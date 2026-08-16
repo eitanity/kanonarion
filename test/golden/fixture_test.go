@@ -637,8 +637,10 @@ func sealVuln(t *testing.T, rec vulndomain.VulnerabilityRecord) vulndomain.Vulne
 // seedFixtureStaleness fills the ledger `latest` reads, so the command answers
 // from the store and never opens a socket.
 //
-// Both rows are FULLY probed — a row whose major probe is unrecorded is not
-// reusable, and the resolver would go to the proxy for the missing half.
+// Two rows are FULLY probed — a row whose major probe is unrecorded is not
+// reusable, and the resolver would go to the proxy for the missing half. The
+// third is deliberately NOT: it is the row a run whose major probe failed leaves
+// behind, and offline it is served with the question still unanswered.
 func seedFixtureStaleness(t *testing.T, store *stalesqlite.Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -648,6 +650,17 @@ func seedFixtureStaleness(t *testing.T, store *stalesqlite.Store) {
 			LatestVersion:     "v1.3.0",
 			LatestPublishedAt: fixtureReleasedAt,
 			NewerMajor:        staledomain.NewerMajor{Probed: true, FromMajor: 2},
+			LookedUpAt:        fixtureLookedUpAt,
+		},
+		{
+			// The module whose major probe never answered: the same-major latest
+			// was recorded and the newer-major question was not. It is what a
+			// transient proxy failure during a sweep leaves in the ledger, and
+			// offline — where nothing may be asked — it is served exactly as it
+			// was written. The rendering of THAT is the fixture.
+			ModulePath:        "example.com/unprobed",
+			LatestVersion:     "v1.1.0",
+			LatestPublishedAt: fixtureReleasedAt,
 			LookedUpAt:        fixtureLookedUpAt,
 		},
 		{

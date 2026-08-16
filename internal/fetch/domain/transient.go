@@ -21,6 +21,24 @@ func (e *ProxyStatusError) Error() string {
 	return fmt.Sprintf("HTTP %d from %s", e.StatusCode, e.URL)
 }
 
+// ProxyEmptyResponseError is returned by module-proxy adapters when the proxy
+// answers a lookup with 200 and a zero-length body. Nothing is settled by it:
+// the request was accepted, no answer came back, and the same request moments
+// later returns the module's real answer.
+//
+// It is a TYPE rather than a message, for the reason ProxyStatusError is one:
+// the condition is classified by callers deciding whether to retry, and a
+// classifier that matched on the sentence would break the next time the
+// sentence is reworded.
+type ProxyEmptyResponseError struct {
+	// Path is the module path whose lookup came back empty.
+	Path string
+}
+
+func (e *ProxyEmptyResponseError) Error() string {
+	return fmt.Sprintf("proxy returned an empty response for %s@latest", e.Path)
+}
+
 // transientMarkers are substrings that identify a transient transport failure
 // in an error whose type cannot be inspected. The HTTP/2 stream errors raised
 // mid-download by net/http's bundled http2 implementation use an unexported
@@ -40,8 +58,8 @@ var transientMarkers = []string{
 
 // IsTransientFetchError reports whether err describes a transient network
 // condition that a later attempt is likely to get past: an HTTP/2 stream reset,
-// a connection reset, a truncated transfer, or a 429 / 5xx answer from the
-// module proxy.
+// a connection reset, a truncated transfer, an empty 200 body, or a 429 / 5xx
+// answer from the module proxy.
 //
 // It is deliberately a positive-match classifier: anything it does not
 // recognise is treated as permanent and fails on the first attempt. A checksum
@@ -59,6 +77,9 @@ func IsTransientFetchError(err error) bool {
 	}
 	if pse, ok := errors.AsType[*ProxyStatusError](err); ok {
 		return isTransientStatus(pse.StatusCode)
+	}
+	if _, ok := errors.AsType[*ProxyEmptyResponseError](err); ok {
+		return true
 	}
 	msg := strings.ToLower(err.Error())
 	for _, m := range transientMarkers {

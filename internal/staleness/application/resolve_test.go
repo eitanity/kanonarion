@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -755,5 +756,65 @@ func TestResolve_StoredRowThatAskedTheRepublicationQuestionIsServed(t *testing.T
 	}
 	if ans.Republication.Version != "v2.17.0" {
 		t.Errorf("Republication.Version = %q, want v2.17.0", ans.Republication.Version)
+	}
+}
+
+// A failing walk used to zero the republication answer beside it. The two
+// questions are about different paths and only one of them failed: the measured
+// half is kept, reported with the error, and the unmeasured half stays
+// unprobed rather than being reported as a negative.
+func TestResolve_AFailingWalkKeepsTheRepublicationAnswerItAlreadyHas(t *testing.T) {
+	proxy := &fakeProxy{
+		versions: map[string]string{
+			"example.com/mod":    "v3.3.4+incompatible",
+			"example.com/mod/v3": "v3.3.5",
+		},
+		fail: map[string]bool{"example.com/mod/v4": true},
+	}
+	ledger := newFakeLedger()
+	r := application.NewResolver(proxy, ledger, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v3.3.4+incompatible")
+	if err == nil {
+		t.Fatal("a failed walk reported no error")
+	}
+	if !ans.Republication.Exists() {
+		t.Fatalf("the republication answer was discarded by a failure about a different path: %+v", ans.Republication)
+	}
+	if ans.Republication.Path != "example.com/mod/v3" || ans.Republication.Version != "v3.3.5" {
+		t.Errorf("Republication = %+v, want example.com/mod/v3@v3.3.5", ans.Republication)
+	}
+	// The half that genuinely failed says so: unprobed, never a negative.
+	if ans.NewerMajor.Probed {
+		t.Errorf("NewerMajor.Probed = true after a failed walk: %+v", ans.NewerMajor)
+	}
+	// The same-major answer resolved, so the row is still worth keeping.
+	if ans.LatestVersion != "v3.3.4+incompatible" {
+		t.Errorf("LatestVersion = %q, want the resolved latest", ans.LatestVersion)
+	}
+}
+
+// A truncated walk cannot be reported as a completed one — Probed means "ran to
+// completion" — so the major it did resolve cannot travel in the record. It must
+// not vanish in silence either: the failure names it.
+func TestResolve_AFailingWalkNamesTheMajorItHadAlreadyResolved(t *testing.T) {
+	proxy := &fakeProxy{
+		versions: map[string]string{
+			"example.com/mod":    "v1.2.0",
+			"example.com/mod/v2": "v2.4.0",
+		},
+		fail: map[string]bool{"example.com/mod/v3": true},
+	}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v1.2.0")
+	if err == nil {
+		t.Fatal("a failed walk reported no error")
+	}
+	if ans.NewerMajor.Probed {
+		t.Errorf("a truncated walk was reported as probed: %+v", ans.NewerMajor)
+	}
+	if want := "example.com/mod/v2 resolved before the walk failed"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to name the major already resolved (%q)", err.Error(), want)
 	}
 }

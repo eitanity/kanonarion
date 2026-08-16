@@ -141,7 +141,15 @@ func TestLatestModules_AProbeFailureDoesNotDiscardTheAnswer(t *testing.T) {
 	if !strings.Contains(stderr.String(), "module proxy lookup failed") {
 		t.Errorf("the probe failure was swallowed: %q", stderr.String())
 	}
-	if strings.Contains(stdout.String(), "newer major") {
-		t.Errorf("a newer-major claim was made for a probe that failed:\n%s", stdout.String())
+	// The row says the question was not answered. It must not claim a newer
+	// major, and it must not render as the clean negative either: those two are
+	// the same bytes only if the failed probe prints nothing at all.
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		if !strings.Contains(line, "newer major: not probed") {
+			t.Errorf("a failed probe renders as a clean answer:\n%s", line)
+		}
+		if strings.Contains(line, "newer major: example.com") {
+			t.Errorf("a newer-major claim was made for a probe that failed:\n%s", line)
+		}
 	}
 }

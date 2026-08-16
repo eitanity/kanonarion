@@ -148,6 +148,12 @@ func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Ans
 // never reached the output. It also meant a pin with no next major reported its
 // own republished major under the newer-major label, claiming a major number
 // change that had not happened.
+//
+// That separation holds on the FAILURE path too, which it did not: a walk that
+// failed used to zero the republication answer beside it, discarding a
+// completely measured fact about one path because a request about a different
+// one did not come back. The republication question is answered before the walk
+// starts and does not depend on it, so it is kept and returned with the error.
 func (r *Resolver) probe(ctx context.Context, path string, plan domain.ProbePlan) (domain.NewerMajor, domain.Republication, error) {
 	fam := domain.ParseFamily(path)
 	start := plan.Start()
@@ -178,7 +184,17 @@ func (r *Resolver) probe(ctx context.Context, path string, plan domain.ProbePlan
 			return nm, rep, nil
 		}
 		if err != nil {
-			return domain.NewerMajor{}, domain.Republication{}, fmt.Errorf("probing %s for a newer major: %w", path, err)
+			// The walk's OWN answer cannot survive this: Probed means "ran to
+			// completion", and a truncated walk carrying the highest major it
+			// happened to reach would report a possibly-understated answer as a
+			// complete one — and cache it for the TTL. What it must not do is
+			// lose that half in silence, so a major already resolved is named in
+			// the failure the caller reports.
+			if nm.Path != "" {
+				return domain.NewerMajor{}, rep, fmt.Errorf(
+					"probing %s for a newer major: %s resolved before the walk failed: %w", path, nm.Path, err)
+			}
+			return domain.NewerMajor{}, rep, fmt.Errorf("probing %s for a newer major: %w", path, err)
 		}
 		nm.Path = candidate
 		nm.Version = info.Version

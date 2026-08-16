@@ -185,7 +185,7 @@ func latestResolverFor(t *testing.T, srv *httptest.Server) *staleapp.Resolver {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return newStalenessResolver(newProxyLatestResolver(proxy), nil, time.Hour, false)
+	return newStalenessResolver(newProxyLatestResolver(proxy, discardLogger()), nil, time.Hour, false)
 }
 
 // runLatestGomod now resolves its scope via the Go toolchain (go list), so the
@@ -386,7 +386,10 @@ func TestPrintLatestTable(t *testing.T) {
 			absent: []string{"newer major"},
 		},
 		{
-			name: "an unprobed row never claims a newer major",
+			// An unprobed row carrying a path from some earlier state must not
+			// report it as a finding, and must not read as the clean negative
+			// above either: it says the question was not answered.
+			name: "an unprobed row never claims a newer major, and says it was not probed",
 			results: []latestResult{
 				{
 					Module:           "github.com/foo/bar",
@@ -398,7 +401,22 @@ func TestPrintLatestTable(t *testing.T) {
 					NewerMajorLatest: "v2.0.0",
 				},
 			},
-			checks: []string{"current"},
+			checks: []string{"current", "newer major: not probed"},
+			absent: []string{"github.com/foo/bar/v2"},
+		},
+		{
+			// The control for the case above and for the one before it: an
+			// unmeasured row asked nothing, so the probe clause is not repeated
+			// beside a cell that already says the column was not measured.
+			name: "an unmeasured row states no probe clause",
+			results: []latestResult{
+				{
+					Module:              "github.com/foo/bar",
+					Pinned:              "v1.0.0",
+					StalenessUnmeasured: stalenessOfflineNoEntry,
+				},
+			},
+			checks: []string{"unmeasured (offline)"},
 			absent: []string{"newer major"},
 		},
 		{

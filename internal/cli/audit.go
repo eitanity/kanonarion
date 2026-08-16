@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -332,7 +333,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 
 	// Which lookup answers the staleness column, and why, is decided in one
 	// place so the offline and online wirings cannot drift apart.
-	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger)
+	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger)
 	if serr != nil {
 		return serr
 	}
@@ -817,7 +818,7 @@ const (
 // What this does NOT promise is that the rest of the run succeeds. A walk that
 // has to fetch module bytes it has not got still fails — with its own error,
 // naming that obstacle, which is the one the operator can act on.
-func auditStalenessLookup(goproxy string, ledger staleports.Ledger) (stalenessLookup, error) {
+func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog.Logger) (stalenessLookup, error) {
 	offline := newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	if modcacheMode {
 		return offline, nil
@@ -832,7 +833,7 @@ func auditStalenessLookup(goproxy string, ledger staleports.Ledger) (stalenessLo
 	// The same ledger `latest` writes. Every successful lookup either command
 	// makes is served to the other inside the TTL, which is the whole point: the
 	// two commands were re-paying the same sweep minutes apart.
-	return newAuditStalenessResolver(newProxyLatestResolver(proxy), ledger, activeConfig.Staleness.TTL), nil
+	return newAuditStalenessResolver(newProxyLatestResolver(proxy, logger), ledger, activeConfig.Staleness.TTL), nil
 }
 
 // applyAuditStaleness fills a row's staleness columns from one lookup.
@@ -1310,12 +1311,15 @@ func auditStalenessAnswer(r auditModuleResult) string {
 // differently. Neither date is carried on an audit row, so neither clause states
 // one here; the labels and the order are the shared part.
 func auditNewerMajorNote(r auditModuleResult) string {
-	if !r.MajorProbed {
-		return ""
-	}
+	// IsLatest is nil exactly when the staleness column was not answered; the
+	// cell already says so, and a probe note there would repeat it on every
+	// offline row. With an answer beside it, an unprobed major line is an answer
+	// this run LOST, and majorNotes states that rather than printing nothing —
+	// which is what a recorded "there is no newer major" prints.
 	return majorNotes(
 		staledomain.Republication{Asked: r.RepublishedProbed, Path: r.RepublishedModule, Version: r.RepublishedLatest},
-		staledomain.NewerMajor{Probed: true, Path: r.NewerMajorModule, Version: r.NewerMajorLatest},
+		staledomain.NewerMajor{Probed: r.MajorProbed, Path: r.NewerMajorModule, Version: r.NewerMajorLatest},
+		r.IsLatest != nil,
 	)
 }
 

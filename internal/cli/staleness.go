@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
+	staleretry "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy/retrying"
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
@@ -28,8 +30,14 @@ func newStalenessResolver(latest staleports.LatestResolver, ledger staleports.Le
 
 // newProxyLatestResolver wraps the module proxy as the port the staleness
 // resolver asks for a module's latest version.
-func newProxyLatestResolver(proxy *proxyadapter.Proxy) staleports.LatestResolver {
-	return staleproxy.New(proxy)
+//
+// The retry decorator goes on the PORT rather than inside the proxy client: the
+// probe and the same-major lookup both come through here, so one decorator
+// covers every question this context asks, and the fetch and walk paths — which
+// have their own retry policies already — are untouched by it. An absent major
+// path is not a transient condition and is not retried; see the decorator.
+func newProxyLatestResolver(proxy *proxyadapter.Proxy, logger *slog.Logger) staleports.LatestResolver {
+	return staleretry.New(staleproxy.New(proxy), logger)
 }
 
 // newAuditStalenessResolver builds the resolver behind an audit's latest column.
@@ -206,6 +214,11 @@ const (
 	// republicationLabel deliberately does not contain the word "major" on its
 	// own. The major NUMBER is unchanged here; only the path moved.
 	republicationLabel = "same major republished"
+	// majorNotProbedClause is what a row says when the newer-major question was
+	// not answered. It states the state of the QUESTION, never a guess at the
+	// answer: "no newer major" would be a claim nothing measured, and "a newer
+	// major may exist" would be an alarm nothing measured either.
+	majorNotProbedClause = newerMajorLabel + ": not probed"
 )
 
 // majorClause renders one labelled path@version, with the publication date when
@@ -231,12 +244,28 @@ func majorClause(label, path, version string, publishedAt time.Time) string {
 // same major number at the path the toolchain expects for it — and for a stuck
 // +incompatible pin it is the likelier action; ordering the two-major migration
 // ahead of it buries the cheaper answer behind the more alarming one.
-func majorNotes(rep staledomain.Republication, nm staledomain.NewerMajor) string {
+//
+// sameMajorAnswered says whether this row got a same-major answer at all. It is
+// what separates a probe that FAILED from a row nothing was measured for: a
+// probe is planned for every module whose latest resolves, so an unprobed row
+// with an answer beside it lost that answer, and the row says so. A row with no
+// answer at all already renders as unmeasured, and repeating it there would put
+// the clause on every offline row in the table.
+func majorNotes(rep staledomain.Republication, nm staledomain.NewerMajor, sameMajorAnswered bool) string {
 	var parts []string
 	if rep.Exists() {
 		parts = append(parts, majorClause(republicationLabel, rep.Path, rep.Version, rep.PublishedAt))
 	}
-	if nm.Exists() {
+	switch {
+	case sameMajorAnswered && !nm.Probed:
+		// The unanswered question is stated on the ROW. It used to render as
+		// nothing at all, which is byte-identical to the recorded negative — so
+		// the surface that exists to stop a several-majors-behind module reading
+		// as current showed a failed probe and a clean answer the same way. It is
+		// appended rather than substituted for the whole note, so a measured
+		// republication beside it is still reported.
+		parts = append(parts, majorNotProbedClause)
+	case nm.Exists():
 		parts = append(parts, majorClause(newerMajorLabel, nm.Path, nm.Version, nm.PublishedAt))
 	}
 	return strings.Join(parts, "; ")

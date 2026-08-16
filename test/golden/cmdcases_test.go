@@ -216,6 +216,21 @@ func latestCases(gomod string, unroutable, refusesNetwork map[string]string) []c
 				"comes from, never what it says.",
 		},
 		{
+			name: "latest_json_unprobed_major",
+			args: []string{"latest", "example.com/unprobed", "--json"},
+			env:  refusesNetwork,
+			why: "THE UNANSWERED QUESTION: a ledger row whose major probe never ran. major_probed is " +
+				"false with newer_major_module absent, which is a DIFFERENT state from probed-and-none.",
+		},
+		{
+			name: "latest_text_unprobed_major",
+			args: []string{"latest", "example.com/unprobed"},
+			env:  refusesNetwork,
+			why: "the unanswered question on the human channel: the row states that the newer-major " +
+				"question was not answered. Its control is latest_text_offline_served, whose probe DID " +
+				"run and found nothing — the two rendered identically until this case existed.",
+		},
+		{
 			name: "latest_text_offline_served",
 			args: []string{"latest", "example.com/mod"},
 			env:  refusesNetwork,

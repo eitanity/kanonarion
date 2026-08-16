@@ -84,8 +84,9 @@ The probe walks upward from one major above the **pinned version's** major - not
 above the path suffix, because a `+incompatible` pin carries its major in the
 version while living at the unsuffixed path - and stops at the first major that
 does not resolve. `major_probed` distinguishes "probed, nothing newer" from "not
-probed" (an offline run, or a probe whose request failed); a question that was
-never asked is never rendered as a clean answer.
+probed" (an offline run, or a probe whose request failed), and the text surface
+says `newer major: not probed` on such a row: a question that was never asked is
+never rendered as a clean answer.
 
 A `+incompatible` pin is asked one extra question first: whether its **own**
 major is now published at the suffixed path. `+incompatible` is what a module
@@ -109,9 +110,6 @@ When both hold, **both are reported, the republication first**:
 github.com/go-chi/chi@v3.3.4+incompatible  ahead of latest tag: v1.5.5; same major republished: github.com/go-chi/chi/v3@v3.3.5 (2023-09-07); newer major: github.com/go-chi/chi/v5@v5.3.1 (2026-07-05)
 ```
 
-That extra question is one additional proxy request, and only for
-`+incompatible` pins.
-
 Whether the newer major is *adoptable* is a different question - a new major is
 expected to be breaking. This only stops a several-majors-behind module reading
 as up to date.
@@ -132,7 +130,9 @@ about longest ago.
 
 A **failed** lookup is never written - failures are not cacheable facts. An
 absent major path is not a failure: it is a definitive answer, it is what bounds
-the probe, and it is recorded.
+the probe, and it is recorded. An answer that settles nothing - an empty body, a
+429 or a 5xx - is asked again a bounded number of times before it counts as a
+failure.
 
 `staleness.ttl` is a config key (default `1h`; `0` disables serving). `--fresh`
 bypasses the ledger for a single run and still records what it resolved.

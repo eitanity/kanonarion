@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 )
 
 // datedStalenessLookup answers with a latest version and a publication date, so
@@ -202,7 +202,7 @@ func TestFetchStaleness_PinAheadOfLatestOffersNoTarget(t *testing.T) {
 				t.Fatalf("NewModuleCoordinate: %v", err)
 			}
 			stale := fetchStalenessFor(context.Background(),
-				stubLatestInfo{info: proxyadapter.LatestVersionInfo{Version: tc.latest, Time: published}},
+				stubLatestInfo{info: staleports.LatestInfo{Version: tc.latest, Time: published}},
 				coord, tc.pinned, io.Discard)
 			if stale.IsLatest == nil {
 				t.Fatalf("staleness is unmeasured (%q); the proxy answered", stale.Unmeasured)

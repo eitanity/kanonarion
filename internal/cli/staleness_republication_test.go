@@ -290,13 +290,28 @@ func TestAuditNote_UsesTheSameLabelsAndOrderAsLatest(t *testing.T) {
 		},
 		{
 			// An unprobed row claims neither. The zero value of a probe is not
-			// an answer.
-			name: "unprobed row states nothing",
+			// an answer. Nothing was measured for this row at all — IsLatest is
+			// nil — so the column already reads "unmeasured" and the note adds
+			// nothing to it.
+			name: "unmeasured row states nothing",
 			row: auditModuleResult{
 				NewerMajorModule:  "github.com/foo/bar/v2",
 				RepublishedModule: "github.com/foo/bar/v1",
 			},
 			want: "",
+		},
+		{
+			// The row this change exists for: the same-major answer resolved and
+			// the probe did not. Printing nothing here is byte-identical to the
+			// recorded negative, so the failed probe read as "there is no newer
+			// major" — the answer this column exists to stop giving.
+			name: "answered row with a failed probe says the question was not answered",
+			row: auditModuleResult{
+				IsLatest:    measuredIsLatest(true),
+				MajorProbed: false,
+			},
+			want:   "newer major: not probed",
+			absent: "@",
 		},
 	}
 	for _, tc := range cases {

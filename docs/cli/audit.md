@@ -179,8 +179,7 @@ line up on every row. The major-line facts are the values routinely wider than
 the rest of the row put together — each carries a whole module path and a
 version — so they are stated in full on a continuation line under the staleness
 column they belong to, rather than setting that column's width for the run.
-`--json` is unaffected: it carries `newer_major_module`/`newer_major_latest` and
-`republished_module`/`republished_latest` as fields.
+`--json` is unaffected: it carries those paths and versions as fields.
 
 ## Example - complete set (code + tooling)
 
@@ -317,7 +316,8 @@ the module **path**. `newer_major_module` names the newest major-suffixed path
 above the pinned major - a dependency pinned a whole major line behind is at the
 latest version of its own path and is still behind. `major_probed` separates
 "probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
-whose request failed).
+whose request failed); an answered row whose probe was not is noted as `newer
+major: not probed`.
 
 `republished_module` is a third fact and only a `+incompatible` pin can have one:
 the pinned major's own `/vN` publication. The major **number** is unchanged

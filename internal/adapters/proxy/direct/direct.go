@@ -288,8 +288,14 @@ func (p *Proxy) LatestInfo(ctx context.Context, path string) (_ LatestVersionInf
 		// accepted the request and has nothing to say, and "EOF" describes the
 		// decoder's position rather than what happened to the lookup — which
 		// is what the reader of the message has to act on.
+		//
+		// Typed, and carrying the same sentence it always did: the condition is
+		// transient under sweep load — a proxy that answers this for one module
+		// answers the same module properly seconds later — and a caller deciding
+		// whether to ask again classifies it by type rather than by parsing the
+		// sentence.
 		if errors.Is(err, io.EOF) {
-			return LatestVersionInfo{}, fmt.Errorf("proxy returned an empty response for %s@latest", path)
+			return LatestVersionInfo{}, &domain2.ProxyEmptyResponseError{Path: path}
 		}
 		return LatestVersionInfo{}, fmt.Errorf("decoding latest response for %s: %w", path, err)
 	}

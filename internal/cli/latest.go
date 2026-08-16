@@ -210,6 +210,22 @@ func (r *latestResult) applyStaleness(ans staleapp.Answer) {
 	r.Served = ans.Served
 }
 
+// latestErrorSentinel is what the `latest` column holds for a row whose lookup
+// failed. It is a value in the version field rather than a state of its own for
+// historical reasons; the JSON says the same thing properly through
+// staleness_unmeasured.
+const latestErrorSentinel = "(error)"
+
+// sameMajorAnswered reports whether this row got a same-major answer at all.
+//
+// It is the gate on stating an unanswered major probe: a probe is planned for
+// every module whose latest resolves, so on a row with an answer an unprobed
+// major line is a lost answer, while on a row with none — an offline row, or the
+// error sentinel — nothing was asked and the row's own cell already says so.
+func (r latestResult) sameMajorAnswered() bool {
+	return r.Latest != "" && r.Latest != latestErrorSentinel
+}
+
 // newerMajor rebuilds the domain fact from an output row, so the renderers
 // share one definition of what "has a newer major" means.
 func (r latestResult) newerMajor() staledomain.NewerMajor {
@@ -289,7 +305,8 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		// asked.
 		lookup = newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	} else {
-		lookup = newStalenessResolver(newProxyLatestResolver(proxy), ledger, activeConfig.Staleness.TTL, f.fresh)
+		lookup = newStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr)),
+			ledger, activeConfig.Staleness.TTL, f.fresh)
 	}
 
 	if len(args) == 0 {
@@ -413,7 +430,7 @@ func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 		line = fmt.Sprintf("%s@%s (released %d days ago, %s)",
 			r.Module, r.Latest, days, r.LatestDate.UTC().Format("2006-01-02"))
 	}
-	if note := majorNotes(r.republication(), r.newerMajor()); note != "" {
+	if note := majorNotes(r.republication(), r.newerMajor(), r.sameMajorAnswered()); note != "" {
 		line += "; " + note
 	}
 	if asOf := stalenessAsOf(r.LookedUpAt); asOf != "" {
@@ -474,7 +491,7 @@ func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned stri
 			// The sentinel the table has always keyed its error cell on stays,
 			// so the text output is unchanged; what changes is that the JSON now
 			// says the column is unmeasured instead of answering it.
-			Latest:              "(error)",
+			Latest:              latestErrorSentinel,
 			StalenessUnmeasured: stalenessLookupFailed,
 		}
 	}
@@ -570,7 +587,7 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		}
 		var status string
 		switch {
-		case r.Latest == "(error)":
+		case r.Latest == latestErrorSentinel:
 			status = "(error resolving latest)"
 		case r.IsLatest == nil:
 			// Any other unmeasured row states the absence in the cell rather than
@@ -596,7 +613,7 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		}
 		// The major-line clauses are appended, never substituted: "current" stays
 		// true of the module's own path and the other paths are stated beside it.
-		if note := majorNotes(r.republication(), r.newerMajor()); note != "" {
+		if note := majorNotes(r.republication(), r.newerMajor(), r.sameMajorAnswered()); note != "" {
 			status += "; " + note
 		}
 		if _, err := fmt.Fprintf(stdout, "%s  %s\n", coord, status); err != nil {
