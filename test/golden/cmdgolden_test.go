@@ -206,17 +206,13 @@ func (n *normaliser) apply(s string) string {
 func mintedValuePatterns() []patternReplacement {
 	return []patternReplacement{
 		{
-			// A scan run's identifier: the walk's ULID with the run's own start
-			// time appended. It is matched BEFORE the bare ULID pattern below,
-			// because that one would replace the ULID half and leave the seconds
-			// behind as a number that changes on every run.
-			re:     regexp.MustCompile(`\bvscan-[0-7][0-9A-HJKMNP-TV-Z]{25}-\d+\b`),
-			stable: "vscan-$$RUNID",
-		},
-		{
-			// A ULID: 26 characters of Crockford base32. Walk ids and scan-run
-			// ids are minted per run, so they are the one part of audit's
-			// derivation statement that cannot be a fixture.
+			// A ULID: 26 characters of Crockford base32. A walk id is minted from
+			// the wall clock AND 80 bits of entropy, so it is the one part of
+			// audit's derivation statement that cannot be a fixture. A scan run's
+			// identifier is that ULID with the run's completion second appended,
+			// and this pattern replaces its ULID half only: the seconds come from
+			// the injected clock, so a recorded run names them literally and a
+			// change to WHICH run answered moves the golden.
 			re:     regexp.MustCompile(`\b[0-7][0-9A-HJKMNP-TV-Z]{25}\b`),
 			stable: "$$ULID",
 		},
@@ -235,24 +231,6 @@ func mintedValuePatterns() []patternReplacement {
 		// RFC3339, because the recorded payloads carry timestamps of their own
 		// — staleness_looked_up_at among them — and those are answers the
 		// fixture fixes, not values the run mints.
-		// The dates a REUSED run names: when the walk it matched was taken, and
-		// when the scan run it was served by completed. Those records are written
-		// by the run that primed the store, and they carry the wall clock rather
-		// than the clock this package pins on the CLI — so they move every run
-		// while everything around them holds still.
-		//
-		// Anchored to the surrounding words rather than matching bare RFC3339,
-		// for the reason the log-timestamp patterns below give: the recorded
-		// payloads carry dates the fixture FIXES — the staleness lookup among
-		// them — and generalising those away would hide the answers.
-		{
-			re:     regexp.MustCompile(`the walk taken \S+;`),
-			stable: "the walk taken $$TIME;",
-		},
-		{
-			re:     regexp.MustCompile(` of \S+ against snapshot`),
-			stable: " of $$TIME against snapshot",
-		},
 		{
 			re:     regexp.MustCompile(`"time":"[^"]*"`),
 			stable: `"time":"$$TIME"`,

@@ -259,7 +259,22 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 
 	// ---- shared infrastructure ----
-	clk := clock.System{}
+	// The container reads the clock the CLI reads rather than constructing its
+	// own. The two were separate, so pinning the CLI's clock fixed what a
+	// command PRINTED about now while the records a command WROTE — a walk's
+	// completion time, a scan run's completion time, and the seconds half of a
+	// scan run's identifier — still carried the wall clock. A golden naming a
+	// served answer then had to generalise away which run answered and when,
+	// which are the two facts such a golden exists to check.
+	//
+	// The production default is unchanged: cliClock is the system clock unless
+	// SetClockForTest pins it, and nothing in the operating path calls that.
+	//
+	// The stopwatch below is deliberately NOT sourced from here. It measures
+	// elapsed durations from a monotonic reading, so it stays correct under a
+	// pinned wall clock — every duration this process reports comes from it, and
+	// none is computed as a difference between two clock readings.
+	clk := cliClock
 	stopwatch := clock.Monotonic{}
 	signer := noopsigner.New()
 	localBlobs := blobstore.New(storeRoot)

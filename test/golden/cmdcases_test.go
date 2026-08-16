@@ -583,7 +583,9 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 			why: "REUSED: the same audit run a second time against the store the first one wrote. It is the " +
 				"only recording of what the tool says about work it did NOT do — the walk re-resolved and found " +
 				"identical, the scan served from a stored run, and what that run's reachability verdicts rest on. " +
-				"Its control is audit_text_populated, which must keep reading `derived by this run`.",
+				"The date and the run identifier below are recorded literally, so a change to WHICH stored run " +
+				"answers moves this file. Its control is audit_text_populated, which must keep reading " +
+				"`derived by this run`.",
 		},
 		{
 			name: "audit_json_empty_scope",
