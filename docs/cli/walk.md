@@ -224,6 +224,7 @@ kanonarion walk --gomod ./go.mod --analyse-root
 | `notice` / `sbom` | Carry the root's own licence and copyright (SBOM `metadata.component` gains `licenses` and `copyright`) |
 | Freshness | The working tree is re-read and re-analysed on every run; no cached record is ever served for the `local` coordinate, so an edit is always reflected in the next run |
 | Source locality | The tree is zipped into the local store only; nothing leaves the machine |
+| Ingest failure | Walk degrades to `partial` with the reason on stderr; the dependency graph is kept. `--allow-partial` exits `0` |
 
 Default off, so without the flag the root stays skipped-with-reason and only
 dependency facts are produced.

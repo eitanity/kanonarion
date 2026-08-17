@@ -114,8 +114,12 @@ func writeLocalModule(t *testing.T, dir, modulePath, version string) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModContent), 0o600); err != nil {
 		t.Fatalf("writing go.mod: %v", err)
 	}
-	// A minimal.go file so the zip is non-empty.
-	src := fmt.Sprintf("package %s\n", filepath.Base(modulePath))
+	// A minimal.go file so the zip is non-empty. The package name is fixed
+	// rather than derived from the path: a module path ending "/v2" or ".v1"
+	// has a last element that is not a usable package name, and the fixture
+	// classes that matter here are exactly those.
+	src := "package lib\n"
+	_ = filepath.Base(modulePath)
 	if err := os.WriteFile(filepath.Join(dir, "lib.go"), []byte(src), 0o600); err != nil {
 		t.Fatalf("writing lib.go: %v", err)
 	}
@@ -342,5 +346,97 @@ func TestEnsureFetchedFromPath_StatesThatNoChecksumWasAvailable(t *testing.T) {
 	}
 	if !strings.Contains(rec.VerificationDetail, "no checksum is available") {
 		t.Errorf("VerificationDetail %q does not state that no checksum was available", rec.VerificationDetail)
+	}
+}
+
+// TestEnsureFetchedFromPath_LocalVersionAtMajorSuffixPath: the project-walk
+// root is zipped under a placeholder version before its entry prefix is
+// rewritten, and modzip validates the path/version pair before it writes
+// anything. Go requires a path carrying a major suffix to carry a version of
+// that major, so a fixed v0.0.0 placeholder rejected every module at major 2
+// or above — the whole class that has ever done a major bump properly. The
+// fixture must carry the suffix: one at major 0 or 1 passes on the broken
+// code and proves nothing.
+func TestEnsureFetchedFromPath_LocalVersionAtMajorSuffixPath(t *testing.T) {
+	for _, modulePath := range []string{
+		"example.com/project/v2",
+		"example.com/project/v10",
+		// gopkg.in spells the major as a dot on the last element, not a
+		// slash-separated one. A "/vN" parser builds a path that cannot exist,
+		// and v0.0.0 is rejected here too — gopkg.in/check.v1 needs v1.
+		"gopkg.in/check.v1",
+		"gopkg.in/project.v4",
+	} {
+		t.Run(modulePath, func(t *testing.T) {
+			dir := t.TempDir()
+			coord := coordinatetest.MustNew(modulePath, coordinate.LocalVersion)
+			writeLocalModule(t, dir, coord.Path(), coord.Version())
+
+			blobs := newFakeBlob()
+			facts := newFakeFacts()
+			f := localfs.New(blobs, facts, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+
+			res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+			if err != nil {
+				t.Fatalf("EnsureFetchedFromPath: %v", err)
+			}
+
+			// The rewrite back to the synthetic local coordinate is symmetric in
+			// the placeholder, so every consumer still derives the prefix from
+			// the coordinate whatever major the path carried.
+			rc, err := blobs.Get(context.Background(), fetchtest.ZipIdentity(t, res.Record.FactRecord))
+			if err != nil {
+				t.Fatalf("Get blob: %v", err)
+			}
+			data, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("reading blob: %v", err)
+			}
+			zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+			if err != nil {
+				t.Fatalf("opening zip: %v", err)
+			}
+			if len(zr.File) == 0 {
+				t.Fatal("zip is empty")
+			}
+			wantPrefix := coord.Path() + "@" + coord.Version() + "/"
+			for _, zf := range zr.File {
+				if !strings.HasPrefix(zf.Name, wantPrefix) {
+					t.Errorf("zip entry %q lacks prefix %q", zf.Name, wantPrefix)
+				}
+			}
+		})
+	}
+}
+
+// TestEnsureFetchedFromPath_LocalVersionAtUnsuffixedPathIsUnchanged: the
+// control. Majors 0 and 1 share the unsuffixed path and keep the v0.0.0
+// placeholder, so the zip an unsuffixed project produces is byte-identical to
+// what it produced before the major was derived from the path. The golden is
+// the h1 this exact fixture yielded from the constant-placeholder code, and
+// the assertion is on the module hash because that is what every downstream
+// record keys on. The fixture is written here rather than through the shared
+// helper so a later edit to the helper cannot silently move the golden.
+func TestEnsureFetchedFromPath_LocalVersionAtUnsuffixedPathIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/project\n\ngo 1.21\n"), 0o600); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lib.go"), []byte("package project\n"), 0o600); err != nil {
+		t.Fatalf("writing lib.go: %v", err)
+	}
+	coord := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
+
+	blobs := newFakeBlob()
+	facts := newFakeFacts()
+	f := localfs.New(blobs, facts, fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+
+	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	if err != nil {
+		t.Fatalf("EnsureFetchedFromPath: %v", err)
+	}
+	const want = "h1:MpJUZoU8nNl0L8/OVcpSxW+nhKT+mnZU2ldLZrzPeVc="
+	if got := res.Record.ModuleHash; got != want {
+		t.Errorf("module hash = %s, want %s (the unsuffixed placeholder must not have moved)", got, want)
 	}
 }

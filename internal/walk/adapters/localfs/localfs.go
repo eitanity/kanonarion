@@ -79,7 +79,11 @@ func (f *Fetcher) EnsureFetchedFromPath(
 	// keep deriving the prefix from the coordinate.
 	zipVersion := coord.Version()
 	if coord.IsLocal() {
-		zipVersion = localZipPlaceholderVersion
+		placeholder, perr := localZipPlaceholderVersion(coord.Path())
+		if perr != nil {
+			return walkports.LocalModuleFetchResult{}, fmt.Errorf("choosing a zip version for %s: %w", coord, perr)
+		}
+		zipVersion = placeholder
 	}
 	mv := module.Version{Path: coord.Path(), Version: zipVersion}
 	var zipBuf bytes.Buffer
@@ -163,10 +167,38 @@ func (f *Fetcher) EnsureFetchedFromPath(
 	return walkports.LocalModuleFetchResult{Record: composed, FromCache: false}, nil
 }
 
-// localZipPlaceholderVersion is the canonical semver under which the
+// localZipPlaceholderVersion returns the canonical semver under which the
 // project-walk root is zipped before its entry prefix is rewritten to the
 // synthetic local version.
-const localZipPlaceholderVersion = "v0.0.0"
+//
+// The version cannot be a constant. modzip validates the path/version pair
+// before it writes anything, and Go requires a path carrying a major-version
+// suffix to carry a version of that major: github.com/caddyserver/caddy/v2 at
+// v0.0.0 is rejected, so a fixed v0.0.0 could only ever serve paths at major 0
+// or 1. The major is read off the path with the toolchain's own splitter rather
+// than a hand-rolled one, because gopkg.in spells the major as a dot on the
+// last element (gopkg.in/yaml.v3) rather than a slash-separated element, and a
+// "/vN" parser would build a path that cannot exist.
+//
+// This is the intermediate zip only. The entry prefix is rewritten to the
+// synthetic local coordinate immediately afterwards, so no stored coordinate
+// and no record shape depends on which placeholder was chosen.
+func localZipPlaceholderVersion(modulePath string) (string, error) {
+	_, pathMajor, ok := module.SplitPathVersion(modulePath)
+	if !ok {
+		return "", fmt.Errorf("module path %q is not a valid module path", modulePath)
+	}
+	if pathMajor == "" {
+		// Majors 0 and 1 share the unsuffixed path, and v0.0.0 satisfies both.
+		return "v0.0.0", nil
+	}
+	// pathMajor is the suffix with its separator: "/v2", or ".v3" for gopkg.in.
+	version := pathMajor[1:] + ".0.0"
+	if err := module.Check(modulePath, version); err != nil {
+		return "", fmt.Errorf("placeholder %s does not agree with module path %q: %w", version, modulePath, err)
+	}
+	return version, nil
+}
 
 // rewriteZipPrefix re-writes a module zip, renaming every entry that starts
 // with oldPrefix to start with newPrefix instead. Entries are recompressed;
