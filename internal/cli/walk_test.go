@@ -280,7 +280,7 @@ func TestRunWalkDiff_EmptyDiff(t *testing.T) {
 		Result: walkapp.WalkDiff{
 			WalkA: "A", WalkB: "B",
 			NodesA: 128, NodesB: 128,
-			FrameA: "linux/amd64", FrameB: "linux/amd64",
+			FrameA: linuxAmd64Frame, FrameB: linuxAmd64Frame,
 		},
 	}
 	var buf bytes.Buffer
@@ -310,7 +310,7 @@ func TestRunWalkDiff_EmptyDiffSameWalk(t *testing.T) {
 		Result: walkapp.WalkDiff{
 			WalkA: "01KZ3VA296P8KTP265M6CDBCHB", WalkB: "01KZ3VA296P8KTP265M6CDBCHB",
 			NodesA: 128, NodesB: 128,
-			FrameA: "linux/amd64", FrameB: "linux/amd64",
+			FrameA: linuxAmd64Frame, FrameB: linuxAmd64Frame,
 		},
 	}
 	var buf bytes.Buffer
@@ -338,8 +338,8 @@ func TestRunWalkDiff_EmptyDiffUnderMismatchIsNotIdentical(t *testing.T) {
 		Result: walkapp.WalkDiff{
 			WalkA: "A", WalkB: "B",
 			NodesA: 4, NodesB: 128,
-			FrameA:               "linux/amd64",
-			FrameB:               "linux/amd64",
+			FrameA:               linuxAmd64Frame,
+			FrameB:               linuxAmd64Frame,
 			CompletenessMismatch: "walk scope differs: code vs complete",
 		},
 	}
@@ -363,7 +363,7 @@ func TestRunWalkDiff_EmptyDiffJSONStatesItOnStderr(t *testing.T) {
 		Result: walkapp.WalkDiff{
 			WalkA: "A", WalkB: "B",
 			NodesA: 128, NodesB: 128,
-			FrameA: "linux/amd64", FrameB: "darwin/arm64",
+			FrameA: linuxAmd64Frame, FrameB: walkdomain.WalkFrame{Text: "darwin/arm64", Basis: walkdomain.FrameBasisPlatform},
 		},
 	}
 	var stdout, stderr bytes.Buffer

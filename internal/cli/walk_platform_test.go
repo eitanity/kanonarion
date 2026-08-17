@@ -165,8 +165,11 @@ func TestVulnScanByModule_IsNotPlatformFiltered(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("a module-rooted walk must be findable without a platform: got %d", len(got))
 	}
-	if got[0].BuildFrame() != "unrecorded" {
-		t.Errorf("module-rooted walk frame = %q, want unrecorded", got[0].BuildFrame())
+	if got[0].BuildFrame() != "not-platform-scoped" {
+		t.Errorf("module-rooted walk frame = %q, want not-platform-scoped", got[0].BuildFrame())
+	}
+	if basis := got[0].Frame().Basis; basis != walkdomain.FrameBasisNotPlatformScoped {
+		t.Errorf("module-rooted walk basis = %q, want %q", basis, walkdomain.FrameBasisNotPlatformScoped)
 	}
 
 	// And the filter that WOULD be wrong here finds nothing, which is why the
@@ -260,7 +263,7 @@ func TestEnsureProjectWalkForSBOM_BuildsRatherThanReuseAnotherPlatformsWalk(t *t
 // which platform it is.
 func TestDependentsText_StatesTheFrameItAnsweredFrom(t *testing.T) {
 	var buf bytes.Buffer
-	if err := writeDependentsText(&buf, "walk-1", "darwin/arm64", "example.com/dep@v1.0.0",
+	if err := writeDependentsText(&buf, "walk-1", walkdomain.WalkFrame{Text: "darwin/arm64", Basis: walkdomain.FrameBasisPlatform}, "example.com/dep@v1.0.0",
 		nil, false, false, true); err != nil {
 		t.Fatalf("writeDependentsText: %v", err)
 	}
@@ -269,10 +272,11 @@ func TestDependentsText_StatesTheFrameItAnsweredFrom(t *testing.T) {
 	}
 }
 
-// A walk written before the frame was projected states that the frame is
-// unrecorded. Omitting the line would leave a reader unable to tell an unstated
-// frame from a missing one.
-func TestBuildFrame_PreBuildEnvWalkSaysUnrecorded(t *testing.T) {
+// A walk whose platform is genuinely not known states that it is unrecorded.
+// Omitting the line would leave a reader unable to tell an unstated frame from a
+// missing one, and saying "not platform-scoped" would claim a reason this walk
+// does not supply.
+func TestBuildFrame_AWalkWithNoKnownPlatformSaysUnrecorded(t *testing.T) {
 	if got := (walkports.WalkSummary{}).BuildFrame(); got != "unrecorded" {
 		t.Errorf("a frame-unrecorded walk renders as %q, want unrecorded", got)
 	}

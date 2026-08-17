@@ -1,0 +1,56 @@
+# populated: the walk's verification aggregate, composed from one fetch record per node — including the go.mod-only module, which has no zip to verify.
+$ kanonarion verification-coverage 01ARZ3NDEKTSV4RRFFQ69G5FAV --json
+exit 0
+--- stdout ---
+{
+  "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "total": 4,
+  "recorded": 3,
+  "cross_verifiable": 3,
+  "cross_verified": 3,
+  "checksum_db_only": 0,
+  "go_sum_only": 0,
+  "unverified": 0,
+  "local_source": 0,
+  "unrecorded": 1,
+  "unrecognised": 0,
+  "collapsed": false,
+  "vcs": {
+    "rechecked": 0,
+    "inherited": 0,
+    "never": 0,
+    "not_measured": 3
+  },
+  "modules": [
+    {
+      "coordinate": "example.com/app@v1.0.0",
+      "path": "example.com/app",
+      "version": "v1.0.0",
+      "class": "cross-verified (checksum db + VCS)",
+      "status": "Verified"
+    },
+    {
+      "coordinate": "example.com/clean@v1.0.0",
+      "path": "example.com/clean",
+      "version": "v1.0.0",
+      "class": "cross-verified (checksum db + VCS)",
+      "status": "Verified"
+    },
+    {
+      "coordinate": "example.com/mod@v1.2.0",
+      "path": "example.com/mod",
+      "version": "v1.2.0",
+      "class": "no fetch record",
+      "reason": "the fetch record for this module could not be read, so nothing here describes how it was verified"
+    },
+    {
+      "coordinate": "example.com/shallow@v1.0.0",
+      "path": "example.com/shallow",
+      "version": "v1.0.0",
+      "class": "cross-verified (checksum db + VCS)",
+      "status": "Verified"
+    }
+  ]
+}
+--- stderr ---
+(empty)

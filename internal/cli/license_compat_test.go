@@ -29,7 +29,7 @@ func TestPrintCompatReportText_Clean(t *testing.T) {
 	var buf bytes.Buffer
 	report := makeCompatReport(true)
 	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
-	printCompatReportText(report, coord, "walk-test", "linux/amd64", &buf)
+	printCompatReportText(report, coord, "walk-test", linuxAmd64Frame, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "compatible with Apache-2.0") {
 		t.Errorf("clean report should say 'compatible with Apache-2.0', got: %q", out)
@@ -53,7 +53,7 @@ func TestPrintCompatReportText_IncompatibleConflict(t *testing.T) {
 		Kind:          domain.ConflictCopyleftPropagation,
 	})
 	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
-	printCompatReportText(report, coord, "walk-test", "linux/amd64", &buf)
+	printCompatReportText(report, coord, "walk-test", linuxAmd64Frame, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "Incompatible") {
 		t.Errorf("incompatible section missing, got: %q", out)
@@ -83,7 +83,7 @@ func TestPrintCompatReportText_UnknownWithNoRecord(t *testing.T) {
 		Kind:          domain.ConflictUnknownPair,
 	})
 	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
-	printCompatReportText(report, coord, "walk-test", "linux/amd64", &buf)
+	printCompatReportText(report, coord, "walk-test", linuxAmd64Frame, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "no licence record") {
 		t.Errorf("'no licence record' label missing, got: %q", out)
@@ -109,7 +109,7 @@ func TestPrintCompatReportText_UnknownNamedSPDX(t *testing.T) {
 		Kind:          domain.ConflictUnknownPair,
 	})
 	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
-	printCompatReportText(report, coord, "walk-test", "linux/amd64", &buf)
+	printCompatReportText(report, coord, "walk-test", linuxAmd64Frame, &buf)
 	out := buf.String()
 	if strings.Contains(out, "kanonarion extract") {
 		t.Errorf("extraction hint should not appear for named-but-unmodelled SPDX, got: %q", out)
@@ -127,7 +127,7 @@ func TestPrintCompatReportJSON_CleanShape(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	report := makeCompatReport(true)
-	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", pinnedSelection(), nil, &buf); err != nil {
+	if err := printCompatReportJSON(report, "walk-test", linuxAmd64Frame, pinnedSelection(), nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var out map[string]any
@@ -159,7 +159,7 @@ func TestPrintCompatReportJSON_ConflictFields(t *testing.T) {
 		Verdict:       domain.VerdictIncompatible,
 		Kind:          domain.ConflictNetworkTrigger,
 	})
-	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", pinnedSelection(), nil, &buf); err != nil {
+	if err := printCompatReportJSON(report, "walk-test", linuxAmd64Frame, pinnedSelection(), nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var out struct {

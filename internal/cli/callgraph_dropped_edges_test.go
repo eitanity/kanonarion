@@ -36,6 +36,10 @@ func droppedEdgeStore() *testfakes.FakeQueryCallGraph {
 			ReferenceScope: cgdomain.ReferenceScopeAnalysed,
 			OverallStatus:  cgdomain.CallGraphStatusPartial,
 			FailedPackages: []string{"example.com/dep"},
+			// The dependency's own sources are what failed, which is what makes the
+			// stored record answer the re-run and therefore what makes --force part
+			// of the remedy.
+			FailureCause: cgdomain.FailureCauseModule,
 		})
 	uc.AddRecord(coordinatetest.MustNew("example.com/app", coordinate.LocalVersion), cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/app.Handler", Symbol: "Handler"}}, nil))
@@ -197,5 +201,59 @@ func TestPrintUsedBySection_SaysNothingWhenNoPackageWasDropped(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "did not typecheck") {
 		t.Errorf("a caveat was invented for a complete graph:\n%s", buf.String())
+	}
+}
+
+// A gap this host's cold module cache opened is not a compile error, and a
+// remedy that says it is sends the reader looking for a fault in sources that
+// are fine. The record states which it was, so the notice reads that rather than
+// assuming.
+func TestRunCallers_DroppedEdgeRemedyNamesTheColdCacheWhenThatIsTheCause(t *testing.T) {
+	uc := droppedEdgeStore()
+	uc.AddRecord(coordinatetest.MustNew("example.com/dep", "v1.0.0"), cgapp.PipelineVersion,
+		cgdomain.CallGraphRecord{
+			Completeness:   cgdomain.CompletenessBuiltWithBodies,
+			TestScope:      cgdomain.TestScopeAnalysed,
+			ReferenceScope: cgdomain.ReferenceScopeAnalysed,
+			OverallStatus:  cgdomain.CallGraphStatusPartial,
+			FailedPackages: []string{"example.com/dep"},
+			FailureCause:   cgdomain.FailureCauseEnvironment,
+		})
+	uc.SetCallers([]cgports.CallEdgeRef{consumerEdge()})
+
+	var buf bytes.Buffer
+	if err := runCallers(context.Background(), "example.com/dep.FuncMap", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "module cache") {
+		t.Errorf("the remedy does not name the cold module cache:\n%s", out)
+	}
+	if !strings.Contains(out, cgdomain.ColdModuleCacheRemedy) {
+		t.Errorf("the one-step way to make the modules available is not named:\n%s", out)
+	}
+	// The record is not servable, so the plain command re-derives; printing
+	// --force here would teach a flag the reader does not need.
+	if strings.Contains(out, "--force") {
+		t.Errorf("a remedy for an unservable record still names --force:\n%s", out)
+	}
+}
+
+// The same on a working tree: 'local' is the command, and it needs no flag
+// because the record a cold cache produced is not served back.
+func TestDroppedEdgeRemedy_LocalColdCacheReanalysesWithoutForce(t *testing.T) {
+	coord := coordinatetest.MustNew("example.com/app", coordinate.LocalVersion)
+	got := cgdomain.IncompleteGraphRemedy(coord, cgdomain.FailureCauseEnvironment, "/work/tree")
+	if !strings.Contains(got, cgdomain.ColdModuleCacheRemedy) {
+		t.Errorf("the remedy does not warm the cache in one step:\n%s", got)
+	}
+	if !strings.Contains(got, "kanonarion local /work/tree") {
+		t.Errorf("the remedy does not name the run in the tree it was pointed at:\n%s", got)
+	}
+	if strings.Contains(got, "--force") {
+		t.Errorf("a record that is not served back was given a bypass flag:\n%s", got)
+	}
+	if strings.Contains(got, "Fix the package so it compiles") {
+		t.Errorf("a cold cache was reported as a compile error:\n%s", got)
 	}
 }

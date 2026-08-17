@@ -269,6 +269,10 @@ type partialRoot struct {
 	// failedPkgs is the union of the owning module's failed packages, for
 	// messaging.
 	failedPkgs []string
+	// cause is what the record says limited it: the module's own sources, or the
+	// environment the analysis ran in. It decides which remedy is printed, and a
+	// remedy chosen without it sends the reader after the wrong fault.
+	cause domain.FailureCause
 }
 
 // rootPartialStatus loads the call graph record(s) owning symbolID and reports
@@ -314,6 +318,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		if fp, hit := symbolFailedPackage(symbolID, rec.FailedPackages); hit && out.failedPkg == "" {
 			out.failedPkg = fp
 			out.coord = coord
+			out.cause = rec.FailureCause
 		}
 	}
 	if len(failedSet) > 0 {
@@ -542,19 +547,12 @@ func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
 			"(chiefly edges recorded in other modules' graphs), and an edge inside %s that is not listed "+
 			"is unmeasured rather than known to be absent",
 		pr.failedPkg, pr.coord, kind, symbolID, pr.failedPkg)
-	if pr.coord.IsLocal() {
-		return line + ".\n  Fix the package so it compiles, then re-analyse:\n  " +
-			domain.ReanalysisCommand(pr.coord, "")
-	}
-	// A published dependency's build failure is not the reader's to fix, and
-	// telling them to repair a working tree they do not have is the same defect
-	// as naming a command that cannot run. Say whose it is, and name the read
-	// that shows the failure.
-	return line + fmt.Sprintf(
-		".\n  %s is a fetched dependency, so the failure is in its own sources, not in your tree.\n"+
-			"  See it: kanonarion callgraph-show %s\n"+
-			"  Re-measure it: %s",
-		pr.coord, pr.coord, domain.ForcedReanalysisCommand(pr.coord, ""))
+	// Which remedy, and whether it needs --force, are decided by the record's own
+	// stated cause rather than here: a published dependency's build failure is not
+	// the reader's to fix, and a gap this host's cold module cache opened is not a
+	// compile error to go looking for. Naming a command that cannot run and naming
+	// one that re-serves the record complained about are the same defect.
+	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, "")
 }
 
 // writeDroppedEdgesNotice prints droppedEdgesNotice, in text mode only.

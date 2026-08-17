@@ -144,6 +144,61 @@ findings, and the ones it reports are the ones its stated database can produce. 
 scan whose snapshot agrees with live is unchanged. A scan that cannot read its
 pinned database now fails instead of quietly answering from another one.
 
+## Licence record: pipeline `1.2.0` → `1.3.0`
+
+**No shape change; not hash-transparent.** The expression was inferred from a
+confidence delta; it is now read from the licence file's prose.
+
+`DeriveExpression` concluded a *legal relationship* between two licences from
+the confidence gap between two text matches. One branch emitted `OR` for three
+materially different files, and its own comment named the module that disproves
+the assumption. The detector was never wrong — licensecheck reports what is in
+each file — the conclusion was.
+
+A compound file is now read down an ordered ladder:
+
+- **election** — a disjunctive `SPDX-License-Identifier:` line, or wording such
+  as "under the terms of either licence";
+- **split** — the file names what each grant covers ("the following files…",
+  "all the remaining project files"). Checked **before** bundling, because a
+  split names several copyright holders and would otherwise look like a bundle;
+- **bundled grant** — a later text standing behind its own dated copyright
+  notice or a `Files: <glob>` stanza. The module's own grant is the one that
+  comes **first** in the file, not the one with the largest span;
+- **unstated** — every grant applies, and the record says the reading was
+  conservative. Understating an obligation is the harmful direction.
+
+`"may choose"` is deliberately absent from the election phrases: Apache-2.0 §9
+contains it, so every Apache-2.0 file in a real corpus does.
+
+A bundled grant leaves the expression and is recorded beside it on
+`BundledSPDXs`, with `ExpressionBasis` naming the reading. Both fields are
+`omitempty` and additive, so **every 1.2.0 record still verifies**.
+
+Migration for existing stores: **none, and no purge.** Reads key on the pipeline
+version, so `1.2.0` rows are already unreachable for a `1.3.0` question and stay
+readable as what the earlier generation concluded. The cost that IS owed is a
+full re-extraction — the prose lives only in the module zip, so no stored record
+can be re-read into the new answer — and because records are keyed
+`(module_path, module_version, pipeline_version)`, the re-extraction writes a
+**second generation** rather than replacing the first.
+
+Measured on the store at the bump: **864 records at `1.2.0`**, of which 21
+expressions change and 717 are re-derived identically. `gopkg.in/yaml.v3` and its
+oasdiff fork move to `Apache-2.0 AND MIT`; twelve OpenTelemetry modules to
+`Apache-2.0` with `BSD-3-Clause` recorded beside; `sean-/seed` and
+`oasdiff/yaml` to `MIT`, and `klauspost/compress` to `BSD-3-Clause` — the last
+three correcting a `PrimarySPDX` that named a third party's grant rather than
+the module's own.
+
+Consumer impact: `license` and `notice` state the module's own licence where they
+previously named a bundled one, and `license --json` gains `BundledSPDXs` and
+`ExpressionBasis`. `notice` also gains a `License expression:` line, emitted only
+where the expression says something the primary `License:` line does not — so
+`gopkg.in/yaml.v3` now reads `MIT` plus `Apache-2.0 AND MIT` rather than `MIT`
+alone. The `License:` line is unchanged for every module, including the ones
+whose primary was corrected; a consumer parsing it keeps working.
+
 ## Vulnerability record: pipeline `v22` → `v23`
 
 **No shape change; not hash-transparent.** Two producers of a finding's fixed
@@ -324,6 +379,72 @@ none" and is never rendered as one.
 
 Serving is governed by the `staleness.ttl` config key (default `1h`; `0`
 disables). `--fresh` on `latest`/`audit` bypasses the read and still records.
+
+## Staleness ledger: module `staleness`, migration 2
+
+**Additive; four new columns on `staleness_records`, no record shape change and
+no pipeline bump — this table carries neither a content hash nor a pipeline
+version.** The whole store's migration count goes `v78` -> `v79`.
+
+A `+incompatible` pin's OWN major republished at `/vN` is a different fact from
+a newer major line: the major NUMBER is unchanged there and only the path moved.
+It shared the `newer_major_*` columns and so was reported as a major upgrade,
+and where a pin had both — `github.com/go-chi/chi@v3.3.4+incompatible` has both
+`/v3@v3.3.5` and `/v5@v5.3.1` — one set of columns could hold only the higher
+and the nearer move was dropped. The new columns are:
+
+| Column | Meaning |
+|---|---|
+| `republication_asked` | `1` when the probe put the question. It is put only for a `+incompatible` pin on a bare path, so `0` means "does not apply", NOT "asked, no". |
+| `republication_path` | The `/vN` path that resolved. Empty with `republication_asked = 1` is a recorded negative. |
+| `republication_version` | The newest version at that path. |
+| `republication_published_at` | Its publication time; empty when the proxy supplied none. |
+
+Migration for existing stores: the columns are added with defaults, and one
+`UPDATE` moves a same-major answer written by the previous shape out of
+`newer_major_*` into them. The move is keyed on the walk's start: the walk begins
+at `major_probe_from`, so any path it found names that major or above, and only
+the same-major question can have written the major immediately BELOW it. Both
+suffix conventions are matched (`/vN` and gopkg.in's `.vN`). On the live store
+that moved 3 rows of 397 and left every genuine newer major untouched.
+
+Rows the `UPDATE` does not touch keep `republication_asked = 0`. They are not
+lost answers: the resolver will not serve a stored probe to a pin that asks the
+republication question unless the row asked it too, so such a row is re-probed
+the next time it is used — and a pin that never asks the question is still
+served from it unchanged.
+
+## Staleness ledger: module `staleness`, migration 3
+**Additive; two new columns on `staleness_records`, no record shape change and
+no pipeline bump — this table carries neither a content hash nor a pipeline
+version.** The whole store's migration count goes `v79` -> `v80`.
+
+A module's own **deprecation notice** — the `// Deprecated:` comment on the
+`module` directive in its `go.mod` — is a fourth fact on the row, beside the
+same-major latest, the newer major and the republication. It is not a variant of
+any of them: the successor a notice names is frequently at a path the `/vN` walk
+structurally cannot reach (`google.golang.org/protobuf` succeeds
+`github.com/golang/protobuf` on a different host), while a module with a newer
+major is usually not deprecated. The new columns are:
+
+| Column | Meaning |
+|---|---|
+| `deprecation_checked` | `1` when the question was ANSWERED. `0` means "not established", NOT "not deprecated". |
+| `deprecation_notice` | The notice verbatim. Empty with `deprecation_checked = 1` is a recorded negative — the module declares none. |
+
+The two are separate for the reason `major_probe_from` is separate from
+`newer_major_path`. The notice is visible only to a source that reports it — the
+batched `go list -m -u` answer a `--gomod` scope is resolved through — and a
+per-path `@latest` lookup cannot see it at all, so an empty notice alone could
+not say whether the module declares none or was never asked.
+
+Migration for existing stores: the columns are added with defaults and **nothing
+is back-filled.** There is nothing stored to derive the notice from, and a row
+written before the question existed genuinely was not asked; it keeps
+`deprecation_checked = 0` and acquires the fact the next time its latest is
+resolved. No `PipelineVersion` bump is owed: nothing on this table is hashed or
+verified, `looked_up_at` is what qualifies a row, and an older binary reads the
+table through explicit column lists that the new columns do not disturb.
 
 ## Walk store: module `walk`, migration 6
 

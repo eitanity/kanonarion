@@ -17,6 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // interfaceDiffCoverageNote is the standing statement of what this comparison
@@ -229,11 +230,13 @@ type usedByResult struct {
 	// names a manifest, not a walk, so the walk is always chosen for the caller
 	// and the choice is always stated, on both surfaces.
 	choice walkChoice
-	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
-	// "unrecorded" for a walk written before the frame was projected. GOOS gates
-	// which files build, so the scope this answer is filtered against is one
-	// platform's build list.
-	WalkFrame string
+	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, carrying the
+	// basis that says which: "platform", "not_platform_scoped" for a
+	// module-rooted walk (no platform applies, and re-walking never produces
+	// one), or "unrecorded" (the platform is not known). Where a
+	// platform IS resolved, GOOS gates which files build, so the scope this
+	// answer is filtered against is that one platform's build list.
+	WalkFrame walkdomain.WalkFrame
 	Consumer  coordinate.ModuleCoordinate
 	// ScopeSize is how many module versions the walk pins.
 	ScopeSize int
@@ -311,7 +314,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		GoMod:     choice.manifestPath,
 		choice:    choice,
 		WalkID:    walkID,
-		WalkFrame: rec.Graph.BuildEnv.Frame(),
+		WalkFrame: rec.Graph.Frame(),
 		Consumer:  rec.Target,
 		ScopeSize: scope.Len(),
 	}
@@ -929,9 +932,12 @@ type registrySurfaceJSON struct {
 type usedByJSON struct {
 	GoMod  string `json:"gomod"`
 	WalkID string `json:"walk_id"`
-	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
-	// "unrecorded" for a walk written before the frame was projected.
-	WalkFrame string `json:"walk_frame"`
+	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, and
+	// WalkFrameBasis the same fact as data so a consumer never has to recognise a
+	// token: "platform", "not_platform_scoped" for a module-rooted walk (no
+	// platform applies), or "unrecorded" (the platform is not known).
+	WalkFrame      string `json:"walk_frame"`
+	WalkFrameBasis string `json:"walk_frame_basis"`
 	// WalkSelection says how walk_id was arrived at. --used-by names a manifest,
 	// never a walk, so the walk is always chosen for the caller: a consumer
 	// reading walk_id has to be able to tell which rule picked it.
@@ -1075,7 +1081,8 @@ func toUsedByJSON(used *usedByResult) *usedByJSON {
 	out := &usedByJSON{
 		GoMod:               used.GoMod,
 		WalkID:              used.WalkID,
-		WalkFrame:           used.WalkFrame,
+		WalkFrame:           used.WalkFrame.Text,
+		WalkFrameBasis:      string(used.WalkFrame.Basis),
 		WalkSelection:       used.choice.selection(),
 		Consumer:            used.Consumer.Path() + "@" + used.Consumer.Version(),
 		ScopeSize:           used.ScopeSize,

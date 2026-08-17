@@ -1,0 +1,12 @@
+# populated, text: the same comparison on the human channel.
+$ kanonarion vuln-scan-diff 01JSCANRUN0GOLDEN00000001 01JSCANRUN0GOLDEN00000002
+exit 0
+--- stdout ---
+Diff: 01JSCANRUN0GOLDEN00000001 → 01JSCANRUN0GOLDEN00000002
+Walk: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+
+NEW findings (1):
+  + GO-2026-0002  example.com/mod@v1.2.0  withdrawn advisory for example.com/mod
+
+--- stderr ---
+(empty)

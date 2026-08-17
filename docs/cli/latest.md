@@ -39,7 +39,7 @@ written can therefore never see it, and a dependency pinned several majors
 behind resolves as the latest version of its own path - `current`, the strongest
 answer the column has - while being the most stale kind of dependency there is.
 
-`latest` reports both, as separate fields:
+Each is a separate field:
 
 - **latest** - the newest version at the module path itself (`latest`,
   `latest_date`, `is_latest`, `pin_ahead_of_latest`). The pin is placed against
@@ -47,60 +47,89 @@ answer the column has - while being the most stale kind of dependency there is.
   (N days ago)`), level (`current`), and **ahead** (`ahead of latest tag: vX`,
   `pin_ahead_of_latest: true`). A pin sorts ahead for ordinary reasons — a
   pseudo-version taken after the last tag, a pre-modules `+incompatible` major
-  above the newest version the unsuffixed path serves — and there is nothing at
-  that path to move to, so no target and no age are offered, in the text and in
-  `--json` alike.
+  above what the unsuffixed path serves — and there is nothing at that path to
+  move to, so no target and no age are offered.
 
   `is_latest` and `pin_ahead_of_latest` are the three-valued answer between
   them: `false`/`false` behind, `true`/`false` level, `false`/`true` ahead. Both
-  are emitted on every measured row, `false` included, so "measured, and not in
-  that state" is distinguishable from "this build does not derive the field";
-  both are `null` together where no comparison was made (a failed lookup, or a
-  bare module path with no pin).
+  are emitted on every measured row, `false` included; both are `null` together
+  where no comparison was made (a failed lookup, or a bare path with no pin).
 
   `latest_release_age_days` is emitted on every row and is **null on an ahead
-  row**. Beside `is_latest: false` an age reads as "you are this far behind",
-  which is the answer the ahead state exists to stop giving; beside
-  `is_latest: true` it is the age of a release you are already on, and it is
-  kept. `latest_date` is unaffected either way — a publication date is a fact
-  about a named release, while the age is a distance, and only the distance is
-  meaningless when nothing is being offered.
+  row**, where an age would read as "you are this far behind". Zero is a value.
+  See [`latest_release_age_days`](#latest_release_age_days).
+- **newer major** - the newest major-suffixed path ABOVE the pinned major that
+  resolves, with its version and date (`newer_major_module`,
+  `newer_major_latest`, `newer_major_date`).
+- **same major republished** - the pinned major's OWN `/vN` publication, with its
+  version and date (`republished_module`, `republished_latest`,
+  `republished_date`). Only a `+incompatible` pin can have one.
+- **deprecated** - the author's own `// Deprecated:` notice on their `go.mod`
+  module directive (`deprecated`), reproduced verbatim. A separate claim: the
+  successor a notice names is often at a path the `/vN` probe cannot reach —
+  `google.golang.org/protobuf` succeeds `github.com/golang/protobuf` on another
+  host. No successor is ever inferred from name similarity.
 
-  **Zero is a value, not an absence.** A release that shipped today is `0` days
-  old, and the field says `0`. Null means there is no age, in two cases told
-  apart by `pin_ahead_of_latest`: the proxy supplied no publication date
-  (`false`, and `latest_date` is absent too), or the pin is ahead (`true`). The
-  text surface matches — `latest: vX (released today)` for a zero age, and
-  `latest: vX` with no clause where the date is unknown, never a fabricated
-  "released today".
-- **newer major** - the newest major-suffixed path that resolves, with its
-  version and date (`newer_major_module`, `newer_major_latest`,
-  `newer_major_date`).
-
-The probe walks upward from one major above the **pinned version's** major - not
-above the path suffix, because a `+incompatible` pin carries its major in the
-version while living at the unsuffixed path - and stops at the first major that
-does not resolve. `major_probed` distinguishes "probed, nothing newer" from "not
-probed" (an offline run, or a probe whose request failed); a question that was
-never asked is never rendered as a clean answer.
+The probe walks upward from one major above the **pinned version's** major -
+not the path suffix, since a `+incompatible` pin carries its major in the
+version - and stops at the first major that does not resolve. `major_probed`
+distinguishes "probed, nothing newer" from "not probed" (offline, or a failed
+request); the text says `newer major: not probed` there, because an unasked
+question is never rendered as a clean answer.
 
 A `+incompatible` pin is asked one extra question first: whether its **own**
-major is now published at the suffixed path. `+incompatible` is what a module
-looks like before it adopts `/vN`, so that republication is usually the
-migration the pin needs to hear about, and it lives at a path the same-major
-`latest` question can never see - `github.com/gavv/httpexpect@v2.0.0+incompatible`
-has `github.com/gavv/httpexpect/v2` published and no `/v3` at all. An absent
-`/vN` there is the ordinary case and does not stop the walk, because a module
-can go from `+incompatible` straight to `/v3`. When both a republished own major
-and a genuine next major exist, the **higher** one is reported. A pin already on
-a `/vN` path is asked nothing extra: it is not its own upgrade target.
+major is now published at the suffixed path -
+`github.com/gavv/httpexpect@v2.0.0+incompatible` has
+`github.com/gavv/httpexpect/v2` published and no `/v3` at all. An absent `/vN`
+there is the ordinary case and does not stop the walk. A pin already on a `/vN`
+path is asked nothing extra.
 
-That extra question is one additional proxy request, and only for
-`+incompatible` pins.
+It is reported **separately from the newer major**: the major NUMBER is
+unchanged, only the path moved, so it is a path migration and usually much
+cheaper. It renders as `same major republished:` and reaches the JSON under
+`republished_*`. `republished_probed` distinguishes "asked, not republished"
+from "not asked".
 
-Whether the newer major is *adoptable* is a different question - a new major is
-expected to be breaking. This only stops a several-majors-behind module reading
-as up to date.
+When both hold, **both are reported, the republication first**:
+
+```
+github.com/go-chi/chi@v3.3.4+incompatible  ahead of latest tag: v1.5.5; same major republished: github.com/go-chi/chi/v3@v3.3.5 (2023-09-07); newer major: github.com/go-chi/chi/v5@v5.3.1 (2026-07-05)
+```
+
+Whether the newer major is *adoptable* is a different question; this only stops
+a several-majors-behind module reading as up to date.
+
+### Where the `--gomod` answer comes from
+
+With `--gomod`, the latest version of every module in the scope comes from
+**one** `go list -m -u` call, not one proxy request per module, and that call is
+where the deprecation notice comes from. The newer-major probe stays
+kanonarion's own — `go list -m -u` does not cross a major boundary — and is the
+remaining per-module request; it runs in bounded parallel rounds
+(`staleness.probe_concurrency`, default 16). That bound is a correctness
+setting: past it the proxy answers `200` with an empty body, a lost answer
+rather than an error.
+
+A positional `latest <module>` resolves one path at a time and cannot see a
+notice. Where the ledger already recorded one, that recorded answer is **carried
+forward**, not replaced with `null`: a query never costs the store a fact. Only
+a resolution that can establish the fact replaces it — including clearing a
+notice the author has removed, which is a real event and is recorded as the
+negative `""`. The same holds under `--fresh`, which suppresses serving the
+recorded row, not knowing it.
+
+The go command resolves within the pin's own major, with two consequences. A
+`+incompatible` pin reports the newest version of THAT major —
+`coreos/etcd@v3.3.10+incompatible` is offered `v3.3.27+incompatible`, not the
+`v2.3.8+incompatible` the unsuffixed path serves. And a pin sitting ABOVE the
+last tag comes back with no update, so those pins get `@latest` looked up
+alongside the probe and keep `ahead of latest tag`; only prerelease and
+`+incompatible` pins can be in that state, so only they are looked up.
+
+Under `GOPROXY=off` the batched call is refused rather than run: it exits 0
+there while reporting every module as current. Offline the ledger answers, as
+below. The call warms `$GOMODCACHE`'s download cache; it writes nothing to
+`go.mod`, `go.sum` or the store.
 
 ### The staleness ledger
 
@@ -108,17 +137,19 @@ Every successful `@latest` resolution - including the major probe, and including
 the recorded negative "no newer major exists" - is written to a store-side
 ledger keyed on module path. Any command that reports staleness (`latest`,
 `audit`) serves a recording younger than `staleness.ttl` instead of re-querying,
-so a `latest` run and an `audit` minutes later pay the proxy sweep once between
-them rather than once each.
+so a `latest` run and an `audit` minutes later pay the sweep once between them.
 
-Every answer states the lookup time it used, so a served answer is never
-mistaken for a live one. A table is dated by its **oldest** row: a run where
+Every answer states the lookup time it used, so a served answer is never taken
+for a live one. A table is dated by its **oldest** row: a run where
 most rows were served and a few re-queried is only as current as the row asked
 about longest ago.
 
 A **failed** lookup is never written - failures are not cacheable facts. An
-absent major path is not a failure: it is a definitive answer, it is what bounds
-the probe, and it is recorded.
+absent major path is not a failure: it is a definitive answer, it bounds the
+probe, and it is recorded. An answer that settles nothing - an empty body, a
+timeout, a 429 or a 5xx - is asked again: four attempts, ten seconds each,
+over about fourteen seconds of backoff, so a sweep can pause on a module the
+proxy is slow for. A definitive answer is never retried.
 
 `staleness.ttl` is a config key (default `1h`; `0` disables serving). `--fresh`
 bypasses the ledger for a single run and still records what it resolved.
@@ -145,7 +176,7 @@ need the `--json` output for a structured pipeline.
 | `--gomod` | `./go.mod` | Path to `go.mod`; report latest vs pinned for the project's code dependencies |
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project` |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
-| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy. `off` and `direct` are honoured, not rewritten: `latest` is a network probe, so it refuses before any network I/O and exits `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
+| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy, honoured not rewritten. Under `off`, a lookup younger than `staleness.ttl` is served and nothing is written; without one, exit `20`. `direct` and `--fresh` refuse. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--fresh` | false | Re-query the proxy instead of serving recorded lookups from the store |
 | `--json` | false | Emit output as JSON (global flag) |
 
@@ -171,12 +202,10 @@ modernc.org/sqlite@v1.50.0                     latest: v1.50.1 (3 days ago)
 latest as of 2026-07-31 09:14 UTC (staleness.ttl 1h0m0s; --fresh to re-query)
 ```
 
-`minio-go/v6` is the case this exists for: `current` is true of its own path and
-a whole major line is available. The clause is appended, never substituted.
-
-`go-difflib` is the other one: the pin is a pseudo-version taken after v1.0.0,
-so it sorts *above* what the proxy answers `@latest` with. Reporting
-`latest: v1.0.0` there named a downgrade as the upgrade target.
+`minio-go/v6` is the case this exists for: `current` is true of its own path
+while a whole major line is available. Clauses are appended, never substituted.
+`go-difflib` is the other one: a pseudo-version taken after v1.0.0 sorts *above*
+the tag, and `latest: v1.0.0` would name a downgrade as the target.
 
 ## JSON output
 
@@ -213,7 +242,18 @@ answered.
     "latest_release_age_days": 6,
     "is_latest": false,
     "major_probed": true,
+    "deprecated": "",
     "looked_up_at": "2026-07-31T09:14:02Z",
+    "served_from_store": false
+  },
+  {
+    "module": "github.com/aws/aws-sdk-go",
+    "pinned": "v1.55.8",
+    "latest": "v1.55.8",
+    "is_latest": true,
+    "major_probed": true,
+    "deprecated": "aws-sdk-go is deprecated. Use aws-sdk-go-v2.\nSee https://...",
+    "looked_up_at": "2026-08-17T09:14:02Z",
     "served_from_store": false
   },
   {
@@ -227,8 +267,23 @@ answered.
     "newer_major_latest": "v7.2.1",
     "newer_major_date": "2026-01-19T...",
     "major_probed": true,
+    "republished_probed": false,
     "looked_up_at": "2026-07-31T09:14:02Z",
     "served_from_store": true
+  },
+  {
+    "module": "github.com/gavv/httpexpect",
+    "pinned": "v2.0.0+incompatible",
+    "latest": "v1.1.3",
+    "is_latest": false,
+    "pin_ahead_of_latest": true,
+    "major_probed": true,
+    "republished_module": "github.com/gavv/httpexpect/v2",
+    "republished_latest": "v2.17.0",
+    "republished_date": "2025-03-04T...",
+    "republished_probed": true,
+    "looked_up_at": "2026-07-31T09:14:02Z",
+    "served_from_store": false
   },
   {
     "module": "example.com/mod",
@@ -242,6 +297,11 @@ answered.
 ]
 ```
 
+`deprecated` is emitted on every row, with three states: `null` — not
+established (a source that cannot see the notice, or a row recorded before the
+question existed); `""` — established, none declared; the notice itself. `null`
+is never "not deprecated".
+
 ### When the column was not measured
 
 `is_latest` is **null**, never `false`, when nothing was measured. `false` is
@@ -254,11 +314,9 @@ thing. `staleness_unmeasured` names why:
 | `(error resolving latest)` | `null` | `lookup_failed` |
 | no staleness clause (bare path, no pin) | `null` | `not_asked` |
 
-The failing module is also named on **stderr** with the error, one line per
-module; the sweep continues over the rest. A reader filtering for upgrade work
-should select `is_latest == false`, which now excludes the rows nobody
-answered — under the old shape those rows were indistinguishable from
-genuinely-behind pins.
+The failing module is also named on **stderr**, one line per module; the sweep
+continues over the rest. A reader filtering for upgrade work selects
+`is_latest == false`, which excludes the rows nobody answered.
 
 ### `latest_release_age_days`
 
@@ -276,21 +334,15 @@ release cadence differs from your upgrade cadence:
 A badly-stale pin on an actively released module reports a **small** number; a
 perfectly current pin on a quiet module reports a **large** one. Do not sort by
 this field to rank upgrade urgency — use the version distance (`pinned` vs
-`latest`, and `newer_major_module`).
+`latest`, `newer_major_module` and `republished_module`).
 
-There is no `days_behind` field. The pin's own publication date is not available
-offline or from the store, so the distance from the pin to the latest release is
-not reported at all.
+There is no `days_behind` field: the pin's own publication date is not available
+offline or from the store.
 
-The field is populated whether or not the pin is current, and is **omitted
-entirely** when the proxy supplied no publication date for the latest version —
-the same condition that omits `latest_date`.
-
-`latest_date` is **omitted entirely** when the proxy supplied no publication date for
-the version, rather than being emitted as the zero time. A module whose date is
-unknown previously rendered `"latest_date": "0001-01-01T00:00:00Z"` — a fabricated
-date offered where the honest answer is no date at all. Text output makes the same
-distinction: such a module prints `module@version` with no "released …" clause.
+`latest_date`, and this field with it, are **omitted entirely** when no
+publication date was supplied, rather than emitted as the zero time — a
+fabricated date where the honest answer is none. Text output matches: such a
+module prints `module@version` with no "released …" clause.
 
 ## Agentic workflow
 
@@ -308,7 +360,8 @@ kanonarion fetch github.com/foo/bar@v1.5.0 --json
 `audit` resolves staleness for every module in scope through the same ledger
 `latest` writes, so running both back to back pays the proxy sweep once. Note
 that `is_latest: true` is about the module *path*: check `newer_major_module`
-as well, or a dependency a whole major line behind will read as up to date. A
+and `republished_module` as well, or a dependency a whole major line behind — or
+a `+incompatible` pin whose major now lives at `/vN` — will read as up to date. A
 `null` there is not an answer at all — see
 [When the column was not measured](#when-the-column-was-not-measured).
 
@@ -345,6 +398,9 @@ kanonarion latest --gomod ./go.mod --fresh
 
 # Every dependency with a newer major line available
 kanonarion latest --gomod ./go.mod --json | jq '.[] | select(.newer_major_module != null)'
+
+# Every +incompatible pin whose own major now lives at /vN — usually the cheapest move
+kanonarion latest --gomod ./go.mod --json | jq '.[] | select(.republished_module != null)'
 ```
 
 ## See also

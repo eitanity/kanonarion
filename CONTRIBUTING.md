@@ -31,6 +31,20 @@ make test    # all packages, race detector
 make lint    # golangci-lint; write lint-clean code the first time
 ```
 
+### Changing dependencies
+
+`THIRD-PARTY-LICENSES` is generated, not hand-edited. If your change adds,
+removes or bumps a dependency of `./cmd/kanonarion`, regenerate it:
+
+```bash
+kanonarion notice --package ./cmd/kanonarion > THIRD-PARTY-LICENSES
+```
+
+The release workflow regenerates the file and fails on any difference, so a
+stale one blocks the release rather than shipping. Regenerating needs a
+populated store: run `kanonarion audit` in the checkout first if a module has
+no licence record yet.
+
 ### Architecture
 
 Kanonarion follows strict Domain-Driven Design layering across bounded

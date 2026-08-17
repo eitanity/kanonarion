@@ -25,11 +25,17 @@ type NoticeEntry struct {
 	// Source distinguishes a module dependency from copied source. Read it
 	// through EffectiveSource, which treats the empty zero value as a module
 	// so existing module construction sites need no change.
-	Source             NoticeSource
-	Name               string // display name; set for copied source, empty for modules
-	SourcePaths        []string
-	Coordinate         coordinate.ModuleCoordinate
-	SPDX               string
+	Source      NoticeSource
+	Name        string // display name; set for copied source, empty for modules
+	SourcePaths []string
+	Coordinate  coordinate.ModuleCoordinate
+	SPDX        string
+	// Expression is the module's whole licence expression, e.g.
+	// "Apache-2.0 AND MIT". SPDX names only the primary, which understates a
+	// module governed by more than one grant, and the document is read by a
+	// person building an obligations list. It is set only where it says
+	// something SPDX does not; see writeNoticeDocument.
+	Expression         string
 	LicenseTexts       []NoticeLicenseFile       // root-level non-vendored license files, sorted by Path
 	Copyrights         []string                  // verbatim copyright statements, deduped, sorted
 	EmbeddedComponents []NoticeEmbeddedComponent // vendored/embedded third-party components

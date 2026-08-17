@@ -7,6 +7,7 @@ import (
 	"io"
 	"syscall"
 	"testing"
+	"time"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -115,6 +116,23 @@ func TestIsTransientFetchError(t *testing.T) {
 			err:  fmt.Errorf("connection reset by peer: %w", context.Canceled),
 			want: false,
 		},
+		// Transient: a deadline the ADAPTER imposed on its own request. It
+		// unwraps to context.DeadlineExceeded, so it is only distinguishable
+		// from the caller giving up by the type the adapter attached.
+		{
+			name: "adapter request timeout",
+			err:  wrapped(&domain2.ProxyRequestTimeoutError{URL: "https://proxy.golang.org/x/@latest", Timeout: 10 * time.Second, Err: context.DeadlineExceeded}),
+			want: true,
+		},
+		{
+			name: "adapter request timeout carrying a client timeout message",
+			err: wrapped(&domain2.ProxyRequestTimeoutError{
+				URL:     "https://proxy.golang.org/x/@latest",
+				Timeout: 10 * time.Second,
+				Err:     fmt.Errorf("Get %q: %w (Client.Timeout exceeded while awaiting headers)", "https://proxy.golang.org/x/@latest", context.DeadlineExceeded),
+			}),
+			want: true,
+		},
 		{
 			name: "nil error",
 			err:  nil,
@@ -148,5 +166,18 @@ func TestProxyStatusErrorUnwrapsFromChain(t *testing.T) {
 	}
 	if pse.StatusCode != 500 {
 		t.Errorf("StatusCode = %d, want 500", pse.StatusCode)
+	}
+}
+
+// A ProxyRequestTimeoutError must still unwrap to the deadline error it carries
+// — that is what makes its position in the classifier load-bearing rather than
+// decorative, and a future edit that reorders the checks has to fail here.
+func TestProxyRequestTimeoutErrorUnwrapsToDeadline(t *testing.T) {
+	err := wrapped(&domain2.ProxyRequestTimeoutError{URL: "u", Timeout: time.Second, Err: context.DeadlineExceeded})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("adapter timeout no longer unwraps to context.DeadlineExceeded")
+	}
+	if !domain2.IsTransientFetchError(err) {
+		t.Error("an adapter timeout that unwraps to the deadline error must still classify transient")
 	}
 }

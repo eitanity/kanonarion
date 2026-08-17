@@ -1,0 +1,46 @@
+# GOPROXY=off WITHOUT --from-modcache: the run no longer refuses at proxy construction for the sake of one column. It proceeds, and the staleness column reports what the ledger holds and `unmeasured (offline)` for what it does not — which is the whole point, because it is measured here on a run that then FAILS. The bytes are not in this store, so the walk cannot fetch them, no licence is determined, and the licence policy blocks with exit 5. That is a different obstacle from the one that used to stop the command, and it names itself. Its control is audit_text_populated, the same audit under --from-modcache.
+$ kanonarion audit --gomod $AUDIT_PROJECT/go.mod
+exit 5
+--- error ---
+execute root command: license policy: 2 dependency(ies) with an undetermined license blocked by policy (unknown_license=block): example.com/clean@v1.0.0, example.com/mod@v1.2.0
+--- stdout ---
+example.com/clean@v1.0.0                                 (not fetched)           (not run)     unmeasured (offline)           Clean                  warn [BLOCKED: no_record]
+example.com/mod@v1.2.0                                   (not fetched)           (not run)     latest: v1.3.0 (273 days ago)  Affected (1 findings)  warn [BLOCKED: no_record]
+stdlib@$GOVERSION                                           VerifiedLocalToolchain  BSD-3-Clause  unmeasured (toolchain-pinned)  Clean                  allow [permissive]
+
+latest as of 2026-02-28 23:50 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
+--- stderr ---
+time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+==> audit: walking project $AUDIT_PROJECT/go.mod (2 code dependencies)
+time=$TIME level=WARN msg=walk.fetch.failed module.path=example.com/clean module.version=v1.0.0 error.type=fetch_failed error="inner fetcher: fetching module: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+time=$TIME level=WARN msg=walk.fetch.failed module.path=example.com/mod module.version=v1.2.0 error.type=fetch_failed error="inner fetcher: fetching module: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+==> audit: extracting licenses for walk $ULID
+time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+Starting extraction for walk $ULID...
+==> audit: scanning vulnerabilities for walk $ULID
+time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+Scanning walk $ULID...
+time=$TIME level=WARN msg="pre-fetch: failed to fetch module" module=example.com/clean@v1.0.0 error="fetching example.com/clean@v1.0.0: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+time=$TIME level=WARN msg="pre-fetch: failed to fetch module" module=example.com/mod@v1.2.0 error="fetching example.com/mod@v1.2.0: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+time=$TIME level=WARN msg="failed to pre-populate GOMODCACHE, govulncheck will download dependencies" requested=2 failures="example.com/clean@v1.0.0: fact record not found for example.com/clean@v1.0.0; example.com/mod@v1.2.0: fact record not found for example.com/mod@v1.2.0"
+  [1/4] example.com/app@local — Clean
+  [2/4] example.com/clean@v1.0.0 — Clean
+  [3/4] example.com/mod@v1.2.0 — Affected
+  [4/4] stdlib@$GOVERSION — Clean
+derivation:
+  walk $ULID: derived by this run
+  vulnerability scan: derived by this run
+toolchain:
+  $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
+verification coverage over 3 module(s):
+  cross-verified (checksum db + VCS)     0    0.0%
+  local go.sum only                      1   33.3%
+  no fetch record                        2   66.7%
+  cross-verified 0 of 1 module(s) where it applies (0.0%)
+  VCS evidence (fetch ledger): 0 rechecked by this run, 0 inherited, 0 never established, 1 not measured
+  note: no module in this graph carries a VCS anchor — cross-verification covered none of it
+staleness coverage over 3 module(s):
+  measured                               1   33.3%
+    measured (served from ledger)        1   33.3%
+  unmeasured (offline)                   1   33.3%
+  unmeasured (toolchain-pinned)          1   33.3%

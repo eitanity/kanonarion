@@ -465,13 +465,15 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 	// normal analysable module instead of skipping it. The ingest is
 	// always fresh — the localFetcher never serves a cached record for the
 	// local version, so an edited tree is re-read on every run.
+	rootIngested := true
 	if req.ProjectMode && req.AnalyseLocalRoot {
-		w.ingestProjectRoot(ctx, req, &outcome, log)
+		rootIngested = w.ingestProjectRoot(ctx, req, &outcome, log)
 	}
 
 	// Step 6: aggregate overall status.
 	outcome.CompletedAt = w.clock.Now()
-	outcome.OverallStatus = aggregateStatus(ctx, outcome.PerNodeResults, req.Target)
+	outcome.OverallStatus = degradeForRootIngest(
+		aggregateStatus(ctx, outcome.PerNodeResults, req.Target), rootIngested)
 
 	log.InfoContext(ctx, "walker.end",
 		slog.String("status", outcome.OverallStatus.String()),
@@ -480,11 +482,6 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 	return outcome, nil
 }
 
-// ingestProjectRoot ingests the project-walk root's working tree as a
-// FactRecord and promotes the root graph node to ResolutionLocalAnalysed.
-// On failure the root's synthesised success is replaced with a fetch-failed
-// result, failing the walk: the caller explicitly asked for root analysis, so
-// silently keeping the skip-with-reason root would misreport what ran.
 // perWalkFetcher derives the fetcher this walk will use from the shared
 // adapter: a force-mode clone when --force is set, and a clone carrying the
 // policy's VCS forge allowlist when the policy overrides the built-in set.
@@ -538,40 +535,55 @@ func (w *Walker) perWalkFetcher(
 	return fetcher, nil
 }
 
+// ingestProjectRoot ingests the project-walk root's working tree as a
+// FactRecord and promotes the root graph node to ResolutionLocalAnalysed. It
+// reports whether the ingest happened.
+//
+// A failure is recorded on the root's node result and reported to the caller,
+// which downgrades the walk to partial. It does not fail the walk: the
+// dependency graph is intact and answerable, and what the run lacks is the
+// project's own packages in the extraction surface. Saying so is what keeps
+// the failure from reading as a clean run, and keeping the graph is what stops
+// a missing capability from discarding a fully fetched and verified closure.
 func (w *Walker) ingestProjectRoot(
 	ctx context.Context,
 	req WalkRequest,
 	outcome *domain2.WalkOutcome,
 	log *slog.Logger,
-) {
+) bool {
 	fail := func(msg string) {
 		log.WarnContext(ctx, "walker.local_root_ingest.failed",
 			slog.String("module.path", req.Target.Path()),
 			slog.String("project_dir", req.ProjectDir),
 			slog.String("error", msg),
 		)
-		outcome.PerNodeResults[req.Target] = domain2.NodeResult{
-			Coordinate: req.Target,
-			Status:     domain2.NodeFetchFailed,
-			Error: &domain2.StoredError{
-				Type:    "local_root_ingest_failed",
-				Message: msg,
-			},
+		// The root keeps the succeeded result the project-mode resolve gave
+		// it: its go.mod WAS read and the graph rooted at it IS resolved, so
+		// marking the target fetch-failed asserted something untrue and, via
+		// aggregateStatus, discarded a walk that had fetched and cross-verified
+		// its whole dependency set. The error rides on the succeeded result
+		// instead, so the record states the capability the walk does not have.
+		prior := outcome.PerNodeResults[req.Target]
+		prior.Coordinate = req.Target
+		prior.Error = &domain2.StoredError{
+			Type:    "local_root_ingest_failed",
+			Message: msg,
 		}
+		outcome.PerNodeResults[req.Target] = prior
 	}
 	if w.localFetcher == nil {
 		fail("local-root analysis requested but no local module fetcher is configured")
-		return
+		return false
 	}
 	if req.ProjectDir == "" {
 		fail("local-root analysis requested but the project directory is unknown")
-		return
+		return false
 	}
 
 	fr, err := w.localFetcher.EnsureFetchedFromPath(ctx, req.Target, req.ProjectDir)
 	if err != nil {
 		fail(err.Error())
-		return
+		return false
 	}
 	rec := fr.Record
 	outcome.PerNodeResults[req.Target] = domain2.NodeResult{
@@ -591,6 +603,7 @@ func (w *Walker) ingestProjectRoot(
 		slog.String("module.path", req.Target.Path()),
 		slog.String("project_dir", req.ProjectDir),
 	)
+	return true
 }
 
 // fetchOne fetches a single module through the recording fetcher and builds a
@@ -638,6 +651,23 @@ func (w *Walker) fetchOne(
 }
 
 // aggregateStatus derives the WalkStatus from the per-node results map.
+// degradeForRootIngest downgrades an otherwise-clean walk whose --analyse-root
+// ingest did not happen.
+//
+// A root ingest that failed is a missing capability, not a failed walk: the
+// project's go.mod was read, its graph resolved, and every dependency fetched
+// and verified. What the run lacks is the project's own packages in the
+// extraction surface — exactly the walk one gets without --analyse-root.
+// Partial keeps that whole result usable while refusing to report it as the
+// analysis that was asked for. A status that is already worse than succeeded
+// is left alone; it has its own reason and this one does not outrank it.
+func degradeForRootIngest(status domain2.WalkStatus, rootIngested bool) domain2.WalkStatus {
+	if !rootIngested && status == domain2.WalkSucceeded {
+		return domain2.WalkPartial
+	}
+	return status
+}
+
 func aggregateStatus(
 	ctx context.Context,
 	results map[coordinate.ModuleCoordinate]domain2.NodeResult,

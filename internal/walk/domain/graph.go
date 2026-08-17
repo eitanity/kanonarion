@@ -216,15 +216,66 @@ func (e BuildEnv) IsZero() bool {
 	return e.GOOS == "" && e.GOARCH == "" && e.GoVersion == ""
 }
 
-// Frame renders the target platform the way output names it. A walk that
-// captured no platform says so rather than rendering an empty pair: a reader
-// cannot tell an unstated frame from a missing one, and both would print as
-// "/".
-func (e BuildEnv) Frame() string {
-	if e.GOOS == "" && e.GOARCH == "" {
-		return "unrecorded"
+// FrameBasis names why a walk's frame reads the way it does. It is the machine
+// half of the frame: the text is written for a reader, and the basis is what a
+// caller keys on, so nobody has to recognise a sentinel string.
+//
+// The three values are three different facts and are never collapsed. A walk
+// rooted at a published coordinate resolves no platform at all, and re-walking
+// it will never produce one; a project walk with no stored platform is a fact
+// that is genuinely missing, and re-walking it does produce one.
+type FrameBasis string
+
+const (
+	// FrameBasisPlatform: the walk resolved a target platform, and the token is
+	// that platform as "goos/goarch".
+	FrameBasisPlatform FrameBasis = "platform"
+	// FrameBasisNotPlatformScoped: the walk is rooted at a published module
+	// coordinate rather than a project, so no platform applies to it.
+	FrameBasisNotPlatformScoped FrameBasis = "not_platform_scoped"
+	// FrameBasisUnrecorded: the platform is not known — a project walk that
+	// stored none, or a walk whose target is not known either.
+	FrameBasisUnrecorded FrameBasis = "unrecorded"
+)
+
+// Frame text, as every surface renders it.
+const (
+	frameTextNotPlatformScoped = "not-platform-scoped"
+	frameTextUnrecorded        = "unrecorded"
+)
+
+// WalkFrame is how one walk names the platform it answers in, together with why
+// it names it that way. Text and JSON surfaces both render from this one value
+// so they cannot disagree about which of the three situations a walk is in.
+type WalkFrame struct {
+	// Text is the frame as output names it: "linux/amd64", or a word standing for
+	// the reason there is no platform.
+	Text string
+	// Basis is the machine-readable reason Text reads as it does.
+	Basis FrameBasis
+}
+
+// String renders the frame the way output names it, so a format verb on the
+// value cannot print something a reader has never seen.
+func (f WalkFrame) String() string { return f.Text }
+
+// FrameOf derives the frame of a walk over the target it was rooted at and the
+// build environment it resolved. The target is required: without it an absent
+// platform cannot be told apart from a platform that was never applicable, and
+// those are opposite claims about whether re-walking would recover it.
+func FrameOf(target coordinate.ModuleCoordinate, env BuildEnv) WalkFrame {
+	if env.GOOS != "" || env.GOARCH != "" {
+		return WalkFrame{Text: env.GOOS + "/" + env.GOARCH, Basis: FrameBasisPlatform}
 	}
-	return e.GOOS + "/" + e.GOARCH
+	if !target.IsZero() && !target.IsLocal() {
+		return WalkFrame{Text: frameTextNotPlatformScoped, Basis: FrameBasisNotPlatformScoped}
+	}
+	return WalkFrame{Text: frameTextUnrecorded, Basis: FrameBasisUnrecorded}
+}
+
+// Frame renders the frame this graph answers in, over its own target.
+func (g Graph) Frame() WalkFrame {
+	return FrameOf(g.Target, g.BuildEnv)
 }
 
 // GraphNode is a single module in the dependency graph.

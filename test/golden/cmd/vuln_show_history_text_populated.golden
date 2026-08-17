@@ -1,0 +1,10 @@
+# populated, text: one line per stored scan record, with the frame each was measured in.
+$ kanonarion vuln-show example.com/mod@v1.2.0 --history
+exit 0
+--- stdout ---
+example.com/mod@v1.2.0 — 2 scan record(s)
+
+  2026-02-20T09:00:00Z  walk=01ARZ3NDEKTSV4RRFFQ69G5FAV  snap=v2026-02-14T00-00-00      frame=target-rooted  pipeline=v24                Affected  GO-2026-0001  GO-2026-0002
+  2026-01-15T09:00:00Z  walk=01ARZ3NDEKTSV4RRFFQ69G5FAV  snap=v2026-01-10T00-00-00      frame=target-rooted  pipeline=v24                Affected  GO-2026-0001
+--- stderr ---
+(empty)

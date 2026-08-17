@@ -10,6 +10,10 @@ import (
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
+// linuxAmd64Frame is the frame a project walk on this platform answers in, for
+// the text renderers that state it.
+var linuxAmd64Frame = walkdomain.WalkFrame{Text: "linux/amd64", Basis: walkdomain.FrameBasisPlatform}
+
 // dependentsWalk builds a walk rooted at root whose edges are the given
 // (from, to) pairs, so a test can decide exactly whether the root is one of
 // the modules depending on the target.
@@ -76,7 +80,7 @@ func TestDependentsZeroResult_StatesItsScope(t *testing.T) {
 				t.Fatalf("fixture produced %d dependents, want an empty answer", len(deps))
 			}
 			var buf bytes.Buffer
-			if err := writeDependentsText(&buf, tc.rec.ID, "linux/amd64", tc.target.String(), deps,
+			if err := writeDependentsText(&buf, tc.rec.ID, linuxAmd64Frame, tc.target.String(), deps,
 				false, rootExcluded, tc.includeRoot); err != nil {
 				t.Fatalf("writeDependentsText: %v", err)
 			}
@@ -111,7 +115,7 @@ func TestDependentsNonZeroHeader_StatesTheWithheldRoot(t *testing.T) {
 			t.Fatalf("got %d dependents, want 1", len(deps))
 		}
 		var buf bytes.Buffer
-		if err := writeDependentsText(&buf, rec.ID, "linux/amd64", cast.String(), deps, false, rootExcluded, false); err != nil {
+		if err := writeDependentsText(&buf, rec.ID, linuxAmd64Frame, cast.String(), deps, false, rootExcluded, false); err != nil {
 			t.Fatalf("writeDependentsText: %v", err)
 		}
 		if !strings.Contains(buf.String(), "(the walk root does; it is excluded by default — pass --include-root)") {
@@ -125,7 +129,7 @@ func TestDependentsNonZeroHeader_StatesTheWithheldRoot(t *testing.T) {
 			t.Fatalf("got %d dependents, want 2", len(deps))
 		}
 		var buf bytes.Buffer
-		if err := writeDependentsText(&buf, rec.ID, "linux/amd64", cast.String(), deps, false, rootExcluded, true); err != nil {
+		if err := writeDependentsText(&buf, rec.ID, linuxAmd64Frame, cast.String(), deps, false, rootExcluded, true); err != nil {
 			t.Fatalf("writeDependentsText: %v", err)
 		}
 		if strings.Contains(buf.String(), "excluded") {

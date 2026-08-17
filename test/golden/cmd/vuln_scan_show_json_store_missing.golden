@@ -1,0 +1,9 @@
+# error-shaped: there is no store to resolve the run in.
+$ kanonarion vuln-scan-show 01JSCANRUN0GOLDEN00000002 --json
+exit 4
+--- error ---
+execute root command: the store holds no scan run at all, so run id "01JSCANRUN0GOLDEN00000002" is not what made this empty; to produce one: kanonarion vuln-scan <walk-id>
+--- stdout ---
+(empty)
+--- stderr ---
+{"subject":"scan run","filter":{"name":"run id","value":"01JSCANRUN0GOLDEN00000002","compared_against":"run id","match":"for exact equality"},"records_considered":0,"store_empty":true,"paged_past":false,"remedy":["kanonarion vuln-scan \u003cwalk-id\u003e"]}

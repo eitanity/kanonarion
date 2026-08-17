@@ -1,0 +1,7 @@
+# empty: no generation at any completeness for this coordinate.
+$ kanonarion callgraph-show example.com/absent@v9.9.9 --history
+exit 0
+--- stdout ---
+no callgraph records for example.com/absent@v9.9.9 at pipeline 0.5.0
+--- stderr ---
+(empty)

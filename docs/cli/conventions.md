@@ -119,8 +119,10 @@ Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
 Frame:    linux/amd64
 ```
 
-A walk taken before the frame was recorded reads `unrecorded`. JSON output
-carries the same value in a `frame` / `walk_frame` field.
+A module-rooted walk resolves no platform and reads `not-platform-scoped`; an
+unknown platform reads `unrecorded`. JSON carries the token in `frame` /
+`walk_frame` and the basis (`platform`, `not_platform_scoped`, `unrecorded`)
+in `frame_basis` / `walk_frame_basis`.
 
 ---
 
@@ -437,7 +439,7 @@ the invocation itself was wrong.
 |---|---|
 | 1 | `walk`, `inspect` (partial closure); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs); `use` (some modules with a stored artefact did not reach the module cache) |
 | 2 | `walk`, `inspect` (target unfetchable); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity); `use` (no module reached the module cache) |
-| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use` |
+| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed) |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review) |
 | 10 | any command consuming a walk whose node failed integrity, or that meets a divergence |
 | 20 | every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)) |

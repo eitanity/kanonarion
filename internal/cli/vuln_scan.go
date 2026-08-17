@@ -47,7 +47,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "vuln-scan [walk-id]",
-		Short: "Scan all modules in a walk for vulnerabilities",
+		Short: "Scan all modules in a walk for vulnerabilities (no args: code deps of ./go.mod)",
 		Long: `Scan every module in a walk against the advisory database.
 
 Beside the result, on stderr, vuln-scan states the toolchain axis: the Go
@@ -56,14 +56,18 @@ against, and either that no toolchain advisory covers it or the ones that do.
 The advisory database keys the toolchain (cmd/go, the compiler, the linker)
 separately from stdlib and no project imports it, so no module scan can reach
 it. It is reported on its own and counted in no roll-up.`,
-		Example: `  kanonarion vuln-scan 01KQDBVW092ER1HNXZ60X27CMD
+		Example: `  kanonarion vuln-scan
+  kanonarion vuln-scan 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln-scan --binary-pre-pass 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan --tool
   kanonarion vuln-scan --tool --gomod ./go.mod`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			goModScope := f.gomod != "" || f.tool || f.project
+			// With neither a walk-id nor --module the scan is the project in
+			// the current directory, as it is for inspect, context and audit.
+			bare := f.moduleCoord == "" && len(args) == 0
+			goModScope := f.gomod != "" || f.tool || f.project || bare
 			if goModScope {
 				if len(args) > 0 {
 					return fmt.Errorf("a go.mod scope scan (--gomod/--tool/--project) and a positional walk-id are mutually exclusive")
@@ -72,9 +76,6 @@ it. It is reported on its own and counted in no roll-up.`,
 			}
 			if f.moduleCoord != "" && len(args) > 0 {
 				return fmt.Errorf("--module and a positional walk-id are mutually exclusive")
-			}
-			if f.moduleCoord == "" && len(args) == 0 {
-				return fmt.Errorf("provide either a walk-id argument, --module <module@version>, --gomod, --tool, or --project")
 			}
 			if f.moduleCoord != "" {
 				return runVulnScanByModule(cmd.Context(), f, stdout, stderr)
@@ -93,7 +94,7 @@ it. It is reported on its own and counted in no roll-up.`,
 	cmd.Flags().StringVar(&f.moduleCoord, "module", "", "look up the latest walk ROOTED AT <module@version> (its own target, not a walk that merely contains it as a dependency) and scan it; such a walk records no target platform, and the scan says so")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scan the tooling supply chain: the latest tool-scoped project walk for this GOOS/GOARCH (requires prior walk --tool)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scan the complete set: the latest complete-scope project walk for this GOOS/GOARCH (requires prior walk --project)")
-	cmd.Flags().StringVar(&f.gomod, "gomod", "", "scan the latest project walk for this go.mod's scope and this GOOS/GOARCH (default: search upward from cwd); default scope is code")
+	cmd.Flags().StringVar(&f.gomod, "gomod", "", "scan the latest project walk for this go.mod's scope and this GOOS/GOARCH (default: ./go.mod); default scope is code")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
 	cmd.Flags().BoolVar(&f.noVendor, "no-vendor", false,
 		"analyse the fetched artefacts even when the project is vendored (default: analyse vendor/, the source the project compiles)")
@@ -416,6 +417,10 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	_, _ = fmt.Fprintf(progressOut, "Scanning walk %s...\n", walkID)
 
 	rollups := newVulnScanRollups()
+	// Counted off the same per-module feed the roll-ups are built from, so the
+	// figure covers every record this run wrote rather than the subset that
+	// reached a roll-up.
+	reach := vulnScanReachability{SourceReadByThisRun: true}
 
 	run, err := ctr.ScanWalk.Scan(ctx, application2.ScanWalkParams{
 		WalkID: walkID,
@@ -435,6 +440,7 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 			// the roll-ups it feeds are the result, printed to stdout.
 			writeVulnScanProgress(record, coord, current, total, progressOut)
 			rollups.add(coord, record)
+			reach.Verdicts += recordReachabilityVerdicts(record)
 		},
 	})
 	if err != nil {
@@ -450,7 +456,7 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		}
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, jsonOut, stdout); perr != nil {
 		return perr
 	}
 	return vulnScanCoverageExit(run)
@@ -574,12 +580,13 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		rollups.add(rec.Coordinate, rec)
 	}
 
+	// How much of this answer is a function of the project's own source, counted
+	// from the records the run wrote — the same count the statement and the JSON
+	// field both report, taken once.
+	reach := vulnScanReachability{Verdicts: reachabilityVerdicts(recs)}
+
 	if announce {
-		if _, werr := fmt.Fprintf(stderr,
-			"reusing scan run %s of %s against snapshot %s@%s; nothing was re-scanned (--force to re-measure)\n",
-			run.ID, run.CompletedAt.UTC().Format(time.RFC3339),
-			run.Snapshot.Source(), run.Snapshot.Version(),
-		); werr != nil {
+		if _, werr := fmt.Fprintf(stderr, "%s\n", reusedScanLine(run, reach.Verdicts)); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -593,7 +600,7 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		}
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, jsonOut, stdout); perr != nil {
 		return perr
 	}
 	return vulnScanCoverageExit(run)
@@ -733,11 +740,15 @@ func scanCompletionSummary(run vuldomain.WalkScanRun) string {
 // already been written to stderr by the Progress callback. This function owns
 // only the final result channel: JSON under --json, or a findings summary
 // followed by the status line in text mode.
-func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, jsonOut bool, stdout io.Writer) error {
+//
+// Under --json the document is the run record plus reach: the run's stored shape
+// is unchanged and one key is added beside it, so a consumer that cannot read
+// the stderr statement still learns what the reachability verdicts rest on.
+func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(run); err != nil {
+		if err := enc.Encode(vulnScanDocument{WalkScanRun: run, Reachability: reach}); err != nil {
 			return fmt.Errorf("encoding JSON output: %w", err)
 		}
 		return nil
@@ -937,10 +948,10 @@ func runVulnScanByModule(ctx context.Context, f vulnScanFlags, stdout, stderr io
 	}
 
 	walkID := summaries[0].ID
-	// A module-rooted walk carries no frame, so this is "unrecorded" in practice.
-	// It is stated anyway: the reader must be able to tell an unstated frame from
-	// a missing one, and a scan of a frameless walk is a real caveat on its
-	// reachability answer.
+	// A module-rooted walk carries no frame, so this reads
+	// "not-platform-scoped" in practice. It is stated anyway: the reader must be
+	// able to tell a frame that does not apply from one that is missing, and a
+	// scan of a frameless walk is a real caveat on its reachability answer.
 	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning walk %s rooted at %s (frame %s)\n",
 		walkID, f.moduleCoord, summaries[0].BuildFrame())
 	logger.Debug("vuln-scan: resolved module to walk", "module", f.moduleCoord, "walk_id", walkID, "build_frame", summaries[0].BuildFrame())

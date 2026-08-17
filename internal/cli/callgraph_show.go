@@ -332,14 +332,21 @@ type callGraphRecordJSON struct {
 	Edges            []callEdgeJSON        `json:"edges"`
 	OverallStatus    string                `json:"overall_status"`
 	FailureDetail    string                `json:"failure_detail,omitempty"`
-	FailedPackages   []string              `json:"failed_packages,omitempty"`
-	ExclusionReason  string                `json:"exclusion_reason,omitempty"`
-	ExclusionList    []string              `json:"exclusion_list,omitempty"`
-	NodeCount        int                   `json:"node_count"`
-	EdgeCount        int                   `json:"edge_count"`
-	ExtractedAt      string                `json:"extracted_at"`
-	PipelineVersion  string                `json:"pipeline_version"`
-	ContentHash      string                `json:"content_hash"`
+	// FailureCause says what the status is a statement about — the module, or the
+	// run that tried to analyse it — and it is the axis that decides whether this
+	// record answers a later extraction. A consumer reading only the detail reads
+	// prose; this is the classification the detail was reduced from. Absent means
+	// no cause was recorded, which is what every record written before a stage
+	// classified its outcome carries.
+	FailureCause    string   `json:"failure_cause,omitempty"`
+	FailedPackages  []string `json:"failed_packages,omitempty"`
+	ExclusionReason string   `json:"exclusion_reason,omitempty"`
+	ExclusionList   []string `json:"exclusion_list,omitempty"`
+	NodeCount       int      `json:"node_count"`
+	EdgeCount       int      `json:"edge_count"`
+	ExtractedAt     string   `json:"extracted_at"`
+	PipelineVersion string   `json:"pipeline_version"`
+	ContentHash     string   `json:"content_hash"`
 	// TestScope says whether _test.go declarations were part of the analysis.
 	// It is emitted even when empty: a consumer that cannot see the axis cannot
 	// tell an unmeasured one from a measured-and-empty one.
@@ -471,6 +478,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		Edges:           edges,
 		OverallStatus:   r.OverallStatus.String(),
 		FailureDetail:   r.FailureDetail,
+		FailureCause:    string(r.FailureCause),
 		FailedPackages:  r.FailedPackages,
 		ExclusionReason: r.ExclusionReason,
 		ExclusionList:   r.ExclusionList,

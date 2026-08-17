@@ -1,0 +1,35 @@
+# populated: a closure holding TWO DIFFERENT detected licences plus a module with no licence record at all, so the compatible pair and the undetermined module are both judged. A closure of one licence repeated composes to the same answer under any rule.
+$ kanonarion license-compat example.com/app@v1.0.0 --walk-id 01ARZ3NDEKTSV4RRFFQ69G5FAV --json
+exit 2
+--- error ---
+execute root command: closure has unmodelled license pairs requiring review
+--- stdout ---
+{
+  "target_spdx": "MIT",
+  "data_version": "1.1.0",
+  "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "walk_frame": "not-platform-scoped",
+  "walk_frame_basis": "not_platform_scoped",
+  "walk_selection": {
+    "rule": "pinned",
+    "candidates": null
+  },
+  "target_modelled": true,
+  "clean": false,
+  "conflicts": [
+    {
+      "module": "example.com/shallow",
+      "version": "v1.0.0",
+      "dep_spdx": "",
+      "spdx_origin": "module_root",
+      "module_spdx": "",
+      "target_spdx": "MIT",
+      "verdict": "unknown_pair",
+      "kind": "unknown_pair",
+      "license_measurement": "unmeasured"
+    }
+  ],
+  "coverage_holes": []
+}
+--- stderr ---
+(empty)

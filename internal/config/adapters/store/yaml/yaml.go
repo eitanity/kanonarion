@@ -124,6 +124,10 @@ type callgraphYAML struct {
 // reads. Merging the two would make the off switch unreachable.
 type stalenessYAML struct {
 	TTL string `yaml:"ttl"`
+	// ProbeConcurrency is a POINTER for the same reason the block is: an absent
+	// key inherits the measured default, while an explicit 0 selects the serial
+	// probe. Merged, "0" and "not set" would be the same edit.
+	ProbeConcurrency *int `yaml:"probe_concurrency"`
 }
 
 // parseOutcome converts a YAML outcome string to a PolicyOutcome.
@@ -219,7 +223,18 @@ func Parse(data []byte) (domain.Config, error) {
 		if err != nil {
 			return domain.Config{}, err
 		}
-		cfg.Staleness = domain.StalenessConfig{TTL: ttl}
+		cfg.Staleness = domain.StalenessConfig{
+			TTL:              ttl,
+			ProbeConcurrency: defaults.Staleness.ProbeConcurrency,
+		}
+		if y.Staleness.ProbeConcurrency != nil {
+			n := *y.Staleness.ProbeConcurrency
+			if n < 0 {
+				return domain.Config{}, fmt.Errorf(
+					"staleness.probe_concurrency %d: must not be negative (use 0 for a serial probe)", n)
+			}
+			cfg.Staleness.ProbeConcurrency = n
+		}
 	}
 
 	// Apply defaults for missing optional fields.

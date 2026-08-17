@@ -395,7 +395,7 @@ func latestSucceededWalkNote(
 // "fresher than the one you named", and a minute-accurate duration would imply
 // a precision the advice does not need.
 func walkAge(t time.Time) string {
-	d := time.Since(t)
+	d := cliSince(t)
 	switch {
 	case d < time.Minute:
 		return "seconds ago"

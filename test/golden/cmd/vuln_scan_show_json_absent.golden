@@ -1,0 +1,9 @@
+# empty: no run with this identifier.
+$ kanonarion vuln-scan-show 01JSCANRUN0ABSENT00000001 --json
+exit 4
+--- error ---
+execute root command: no scan run matched run id "01JSCANRUN0ABSENT00000001" — the value is compared for exact equality against the run id of all 2 scan run(s) in the store (e.g. 01JSCANRUN0GOLDEN00000002); to list every scan run: kanonarion vuln-scan-list --limit 0
+--- stdout ---
+(empty)
+--- stderr ---
+{"subject":"scan run","filter":{"name":"run id","value":"01JSCANRUN0ABSENT00000001","compared_against":"run id","match":"for exact equality"},"records_considered":2,"store_empty":false,"paged_past":false,"remedy":["kanonarion vuln-scan-list --limit 0"]}

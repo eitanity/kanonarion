@@ -1,0 +1,114 @@
+# populated: one coordinate with TWO artefact measurements, a licence, a call graph, and vulnerability findings from two snapshots. A change to how those compose shows here.
+$ kanonarion context example.com/mod@v1.2.0 --json
+exit 0
+--- stdout ---
+{
+  "module": {
+    "path": "example.com/mod",
+    "version": "v1.2.0"
+  },
+  "commands": {
+    "interface": "kanonarion interface-show example.com/mod@v1.2.0",
+    "call_graph": "kanonarion callgraph-show example.com/mod@v1.2.0",
+    "call_graph_nav": "kanonarion callers \u003csymbol\u003e | kanonarion callees \u003csymbol\u003e",
+    "examples": "kanonarion examples-find \u003csymbol\u003e | kanonarion examples-show example.com/mod@v1.2.0 \u003cname\u003e",
+    "vulnerabilities": "kanonarion vuln-show example.com/mod@v1.2.0",
+    "license": "kanonarion license example.com/mod@v1.2.0",
+    "dependents": "kanonarion dependents example.com/mod@v1.2.0"
+  },
+  "verification": {
+    "status": "read_error",
+    "retracted": false,
+    "error": "divergent fetch records for example.com/mod@v1.2.0 at pipeline 0.4.0: module_hash disagrees ([h1:3IvVk0RhFj+2ByrMSiZ8R9Zi8RQYOGgRkIQ2mO6rqo4= h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=]; records [sha256:af365cbf30d10328234c3a8c0f404b42b661b628fa0b353e434d475f7506a36e sha256:4e652a1b1d152e3eb8619e6cbace8c69025861d780d422cc0e929f271490d6f0]) — two measurements describe different artefacts; recover with --force, which appends an authoritative measurement and erases nothing"
+  },
+  "provenance": {
+    "fork_heuristic": {
+      "status": "none",
+      "catalogue_version": "1.0.0"
+    }
+  },
+  "dependencies": {
+    "status": "not_run",
+    "count": 0,
+    "partial": false
+  },
+  "license": {
+    "extracted_at": "2026-01-15T08:00:00Z",
+    "spdx": "MIT",
+    "status": "Detected",
+    "low_confidence_coverage": null,
+    "copyright_status": "not_analysed",
+    "obligations": {
+      "status": "known",
+      "include_notice": true,
+      "include_license_text": true,
+      "state_changes": false,
+      "disclose_source": false,
+      "same_license": "none",
+      "network_use_trigger": false,
+      "no_trademark_use": false,
+      "explicit_patent_grant": false,
+      "catalogue_version": "1.2.0"
+    }
+  },
+  "interface": {
+    "status": "not_run"
+  },
+  "call_graph": {
+    "extracted_at": "2026-01-15T08:00:00Z",
+    "status": "Extracted",
+    "algorithm": "CHA",
+    "node_count": 2,
+    "edge_count": 1,
+    "entry_point_count": null,
+    "entry_points_by_package": {
+      "example.com/mod": 2
+    }
+  },
+  "examples": {
+    "status": "not_run",
+    "count": 0
+  },
+  "vulnerabilities": {
+    "extracted_at": "2026-02-20T09:00:00Z",
+    "status": "Affected",
+    "walk_status": "Affected",
+    "walk_basis_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "walk_basis_frame": "target-rooted:example.com/app@v1.0.0",
+    "findings": [
+      {
+        "id": "GO-2026-0001",
+        "aliases": [
+          "CVE-2026-00001"
+        ],
+        "summary": "example vulnerability in example.com/mod",
+        "fixed_in": "v1.3.0",
+        "score": null,
+        "reachable": true,
+        "soundness": "not stated"
+      },
+      {
+        "id": "GO-2026-0002",
+        "aliases": [
+          "CVE-2026-00002"
+        ],
+        "summary": "withdrawn advisory for example.com/mod",
+        "fixed_in": "v1.3.0",
+        "score": null,
+        "withdrawn_at": "2026-02-10T00:00:00Z",
+        "reachable": null,
+        "soundness": "not stated"
+      }
+    ],
+    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "frame": "target-rooted",
+    "first_validated_at": "2026-01-15T09:00:00Z",
+    "last_validated_at": "2026-02-20T09:00:00Z",
+    "snapshot_version": "v2026-02-14T00-00-00",
+    "pipeline_version": "v24",
+    "snapshot_retrieved_at": "2026-02-14T00:00:00Z",
+    "snapshot_age_days": 6
+  }
+}
+--- stderr ---
+(empty)

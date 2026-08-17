@@ -1185,7 +1185,8 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 	}
 	defer func() { _ = cleanup() }()
 
-	vulnLoader := localvulnstore.New(ctr.VulnStore, localVulnPipelineVersion)
+	vulnLoader := localvulnstore.New(ctr.VulnStore, localVulnPipelineVersion).
+		WithNegativeSearcher(ctr.NegativeSearch)
 	uc := localapp.NewLocalReachabilityUseCase(
 		localsnapshot.Builder{},
 		localimporter.New(""),

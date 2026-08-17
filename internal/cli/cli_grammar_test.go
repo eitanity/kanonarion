@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -481,4 +483,86 @@ func TestCommandExamples_ParseAsWritten(t *testing.T) {
 		}
 	}
 	walk(newRootCmd(io.Discard, io.Discard))
+}
+
+// ---- help output is text ---------------------------------------------------
+
+// helpTexts renders every command in the tree exactly as `--help` prints it,
+// keyed by command path. The tree is built once and each command's help is
+// captured from the same writer, which is what a caller's terminal receives.
+func helpTexts(t *testing.T) map[string]string {
+	t.Helper()
+	var buf bytes.Buffer
+	root := newRootCmd(io.Discard, io.Discard)
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+
+	out := make(map[string]string)
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		buf.Reset()
+		if err := c.Help(); err != nil {
+			t.Fatalf("%s: rendering help: %v", c.CommandPath(), err)
+		}
+		out[c.CommandPath()] = buf.String()
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	if len(out) == 0 {
+		t.Fatal("the command tree rendered no help at all")
+	}
+	return out
+}
+
+// Help output is read by pipelines, not only by people. A control character in
+// it breaks that silently: GNU grep classifies the stream as binary and prints
+// nothing, so a flag-coverage sweep reports a registered flag as absent and
+// exits 1, which reads as "not found" rather than "unreadable". pflag prints a
+// flag's NoOptDefVal verbatim, so any flag is one declaration away from putting
+// a raw byte on stdout - which is why this sweeps the whole tree rather than
+// the commands that carry such a flag today.
+func TestHelpOutput_ContainsNoControlCharacters(t *testing.T) {
+	for path, help := range helpTexts(t) {
+		for i, r := range help {
+			if r == '\n' {
+				continue
+			}
+			if unicode.IsControl(r) {
+				line := help[strings.LastIndex(help[:i], "\n")+1:]
+				if j := strings.Index(line, "\n"); j >= 0 {
+					line = line[:j]
+				}
+				t.Errorf("%s --help: control character %q at byte %d, on line %q",
+					path, r, i, line)
+				break
+			}
+		}
+	}
+}
+
+// The NoOptDefVal pflag prints for --from-modcache has to render as a value a
+// caller could type, and it has to stay in the flag column: pflag marks the
+// column boundary with a byte of its own, so a NoOptDefVal that carries one
+// splits the line in the wrong place and runs the bracket straight into the
+// description.
+func TestFromModcacheFlag_HelpLineReadsAsText(t *testing.T) {
+	want := regexp.MustCompile(`^--from-modcache dir\[="go env GOMODCACHE"] {2,}source modules from an existing Go module cache`)
+	seen := 0
+	for path, help := range helpTexts(t) {
+		for _, raw := range strings.Split(help, "\n") {
+			line := strings.TrimSpace(raw)
+			if !strings.HasPrefix(line, "--from-modcache") {
+				continue
+			}
+			seen++
+			if !want.MatchString(line) {
+				t.Errorf("%s --help: --from-modcache renders as %q", path, line)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no command's help shows --from-modcache; the sweep found nothing to check")
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -114,6 +115,20 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		{"scan-show", ExitNotFound, func(t *testing.T) error {
 			return runScanShow(context.Background(), "vscan-missing", false,
 				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), nil, &bytes.Buffer{}, io.Discard)
+		}},
+		{"scan-show (a run this build cannot serve in full)", ExitNotFound, func(t *testing.T) error {
+			// The run itself is found; what is not served is part of its body. A
+			// header asserting a verdict over modules this build cannot read is not
+			// a success, and the code has to say so on the same terms as a record
+			// that is missing outright.
+			run, _ := fixtureRunAndRec(t)
+			run.PipelineVersion = "v1"
+			runs := testfakes.NewFakeQueryScanRuns()
+			runs.AddRun(run)
+			vuln := testfakes.NewFakeQueryVuln()
+			vuln.SetRecordGenerations(mustVulnCoord(t, "example.com/app", "v1.0.0"),
+				[]vulnports.VulnerabilityRecordGeneration{{PipelineVersion: "v1", Records: 1, Findings: 0}})
+			return runScanShow(context.Background(), fixtureScanID, false, runs, vuln, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"license-compat (no walk record)", ExitNotFound, func(t *testing.T) error {
 			return licenseCompatWith(context.Background(),

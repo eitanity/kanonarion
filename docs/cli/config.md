@@ -215,6 +215,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `license_overrides.<module>` | string | `MIT` |
 | `callgraph.exclude` | sequence | `[github.com/foo/bar]` |
 | `staleness.ttl` | duration | `1h` |
+| `staleness.probe_concurrency` | int | `16` - newer-major probe requests in flight at once. Wider is not simply faster: past the default the proxy answers `200` with an empty body, which is a lost answer rather than an error. `0` is serial. |
 | `fetch_policy.allowed_vcs_hosts` | sequence | `[github.com, git.example.org]` - absent leaves the built-in host set advisory; naming it switches to enforcing |
 
 The unified governance blocks (`directive_policy`, `godebug_policy`,

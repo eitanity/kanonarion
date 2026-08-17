@@ -56,7 +56,11 @@ func TestGoldenFactRecord(t *testing.T) {
 
 	want, err := os.ReadFile(goldenPath) //nolint:gosec
 	if err != nil {
-		t.Skipf("golden file not found (%v); run UPDATE_GOLDEN=1 go test to generate", err)
+		// A missing golden FAILS. It used to skip, which is the same defect a
+		// change detector exists to prevent: a check that reports success for a
+		// comparison it never made. Deleting the file was enough to make this
+		// test stop detecting anything, and the suite stayed green.
+		t.Fatalf("golden file %s not found: %v\n\tre-record it with: UPDATE_GOLDEN=1 go test ./test/golden/", goldenPath, err)
 	}
 	// Normalise: compare parsed JSON to avoid trailing-newline issues.
 	var gotJSON, wantJSON any

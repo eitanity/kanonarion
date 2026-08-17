@@ -126,7 +126,7 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 	// The frame comes off the record, so it is stated whether the walk was named
 	// with --walk-id or found by the containment search — the search takes the
 	// newest walk containing the coordinate and cannot tell two platforms apart.
-	walkFrame := rec.Graph.BuildEnv.Frame()
+	walkFrame := rec.Graph.Frame()
 	// Both directions of the question are bounded by the same fact. Asking about a
 	// +incompatible target, the answer covers only edges the module system
 	// resolved; asking about anything else, a +incompatible module in the walk can
@@ -210,11 +210,15 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 
 type dependentsJSON struct {
 	WalkID string `json:"walk_id"`
-	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
-	// "unrecorded" for a walk written before the frame was projected.
-	WalkFrame  string               `json:"walk_frame"`
-	Target     string               `json:"target"`
-	Dependents []dependentEntryJSON `json:"dependents"`
+	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or a token
+	// standing for the reason there is none. WalkFrameBasis is the same fact as
+	// data: "platform", "not_platform_scoped" for a module-rooted walk (no
+	// platform applies, and re-walking never produces one), or "unrecorded" (the
+	// platform is simply not known). Both are always emitted.
+	WalkFrame      string               `json:"walk_frame"`
+	WalkFrameBasis string               `json:"walk_frame_basis"`
+	Target         string               `json:"target"`
+	Dependents     []dependentEntryJSON `json:"dependents"`
 	// PreModulesCaveat is present only when the answer is bounded by a module
 	// resolved under pre-modules semantics; absent means no coordinate in scope is
 	// one, so an answer that never meets the class marshals exactly as before.
@@ -230,7 +234,9 @@ type dependentEntryJSON struct {
 
 func writeDependentsJSON(
 	w io.Writer,
-	walkID, walkFrame, target string,
+	walkID string,
+	walkFrame walkdomain.WalkFrame,
+	target string,
 	deps []dependentResult,
 	caveat *preModulesCaveatJSON,
 ) error {
@@ -245,7 +251,8 @@ func writeDependentsJSON(
 	}
 	result := dependentsJSON{
 		WalkID:           walkID,
-		WalkFrame:        walkFrame,
+		WalkFrame:        walkFrame.Text,
+		WalkFrameBasis:   string(walkFrame.Basis),
 		Target:           target,
 		Dependents:       entries,
 		PreModulesCaveat: caveat,
@@ -336,7 +343,7 @@ func dependentsScopeSuffix(rootExcluded, includeRoot bool) string {
 	}
 }
 
-func writeDependentsText(w io.Writer, walkID, walkFrame, target string, deps []dependentResult, directOnly, rootExcluded, includeRoot bool) error {
+func writeDependentsText(w io.Writer, walkID string, walkFrame walkdomain.WalkFrame, target string, deps []dependentResult, directOnly, rootExcluded, includeRoot bool) error {
 	qualifier := ""
 	if directOnly {
 		qualifier = "direct "

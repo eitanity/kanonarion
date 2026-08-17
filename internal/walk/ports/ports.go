@@ -266,9 +266,14 @@ type BuildEnvFilter struct {
 	GOARCH string
 }
 
-// String renders the platform the way output and refusals name it.
+// String renders the platform the way output and refusals name it. A filter is
+// not a walk: an empty filter selects the rows that stored no platform, and it
+// says so without claiming why any particular row is one of them.
 func (f BuildEnvFilter) String() string {
-	return walkdomain.BuildEnv{GOOS: f.GOOS, GOARCH: f.GOARCH}.Frame()
+	if f.GOOS == "" && f.GOARCH == "" {
+		return "unrecorded"
+	}
+	return f.GOOS + "/" + f.GOARCH
 }
 
 // WalkSummary is a lightweight projection of a WalkRecord for list views.
@@ -294,10 +299,17 @@ type WalkSummary struct {
 	GOARCH string `json:"goarch,omitempty"`
 }
 
+// Frame is the frame this walk answers in, derived over its own target so a
+// module-rooted walk (no platform applies) is never confused with a project
+// walk whose platform was not recorded.
+func (s WalkSummary) Frame() walkdomain.WalkFrame {
+	return walkdomain.FrameOf(s.Target, walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH})
+}
+
 // BuildFrame renders the target platform a walk answers in, for output that
-// names the walk it answered from. A walk that recorded no build environment
-// says so rather than rendering an empty pair or omitting the statement: a
-// reader cannot tell a missing frame from an unstated one.
+// names the walk it answered from. A walk that resolved no platform says so
+// rather than rendering an empty pair or omitting the statement: a reader
+// cannot tell a missing frame from an unstated one.
 func (s WalkSummary) BuildFrame() string {
-	return walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH}.Frame()
+	return s.Frame().Text
 }

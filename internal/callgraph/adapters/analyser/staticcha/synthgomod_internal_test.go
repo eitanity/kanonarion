@@ -402,3 +402,108 @@ func TestOfflineCacheMissIsNotTheModulesFault(t *testing.T) {
 		}
 	}
 }
+
+// TestAnalyseDir_ColdCachePartialStatesTheEnvironmentCause is the other half of
+// naming the cold cache: the reason has to reach the axis that decides whether
+// the record may be served back, not only the prose a reader sees.
+//
+// A tree whose module cache holds a dependency's go.mod but not its source loads
+// far enough to produce a graph — every package that does not import it
+// typechecks — so the record is Partial rather than failed. Left unattributed,
+// that record is cacheable, and the run made after the cache was warmed is
+// served it: the analysis that would finally have measured the whole tree never
+// happens, and the remedy the tool prints reads as tried and failed.
+func TestAnalyseDir_ColdCachePartialStatesTheEnvironmentCause(t *testing.T) {
+	dir := t.TempDir()
+	cache := t.TempDir()
+	// A dependency the cache can describe but not open: minimal version selection
+	// reads the .mod and succeeds, and the package load that needs the source
+	// meets the offline posture. No network and no real module is involved.
+	depDir := filepath.Join(cache, "cache", "download", "example.com", "dep", "@v")
+	if err := os.MkdirAll(depDir, 0o750); err != nil {
+		t.Fatalf("module cache: %v", err)
+	}
+	for name, content := range map[string]string{
+		"v1.0.0.mod":  "module example.com/dep\n\ngo 1.21\n",
+		"v1.0.0.info": `{"Version":"v1.0.0"}`,
+		"list":        "v1.0.0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(depDir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	t.Setenv("GOMODCACHE", cache)
+
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o750); err != nil {
+			t.Fatalf("mkdir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	write("go.mod", "module example.com/needsdep\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n")
+	write("a.go", "package needsdep\n\nimport _ \"example.com/dep\"\n\nfunc A() {}\n")
+	// The package that carries the graph: nothing about it is missing, so the
+	// analysis produces something and the outcome is an incompleteness.
+	write("b/b.go", "package b\n\nfunc B() {}\n")
+
+	coord, err := coordinate.NewModuleCoordinate("example.com/needsdep", coordinate.LocalVersion)
+	if err != nil {
+		t.Fatalf("coordinate: %v", err)
+	}
+	rec, err := quietAnalyser().AnalyseDir(context.Background(), dir, coord)
+	if err != nil {
+		t.Fatalf("AnalyseDir: %v", err)
+	}
+	if rec.OverallStatus != domain.CallGraphStatusPartial {
+		t.Fatalf("status = %s, want Partial (detail: %q)", rec.OverallStatus, rec.FailureDetail)
+	}
+	if rec.FailureCause != domain.FailureCauseEnvironment {
+		t.Errorf("cause = %q, want %q: the cold cache reached the prose and not the axis, so this "+
+			"record is served back to the run made after the cache was warmed (detail: %q)",
+			rec.FailureCause, domain.FailureCauseEnvironment, rec.FailureDetail)
+	}
+	if domain.RecordIsCacheable(rec) {
+		t.Error("a graph this host's cold cache cut short is servable as a cache hit")
+	}
+}
+
+// TestAnalyseDir_PartialFromTheModulesOwnSourcesStaysCacheable is the control the
+// change above must not break. A package that does not typecheck on its own
+// terms is a stable finding about the module, and re-deriving it on every run
+// would pay a full analysis to rediscover it.
+func TestAnalyseDir_PartialFromTheModulesOwnSourcesStaysCacheable(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o750); err != nil {
+			t.Fatalf("mkdir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	write("go.mod", "module example.com/broken\n\ngo 1.21\n")
+	write("a/a.go", "package a\n\nfunc A() { undefinedHelper() }\n")
+	write("b/b.go", "package b\n\nfunc B() {}\n")
+
+	coord, err := coordinate.NewModuleCoordinate("example.com/broken", coordinate.LocalVersion)
+	if err != nil {
+		t.Fatalf("coordinate: %v", err)
+	}
+	rec, err := quietAnalyser().AnalyseDir(context.Background(), dir, coord)
+	if err != nil {
+		t.Fatalf("AnalyseDir: %v", err)
+	}
+	if rec.OverallStatus != domain.CallGraphStatusPartial {
+		t.Fatalf("status = %s, want Partial (detail: %q)", rec.OverallStatus, rec.FailureDetail)
+	}
+	if rec.FailureCause != domain.FailureCauseModule {
+		t.Errorf("cause = %q, want %q", rec.FailureCause, domain.FailureCauseModule)
+	}
+	if !domain.RecordIsCacheable(rec) {
+		t.Error("a module's own compile error is re-derived on every run rather than served")
+	}
+}

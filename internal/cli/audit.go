@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,6 +25,7 @@ import (
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -48,7 +50,7 @@ func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "audit",
-		Short: "Audit direct dependencies from a go.mod file",
+		Short: "Audit every dependency in a go.mod's scope",
 		Long: `Audit fetches, scans, and reports on every dependency in a go.mod's scope.
 
 For each module, audit shows:
@@ -56,6 +58,7 @@ For each module, audit shows:
   - Verification status (from the fetch record)
   - License (SPDX identifier)
   - Vulnerability status
+  - The author's own deprecation notice, where they published one
 
 Beside the table, on stderr, audit states the toolchain axis: the Go toolchain
 version the walk was built by, the advisory snapshot it was judged against, and
@@ -239,6 +242,31 @@ type auditModuleResult struct {
 	// MajorProbed separates "probed, none newer" from "not probed" (offline
 	// runs, or a probe whose request failed).
 	MajorProbed bool `json:"major_probed"`
+	// Republished* is the module's OWN major published at its /vN path — a
+	// SIBLING fact to NewerMajor, carried in its own keys because the major
+	// NUMBER is unchanged there and only the path moved. A +incompatible pin can
+	// hold both at once, and `latest` emits the same pair of key sets.
+	RepublishedModule string `json:"republished_module,omitempty"`
+	RepublishedLatest string `json:"republished_latest,omitempty"`
+	// RepublishedProbed separates "asked, this major is not republished" from
+	// "not asked": the question is only put for a +incompatible pin on a bare
+	// path. Emitted always, false included.
+	RepublishedProbed bool `json:"republished_probed"`
+	// Deprecated is the module author's OWN deprecation notice, reproduced
+	// verbatim from the `// Deprecated:` comment on their go.mod module
+	// directive. It is a FOURTH fact beside the three above and is never merged
+	// into them: a deprecated module is frequently current on its own path, and
+	// the successor a notice names is often somewhere the /vN probe structurally
+	// cannot reach — google.golang.org/protobuf succeeds github.com/golang/protobuf
+	// on a different host entirely.
+	//
+	// A POINTER and ALWAYS emitted, because there are three states and only two
+	// of them are answers: null is "not established" — an offline row, or one
+	// resolved by a route that cannot see a notice — "" is the recorded negative,
+	// and text is the notice as published. A bare string would report every
+	// unasked module as actively fine. `latest` emits the same key with the same
+	// three states; see latestResult.
+	Deprecated *string `json:"deprecated"`
 	// StalenessLookedUpAt is when the proxy was asked for this row's staleness.
 	// A row served from the ledger carries the original lookup time.
 	StalenessLookedUpAt time.Time `json:"staleness_looked_up_at,omitzero"`
@@ -319,23 +347,11 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 	defer func() { _ = cleanup() }()
 
-	// The staleness column consults the network proxy for each module's latest
-	// version. In --from-modcache mode the run is fully offline, so the column is
-	// answered from the staleness ledger alone: a lookup recorded inside the TTL
-	// is a measurement and is served with its age stated, and a module with no
-	// such lookup is reported unmeasured. No probe is added to the offline path —
-	// that would break the mode's whole contract — and nothing is written.
-	var staleness stalenessLookup = newOfflineStalenessLookup(ctr.StalenessLedger, activeConfig.Staleness.TTL)
-	if !modcacheMode {
-		proxy, perr := proxyadapter.New(f.goproxy, false)
-		if perr != nil {
-			return proxyAdapterError(perr)
-		}
-		// The same ledger `latest` writes. Every successful lookup either
-		// command makes is served to the other inside the TTL, which is the
-		// whole point: the two commands were re-paying the same sweep minutes
-		// apart.
-		staleness = newAuditStalenessResolver(newProxyLatestResolver(proxy), ctr.StalenessLedger, activeConfig.Staleness.TTL)
+	// Which lookup answers the staleness column, and why, is decided in one
+	// place so the offline and online wirings cannot drift apart.
+	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger, f.gomodPath, coords, stderr)
+	if serr != nil {
+		return serr
 	}
 
 	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
@@ -418,6 +434,13 @@ type auditDerivation struct {
 	walkRecord walkdomain.WalkRecord
 	scanReused bool
 	scanRun    vulndomain.WalkScanRun
+	// scanReachabilityVerdicts is how many findings in the reused run carry a
+	// reachability answer. It is what decides whether the reuse statement says
+	// anything about source at all: reachability is the half of a scan computed
+	// from the project's own source, and a run that answered no reachability
+	// question has nothing for that statement to qualify. Zero on a run this
+	// invocation derived, where the line says so instead.
+	scanReachabilityVerdicts int
 	// refreshed is set when --fresh made this run check the advisory database;
 	// refresh is what that check established. Without the flag the run reads the
 	// stored database and the derivation says nothing about a check it never made.
@@ -451,9 +474,7 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 
 	scanLine := "vulnerability scan: derived by this run"
 	if d.scanReused {
-		scanLine = fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s@%s; nothing was re-scanned (--force to re-measure)",
-			d.scanRun.ID, d.scanRun.CompletedAt.UTC().Format(time.RFC3339),
-			d.scanRun.Snapshot.Source(), d.scanRun.Snapshot.Version())
+		scanLine = reusedScanLine(d.scanRun, d.scanReachabilityVerdicts)
 	}
 
 	lines := []string{walkLine}
@@ -615,6 +636,16 @@ func auditScope(
 	} else if ok && !f.force {
 		derivation.scanReused = true
 		derivation.scanRun = prior
+		// How much of the served answer is a function of source, counted from the
+		// records that run wrote. Asked on the reuse path only: a run that measures
+		// for itself pays nothing for it. A read that fails is reported rather than
+		// silently collapsing the count to nought, because nought is also the
+		// answer that removes the statement.
+		if recs, lerr := ctr.QueryVuln.ListRecordsForRun(ctx, prior.ID); lerr != nil {
+			_, _ = fmt.Fprintf(stderr, "vuln-scan: reading the reused run's records: %v\n", lerr)
+		} else {
+			derivation.scanReachabilityVerdicts = reachabilityVerdicts(recs)
+		}
 	}
 
 	// fresh=false: the refresh above already happened, and the snapshot it
@@ -780,6 +811,55 @@ const (
 	stalenessSourceUnmeasured = "unmeasured"
 )
 
+// auditStalenessLookup decides what answers audit's staleness column.
+//
+// The proxy this builds is wanted for ONE column and nothing else in the run.
+// Refusing at construction therefore killed the whole command — the walk, the
+// licences, the advisories, every stored answer an air-gapped operator has
+// already paid for — because one column could not be measured. Under a declared
+// air gap the ledger-only lookup answers instead: a row inside the TTL is
+// served, a module without one is reported unmeasured (offline), and nothing is
+// written. It is the same lookup and the same rule --from-modcache has always
+// used, and the same rule `latest` applies.
+//
+// The gate is ErrProxyOff, not every construction refusal. GOPROXY=direct asks
+// for a fetch route this adapter has not got, which is not a statement that the
+// network is forbidden, so it still refuses and names the mode.
+//
+// --fresh is deliberately absent from the decision. On audit its subject is the
+// ADVISORY database, not the latest answer, and that download carries its own
+// refusal which the run reports as a failed refresh rather than as a reason not
+// to audit at all.
+//
+// What this does NOT promise is that the rest of the run succeeds. A walk that
+// has to fetch module bytes it has not got still fails — with its own error,
+// naming that obstacle, which is the one the operator can act on.
+func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog.Logger,
+	gomodPath string, coords []string, stderr io.Writer) (stalenessLookup, error) {
+	offline := newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
+	if modcacheMode {
+		return offline, nil
+	}
+	proxy, perr := proxyadapter.New(goproxy, false)
+	switch {
+	case errors.Is(perr, proxyadapter.ErrProxyOff):
+		return offline, nil
+	case perr != nil:
+		return nil, proxyAdapterError(perr)
+	}
+	// The same ledger `latest` writes. Every successful lookup either command
+	// makes is served to the other inside the TTL, which is the whole point: the
+	// two commands were re-paying the same sweep minutes apart.
+	//
+	// And it gets the same BATCHED source `latest --gomod` gets, over the same
+	// scope, for the same reason: this column asked the proxy once per module,
+	// serially, for a fact the go command answers for the whole set in one call.
+	// The two commands share the defect as they share the ledger, so they are
+	// fixed together rather than leaving `audit` on the sweep `latest` left.
+	return newReportOnceLookup(newGomodStalenessResolver(newProxyLatestResolver(proxy, logger), ledger,
+		activeConfig.Staleness.TTL, false, gomodPath, goproxy, pinnedModulesOf(coords)), stderr), nil
+}
+
 // applyAuditStaleness fills a row's staleness columns from one lookup.
 //
 // The lookup answers in three states and the row keeps all three apart: served
@@ -802,7 +882,12 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 		// the mode working as designed and is already stated in the column, the
 		// coverage line and the JSON.
 		if lerr != nil && !errors.Is(lerr, errStalenessOffline) {
-			_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+			// errStalenessBatchReported is the exception: the batched resolution
+			// failed for the WHOLE set and has already said so once. Every row is
+			// still marked unmeasured; only the repeated sentence is dropped.
+			if !errors.Is(lerr, errStalenessBatchReported) {
+				_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+			}
 			res.markStalenessUnmeasured(stalenessLookupFailed)
 			return
 		}
@@ -822,7 +907,7 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 			// Offline, so this row's whole answer is the recorded one: it states
 			// its own age. On the network path the table's dated footer already
 			// carries that statement for the run as a whole.
-			res.stalenessLedgerAge = time.Since(ans.LookedUpAt)
+			res.stalenessLedgerAge = cliSince(ans.LookedUpAt)
 		}
 	}
 	// Placed with semver, not string equality: a pin can sort ABOVE @latest, and
@@ -851,6 +936,10 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 	res.MajorProbed = ans.NewerMajor.Probed
 	res.NewerMajorModule = ans.NewerMajor.Path
 	res.NewerMajorLatest = ans.NewerMajor.Version
+	res.RepublishedProbed = ans.Republication.Asked
+	res.RepublishedModule = ans.Republication.Path
+	res.RepublishedLatest = ans.Republication.Version
+	res.Deprecated = deprecationField(ans.Deprecation)
 }
 
 // markStalenessUnmeasured records that the column was not answered, and why. It
@@ -1238,18 +1327,69 @@ func auditStalenessAnswer(r auditModuleResult) string {
 	return "current"
 }
 
-// auditNewerMajorNote is the newer-major clause: the fact that stops a module
-// several majors behind from reading as up to date.
+// auditNewerMajorNote is the major-line clause: the facts that stop a module
+// several majors behind, or stuck on a +incompatible pin, from reading as up to
+// date.
 //
 // It is stated beside the staleness answer, never folded into it. "current" and
 // "a newer major line exists" are both true at once for a module pinned behind a
 // major bump, and a rendering that merged them would report the module the way
 // this whole context exists to stop reporting it.
+//
+// It goes through majorNotes rather than formatting its own string so this
+// surface and `latest` cannot end up labelling or ordering the same two facts
+// differently. Neither date is carried on an audit row, so neither clause states
+// one here; the labels and the order are the shared part.
 func auditNewerMajorNote(r auditModuleResult) string {
-	if !r.MajorProbed || r.NewerMajorModule == "" {
-		return ""
+	// IsLatest is nil exactly when the staleness column was not answered; the
+	// cell already says so, and a probe note there would repeat it on every
+	// offline row. With an answer beside it, an unprobed major line is an answer
+	// this run LOST, and majorNotes states that rather than printing nothing —
+	// which is what a recorded "there is no newer major" prints.
+	return majorNotes(
+		staledomain.Republication{Asked: r.RepublishedProbed, Path: r.RepublishedModule, Version: r.RepublishedLatest},
+		staledomain.NewerMajor{Probed: r.MajorProbed, Path: r.NewerMajorModule, Version: r.NewerMajorLatest},
+		r.IsLatest != nil,
+	)
+}
+
+// deprecation rebuilds the domain fact from an output row, so the table and the
+// JSON cannot disagree about which of the three states the row is in.
+func (r auditModuleResult) deprecation() staledomain.Deprecation {
+	if r.Deprecated == nil {
+		return staledomain.Deprecation{}
 	}
-	return fmt.Sprintf("newer major: %s@%s", r.NewerMajorModule, r.NewerMajorLatest)
+	return staledomain.Deprecation{Checked: true, Notice: *r.Deprecated}
+}
+
+// auditRowNote is everything stated BESIDE the staleness answer, on the row's
+// continuation line: the major-line clauses and the module's own deprecation
+// notice.
+//
+// They are separate clauses and neither is folded into the other or into the
+// column. A module can be deprecated and current at once, or deprecated with a
+// newer major line beside it — go-chi/chi and go.mongodb.org/mongo-driver are
+// both live examples — and a rendering that merged them would report one claim
+// as the other.
+//
+// Both clauses come from the renderers `latest` uses, not from wording invented
+// here: two surfaces that word one fact differently is a defect this project has
+// already had to fix.
+//
+// A row whose deprecation was not established contributes nothing here, and
+// neither does one established as clean. That is what leaves the overwhelming
+// majority of rows unchanged. The two are not the same state and the JSON keeps
+// them apart — null against "" — the table just has no clause to print for
+// either.
+func auditRowNote(r auditModuleResult) string {
+	notes := auditNewerMajorNote(r)
+	if dep := deprecationNote(r.deprecation()); dep != "" {
+		if notes != "" {
+			notes += "; "
+		}
+		notes += dep
+	}
+	return notes
 }
 
 // auditLedgerAgeNote states how old the recorded lookup this row was answered
@@ -1368,13 +1508,14 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	// pushed every column to its right out of line on that row alone.
 	type row struct {
 		cells []string
-		// note is the newer-major clause, printed beneath the row. See
-		// auditStalenessCell for why it is not in the column.
+		// note is the clauses stated beside the staleness answer — major line
+		// and deprecation — printed beneath the row. See auditStalenessCell for
+		// why they are not in the column.
 		note string
 	}
 	rows := make([]row, 0, len(results))
 	for _, r := range results {
-		rows = append(rows, row{cells: auditRowCells(r, showScope), note: auditNewerMajorNote(r)})
+		rows = append(rows, row{cells: auditRowCells(r, showScope), note: auditRowNote(r)})
 	}
 
 	var widths []int

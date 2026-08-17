@@ -1,0 +1,7 @@
+# empty: a go.mod with no dependencies answers [] rather than prose or nothing.
+$ kanonarion latest --gomod $PROJECT/go.mod --json
+exit 0
+--- stdout ---
+[]
+--- stderr ---
+(empty)

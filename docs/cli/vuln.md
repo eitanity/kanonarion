@@ -205,9 +205,8 @@ toolchain:
 ```
 
 The database keys the toolchain (`cmd/go`, the compiler, the linker) separately
-from `stdlib`, and the two sets are disjoint. No project imports `cmd/*`, so no
-module scan reaches a toolchain advisory; this line is the only place they
-appear. The fix named is the one on **this toolchain's own release branch** — an
+from `stdlib`, and the two sets are disjoint; this line is the only place a
+toolchain advisory appears. The fix named is the one on **this toolchain's own release branch** — an
 advisory backported to two release lines has two fixes, and only one of them is
 a move forward.
 
@@ -257,12 +256,19 @@ When a scan run of the same walk against the same advisory snapshot already
 exists, its result is served and `govulncheck` does not run:
 
 ```
-reusing scan run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability verdicts came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 The line names the run whose verdicts you are reading and when it was made. The
 findings, roll-ups, exit code and `--json` document are the ones **that run**
-produced, rebuilt from the records it wrote.
+produced, rebuilt from the records it wrote, and `audit` states the same line.
+
+Which advisories apply is fixed by the resolved module versions, so reuse is
+sound there. Reachability is computed from source, which is not a condition
+below, so the line states what those verdicts rest on and does not claim the
+source is unchanged — nothing re-read it. Absent when none were answered. Under
+`--json` the same fact is `reachability_basis`: the verdict count, and
+`source_read_by_this_run`.
 
 A stored run is served only when the walk, the advisory snapshot (source,
 version and seal) and the scan pipeline version all match, **and** the stored
@@ -275,20 +281,14 @@ For a walk of a project, one further condition applies: the project directory
 must still require the module versions the walk resolved. A stored run of a
 project walk is an analysis of that directory, so once the directory has moved it
 is not served, and the command re-derives — reaching the metadata-only
-degradation described under "no longer builds the walk" below. The answer to a
-diverged directory is therefore the same whether or not a stored run exists,
-which is the point: it does not depend on what the store happens to hold. The
-comparison is one `go.mod` read (measured at 0.2–0.3 ms on manifests of 130–260
-require lines), and an agreeing directory still reuses.
+degradation described under "no longer builds the walk" below.  The
+comparison is one `go.mod` read, and an agreeing directory still reuses.
 
 Two `--force` runs of one walk against one advisory snapshot write two records
 per module and both say the same thing. The lists inside a record — the findings,
 and a finding's affected symbols, aliases, references and reachability routes —
 are written in one fixed order, so the only fields that move between the two are
-`scanned_at` and the `content_hash` that covers it. A record written before this
-was fixed may list the same values in a different order; it is the same
-measurement, and `vuln-show --history` shows both generations rather than
-treating the rearranged one as a change. The hops WITHIN one reachability route
+`scanned_at` and the `content_hash` that covers it. The hops WITHIN one reachability route
 are never reordered — a route is a call stack, printed entry point first.
 
 **Refreshing the advisory database (`--fresh`)**
@@ -343,6 +343,7 @@ found the stored generation still current: nothing was transferred, so nothing
 is appended.
 
 ```
+kanonarion vuln-scan [flags]
 kanonarion vuln-scan [walk-id] [flags]
 kanonarion vuln-scan --module <module>@<version> [flags]
 kanonarion vuln-scan --gomod ./go.mod [flags]
@@ -350,13 +351,13 @@ kanonarion vuln-scan --tool [--gomod ./go.mod] [flags]
 kanonarion vuln-scan --project [--gomod ./go.mod] [flags]
 ```
 
-`--gomod`, `--tool`, and `--project` select the project's dependency **scope**
-and scan the latest succeeded project walk for that scope (one record produced
-by `walk --gomod [--tool|--project]`). The scope is consistent with every other
+`--gomod`, `--tool`, and `--project` select the project's dependency **scope** and
+scan the latest succeeded project walk for that scope (one record produced by
+`walk --gomod [--tool|--project]`). The scope is consistent with every other
 go.mod command - default `code`, `--tool` the tooling supply chain, `--project`
-the complete set; see [`walk` Scopes](walk.md#scopes-code-tool-complete). The
-matching walk must exist first (run `walk --gomod` with the same scope). A scope
-scan is mutually exclusive with a positional walk-id and with `--module`.
+the complete set; see [`walk` Scopes](walk.md#scopes-code-tool-complete). With no
+walk-id and no `--module`, `--gomod` defaults to `./go.mod`. A scope scan is
+mutually exclusive with a positional walk-id and with `--module`.
 
 **The walk must match this platform.** Selection filters on the current
 environment's `go env GOOS`/`GOARCH`, because build constraints select which
@@ -405,10 +406,10 @@ their notice that the manifest was not re-resolved for the read.
 `--module` is **not** filtered this way. A walk rooted at a published
 coordinate records no target platform at all — only project walks (`--gomod`)
 do — so there is nothing to filter on, and the scan states the frame as
-`unrecorded` instead:
+`not-platform-scoped` instead:
 
 ```
-scanning walk 01KQDBVW092ER1HNXZ60X27CMD rooted at github.com/spf13/cobra@v1.8.1 (frame unrecorded)
+scanning walk 01KQDBVW092ER1HNXZ60X27CMD rooted at github.com/spf13/cobra@v1.8.1 (frame not-platform-scoped)
 ```
 
 **The project-scoped views are project-rooted.** A `--gomod`/`--tool`/`--project`
@@ -467,7 +468,7 @@ the current resolution, and scanning that walk gives a reachability answer again
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it (not platform-filtered; such walks record no platform) |
-| `--gomod` | _(search upward from cwd)_ | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
+| `--gomod` | `./go.mod` | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
 | `--force` | `false` | Force re-scan even if results exist; also re-runs on-demand callgraph extraction |
@@ -695,6 +696,64 @@ on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field
 ```
 Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from this store)
 ```
+
+#### A run this build cannot read in full
+
+A scan run stores the identities of the records it was built from, so a run
+recorded under an older scan pipeline names records this build does not serve.
+Those modules are listed under their own heading, with what the store still
+holds behind each, and a notice under the report names both generations:
+
+```
+Modules:     283
+Superseded scan records (279): the store holds these modules at pipeline v19 and this build reads pipeline v24, so none of them is served
+  cel.dev/expr@v0.25.1 (1 record(s), 0 finding(s) at pipeline v19)
+  ...
+
+notice: 279 of 283 module(s) this run names are recorded at pipeline v19, holding 366
+        record(s) and 57 finding(s) this build does not serve: it reads pipeline v24 and
+        the store holds them at pipeline v19. A superseded record is not served, so this
+        answer is empty for want of a scan at this generation — they have been
+        vuln-scanned, and this is a stale cache, not a coverage gap. Re-scanning does
+        not repair this run: a run names the records it was built from, so a new scan
+        writes new records beside these and leaves this run reading as it does.
+        Scan the walk again for a current answer:
+          kanonarion vuln-scan 01KZ6TG0NS1B8TYTV5YXCC6T3W --reachability
+```
+
+Re-scanning the walk does not change how this run renders. It produces a **new**
+run, at the current generation; the old one keeps naming the records it named.
+
+The exit code is `4` whenever any module the run counted produced no record this
+build serves — including the plain coverage gap below, whose modules the store
+does not hold at the run's generation either:
+
+```
+No scan record (1): the run reports a verdict for these modules but no record backs it
+```
+
+The report is printed in full before the refusal; the header, the module count,
+the `Withdrawn advisories` section and every other section are unaffected.
+
+Every module line is the record the run itself named, looked up by the content
+hash the run pinned. A later scan of the same module — under a newer pipeline,
+against a newer snapshot, or rooted at another project — is a different record
+and is never shown in this run's body, so a run recorded under an older pipeline
+reports all of its modules as superseded and exits `4` even where the coordinate
+has since been scanned again.
+
+`--json` carries the same facts as fields:
+
+| Field | Meaning |
+|---|---|
+| `pipeline_version` | the generation the run was recorded under |
+| `reads_pipeline_version` | the generation this build serves |
+| `superseded` | whether the two differ; emitted on every run, `false` included |
+| `superseded_records` | per module: `coordinate`, `pipeline_version`, and the `records` and `findings` the store holds there. Absent when there are none |
+| `missing_records` | modules the store holds at no generation at all |
+
+A module is in `superseded_records` or in `missing_records`, never both: the
+first is held and declined, the second is not there.
 
 The text form lists finding ids per module and publishes no reachability
 verdict. `--json` does: each finding carries `reachable`, and beside it the

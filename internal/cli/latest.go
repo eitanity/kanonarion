@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -35,18 +36,20 @@ more modules.
 With --gomod, it reports the pinned version from go.mod against the latest
 available for every direct dependency, letting you see staleness at a glance.
 
-Two separate facts are reported for each module. The latest version at the
-module path itself, and — because a Go module's next MAJOR version lives at a
-different path — the newest major path that resolves. A module pinned several
-majors behind is current at its own path and still behind; both are stated,
-never merged.
+Separate facts are reported for each module, never merged. The latest version at
+the module path itself, and — because a Go module's next MAJOR version lives at
+a different path — the newest major path above the pinned major that resolves. A
+module pinned several majors behind is current at its own path and still behind.
 
-For a +incompatible pin the second fact includes its own major republished at
-/vN, which is usually the migration target and is invisible to the first.
+A +incompatible pin gets a third: its OWN major republished at /vN. The major
+number is unchanged there and only the path moved, so it reads as "same major
+republished" rather than "newer major" — usually the cheaper move, and invisible
+to the first fact. Where a pin has both, both are reported, that one first.
 
 Successful lookups are recorded in the store and served back while they are
-younger than staleness.ttl (default 1h). Every answer states the lookup time it
-used; pass --fresh to bypass the ledger and re-query the proxy.
+younger than staleness.ttl (default 1h) — including under GOPROXY=off, where a
+module with no such lookup is refused rather than answered. Every answer states
+the lookup time it used; pass --fresh to bypass the ledger and re-query.
 
 Without --gomod, one or more module paths may be passed as positional
 arguments; with multiple modules, --json emits an array.`,
@@ -161,6 +164,50 @@ type latestResult struct {
 	// MajorProbed distinguishes "probed, no newer major" from "not probed".
 	MajorProbed bool `json:"major_probed"`
 
+	// Republished* is the module's OWN major published at its /vN path, which is
+	// a SIBLING fact to NewerMajor and not a variant of it. A +incompatible pin
+	// carries its major in the version while living at the unsuffixed path, so
+	// /vN is the same major number at the path the toolchain expects for it — a
+	// path migration, not a major upgrade. It reached these keys as
+	// newer_major_module until the two were separated, which told a consumer to
+	// budget a breaking change for what can be a patch-level move.
+	//
+	// Both sets are populated when both hold, and neither is derived from the
+	// other: a consumer wanting the cheap move reads these keys, one wanting the
+	// next major line reads newer_major_*, and neither has to parse a major
+	// number out of a path to tell which it has.
+	RepublishedModule string    `json:"republished_module,omitempty"`
+	RepublishedLatest string    `json:"republished_latest,omitempty"`
+	RepublishedDate   time.Time `json:"republished_date,omitzero"`
+	// RepublishedProbed distinguishes "asked, this major is not republished" from
+	// "not asked" — the question is only put for a +incompatible pin on a bare
+	// path. Emitted always, false included: false is an answer here, and erasing
+	// it would make a module that was asked indistinguishable from a build that
+	// does not derive the field at all.
+	RepublishedProbed bool `json:"republished_probed"`
+
+	// Deprecated is the module author's OWN deprecation notice, reproduced
+	// verbatim from the `// Deprecated:` comment on their go.mod module
+	// directive. It is a fourth fact beside the three above and is never merged
+	// into them: a deprecated module frequently has no newer major at all, and
+	// the successor a notice names is often at a path the /vN probe structurally
+	// cannot reach — google.golang.org/protobuf succeeds github.com/golang/protobuf
+	// on a different host entirely.
+	//
+	// It is a POINTER and is ALWAYS emitted, because there are three states and
+	// only two of them are answers:
+	//   - null: not established. The answer came from a source that cannot see
+	//     the notice (a per-path @latest lookup) or from a ledger row recorded
+	//     before the question was asked. It is NOT "not deprecated".
+	//   - "": established, and the module declares no deprecation.
+	//   - text: the notice, as published.
+	// A bare string could not tell the first two apart, and collapsing them
+	// would report every unasked module as actively fine.
+	//
+	// kanonarion never INFERS a successor. If a module is superseded and says so
+	// nowhere machine-readable, this is empty and nothing is reported.
+	Deprecated *string `json:"deprecated"`
+
 	// LookedUpAt is when the proxy was asked for this answer. A served answer
 	// carries the original lookup time, not the time of this run.
 	LookedUpAt time.Time `json:"looked_up_at,omitzero"`
@@ -177,8 +224,29 @@ func (r *latestResult) applyStaleness(ans staleapp.Answer) {
 	r.NewerMajorLatest = ans.NewerMajor.Version
 	r.NewerMajorDate = ans.NewerMajor.PublishedAt
 	r.MajorProbed = ans.NewerMajor.Probed
+	r.RepublishedModule = ans.Republication.Path
+	r.RepublishedLatest = ans.Republication.Version
+	r.RepublishedDate = ans.Republication.PublishedAt
+	r.RepublishedProbed = ans.Republication.Asked
+	r.Deprecated = deprecationField(ans.Deprecation)
 	r.LookedUpAt = ans.LookedUpAt
 	r.Served = ans.Served
+}
+
+// latestErrorSentinel is what the `latest` column holds for a row whose lookup
+// failed. It is a value in the version field rather than a state of its own for
+// historical reasons; the JSON says the same thing properly through
+// staleness_unmeasured.
+const latestErrorSentinel = "(error)"
+
+// sameMajorAnswered reports whether this row got a same-major answer at all.
+//
+// It is the gate on stating an unanswered major probe: a probe is planned for
+// every module whose latest resolves, so on a row with an answer an unprobed
+// major line is a lost answer, while on a row with none — an offline row, or the
+// error sentinel — nothing was asked and the row's own cell already says so.
+func (r latestResult) sameMajorAnswered() bool {
+	return r.Latest != "" && r.Latest != latestErrorSentinel
 }
 
 // newerMajor rebuilds the domain fact from an output row, so the renderers
@@ -192,24 +260,97 @@ func (r latestResult) newerMajor() staledomain.NewerMajor {
 	}
 }
 
+// republication rebuilds the sibling fact from an output row, for the same
+// reason: the text line and the JSON must not disagree about which of the two
+// facts a row holds.
+func (r latestResult) republication() staledomain.Republication {
+	return staledomain.Republication{
+		Asked:       r.RepublishedProbed,
+		Path:        r.RepublishedModule,
+		Version:     r.RepublishedLatest,
+		PublishedAt: r.RepublishedDate,
+	}
+}
+
+// deprecationField renders the domain fact as the JSON three-state: nil when the
+// question was not answered, a pointer to the notice (empty for a recorded
+// negative) when it was.
+func deprecationField(dep staledomain.Deprecation) *string {
+	if !dep.Checked {
+		return nil
+	}
+	notice := dep.Notice
+	return &notice
+}
+
+// deprecation rebuilds the domain fact from an output row, so the text renderers
+// and the JSON cannot disagree about which state a row is in.
+func (r latestResult) deprecation() staledomain.Deprecation {
+	if r.Deprecated == nil {
+		return staledomain.Deprecation{}
+	}
+	return staledomain.Deprecation{Checked: true, Notice: *r.Deprecated}
+}
+
 func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr io.Writer) error {
-	proxy, err := proxyadapter.New(f.goproxy, false)
-	if err != nil {
-		return proxyAdapterError(err)
+	// An environment that declares no module fetching is no longer refused at
+	// adapter construction. GOPROXY=off says the network may not be asked; it
+	// does not say the answer is unknown, and the staleness ledger exists
+	// precisely so a recorded lookup can be served without going out. The
+	// refusal that used to fire here also offered --from-modcache and
+	// `use --recursive`, which are about module BYTES — neither can produce an
+	// @latest version, so it named remedies this command has no use for.
+	//
+	// --fresh is the exception and is deliberately untouched: it means "bypass
+	// the ledger and re-query the proxy", which an environment that forbids
+	// fetching cannot do, so it keeps the refusal it has today.
+	//
+	// The gate is ErrProxyOff specifically, NOT every construction refusal.
+	// GOPROXY=direct is a different statement: the operator asked for VCS-origin
+	// fetching, a route this adapter has not got, and serving a recorded answer
+	// there would answer a request that was never refused on network grounds. It
+	// keeps refusing, with the message that names the mode.
+	proxy, perr := proxyadapter.New(f.goproxy, false)
+	offline := perr != nil && errors.Is(perr, proxyadapter.ErrProxyOff) && !f.fresh
+	if perr != nil && !offline {
+		return proxyAdapterError(perr)
 	}
 
 	// The ledger is the only reason this command opens the store. A store that
 	// cannot be opened is reported and the run continues live rather than
-	// failing: the answer is still obtainable, it is just paid for again.
+	// failing: the answer is still obtainable, it is just paid for again. When
+	// the network is forbidden there is nothing to fall back to, and the
+	// per-module refusal below states that rather than a live retry that will
+	// not happen.
 	ledger, closeLedger, lerr := openStalenessLedger(storeRoot)
 	if lerr != nil {
-		_, _ = fmt.Fprintf(stderr, "staleness ledger unavailable, resolving live: %v\n", lerr)
+		if offline {
+			_, _ = fmt.Fprintf(stderr, "staleness ledger unavailable and the environment forbids fetching: %v\n", lerr)
+		} else {
+			_, _ = fmt.Fprintf(stderr, "staleness ledger unavailable, resolving live: %v\n", lerr)
+		}
 	} else {
 		defer func() { _ = closeLedger() }()
 	}
 	// --fresh belongs here: the subject of this command IS the latest answer, so
 	// asking for a fresh one is asking for the ledger to be bypassed.
-	resolver := newStalenessResolver(newProxyLatestResolver(proxy), ledger, activeConfig.Staleness.TTL, f.fresh)
+	//
+	// Offline the lookup is the ledger alone — the same one `audit` uses under
+	// --from-modcache, with the same rule: a row inside the TTL is a
+	// measurement and is served, anything else refuses. Serving a stale row
+	// because the network is unavailable would present an old answer as
+	// current, which is worse than refusing, and it never writes, because an
+	// offline run learns no new upstream fact.
+	var lookup stalenessLookup
+	if offline {
+		// proxy is nil here — construction refused — so the live resolver is not
+		// built at all rather than being built around an adapter that cannot be
+		// asked.
+		lookup = newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
+	} else {
+		lookup = newStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr)),
+			ledger, activeConfig.Staleness.TTL, f.fresh)
+	}
 
 	if len(args) == 0 {
 		gomodPath, err := resolveGoModPath(f.gomodPath)
@@ -220,10 +361,21 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		if serr != nil {
 			return serr
 		}
-		return runLatestGomod(ctx, gomodPath, scope, resolver, stdout, stderr)
+		// The go.mod path is the one place the latest question is asked about a
+		// SET, and the go command answers a set in one call. The offline lookup
+		// keeps the ledger it already had: `go list -m -u` under a declared air
+		// gap reports every module as having no update, which is not an answer,
+		// so the batch refuses there rather than manufacturing one.
+		return runLatestGomod(ctx, gomodPath, scope, func(coords []string) stalenessLookup {
+			if offline {
+				return lookup
+			}
+			return newGomodStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr)),
+				ledger, activeConfig.Staleness.TTL, f.fresh, gomodPath, f.goproxy, pinnedModulesOf(coords))
+		}, stdout, stderr)
 	}
 
-	return runLatestModules(ctx, args, resolver, stdout, stderr)
+	return runLatestModules(ctx, args, lookup, stdout, stderr)
 }
 
 // runLatestModules resolves one or more module coordinates from positional
@@ -231,7 +383,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 // every module is queried and the output mode is determined by jsonOut and
 // arity: a single module renders as a one-line text string or a JSON object,
 // multiple modules render as one text line each or a JSON array.
-func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.Resolver, stdout, stderr io.Writer) error {
+func runLatestModules(ctx context.Context, modules []string, lookup stalenessLookup, stdout, stderr io.Writer) error {
 	results := make([]latestResult, 0, len(modules))
 	for _, modulePath := range modules {
 		if cerr := ctx.Err(); cerr != nil {
@@ -240,8 +392,11 @@ func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.
 		// No pin is passed: with nothing named on the command line the resolved
 		// latest places the probe's starting major, so a bare path whose newest
 		// release is a +incompatible v2 still probes from /v3.
-		ans, err := resolver.Resolve(ctx, modulePath, "")
+		ans, err := lookup.Resolve(ctx, modulePath, "")
 		if err != nil && ans.LatestVersion == "" {
+			if errors.Is(err, errStalenessOffline) {
+				return latestOfflineRefusal(modulePath)
+			}
 			// Nothing resolved at all: there is no answer to print.
 			return fmt.Errorf("querying latest for %s: %w", modulePath, err)
 		}
@@ -292,11 +447,32 @@ func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.
 	return nil
 }
 
+// latestOfflineRefusal is what a named module gets when the environment forbids
+// fetching and the ledger cannot answer for it.
+//
+// It names the actual obstacle — no recorded lookup inside the staleness TTL —
+// rather than the module-bytes remedies the proxy adapter's own refusal carries.
+// `--from-modcache` reads bytes already downloaded and `use --recursive`
+// reconstitutes a module from the store; neither yields an @latest version, so
+// offering them here sent the reader after two things that cannot work.
+//
+// It carries ExitConfig because the run was stopped by a precondition, which is
+// the code the adapter refusal it replaces already used.
+func latestOfflineRefusal(modulePath string) error {
+	return &exitError{
+		code: ExitConfig,
+		msg: fmt.Sprintf(
+			"cannot resolve latest for %s: this environment does no proxy fetching, and the store holds no lookup "+
+				"for it inside staleness.ttl (%s); offline, latest serves only a lookup recorded earlier",
+			modulePath, activeConfig.Staleness.TTL),
+	}
+}
+
 // writeLatestSingleLine prints one human-readable line for a resolved module.
 func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 	days := 0
 	if !r.LatestDate.IsZero() {
-		days = int(time.Since(r.LatestDate).Hours() / 24)
+		days = int(cliSince(r.LatestDate).Hours() / 24)
 	}
 	var line string
 	switch {
@@ -308,7 +484,13 @@ func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 		line = fmt.Sprintf("%s@%s (released %d days ago, %s)",
 			r.Module, r.Latest, days, r.LatestDate.UTC().Format("2006-01-02"))
 	}
-	if note := newerMajorNote(r.newerMajor()); note != "" {
+	if note := majorNotes(r.republication(), r.newerMajor(), r.sameMajorAnswered()); note != "" {
+		line += "; " + note
+	}
+	// Appended as its own clause, never substituted for one of the others: a
+	// module can be deprecated AND have a newer major, and they are different
+	// claims.
+	if note := deprecationNote(r.deprecation()); note != "" {
 		line += "; " + note
 	}
 	if asOf := stalenessAsOf(r.LookedUpAt); asOf != "" {
@@ -334,7 +516,7 @@ func latestReleaseAgeDays(publishedAt time.Time) *int {
 	if publishedAt.IsZero() {
 		return nil
 	}
-	days := int(time.Since(publishedAt).Hours() / 24)
+	days := int(cliSince(publishedAt).Hours() / 24)
 	return &days
 }
 
@@ -345,9 +527,26 @@ func latestReleaseAgeDays(publishedAt time.Time) *int {
 // line it already printed. The row used to carry a bare zero-value IsLatest,
 // which --json emitted as `"is_latest": false` — the claim "your pin is behind"
 // contradicting the very text line beside it that said the lookup errored.
-func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned string, stderr io.Writer) latestResult {
+// The error is returned as well as rendered because ONE class of failure is not
+// this row's: a batched resolution answers for the whole set in one call, so its
+// failure is the same failure for every module and the caller stops the run on
+// it rather than printing it once per dependency. Every other error stays a
+// per-row condition and is rendered as one, exactly as before.
+func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned string, stderr io.Writer) (latestResult, error) {
 	ans, lerr := lookup.Resolve(ctx, path, pinned)
 	if ans.LatestVersion == "" {
+		if errors.Is(lerr, errStalenessOffline) {
+			// Not a failure: the environment forbids asking and nothing recorded
+			// was inside the TTL. It gets the offline reason and no error line,
+			// exactly as the audit column does, so the table says "unmeasured
+			// (offline)" instead of "(error resolving latest)" — which would
+			// report a working mode as a fault.
+			return latestResult{
+				Module:              path,
+				Pinned:              pinned,
+				StalenessUnmeasured: stalenessOfflineNoEntry,
+			}, nil
+		}
 		if lerr != nil {
 			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", path, lerr)
 		}
@@ -357,9 +556,9 @@ func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned stri
 			// The sentinel the table has always keyed its error cell on stays,
 			// so the text output is unchanged; what changes is that the JSON now
 			// says the column is unmeasured instead of answering it.
-			Latest:              "(error)",
+			Latest:              latestErrorSentinel,
 			StalenessUnmeasured: stalenessLookupFailed,
-		}
+		}, fmt.Errorf("resolving latest for %s: %w", path, lerr)
 	}
 	if lerr != nil {
 		// The same-major answer resolved and the major probe did not. The module
@@ -387,13 +586,21 @@ func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned stri
 		// because it also serves the unpinned row, which has no position at all.
 		res.LatestReleaseAgeDays = nil
 	}
-	return res
+	if lerr != nil {
+		return res, fmt.Errorf("resolving latest for %s: %w", path, lerr)
+	}
+	return res, nil
 }
 
 // runLatestGomod takes the lookup as an interface, not the concrete resolver, so
 // the row above can be exercised against a lookup that fails — the leg no live
 // proxy can be asked to produce on demand.
-func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, lookup stalenessLookup, stdout, stderr io.Writer) error {
+// newLookup is a FACTORY rather than a built lookup because the batched latest
+// source has to be told which modules it is answering for, and that set is this
+// function's own result. Building the lookup before the scope is resolved would
+// have meant either a batch over the wrong set or a second scope resolution.
+func runLatestGomod(ctx context.Context, gomodPath string, scope depScope,
+	newLookup func(coords []string) stalenessLookup, stdout, stderr io.Writer) error {
 	type pinnedDep struct {
 		path    string
 		version string
@@ -422,13 +629,23 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, looku
 		at := strings.LastIndex(coord, "@")
 		deps = append(deps, pinnedDep{path: coord[:at], version: coord[at+1:]})
 	}
+	lookup := newLookup(coords)
 
 	results := make([]latestResult, 0, len(deps))
 	for _, dep := range deps {
 		if cerr := ctx.Err(); cerr != nil {
 			return fmt.Errorf("context cancelled: %w", cerr)
 		}
-		results = append(results, latestRowFor(ctx, lookup, dep.path, dep.version, stderr))
+		row, rerr := latestRowFor(ctx, lookup, dep.path, dep.version, stderr)
+		if errors.Is(rerr, staleapp.ErrBatchUnavailable) {
+			// The batched call answers for every module at once, so this is not
+			// one dependency's failure and must not be rendered as one: printing
+			// it per row would repeat the identical message once per dependency
+			// while the table filled with unmeasured cells. The run stops with
+			// the reason, in the go command's own words.
+			return fmt.Errorf("resolving the latest version of the %s dependency set: %w", scope, rerr)
+		}
+		results = append(results, row)
 	}
 
 	if jsonOut {
@@ -453,7 +670,7 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		}
 		var status string
 		switch {
-		case r.Latest == "(error)":
+		case r.Latest == latestErrorSentinel:
 			status = "(error resolving latest)"
 		case r.IsLatest == nil:
 			// Any other unmeasured row states the absence in the cell rather than
@@ -477,9 +694,12 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		default:
 			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, *r.LatestReleaseAgeDays)
 		}
-		// The newer-major clause is appended, never substituted: "current" stays
-		// true of the module's own path and the major line is stated beside it.
-		if note := newerMajorNote(r.newerMajor()); note != "" {
+		// The major-line clauses are appended, never substituted: "current" stays
+		// true of the module's own path and the other paths are stated beside it.
+		if note := majorNotes(r.republication(), r.newerMajor(), r.sameMajorAnswered()); note != "" {
+			status += "; " + note
+		}
+		if note := deprecationNote(r.deprecation()); note != "" {
 			status += "; " + note
 		}
 		if _, err := fmt.Fprintf(stdout, "%s  %s\n", coord, status); err != nil {

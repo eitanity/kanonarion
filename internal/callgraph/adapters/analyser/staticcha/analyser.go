@@ -598,12 +598,36 @@ func (a *Analyser) analyseDir(
 	// The reason is in the metadata load's own errors, in the go command's own
 	// sentence about its offline posture, and it is the only thing that tells a
 	// reader to warm the cache rather than go looking for a fault in the module.
-	// The cause stays unset because the record still carries a graph, and a
-	// partial graph is not a failed one.
+	//
+	// It is written to the CAUSE as well as to the detail. The detail is prose a
+	// reader acts on; the cause is the axis RecordIsCacheable reads, and a reason
+	// that reaches only the prose leaves the record served back on every later run
+	// — including the run made after the cache was warmed, which is the one run
+	// that would have measured the module completely. An incompleteness this host
+	// imposed is not a property of these bytes, exactly as the failing load two
+	// screens up says of the same marker.
+	//
+	// Every other Partial states the module. Reaching here means the toolchain
+	// demonstrably ran — it produced a graph — and the packages that did not
+	// typecheck did so on their own sources, which is a stable finding worth
+	// keeping rather than rediscovering at full analysis cost. The limit of that
+	// claim is that a type error the analysed sources produce only under THIS
+	// toolchain version is filed as the module's; the axis is classified from what
+	// the run can observe, never re-derived by reading the stored prose.
 	if overallStatus == domain.CallGraphStatusPartial {
-		if miss := firstOfflineCacheMiss(metaErrs); miss != "" {
+		miss := firstOfflineCacheMiss(metaErrs)
+		if miss != "" {
 			rec.FailureDetail = strings.TrimPrefix(rec.FailureDetail+"; ", "; ") +
 				"the loader reported: " + miss
+		}
+		rec.FailureCause = domain.FailureCauseModule
+		// The marker is looked for in both error sets. The metadata load is where
+		// it usually appears, and the sentence above is taken from there because
+		// that is the one worth quoting; a syntax load that meets the same cold
+		// cache states it too, and a cause read from only one of the two would
+		// depend on which pass happened to hit the missing module first.
+		if miss != "" || firstOfflineCacheMiss(allLoadErrs) != "" {
+			rec.FailureCause = domain.FailureCauseEnvironment
 		}
 	}
 	// FailedPackages scopes the incompleteness to the exact packages that did

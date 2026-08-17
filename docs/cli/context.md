@@ -214,7 +214,8 @@ selection). The list is sorted lexicographically by module path.
 |---|---|---|
 | `status` | string | `not_run` / `read_error` / walk status (`succeeded`, `partial`, `failed`, `cancelled`) |
 | `walk_id` | string | ID of the walk record this was drawn from |
-| `frame` | string | `GOOS/GOARCH` that walk resolved for, or `unrecorded` for a walk taken before the frame was recorded |
+| `frame` | string | `GOOS/GOARCH` that walk resolved for, or `not-platform-scoped` for a module-rooted walk |
+| `frame_basis` | string | `platform`, `not_platform_scoped` or `unrecorded` |
 | `count` | int | Number of direct dependencies. Always present; `0` is the measurement that the module has none |
 | `partial` | bool | True when the walk graph was partial - some transitive deps could not be resolved, so the direct dep list may be incomplete. Always present; `false` is the measurement that the graph resolved completely |
 | `dependencies` | array | Direct dependencies sorted by path |
@@ -395,7 +396,7 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 | `findings[].score` | float\|null | CVSS base score. Always present; `null` when the advisory publishes no severity, which is different from a published `0.0` |
 | `findings[].withdrawn_at` | string | Retraction timestamp, present **only** on an advisory retracted upstream. Absent means live — the retraction is a fact on the finding, never something to infer from the `WITHDRAWN: ` prefix upstream puts on the summary |
 | `findings[].reachable` | bool\|null | Reachability verdict. Always present; `null` when no reachability analysis answered for this finding — `soundness` cannot stand in for it, since it reads `not stated` for a positive verdict too |
-| `findings[].soundness` | string | How thorough the search behind a **negative** was: `confirmed`, `inferred`, `unconfirmed`, `unsearchable`, or `not stated` where there is no absence to qualify. Always present. Derived at read time from the analyser the stored answer names, so it is on records scanned long before the field existed. See [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was) |
+| `findings[].soundness` | string | How thorough the search behind a **negative** was: `confirmed`, `inferred`, `unconfirmed`, `unsearchable`, `disputed`, or `not stated` where there is no absence to qualify. Always present. Derived at read time, so it is on records scanned long before the field existed. See [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was) |
 | `findings[].soundness_reason` | string | The basis for that rung in the producing analyser's own terms. Absent where no rung is stated |
 
 A retracted advisory stays in `findings` as the historical fact, so a module whose

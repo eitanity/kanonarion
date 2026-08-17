@@ -19,7 +19,12 @@ func TestRecordIsCacheable(t *testing.T) {
 		want   bool
 	}{
 		{"extracted, no cause", domain.CallGraphStatusExtracted, domain.FailureCauseUnrecorded, true},
-		{"partial, no cause", domain.CallGraphStatusPartial, domain.FailureCauseUnrecorded, true},
+		// An incompleteness that states no cause is in the same position as a
+		// failure that states none: nothing about it says the module was at fault,
+		// so it is re-attempted once rather than served forever.
+		{"partial, no cause", domain.CallGraphStatusPartial, domain.FailureCauseUnrecorded, false},
+		{"partial, module", domain.CallGraphStatusPartial, domain.FailureCauseModule, true},
+		{"partial, environment", domain.CallGraphStatusPartial, domain.FailureCauseEnvironment, false},
 		{"excluded by config", domain.CallGraphStatusExcludedByConfig, domain.FailureCauseUnrecorded, true},
 		{"load failed, module", domain.CallGraphStatusLoadFailed, domain.FailureCauseModule, true},
 		{"load failed, environment", domain.CallGraphStatusLoadFailed, domain.FailureCauseEnvironment, false},

@@ -1,0 +1,9 @@
+# empty: no records at any generation for this coordinate.
+$ kanonarion vuln-show example.com/absent@v9.9.9 --history --json
+exit 4
+--- error ---
+execute root command: no vulnerability records for example.com/absent@v9.9.9 — run 'kanonarion vuln-scan' first
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

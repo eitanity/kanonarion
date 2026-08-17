@@ -166,7 +166,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	walkID := walkRec.ID
 
 	// Step 3: extract. The banner names the frame the walk was resolved in.
-	if _, err := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.BuildEnv.Frame()); err != nil {
+	if _, err := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	ef := extractFlags{
@@ -180,7 +180,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	}
 
 	// Step 4: vuln-scan
-	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s (frame %s)\n", walkID, walkRec.Graph.BuildEnv.Frame()); err != nil {
+	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	// The scan's result channel goes to stderr, not io.Discard: it carries the
@@ -239,13 +239,16 @@ type inspectSummary struct {
 	AffectedCount   int      `json:"affected_count"`
 	SnapshotVersion string   `json:"snapshot_version,omitempty"`
 	WalkIDs         []string `json:"walk_ids"`
-	// WalkFrame is the GOOS/GOARCH the answering project walk resolved for, or
-	// "unrecorded" for a walk written before the frame was projected. It is
-	// always present: a reader cannot tell an unstated frame from a missing one.
-	WalkFrame  string             `json:"walk_frame"`
-	Directives *directivesSection `json:"directives,omitempty"`
-	GoDebug    *godebugSection    `json:"godebug,omitempty"`
-	Vendor     *vendorSection     `json:"vendor,omitempty"`
+	// WalkFrame is the GOOS/GOARCH the answering project walk resolved for, and
+	// WalkFrameBasis the same fact as data: "platform", "not_platform_scoped" for
+	// a module-rooted walk (no platform applies), or "unrecorded" (the platform
+	// is not known). Both are always present: a reader cannot tell an unstated
+	// frame from a missing one.
+	WalkFrame      string             `json:"walk_frame"`
+	WalkFrameBasis string             `json:"walk_frame_basis"`
+	Directives     *directivesSection `json:"directives,omitempty"`
+	GoDebug        *godebugSection    `json:"godebug,omitempty"`
+	Vendor         *vendorSection     `json:"vendor,omitempty"`
 	// Build states whether the project compiles from a vendored tree, so a
 	// consumer of this document can see which of two things every other section
 	// describes: the modules the manifest resolves, or the bytes that ship. It
@@ -496,7 +499,8 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			AffectedCount:   affectedCount,
 			SnapshotVersion: snapshotVersion,
 			WalkIDs:         walkIDs,
-			WalkFrame:       projectWalk.BuildFrame(),
+			WalkFrame:       projectWalk.Frame().Text,
+			WalkFrameBasis:  string(projectWalk.Frame().Basis),
 			Directives:      directives,
 			GoDebug:         godebug,
 			Vendor:          vendor,

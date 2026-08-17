@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 )
 
 // This file pins one rule across the two surfaces that used to break it: a
@@ -41,13 +41,16 @@ func (a answeringStalenessLookup) Resolve(_ context.Context, path, _ string) (st
 	}}, nil
 }
 
-// stubLatestInfo answers fetch's proxy question, or fails to.
+// stubLatestInfo answers fetch's proxy question, or fails to. It satisfies the
+// staleness context's own LatestResolver port, which is what fetch asks now —
+// the locally declared interface it used to satisfy was how this call site came
+// to sit outside every decorator on that port.
 type stubLatestInfo struct {
-	info proxyadapter.LatestVersionInfo
+	info staleports.LatestInfo
 	err  error
 }
 
-func (s stubLatestInfo) LatestInfo(context.Context, string) (proxyadapter.LatestVersionInfo, error) {
+func (s stubLatestInfo) LatestInfo(context.Context, string) (staleports.LatestInfo, error) {
 	return s.info, s.err
 }
 
@@ -57,7 +60,7 @@ func (s stubLatestInfo) LatestInfo(context.Context, string) (proxyadapter.Latest
 // about a module nothing was measured for.
 func TestLatestGomod_FailedLookupIsNullNotBehind(t *testing.T) {
 	var stderr bytes.Buffer
-	row := latestRowFor(context.Background(),
+	row, _ := latestRowFor(context.Background(),
 		failingStalenessLookup{err: errStalenessTestProxyDown},
 		"github.com/foo/bar", "v1.0.0", &stderr)
 
@@ -110,7 +113,7 @@ func TestLatestGomod_MeasuredRowsStillAnswer(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			row := latestRowFor(context.Background(),
+			row, _ := latestRowFor(context.Background(),
 				answeringStalenessLookup{latest: tc.latest},
 				"github.com/foo/bar", tc.pinned, &stderr)
 
@@ -188,7 +191,7 @@ func TestFetchStaleness_UnmeasuredLegs(t *testing.T) {
 	tests := []struct {
 		name      string
 		requested string
-		proxy     latestInfoLookup
+		proxy     staleports.LatestResolver
 		reason    string
 		note      string
 		wantErrLn bool
@@ -204,7 +207,7 @@ func TestFetchStaleness_UnmeasuredLegs(t *testing.T) {
 		{
 			name:      "at latest, never asked",
 			requested: "latest",
-			proxy:     stubLatestInfo{info: proxyadapter.LatestVersionInfo{Version: "v1.0.0"}},
+			proxy:     stubLatestInfo{info: staleports.LatestInfo{Version: "v1.0.0"}},
 			reason:    stalenessNotAsked,
 			note:      " [staleness unmeasured (not asked)]",
 		},
@@ -250,7 +253,7 @@ func TestFetchStaleness_MeasuredLegs(t *testing.T) {
 	t.Run("pin is the latest", func(t *testing.T) {
 		var stderr bytes.Buffer
 		stale := fetchStalenessFor(context.Background(),
-			stubLatestInfo{info: proxyadapter.LatestVersionInfo{Version: "v1.0.0"}},
+			stubLatestInfo{info: staleports.LatestInfo{Version: "v1.0.0"}},
 			coord, "v1.0.0", &stderr)
 
 		data, merr := json.Marshal(stale)
@@ -270,7 +273,7 @@ func TestFetchStaleness_MeasuredLegs(t *testing.T) {
 	t.Run("pin is behind", func(t *testing.T) {
 		var stderr bytes.Buffer
 		stale := fetchStalenessFor(context.Background(),
-			stubLatestInfo{info: proxyadapter.LatestVersionInfo{
+			stubLatestInfo{info: staleports.LatestInfo{
 				Version: "v1.2.0",
 				Time:    time.Now().Add(-72 * time.Hour),
 			}},
@@ -294,7 +297,7 @@ func TestFetchStaleness_MeasuredLegs(t *testing.T) {
 	t.Run("pin sorts above the latest tag", func(t *testing.T) {
 		var stderr bytes.Buffer
 		stale := fetchStalenessFor(context.Background(),
-			stubLatestInfo{info: proxyadapter.LatestVersionInfo{
+			stubLatestInfo{info: staleports.LatestInfo{
 				Version: "v0.5.5",
 				Time:    time.Now().Add(-2660 * 24 * time.Hour),
 			}},

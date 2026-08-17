@@ -1,0 +1,7 @@
+# empty: no stored record carries this advisory.
+$ kanonarion vuln-by-id GO-2099-9999 --json
+exit 0
+--- stdout ---
+[]
+--- stderr ---
+(empty)

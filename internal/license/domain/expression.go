@@ -5,18 +5,54 @@ import (
 	"strings"
 )
 
+// ExpressionResult is the licence expression for a module together with the
+// basis on which its operator was chosen. An expression's operator is a legal
+// claim — under OR a redistributor elects one licence, under AND every licence
+// governs — so the record says what settled it rather than leaving a reader to
+// assume the pipeline knew.
+type ExpressionResult struct {
+	// Expression is the SPDX expression, e.g. "MIT", "MIT OR Unlicense",
+	// "Apache-2.0 AND MIT". Empty when no licence was identified.
+	Expression string
+	// PrimarySPDX names the module's own licence when the reading establishes
+	// it and the detector's most-covered match is not it — a bundled grant can
+	// cover more of a file than the module's own licence does. Empty when the
+	// detector's primary stands.
+	PrimarySPDX string
+	// Basis states how the operator was chosen: the shape read from the file
+	// and the evidence that decided it. Empty when there was nothing to
+	// decide — a single grant needs no operator.
+	Basis string
+	// BundledSPDXs lists grants carried in the licence file that cover
+	// somebody else's code. They are deliberately absent from Expression: a
+	// consumer must not read them as licences of this module, in either
+	// direction — not as an arm they may elect, and not as an obligation the
+	// module imposes.
+	BundledSPDXs []string
+}
+
 // DeriveExpression computes the SPDX license expression for a module from its
-// detected license file entries. The expression distinguishes:
+// detected license file entries. See DeriveExpressionResult, of which this is
+// the expression alone. texts maps a licence file's path to its verbatim
+// content; a path absent from the map is read as text unavailable.
+func DeriveExpression(entries []LicenseFileEntry, texts map[string]string) string {
+	return DeriveExpressionResult(entries, texts).Expression
+}
+
+// DeriveExpressionResult computes the SPDX license expression for a module
+// from its detected license file entries and the text of those files. The
+// expression distinguishes:
 //
 // - Single license → bare SPDX identifier (e.g. "MIT")
-// - Compound file (one file, multiple full license texts at near-equal
-// coverage, e.g. yaml.v3) → OR expression (consumer picks one)
+// - Compound file (one file carrying several full licence texts at near-equal
+// coverage) → whatever the file's own prose says the relationship is; see
+// ReadCompoundFile. The count of texts decides nothing.
 // - Multiple root files with dual-license naming (LICENSE-MIT + LICENSE-APACHE)
 // → OR expression (consumer picks one)
 // - Multiple root files with genuinely distinct licenses → AND expression
 // (all apply)
 // - No identified license → empty string
-func DeriveExpression(entries []LicenseFileEntry) string {
+func DeriveExpressionResult(entries []LicenseFileEntry, texts map[string]string) ExpressionResult {
 	var roots []LicenseFileEntry
 	for _, e := range entries {
 		if !e.IsVendored && exprIsRootLevel(e.Path) && !exprIsNoticeName(e.Path) && e.SPDX != "" {
@@ -24,7 +60,7 @@ func DeriveExpression(entries []LicenseFileEntry) string {
 		}
 	}
 	if len(roots) == 0 {
-		return ""
+		return ExpressionResult{}
 	}
 
 	sort.Slice(roots, func(i, j int) bool {
@@ -40,18 +76,14 @@ func DeriveExpression(entries []LicenseFileEntry) string {
 		realAlts := filterRealSPDX(primary.AltMatches)
 		if len(realAlts) > 0 {
 			delta := primary.Confidence - realAlts[0].Confidence
-			// Compound file: multiple full license texts at near-equal coverage.
-			// Only treat as dual-licensed (OR) when there is exactly one
-			// alternative — genuine dual-licensing offers exactly two choices
-			// (e.g. yaml.v3: MIT OR Apache-2.0, gioui.org: MIT OR Unlicense).
-			// Files with 2+ alts at identical confidence are omnibus attribution
-			// files that bundle third-party license texts for compliance (e.g.
-			// apache/arrow, klauspost/compress); their primary SPDX id is correct.
-			if delta <= exprCompoundDelta && len(realAlts) == 1 {
-				return buildORExpression(primary.SPDX, realAlts)
+			// A compound file carries several full licence texts at near-equal
+			// coverage. Below the delta the alternative is a partial match
+			// against one text, not a second grant, and the primary stands.
+			if delta <= exprCompoundDelta {
+				return readCompoundResult(primary, realAlts, texts[primary.Path])
 			}
 		}
-		return primary.SPDX
+		return ExpressionResult{Expression: primary.SPDX}
 	}
 
 	// Multiple root files: collect distinct SPDX identifiers.
@@ -64,16 +96,93 @@ func DeriveExpression(entries []LicenseFileEntry) string {
 		}
 	}
 	if len(distinct) == 1 {
-		return distinct[0]
+		return ExpressionResult{Expression: distinct[0]}
 	}
 
 	sort.Strings(distinct)
 	// Dual-license naming (e.g. LICENSE-MIT + LICENSE-APACHE) signals the
 	// consumer may choose one. Otherwise, all licenses genuinely apply.
 	if hasDualLicenseNaming(roots) {
-		return strings.Join(distinct, " OR ")
+		return ExpressionResult{
+			Expression: strings.Join(distinct, " OR "),
+			Basis:      "election: one file per licence (" + strings.Join(rootPaths(roots), ", ") + ")",
+		}
 	}
-	return strings.Join(distinct, " AND ")
+	return ExpressionResult{
+		Expression: strings.Join(distinct, " AND "),
+		Basis:      "split: one file per licence, none naming a choice",
+	}
+}
+
+// readCompoundResult turns the prose of a compound licence file into an
+// expression. The alternatives say which texts are in the file; only the file
+// says how they relate, and where it does not say, the reading is stated as
+// conservative rather than made silently.
+func readCompoundResult(primary LicenseFileEntry, alts []AltMatch, text string) ExpressionResult {
+	ids := make([]string, 0, len(alts)+1)
+	ids = append(ids, primary.SPDX)
+	for _, a := range alts {
+		ids = append(ids, a.SPDX)
+	}
+	if len(dedupeSorted(ids)) < 2 {
+		// The alternative names the same licence as the primary: one grant,
+		// matched twice, and no relationship to state.
+		return ExpressionResult{Expression: primary.SPDX}
+	}
+
+	if text == "" {
+		// The text was not available to read. Say so and take the
+		// conservative reading: every grant in the file applies.
+		return ExpressionResult{
+			Expression: strings.Join(dedupeSorted(ids), " AND "),
+			Basis:      "conservative: several grants, file text unavailable to read",
+		}
+	}
+
+	reading := ReadCompoundFile(text, ids)
+	basis := reading.Shape.String() + ": " + reading.Evidence
+	switch reading.Shape {
+	case ShapeElection:
+		return ExpressionResult{
+			Expression: strings.Join(reading.Own, " OR "),
+			Basis:      basis,
+		}
+	case ShapeBundledGrant:
+		res := ExpressionResult{
+			Expression:   strings.Join(reading.Own, " AND "),
+			Basis:        basis + " — bundled: " + strings.Join(reading.Bundled, ", "),
+			BundledSPDXs: reading.Bundled,
+		}
+		// The most-covered text in the file can be the bundled one: a full
+		// BSD-3-Clause carried beside a short MIT grant covers more of the
+		// file than the grant the module actually makes. The module's own
+		// licence is the one it makes, so the primary follows the reading.
+		if len(reading.Own) == 1 && reading.Own[0] != primary.SPDX {
+			res.PrimarySPDX = reading.Own[0]
+		}
+		return res
+	case ShapeSplit:
+		return ExpressionResult{
+			Expression: strings.Join(reading.Own, " AND "),
+			Basis:      basis,
+		}
+	case ShapeUnstated:
+		return ExpressionResult{
+			Expression: strings.Join(reading.Own, " AND "),
+			Basis:      "conservative: " + reading.Evidence,
+		}
+	}
+	return ExpressionResult{Expression: primary.SPDX}
+}
+
+// rootPaths lists the entries' paths in order for a basis string.
+func rootPaths(roots []LicenseFileEntry) []string {
+	out := make([]string, 0, len(roots))
+	for _, r := range roots {
+		out = append(out, r.Path)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // DisjunctionArms returns the distinct arms of a purely disjunctive SPDX
@@ -118,20 +227,6 @@ func SoleIdentifier(expr string) string {
 		return ""
 	}
 	return expr
-}
-
-// buildORExpression constructs "primary OR alt1 OR alt2..." sorted and deduped.
-func buildORExpression(primary string, alts []AltMatch) string {
-	seen := map[string]bool{primary: true}
-	ids := []string{primary}
-	for _, a := range alts {
-		if a.SPDX != "" && !seen[a.SPDX] {
-			seen[a.SPDX] = true
-			ids = append(ids, a.SPDX)
-		}
-	}
-	sort.Strings(ids)
-	return strings.Join(ids, " OR ")
 }
 
 // hasDualLicenseNaming reports whether any root entry uses a license file name

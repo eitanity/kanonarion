@@ -1,0 +1,7 @@
+# empty, text: prose on the human channel, never an empty array.
+$ kanonarion audit --gomod $PROJECT/go.mod
+exit 0
+--- stdout ---
+no code dependencies found in $PROJECT/go.mod
+--- stderr ---
+(empty)

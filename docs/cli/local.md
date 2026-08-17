@@ -14,24 +14,22 @@ call graph into the store. Unlike `callgraph <module@version>`, which only sees
 packages**, so `callers` / `callees` can answer questions about symbols defined
 in the working tree.
 
-The tree is stored under the module's own path at the version `local` - a
-working tree has no semver to pin, and `local` is the marker a project walk
-already uses for the module nothing published. The record additionally names
-its **analysis source** as `worktree`, carries a **worktree digest** and records
-the **directory it analysed**, so two checkouts of the same module path are two
-records rather than one overwritten row.
+The tree is stored under the module's own path at the version `local`. The
+record additionally names its **analysis source** as `worktree`, carries a
+**worktree digest** and records the **directory it analysed**, so two checkouts
+of the same module path are two records rather than one overwritten row.
 
 The digest is a hash over the source the loader actually resolved - symlinks
 followed, build tags applied, `testdata` and nested modules excluded - so it
 moves when the analysed code moves and not otherwise. It carries a scheme
 prefix: `analysed-sha256:` for that list, `scanned-sha256:` when the load failed
 before resolving any files and the tree had to be scanned instead, and a bare
-`sha256:` on records written before the schemes existed. The three are not
-comparable and nothing compares them.
+`sha256:` on records written before the schemes existed. The three are never
+compared.
 
 A second digest, taken by scanning the tree before the analysis runs, records
-which tree the run was handed. It is what makes reuse possible - see
-[Unchanged trees](#unchanged-trees) - and it is `scanned-sha256:` always.
+which tree the run was handed. It makes reuse possible - see
+[Unchanged trees](#unchanged-trees) - and is always `scanned-sha256:`.
 
 The directory is what a query routes on. A `callers` query run inside a checkout
 is answered from the generation analysed in THAT directory rather than from
@@ -64,8 +62,7 @@ separately (`kanonarion local . --json > graph.json 2> derivation.txt`); to
 discard the statement, `2>/dev/null`.
 
 The `(cached)` marker on the summary line is on stdout with the rest of the
-result - it is a property of the answer, not a statement about where it came
-from.
+result: it is a property of the answer, not a statement about it.
 
 What the scan sees: every `.go` file under the directory plus `go.mod` and
 `go.sum`, following symlinks to source files. `.git` is ignored, so committing,
@@ -78,13 +75,17 @@ What it does **not** see, and when to use `--force`:
   devirtualisation depends on how much of the closure could be built)
 - source reached through a symlinked **directory**
 
-A record that failed for an environment reason - no usable toolchain, a
-cancelled run - is never served back, so a bad run does not become permanent and
-`--force` is not needed to clear it.
+A record the environment limited is never served back, so a bad run does not
+become permanent and `--force` is not needed to clear it: a failure with no
+usable toolchain, a cancelled run, or an incomplete graph whose loader reported
+`module lookup disabled by GOPROXY=off`. That last is a cold module cache - the
+summary says so and names `go mod download all`; re-running without the flag
+re-analyses. A graph the tree's own compile errors left incomplete is
+served: fixing them moves the digest.
 
-Records written before this digest existed state nothing about the tree they
-were handed, so the first `local` run after upgrading re-analyses and every run
-after that reuses.
+Records written before this digest, or before a run recorded what limited it,
+state nothing, so the first `local` run after upgrading re-analyses and later
+runs reuse.
 
 ## Output
 
@@ -125,8 +126,8 @@ the append-only audit log
 (`{store-root}/audit.jsonl`): module, version, pipeline version, completeness
 level, overall status, `analysis_source` (`worktree`), node and edge counts, the
 record's content hash, and the worktree digest. A run that served a stored
-record appends nothing, to either the log or the ledger: it wrote no generation,
-and an event stating an extraction that did not happen is not checkable.
+record appends nothing, to either the log or the ledger: it wrote no
+generation.
 
 ## Relationship to other commands
 
