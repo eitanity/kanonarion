@@ -70,10 +70,12 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_PromotesRootToLocalAnalysed(t *test
 	}
 }
 
-// When root ingestion fails, the walk fails: the caller explicitly asked for
-// root analysis, so keeping the synthesised root success would misreport what
-// actually ran.
-func TestWalker_ProjectMode_AnalyseLocalRoot_IngestFailureFailsWalk(t *testing.T) {
+// A root ingest that fails degrades the walk; it does not discard it. The
+// project's go.mod was read and every dependency fetched, so the graph is
+// intact and answerable — what is missing is the project's own packages. The
+// walk reads partial, the root keeps the succeeded result the project resolve
+// gave it, and the reason rides on that result so nothing reads as clean.
+func TestWalker_ProjectMode_AnalyseLocalRoot_IngestFailureDegradesWalk(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
 	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
@@ -98,21 +100,31 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_IngestFailureFailsWalk(t *testing.T
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if outcome.OverallStatus != domain.WalkFailed {
-		t.Fatalf("status = %s, want failed", outcome.OverallStatus)
+	if outcome.OverallStatus != domain.WalkPartial {
+		t.Fatalf("status = %s, want partial", outcome.OverallStatus)
 	}
 	tr := outcome.PerNodeResults[target]
-	if tr.Status != domain.NodeFetchFailed {
-		t.Errorf("root status = %s, want fetch_failed", tr.Status)
+	if tr.Status != domain.NodeSucceeded {
+		t.Errorf("root status = %s, want succeeded: the go.mod was read and the graph resolved", tr.Status)
 	}
 	if tr.Error == nil || tr.Error.Type != "local_root_ingest_failed" {
 		t.Errorf("root error = %+v, want type local_root_ingest_failed", tr.Error)
 	}
+	// The dependency closure the run paid for survives the degradation.
+	dep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
+	if dr, ok := outcome.PerNodeResults[dep]; !ok || dr.Status != domain.NodeSucceeded {
+		t.Errorf("dependency result = %+v (present=%v), want succeeded", dr, ok)
+	}
+	if len(outcome.Graph.Nodes) == 0 {
+		t.Error("graph has no nodes: a failed root ingest discarded the resolved graph")
+	}
 }
 
-// Local-root analysis is only meaningful with a known working tree; a missing
-// project directory is a configuration failure, not a silent no-op.
-func TestWalker_ProjectMode_AnalyseLocalRoot_MissingProjectDirFailsWalk(t *testing.T) {
+// Local-root analysis is only meaningful with a known working tree. A missing
+// project directory is a configuration failure that must be stated, but it is
+// still only the root ingest that did not happen, so it degrades the walk
+// rather than discarding it.
+func TestWalker_ProjectMode_AnalyseLocalRoot_MissingProjectDirDegradesWalk(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
 	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
@@ -134,8 +146,8 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_MissingProjectDirFailsWalk(t *testi
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
-	if outcome.OverallStatus != domain.WalkFailed {
-		t.Fatalf("status = %s, want failed", outcome.OverallStatus)
+	if outcome.OverallStatus != domain.WalkPartial {
+		t.Fatalf("status = %s, want partial", outcome.OverallStatus)
 	}
 	tr := outcome.PerNodeResults[target]
 	if tr.Error == nil || tr.Error.Type != "local_root_ingest_failed" {

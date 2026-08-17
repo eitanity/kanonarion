@@ -160,6 +160,10 @@ type Container struct {
 	DiffScanRuns        DiffScanRunsUseCase
 	VulnStore           vulnports.VulnerabilityStore
 	VulnPipelineVersion string
+	// NegativeSearch is the read-time call-graph search over stored negatives.
+	// QueryVuln already applies it; this is for the read paths that go to the
+	// vuln store directly rather than through the query use case.
+	NegativeSearch *reachability.NegativeSearcher
 
 	// sbom
 	GenerateSBOM GenerateSBOMUseCase
@@ -259,7 +263,22 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 
 	// ---- shared infrastructure ----
-	clk := clock.System{}
+	// The container reads the clock the CLI reads rather than constructing its
+	// own. The two were separate, so pinning the CLI's clock fixed what a
+	// command PRINTED about now while the records a command WROTE — a walk's
+	// completion time, a scan run's completion time, and the seconds half of a
+	// scan run's identifier — still carried the wall clock. A golden naming a
+	// served answer then had to generalise away which run answered and when,
+	// which are the two facts such a golden exists to check.
+	//
+	// The production default is unchanged: cliClock is the system clock unless
+	// SetClockForTest pins it, and nothing in the operating path calls that.
+	//
+	// The stopwatch below is deliberately NOT sourced from here. It measures
+	// elapsed durations from a monotonic reading, so it stays correct under a
+	// pinned wall clock — every duration this process reports comes from it, and
+	// none is computed as a difference between two clock readings.
+	clk := cliClock
 	stopwatch := clock.Monotonic{}
 	signer := noopsigner.New()
 	localBlobs := blobstore.New(storeRoot)
@@ -544,9 +563,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkScannerUC = walkScannerUC.WithRealModcache(modcacheDir)
 		rescanWalkUC = rescanWalkUC.WithRealModcache(modcacheDir)
 	}
-	queryVulnUC := vulnapp.NewQueryVulnUseCase(vulnStore)
+	// Every vuln read is put through kanonarion's own call-graph search before it
+	// reaches a surface, so a negative another analyser only stayed silent about
+	// is answered by a search wherever a graph exists for the coordinate. It
+	// writes nothing: see searchedVulnQuery.
+	negSearcher := reachability.NewNegativeSearcher(cgLoader)
+	queryVulnUC := newSearchedVulnQuery(vulnapp.NewQueryVulnUseCase(vulnStore), negSearcher)
 	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, walkStore)
-	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
+	diffScanRunsUC := newSearchedDiffScanRuns(vulnapp.NewDiffScanRunsUseCase(vulnStore), negSearcher)
 
 	// ---- sbom use cases ----
 	// The version bump is the whole migration every time. SBOM records are a
@@ -654,6 +678,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		DiffScanRuns:        diffScanRunsUC,
 		VulnStore:           vulnStore,
 		VulnPipelineVersion: vulnapp.PipelineVersion,
+		NegativeSearch:      negSearcher,
 
 		GenerateSBOM: generateSBOMUC,
 		QuerySBOM:    querySBOMUC,

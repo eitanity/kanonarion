@@ -129,11 +129,14 @@ type contextDependency struct {
 type contextDependencies struct {
 	Status string `json:"status"`
 	WalkID string `json:"walk_id,omitempty"`
-	// Frame is the GOOS/GOARCH the answering walk resolved for, or "unrecorded"
-	// for a walk written before the frame was projected. Present whenever a walk
-	// answered: GOOS gates which files build, so a dependency list is a list for
-	// one platform.
-	Frame string `json:"frame,omitempty"`
+	// Frame is the GOOS/GOARCH the answering walk resolved for, or a token
+	// standing for the reason there is none, and FrameBasis is that reason as
+	// data: "platform", "not_platform_scoped" for a module-rooted walk (no
+	// platform applies), or "unrecorded" (the platform is not known). Both are
+	// present whenever a walk answered: GOOS gates which files build, so a
+	// dependency list for a project is a list for one platform.
+	Frame      string `json:"frame,omitempty"`
+	FrameBasis string `json:"frame_basis,omitempty"`
 	// Count and Partial are emitted whenever this section is rendered, zero and
 	// false included. A module with no direct dependencies is a measurement, and
 	// so is a walk that resolved every node; Status carries the cases where no
@@ -343,13 +346,13 @@ func newContextCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "context [<module>@<version>]",
-		Short: "Aggregate stored records into AI-ready context (no args: direct deps of ./go.mod)",
+		Short: "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
 		Long: `Aggregate all stored records for a module — verification, dependencies,
 license, interface, call graph, examples, vulnerabilities — into AI-ready
 context.
 
-With no arguments, context defaults to --gomod ./go.mod and emits one
-context entry per direct (non-indirect) dependency. This is the same module
+With no arguments, context defaults to --gomod ./go.mod and emits one context
+entry per module in the project's code-scope build list. This is the same module
 set a bare 'kanonarion inspect' walks, extracts, and vuln-scans, so the
 no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 		Example: `  kanonarion context golang.org/x/mod@v0.35.0

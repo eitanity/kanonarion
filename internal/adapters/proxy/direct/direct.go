@@ -78,6 +78,24 @@ const (
 	defaultProxy = "https://proxy.golang.org"
 	// maxZipBytes matches Go's own limit for module zips (500 MB).
 	maxZipBytes = 500 << 20
+	// metadataTimeout bounds a single METADATA request — .info, /@v/list,
+	// /@latest, .mod. It is measured, not chosen: 120 successful /@latest calls
+	// from this host answered with p50 0.08s, p90 0.11s, p99 0.58s and a slowest
+	// of 1.49s, so 10s is roughly seven times the slowest observed success and a
+	// genuinely slow link still gets its answer.
+	//
+	// The value it replaces was a 60s whole-client timeout, which almost never
+	// fired: the proxy gives up on an origin lookup it cannot complete at about
+	// 56s and answers 200 with an empty body, so the wait ended just inside the
+	// old deadline and ended with a non-answer. Waiting that minute buys nothing
+	// and the budget is better spent on a second attempt.
+	metadataTimeout = 10 * time.Second
+	// downloadTimeout bounds a module ZIP transfer, which is a different size of
+	// request: up to maxZipBytes of body, and http.Client.Timeout covers the body
+	// read as well as the headers. It keeps the 60s this adapter has always
+	// applied. A metadata timeout applied here would refuse large modules on slow
+	// links, which is the opposite of the intent.
+	downloadTimeout = 60 * time.Second
 )
 
 var MaxZipBytes int64 = maxZipBytes
@@ -87,6 +105,10 @@ type Proxy struct {
 	baseURL    string
 	httpClient *http.Client
 	insecure   bool
+
+	// metadataTimeout bounds a single metadata request. A field rather than the
+	// constant directly so tests can drive the timeout path without waiting.
+	metadataTimeout time.Duration
 }
 
 // New constructs a Proxy adapter. If baseURL is empty it uses $GOPROXY (first
@@ -111,11 +133,13 @@ func New(baseURL string, insecure bool) (*Proxy, error) {
 		return nil, fmt.Errorf("proxy URL %q uses plain HTTP; pass --insecure to allow (forces unverified status)", baseURL)
 	}
 	return &Proxy{
-		baseURL:  baseURL,
-		insecure: insecure,
-		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		baseURL:         baseURL,
+		insecure:        insecure,
+		metadataTimeout: metadataTimeout,
+		// No whole-client Timeout: the deadline is set per request, because a
+		// metadata lookup and a 500 MB zip do not deserve the same one. See
+		// metadataTimeout and downloadTimeout.
+		httpClient: &http.Client{},
 	}, nil
 }
 
@@ -288,8 +312,14 @@ func (p *Proxy) LatestInfo(ctx context.Context, path string) (_ LatestVersionInf
 		// accepted the request and has nothing to say, and "EOF" describes the
 		// decoder's position rather than what happened to the lookup — which
 		// is what the reader of the message has to act on.
+		//
+		// Typed, and carrying the same sentence it always did: the condition is
+		// transient under sweep load — a proxy that answers this for one module
+		// answers the same module properly seconds later — and a caller deciding
+		// whether to ask again classifies it by type rather than by parsing the
+		// sentence.
 		if errors.Is(err, io.EOF) {
-			return LatestVersionInfo{}, fmt.Errorf("proxy returned an empty response for %s@latest", path)
+			return LatestVersionInfo{}, &domain2.ProxyEmptyResponseError{Path: path}
 		}
 		return LatestVersionInfo{}, fmt.Errorf("decoding latest response for %s: %w", path, err)
 	}
@@ -334,7 +364,10 @@ func (p *Proxy) Download(ctx context.Context, coord coordinate.ModuleCoordinate)
 
 	// Fetch zip; enforce size limit to guard against resource exhaustion (T12).
 	zipURL := fmt.Sprintf("%s/%s/@v/%s.zip", p.baseURL, escapedPath, escapedVersion)
-	zipBody, err := p.get(ctx, zipURL)
+	// The zip takes downloadTimeout, not the metadata one: this deadline covers
+	// the whole body transfer, and a large module on a slow link legitimately
+	// needs longer than a lookup does.
+	zipBody, err := p.getWithTimeout(ctx, zipURL, downloadTimeout)
 	if err != nil {
 		return ports.ModuleDownload{}, fmt.Errorf("fetching zip: %w", err)
 	}
@@ -453,16 +486,45 @@ func hashZipBytes(data []byte) (string, error) {
 	return hash, nil
 }
 
+// get performs a metadata request under metadataTimeout. Every endpoint this
+// adapter treats as metadata — .info, /@v/list, /@latest, .mod — goes through
+// it; the zip transfer takes getWithTimeout(downloadTimeout) instead.
 func (p *Proxy) get(ctx context.Context, url string) (io.ReadCloser, error) {
+	return p.getWithTimeout(ctx, url, p.metadataTimeout)
+}
+
+// getWithTimeout performs the request under a deadline this adapter imposes,
+// derived from the caller's context so a caller that cancels still stops the
+// request immediately.
+//
+// The two contexts are what makes a timeout classifiable. When the request runs
+// out of time, reqCtx is done and the caller's ctx is not, and that comparison —
+// not the message text — is what says the deadline was the adapter's own. The
+// resulting ProxyRequestTimeoutError is transient and gets retried; a caller
+// cancellation or a caller's own expired deadline leaves ctx done too, is never
+// wrapped, and is still not retried.
+func (p *Proxy) getWithTimeout(ctx context.Context, url string, timeout time.Duration) (_ io.ReadCloser, retErr error) {
 	if !p.insecure && strings.HasPrefix(strings.ToLower(url), "http://") {
 		return nil, fmt.Errorf("refusing plain HTTP connection to %s", url)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	// The deadline has to outlive this function on the success path, because the
+	// body is read by the caller after it returns. It is released either here on
+	// every failure, or by the returned body's Close.
+	defer func() {
+		if retErr != nil {
+			cancel()
+		}
+	}()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request for %s: %w", url, err)
 	}
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
+		if terr, ok := classifyTimeout(ctx, reqCtx, url, timeout, err); ok {
+			return nil, terr
+		}
 		return nil, fmt.Errorf("executing request for %s: %w", url, err)
 	}
 	if resp.StatusCode == http.StatusNotFound {
@@ -480,7 +542,68 @@ func (p *Proxy) get(ctx context.Context, url string) (io.ReadCloser, error) {
 		}
 		return nil, statusErr
 	}
-	return resp.Body, nil
+	return &deadlineBody{
+		ReadCloser: resp.Body,
+		callerCtx:  ctx,
+		reqCtx:     reqCtx,
+		cancel:     cancel,
+		url:        url,
+		timeout:    timeout,
+	}, nil
+}
+
+// classifyTimeout reports whether cause is the adapter's own request deadline
+// firing, and if so describes it. The test is structural: the request's derived
+// context ran out of time while the caller's context is still live.
+//
+// It returns the concrete type and a bool rather than an error, because it
+// classifies cause rather than propagating it — a false result is not a
+// successful outcome, it is "this is some other failure, handle it yourself".
+func classifyTimeout(
+	callerCtx, reqCtx context.Context,
+	url string,
+	timeout time.Duration,
+	cause error,
+) (*domain2.ProxyRequestTimeoutError, bool) {
+	callerGaveUp := callerCtx.Err() != nil
+	adapterDeadlineFired := errors.Is(reqCtx.Err(), context.DeadlineExceeded)
+	if callerGaveUp || !adapterDeadlineFired {
+		// nilerr sees a non-nil context error above a nil return and reads it as
+		// a swallowed failure. It is the opposite: cause is the input being
+		// classified, not a result being propagated, and a false answer sends the
+		// caller to its own handling of cause rather than discarding it. The
+		// caller's context being done is precisely the case this must NOT claim.
+		return nil, false //nolint:nilerr // classifier: false means "not the adapter's timeout", cause is handled by the caller
+	}
+	return &domain2.ProxyRequestTimeoutError{URL: url, Timeout: timeout, Err: cause}, true
+}
+
+// deadlineBody holds the request deadline open until the body is closed, and
+// gives a read that runs out of time the same classification the request itself
+// gets. A metadata body arriving in pieces past the deadline is the same event
+// as headers that never arrived.
+type deadlineBody struct {
+	io.ReadCloser
+	callerCtx context.Context
+	reqCtx    context.Context
+	cancel    context.CancelFunc
+	url       string
+	timeout   time.Duration
+}
+
+func (b *deadlineBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		if terr, ok := classifyTimeout(b.callerCtx, b.reqCtx, b.url, b.timeout, err); ok {
+			return n, terr
+		}
+	}
+	return n, err //nolint:wrapcheck // pass-through of the body's own read error
+}
+
+func (b *deadlineBody) Close() error {
+	defer b.cancel()
+	return b.ReadCloser.Close() //nolint:wrapcheck // pass-through of the body's own close error
 }
 
 // Exported for testing.

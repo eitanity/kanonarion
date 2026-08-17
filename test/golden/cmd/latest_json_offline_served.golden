@@ -1,0 +1,20 @@
+# THE OFFLINE ANSWER: GOPROXY=off with a ledger row inside the TTL. The module is answered from the store, served_from_store is true and looked_up_at is the ORIGINAL lookup, not this run. It must match latest_json_populated byte for byte: a declared air gap changes where the answer comes from, never what it says.
+$ kanonarion latest example.com/mod --json
+exit 0
+--- stdout ---
+{
+  "module": "example.com/mod",
+  "latest": "v1.3.0",
+  "latest_date": "2025-06-01T00:00:00Z",
+  "latest_release_age_days": 273,
+  "is_latest": null,
+  "pin_ahead_of_latest": null,
+  "staleness_unmeasured": "not_asked",
+  "major_probed": true,
+  "republished_probed": false,
+  "deprecated": null,
+  "looked_up_at": "2026-02-28T23:50:00Z",
+  "served_from_store": true
+}
+--- stderr ---
+(empty)

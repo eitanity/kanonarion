@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // `inspect`, `walk`, and `context` each accept a positional module and
@@ -124,5 +127,69 @@ func TestContextNoGoModIsNotUsageError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "invalid arguments") {
 		t.Errorf("bare context must not fall through to a usage error, got: %v", err)
+	}
+}
+
+func TestVulnScanNoGoModIsNotUsageError(t *testing.T) {
+	chdirWithGoMod(t, "")
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"vuln-scan", "--store-root", t.TempDir()}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected error when ./go.mod is absent")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected resolveGoModPath diagnostic, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "provide either") {
+		t.Errorf("bare vuln-scan must not refuse with the alternatives list, got: %v", err)
+	}
+}
+
+func TestVulnScanDefaultsToCwdGoMod(t *testing.T) {
+	// A dependency-free module keeps this hermetic: the go.mod path resolves,
+	// the project walk is looked up, and no walk exists in a fresh store — the
+	// diagnostic proves the scan reached the go.mod scope path rather than the
+	// usage refusal.
+	chdirWithGoMod(t, "module example.com/mod\n\ngo 1.21\n")
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"vuln-scan", "--store-root", t.TempDir()}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("expected a no-walk diagnostic, got stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if strings.Contains(err.Error(), "provide either") {
+		t.Fatalf("bare vuln-scan should default --gomod to ./go.mod, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "walk") {
+		t.Errorf("expected a project-walk diagnostic from the go.mod scope path, got: %v", err)
+	}
+}
+
+// TestGoModFlagDefaultsAreStated is the grammar check over every command that
+// registers --gomod: a usage string that advertises a default must name the
+// path the shared resolver actually uses. resolveGoModPath stats ./go.mod in
+// the current directory and does not search upward, so no help text may say it
+// does.
+func TestGoModFlagDefaultsAreStated(t *testing.T) {
+	root := newRootCmd(io.Discard, io.Discard)
+	var walk func(c *cobra.Command)
+	seen := 0
+	walk = func(c *cobra.Command) {
+		if fl := c.Flags().Lookup("gomod"); fl != nil {
+			seen++
+			usage := fl.Usage
+			if strings.Contains(usage, "upward") {
+				t.Errorf("%s --gomod: no command searches upward for go.mod; usage says %q", c.Name(), usage)
+			}
+			if strings.Contains(usage, "default") && !strings.Contains(usage, "./go.mod") {
+				t.Errorf("%s --gomod: usage advertises a default that is not ./go.mod: %q", c.Name(), usage)
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	if seen == 0 {
+		t.Fatal("no command registered --gomod; the grammar check measured nothing")
 	}
 }

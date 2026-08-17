@@ -1,0 +1,12 @@
+# populated, text: the same verdict on the human channel.
+$ kanonarion reachability example.com/mod@v1.2.0 --vuln GO-2026-0001
+exit 0
+--- stdout ---
+GO-2026-0001 is REACHABLE in example.com/mod@v1.2.0 [confidence: High, by: govulncheck, fidelity: source, rooted at: target-rooted] [root: unrooted]
+  route (entry point first):
+    example.com/app main
+    example.com/mod@v1.2.0 Handle
+    example.com/mod@v1.2.0 Parse
+  root: unrooted — the route's entry point is in example.com/app, which names no version on the frame and is not the module the analysis frame identifies, so no call graph can be located for it
+--- stderr ---
+(empty)

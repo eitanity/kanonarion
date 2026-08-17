@@ -91,6 +91,14 @@ staleness:
   #
   # Set to 0 to disable serving entirely (every command re-pays the sweep).
   # ttl: 1h
+  #
+  # How many newer-major probe requests may be in flight at once. The probe asks
+  # whether a path one major above the pin exists, which is one request per
+  # module in the closure, and issuing them serially is what made a large sweep
+  # take tens of minutes. Wider is not simply faster: past the default the proxy
+  # starts answering 200 with an empty body, which is a lost answer rather than
+  # an error. Set to 0 for a serial probe.
+  # probe_concurrency: 16
 `,
 	"directive_policy": `
 directive_policy:

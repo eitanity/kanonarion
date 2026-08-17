@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -93,11 +94,29 @@ func fetchCapableInvocations() []struct {
 // file's reason to exist: GOPROXY=off is an operator declaring an air gap, and
 // a fetch that crosses it writes network-acquired evidence into a store that is
 // supposed to hold only what the enclave can see. Every fetch-capable command
-// must stop before the socket and say how to proceed offline.
+// must stop before the socket, and say how to proceed offline.
+//
+// `latest` says something different, and the difference is the point. The other
+// commands want module BYTES, and --from-modcache and `use --recursive` are the
+// two ways to get bytes without the network. `latest` wants an @latest version,
+// which neither produces; what it has instead is the staleness ledger, so it
+// serves a recorded lookup inside the TTL and refuses — naming THAT — when there
+// is none. Both refusals still stop before the socket, which is the contract
+// this file actually guards.
+//
+// `audit` is the second exception and is not listed here at all, because it no
+// longer refuses: its proxy served one column, so a construction refusal took
+// away a whole command an air-gapped operator can otherwise run. Its wiring
+// decision is pinned by TestGOPROXYOff_AuditKeepsTheLedgerLookup below, and its
+// whole offline run by the audit_text_no_network golden.
 func TestGOPROXYOff_EveryFetchCapableCommandRefusesBeforeAnyNetworkIO(t *testing.T) {
 	for _, tc := range fetchCapableInvocations() {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("GOPROXY", "off")
+			// An empty store, so `latest` has no recorded lookup to serve and
+			// the case is the refusal it is written to be — and so no run here
+			// reads the operator's own store.
+			t.Setenv("KANONARION_STORE", t.TempDir())
 			rec := installDialRecorder(t, true)
 
 			var stdout, stderr bytes.Buffer
@@ -111,9 +130,13 @@ func TestGOPROXYOff_EveryFetchCapableCommandRefusesBeforeAnyNetworkIO(t *testing
 			// The refusal has to name the contract it is honouring and the
 			// ways to proceed without the network; an operator who is told
 			// only "no" has to guess.
-			for _, want := range []string{"GOPROXY=off", "--from-modcache", "use --recursive"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("refusal does not mention %q: %v", want, err)
+			want := []string{"GOPROXY=off", "--from-modcache", "use --recursive"}
+			if tc.name == "latest" {
+				want = []string{"no proxy fetching", "staleness.ttl"}
+			}
+			for _, phrase := range want {
+				if !strings.Contains(err.Error(), phrase) {
+					t.Errorf("refusal does not mention %q: %v", phrase, err)
 				}
 			}
 			if dialed := rec.dialed(); len(dialed) != 0 {
@@ -131,6 +154,7 @@ func TestGOPROXYDirect_NeverContactsTheDefaultProxy(t *testing.T) {
 	for _, tc := range fetchCapableInvocations() {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("GOPROXY", "direct")
+			t.Setenv("KANONARION_STORE", t.TempDir())
 			rec := installDialRecorder(t, true)
 
 			var stdout, stderr bytes.Buffer
@@ -233,5 +257,59 @@ func TestRefusingProxy_AnswersEveryPortMethod(t *testing.T) {
 	}
 	if _, err := p.DownloadGoMod(ctx, coord); err == nil {
 		t.Error("DownloadGoMod did not refuse")
+	}
+}
+
+// TestGOPROXYOff_AuditKeepsTheLedgerLookup is `audit`'s half of the same
+// correction, at the seam where the decision is made.
+//
+// audit's proxy answers ONE column. Refusing to build it stopped the walk, the
+// licences, the advisories and every stored answer already paid for, because a
+// single column could not be measured. Under a declared air gap the ledger-only
+// lookup answers instead — the same object --from-modcache has always used, so
+// the two modes cannot say different things about the same row.
+//
+// The dial recorder is installed for the same reason as everywhere else in this
+// file: not refusing must not become quietly reaching out.
+func TestGOPROXYOff_AuditKeepsTheLedgerLookup(t *testing.T) {
+	tests := []struct {
+		name        string
+		goproxy     string
+		modcache    bool
+		wantOffline bool
+		wantErr     bool
+	}{
+		{name: "off keeps the ledger lookup", goproxy: "off", wantOffline: true},
+		{name: "from-modcache is unchanged", goproxy: "off", modcache: true, wantOffline: true},
+		{name: "direct still refuses", goproxy: "direct", wantErr: true},
+		{name: "a proxy URL resolves live", goproxy: "https://127.0.0.1:1"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := installDialRecorder(t, true)
+			if tc.modcache {
+				offlineMode(t)
+			}
+			lookup, err := auditStalenessLookup(tc.goproxy, offlineLedger(t), discardLogger(), "go.mod", nil, io.Discard)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected a refusal, got %T", lookup)
+				}
+				if got := ExitCodeForError(err); got != ExitConfig {
+					t.Errorf("exit code = %d, want ExitConfig(%d): %v", got, ExitConfig, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("auditStalenessLookup(%q): %v", tc.goproxy, err)
+			}
+			_, offline := lookup.(*offlineStalenessLookup)
+			if offline != tc.wantOffline {
+				t.Errorf("lookup is %T, offline=%v, want offline=%v", lookup, offline, tc.wantOffline)
+			}
+			if dialed := rec.dialed(); len(dialed) != 0 {
+				t.Errorf("dialled %v while choosing a staleness lookup", dialed)
+			}
+		})
 	}
 }

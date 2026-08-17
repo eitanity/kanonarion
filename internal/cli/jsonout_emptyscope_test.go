@@ -62,7 +62,7 @@ func TestLatestGomod_EmptyScope_JSONIsEmptyArray(t *testing.T) {
 	defer func() { jsonOut = false }()
 
 	var stdout, stderr bytes.Buffer
-	if err := runLatestGomod(context.Background(), p, scopeTool, nil, &stdout, &stderr); err != nil {
+	if err := runLatestGomod(context.Background(), p, scopeTool, func([]string) stalenessLookup { return nil }, &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := strings.TrimSpace(stdout.String())
@@ -82,7 +82,7 @@ func TestLatestGomod_EmptyScope_JSONIsEmptyArray(t *testing.T) {
 func TestLatestGomod_EmptyScope_TextKeepsProse(t *testing.T) {
 	p := emptyToolScopeGoMod(t)
 	var stdout, stderr bytes.Buffer
-	if err := runLatestGomod(context.Background(), p, scopeTool, nil, &stdout, &stderr); err != nil {
+	if err := runLatestGomod(context.Background(), p, scopeTool, func([]string) stalenessLookup { return nil }, &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "no tool dependencies found") {

@@ -167,7 +167,8 @@ func TestReachabilitySoundnessLevels_IsExhaustiveAndOrdered(t *testing.T) {
 	}
 	for _, want := range []domain.ReachabilitySoundness{
 		domain.SoundnessConfirmed, domain.SoundnessInferred,
-		domain.SoundnessUnconfirmed, domain.SoundnessUnsearchable, domain.SoundnessNotStated,
+		domain.SoundnessUnconfirmed, domain.SoundnessUnsearchable,
+		domain.SoundnessDisputed, domain.SoundnessNotStated,
 	} {
 		if !seen[want] {
 			t.Errorf("%s is missing from ReachabilitySoundnessLevels", want)
@@ -215,6 +216,7 @@ func TestSoundnessMarshalsTheNamedZero(t *testing.T) {
 		{domain.SoundnessInferred, `"inferred"`},
 		{domain.SoundnessUnconfirmed, `"unconfirmed"`},
 		{domain.SoundnessUnsearchable, `"unsearchable"`},
+		{domain.SoundnessDisputed, `"disputed"`},
 	} {
 		raw, err := json.Marshal(tc.rung)
 		if err != nil {

@@ -165,6 +165,8 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 		return marshalConfigYAML(cfg.Callgraph.Exclude)
 	case key == "staleness.ttl":
 		return cfg.Staleness.TTL.String(), nil
+	case key == "staleness.probe_concurrency":
+		return strconv.Itoa(cfg.Staleness.ProbeConcurrency), nil
 	case key == "fetch_policy.allowed_vcs_hosts":
 		if cfg.FetchPolicy.AllowedVCSHosts == nil {
 			// Absent is a distinct answer from empty, and printing "[]" would
@@ -283,6 +285,8 @@ func configSetPath(key string) ([]string, error) {
 		return []string{"callgraph", "exclude"}, nil
 	case key == "staleness.ttl":
 		return []string{"staleness", "ttl"}, nil
+	case key == "staleness.probe_concurrency":
+		return []string{"staleness", "probe_concurrency"}, nil
 	case key == "fetch_policy.allowed_vcs_hosts":
 		return []string{"fetch_policy", "allowed_vcs_hosts"}, nil
 	default:
@@ -331,6 +335,19 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 		}
 		if _, err := time.ParseDuration(node.Value); err != nil {
 			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl must be a duration (e.g. 1h, 30m, 0), got %q", value)}
+		}
+	case key == "staleness.probe_concurrency":
+		// Bounded, and the bound is a correctness setting rather than a speed
+		// one: past the default the proxy starts answering 200 with an empty
+		// body, which is a lost answer rather than an error. 0 is a serial probe.
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
+			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"staleness.probe_concurrency requires a whole number (0 for a serial probe), got %q", value)}
+		}
+		n, err := strconv.Atoi(node.Value)
+		if err != nil || n < 0 {
+			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"staleness.probe_concurrency must not be negative (use 0 for a serial probe), got %q", value)}
 		}
 	case key == "fetch_policy.allowed_vcs_hosts":
 		if node.Kind != yaml.SequenceNode {

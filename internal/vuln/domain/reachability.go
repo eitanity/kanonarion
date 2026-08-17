@@ -1,6 +1,9 @@
 package domain
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // ReachabilityAnalyser names the instrument that produced a reachability
 // answer.
@@ -154,6 +157,26 @@ func (r ReachabilityRoute) IsVersioned() bool {
 	return crossed
 }
 
+// String renders the route as its hops joined by arrows, entry point first.
+//
+// A long route is elided in the middle rather than truncated at the end: the
+// two hops a reader checks first are where the path starts and what it reaches,
+// and dropping the tail would remove the second one.
+func (r ReachabilityRoute) String() string {
+	const shown = 6
+	frames := make([]string, 0, len(r))
+	for _, f := range r {
+		frames = append(frames, f.String())
+	}
+	if len(frames) > shown {
+		head := frames[:shown-1]
+		tail := frames[len(frames)-1]
+		return strings.Join(head, " -> ") +
+			" -> … (" + strconv.Itoa(len(frames)-shown) + " more) -> " + tail
+	}
+	return strings.Join(frames, " -> ")
+}
+
 // Reverse returns the route in the opposite order. It exists for the
 // govulncheck adapter, whose trace arrives vulnerable-symbol-first.
 func (r ReachabilityRoute) Reverse() ReachabilityRoute {
@@ -230,6 +253,82 @@ func StampReachabilityRooting(record *VulnerabilityRecord) {
 	}
 }
 
+// NegativeSearch is the result of running kanonarion's own call-graph search
+// for a finding whose recorded negative rests on another analyser's silence.
+//
+// It is attached at READ time and never serialised: the stored record is left
+// byte-identical, so a search that runs today classifies every negative already
+// in the store without a re-scan and without a pipeline generation. It is the
+// same move NegativeSoundness itself makes — derive from what is held rather
+// than freeze an answer into new records — carried one step further, from
+// classifying the recorded derivation to running the search that derivation
+// admits never ran.
+//
+// A nil NegativeSearch means no search ran: no call graph is held for the
+// coordinate, the graph names none of the advisory's symbols, or the negative
+// was not one this search may speak to. It never means "searched and found
+// nothing"; that is a non-nil value with PathFound false.
+type NegativeSearch struct {
+	// Fidelity is the completeness level of the graph searched, in the
+	// call-graph ladder's own terms. It is what decides whether a clean search
+	// may confirm the negative.
+	Fidelity string
+	// PathFound reports that the search DID reach a vulnerable symbol from an
+	// entry point — a direct contradiction of the negative the record states.
+	PathFound bool
+	// Route is that path, entry point first. Empty unless PathFound.
+	Route ReachabilityRoute
+	// InRecordedFrame reports whether the graph searched is a graph OF the frame
+	// the record was measured in — the analysed module's own build — rather than
+	// a graph of the module standing alone inside someone else's.
+	//
+	// It decides what a found path is allowed to mean, and the asymmetry is the
+	// point. A search that finds NOTHING confirms in any frame: a consumer can
+	// only enter a module through the roots this graph already traverses from, so
+	// what the module cannot reach in its own graph, no build above it reaches
+	// either. A search that finds a path proves only that the module reaches the
+	// symbol WITHIN ITSELF, which is not the question a record measured in
+	// another build asked, and contradicting that record with it would report a
+	// disagreement that does not exist.
+	InRecordedFrame bool
+}
+
+// disputedReason states a contradiction between two analysers in full, naming
+// both answers and the path the second one found.
+//
+// It says what each instrument was answering about, because the two questions
+// are not the same one: an analyser's silence is about the build it analysed,
+// and a search over the stored graph is about the graph kanonarion holds. A
+// disagreement between them is therefore information — most often about
+// dispatch the first analyser could not follow — and not automatically an error
+// in either.
+func disputedReason(recorded ReachabilityDerivation, s *NegativeSearch) string {
+	var b strings.Builder
+	b.WriteString("the negative was recorded by " + recorded.Analyser.String())
+	if recorded.Fidelity != "" {
+		b.WriteString(" at fidelity " + recorded.Fidelity)
+	}
+	b.WriteString(", but a call-graph search over kanonarion's own ")
+	b.WriteString(s.Fidelity)
+	b.WriteString(" graph reaches the vulnerable symbol")
+	if len(s.Route) == 1 {
+		// A one-hop route is not a call chain: the symbol is itself a root the
+		// search starts from. Saying "a path was found" for it would overstate
+		// what was measured, and being a root is the substance of the
+		// disagreement — a root is shipped code an application enters by dispatch
+		// no static analysis can enumerate, or a library's own exported API, and
+		// the recorded analyser treated it as entered by nothing.
+		b.WriteString(" as a traversal root: " + s.Route[0].String() +
+			" is itself an entry point of the analysed module's graph, not a symbol behind one")
+	} else if r := s.Route.String(); r != "" {
+		b.WriteString(" along " + r)
+	}
+	b.WriteString(". The two disagree — the recorded answer is about the build that analyser saw, " +
+		"the search is about the graph this store holds — so the negative is reported as measured " +
+		"and is NOT confirmed; treat it as open until one of the two is explained")
+	return b.String()
+}
+
 // completenessBuiltWithBodies is the one call-graph fidelity a confident
 // negative may rest on, as a string because a VulnerabilityRecord and a
 // ReachabilityDerivation both store the level as one and this domain does not
@@ -274,6 +373,13 @@ const completenessBuiltWithBodies = "BUILT_WITH_BODIES"
 //  5. An answer that does not name its analyser is unconfirmed. It may have come
 //     from anywhere, and a search that cannot be identified cannot be weighed.
 //
+// Between rules 2 and 3 sits the read-time search — see NegativeSearch. Where
+// one ran and came back empty it becomes the derivation rules 3 to 5 weigh, so a
+// negative stamped from silence is judged on the search that has since run over
+// it rather than on the silence. Where it found a path instead, rule 4 still
+// refuses to confirm and the rung says the two analysers disagree; the recorded
+// verdict is never overwritten by the search, in either direction.
+//
 // reason is always non-empty when a rung is returned, and it names the basis in
 // the producing analyser's own terms. A bare rung is a label, and a label is what
 // turns a measurement into a verdict.
@@ -286,6 +392,46 @@ func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness,
 	}
 
 	d := f.Reachable.DerivedBy
+	// A search that ran at read time answers ahead of the recorded derivation,
+	// which by construction is one that never searched. Where it found the path
+	// the record denies, neither answer is discarded: rule 4 still refuses to
+	// confirm, and the rung says the two disagree.
+	if s := f.NegativeSearch; s != nil {
+		switch {
+		case s.PathFound && s.InRecordedFrame:
+			return SoundnessDisputed, disputedReason(d, s)
+		case s.PathFound:
+			// A path inside the module's own graph is not a contradiction of a
+			// negative measured in another build. The recorded rung stands, and the
+			// path is stated beside it rather than dropped: a route this tool found
+			// and did not report is the one outcome a reachability tool must never
+			// produce.
+			rung, reason := soundnessFromDerivation(d)
+			return rung, reason + crossFrameNote(s)
+		default:
+			d = ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting}
+		}
+	}
+	return soundnessFromDerivation(d)
+}
+
+// crossFrameNote states a path the search found in the module's own graph that
+// the recorded frame's question did not ask about.
+func crossFrameNote(s *NegativeSearch) string {
+	note := " — separately, a call-graph search over this module's own " + s.Fidelity +
+		" graph does reach the vulnerable symbol from that module's own entry points"
+	if r := s.Route.String(); r != "" && len(s.Route) > 1 {
+		note += " along " + r
+	}
+	return note + ". That is a different question from the one this record answers, so it does not contradict the negative;" +
+		" it is stated because a route found and not reported is worse than one reported with its frame named"
+}
+
+// soundnessFromDerivation is the rung a negative earns from the instrument that
+// produced it and how well that instrument could see. It is separate from
+// NegativeSoundness so that a read-time search and a recorded derivation are
+// weighed on exactly one ladder.
+func soundnessFromDerivation(d ReachabilityDerivation) (soundness ReachabilitySoundness, reason string) {
 	switch d.Analyser {
 	case AnalyserCallGraphBFS:
 		if d.Fidelity == completenessBuiltWithBodies {

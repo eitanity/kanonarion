@@ -1,0 +1,57 @@
+# empty: nothing is stored for this coordinate; every section must say so rather than be omitted.
+$ kanonarion context example.com/absent@v9.9.9 --json
+exit 0
+--- stdout ---
+{
+  "module": {
+    "path": "example.com/absent",
+    "version": "v9.9.9"
+  },
+  "commands": {
+    "interface": "kanonarion interface-show example.com/absent@v9.9.9",
+    "call_graph": "kanonarion callgraph-show example.com/absent@v9.9.9",
+    "call_graph_nav": "kanonarion callers \u003csymbol\u003e | kanonarion callees \u003csymbol\u003e",
+    "examples": "kanonarion examples-find \u003csymbol\u003e | kanonarion examples-show example.com/absent@v9.9.9 \u003cname\u003e",
+    "vulnerabilities": "kanonarion vuln-show example.com/absent@v9.9.9",
+    "license": "kanonarion license example.com/absent@v9.9.9",
+    "dependents": "kanonarion dependents example.com/absent@v9.9.9"
+  },
+  "verification": {
+    "status": "not_fetched",
+    "retracted": false
+  },
+  "provenance": {
+    "fork_heuristic": {
+      "status": "none",
+      "catalogue_version": "1.0.0"
+    }
+  },
+  "dependencies": {
+    "status": "not_run",
+    "count": 0,
+    "partial": false
+  },
+  "license": {
+    "status": "not_run",
+    "low_confidence_coverage": null
+  },
+  "interface": {
+    "status": "not_run"
+  },
+  "call_graph": {
+    "status": "not_run",
+    "node_count": 0,
+    "edge_count": 0,
+    "entry_point_count": null
+  },
+  "examples": {
+    "status": "not_run",
+    "count": 0
+  },
+  "vulnerabilities": {
+    "status": "not_run",
+    "snapshot_age_days": null
+  }
+}
+--- stderr ---
+(empty)

@@ -129,8 +129,10 @@ func TestListWalks_ExplicitPlatformNeverMatchesAnUnrecordedFrame(t *testing.T) {
 	if len(got) != 1 || got[0].ID != frameless.ID {
 		t.Fatalf("an explicitly empty filter returned %+v, want the frame-unrecorded walk", got)
 	}
-	if got[0].BuildFrame() != "unrecorded" {
-		t.Errorf("frame-unrecorded summary rendered as %q, want unrecorded", got[0].BuildFrame())
+	// buildWalkRecord is rooted at a published coordinate, so no platform applies
+	// to it — which is a different fact from a platform that was not recorded.
+	if got[0].BuildFrame() != "not-platform-scoped" {
+		t.Errorf("frameless module-rooted summary rendered as %q, want not-platform-scoped", got[0].BuildFrame())
 	}
 }
 

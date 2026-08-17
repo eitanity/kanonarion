@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,14 +19,22 @@ var errProxyDown = errors.New("proxy down")
 
 // fakeProxy answers from a fixed map. Any path not in it is absent, which is
 // what bounds the probe. Paths in fail return errProxyDown instead.
+//
+// It is mutex-guarded because the port is now called concurrently: the probe
+// asks in bounded parallel rounds, so a fake that records its calls is a fake
+// with shared mutable state.
 type fakeProxy struct {
 	versions map[string]string
 	fail     map[string]bool
-	calls    []string
+
+	mu    sync.Mutex
+	calls []string
 }
 
 func (f *fakeProxy) LatestInfo(_ context.Context, path string) (ports.LatestInfo, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, path)
+	f.mu.Unlock()
 	if f.fail[path] {
 		return ports.LatestInfo{}, errProxyDown
 	}
@@ -194,9 +204,15 @@ func TestResolve_ExpiredRowIsRequeried(t *testing.T) {
 	}
 }
 
-// --fresh must suppress ledger READS but still write: a freshly measured fact
+// --fresh must suppress ledger ANSWERS but still write: a freshly measured fact
 // is exactly what the next run should be served.
-func TestResolve_FreshBypassesTheReadAndStillWrites(t *testing.T) {
+//
+// The row is still READ. --fresh says "do not answer me from the ledger"; it
+// does not say "forget what the ledger established", and the recorded row holds
+// facts a live per-path resolution structurally cannot re-establish — the
+// deprecation notice among them. What the test pins is that nothing read is
+// served: the answer is the live one and Served is false.
+func TestResolve_FreshBypassesTheAnswerAndStillWrites(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	ledger := newFakeLedger()
 	ledger.rows["example.com/mod"] = domain.Record{
@@ -212,8 +228,8 @@ func TestResolve_FreshBypassesTheReadAndStillWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if ledger.reads != 0 {
-		t.Errorf("--fresh must not read the ledger, got %d reads", ledger.reads)
+	if ans.Served {
+		t.Error("--fresh answered from the ledger")
 	}
 	if ans.LatestVersion != "v1.9.0" {
 		t.Errorf("LatestVersion = %q, want the live v1.9.0", ans.LatestVersion)
@@ -333,17 +349,16 @@ func TestResolve_UnpinnedUsesTheResolvedLatestToPlaceTheProbe(t *testing.T) {
 	}
 }
 
-// TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead
+// TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndOnTheRead
 //
-// There are two ways to ask for a live lookup and they are not the same
-// mechanism. --fresh suppresses the ledger READ. A zero staleness.ttl leaves
-// the read in place and makes every row fail FreshAt. Both produce a live
-// answer and both still write, so the answer never depends on which was used;
-// what differs is whether the ledger is touched at all, which is visible when
-// the ledger itself is broken — a zero TTL surfaces that read failure, --fresh
-// cannot. Pinned here because "two ways to ask the same question" is exactly
-// the shape that drifts apart unmeasured.
-func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead(t *testing.T) {
+// There are two ways to ask for a live lookup, by different mechanisms: --fresh
+// refuses to SERVE the row, a zero staleness.ttl makes every row fail FreshAt.
+// Both read the row, neither serves it, both produce a live answer and both
+// write. Pinned here because "two ways to ask the same question" is exactly the
+// shape that drifts apart unmeasured — and because the read is not optional on
+// either path: the recorded row carries facts a live per-path resolution cannot
+// re-establish, and dropping it before the write is how a query destroyed one.
+func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndOnTheRead(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	stored := domain.Record{
 		ModulePath:    "example.com/mod",
@@ -358,7 +373,7 @@ func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead(t *testing.T)
 		fresh     bool
 		wantReads int
 	}{
-		{name: "fresh bypasses the read", ttl: time.Hour, fresh: true, wantReads: 0},
+		{name: "fresh reads and refuses to serve", ttl: time.Hour, fresh: true, wantReads: 1},
 		{name: "a zero TTL reads and rejects", ttl: 0, fresh: false, wantReads: 1},
 	}
 	for _, tt := range tests {
@@ -382,7 +397,8 @@ func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead(t *testing.T)
 			if ledger.writes != 1 {
 				t.Errorf("writes = %d, want 1 — a live lookup is what the next run should be served", ledger.writes)
 			}
-			// The mechanism is not the same.
+			// Both read the row — one to reject it as expired, one because
+			// --fresh forbids serving it, not knowing it.
 			if ledger.reads != tt.wantReads {
 				t.Errorf("ledger reads = %d, want %d", ledger.reads, tt.wantReads)
 			}
@@ -405,14 +421,22 @@ func TestResolve_IncompatiblePinFindsItsOwnMajorRepublished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if !ans.NewerMajor.Exists() {
+	if !ans.Republication.Exists() {
 		t.Fatal("the republished /v2 must be reported, not a recorded negative")
 	}
-	if ans.NewerMajor.Path != "github.com/gavv/httpexpect/v2" {
-		t.Errorf("NewerMajor.Path = %q, want github.com/gavv/httpexpect/v2", ans.NewerMajor.Path)
+	if ans.Republication.Path != "github.com/gavv/httpexpect/v2" {
+		t.Errorf("Republication.Path = %q, want github.com/gavv/httpexpect/v2", ans.Republication.Path)
 	}
-	if ans.NewerMajor.Version != "v2.16.0" {
-		t.Errorf("NewerMajor.Version = %q, want v2.16.0", ans.NewerMajor.Version)
+	if ans.Republication.Version != "v2.16.0" {
+		t.Errorf("Republication.Version = %q, want v2.16.0", ans.Republication.Version)
+	}
+	// The republication is NOT a newer major. The major number is unchanged and
+	// only the path moved, and the walk above it found nothing at all.
+	if ans.NewerMajor.Exists() {
+		t.Errorf("NewerMajor.Path = %q, want empty: /v2 is the pin's own major, not a newer one", ans.NewerMajor.Path)
+	}
+	if !ans.NewerMajor.Probed {
+		t.Error("the walk ran and found nothing; that is a recorded negative, not an unasked question")
 	}
 	// FromMajor still names the WALK's start. The same-major question is not a
 	// step of the walk, and the stored start keeps its meaning.
@@ -476,25 +500,83 @@ func TestResolve_IncompatiblePinStepsOverItsAbsentOwnMajor(t *testing.T) {
 	}
 }
 
-// When both exist the row reports the HIGHEST major found. The republished
-// same-major is the answer only when there is nothing above it.
-func TestResolve_IncompatiblePinReportsTheHighestMajorWhenBothExist(t *testing.T) {
+// When both exist the row reports BOTH, in separate fields. The go-chi/chi
+// shape: /v3 is the pin's own major republished — a patch-level move to the
+// path the toolchain expects — and /v5 is a two-major migration. The walk used
+// to overwrite the republication, so the cheaper move never reached the output.
+func TestResolve_IncompatiblePinReportsBothWhenBothExist(t *testing.T) {
 	proxy := &fakeProxy{versions: map[string]string{
-		"example.com/mod":    "v2.22.0+incompatible",
-		"example.com/mod/v2": "v2.30.0",
-		"example.com/mod/v3": "v3.1.0",
+		"example.com/mod":    "v3.3.4+incompatible",
+		"example.com/mod/v3": "v3.3.5",
+		"example.com/mod/v4": "v4.1.3",
+		"example.com/mod/v5": "v5.3.1",
 	}}
 	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
 
-	ans, err := r.Resolve(context.Background(), "example.com/mod", "v2.22.0+incompatible")
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v3.3.4+incompatible")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if ans.NewerMajor.Path != "example.com/mod/v3" {
-		t.Errorf("NewerMajor.Path = %q, want example.com/mod/v3", ans.NewerMajor.Path)
+	if ans.Republication.Path != "example.com/mod/v3" {
+		t.Errorf("Republication.Path = %q, want example.com/mod/v3", ans.Republication.Path)
 	}
-	if ans.NewerMajor.Version != "v3.1.0" {
-		t.Errorf("NewerMajor.Version = %q, want v3.1.0", ans.NewerMajor.Version)
+	if ans.Republication.Version != "v3.3.5" {
+		t.Errorf("Republication.Version = %q, want v3.3.5", ans.Republication.Version)
+	}
+	// The non-zero control on the same row: the genuine next major is still the
+	// highest the walk found, and it is still reported.
+	if ans.NewerMajor.Path != "example.com/mod/v5" {
+		t.Errorf("NewerMajor.Path = %q, want example.com/mod/v5", ans.NewerMajor.Path)
+	}
+	if ans.NewerMajor.Version != "v5.3.1" {
+		t.Errorf("NewerMajor.Version = %q, want v5.3.1", ans.NewerMajor.Version)
+	}
+}
+
+// The higher-major-only shape, and the control for the two above:
+// Masterminds/sprig has no /v2 and a real /v3, so the republication is a
+// recorded negative — ASKED, and absent — while the newer major is reported.
+func TestResolve_IncompatiblePinWithOnlyAHigherMajorRecordsAnAskedAbsence(t *testing.T) {
+	proxy := &fakeProxy{versions: map[string]string{
+		"github.com/Masterminds/sprig":    "v2.22.0+incompatible",
+		"github.com/Masterminds/sprig/v3": "v3.3.0",
+	}}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "github.com/Masterminds/sprig", "v2.22.0+incompatible")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !ans.Republication.Asked {
+		t.Error("a +incompatible pin asks the republication question; the row must record that it was asked")
+	}
+	if ans.Republication.Exists() {
+		t.Errorf("Republication.Path = %q, want a recorded negative", ans.Republication.Path)
+	}
+	if ans.NewerMajor.Path != "github.com/Masterminds/sprig/v3" {
+		t.Errorf("NewerMajor.Path = %q, want github.com/Masterminds/sprig/v3", ans.NewerMajor.Path)
+	}
+}
+
+// A pin that never asks the question records Asked false, which is not the same
+// answer as "asked, not republished". A /vN pin is the case: probing its own
+// major would name the pin as its own upgrade.
+func TestResolve_PinThatDoesNotAskRecordsTheQuestionAsUnasked(t *testing.T) {
+	proxy := &fakeProxy{versions: map[string]string{
+		"example.com/mod/v2": "v2.16.0",
+	}}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod/v2", "v2.16.0")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ans.Republication.Asked {
+		t.Error("a /vN pin never asks the republication question; Asked must stay false")
+	}
+	// The non-zero control: the walk itself DID run and recorded its negative.
+	if !ans.NewerMajor.Probed {
+		t.Error("the walk ran; NewerMajor.Probed must be true")
 	}
 }
 
@@ -521,14 +603,19 @@ func TestResolve_SuffixedPinDoesNotReprobeItsOwnMajor(t *testing.T) {
 	}
 }
 
-// The change alters what a probe RECORDS, not how a row is keyed, so no stored
-// row is invalidated by it and none is re-probed on account of it. A row
-// written before the change stays servable until its lookup time falls outside
-// the TTL — which is the only thing that qualifies this ledger, and the only
-// way a stale row is told from a current one.
-func TestResolve_RowFromBeforeTheChangeExpiresRatherThanBeingInvalidated(t *testing.T) {
+// A row written before the republication was a separate fact is NOT servable to
+// a pin that asks the question, inside the TTL or not. Its Republication.Asked
+// is false, which says the question was never put — and the rows this shape
+// actually wrote carry the module's own major under newer_major_path, so
+// serving one would keep printing the label this change removes.
+//
+// This reverses what the previous shape of this test asserted. The change is no
+// longer only about what a probe RECORDS: the same-major answer is now a
+// separate field, and a row that predates the field cannot answer for it.
+func TestResolve_RowFromBeforeTheRepublicationFieldIsReProbedForAPinThatAsks(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	// The recorded negative the probe produced before it asked about /v2.
+	// The row the previous shape wrote: the walk recorded, the republication
+	// question absent from the record entirely.
 	before := domain.Record{
 		ModulePath:    "github.com/gavv/httpexpect",
 		LatestVersion: "v2.0.0+incompatible",
@@ -542,7 +629,7 @@ func TestResolve_RowFromBeforeTheChangeExpiresRatherThanBeingInvalidated(t *test
 		}}
 	}
 
-	t.Run("inside the TTL it is served unchanged", func(t *testing.T) {
+	t.Run("inside the TTL it is re-probed for the pin that asks", func(t *testing.T) {
 		ledger := newFakeLedger()
 		ledger.rows[before.ModulePath] = before
 		px := proxy()
@@ -552,8 +639,32 @@ func TestResolve_RowFromBeforeTheChangeExpiresRatherThanBeingInvalidated(t *test
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
+		if ans.Served {
+			t.Error("a row that never asked the republication question must not answer a pin that does")
+		}
+		if ans.Republication.Path != "github.com/gavv/httpexpect/v2" {
+			t.Errorf("Republication.Path = %q, want github.com/gavv/httpexpect/v2", ans.Republication.Path)
+		}
+	})
+
+	// The non-zero control: a pin that does NOT ask the question is still served
+	// from the same row. Only the leg the row cannot answer is re-probed.
+	t.Run("a pin that does not ask is still served", func(t *testing.T) {
+		ledger := newFakeLedger()
+		row := before
+		row.ModulePath = "example.com/quiet"
+		row.LatestVersion = "v1.9.0"
+		row.NewerMajor = domain.NewerMajor{Probed: true, FromMajor: 2}
+		ledger.rows[row.ModulePath] = row
+		px := &fakeProxy{versions: map[string]string{"example.com/quiet": "v1.9.0"}}
+		r := application.NewResolver(px, ledger, &fixedClock{t: now}, time.Hour, false)
+
+		ans, err := r.Resolve(context.Background(), row.ModulePath, "v1.5.0")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
 		if !ans.Served {
-			t.Error("a row inside the TTL is served; nothing about the change invalidates it")
+			t.Error("a plain pin asks nothing new; its row is still reusable")
 		}
 		if len(px.calls) != 0 {
 			t.Errorf("proxy calls = %v, want none", px.calls)
@@ -573,8 +684,8 @@ func TestResolve_RowFromBeforeTheChangeExpiresRatherThanBeingInvalidated(t *test
 		if ans.Served {
 			t.Error("a row outside the TTL must not be served")
 		}
-		if ans.NewerMajor.Path != "github.com/gavv/httpexpect/v2" {
-			t.Errorf("NewerMajor.Path = %q, want github.com/gavv/httpexpect/v2", ans.NewerMajor.Path)
+		if ans.Republication.Path != "github.com/gavv/httpexpect/v2" {
+			t.Errorf("Republication.Path = %q, want github.com/gavv/httpexpect/v2", ans.Republication.Path)
 		}
 	})
 
@@ -589,11 +700,136 @@ func TestResolve_RowFromBeforeTheChangeExpiresRatherThanBeingInvalidated(t *test
 		if err != nil {
 			t.Fatalf("Resolve: %v", err)
 		}
-		if ans.NewerMajor.Path != "github.com/gavv/httpexpect/v2" {
-			t.Errorf("NewerMajor.Path = %q, want github.com/gavv/httpexpect/v2", ans.NewerMajor.Path)
+		if ans.Republication.Path != "github.com/gavv/httpexpect/v2" {
+			t.Errorf("Republication.Path = %q, want github.com/gavv/httpexpect/v2", ans.Republication.Path)
 		}
-		if stored := ledger.rows[before.ModulePath]; stored.NewerMajor.Path != "github.com/gavv/httpexpect/v2" {
-			t.Errorf("stored NewerMajor.Path = %q, want the freshly measured one", stored.NewerMajor.Path)
+		if stored := ledger.rows[before.ModulePath]; stored.Republication.Path != "github.com/gavv/httpexpect/v2" {
+			t.Errorf("stored Republication.Path = %q, want the freshly measured one", stored.Republication.Path)
 		}
 	})
+}
+
+// A stored row written before the republication was a separate fact carries
+// NewerMajor.Probed true and Republication.Asked false. It answers the walk and
+// nothing else, so a pin that ASKS the republication question must not be served
+// from it: doing so would answer a question the row never put, and — for the
+// rows this shape actually wrote — would keep serving the module's own major
+// under the newer-major label.
+func TestResolve_StoredRowThatNeverAskedTheRepublicationQuestionIsNotServed(t *testing.T) {
+	now := time.Now()
+	ledger := newFakeLedger()
+	ledger.rows["example.com/mod"] = domain.Record{
+		ModulePath:    "example.com/mod",
+		LatestVersion: "v1.1.3",
+		// The walk's start for a v2+incompatible pin, so the FromMajor gate on
+		// its own would serve this row.
+		NewerMajor: domain.NewerMajor{Probed: true, FromMajor: 3},
+		LookedUpAt: now,
+	}
+	proxy := &fakeProxy{versions: map[string]string{
+		"example.com/mod":    "v1.1.3",
+		"example.com/mod/v2": "v2.17.0",
+	}}
+	r := application.NewResolver(proxy, ledger, &fixedClock{t: now}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v2.0.0+incompatible")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ans.Served {
+		t.Error("a row that never asked the republication question must not answer a pin that does")
+	}
+	if ans.Republication.Path != "example.com/mod/v2" {
+		t.Errorf("Republication.Path = %q, want example.com/mod/v2 from the live probe", ans.Republication.Path)
+	}
+}
+
+// The non-zero control for the gate above: once the row HAS asked the question,
+// the same pin is served from it and the proxy is not asked again.
+func TestResolve_StoredRowThatAskedTheRepublicationQuestionIsServed(t *testing.T) {
+	now := time.Now()
+	ledger := newFakeLedger()
+	ledger.rows["example.com/mod"] = domain.Record{
+		ModulePath:    "example.com/mod",
+		LatestVersion: "v1.1.3",
+		NewerMajor:    domain.NewerMajor{Probed: true, FromMajor: 3},
+		Republication: domain.Republication{Asked: true, Path: "example.com/mod/v2", Version: "v2.17.0"},
+		LookedUpAt:    now,
+	}
+	proxy := &fakeProxy{}
+	r := application.NewResolver(proxy, ledger, &fixedClock{t: now}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v2.0.0+incompatible")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !ans.Served {
+		t.Error("a row carrying both answers is reusable for the pin that asks them")
+	}
+	if len(proxy.calls) != 0 {
+		t.Errorf("proxy calls = %v, want none", proxy.calls)
+	}
+	if ans.Republication.Version != "v2.17.0" {
+		t.Errorf("Republication.Version = %q, want v2.17.0", ans.Republication.Version)
+	}
+}
+
+// A failing walk used to zero the republication answer beside it. The two
+// questions are about different paths and only one of them failed: the measured
+// half is kept, reported with the error, and the unmeasured half stays
+// unprobed rather than being reported as a negative.
+func TestResolve_AFailingWalkKeepsTheRepublicationAnswerItAlreadyHas(t *testing.T) {
+	proxy := &fakeProxy{
+		versions: map[string]string{
+			"example.com/mod":    "v3.3.4+incompatible",
+			"example.com/mod/v3": "v3.3.5",
+		},
+		fail: map[string]bool{"example.com/mod/v4": true},
+	}
+	ledger := newFakeLedger()
+	r := application.NewResolver(proxy, ledger, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v3.3.4+incompatible")
+	if err == nil {
+		t.Fatal("a failed walk reported no error")
+	}
+	if !ans.Republication.Exists() {
+		t.Fatalf("the republication answer was discarded by a failure about a different path: %+v", ans.Republication)
+	}
+	if ans.Republication.Path != "example.com/mod/v3" || ans.Republication.Version != "v3.3.5" {
+		t.Errorf("Republication = %+v, want example.com/mod/v3@v3.3.5", ans.Republication)
+	}
+	// The half that genuinely failed says so: unprobed, never a negative.
+	if ans.NewerMajor.Probed {
+		t.Errorf("NewerMajor.Probed = true after a failed walk: %+v", ans.NewerMajor)
+	}
+	// The same-major answer resolved, so the row is still worth keeping.
+	if ans.LatestVersion != "v3.3.4+incompatible" {
+		t.Errorf("LatestVersion = %q, want the resolved latest", ans.LatestVersion)
+	}
+}
+
+// A truncated walk cannot be reported as a completed one — Probed means "ran to
+// completion" — so the major it did resolve cannot travel in the record. It must
+// not vanish in silence either: the failure names it.
+func TestResolve_AFailingWalkNamesTheMajorItHadAlreadyResolved(t *testing.T) {
+	proxy := &fakeProxy{
+		versions: map[string]string{
+			"example.com/mod":    "v1.2.0",
+			"example.com/mod/v2": "v2.4.0",
+		},
+		fail: map[string]bool{"example.com/mod/v3": true},
+	}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v1.2.0")
+	if err == nil {
+		t.Fatal("a failed walk reported no error")
+	}
+	if ans.NewerMajor.Probed {
+		t.Errorf("a truncated walk was reported as probed: %+v", ans.NewerMajor)
+	}
+	if want := "example.com/mod/v2 resolved before the walk failed"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to name the major already resolved (%q)", err.Error(), want)
+	}
 }

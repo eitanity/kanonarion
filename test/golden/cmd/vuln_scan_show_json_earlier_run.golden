@@ -1,0 +1,91 @@
+# the CONTROL for the run above: the earlier run pinned ONE module against the first snapshot. A composition that served the coordinate's current records instead of the ones this run pinned would make the two runs agree.
+$ kanonarion vuln-scan-show 01JSCANRUN0GOLDEN00000001 --json
+exit 0
+--- stdout ---
+{
+  "id": "01JSCANRUN0GOLDEN00000001",
+  "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "snapshot": {
+    "source": "govulndb",
+    "version": "v2026-01-10T00-00-00",
+    "retrieved_at": "2026-01-10T00:00:00Z",
+    "content_hash": "sha256:066c65bdf0a2404975109e3b09f7e137c84552c775d1898bdf840cddcb389a60"
+  },
+  "per_module_results": {
+    "example.com/mod@v1.2.0": "sha256:e94a403712ad0e9a66199dc42e1dbd1aa8e0ddbb32ce6e996d55a1255902b7a1"
+  },
+  "started_at": "2026-01-15T09:00:00Z",
+  "completed_at": "2026-01-15T09:00:01Z",
+  "overall_status": "Affected",
+  "pipeline_version": "v24",
+  "operator": "fixture",
+  "content_hash": "sha256:993a30666036d10ee45c57b412546388b9d9680966a6171e03917061037252e2",
+  "affected_modules": [
+    {
+      "coordinate": "example.com/mod@v1.2.0",
+      "status": "Affected",
+      "findings": [
+        {
+          "id": "GO-2026-0001",
+          "aliases": [
+            "CVE-2026-00001"
+          ],
+          "summary": "example vulnerability in example.com/mod",
+          "affected_range": "\u003cv1.3.0",
+          "fixed_in": "v1.3.0",
+          "affected_symbols": [
+            "Parse"
+          ],
+          "reachable": {
+            "is_reachable": true,
+            "confidence": "High",
+            "routes": [
+              [
+                {
+                  "module_path": "example.com/app",
+                  "package": "example.com/app",
+                  "symbol": "main"
+                },
+                {
+                  "module_path": "example.com/mod",
+                  "module_version": "v1.2.0",
+                  "package": "example.com/mod",
+                  "symbol": "Handle"
+                },
+                {
+                  "module_path": "example.com/mod",
+                  "module_version": "v1.2.0",
+                  "package": "example.com/mod",
+                  "symbol": "Parse"
+                }
+              ]
+            ],
+            "derived_by": {
+              "analyser": "govulncheck",
+              "fidelity": "source",
+              "rooting": "target-rooted"
+            }
+          },
+          "references": [
+            {
+              "type": "ADVISORY",
+              "url": "https://example.com/advisories/GO-2026-0001"
+            }
+          ],
+          "published_at": "2026-01-05T00:00:00Z",
+          "modified_at": "2026-01-06T00:00:00Z",
+          "soundness": "not stated",
+          "route_root": {
+            "kind": "unrooted",
+            "reason": "the route's entry point is in example.com/app, which names no version on the frame and is not the module the analysis frame identifies, so no call graph can be located for it",
+            "closure_rooted": false
+          }
+        }
+      ]
+    }
+  ],
+  "superseded": false,
+  "reads_pipeline_version": "v24"
+}
+--- stderr ---
+(empty)

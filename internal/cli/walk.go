@@ -303,6 +303,19 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		}
 	}
 
+	// A root ingest that did not happen is stated outright. The walk is
+	// otherwise complete — the node count and failure count both read clean —
+	// so without this line nothing in the output says the project's own
+	// packages are absent from the surface the operator asked for.
+	rootIngestErr := rootIngestFailure(rec)
+	if rootIngestErr != "" {
+		if _, wErr := fmt.Fprintf(stderr,
+			"note: --analyse-root did not ingest %s, so this walk does not cover the project's own packages: %s\n",
+			rec.Target.Path(), rootIngestErr); wErr != nil {
+			return result, fmt.Errorf("writing output: %w", wErr)
+		}
+	}
+
 	switch rec.OverallStatus {
 	case domain.WalkFailed:
 		return result, &exitError{code: ExitFailed, msg: "walk failed: project go.mod could not be resolved"}
@@ -310,10 +323,27 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		return result, &exitError{code: ExitCancelled, msg: "walk cancelled"}
 	case domain.WalkPartial:
 		if !allowPartial {
-			return result, &exitError{code: ExitPartial, msg: "walk partial: some dependencies could not be fetched"}
+			msg := "walk partial: some dependencies could not be fetched"
+			if rootIngestErr != "" {
+				msg = "walk partial: the dependency graph is complete, but the project's own packages were not ingested"
+			}
+			return result, &exitError{code: ExitPartial, msg: msg}
 		}
 	}
 	return result, nil
+}
+
+// rootIngestFailure returns the reason --analyse-root did not ingest the
+// project root, or "" when it did (or was never asked for). The failure rides
+// on the root's otherwise-succeeded node result, because the root's go.mod was
+// read and its graph resolved: only the project's own package analysis is
+// missing.
+func rootIngestFailure(rec domain.WalkRecord) string {
+	r, ok := rec.PerNodeResults[rec.Target]
+	if !ok || r.Error == nil || r.Error.Type != "local_root_ingest_failed" {
+		return ""
+	}
+	return r.Error.Message
 }
 
 // runWalk walks one published coordinate and returns the walk it produced.

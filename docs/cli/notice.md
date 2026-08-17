@@ -106,6 +106,35 @@ Apache-2.0 (LICENSE.txt):
 Copyright notices are deduplicated and sorted lexically. Each licence text is
 reproduced verbatim from the file in the module zip.
 
+### `License:` names the primary, `License expression:` names the whole position
+
+`License:` is the module's primary SPDX identifier and always appears. Where the
+module is governed by more than one grant, a second line carries the full SPDX
+expression:
+
+```
+Module:  gopkg.in/yaml.v3@v3.0.1
+License: MIT
+License expression: Apache-2.0 AND MIT
+```
+
+The expression line appears **only where it says something the primary does
+not** - a module whose expression is its primary gets one line, not two. The
+`License:` line never changes meaning, so anything already parsing it keeps
+working; the expression is added beside it.
+
+`AND` and `OR` are different obligations: under `AND` every named licence
+governs the shipped code, under `OR` a redistributor elects one. Run
+`kanonarion licence <module@version> --json` for the `ExpressionBasis` field,
+which quotes what in the licence file settled the operator.
+
+Grants a module *bundles* - third-party code it ships under someone else's
+licence - are deliberately **not** on this header. They are not licences the
+module grants, and reading them there in either direction is wrong: they are
+neither an arm a consumer may elect nor an obligation the module imposes. They
+appear where they belong, on the licence block that reproduces their text and
+in the `Embedded component` sections below.
+
 ### Each block is headed by that file's own classification
 
 The heading on a licence block names what the detector found **in that file**,

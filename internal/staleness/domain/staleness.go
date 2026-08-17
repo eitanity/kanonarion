@@ -39,13 +39,27 @@ type Record struct {
 	// NewerMajor is the separate major-line fact. See NewerMajor.
 	NewerMajor NewerMajor
 
+	// Republication is the module's OWN major published at its /vN path. It is a
+	// third fact, not a variant of the second. See Republication.
+	Republication Republication
+
+	// Deprecation is the module author's own "this module is obsolete"
+	// declaration. It is a FOURTH fact and never merged into the other three.
+	// See Deprecation.
+	Deprecation Deprecation
+
 	// LookedUpAt is when the proxy was asked. It is what the TTL is measured
 	// against and what the output must state.
 	LookedUpAt time.Time
 }
 
-// NewerMajor is the result of probing major-suffixed paths above the pinned
+// NewerMajor is the result of probing major-suffixed paths ABOVE the pinned
 // major.
+//
+// It carries the upward walk's answer and nothing else. A +incompatible pin's
+// own major republished at /vN is NOT one of these: the major number is
+// unchanged there and only the path moved, which is a different piece of work
+// with a different risk, and it lives in Republication.
 //
 // Probed separates "nobody has asked" from "asked, and there is none". Without
 // it a row written by a same-major-only resolution would read as a negative
@@ -77,6 +91,73 @@ type NewerMajor struct {
 
 // Exists reports whether a newer major line was found.
 func (n NewerMajor) Exists() bool { return n.Probed && n.Path != "" }
+
+// Republication is the module's own major published at its /vN path — the
+// answer to the extra question a +incompatible pin asks before the upward walk.
+//
+// It is a separate type from NewerMajor because it is a separate fact. +incompatible
+// is what a module looks like BEFORE it adopts the /vN path, so /vN carries the
+// SAME major number the project is already on: moving to it is a path migration,
+// not a major upgrade. Reported as a newer major it told a reader to budget for
+// a breaking change where chi v3.3.4+incompatible -> chi/v3@v3.3.5 is a patch.
+//
+// The two facts can both hold at once, and both are then reported, this one
+// first — it is the nearer move and the likelier action for a stuck pin.
+type Republication struct {
+	// Asked is true when the probe put the question. It is put only for a
+	// +incompatible pin on a bare path; see ProbePlan. False means the question
+	// does not apply to this module, NOT that the answer was no — the same
+	// distinction NewerMajor.Probed draws for the walk.
+	Asked bool
+	// Path is the /vN path that resolved. Empty when Asked and none did — a
+	// recorded negative, which is a real answer and is cacheable.
+	Path string
+	// Version is the newest version at Path.
+	Version string
+	// PublishedAt is that version's publication time; zero when unsupplied.
+	PublishedAt time.Time
+}
+
+// Exists reports whether the module's own major was found republished at /vN.
+func (p Republication) Exists() bool { return p.Asked && p.Path != "" }
+
+// Deprecation is the module's own deprecation notice — the `// Deprecated:`
+// comment on the `module` directive in its go.mod, which the go command reports
+// alongside the latest-version answer.
+//
+// It is a SEPARATE fact from NewerMajor and Republication, and reporting it
+// beside them rather than folded into them is the whole point: the successor a
+// notice names is frequently at a path the /vN walk structurally cannot reach —
+// google.golang.org/protobuf succeeds github.com/golang/protobuf on a different
+// host entirely — while a module with a newer major is usually not deprecated
+// at all. They are different claims by different mechanisms.
+//
+// The notice is reproduced, never interpreted. kanonarion does not decide
+// whether the named successor is a good idea, does not rewrite the sentence, and
+// above all does not GUESS a successor from name similarity: aws-sdk-go-v2 is
+// the successor of aws-sdk-go because its author said so in machine-readable
+// form, not because the strings look alike.
+type Deprecation struct {
+	// Checked is true when the question was ANSWERED. When false, Notice is
+	// meaningless and the module's deprecation state is not established — which
+	// is a different thing from "not deprecated" and must never render as one.
+	//
+	// It is false for every answer obtained one path at a time: a proxy @latest
+	// lookup returns a version and a date and says nothing about deprecation, so
+	// that resolution has not asked. A resolution that did not ask does not get
+	// to record the fact either way — it carries forward whatever the ledger
+	// already established, because an unasked question is not evidence against
+	// an answer.
+	Checked bool
+	// Notice is the declaration verbatim, or empty when Checked and the module
+	// declares none — a recorded negative, and a real answer.
+	Notice string
+}
+
+// Deprecated reports whether the module declares itself deprecated. It is false
+// both for a module that declares nothing and for one nobody asked about; the
+// two are told apart by Checked, which every renderer states.
+func (d Deprecation) Deprecated() bool { return d.Checked && d.Notice != "" }
 
 // FreshAt reports whether the record may be served instead of re-querying the
 // proxy. A zero or negative ttl means never serve.
@@ -199,8 +280,10 @@ func (p ProbePlan) SameMajor() (int, bool) { return p.sameMajor, p.sameMajor != 
 // and no /v3 at all, and the walk alone reports it as having nowhere to go.
 //
 // When both exist — a republished /vN and a genuine next major — the walk still
-// runs and the higher one is what the row reports. The republished same-major
-// is the answer only when there is nothing above it.
+// runs and BOTH are reported, in separate fields, the republication first.
+// go-chi/chi v3.3.4+incompatible is the case: /v3@v3.3.5 is a patch-level move
+// to the correctly-published path and /v5@v5.3.1 is a two-major migration, and a
+// row that reported only the higher dropped the cheaper answer entirely.
 //
 // A module already pinned to a /vN path is asked nothing extra. Its own major
 // is the path it is already on, so probing it would ask whether the module the
@@ -295,6 +378,42 @@ const (
 	// fact is NewerMajor's, stated beside this one and never folded into it.
 	PinAhead
 )
+
+// CanSortAboveTag reports whether a version could possibly sort ABOVE the
+// newest release tag at its own path.
+//
+// Only two shapes can: a prerelease (which includes every pseudo-version, whose
+// -0.YYYYMMDDHHMMSS-abcdef suffix is prerelease metadata) and a +incompatible
+// version, whose major lives in the version while the path serves a lower one.
+// A plain release version cannot be above the newest release tag, because it IS
+// one.
+//
+// It exists to narrow a lookup, never to answer a question. A batched source
+// that resolves within the pin's own major reports "no update" both for a pin
+// that is the newest release and for one sitting above the last tag, and the
+// two have to be told apart by asking the path's @latest. Asking for every
+// module would restore the per-module sweep; this says which pins could
+// possibly be in the second state, and the answer for those is still MEASURED
+// by asking. A false positive costs one request. A false negative would report
+// an ahead pin as current, which is why the predicate is deliberately loose:
+// every prerelease and every +incompatible is asked, not the subset that looks
+// like a pseudo-version.
+//
+// It is a syntactic reading of a version string and nothing more. Nothing is
+// concluded from it; it only decides what to go and measure.
+func CanSortAboveTag(version string) bool {
+	if version == "" {
+		return false
+	}
+	if !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+	if !semver.IsValid(version) {
+		// Unreadable by semver, so nothing can be ruled out. Ask.
+		return true
+	}
+	return semver.Prerelease(version) != "" || semver.Build(version) == "+incompatible"
+}
 
 // ComparePin places pinned against the path's @latest answer.
 //

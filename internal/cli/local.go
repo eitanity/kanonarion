@@ -33,7 +33,9 @@ packages so 'callers'/'callees' can answer questions about them.
 A tree that has not changed since the last run is not analysed again: the
 record already held is served, and the derivation line says so. --force
 re-measures anyway, which is what to use when something outside the tree
-changed — a different toolchain, a repopulated module cache.
+changed — a different toolchain. A record left incomplete because this host's
+module cache was cold is never served, so warming the cache and re-running
+without the flag re-analyses.
 
 After running 'local', query internal symbols directly, e.g.:
   kanonarion callers '<module-path>/internal/cli.runScanRescan'`,
@@ -98,7 +100,7 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 		return fmt.Errorf("extracting local call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, stdout); err != nil {
+	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, abs, stdout); err != nil {
 		return err
 	}
 	// The derivation goes to stderr, in both modes and for the same reason.

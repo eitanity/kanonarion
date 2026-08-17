@@ -34,10 +34,15 @@ func (i WorktreeIdentity) IsZero() bool { return i.Root == "" || i.ScanDigest ==
 //     field existed carries none, and absence cannot show that two runs were
 //     handed the same tree. The first run after this field lands therefore
 //     re-derives, and every run after that reuses.
-//   - It is servable at all. A record whose failure was the analysis environment
-//     failing measured nothing about this tree, and serving it back would make
-//     one bad run permanent — the same rule the published path applies, applied
-//     here for the same reason.
+//   - It is servable at all. A record the analysis environment cut short — one
+//     that failed for want of a toolchain, or came back incomplete because a
+//     dependency was absent from this host's module cache — describes the run and
+//     not just this tree, and serving it back would make one bad run permanent.
+//     The tree's digest cannot see any of that: it moves when the source moves
+//     and nothing else, so a repaired environment leaves it identical and the
+//     cause axis is the only thing that says the answer is worth taking again.
+//     The same rule the published path applies, applied here for the same
+//     reason.
 //
 // The pipeline version is not checked here because it is not this function's to
 // check: a store read is scoped to one pipeline version, so a record from

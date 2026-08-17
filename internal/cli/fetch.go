@@ -19,6 +19,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	"github.com/spf13/cobra"
 )
 
@@ -99,7 +100,7 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.listVersions, "list-versions", false, "list available versions from the proxy and exit without fetching")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "fetch the tooling supply chain (the go.mod tool directives' closure) instead of a positional module@version")
 	cmd.Flags().BoolVar(&f.project, "project", false, "fetch the complete set: the project's code AND tooling")
-	cmd.Flags().StringVar(&f.gomod, "gomod", "", "path to a go.mod file to fetch a dependency scope from (default: search upward from cwd)")
+	cmd.Flags().StringVar(&f.gomod, "gomod", "", "path to a go.mod file to fetch a dependency scope from (default: ./go.mod)")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 
 	return cmd
@@ -240,7 +241,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 
 	// Check staleness for pinned versions. The proxy call is fast relative to
 	// the fetch itself and the result is informative for both humans and agents.
-	stale := fetchStalenessFor(ctx, proxyAdapter, coord, version, stderr)
+	stale := fetchStalenessFor(ctx, newProxyLatestResolver(proxyAdapter, logger), coord, version, stderr)
 
 	if jsonOut {
 		type fetchOutput struct {
@@ -323,19 +324,23 @@ type stalenessInfo struct {
 	DaysSince *int `json:"days_since_latest"`
 }
 
-// latestInfoLookup asks the proxy for a module path's newest version. The proxy
-// adapter satisfies it; narrowing the dependency here is what lets the failed
-// lookup — the case whose rendering this exists to fix — be exercised.
-type latestInfoLookup interface {
-	LatestInfo(ctx context.Context, path string) (proxyadapter.LatestVersionInfo, error)
-}
+// The lookup this surface asks is the staleness context's own port
+// (staleports.LatestResolver), not the proxy adapter's method.
+//
+// It was a locally declared interface over *direct.Proxy, which is how this
+// call site came to be the one @latest lookup in the product with no retry in
+// front of it: the retry decorator is a decorator on the PORT, and a caller
+// that names its own interface over the adapter routes around every decorator
+// the port has. Nothing is widened by the change — the port has one method, so
+// the dependency is exactly as narrow, and a stub still exercises the failed
+// lookup this rendering exists for.
 
 // fetchStalenessFor answers "is the fetched coordinate the newest version", or
 // states that it did not.
 //
 // requestedVersion is what the user wrote, not what was resolved: "@latest" is
 // the never-asked case even though the coordinate it produced is pinned.
-func fetchStalenessFor(ctx context.Context, proxy latestInfoLookup, coord coordinate.ModuleCoordinate, requestedVersion string, stderr io.Writer) stalenessInfo {
+func fetchStalenessFor(ctx context.Context, proxy staleports.LatestResolver, coord coordinate.ModuleCoordinate, requestedVersion string, stderr io.Writer) stalenessInfo {
 	if requestedVersion == "latest" {
 		return stalenessInfo{Unmeasured: stalenessNotAsked}
 	}

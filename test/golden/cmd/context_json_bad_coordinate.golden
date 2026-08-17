@@ -1,0 +1,9 @@
+# error-shaped: a malformed coordinate is refused before any store is opened.
+$ kanonarion context not-a-coordinate --json
+exit 20
+--- error ---
+execute root command: invalid coordinate "not-a-coordinate": expected module@version, got "not-a-coordinate"
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

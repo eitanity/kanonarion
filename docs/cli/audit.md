@@ -36,37 +36,39 @@ For each module in the scope, `audit` emits a single line containing:
   answers `@latest` with. The last is ordinary: a pseudo-version taken after
   the last tag, or a pre-modules `+incompatible` major published above the
   newest version the unsuffixed path serves. No upgrade target and no age are
-  offered there — there is nothing at that path to move to, and the age figure
-  in this column means "how long you have been behind". A newer major line, if
-  one exists, is still reported (see below), because that is a separate fact
-  and it lives at a different path. In `--json` the same three positions are
-  `is_latest` plus `pin_ahead_of_latest` (both emitted on every measured row,
-  `false` included; both `null` together where nothing was measured), and
-  `latest_release_age_days` is null on an ahead row so the two surfaces cannot
-  disagree — beside `is_latest: false` an age reads as "you are this far
-  behind", which is exactly what an ahead pin is not. The field is emitted on
-  every row and **zero is a value**: a release that shipped today is `0` days
-  old. Null means there is no age — either the pin is ahead, or the proxy
+  offered there — there is nothing at that path to move to. A newer major line,
+  if one exists, is still reported (see below): a separate fact, at a different
+  path. In `--json` the same three positions are `is_latest` plus
+  `pin_ahead_of_latest`, both emitted on every measured row and
+  both `null` together where nothing was measured. `latest_release_age_days` is
+  emitted on every row and **zero is a value**: a release that shipped today is
+  `0` days old. Null means there is no age — the pin is ahead, or the proxy
   supplied no publication date, told apart by `pin_ahead_of_latest`. The text
   column matches: `latest: vX (today)` for a zero age, and a bare `latest: vX`
   where the date is unknown rather than an invented "today".
+- **Deprecation** - the module author's own `// Deprecated:` notice from their
+  `go.mod`, reproduced verbatim on the row's continuation line as `deprecated by
+  its author: <notice>`. It is stated beside the staleness answer, never merged
+  into it: a deprecated module is frequently `current` on its own path, and the
+  successor a notice names is often somewhere the `/vN` probe cannot reach.
+  kanonarion never infers a successor from name similarity. In `--json` the key
+  is `deprecated`, always emitted, in three states: `null` where the question was
+  not established (an offline row, or one resolved a path at a time), `""` where
+  it was asked and the module declares none, or the notice text. `null` is not
+  "not deprecated".
 - **Vuln status** - `Clean`, `Affected (N findings)`, `Withdrawn (N retracted)`,
   `ScanFailed`, `(not scanned)` when no record exists at any pipeline version, or
   `(superseded)` when the store holds records for the module only at pipeline
   versions this build no longer reads — the module has been scanned, and the row's
   reason names the generations held and says to re-scan. A module whose every
   matched advisory was retracted upstream reads `Withdrawn`, and its count is
-  reported as *retracted* rather than as findings — the two must not read alike,
-  since only one of them is something to act on. A module carrying both reads
-  `Affected (N findings, M retracted)`. The verdict is **project-rooted**:
-  it comes from a single scan of the project's resolved, pruned build graph - the
-  build the project actually produces - not from scanning each dependency in
-  isolation. A module the project builds cleanly reads `Clean`, `Affected` or `Withdrawn`
-  within that graph; only a genuine fault of the whole scan (no `go.mod`, an OOM
-  kill, a build that does not compile) reads `Unscannable`/`ScanFailed`. Because
-  no dependency is re-resolved on its own, a module can never be reported
-  un-analysable merely because its isolated build would select a version the
-  project never uses.
+  reported as *retracted* rather than as findings: only one of the two is
+  something to act on. A module carrying both reads
+  `Affected (N findings, M retracted)`. The verdict is **project-rooted**: it
+  comes from a single scan of the project's resolved, pruned build graph, not
+  from scanning each dependency in isolation. A module the project builds
+  cleanly reads `Clean`, `Affected` or `Withdrawn` within that graph; only a genuine fault of the whole scan (no `go.mod`, an OOM
+  kill, a build that does not compile) reads `Unscannable`/`ScanFailed`.
 
 The scope always includes the **Go standard library** as a first-class row
 (`stdlib@vX.Y.Z`), so standard-library advisories are audited alongside module
@@ -96,10 +98,8 @@ over standard-library symbols, so a surfaced stdlib finding carries a populated
 `Reachable` verdict and `AffectedSymbols` exactly as a module finding does. A
 standard-library advisory that affects the pinned toolchain version but whose
 vulnerable symbols are **not reached** from the project therefore reads `Clean`,
-consistent with how an unreachable advisory in a fetched module is reported —
-reachability is decided by the call graph, not by whether the enclosing symbol is
-linked into the binary. Query a specific verdict with `kanonarion reachability
-stdlib@vX.Y.Z --vuln <id>`.
+as an unreachable advisory in a fetched module does. Query a specific verdict
+with `kanonarion reachability stdlib@vX.Y.Z --vuln <id>`.
 
 The scope is an **import closure**, not a `require`-line listing: the `code`
 scope is every module the project's packages (and their tests) actually import,
@@ -144,7 +144,7 @@ the install command.
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache---from-modcache) |
-| `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`). `off` and `direct` are honoured, not rewritten: an online audit refuses before any network I/O and exits `20`, naming `--from-modcache`, which answers the staleness column from the ledger alone. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
+| `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`), honoured not rewritten. Under `off` the run proceeds, the staleness column answered from the ledger alone — a walk still needs its module bytes. `direct` refuses, exit `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--json` | `false` | Emit output as a JSON array |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -171,15 +171,17 @@ golang.org/x/mod@v0.35.0                                 Verified             BS
 golang.org/x/vuln@v1.3.0                                 Verified             BSD-3-Clause           current                       Clean
 modernc.org/libc@v1.73.5                                 Verified             BSD-3-Clause           latest: v1.75.3 (5 days ago)  Clean
                                                                                                      newer major: modernc.org/libc/v2@v2.1.30
+github.com/golang/protobuf@v1.5.4                        Verified             BSD-3-Clause           current                       Clean
+                                                                                                     deprecated by its author: Use the "google.golang.org/protobuf" module instead.
 modernc.org/sqlite@v1.50.0                               Verified             BSD-3-Clause           latest: v1.50.1 (3 days ago)  Clean
 ```
 
 Every column is sized from the widest value the run produced, so the columns
-line up on every row. The newer-major fact is the one value routinely wider than
-the rest of the row put together — it carries a whole module path and a version
-— so it is stated in full on a continuation line under the staleness column it
-belongs to, rather than setting that column's width for the run. `--json` is
-unaffected: it carries `newer_major_module` and `newer_major_latest` as fields.
+line up on every row. The major-line and deprecation facts are the values
+routinely wider than the rest of the row put together — a whole module path and
+version, or a sentence — so they are stated in full on a continuation line under
+the staleness column they belong to, rather than setting that column's width for the run.
+`--json` is unaffected: it carries those paths and versions as fields.
 
 ## Example - complete set (code + tooling)
 
@@ -267,9 +269,10 @@ kanonarion audit --gomod ./go.mod --json
 The example above is abridged. Keys whose value is zero, `false` or `null` are
 still emitted - `vuln_findings: 0`, `vuln_withdrawn: 0`, `policy_blocking:
 false`, `policy_unevaluated: false`, `pin_ahead_of_latest: false`,
-`latest_release_age_days: null`. A key is absent only where it names something
-that does not apply to the row at all: the string and list keys
-(`latest_version`, `newer_major_module`, `vuln_reason`, `staleness_unmeasured`,
+`latest_release_age_days: null`, `deprecated: null`. A key is absent only where
+it names something that does not apply to the row at all: the string and list keys
+(`latest_version`, `newer_major_module`, `republished_module`, `vuln_reason`,
+`staleness_unmeasured`,
 `license_uncertainty`, `license_electable_arms`, `scope`).
 
 `vuln_findings` counts **every** advisory on the record, retracted ones
@@ -281,9 +284,7 @@ it is in `vuln_status` (`(not scanned)`, `(superseded)`, `(scan record
 unreadable)`) and `vuln_reason`.
 
 `latest_release_age_days` is **how long ago the latest release shipped**, not how
-far behind the pin is. A stale pin on an actively released module reports a small
-number; a current pin on a quiet module reports a large one. There is no
-`days_behind` field. See
+far behind the pin is. There is no `days_behind` field. See
 [`latest`](latest.md#latest_release_age_days) for the worked example.
 
 ## Pipeline
@@ -298,11 +299,9 @@ dependency:
 4. Staleness check - query the proxy for the latest version of each module (offline under `--from-modcache`: the ledger alone, see [When the column was not measured](#when-the-column-was-not-measured))
 5. Query and report - iterate the walk's dependency nodes (every graph node bar the local root) and join fetch, license, vuln, and staleness into one line each
 
-Walk, licence and staleness use cached results on subsequent runs unless
-`--force` is passed. One stage always
-does work on every run, warm store or not: the project-rooted vuln scan is
-**always recomputed fresh** (the working tree mutates between runs, so its
-verdict is live and never served from a coordinate cache).
+Walk, licence, staleness and the vuln scan all use stored results on subsequent
+runs unless `--force` is passed; see
+[Reuse and re-derivation](#reuse-and-re-derivation).
 
 The staleness column reads a **store-side ledger** keyed on module path. Every
 successful `@latest` resolution any command makes is recorded there, and a
@@ -312,12 +311,20 @@ sweep once between them rather than once each. The table states the lookup time
 it used (`latest as of ...`, dated by its oldest row) so a served answer is
 never mistaken for a live one, and a **failed** lookup is never recorded.
 
-The column reports two facts per module, never merged: `is_latest` is about the
-module **path**, and `newer_major_module` names the newest major-suffixed path
+The column reports separate facts per module, never merged. `is_latest` is about
+the module **path**. `newer_major_module` names the newest major-suffixed path
 above the pinned major - a dependency pinned a whole major line behind is at the
 latest version of its own path and is still behind. `major_probed` separates
 "probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
-whose request failed).
+whose request failed); an answered row whose probe was not is noted as `newer
+major: not probed`.
+
+`republished_module` is a third fact and only a `+incompatible` pin can have one:
+the pinned major's own `/vN` publication. The major **number** is unchanged
+there, so it renders as `same major republished:` rather than `newer major:` -
+a path migration, not a major upgrade, and usually the cheaper move.
+`republished_probed` separates "asked, this major is not republished" from "not
+asked". Where a module has both, both are printed, the republication first.
 
 ### When the column was not measured
 
@@ -450,9 +457,7 @@ An unvendored project states nothing - its answer was never ambiguous.
 
 `audit` is safe to re-run, but a warm re-run is **not** fully offline. The walk,
 licence, and vulnerability-database stages are cached and do no network I/O on a
-warm store (`--force` re-fetches the modules and re-runs the scan; `--fresh`
-checks the advisory database and re-downloads it only if an advisory for one of
-this walk's modules has changed).
+warm store.
 
 - **Staleness** - `audit` queries the module proxy for each module's latest
   version (`@latest`). Answers are served from the staleness ledger inside
@@ -462,9 +467,9 @@ this walk's modules has changed).
   working tree is always picked up. When the resolution matches a walk already
   stored, that walk's record is reused rather than a new one recorded. See
   [Reuse and re-derivation](#reuse-and-re-derivation).
-- **Project-rooted vuln scan** - `govulncheck` runs over the live working tree
-  when the walk or the advisory snapshot has changed, and is served from the
-  stored run when neither has.
+- **Project-rooted vuln scan** - served from the stored run unless one of the
+  [reuse conditions](#reuse-and-re-derivation) fails; `govulncheck` then runs
+  over the live working tree.
 
 ## Reuse and re-derivation
 
@@ -473,7 +478,7 @@ Every run reports, on **stderr**, where its two expensive answers came from:
 ```
 derivation:
   walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
-  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability verdicts came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 or, when the run measured for itself:
@@ -494,11 +499,15 @@ Reading the scan line: **"reused run … of &lt;date&gt;"** names the scan run w
 verdicts you are reading and when it was made; `govulncheck` did not run. The
 findings, roll-ups and exit code are the ones that run produced.
 
+Which advisories apply is fixed by the resolved module versions, so reuse is
+sound there. Reachability is not: `govulncheck` reads source, and source is not
+a reuse condition below. The reachability clause therefore appears whenever the
+run answered any, and it states what those verdicts rest on rather than claiming
+your tree is unchanged — nothing re-read it.
+
 A new walk is recorded whenever the target, scope, depth, policy, build
 environment, resolved graph (every module at every selected version, every edge,
-every artefact hash) or per-node outcome differs — so editing `go.mod`, bumping a
-dependency, switching scope or changing the policy all produce a new walk and a
-new scan.
+every artefact hash) or per-node outcome differs.
 
 A stored scan is reused only when **all** of these hold:
 
@@ -508,11 +517,11 @@ A stored scan is reused only when **all** of these hold:
 | same advisory snapshot (source, version, retrieval time and seal) | a newer advisory database re-scans |
 | same scan pipeline version | a newer kanonarion re-scans |
 | the stored run's coverage is **complete** | a partial or failed run is never served |
+| the project directory still requires the versions the walk resolved | a moved `go.mod` re-derives |
 
 To force a fresh measurement:
 
-- `--force` — re-fetches the modules, records a new walk and re-scans. This is
-  the flag for release evidence that must be measured now.
+- `--force` — re-fetches the modules, records a new walk and re-scans.
 - `--fresh` — refreshes the advisory database. It re-scans only when the refresh
   changes an advisory listed for a module in this walk; a database that moved for
   anything else leaves the stored run serving.

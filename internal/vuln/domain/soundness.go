@@ -30,13 +30,19 @@ import (
 //	inferred     no search ran; the negative reads a source-fidelity analysis's silence
 //	unconfirmed  an analysis ran that could not have found a route at all
 //	unsearchable the advisory names no symbol, so no search was ever possible
+//	disputed     a search DID find a path the recorded negative denies
 //
 // inferred outranks unconfirmed deliberately. A source-mode analysis that loaded
 // the whole build, built a call graph over it and never mentioned the advisory is
 // weaker evidence than a search — it is an inference — but it is stronger than a
-// symbol table inspected with no call graph behind it. unsearchable is the floor
-// because it is the only rung no amount of fidelity can raise: the other three
-// improve when the analysis does, and this one never will.
+// symbol table inspected with no call graph behind it. unsearchable ranks below
+// all three because no amount of fidelity can raise it: the others improve when
+// the analysis does, and it never will.
+//
+// disputed is the floor, and it is not a weaker search — it is a contradicted
+// one. The negative stands recorded and a second analyser found the path it
+// denies, so it is the one rung an operator must not act on at all. It ranks
+// last so that a rung comparison can never prefer it.
 type ReachabilitySoundness string
 
 const (
@@ -67,6 +73,13 @@ const (
 	// any fidelity produces the same answer, which is what separates this from
 	// unconfirmed.
 	SoundnessUnsearchable ReachabilitySoundness = "unsearchable"
+	// SoundnessDisputed means the recorded negative is contradicted: a second
+	// analyser searched for the same symbols and found a path. The verdict the
+	// record states is left exactly as it was measured — one analyser does not
+	// overwrite another's answer — and this rung is how a reader learns the two
+	// disagree, instead of the disagreement being resolved silently in either
+	// direction.
+	SoundnessDisputed ReachabilitySoundness = "disputed"
 )
 
 // ReachabilitySoundnessLevels is every rung this type defines, most to least
@@ -79,6 +92,7 @@ func ReachabilitySoundnessLevels() []ReachabilitySoundness {
 		SoundnessInferred,
 		SoundnessUnconfirmed,
 		SoundnessUnsearchable,
+		SoundnessDisputed,
 		SoundnessNotStated,
 	}
 }
@@ -116,12 +130,14 @@ func (s ReachabilitySoundness) MarshalJSON() ([]byte, error) {
 func (s ReachabilitySoundness) Rank() int {
 	switch s {
 	case SoundnessConfirmed:
-		return 4
+		return 5
 	case SoundnessInferred:
-		return 3
+		return 4
 	case SoundnessUnconfirmed:
-		return 2
+		return 3
 	case SoundnessUnsearchable:
+		return 2
+	case SoundnessDisputed:
 		return 1
 	case SoundnessNotStated:
 		return 0

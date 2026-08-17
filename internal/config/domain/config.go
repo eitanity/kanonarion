@@ -148,6 +148,28 @@ type StalenessConfig struct {
 	// command re-pay the proxy sweep — the behaviour that predates the ledger,
 	// kept reachable rather than removed.
 	TTL time.Duration
+
+	// ProbeConcurrency is how many newer-major probe requests may be in flight
+	// at once for one command.
+	//
+	// The probe asks about a module path one major above the pin, which for
+	// almost every module does not exist. It is therefore one request per module
+	// in the dependency closure, and issuing them one at a time is what made a
+	// 552-module sweep take tens of minutes. Measured against proxy.golang.org
+	// over 554 real candidates: serial ~1.3 s each, 8-wide 0.194 s each,
+	// 16-wide 0.019 s each warm.
+	//
+	// It is bounded rather than unlimited because the proxy throttles, and a
+	// throttled probe does not fail cleanly — it answers 200 with an empty body,
+	// which is a lost answer rather than an error. Wider is not simply faster:
+	// the same measurement saw 8-wide lose nothing to that condition and 16-wide
+	// lose eight, absorbed by the retry decorator. Zero or negative means serial.
+	//
+	// This is a GLOBAL bound, not a per-host one. 72% of a real corpus is one
+	// host and the proxy throttles per origin, so the right primitive is a
+	// per-host limiter shared with the walk fetcher; that is owned elsewhere and
+	// this key is sized to be replaced by it rather than to outlive it.
+	ProbeConcurrency int
 }
 
 // DefaultStalenessTTL is the built-in staleness.ttl. An hour is short enough
@@ -155,6 +177,15 @@ type StalenessConfig struct {
 // session, and long enough that a gates-and-staleness cadence pays the proxy
 // sweep once rather than once per command.
 const DefaultStalenessTTL = time.Hour
+
+// DefaultStalenessProbeConcurrency is the built-in staleness.probe_concurrency.
+//
+// Sixteen is the measured knee: over 554 real probe candidates against
+// proxy.golang.org it completed in 10.7 s warm against 107.4 s at eight, and
+// the eight empty-200s it provoked are the condition the probe's retry
+// decorator already absorbs. Going wider trades wall time for lost answers,
+// which is the wrong trade on a surface whose whole purpose is not to lose them.
+const DefaultStalenessProbeConcurrency = 16
 
 // DefaultConfig returns a Config populated with the built-in defaults documented in.
 func DefaultConfig() Config {
@@ -195,7 +226,8 @@ func DefaultConfig() Config {
 			Exclude: []string{},
 		},
 		Staleness: StalenessConfig{
-			TTL: DefaultStalenessTTL,
+			TTL:              DefaultStalenessTTL,
+			ProbeConcurrency: DefaultStalenessProbeConcurrency,
 		},
 		// Default governance posture. The highest-risk classes
 		// local-path replace, patched-version exclusion, security-weakening

@@ -171,7 +171,7 @@ func TestToolchainAxis_NeverEntersTheModuleRollups(t *testing.T) {
 				t.Fatalf("writeToolchainJudgment: %v", err)
 			}
 		}
-		if err := printVulnScanResult(run, r.affected, r.withdrawn, r.failed, r.unscannable, false, &out); err != nil {
+		if err := printVulnScanResult(run, r.affected, r.withdrawn, r.failed, r.unscannable, vulnScanReachability{}, false, &out); err != nil {
 			t.Fatalf("printVulnScanResult: %v", err)
 		}
 		if len(r.affected) != 1 || len(r.withdrawn) != 0 {

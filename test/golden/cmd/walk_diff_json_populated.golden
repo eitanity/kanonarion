@@ -1,0 +1,24 @@
+# populated: two walks of one target. One module leaves the graph and another moves version, so the added/removed/changed axes are not all empty.
+$ kanonarion walk-diff 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FAW --json
+exit 0
+--- stdout ---
+{
+  "walk_a": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "walk_b": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+  "added": [],
+  "removed": [
+    "example.com/mod@v1.2.0"
+  ],
+  "upgraded": [
+    {
+      "module": "example.com/shallow",
+      "from": "v1.0.0",
+      "to": "v1.1.0",
+      "fixed_cves": []
+    }
+  ],
+  "license_regressions": [],
+  "new_reachable_cves": []
+}
+--- stderr ---
+(empty)

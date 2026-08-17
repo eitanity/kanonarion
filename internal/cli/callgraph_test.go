@@ -49,7 +49,7 @@ func makeCGRecord(t *testing.T) cgdomain.CallGraphRecord {
 func TestPrintCallGraphSummary_TextBasic(t *testing.T) {
 	r := makeCGRecord(t)
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, false, false, &buf); err != nil {
+	if err := printCallGraphSummary(r, false, false, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -67,7 +67,7 @@ func TestPrintCallGraphSummary_TextBasic(t *testing.T) {
 func TestPrintCallGraphSummary_TextCached(t *testing.T) {
 	r := makeCGRecord(t)
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, true, false, &buf); err != nil {
+	if err := printCallGraphSummary(r, true, false, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "(cached)") {
@@ -84,7 +84,7 @@ func TestPrintCallGraphSummary_TextFailure(t *testing.T) {
 		FailureDetail: "analysis failed",
 	}
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, false, false, &buf); err != nil {
+	if err := printCallGraphSummary(r, false, false, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "analysis failed") {
@@ -95,7 +95,7 @@ func TestPrintCallGraphSummary_TextFailure(t *testing.T) {
 func TestPrintCallGraphSummary_JSON(t *testing.T) {
 	r := makeCGRecord(t)
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, false, true, &buf); err != nil {
+	if err := printCallGraphSummary(r, false, true, "", &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), `"coordinate"`) {
@@ -1149,5 +1149,49 @@ func TestWorktreeNoticeText_NamesTheTreeAndTheRemedy(t *testing.T) {
 	}
 	if strings.Contains(predating, "working tree at ") {
 		t.Errorf("an unlocated generation was reported as a located tree: %s", predating)
+	}
+}
+
+// The run that produced the incomplete graph is where the remedy is worth most,
+// and it was the one place not stating it: the reader saw a failed-package list
+// and a loader message and had to work out for themselves whether to go looking
+// for a compile error or to warm the module cache.
+func TestPrintCallGraphSummary_ColdCachePartialPrintsTheRemedy(t *testing.T) {
+	coord, err := coordinate.NewLocalCoordinate("example.com/app")
+	if err != nil {
+		t.Fatalf("coordinate: %v", err)
+	}
+	r := cgdomain.CallGraphRecord{
+		Coordinate:     coord,
+		Algorithm:      cgdomain.AlgorithmCHA,
+		OverallStatus:  cgdomain.CallGraphStatusPartial,
+		FailureCause:   cgdomain.FailureCauseEnvironment,
+		FailedPackages: []string{"example.com/app/needsdep"},
+	}
+	var buf bytes.Buffer
+	if err := printCallGraphSummary(r, false, false, "/work/tree", &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, cgdomain.ColdModuleCacheRemedy) {
+		t.Errorf("the one-step way to make the modules available is not named:\n%s", got)
+	}
+	if !strings.Contains(got, "kanonarion local /work/tree") {
+		t.Errorf("the remedy does not name the directory this run was pointed at:\n%s", got)
+	}
+	if strings.Contains(got, "--force") {
+		t.Errorf("a record that is not served back was given a bypass flag:\n%s", got)
+	}
+}
+
+// A complete graph gains no remedy: there is nothing to remedy, and a run that
+// prints one teaches its reader to distrust an answer that is sound.
+func TestPrintCallGraphSummary_CompleteGraphGetsNoRemedy(t *testing.T) {
+	var buf bytes.Buffer
+	if err := printCallGraphSummary(makeCGRecord(t), false, false, "/work/tree", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "re-analyse") {
+		t.Errorf("a complete graph was told how to re-analyse itself:\n%s", buf.String())
 	}
 }

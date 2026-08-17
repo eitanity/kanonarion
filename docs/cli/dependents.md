@@ -35,10 +35,10 @@ N module(s) in walk <id> (frame linux/amd64) depend on <target>:
   ...
 ```
 
-`frame` is the `GOOS/GOARCH` the answering walk resolved for, or `unrecorded`
-for a walk taken before the frame was recorded. Without `--walk-id` the answer
-comes from the most recent walk containing the target, whatever its platform.
-JSON output carries it as `walk_frame`.
+`frame` is the `GOOS/GOARCH` the answering walk resolved for, or
+`not-platform-scoped` for a module-rooted walk. Without `--walk-id` it comes
+from the most recent containing walk, whatever its platform.
+JSON carries `walk_frame` and `walk_frame_basis`.
 
 ### Without `--walk-id`: the search is bounded, and says so
 

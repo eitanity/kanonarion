@@ -23,12 +23,17 @@ type canonicalLicenseRecord struct {
 	// ArtefactIdentity and SourceContentHash are omitted when empty so
 	// records that predate them keep their stored content hash verifiable,
 	// on the same terms every additive field on this shape has used.
-	ArtefactIdentity  string                     `json:"artefact_identity,omitempty"`
+	ArtefactIdentity string `json:"artefact_identity,omitempty"`
+	// BundledSPDXs and ExpressionBasis are omitted when empty on the same
+	// terms as every additive field on this shape: a record written before
+	// they existed keeps its stored content hash verifiable.
+	BundledSPDXs      []string                   `json:"bundled_spdxs,omitempty"`
 	ContentHash       string                     `json:"content_hash"`
 	Coordinate        canonicalCoord             `json:"coordinate"`
 	CopyrightStatus   int                        `json:"copyright_status"`
 	Ecosystem         string                     `json:"ecosystem"`
 	Expression        string                     `json:"expression"`
+	ExpressionBasis   string                     `json:"expression_basis,omitempty"`
 	ExtractedAt       string                     `json:"extracted_at"`
 	FailureDetail     string                     `json:"failure_detail"`
 	LicenseFiles      []canonicalFileEntry       `json:"license_files"`
@@ -181,6 +186,8 @@ func (LicenseRecordHasher) Unmarshal(data []byte) (LicenseRecord, error) {
 		Role:              c.Role,
 		PrimarySPDX:       c.PrimarySPDX,
 		Expression:        c.Expression,
+		ExpressionBasis:   c.ExpressionBasis,
+		BundledSPDXs:      c.BundledSPDXs,
 		PrimaryConfidence: c.PrimaryConfidence,
 		LicenseFiles:      files,
 		OverallStatus:     LicenseStatus(c.OverallStatus),
@@ -265,6 +272,7 @@ func marshalCanonicalLicense(r LicenseRecord) ([]byte, error) {
 
 	c := canonicalLicenseRecord{
 		ArtefactIdentity: r.ArtefactIdentity,
+		BundledSPDXs:     r.BundledSPDXs,
 		ContentHash:      r.ContentHash,
 		Coordinate: canonicalCoord{
 			Path:    r.Coordinate.Path(),
@@ -273,6 +281,7 @@ func marshalCanonicalLicense(r LicenseRecord) ([]byte, error) {
 		CopyrightStatus:   int(r.CopyrightStatus),
 		Ecosystem:         r.Ecosystem,
 		Expression:        r.Expression,
+		ExpressionBasis:   r.ExpressionBasis,
 		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
 		FailureDetail:     r.FailureDetail,
 		LicenseFiles:      cFiles,

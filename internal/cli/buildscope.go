@@ -105,7 +105,7 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 	// must not say more for one than the other.
 	return buildScope{
 		modules:   walkModuleSet(rec),
-		source:    fmt.Sprintf("walk %q (frame %s)", walkID, rec.Graph.BuildEnv.Frame()),
+		source:    fmt.Sprintf("walk %q (frame %s)", walkID, rec.Graph.Frame()),
 		staleness: staleness,
 	}, nil
 }

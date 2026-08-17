@@ -1,0 +1,7 @@
+# the unanswered question on the human channel: the row states that the newer-major question was not answered. Its control is latest_text_offline_served, whose probe DID run and found nothing — the two rendered identically until this case existed.
+$ kanonarion latest example.com/unprobed
+exit 0
+--- stdout ---
+example.com/unprobed@v1.1.0 (released 273 days ago, 2025-06-01); newer major: not probed  [as of 2026-02-28 23:50 UTC]
+--- stderr ---
+(empty)

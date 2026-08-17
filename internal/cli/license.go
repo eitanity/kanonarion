@@ -341,6 +341,23 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 			return fmt.Errorf("writing failure detail: %w", err)
 		}
 	}
+	// An expression carrying an operator makes a legal claim — a choice under
+	// OR, a set of obligations under AND — so the reader is shown what settled
+	// it, and any grant that was read as somebody else's rather than this
+	// module's, which is the one fact the expression deliberately omits.
+	if r.ExpressionBasis != "" {
+		if _, err := fmt.Fprintf(stdout, "  basis: %s\n", r.ExpressionBasis); err != nil {
+			return fmt.Errorf("writing expression basis: %w", err)
+		}
+	}
+	if len(r.BundledSPDXs) > 0 {
+		if _, err := fmt.Fprintf(stdout,
+			"  bundled in the licence file, not a licence of this module: %s\n",
+			strings.Join(r.BundledSPDXs, ", "),
+		); err != nil {
+			return fmt.Errorf("writing bundled grants: %w", err)
+		}
+	}
 	for _, f := range r.LicenseFiles {
 		vendored := ""
 		if f.IsVendored {

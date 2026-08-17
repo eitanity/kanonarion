@@ -1,0 +1,112 @@
+# populated: every coordinate a single advisory reaches, ranked by finding.
+$ kanonarion vuln-by-id GO-2026-0001 --json
+exit 0
+--- stdout ---
+[
+  {
+    "ecosystem": "go",
+    "coordinate": "example.com/mod@v1.2.0",
+    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "overall_status": "Affected",
+    "coverage_status": "Analysed",
+    "findings_status": "Affected",
+    "database_snapshot": {
+      "source": "govulndb",
+      "version": "v2026-02-14T00-00-00",
+      "retrieved_at": "2026-02-14T00:00:00Z",
+      "content_hash": "sha256:f8f3e08ea8c5a10193a6767cfea29261ea9eb06896fb30c5cf61327d1c6d7f47"
+    },
+    "scanned_at": "2026-02-20T09:00:00Z",
+    "first_scanned_at": "2026-01-15T09:00:00Z",
+    "pipeline_version": "v24",
+    "callgraph_completeness": "BUILT_WITH_BODIES",
+    "callgraph_algorithm": "CHA",
+    "rooting": "target-rooted",
+    "analysis_surface": "fetched",
+    "content_hash": "sha256:2a771a09976ef446cc78d7ec9937fc3a0b9a05d34665ae70fc7f38ad40972912",
+    "findings": [
+      {
+        "id": "GO-2026-0001",
+        "aliases": [
+          "CVE-2026-00001"
+        ],
+        "summary": "example vulnerability in example.com/mod",
+        "affected_range": "\u003cv1.3.0",
+        "fixed_in": "v1.3.0",
+        "affected_symbols": [
+          "Parse"
+        ],
+        "reachable": {
+          "is_reachable": true,
+          "confidence": "High",
+          "routes": [
+            [
+              {
+                "module_path": "example.com/app",
+                "package": "example.com/app",
+                "symbol": "main"
+              },
+              {
+                "module_path": "example.com/mod",
+                "module_version": "v1.2.0",
+                "package": "example.com/mod",
+                "symbol": "Handle"
+              },
+              {
+                "module_path": "example.com/mod",
+                "module_version": "v1.2.0",
+                "package": "example.com/mod",
+                "symbol": "Parse"
+              }
+            ]
+          ],
+          "derived_by": {
+            "analyser": "govulncheck",
+            "fidelity": "source",
+            "rooting": "target-rooted"
+          }
+        },
+        "references": [
+          {
+            "type": "ADVISORY",
+            "url": "https://example.com/advisories/GO-2026-0001"
+          }
+        ],
+        "published_at": "2026-01-05T00:00:00Z",
+        "modified_at": "2026-01-06T00:00:00Z",
+        "soundness": "not stated",
+        "route_root": {
+          "kind": "unrooted",
+          "reason": "the route's entry point is in example.com/app, which names no version on the frame and is not the module the analysis frame identifies, so no call graph can be located for it",
+          "closure_rooted": false
+        }
+      },
+      {
+        "id": "GO-2026-0002",
+        "aliases": [
+          "CVE-2026-00002"
+        ],
+        "summary": "withdrawn advisory for example.com/mod",
+        "affected_range": "\u003cv1.3.0",
+        "fixed_in": "v1.3.0",
+        "affected_symbols": [
+          "Parse"
+        ],
+        "references": [
+          {
+            "type": "ADVISORY",
+            "url": "https://example.com/advisories/GO-2026-0001"
+          }
+        ],
+        "published_at": "2026-01-05T00:00:00Z",
+        "modified_at": "2026-01-06T00:00:00Z",
+        "withdrawn_at": "2026-02-10T00:00:00Z",
+        "soundness": "not stated",
+        "route_root": null
+      }
+    ],
+    "superseded": false
+  }
+]
+--- stderr ---
+(empty)

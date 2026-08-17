@@ -170,6 +170,12 @@ func TestTransientFailureRetriesThenVerifies(t *testing.T) {
 		{"connection reset", errors.New("fetching https://sum.golang.org/lookup/x: read tcp: connection reset by peer")},
 		{"unexpected EOF", fmt.Errorf("reading sumdb response for /lookup/x: %w", io.ErrUnexpectedEOF)},
 		{"http2 stream reset", errors.New("stream error: stream ID 7; INTERNAL_ERROR; received from peer")},
+		// A checksum-database lookup is a metadata-sized request, so an adapter
+		// timeout here means the database did not answer in time — the same
+		// unreliable measurement a 503 is, not a statement about the module.
+		{"adapter request timeout", fmt.Errorf("fetching lookup: %w", &fetchdomain.ProxyRequestTimeoutError{
+			URL: "https://sum.golang.org/lookup/golang.org/x/text@v0.37.0", Timeout: 10 * time.Second, Err: context.DeadlineExceeded,
+		})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := &scriptedClient{results: []ports.SumDBResult{
@@ -286,6 +292,8 @@ func TestPermanentFailureDoesNotRetry(t *testing.T) {
 		{"malformed record", errors.New("parsing record: malformed record data")},
 		{"404 not found", &fetchdomain.ProxyStatusError{StatusCode: 404, URL: "https://sum.golang.org/lookup/x"}},
 		{"context canceled", fmt.Errorf("fetching lookup: %w", context.Canceled)},
+		// The control for the adapter-timeout case above.
+		{"caller deadline exceeded", fmt.Errorf("fetching lookup: %w", context.DeadlineExceeded)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := &scriptedClient{results: []ports.SumDBResult{failureResult(tc.err), availableResult(t)}}

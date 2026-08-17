@@ -1,0 +1,9 @@
+# error-shaped: the named go.mod does not exist.
+$ kanonarion audit --gomod $PROJECT/absent/go.mod --json
+exit 20
+--- error ---
+execute root command: resolving code scope: go list -deps -test -f {{if .Module}}{{if and (not .Standard) .Module.Version}}{{.Module.Path}}@{{.Module.Version}}{{end}}{{end}} ./...: chdir $PROJECT/absent: no such file or directory
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

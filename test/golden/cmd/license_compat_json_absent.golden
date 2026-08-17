@@ -1,0 +1,9 @@
+# empty: no walk is stored for this coordinate, so there is no closure to judge.
+$ kanonarion license-compat example.com/absent@v9.9.9 --json
+exit 4
+--- error ---
+execute root command: no walk record matched target module "example.com/absent@v9.9.9" — the value is compared for exact equality against the target coordinate of all 2 walk record(s) in the store (e.g. example.com/app@v1.0.0); to list every walk record: kanonarion walk-list --limit 0; to produce one: kanonarion walk example.com/absent@v9.9.9
+--- stdout ---
+(empty)
+--- stderr ---
+{"subject":"walk record","filter":{"name":"target module","value":"example.com/absent@v9.9.9","compared_against":"target coordinate","match":"for exact equality"},"records_considered":2,"store_empty":false,"paged_past":false,"remedy":["kanonarion walk-list --limit 0","kanonarion walk example.com/absent@v9.9.9"]}

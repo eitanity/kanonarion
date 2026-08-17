@@ -73,6 +73,9 @@ func TestPrintVulnRecord_NamesTheRetractionAndItsDate(t *testing.T) {
 // silence in a different place.
 func TestBuildScanAffectedModules_WithdrawnIsItsOwnSection(t *testing.T) {
 	rec := withdrawnBboltRecord()
+	// The run names this record by its hash: the report is read by that identity,
+	// never by re-resolving the coordinate.
+	rec.ContentHash = "h1"
 	uc := testfakes.NewFakeQueryVuln()
 	uc.AddRecord(rec.Coordinate, rec)
 
@@ -104,7 +107,7 @@ func TestPrintVulnScanResult_WithdrawnIsOutOfTheFindingsCountButInTheReport(t *t
 	withdrawn := []vulnScanAffected{{coord: rec.Coordinate.String(), record: rec}}
 
 	var out bytes.Buffer
-	if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, nil, withdrawn, nil, nil, false, &out); err != nil {
+	if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, nil, withdrawn, nil, nil, vulnScanReachability{}, false, &out); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 	got := out.String()
