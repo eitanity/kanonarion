@@ -1,6 +1,10 @@
 package domain
 
-import "github.com/eitanity/kanonarion/internal/coordinate"
+import (
+	"fmt"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
+)
 
 // LocalDirPlaceholder stands in for the working tree's directory in a remedy
 // built somewhere the directory is not known.
@@ -57,4 +61,57 @@ func ForcedReanalysisCommand(coord coordinate.ModuleCoordinate, dir string) stri
 // succeed however often it is run.
 func IsReFetchable(coord coordinate.ModuleCoordinate) bool {
 	return !coord.IsLocal() && !coord.IsZero()
+}
+
+// ColdModuleCacheRemedy makes every module a load needs available on this host,
+// in one step.
+//
+// One step is the point of it. The loader stops at the first unresolved imports
+// of each package, so a reader told to fetch the modules it named fetches those,
+// re-runs, and is told about the next few — with nothing anywhere saying how many
+// rounds are left. Downloading the whole requirement graph ends that in one
+// command, and it is the same command whatever the load happened to reach first.
+const ColdModuleCacheRemedy = "go mod download all"
+
+// IncompleteGraphRemedy states what to do about a call graph that came back
+// incomplete, for a reader looking at an answer computed from it.
+//
+// cause decides both halves of the answer, and getting it wrong is worse than
+// saying nothing. A module whose own sources do not typecheck is fixed by fixing
+// them; a graph cut short because this host's module cache did not hold a
+// dependency is fixed by warming the cache, and telling that reader to go and
+// find a compile error sends them looking for a fault that is not there.
+//
+// The re-derivation command carries --force exactly when the stored record would
+// otherwise answer the re-run — which is the same question RecordIsCacheable
+// decides, asked here so the printed remedy and the reuse gate can never
+// disagree. An incompleteness this host caused is not served back, so the plain
+// command re-derives; a module fault is served back, so the flag is owed. For a
+// working tree the source fix moves the tree's digest, which is itself enough to
+// make the plain command re-analyse.
+//
+// dir is the working tree behind a local coordinate when the caller knows it.
+func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause, dir string) string {
+	rerun := ReanalysisCommand(coord, dir)
+	if cause == FailureCauseModule && !coord.IsLocal() {
+		rerun = ForcedReanalysisCommand(coord, dir)
+	}
+	if coord.IsLocal() {
+		if cause == FailureCauseEnvironment {
+			return "  This host's module cache did not hold every module the load needed, so the gap is in\n" +
+				"  the environment and not in the source. Make them all available, then re-analyse:\n" +
+				"  " + ColdModuleCacheRemedy + "\n" +
+				"  " + rerun
+		}
+		return "  Fix the package so it compiles, then re-analyse:\n  " + rerun
+	}
+	whose := fmt.Sprintf("  %s is a fetched dependency, so the failure is in its own sources, not in your tree.", coord)
+	if cause == FailureCauseEnvironment {
+		whose = fmt.Sprintf(
+			"  %s is a fetched dependency, and this host's module cache did not hold every module its\n"+
+				"  analysis needed, so the gap is in the environment and not in what it published.\n"+
+				"  Populating the cache — %s in a tree that requires it — is what closes it.",
+			coord, ColdModuleCacheRemedy)
+	}
+	return fmt.Sprintf("%s\n  See it: kanonarion callgraph-show %s\n  Re-measure it: %s", whose, coord, rerun)
 }

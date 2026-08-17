@@ -244,3 +244,90 @@ func TestLocalExecute_AnalyserInfraError(t *testing.T) {
 		t.Fatalf("expected error from analyser infra failure, got nil")
 	}
 }
+
+// TestLocalExecute_DoesNotReuseAPartialLimitedByTheEnvironment is the defect this
+// guards. A graph left incomplete because this host's module cache did not hold
+// a dependency is not a statement about the tree, and the tree's own digest
+// cannot see the difference: warming the cache leaves the source identical, so
+// reuse keyed on the tree alone serves the incomplete graph back to the one run
+// that would finally have measured the whole thing.
+func TestLocalExecute_DoesNotReuseAPartialLimitedByTheEnvironment(t *testing.T) {
+	store, analyser := seededTree(t, "/work/tree", "scanned-sha256:aaa",
+		domain.CallGraphRecord{
+			OverallStatus:  domain.CallGraphStatusPartial,
+			FailureCause:   domain.FailureCauseEnvironment,
+			FailedPackages: []string{"example.com/mod/needsdep"},
+			NodeCount:      42,
+		})
+	uc := buildLocalUseCase(store, analyser)
+
+	res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
+		Dir:        "/work/tree",
+		Coordinate: testCoord,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.FromCache {
+		t.Error("FromCache=true: a graph cut short by a cold module cache was served back, " +
+			"so warming the cache and re-running changes nothing")
+	}
+	if analyser.calls != 1 {
+		t.Errorf("analyser invoked %d times, want 1", analyser.calls)
+	}
+}
+
+// TestLocalExecute_DoesNotReuseAPartialThatStatesNoCause: the records written
+// before the cause reached partial extractions say nothing about what limited
+// them, and "we do not know" is not "the module is at fault". Each is
+// re-attempted once; the re-attempt writes a record that does state its cause.
+func TestLocalExecute_DoesNotReuseAPartialThatStatesNoCause(t *testing.T) {
+	store, analyser := seededTree(t, "/work/tree", "scanned-sha256:aaa",
+		domain.CallGraphRecord{
+			OverallStatus:  domain.CallGraphStatusPartial,
+			FailedPackages: []string{"example.com/mod/needsdep"},
+			NodeCount:      42,
+		})
+	uc := buildLocalUseCase(store, analyser)
+
+	res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
+		Dir:        "/work/tree",
+		Coordinate: testCoord,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.FromCache {
+		t.Error("FromCache=true: an incompleteness of unestablished cause answered for this tree")
+	}
+}
+
+// TestLocalExecute_ReusesAPartialTheModuleItselfCaused is the control that keeps
+// the rule from degenerating into never caching a partial graph. A package that
+// does not typecheck on its own terms is a stable finding, and an unchanged tree
+// rediscovering it every run would pay a full analysis for an answer already
+// held.
+func TestLocalExecute_ReusesAPartialTheModuleItselfCaused(t *testing.T) {
+	store, analyser := seededTree(t, "/work/tree", "scanned-sha256:aaa",
+		domain.CallGraphRecord{
+			OverallStatus:  domain.CallGraphStatusPartial,
+			FailureCause:   domain.FailureCauseModule,
+			FailedPackages: []string{"example.com/mod/broken"},
+			NodeCount:      42,
+		})
+	uc := buildLocalUseCase(store, analyser)
+
+	res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
+		Dir:        "/work/tree",
+		Coordinate: testCoord,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !res.FromCache {
+		t.Error("FromCache=false: a module's own compile error was re-analysed on an unchanged tree")
+	}
+	if analyser.calls != 0 {
+		t.Errorf("analyser invoked %d times, want 0", analyser.calls)
+	}
+}

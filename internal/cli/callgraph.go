@@ -108,7 +108,7 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		return fmt.Errorf("extracting call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, stdout); err != nil {
+	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, "", stdout); err != nil {
 		return err
 	}
 	return callGraphExtractionExit(result.Record)
@@ -142,7 +142,10 @@ func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
 	}
 }
 
-func printCallGraphSummary(r cgdomain.CallGraphRecord, fromCache bool, jsonOut bool, stdout io.Writer) error {
+// dir is the working tree a local run was pointed at, so a printed remedy names
+// the directory the reader actually ran in rather than a placeholder; it is empty
+// where the caller has none.
+func printCallGraphSummary(r cgdomain.CallGraphRecord, fromCache bool, jsonOut bool, dir string, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -175,6 +178,25 @@ func printCallGraphSummary(r cgdomain.CallGraphRecord, fromCache bool, jsonOut b
 	}
 	if err := writeExclusionInfo(stdout, r); err != nil {
 		return err
+	}
+	return writeIncompletenessRemedy(stdout, r, dir)
+}
+
+// writeIncompletenessRemedy prints, in text mode, what to do about a graph that
+// came back incomplete.
+//
+// The run that produced the record is where the remedy is most useful and was
+// the one place not stating it: the failed-package list above says what is
+// missing and the failure detail says what the loader reported, and a reader was
+// left to work out from that prose whether the fault was in the source or in
+// their module cache. The record has already classified it, so the remedy is
+// printed from the classification rather than re-derived by the reader.
+func writeIncompletenessRemedy(stdout io.Writer, r cgdomain.CallGraphRecord, dir string) error {
+	if !cgdomain.RecordIsIncomplete(r) {
+		return nil
+	}
+	if _, err := fmt.Fprintln(stdout, cgdomain.IncompleteGraphRemedy(r.Coordinate, r.FailureCause, dir)); err != nil {
+		return fmt.Errorf("writing incompleteness remedy: %w", err)
 	}
 	return nil
 }
