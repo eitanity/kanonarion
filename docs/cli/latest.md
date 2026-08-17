@@ -80,10 +80,9 @@ answer the column has - while being the most stale kind of dependency there is.
   version and date (`republished_module`, `republished_latest`,
   `republished_date`). Only a `+incompatible` pin can have one.
 
-The probe walks upward from one major above the **pinned version's** major - not
-above the path suffix, because a `+incompatible` pin carries its major in the
-version while living at the unsuffixed path - and stops at the first major that
-does not resolve. `major_probed` distinguishes "probed, nothing newer" from "not
+The probe walks upward from one major above the **pinned version's** major -
+not above the path suffix, since a `+incompatible` pin carries its major in the
+version - and stops at the first major that does not resolve. `major_probed` distinguishes "probed, nothing newer" from "not
 probed" (an offline run, or a probe whose request failed), and the text surface
 says `newer major: not probed` on such a row: a question that was never asked is
 never rendered as a clean answer.
@@ -110,9 +109,8 @@ When both hold, **both are reported, the republication first**:
 github.com/go-chi/chi@v3.3.4+incompatible  ahead of latest tag: v1.5.5; same major republished: github.com/go-chi/chi/v3@v3.3.5 (2023-09-07); newer major: github.com/go-chi/chi/v5@v5.3.1 (2026-07-05)
 ```
 
-Whether the newer major is *adoptable* is a different question - a new major is
-expected to be breaking. This only stops a several-majors-behind module reading
-as up to date.
+Whether the newer major is *adoptable* is a different question; this only stops
+a several-majors-behind module reading as up to date.
 
 ### The staleness ledger
 
@@ -120,19 +118,19 @@ Every successful `@latest` resolution - including the major probe, and including
 the recorded negative "no newer major exists" - is written to a store-side
 ledger keyed on module path. Any command that reports staleness (`latest`,
 `audit`) serves a recording younger than `staleness.ttl` instead of re-querying,
-so a `latest` run and an `audit` minutes later pay the proxy sweep once between
-them rather than once each.
+so a `latest` run and an `audit` minutes later pay the sweep once between them.
 
-Every answer states the lookup time it used, so a served answer is never
-mistaken for a live one. A table is dated by its **oldest** row: a run where
+Every answer states the lookup time it used, so a served answer is never taken
+for a live one. A table is dated by its **oldest** row: a run where
 most rows were served and a few re-queried is only as current as the row asked
 about longest ago.
 
 A **failed** lookup is never written - failures are not cacheable facts. An
-absent major path is not a failure: it is a definitive answer, it is what bounds
-the probe, and it is recorded. An answer that settles nothing - an empty body, a
-429 or a 5xx - is asked again a bounded number of times before it counts as a
-failure.
+absent major path is not a failure: it is a definitive answer, it bounds the
+probe, and it is recorded. An answer that settles nothing - an empty body, a
+timeout, a 429 or a 5xx - is asked again: four attempts, ten seconds each,
+over about fourteen seconds of backoff, so a sweep can pause on a module the
+proxy is slow for. A definitive answer is never retried.
 
 `staleness.ttl` is a config key (default `1h`; `0` disables serving). `--fresh`
 bypasses the ledger for a single run and still records what it resolved.
@@ -185,12 +183,12 @@ modernc.org/sqlite@v1.50.0                     latest: v1.50.1 (3 days ago)
 latest as of 2026-07-31 09:14 UTC (staleness.ttl 1h0m0s; --fresh to re-query)
 ```
 
-`minio-go/v6` is the case this exists for: `current` is true of its own path and
-a whole major line is available. The clause is appended, never substituted.
+`minio-go/v6` is the case this exists for: `current` is true of its own path
+while a whole major line is available. The clause is appended, never substituted.
 
 `go-difflib` is the other one: the pin is a pseudo-version taken after v1.0.0,
-so it sorts *above* what the proxy answers `@latest` with. Reporting
-`latest: v1.0.0` there named a downgrade as the upgrade target.
+so it sorts *above* what the proxy answers `@latest` with, and reporting
+`latest: v1.0.0` would name a downgrade as the upgrade target.
 
 ## JSON output
 

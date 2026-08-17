@@ -124,6 +124,13 @@ func TestTransientErrorRetriesThenSucceeds(t *testing.T) {
 		{"unexpected EOF", fmt.Errorf("proxy download: reading zip: %w", io.ErrUnexpectedEOF)},
 		{"proxy 500", fmt.Errorf("proxy info: %w", &fetchdomain.ProxyStatusError{StatusCode: 500, URL: "https://proxy.golang.org"})},
 		{"proxy 429", fmt.Errorf("proxy info: %w", &fetchdomain.ProxyStatusError{StatusCode: 429, URL: "https://proxy.golang.org"})},
+		// The deadline the proxy adapter imposed on its own request. On this
+		// path it means a transfer that outran the download timeout, which is a
+		// network condition about the link and not the module's answer — the
+		// same family as the stream resets above.
+		{"adapter request timeout", fmt.Errorf("fetching zip: %w", &fetchdomain.ProxyRequestTimeoutError{
+			URL: "https://proxy.golang.org/x/@v/v1.0.0.zip", Timeout: 60 * time.Second, Err: context.DeadlineExceeded,
+		})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := &scriptedFetcher{errs: []error{tc.err}}
@@ -208,6 +215,9 @@ func TestNonTransientErrorFailsWithoutRetry(t *testing.T) {
 		{"not found", errors.New("inner fetcher: fetching module: proxy info: not found")},
 		{"proxy 404 gone", fmt.Errorf("proxy info: %w", &fetchdomain.ProxyStatusError{StatusCode: 410, URL: "u"})},
 		{"context canceled", fmt.Errorf("proxy download: %w", context.Canceled)},
+		// The control for the adapter-timeout case above: the CALLER's deadline
+		// expiring produces the same error value and must still not be retried.
+		{"caller deadline exceeded", fmt.Errorf("proxy download: %w", context.DeadlineExceeded)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := &scriptedFetcher{errs: []error{tc.err, tc.err, tc.err}}

@@ -8,6 +8,18 @@
 // short row of hundreds goes unnoticed. The condition is load-related: the same
 // path asked again moments later answers cleanly.
 //
+// The budget is what the condition costs, not a round number, and it is sized
+// against what a lost probe costs TODAY rather than against zero. The proxy is
+// slow here rather than flaky: it spends about fifty-six seconds on an origin
+// lookup it cannot finish and then answers 200 with an empty body, so a probe
+// that never answers already costs the better part of a minute. Four attempts
+// bounded at ten seconds each, spread over a backoff of at most fourteen
+// seconds, come to fifty-four — the same minute, spent on four chances instead
+// of one dead wait. The friction lands only on the failing path, and one probe
+// at a time, because the sweep is sequential. A probe that answers — including
+// the definitive absent-major 404 that is this decorator's commonest result —
+// is untouched and still costs exactly one request.
+//
 // Classification lives in the fetch domain (domain.IsTransientFetchError), the
 // same positive-match classifier the module download and checksum-database
 // paths use. That is deliberate: a second classifier is how two surfaces come
@@ -30,15 +42,25 @@ import (
 
 const (
 	// defaultAttempts is the total number of tries, not the number of retries:
-	// one initial attempt plus two retries.
-	defaultAttempts = 3
+	// one initial attempt plus three retries.
+	defaultAttempts = 4
 	// defaultBaseDelay is the first backoff interval; it doubles per retry.
-	defaultBaseDelay = 200 * time.Millisecond
+	//
+	// It is sized from what the condition actually is. The proxy answering an
+	// absent major path is not blipping: it is running an origin lookup it has
+	// not finished, and it holds the request for about fifty-six seconds before
+	// answering 200 with an empty body. Measured against the live proxy from
+	// this host, that work CONTINUES after the client gives up and is resumed
+	// rather than restarted by the next request — paths that never answered
+	// inside a single sixty-second request answered a definitive 404 after
+	// several short attempts spread over minutes. A retry window of a few
+	// hundred milliseconds cannot reach that; seconds can.
+	defaultBaseDelay = 2 * time.Second
 	// maxBackoff caps the doubling so a raised attempt budget saturates rather
 	// than overflowing the interval to a negative duration, which would collapse
 	// the backoff to zero and turn the retry loop into a hot spin on the proxy.
-	// The default budget (200ms then 400ms) never reaches it.
-	maxBackoff = 5 * time.Second
+	// The default budget (2s, 4s then 8s) stops just short of it.
+	maxBackoff = 10 * time.Second
 )
 
 // Resolver wraps a ports.LatestResolver and retries transient lookup failures.
@@ -109,6 +131,7 @@ func (r *Resolver) LatestInfo(ctx context.Context, path string) (ports.LatestInf
 		info         ports.LatestInfo
 		err          error
 		totalBackoff time.Duration
+		started      = time.Now()
 	)
 	for attempt := 1; ; attempt++ {
 		info, err = r.inner.LatestInfo(ctx, path)
@@ -132,7 +155,10 @@ func (r *Resolver) LatestInfo(ctx context.Context, path string) (ports.LatestInf
 			r.logger.WarnContext(ctx, "staleness.latest.retries_exhausted",
 				slog.String("module.path", path),
 				slog.Int("attempts", attempt),
+				slog.Int("attempts.max", r.attempts),
 				slog.Int64("backoff_total_ms", totalBackoff.Milliseconds()),
+				slog.Int64("backoff_budget_ms", r.backoffBudget().Milliseconds()),
+				slog.Int64("elapsed_ms", time.Since(started).Milliseconds()),
 				slog.String("error", err.Error()),
 			)
 			return info, err //nolint:wrapcheck // deliberate pass-through of the wrapped resolver's error
@@ -172,6 +198,18 @@ func (r *Resolver) backoffFor(attempt int) time.Duration {
 		d *= 2
 	}
 	return d
+}
+
+// backoffBudget returns the largest total time this resolver will spend
+// sleeping between attempts, before jitter. It is the figure the exhaustion
+// warning names, so a reader who sees a probe give up can tell how long it
+// waited against how long it was ever going to.
+func (r *Resolver) backoffBudget() time.Duration {
+	var total time.Duration
+	for attempt := 1; attempt < r.attempts; attempt++ {
+		total += r.backoffFor(attempt)
+	}
+	return total
 }
 
 // fullJitter spreads a backoff interval over [d/2, d] so a sweep hitting an

@@ -96,8 +96,8 @@ func TestPersistentEmptyResponseStillFails(t *testing.T) {
 	if want := "proxy returned an empty response for example.com/mod/v2@latest"; !strings.Contains(err.Error(), want) {
 		t.Errorf("error = %q, want it to still contain %q", err.Error(), want)
 	}
-	if got := calls.Load(); got != 3 {
-		t.Errorf("proxy asked %d times, want the 3-attempt budget", got)
+	if got := calls.Load(); got != 4 {
+		t.Errorf("proxy asked %d times, want the 4-attempt budget", got)
 	}
 }
 
