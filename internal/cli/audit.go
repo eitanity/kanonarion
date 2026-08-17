@@ -58,6 +58,7 @@ For each module, audit shows:
   - Verification status (from the fetch record)
   - License (SPDX identifier)
   - Vulnerability status
+  - The author's own deprecation notice, where they published one
 
 Beside the table, on stderr, audit states the toolchain axis: the Go toolchain
 version the walk was built by, the advisory snapshot it was judged against, and
@@ -251,6 +252,21 @@ type auditModuleResult struct {
 	// "not asked": the question is only put for a +incompatible pin on a bare
 	// path. Emitted always, false included.
 	RepublishedProbed bool `json:"republished_probed"`
+	// Deprecated is the module author's OWN deprecation notice, reproduced
+	// verbatim from the `// Deprecated:` comment on their go.mod module
+	// directive. It is a FOURTH fact beside the three above and is never merged
+	// into them: a deprecated module is frequently current on its own path, and
+	// the successor a notice names is often somewhere the /vN probe structurally
+	// cannot reach — google.golang.org/protobuf succeeds github.com/golang/protobuf
+	// on a different host entirely.
+	//
+	// A POINTER and ALWAYS emitted, because there are three states and only two
+	// of them are answers: null is "not established" — an offline row, or one
+	// resolved by a route that cannot see a notice — "" is the recorded negative,
+	// and text is the notice as published. A bare string would report every
+	// unasked module as actively fine. `latest` emits the same key with the same
+	// three states; see latestResult.
+	Deprecated *string `json:"deprecated"`
 	// StalenessLookedUpAt is when the proxy was asked for this row's staleness.
 	// A row served from the ledger carries the original lookup time.
 	StalenessLookedUpAt time.Time `json:"staleness_looked_up_at,omitzero"`
@@ -923,6 +939,7 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 	res.RepublishedProbed = ans.Republication.Asked
 	res.RepublishedModule = ans.Republication.Path
 	res.RepublishedLatest = ans.Republication.Version
+	res.Deprecated = deprecationField(ans.Deprecation)
 }
 
 // markStalenessUnmeasured records that the column was not answered, and why. It
@@ -1336,6 +1353,45 @@ func auditNewerMajorNote(r auditModuleResult) string {
 	)
 }
 
+// deprecation rebuilds the domain fact from an output row, so the table and the
+// JSON cannot disagree about which of the three states the row is in.
+func (r auditModuleResult) deprecation() staledomain.Deprecation {
+	if r.Deprecated == nil {
+		return staledomain.Deprecation{}
+	}
+	return staledomain.Deprecation{Checked: true, Notice: *r.Deprecated}
+}
+
+// auditRowNote is everything stated BESIDE the staleness answer, on the row's
+// continuation line: the major-line clauses and the module's own deprecation
+// notice.
+//
+// They are separate clauses and neither is folded into the other or into the
+// column. A module can be deprecated and current at once, or deprecated with a
+// newer major line beside it — go-chi/chi and go.mongodb.org/mongo-driver are
+// both live examples — and a rendering that merged them would report one claim
+// as the other.
+//
+// Both clauses come from the renderers `latest` uses, not from wording invented
+// here: two surfaces that word one fact differently is a defect this project has
+// already had to fix.
+//
+// A row whose deprecation was not established contributes nothing here, and
+// neither does one established as clean. That is what leaves the overwhelming
+// majority of rows unchanged. The two are not the same state and the JSON keeps
+// them apart — null against "" — the table just has no clause to print for
+// either.
+func auditRowNote(r auditModuleResult) string {
+	notes := auditNewerMajorNote(r)
+	if dep := deprecationNote(r.deprecation()); dep != "" {
+		if notes != "" {
+			notes += "; "
+		}
+		notes += dep
+	}
+	return notes
+}
+
 // auditLedgerAgeNote states how old the recorded lookup this row was answered
 // from is. Offline only: on the network path the table's dated footer carries
 // that statement for the run as a whole.
@@ -1452,13 +1508,14 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	// pushed every column to its right out of line on that row alone.
 	type row struct {
 		cells []string
-		// note is the major-line clause, printed beneath the row. See
-		// auditStalenessCell for why it is not in the column.
+		// note is the clauses stated beside the staleness answer — major line
+		// and deprecation — printed beneath the row. See auditStalenessCell for
+		// why they are not in the column.
 		note string
 	}
 	rows := make([]row, 0, len(results))
 	for _, r := range results {
-		rows = append(rows, row{cells: auditRowCells(r, showScope), note: auditNewerMajorNote(r)})
+		rows = append(rows, row{cells: auditRowCells(r, showScope), note: auditRowNote(r)})
 	}
 
 	var widths []int

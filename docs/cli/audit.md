@@ -36,37 +36,39 @@ For each module in the scope, `audit` emits a single line containing:
   answers `@latest` with. The last is ordinary: a pseudo-version taken after
   the last tag, or a pre-modules `+incompatible` major published above the
   newest version the unsuffixed path serves. No upgrade target and no age are
-  offered there — there is nothing at that path to move to, and the age figure
-  in this column means "how long you have been behind". A newer major line, if
-  one exists, is still reported (see below), because that is a separate fact
-  and it lives at a different path. In `--json` the same three positions are
-  `is_latest` plus `pin_ahead_of_latest` (both emitted on every measured row,
-  `false` included; both `null` together where nothing was measured), and
-  `latest_release_age_days` is null on an ahead row so the two surfaces cannot
-  disagree — beside `is_latest: false` an age reads as "you are this far
-  behind", which is exactly what an ahead pin is not. The field is emitted on
-  every row and **zero is a value**: a release that shipped today is `0` days
-  old. Null means there is no age — either the pin is ahead, or the proxy
+  offered there — there is nothing at that path to move to. A newer major line,
+  if one exists, is still reported (see below): a separate fact, at a different
+  path. In `--json` the same three positions are `is_latest` plus
+  `pin_ahead_of_latest`, both emitted on every measured row and
+  both `null` together where nothing was measured. `latest_release_age_days` is
+  emitted on every row and **zero is a value**: a release that shipped today is
+  `0` days old. Null means there is no age — the pin is ahead, or the proxy
   supplied no publication date, told apart by `pin_ahead_of_latest`. The text
   column matches: `latest: vX (today)` for a zero age, and a bare `latest: vX`
   where the date is unknown rather than an invented "today".
+- **Deprecation** - the module author's own `// Deprecated:` notice from their
+  `go.mod`, reproduced verbatim on the row's continuation line as `deprecated by
+  its author: <notice>`. It is stated beside the staleness answer, never merged
+  into it: a deprecated module is frequently `current` on its own path, and the
+  successor a notice names is often somewhere the `/vN` probe cannot reach.
+  kanonarion never infers a successor from name similarity. In `--json` the key
+  is `deprecated`, always emitted, in three states: `null` where the question was
+  not established (an offline row, or one resolved a path at a time), `""` where
+  it was asked and the module declares none, or the notice text. `null` is not
+  "not deprecated".
 - **Vuln status** - `Clean`, `Affected (N findings)`, `Withdrawn (N retracted)`,
   `ScanFailed`, `(not scanned)` when no record exists at any pipeline version, or
   `(superseded)` when the store holds records for the module only at pipeline
   versions this build no longer reads — the module has been scanned, and the row's
   reason names the generations held and says to re-scan. A module whose every
   matched advisory was retracted upstream reads `Withdrawn`, and its count is
-  reported as *retracted* rather than as findings — the two must not read alike,
-  since only one of them is something to act on. A module carrying both reads
-  `Affected (N findings, M retracted)`. The verdict is **project-rooted**:
-  it comes from a single scan of the project's resolved, pruned build graph - the
-  build the project actually produces - not from scanning each dependency in
-  isolation. A module the project builds cleanly reads `Clean`, `Affected` or `Withdrawn`
-  within that graph; only a genuine fault of the whole scan (no `go.mod`, an OOM
-  kill, a build that does not compile) reads `Unscannable`/`ScanFailed`. Because
-  no dependency is re-resolved on its own, a module can never be reported
-  un-analysable merely because its isolated build would select a version the
-  project never uses.
+  reported as *retracted* rather than as findings: only one of the two is
+  something to act on. A module carrying both reads
+  `Affected (N findings, M retracted)`. The verdict is **project-rooted**: it
+  comes from a single scan of the project's resolved, pruned build graph, not
+  from scanning each dependency in isolation. A module the project builds
+  cleanly reads `Clean`, `Affected` or `Withdrawn` within that graph; only a genuine fault of the whole scan (no `go.mod`, an OOM
+  kill, a build that does not compile) reads `Unscannable`/`ScanFailed`.
 
 The scope always includes the **Go standard library** as a first-class row
 (`stdlib@vX.Y.Z`), so standard-library advisories are audited alongside module
@@ -96,10 +98,8 @@ over standard-library symbols, so a surfaced stdlib finding carries a populated
 `Reachable` verdict and `AffectedSymbols` exactly as a module finding does. A
 standard-library advisory that affects the pinned toolchain version but whose
 vulnerable symbols are **not reached** from the project therefore reads `Clean`,
-consistent with how an unreachable advisory in a fetched module is reported —
-reachability is decided by the call graph, not by whether the enclosing symbol is
-linked into the binary. Query a specific verdict with `kanonarion reachability
-stdlib@vX.Y.Z --vuln <id>`.
+as an unreachable advisory in a fetched module does. Query a specific verdict
+with `kanonarion reachability stdlib@vX.Y.Z --vuln <id>`.
 
 The scope is an **import closure**, not a `require`-line listing: the `code`
 scope is every module the project's packages (and their tests) actually import,
@@ -171,14 +171,16 @@ golang.org/x/mod@v0.35.0                                 Verified             BS
 golang.org/x/vuln@v1.3.0                                 Verified             BSD-3-Clause           current                       Clean
 modernc.org/libc@v1.73.5                                 Verified             BSD-3-Clause           latest: v1.75.3 (5 days ago)  Clean
                                                                                                      newer major: modernc.org/libc/v2@v2.1.30
+github.com/golang/protobuf@v1.5.4                        Verified             BSD-3-Clause           current                       Clean
+                                                                                                     deprecated by its author: Use the "google.golang.org/protobuf" module instead.
 modernc.org/sqlite@v1.50.0                               Verified             BSD-3-Clause           latest: v1.50.1 (3 days ago)  Clean
 ```
 
 Every column is sized from the widest value the run produced, so the columns
-line up on every row. The major-line facts are the values routinely wider than
-the rest of the row put together — each carries a whole module path and a
-version — so they are stated in full on a continuation line under the staleness
-column they belong to, rather than setting that column's width for the run.
+line up on every row. The major-line and deprecation facts are the values
+routinely wider than the rest of the row put together — a whole module path and
+version, or a sentence — so they are stated in full on a continuation line under
+the staleness column they belong to, rather than setting that column's width for the run.
 `--json` is unaffected: it carries those paths and versions as fields.
 
 ## Example - complete set (code + tooling)
@@ -267,8 +269,8 @@ kanonarion audit --gomod ./go.mod --json
 The example above is abridged. Keys whose value is zero, `false` or `null` are
 still emitted - `vuln_findings: 0`, `vuln_withdrawn: 0`, `policy_blocking:
 false`, `policy_unevaluated: false`, `pin_ahead_of_latest: false`,
-`latest_release_age_days: null`. A key is absent only where it names something
-that does not apply to the row at all: the string and list keys
+`latest_release_age_days: null`, `deprecated: null`. A key is absent only where
+it names something that does not apply to the row at all: the string and list keys
 (`latest_version`, `newer_major_module`, `republished_module`, `vuln_reason`,
 `staleness_unmeasured`,
 `license_uncertainty`, `license_electable_arms`, `scope`).
@@ -282,9 +284,7 @@ it is in `vuln_status` (`(not scanned)`, `(superseded)`, `(scan record
 unreadable)`) and `vuln_reason`.
 
 `latest_release_age_days` is **how long ago the latest release shipped**, not how
-far behind the pin is. A stale pin on an actively released module reports a small
-number; a current pin on a quiet module reports a large one. There is no
-`days_behind` field. See
+far behind the pin is. There is no `days_behind` field. See
 [`latest`](latest.md#latest_release_age_days) for the worked example.
 
 ## Pipeline

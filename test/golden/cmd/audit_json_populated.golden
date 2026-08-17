@@ -24,6 +24,7 @@ exit 0
     "latest_release_age_days": null,
     "major_probed": false,
     "republished_probed": false,
+    "deprecated": null,
     "direct": true
   },
   {
@@ -47,6 +48,7 @@ exit 0
     "latest_release_age_days": 273,
     "major_probed": true,
     "republished_probed": false,
+    "deprecated": null,
     "staleness_looked_up_at": "2026-02-28T23:50:00Z",
     "direct": true
   },
@@ -71,6 +73,7 @@ exit 0
     "latest_release_age_days": null,
     "major_probed": false,
     "republished_probed": false,
+    "deprecated": null,
     "direct": true
   }
 ]

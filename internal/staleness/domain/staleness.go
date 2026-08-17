@@ -144,7 +144,10 @@ type Deprecation struct {
 	//
 	// It is false for every answer obtained one path at a time: a proxy @latest
 	// lookup returns a version and a date and says nothing about deprecation, so
-	// a row resolved that way has not been asked.
+	// that resolution has not asked. A resolution that did not ask does not get
+	// to record the fact either way — it carries forward whatever the ledger
+	// already established, because an unasked question is not evidence against
+	// an answer.
 	Checked bool
 	// Notice is the declaration verbatim, or empty when Checked and the module
 	// declares none — a recorded negative, and a real answer.

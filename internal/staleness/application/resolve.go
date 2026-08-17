@@ -112,15 +112,23 @@ func (r *Resolver) WithBatch(batch ports.BatchLatestResolver, coords []ports.Pin
 func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Answer, error) {
 	now := r.clk.Now()
 
+	// The recorded row is read whether or not it may be SERVED, and whether or
+	// not --fresh is in force. Two different questions are being asked of it:
+	// whether it answers this run (freshness, below), and what it already
+	// established that this run may not be able to — see carryDeprecation. A row
+	// too old to serve still holds facts a live resolution cannot re-establish,
+	// and discarding it before the write is how a query came to destroy them. The
+	// extra cost is one keyed read of a local table on --fresh runs only.
 	var stored domain.Record
 	var haveFresh bool
-	if r.ledger != nil && !r.fresh {
+	if r.ledger != nil {
 		rec, found, err := r.ledger.GetStaleness(ctx, path)
 		if err != nil {
 			return Answer{}, fmt.Errorf("reading staleness ledger for %s: %w", path, err)
 		}
-		if found && rec.FreshAt(now, r.ttl) {
-			stored, haveFresh = rec, true
+		if found {
+			stored = rec
+			haveFresh = !r.fresh && rec.FreshAt(now, r.ttl)
 		}
 	}
 
@@ -140,7 +148,7 @@ func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Ans
 		}
 		out.LatestVersion = info.Version
 		out.LatestPublishedAt = info.Time
-		out.Deprecation = dep
+		out.Deprecation = carryDeprecation(dep, stored.Deprecation)
 		out.LookedUpAt = now
 		r.applyTagPosition(ctx, &out, pinnedVersion)
 	}
@@ -234,9 +242,11 @@ func (r *Resolver) applyTagPosition(ctx context.Context, out *domain.Record, pin
 // path missing from it is an unasked question, not a module with no update.
 //
 // The deprecation notice rides on the batch answer only. A per-path @latest
-// lookup returns a version and a date and cannot see the notice, so a row
-// resolved that way reports the deprecation question as unchecked instead of
-// reporting a negative it never established.
+// lookup returns a version and a date and cannot see the notice, so this route
+// returns the question UNCHECKED rather than reporting a negative it never
+// established. Unchecked here means "not established by this resolution"; what
+// the row then carries is settled by carryDeprecation, which keeps a recorded
+// answer rather than letting a route that cannot ask erase one.
 func (r *Resolver) latestFor(ctx context.Context, path string) (ports.LatestInfo, domain.Deprecation, error) {
 	if r.batch != nil {
 		if err := r.primeBatch(ctx); err != nil {
@@ -380,6 +390,29 @@ func (r *Resolver) probe(ctx context.Context, path string, plan domain.ProbePlan
 		nm.PublishedAt = info.Time
 	}
 	return nm, rep, nil
+}
+
+// carryDeprecation decides which deprecation answer the row about to be written
+// keeps: the one this resolution obtained, or the one already recorded.
+//
+// It turns on whether the fact was ESTABLISHED, not on which route ran, so a
+// route added later inherits the behaviour without being told about it.
+// resolved.Checked is exactly that test: true means this run put the question
+// and got an answer, including the recorded negative a module author causes by
+// REMOVING a notice, which is a real event and must overwrite. False means the
+// question was never put, and the never-asked value is not an answer — writing
+// it over a recorded notice destroys a fact the ledger held and reports success
+// while doing it.
+//
+// It is the same rule the resolver already applies to the other halves of the
+// row: a failed latest lookup is never written, and a failed probe never
+// overwrites a recorded one. A resolution that cannot establish a fact leaves
+// the recorded one alone.
+func carryDeprecation(resolved, stored domain.Deprecation) domain.Deprecation {
+	if resolved.Checked {
+		return resolved
+	}
+	return stored
 }
 
 func (r *Resolver) write(ctx context.Context, rec domain.Record) error {

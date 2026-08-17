@@ -277,3 +277,136 @@ func TestDeprecationRidesOnTheBatchAnswer(t *testing.T) {
 		t.Error("a module declaring no deprecation was reported deprecated")
 	}
 }
+
+// TestPerModuleResolutionDoesNotEraseARecordedNotice: a positional
+// `latest <module>` resolves one path at a time, cannot see the deprecation
+// notice, and must therefore leave the recorded one alone.
+//
+// The route that never put the question was writing its never-asked value over
+// an answer, so a command every user reads as a query destroyed a fact the
+// ledger held and reported success. The stored row here is STALE — a fresh row
+// is served whole and never reached the write — which is the state the loss
+// actually happened in.
+func TestPerModuleResolutionDoesNotEraseARecordedNotice(t *testing.T) {
+	const notice = "aws-sdk-go is deprecated. Use aws-sdk-go-v2."
+	now := time.Now()
+	ledger := newFakeLedger()
+	ledger.rows["example.com/old"] = domain.Record{
+		ModulePath:    "example.com/old",
+		LatestVersion: "v1.0.0",
+		Deprecation:   domain.Deprecation{Checked: true, Notice: notice},
+		// Older than the TTL: this row cannot be served, so the live route runs.
+		LookedUpAt: now.Add(-48 * time.Hour),
+	}
+	proxy := &fakeProxy{versions: map[string]string{"example.com/old": "v1.1.0"}}
+	r := application.NewResolver(proxy, ledger, &fixedClock{t: now}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/old", "")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	// The half this route DID establish is the new one.
+	if ans.LatestVersion != "v1.1.0" {
+		t.Errorf("LatestVersion = %q, want the freshly resolved v1.1.0", ans.LatestVersion)
+	}
+	// The half it could not establish is the recorded one, unchanged.
+	if !ans.Deprecation.Deprecated() || ans.Deprecation.Notice != notice {
+		t.Errorf("answered Deprecation = %+v, want the recorded notice carried forward", ans.Deprecation)
+	}
+	if got := ledger.rows["example.com/old"].Deprecation; !got.Deprecated() || got.Notice != notice {
+		t.Errorf("recorded Deprecation = %+v, want it untouched by a route that never asked", got)
+	}
+}
+
+// TestBatchedResolutionStillClearsARemovedNotice is the non-zero control for
+// the rule above: a route that CAN establish the fact overwrites, including with
+// the recorded negative a module author causes by deleting their deprecation.
+//
+// That is a real event and the ledger has to be able to record it. A carry
+// forward that kept every notice for ever would have replaced data loss with a
+// fact that can never be retracted.
+func TestBatchedResolutionStillClearsARemovedNotice(t *testing.T) {
+	now := time.Now()
+	ledger := newFakeLedger()
+	ledger.rows["example.com/old"] = domain.Record{
+		ModulePath:    "example.com/old",
+		LatestVersion: "v1.0.0",
+		Deprecation:   domain.Deprecation{Checked: true, Notice: "use example.com/new"},
+		LookedUpAt:    now.Add(-48 * time.Hour),
+	}
+	// The author has removed the notice: the batch answers, and answers empty.
+	batch := &fakeBatch{answers: map[string]ports.BatchLatest{
+		"example.com/old": batchAnswer("v1.1.0", 3, ""),
+	}}
+	r := application.NewResolver(&fakeProxy{}, ledger, &fixedClock{t: now}, time.Hour, false).
+		WithBatch(batch, pins("example.com/old@v1.0.0"), 4)
+
+	ans, err := r.Resolve(context.Background(), "example.com/old", "v1.0.0")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !ans.Deprecation.Checked {
+		t.Error("a batched answer left the deprecation question unchecked")
+	}
+	if ans.Deprecation.Deprecated() {
+		t.Errorf("a removed notice survived a resolution that established its absence: %+v", ans.Deprecation)
+	}
+	if got := ledger.rows["example.com/old"].Deprecation; !got.Checked || got.Notice != "" {
+		t.Errorf("recorded Deprecation = %+v, want the established negative", got)
+	}
+}
+
+// TestNeverCheckedStaysNeverChecked: carrying a recorded answer forward must not
+// invent one. A module with no recorded deprecation, resolved by a route that
+// cannot ask, is still unchecked — which is a different state from "checked, not
+// deprecated" and renders differently on every surface.
+func TestNeverCheckedStaysNeverChecked(t *testing.T) {
+	now := time.Now()
+	ledger := newFakeLedger()
+	proxy := &fakeProxy{versions: map[string]string{"example.com/mod": "v1.0.0"}}
+	r := application.NewResolver(proxy, ledger, &fixedClock{t: now}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ans.Deprecation.Checked {
+		t.Errorf("Deprecation = %+v, want unchecked — nothing asked and nothing recorded", ans.Deprecation)
+	}
+	if got := ledger.rows["example.com/mod"].Deprecation; got.Checked {
+		t.Errorf("recorded Deprecation = %+v, want unchecked", got)
+	}
+}
+
+// TestFreshRunDoesNotEraseARecordedNotice: --fresh suppresses SERVING, not
+// preservation. It says "do not answer me from the ledger"; it does not say
+// "delete what the ledger established", and the route it forces is still one
+// that cannot see a notice.
+func TestFreshRunDoesNotEraseARecordedNotice(t *testing.T) {
+	const notice = "use google.golang.org/protobuf instead"
+	now := time.Now()
+	ledger := newFakeLedger()
+	ledger.rows["example.com/old"] = domain.Record{
+		ModulePath:    "example.com/old",
+		LatestVersion: "v1.0.0",
+		Deprecation:   domain.Deprecation{Checked: true, Notice: notice},
+		// Well inside the TTL: only --fresh stops this row being served.
+		LookedUpAt: now.Add(-time.Minute),
+	}
+	proxy := &fakeProxy{versions: map[string]string{"example.com/old": "v1.2.0"}}
+	r := application.NewResolver(proxy, ledger, &fixedClock{t: now}, time.Hour, true)
+
+	ans, err := r.Resolve(context.Background(), "example.com/old", "")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ans.Served {
+		t.Error("--fresh served the row from the ledger")
+	}
+	if ans.LatestVersion != "v1.2.0" {
+		t.Errorf("LatestVersion = %q, want the re-queried v1.2.0", ans.LatestVersion)
+	}
+	if got := ledger.rows["example.com/old"].Deprecation; !got.Deprecated() || got.Notice != notice {
+		t.Errorf("recorded Deprecation = %+v, want the notice preserved through a --fresh run", got)
+	}
+}

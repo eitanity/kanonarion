@@ -204,9 +204,15 @@ func TestResolve_ExpiredRowIsRequeried(t *testing.T) {
 	}
 }
 
-// --fresh must suppress ledger READS but still write: a freshly measured fact
+// --fresh must suppress ledger ANSWERS but still write: a freshly measured fact
 // is exactly what the next run should be served.
-func TestResolve_FreshBypassesTheReadAndStillWrites(t *testing.T) {
+//
+// The row is still READ. --fresh says "do not answer me from the ledger"; it
+// does not say "forget what the ledger established", and the recorded row holds
+// facts a live per-path resolution structurally cannot re-establish — the
+// deprecation notice among them. What the test pins is that nothing read is
+// served: the answer is the live one and Served is false.
+func TestResolve_FreshBypassesTheAnswerAndStillWrites(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	ledger := newFakeLedger()
 	ledger.rows["example.com/mod"] = domain.Record{
@@ -222,8 +228,8 @@ func TestResolve_FreshBypassesTheReadAndStillWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if ledger.reads != 0 {
-		t.Errorf("--fresh must not read the ledger, got %d reads", ledger.reads)
+	if ans.Served {
+		t.Error("--fresh answered from the ledger")
 	}
 	if ans.LatestVersion != "v1.9.0" {
 		t.Errorf("LatestVersion = %q, want the live v1.9.0", ans.LatestVersion)
@@ -343,17 +349,16 @@ func TestResolve_UnpinnedUsesTheResolvedLatestToPlaceTheProbe(t *testing.T) {
 	}
 }
 
-// TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead
+// TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndOnTheRead
 //
-// There are two ways to ask for a live lookup and they are not the same
-// mechanism. --fresh suppresses the ledger READ. A zero staleness.ttl leaves
-// the read in place and makes every row fail FreshAt. Both produce a live
-// answer and both still write, so the answer never depends on which was used;
-// what differs is whether the ledger is touched at all, which is visible when
-// the ledger itself is broken — a zero TTL surfaces that read failure, --fresh
-// cannot. Pinned here because "two ways to ask the same question" is exactly
-// the shape that drifts apart unmeasured.
-func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead(t *testing.T) {
+// There are two ways to ask for a live lookup, by different mechanisms: --fresh
+// refuses to SERVE the row, a zero staleness.ttl makes every row fail FreshAt.
+// Both read the row, neither serves it, both produce a live answer and both
+// write. Pinned here because "two ways to ask the same question" is exactly the
+// shape that drifts apart unmeasured — and because the read is not optional on
+// either path: the recorded row carries facts a live per-path resolution cannot
+// re-establish, and dropping it before the write is how a query destroyed one.
+func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndOnTheRead(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	stored := domain.Record{
 		ModulePath:    "example.com/mod",
@@ -368,7 +373,7 @@ func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead(t *testing.T)
 		fresh     bool
 		wantReads int
 	}{
-		{name: "fresh bypasses the read", ttl: time.Hour, fresh: true, wantReads: 0},
+		{name: "fresh reads and refuses to serve", ttl: time.Hour, fresh: true, wantReads: 1},
 		{name: "a zero TTL reads and rejects", ttl: 0, fresh: false, wantReads: 1},
 	}
 	for _, tt := range tests {
@@ -392,7 +397,8 @@ func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead(t *testing.T)
 			if ledger.writes != 1 {
 				t.Errorf("writes = %d, want 1 — a live lookup is what the next run should be served", ledger.writes)
 			}
-			// The mechanism is not the same.
+			// Both read the row — one to reject it as expired, one because
+			// --fresh forbids serving it, not knowing it.
 			if ledger.reads != tt.wantReads {
 				t.Errorf("ledger reads = %d, want %d", ledger.reads, tt.wantReads)
 			}

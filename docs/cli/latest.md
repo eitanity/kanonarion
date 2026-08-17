@@ -110,6 +110,14 @@ remaining per-module request; it runs in bounded parallel rounds
 setting: past it the proxy answers `200` with an empty body, a lost answer
 rather than an error.
 
+A positional `latest <module>` resolves one path at a time and cannot see a
+notice. Where the ledger already recorded one, that recorded answer is **carried
+forward**, not replaced with `null`: a query never costs the store a fact. Only
+a resolution that can establish the fact replaces it — including clearing a
+notice the author has removed, which is a real event and is recorded as the
+negative `""`. The same holds under `--fresh`, which suppresses serving the
+recorded row, not knowing it.
+
 The go command resolves within the pin's own major, with two consequences. A
 `+incompatible` pin reports the newest version of THAT major —
 `coreos/etcd@v3.3.10+incompatible` is offered `v3.3.27+incompatible`, not the
