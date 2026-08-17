@@ -157,6 +157,12 @@ type auditModuleResult struct {
 	// stands on the most favourable arm, and the row is not blocking for want
 	// of a recorded election.
 	LicenseElectableArms []string `json:"license_electable_arms,omitempty"`
+	// LicenseGoverningArms names the arms of a licence conjunction that carry
+	// the reported policy_outcome — the obligations the row is worse than
+	// allow on account of. Absent when the conjunction allows on every arm,
+	// because then no single arm is responsible, and absent for every other
+	// licence shape.
+	LicenseGoverningArms []string `json:"license_governing_arms,omitempty"`
 	// PolicyBlocking is true when this result is a hard compliance failure:
 	// an uncertain licence under scope unknown_license = block, or a policy
 	// scope no rule covers (unevaluated); `audit` exits non-zero when any
@@ -748,7 +754,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 
 	lrec, lfound, lerr := ctr.QueryLicense.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
 	var resolvedSPDX, uncertaintyReason string
-	var arms []string
+	var arms licenceArms
 	res.License, res.LicenseStatus, resolvedSPDX, uncertaintyReason, arms = auditLicenceResolution(lrec, lfound, lerr, res.License, res.LicenseStatus)
 	// Overrides are consulted after the scanner result and can correct both
 	// unknown and positive results; a version-pinned entry beats a
@@ -759,14 +765,17 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 		resolvedSPDX = ov.SPDX
 		res.License = ov.SPDX
 		res.LicenseSource = "override"
-		arms = nil
+		arms = licenceArms{}
 	} else if res.LicenseStatus != "(not run)" {
 		res.LicenseSource = "scanner"
 	}
 
 	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, policyScope)
-	if len(arms) > 0 {
-		eval = activeConfig.LicensePolicy.EvaluateDisjunction(arms, policyScope)
+	switch {
+	case len(arms.Electable) > 0:
+		eval = activeConfig.LicensePolicy.EvaluateDisjunction(arms.Electable, policyScope)
+	case len(arms.Obligations) > 0:
+		eval = activeConfig.LicensePolicy.EvaluateConjunction(arms.Obligations, policyScope)
 	}
 	applyPolicyEvaluation(&res, eval, uncertaintyReason)
 
@@ -952,6 +961,17 @@ func (r *auditModuleResult) markStalenessUnmeasured(reason string) {
 	r.StalenessUnmeasured = reason
 }
 
+// licenceArms is how a compound licence expression decomposed, and which of
+// the two shapes it is. The shapes are exclusive — an expression yields arms to
+// at most one of them — and they are evaluated by different rules, so keeping
+// them in one field would have lost the distinction the evaluation turns on.
+type licenceArms struct {
+	// Electable are the arms of a disjunction: the consumer picks one.
+	Electable []string
+	// Obligations are the arms of a conjunction: the consumer carries all.
+	Obligations []string
+}
+
 // auditLicenceResolution derives an audit row's licence columns from a licence
 // record lookup: the display licence and status, the SPDX the policy is
 // evaluated against, the machine-readable uncertainty reason (meaningful only
@@ -972,12 +992,19 @@ func (r *auditModuleResult) markStalenessUnmeasured(reason string) {
 // resolution: a module whose one licence file bundles third-party texts is
 // reported Multiple, and its derived expression is still its own licence.
 //
-// A Multiple whose expression yields neither (a conjunction, or candidates that
-// could not be identified) resolves NO SPDX: detection did not settle on any
-// licence identity, so it stays an open item and rides the unknown-licence
-// machinery (uncertain, and blocking where the scope blocks unknowns) until an
-// override settles it. Overrides are consulted by the caller after this.
-func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error, displayIn, statusIn string) (display, status, resolvedSPDX, uncertaintyReason string, arms []string) {
+// When the expression is a pure AND of identified licences, the module carries
+// every arm's obligations at once: the arms are returned as obligations and the
+// caller evaluates the policy per arm, taking the least favourable — there is
+// no election to make, so the strictest obligation is simply what the consumer
+// is bound by. The policy declines to fold a conjunction naming an arm it has
+// no category for, and such a row keeps the behaviour below.
+//
+// A Multiple whose expression yields none of those (candidates that could not
+// be identified) resolves NO SPDX: detection did not settle on any licence
+// identity, so it stays an open item and rides the unknown-licence machinery
+// (uncertain, and blocking where the scope blocks unknowns) until an override
+// settles it. Overrides are consulted by the caller after this.
+func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error, displayIn, statusIn string) (display, status, resolvedSPDX, uncertaintyReason string, arms licenceArms) {
 	display, status = displayIn, statusIn
 	uncertaintyReason = "no_record"
 	switch {
@@ -992,16 +1019,20 @@ func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error
 		case licdomain.LicenseStatusMultiple:
 			resolvedSPDX = ""
 			uncertaintyReason = "multiple"
-			arms = licdomain.DisjunctionArms(lrec.Expression)
 			// The expression is the licence identity detection settled on, and
 			// Multiple describes how it got there, not that it failed. A pure
-			// disjunction is handed to the caller as arms; an expression naming
-			// one identifier — the omnibus-attribution case, where a single
-			// LICENSE file bundles third-party texts and the derived expression
-			// is the module's own licence — resolves to that identifier.
-			// Anything else (a conjunction, or candidates that named nothing)
-			// resolves nothing and keeps riding the unknown-licence machinery.
-			if len(arms) == 0 {
+			// disjunction is handed to the caller as an election and a pure
+			// conjunction as a set of obligations; an expression naming one
+			// identifier — the omnibus-attribution case, where a single LICENSE
+			// file bundles third-party texts and the derived expression is the
+			// module's own licence — resolves to that identifier. Candidates
+			// that named nothing resolve nothing and keep riding the
+			// unknown-licence machinery.
+			arms = licenceArms{
+				Electable:   licdomain.DisjunctionArms(lrec.Expression),
+				Obligations: licdomain.ConjunctionArms(lrec.Expression),
+			}
+			if len(arms.Electable) == 0 && len(arms.Obligations) == 0 {
 				resolvedSPDX = licdomain.SoleIdentifier(lrec.Expression)
 			}
 		case licdomain.LicenseStatusExtractionFailed:
@@ -1028,6 +1059,7 @@ func applyPolicyEvaluation(res *auditModuleResult, eval configdomain.PolicyEvalu
 	res.policyScope = eval.Scope
 	res.policyRuleScopes = eval.RuleScopes
 	res.LicenseElectableArms = eval.ElectableArms
+	res.LicenseGoverningArms = eval.GoverningArms
 	if eval.Uncertain {
 		res.LicenseUncertainty = uncertaintyReason
 	}
@@ -1484,6 +1516,12 @@ func auditPolicyCell(r auditModuleResult) string {
 	// can see the row was decided on an arm rather than on one identity.
 	if len(r.LicenseElectableArms) > 0 {
 		policy = fmt.Sprintf("%s [electable: %s]", policy, strings.Join(r.LicenseElectableArms, " or "))
+	}
+	// A conjunction the policy folded onto something worse than allow names the
+	// obligation responsible, so the reader is not left to guess which of the
+	// arms the row was decided against.
+	if len(r.LicenseGoverningArms) > 0 {
+		policy = fmt.Sprintf("%s [governing: %s]", policy, strings.Join(r.LicenseGoverningArms, " and "))
 	}
 	return policy
 }

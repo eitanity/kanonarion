@@ -298,3 +298,118 @@ func TestEvaluateDisjunction_UnmatchedScopeStaysUnevaluated(t *testing.T) {
 		t.Errorf("unmatched scope: RuleScopes empty, want the scopes that do carry rules")
 	}
 }
+
+// TestEvaluateConjunction_LeastFavourableArm is the mirror of the disjunction
+// case above: the consumer carries every arm, so the outcome is the arm it
+// cannot escape rather than the arm it would elect.
+func TestEvaluateConjunction_LeastFavourableArm(t *testing.T) {
+	p := defaultPolicy()
+
+	tests := []struct {
+		name     string
+		arms     []string
+		scope    string
+		want     PolicyOutcome
+		wantArms []string
+	}{
+		{
+			name:  "every arm allowed",
+			arms:  []string{"Apache-2.0", "MIT"},
+			scope: "production",
+			want:  PolicyOutcomeAllow,
+		},
+		{
+			name:     "one strong-copyleft arm governs the permissive one",
+			arms:     []string{"GPL-3.0-only", "MIT"},
+			scope:    "production",
+			want:     PolicyOutcomeWarn,
+			wantArms: []string{"GPL-3.0-only"},
+		},
+		{
+			name:     "weak copyleft governs a permissive arm",
+			arms:     []string{"MIT", "MPL-2.0"},
+			scope:    "production",
+			want:     PolicyOutcomeNotify,
+			wantArms: []string{"MPL-2.0"},
+		},
+		{
+			name:     "every arm warned names them all",
+			arms:     []string{"GPL-2.0-only", "GPL-3.0-only"},
+			scope:    "production",
+			want:     PolicyOutcomeWarn,
+			wantArms: []string{"GPL-2.0-only", "GPL-3.0-only"},
+		},
+		{
+			name:  "a tool-scope rule that allows copyleft still allows the pair",
+			arms:  []string{"GPL-3.0-only", "MIT"},
+			scope: "tool",
+			want:  PolicyOutcomeAllow,
+		},
+	}
+
+	for _, tc := range tests {
+		got := p.EvaluateConjunction(tc.arms, tc.scope)
+		if got.Outcome != tc.want {
+			t.Errorf("%s: outcome = %q, want %q", tc.name, got.Outcome, tc.want)
+		}
+		if got.Uncertain || got.Blocking || got.Unevaluated {
+			t.Errorf("%s: uncertain=%v blocking=%v unevaluated=%v, want all false — a classified conjunction is determined",
+				tc.name, got.Uncertain, got.Blocking, got.Unevaluated)
+		}
+		if len(got.ElectableArms) != 0 {
+			t.Errorf("%s: electable arms = %v, want none — a conjunction offers no election", tc.name, got.ElectableArms)
+		}
+		if len(got.GoverningArms) != len(tc.wantArms) {
+			t.Fatalf("%s: governing arms = %v, want %v", tc.name, got.GoverningArms, tc.wantArms)
+		}
+		for i, arm := range tc.wantArms {
+			if got.GoverningArms[i] != arm {
+				t.Errorf("%s: governing arms = %v, want %v", tc.name, got.GoverningArms, tc.wantArms)
+				break
+			}
+		}
+	}
+}
+
+// TestEvaluateConjunction_UnclassifiedArmIsNotFolded holds the boundary the
+// fold was narrowed to. An arm in no category has no known strictness, so the
+// strictest arm is unknown and the composite is returned exactly as an
+// undetermined licence is — the behaviour a conjunction had before it was
+// evaluated at all. Nothing the policy never classified starts being allowed,
+// and nothing starts being blocked that was not blocked already.
+func TestEvaluateConjunction_UnclassifiedArmIsNotFolded(t *testing.T) {
+	p := defaultPolicy()
+
+	got := p.EvaluateConjunction([]string{"Apache-2.0", "CC-BY-SA-4.0"}, "production")
+	if !got.Uncertain || !got.Blocking {
+		t.Errorf("unclassified arm: uncertain=%v blocking=%v, want both true", got.Uncertain, got.Blocking)
+	}
+	if got.Outcome != p.EvaluateLicense("", "production").Outcome {
+		t.Errorf("unclassified arm: outcome = %q, want the undetermined-licence outcome", got.Outcome)
+	}
+	if len(got.GoverningArms) != 0 {
+		t.Errorf("unclassified arm: governing arms = %v, want none — nothing was folded", got.GoverningArms)
+	}
+
+	if got := p.EvaluateConjunction(nil, "production"); !got.Uncertain || !got.Blocking {
+		t.Errorf("no arms: uncertain=%v blocking=%v, want both true", got.Uncertain, got.Blocking)
+	}
+}
+
+// TestEvaluateConjunction_UnmatchedScopeStaysUnevaluated guards that a scope
+// carrying no rule reports the gate gap rather than an arm's outcome: nothing
+// was measured, so no arm is named.
+func TestEvaluateConjunction_UnmatchedScopeStaysUnevaluated(t *testing.T) {
+	p := defaultPolicy()
+	got := p.EvaluateConjunction([]string{"MIT", "Apache-2.0"}, "no-such-scope")
+	if !got.Unevaluated || !got.Blocking || got.Outcome != PolicyOutcomeUnevaluated {
+		t.Errorf("unmatched scope: unevaluated=%v blocking=%v outcome=%q, want true/true/unevaluated",
+			got.Unevaluated, got.Blocking, got.Outcome)
+	}
+	if len(got.GoverningArms) != 0 {
+		t.Errorf("unmatched scope: governing arms = %v, want none — no arm was measured", got.GoverningArms)
+	}
+	if len(got.RuleScopes) == 0 {
+		t.Errorf("unmatched scope: RuleScopes empty, want the scopes that do carry rules")
+	}
+}

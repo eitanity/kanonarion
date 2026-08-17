@@ -212,6 +212,37 @@ func DisjunctionArms(expr string) []string {
 	return arms
 }
 
+// ConjunctionArms returns the distinct arms of a purely conjunctive SPDX
+// expression ("A AND B", "A AND B AND C"): the licences a consumer must satisfy
+// together. It returns nil for an empty expression, a single identifier, or an
+// expression carrying any non-AND operator (OR/WITH) — a mixed expression names
+// an election this cannot fold, and a WITH exception qualifies an arm rather
+// than adding one.
+//
+// It is the counterpart of DisjunctionArms, and the two are exclusive by
+// construction: an expression yields arms to at most one of them.
+func ConjunctionArms(expr string) []string {
+	if expr == "" || strings.Contains(expr, " OR ") || strings.Contains(expr, " WITH ") {
+		return nil
+	}
+	parts := strings.Split(expr, " AND ")
+	seen := make(map[string]bool, len(parts))
+	arms := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		arms = append(arms, p)
+	}
+	if len(arms) < 2 {
+		return nil
+	}
+	sort.Strings(arms)
+	return arms
+}
+
 // SoleIdentifier returns the one licence identifier an expression names, or ""
 // when it is empty or carries any operator (OR/AND/WITH). It answers a question
 // DisjunctionArms cannot: an expression such as "Apache-2.0" derived from a

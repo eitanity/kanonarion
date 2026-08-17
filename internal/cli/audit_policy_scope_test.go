@@ -91,26 +91,34 @@ func TestAuditLicenceResolution_MultipleIsUnresolved(t *testing.T) {
 	if display != "GPL-3.0" || status != "Multiple" {
 		t.Errorf("display/status = %q/%q, want GPL-3.0/Multiple (display keeps the fact)", display, status)
 	}
-	if len(arms) != 2 || arms[0] != "Apache-2.0" || arms[1] != "GPL-3.0" {
-		t.Errorf("arms = %v, want [Apache-2.0 GPL-3.0]", arms)
+	if len(arms.Electable) != 2 || arms.Electable[0] != "Apache-2.0" || arms.Electable[1] != "GPL-3.0" {
+		t.Errorf("electable arms = %v, want [Apache-2.0 GPL-3.0]", arms.Electable)
+	}
+	if arms.Obligations != nil {
+		t.Errorf("disjunction obligations = %v, want none", arms.Obligations)
 	}
 
-	// A Multiple whose expression is conjunctive offers no election: no arms,
-	// so the row keeps riding the unknown-licence machinery.
+	// A Multiple whose expression is conjunctive offers no election: it is
+	// handed over as obligations, which bind together, and never as arms the
+	// consumer may choose between.
 	conj := licdomain.LicenseRecord{
 		PrimarySPDX:   "MIT",
 		Expression:    "MIT AND BSD-3-Clause",
 		OverallStatus: licdomain.LicenseStatusMultiple,
 	}
-	if _, _, _, _, arms = auditLicenceResolution(conj, true, nil, "(not run)", "(not run)"); arms != nil {
-		t.Errorf("conjunction arms = %v, want none", arms)
+	_, _, _, _, arms = auditLicenceResolution(conj, true, nil, "(not run)", "(not run)")
+	if arms.Electable != nil {
+		t.Errorf("conjunction electable arms = %v, want none", arms.Electable)
+	}
+	if len(arms.Obligations) != 2 || arms.Obligations[0] != "BSD-3-Clause" || arms.Obligations[1] != "MIT" {
+		t.Errorf("conjunction obligations = %v, want [BSD-3-Clause MIT]", arms.Obligations)
 	}
 
 	// A determined single licence still resolves.
 	det := licdomain.LicenseRecord{PrimarySPDX: "MIT", OverallStatus: licdomain.LicenseStatusDetected}
 	_, _, resolved, _, arms = auditLicenceResolution(det, true, nil, "(not run)", "(not run)")
-	if resolved != "MIT" || arms != nil {
-		t.Errorf("Detected record resolvedSPDX = %q arms %v, want MIT/none", resolved, arms)
+	if resolved != "MIT" || arms.Electable != nil || arms.Obligations != nil {
+		t.Errorf("Detected record resolvedSPDX = %q arms %+v, want MIT/none", resolved, arms)
 	}
 
 	// A read error keeps the placeholders and resolves nothing.

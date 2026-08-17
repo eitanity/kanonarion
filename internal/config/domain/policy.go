@@ -34,10 +34,19 @@ type PolicyEvaluation struct {
 	// Populated only by EvaluateDisjunction, and information rather than a
 	// gate: the outcome already stands on the most favourable arm.
 	ElectableArms []string
+	// GoverningArms names the arms of a conjunction that carry the reported
+	// outcome — the strictest obligations, the ones the outcome is owed to.
+	// Deliberately not called electable: a conjunction offers no election, so
+	// naming these as a choice would misdescribe them. Populated only by
+	// EvaluateConjunction, and only when the outcome is worse than allow: an
+	// allowing conjunction allows on every arm, so there is no arm to hold
+	// responsible and nothing to name.
+	GoverningArms []string
 }
 
-// outcomeRank orders the outcomes from most to least favourable so a
-// disjunction can be folded onto the arm the consumer would elect. Lower is
+// outcomeRank orders the outcomes from most to least favourable so a compound
+// expression can be folded onto one arm: a disjunction onto the arm the
+// consumer would elect, a conjunction onto the arm it cannot escape. Lower is
 // more favourable: allow < notify < warn < unevaluated.
 func outcomeRank(o PolicyOutcome) int {
 	switch o {
@@ -96,6 +105,56 @@ func (p LicensePolicy) EvaluateDisjunction(arms []string, scope string) PolicyEv
 		}
 	}
 	return best
+}
+
+// EvaluateConjunction resolves the policy outcome for a module licensed under
+// a set of obligations that all bind (a pure "A AND B" expression whose arms
+// were identified). It is the mirror of EvaluateDisjunction: there the consumer
+// elects one arm so the most favourable governs, here the consumer must satisfy
+// every arm so the LEAST favourable governs. outcomeRank supplies the ordering
+// for both.
+//
+// It folds only a conjunction the policy has classified in FULL. An arm in no
+// category has no known strictness, so the strictest arm is not known either
+// and the composite is not something this policy has measured: that case is
+// returned exactly as an undetermined licence is, which is the behaviour a
+// conjunction had before this function existed. Nothing the policy has never
+// classified starts being allowed, warned or blocked on account of the fold —
+// the change is confined to conjunctions every arm of which the policy already
+// has an answer for.
+//
+// The result names the governing arms in GoverningArms when the outcome is
+// worse than allow, so a warned or notified row says which obligation earned
+// it. An unevaluated scope short-circuits for the same reason it does in the
+// disjunction: the gap is the scope's, no arm was measured, and none is named.
+// Called with no arms, this defers to the undetermined path.
+func (p LicensePolicy) EvaluateConjunction(arms []string, scope string) PolicyEvaluation {
+	if len(arms) == 0 {
+		return p.EvaluateLicense("", scope)
+	}
+	for _, arm := range arms {
+		if p.categoryFor(arm) == "" {
+			return p.EvaluateLicense("", scope)
+		}
+	}
+
+	worst := p.EvaluateLicense(arms[0], scope)
+	for _, arm := range arms[1:] {
+		if e := p.EvaluateLicense(arm, scope); outcomeRank(e.Outcome) > outcomeRank(worst.Outcome) {
+			worst = e
+		}
+	}
+
+	if worst.Unevaluated || worst.Outcome == PolicyOutcomeAllow {
+		return worst
+	}
+
+	for _, arm := range arms {
+		if p.EvaluateLicense(arm, scope).Outcome == worst.Outcome {
+			worst.GoverningArms = append(worst.GoverningArms, arm)
+		}
+	}
+	return worst
 }
 
 // resolveUnknownLicense returns the effective UnknownLicensePolicy for the
