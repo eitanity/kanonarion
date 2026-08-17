@@ -18,11 +18,29 @@ import (
 type VulnStoreAdapter struct {
 	store           vulnports.VulnerabilityStore
 	pipelineVersion string
+	searcher        NegativeSearcher
+}
+
+// NegativeSearcher is the read-time call-graph search a record's negatives are
+// put through before their soundness is derived. It is declared here, as the
+// one method this adapter needs, so the local context does not depend on the
+// vuln reachability adapter.
+type NegativeSearcher interface {
+	Search(ctx context.Context, rec *vulndomain.VulnerabilityRecord)
 }
 
 // New constructs a VulnStoreAdapter.
 func New(store vulnports.VulnerabilityStore, pipelineVersion string) *VulnStoreAdapter {
 	return &VulnStoreAdapter{store: store, pipelineVersion: pipelineVersion}
+}
+
+// WithNegativeSearcher seeds the probe from records that have been through the
+// call-graph search, so a negative reads at the same rung here as it does on
+// every other surface. Without one the seed carries the stored derivation's own
+// rung, which is what it carried before the search existed.
+func (a *VulnStoreAdapter) WithNegativeSearcher(s NegativeSearcher) *VulnStoreAdapter {
+	a.searcher = s
+	return a
 }
 
 // LoadFindings queries the stored vulnerability records for each coordinate and
@@ -82,6 +100,9 @@ func (a *VulnStoreAdapter) LoadFindings(
 		result.Scanned[coord] = struct{}{}
 		if len(rec.Findings) == 0 {
 			continue
+		}
+		if a.searcher != nil {
+			a.searcher.Search(ctx, &rec)
 		}
 		findings := make([]ports.VulnFinding, 0, len(rec.Findings))
 		for _, f := range rec.Findings {

@@ -160,6 +160,10 @@ type Container struct {
 	DiffScanRuns        DiffScanRunsUseCase
 	VulnStore           vulnports.VulnerabilityStore
 	VulnPipelineVersion string
+	// NegativeSearch is the read-time call-graph search over stored negatives.
+	// QueryVuln already applies it; this is for the read paths that go to the
+	// vuln store directly rather than through the query use case.
+	NegativeSearch *reachability.NegativeSearcher
 
 	// sbom
 	GenerateSBOM GenerateSBOMUseCase
@@ -559,9 +563,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkScannerUC = walkScannerUC.WithRealModcache(modcacheDir)
 		rescanWalkUC = rescanWalkUC.WithRealModcache(modcacheDir)
 	}
-	queryVulnUC := vulnapp.NewQueryVulnUseCase(vulnStore)
+	// Every vuln read is put through kanonarion's own call-graph search before it
+	// reaches a surface, so a negative another analyser only stayed silent about
+	// is answered by a search wherever a graph exists for the coordinate. It
+	// writes nothing: see searchedVulnQuery.
+	negSearcher := reachability.NewNegativeSearcher(cgLoader)
+	queryVulnUC := newSearchedVulnQuery(vulnapp.NewQueryVulnUseCase(vulnStore), negSearcher)
 	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, walkStore)
-	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
+	diffScanRunsUC := newSearchedDiffScanRuns(vulnapp.NewDiffScanRunsUseCase(vulnStore), negSearcher)
 
 	// ---- sbom use cases ----
 	// The version bump is the whole migration every time. SBOM records are a
@@ -669,6 +678,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		DiffScanRuns:        diffScanRunsUC,
 		VulnStore:           vulnStore,
 		VulnPipelineVersion: vulnapp.PipelineVersion,
+		NegativeSearch:      negSearcher,
 
 		GenerateSBOM: generateSBOMUC,
 		QuerySBOM:    querySBOMUC,

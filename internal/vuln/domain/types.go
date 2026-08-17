@@ -596,6 +596,14 @@ type VulnerabilityFinding struct {
 	Severity        *Severity           `json:"severity,omitzero"`
 	AffectedSymbols []string            `json:"affected_symbols,omitzero"`
 	Reachable       *ReachabilityResult `json:"reachable,omitzero"`
+	// NegativeSearch is what kanonarion's own call-graph search says about this
+	// finding's negative, attached at read time and never stored — see
+	// NegativeSearch. It carries no JSON tag content on purpose: the record's
+	// bytes, and therefore its content hash, are unchanged by a search, so the
+	// better answer reaches every negative already in the store without a
+	// re-scan and without a pipeline generation. NegativeSoundness is the only
+	// reader; consumers see its effect as the rung and its reason.
+	NegativeSearch *NegativeSearch `json:"-"`
 	// AdvisoryNamesNoSymbols records that the advisory entry matching this
 	// finding's module path carries no symbol list at all.
 	//
