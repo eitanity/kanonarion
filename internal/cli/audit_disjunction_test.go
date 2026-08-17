@@ -152,10 +152,14 @@ func TestAuditRow_DisjunctionOutcomes(t *testing.T) {
 			wantBlocking: true,
 		},
 		{
-			name:         "a conjunction is not an election and still blocks",
+			// A conjunction is still not an election — no arm is electable —
+			// but it is evaluated: the consumer carries both obligations, and
+			// the production rule allows both. It used to block here, which
+			// called a fully determined licence undetermined.
+			name:         "a conjunction is not an election but is evaluated",
 			rec:          multiple("MIT", "BSD-3-Clause AND MIT"),
-			wantOutcome:  configdomain.PolicyOutcomeWarn,
-			wantBlocking: true,
+			wantOutcome:  configdomain.PolicyOutcomeAllow,
+			wantCategory: "permissive",
 		},
 		{
 			name:        "a recorded election settles the row wholesale",
