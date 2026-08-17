@@ -43,6 +43,11 @@ type Record struct {
 	// third fact, not a variant of the second. See Republication.
 	Republication Republication
 
+	// Deprecation is the module author's own "this module is obsolete"
+	// declaration. It is a FOURTH fact and never merged into the other three.
+	// See Deprecation.
+	Deprecation Deprecation
+
 	// LookedUpAt is when the proxy was asked. It is what the TTL is measured
 	// against and what the output must state.
 	LookedUpAt time.Time
@@ -115,6 +120,41 @@ type Republication struct {
 
 // Exists reports whether the module's own major was found republished at /vN.
 func (p Republication) Exists() bool { return p.Asked && p.Path != "" }
+
+// Deprecation is the module's own deprecation notice — the `// Deprecated:`
+// comment on the `module` directive in its go.mod, which the go command reports
+// alongside the latest-version answer.
+//
+// It is a SEPARATE fact from NewerMajor and Republication, and reporting it
+// beside them rather than folded into them is the whole point: the successor a
+// notice names is frequently at a path the /vN walk structurally cannot reach —
+// google.golang.org/protobuf succeeds github.com/golang/protobuf on a different
+// host entirely — while a module with a newer major is usually not deprecated
+// at all. They are different claims by different mechanisms.
+//
+// The notice is reproduced, never interpreted. kanonarion does not decide
+// whether the named successor is a good idea, does not rewrite the sentence, and
+// above all does not GUESS a successor from name similarity: aws-sdk-go-v2 is
+// the successor of aws-sdk-go because its author said so in machine-readable
+// form, not because the strings look alike.
+type Deprecation struct {
+	// Checked is true when the question was ANSWERED. When false, Notice is
+	// meaningless and the module's deprecation state is not established — which
+	// is a different thing from "not deprecated" and must never render as one.
+	//
+	// It is false for every answer obtained one path at a time: a proxy @latest
+	// lookup returns a version and a date and says nothing about deprecation, so
+	// a row resolved that way has not been asked.
+	Checked bool
+	// Notice is the declaration verbatim, or empty when Checked and the module
+	// declares none — a recorded negative, and a real answer.
+	Notice string
+}
+
+// Deprecated reports whether the module declares itself deprecated. It is false
+// both for a module that declares nothing and for one nobody asked about; the
+// two are told apart by Checked, which every renderer states.
+func (d Deprecation) Deprecated() bool { return d.Checked && d.Notice != "" }
 
 // FreshAt reports whether the record may be served instead of re-querying the
 // proxy. A zero or negative ttl means never serve.
@@ -335,6 +375,42 @@ const (
 	// fact is NewerMajor's, stated beside this one and never folded into it.
 	PinAhead
 )
+
+// CanSortAboveTag reports whether a version could possibly sort ABOVE the
+// newest release tag at its own path.
+//
+// Only two shapes can: a prerelease (which includes every pseudo-version, whose
+// -0.YYYYMMDDHHMMSS-abcdef suffix is prerelease metadata) and a +incompatible
+// version, whose major lives in the version while the path serves a lower one.
+// A plain release version cannot be above the newest release tag, because it IS
+// one.
+//
+// It exists to narrow a lookup, never to answer a question. A batched source
+// that resolves within the pin's own major reports "no update" both for a pin
+// that is the newest release and for one sitting above the last tag, and the
+// two have to be told apart by asking the path's @latest. Asking for every
+// module would restore the per-module sweep; this says which pins could
+// possibly be in the second state, and the answer for those is still MEASURED
+// by asking. A false positive costs one request. A false negative would report
+// an ahead pin as current, which is why the predicate is deliberately loose:
+// every prerelease and every +incompatible is asked, not the subset that looks
+// like a pseudo-version.
+//
+// It is a syntactic reading of a version string and nothing more. Nothing is
+// concluded from it; it only decides what to go and measure.
+func CanSortAboveTag(version string) bool {
+	if version == "" {
+		return false
+	}
+	if !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+	if !semver.IsValid(version) {
+		// Unreadable by semver, so nothing can be ruled out. Ask.
+		return true
+	}
+	return semver.Prerelease(version) != "" || semver.Build(version) == "+incompatible"
+}
 
 // ComparePin places pinned against the path's @latest answer.
 //

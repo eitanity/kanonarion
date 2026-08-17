@@ -239,6 +239,9 @@ type configCGResult struct {
 // it is in, and a bare 3600000000000 does not.
 type configStalenessResult struct {
 	TTL string `json:"ttl"`
+	// ProbeConcurrency is how many newer-major probe requests may be in flight
+	// at once. A number, not a duration: it is a count of requests.
+	ProbeConcurrency int `json:"probe_concurrency"`
 }
 
 func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
@@ -302,7 +305,10 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 			},
 			LicenseOverrides: cfg.LicenseOverrides,
 			Callgraph:        configCGResult{Exclude: cfg.Callgraph.Exclude},
-			Staleness:        configStalenessResult{TTL: cfg.Staleness.TTL.String()},
+			Staleness: configStalenessResult{
+				TTL:              cfg.Staleness.TTL.String(),
+				ProbeConcurrency: cfg.Staleness.ProbeConcurrency,
+			},
 			DirectivePolicy: configDirectiveResult{
 				LocalPathReplace:  string(cfg.DirectivePolicy.LocalPathReplace),
 				ModulePathReplace: string(cfg.DirectivePolicy.ModulePathReplace),

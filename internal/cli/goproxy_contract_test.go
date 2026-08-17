@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -289,7 +290,7 @@ func TestGOPROXYOff_AuditKeepsTheLedgerLookup(t *testing.T) {
 			if tc.modcache {
 				offlineMode(t)
 			}
-			lookup, err := auditStalenessLookup(tc.goproxy, offlineLedger(t), discardLogger())
+			lookup, err := auditStalenessLookup(tc.goproxy, offlineLedger(t), discardLogger(), "go.mod", nil, io.Discard)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected a refusal, got %T", lookup)

@@ -414,6 +414,38 @@ republication question unless the row asked it too, so such a row is re-probed
 the next time it is used — and a pin that never asks the question is still
 served from it unchanged.
 
+## Staleness ledger: module `staleness`, migration 3
+**Additive; two new columns on `staleness_records`, no record shape change and
+no pipeline bump — this table carries neither a content hash nor a pipeline
+version.** The whole store's migration count goes `v79` -> `v80`.
+
+A module's own **deprecation notice** — the `// Deprecated:` comment on the
+`module` directive in its `go.mod` — is a fourth fact on the row, beside the
+same-major latest, the newer major and the republication. It is not a variant of
+any of them: the successor a notice names is frequently at a path the `/vN` walk
+structurally cannot reach (`google.golang.org/protobuf` succeeds
+`github.com/golang/protobuf` on a different host), while a module with a newer
+major is usually not deprecated. The new columns are:
+
+| Column | Meaning |
+|---|---|
+| `deprecation_checked` | `1` when the question was ANSWERED. `0` means "not established", NOT "not deprecated". |
+| `deprecation_notice` | The notice verbatim. Empty with `deprecation_checked = 1` is a recorded negative — the module declares none. |
+
+The two are separate for the reason `major_probe_from` is separate from
+`newer_major_path`. The notice is visible only to a source that reports it — the
+batched `go list -m -u` answer a `--gomod` scope is resolved through — and a
+per-path `@latest` lookup cannot see it at all, so an empty notice alone could
+not say whether the module declares none or was never asked.
+
+Migration for existing stores: the columns are added with defaults and **nothing
+is back-filled.** There is nothing stored to derive the notice from, and a row
+written before the question existed genuinely was not asked; it keeps
+`deprecation_checked = 0` and acquires the fact the next time its latest is
+resolved. No `PipelineVersion` bump is owed: nothing on this table is hashed or
+verified, `looked_up_at` is what qualifies a row, and an older binary reads the
+table through explicit column lists that the new columns do not disturb.
+
 ## Walk store: module `walk`, migration 6
 
 **Additive; a new column, no record shape change and no pipeline bump.** `walks`

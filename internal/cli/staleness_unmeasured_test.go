@@ -60,7 +60,7 @@ func (s stubLatestInfo) LatestInfo(context.Context, string) (staleports.LatestIn
 // about a module nothing was measured for.
 func TestLatestGomod_FailedLookupIsNullNotBehind(t *testing.T) {
 	var stderr bytes.Buffer
-	row := latestRowFor(context.Background(),
+	row, _ := latestRowFor(context.Background(),
 		failingStalenessLookup{err: errStalenessTestProxyDown},
 		"github.com/foo/bar", "v1.0.0", &stderr)
 
@@ -113,7 +113,7 @@ func TestLatestGomod_MeasuredRowsStillAnswer(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			row := latestRowFor(context.Background(),
+			row, _ := latestRowFor(context.Background(),
 				answeringStalenessLookup{latest: tc.latest},
 				"github.com/foo/bar", tc.pinned, &stderr)
 

@@ -12,6 +12,7 @@ exit 0
   "staleness_unmeasured": "not_asked",
   "major_probed": true,
   "republished_probed": false,
+  "deprecated": null,
   "looked_up_at": "2026-02-28T23:50:00Z",
   "served_from_store": true
 }

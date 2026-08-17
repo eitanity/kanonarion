@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,14 +19,22 @@ var errProxyDown = errors.New("proxy down")
 
 // fakeProxy answers from a fixed map. Any path not in it is absent, which is
 // what bounds the probe. Paths in fail return errProxyDown instead.
+//
+// It is mutex-guarded because the port is now called concurrently: the probe
+// asks in bounded parallel rounds, so a fake that records its calls is a fake
+// with shared mutable state.
 type fakeProxy struct {
 	versions map[string]string
 	fail     map[string]bool
-	calls    []string
+
+	mu    sync.Mutex
+	calls []string
 }
 
 func (f *fakeProxy) LatestInfo(_ context.Context, path string) (ports.LatestInfo, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, path)
+	f.mu.Unlock()
 	if f.fail[path] {
 		return ports.LatestInfo{}, errProxyDown
 	}

@@ -132,6 +132,8 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 
 	add("callgraph.exclude", "["+strings.Join(cfg.Callgraph.Exclude, ", ")+"]", raw.isSet("callgraph", "exclude"))
 	add("staleness.ttl", cfg.Staleness.TTL.String(), raw.isSet("staleness", "ttl"))
+	add("staleness.probe_concurrency", strconv.Itoa(cfg.Staleness.ProbeConcurrency),
+		raw.isSet("staleness", "probe_concurrency"))
 
 	dp := cfg.DirectivePolicy
 	add("directive_policy.local_path_replace", string(dp.LocalPathReplace), raw.isSet("directive_policy", "local_path_replace"))

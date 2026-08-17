@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	stalegolist "github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
 	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
 	staleretry "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy/retrying"
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
@@ -26,6 +28,40 @@ import (
 // read at all.
 func newStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger, ttl time.Duration, fresh bool) *staleapp.Resolver {
 	return staleapp.NewResolver(latest, ledger, cliClock, ttl, fresh)
+}
+
+// newGomodStalenessResolver is the resolver a go.mod-scoped command gets: the
+// same one, with the batched latest source wired over the scope it is reporting
+// on.
+//
+// The batch belongs HERE and not inside newProxyLatestResolver because it is a
+// different question's shape. `go list -m -u` answers about a build list, in one
+// call, from a module directory — none of which a per-path @latest resolver has
+// or needs. The two are composed, not substituted: the batch answers the
+// same-major latest for the set, and the per-path resolver still answers the
+// newer-major probe, which asks about paths that are not in the build list at
+// all and which no batched answer can contain.
+func newGomodStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger,
+	ttl time.Duration, fresh bool, gomodPath, goproxy string, coords []staleports.PinnedModule) *staleapp.Resolver {
+	return newStalenessResolver(latest, ledger, ttl, fresh).
+		WithBatch(stalegolist.New(filepath.Dir(gomodPath), goproxy), coords,
+			activeConfig.Staleness.ProbeConcurrency)
+}
+
+// pinnedModulesOf splits "path@version" coordinates into the shape the resolver
+// needs. The VERSION is carried, not dropped: the newer-major probe cannot plan
+// its walk without it, because a +incompatible pin holds its major in the
+// version while living at the unsuffixed path.
+func pinnedModulesOf(coords []string) []staleports.PinnedModule {
+	mods := make([]staleports.PinnedModule, 0, len(coords))
+	for _, coord := range coords {
+		if at := strings.LastIndex(coord, "@"); at > 0 {
+			mods = append(mods, staleports.PinnedModule{Path: coord[:at], Version: coord[at+1:]})
+			continue
+		}
+		mods = append(mods, staleports.PinnedModule{Path: coord})
+	}
+	return mods
 }
 
 // newProxyLatestResolver wraps the module proxy as the port the staleness
@@ -146,7 +182,13 @@ func (o *offlineStalenessLookup) Resolve(ctx context.Context, path, pinnedVersio
 		ModulePath:        path,
 		LatestVersion:     rec.LatestVersion,
 		LatestPublishedAt: rec.LatestPublishedAt,
-		LookedUpAt:        rec.LookedUpAt,
+		// The deprecation travels with the latest fact it was recorded beside,
+		// and for the same reason: it is part of the answer that lookup gave, so
+		// a row served offline states it exactly as the run that recorded it did.
+		// A row recorded before the question existed carries Checked false, which
+		// says "not established" — never "not deprecated".
+		Deprecation: rec.Deprecation,
+		LookedUpAt:  rec.LookedUpAt,
 	}
 	// The stored probe is reusable only when it started at the same major AND, for
 	// a pin that asks the republication question, only when the stored row asked
@@ -170,6 +212,48 @@ func (o *offlineStalenessLookup) Resolve(ctx context.Context, path, pinnedVersio
 	}
 	return staleapp.Answer{Record: out, Served: true}, nil
 }
+
+// reportOnceLookup states a whole-set failure ONCE.
+//
+// A batched latest resolution answers for every module in one call, so its
+// failure is the same failure for each of them. `audit` reports a failed
+// staleness lookup per module and keeps auditing — which is right, the column is
+// one of many — but the identical batch refusal printed once per dependency
+// buries every other line of the run. The rows still each report unmeasured;
+// only the repetition of the reason is dropped.
+type reportOnceLookup struct {
+	inner    stalenessLookup
+	stderr   io.Writer
+	reported bool
+}
+
+func newReportOnceLookup(inner stalenessLookup, stderr io.Writer) *reportOnceLookup {
+	return &reportOnceLookup{inner: inner, stderr: stderr}
+}
+
+func (r *reportOnceLookup) Resolve(ctx context.Context, path, pinnedVersion string) (staleapp.Answer, error) {
+	ans, err := r.inner.Resolve(ctx, path, pinnedVersion)
+	switch {
+	case err == nil:
+		return ans, nil
+	case !errors.Is(err, staleapp.ErrBatchUnavailable):
+		return ans, fmt.Errorf("resolving staleness for %s: %w", path, err)
+	}
+	if !r.reported {
+		r.reported = true
+		_, _ = fmt.Fprintf(r.stderr, "staleness: the latest column is unmeasured for every module: %v\n", err)
+	}
+	// The reason is stripped from the per-row error so the caller renders the
+	// column as unmeasured without repeating a sentence already printed. The
+	// column itself still says nothing was measured, which is the answer.
+	return ans, errStalenessBatchReported
+}
+
+// errStalenessBatchReported is the per-row stand-in for a whole-set failure that
+// has already been stated once. It is still an error — the row is unmeasured —
+// and it is deliberately not wrapped around the original, so no caller prints
+// the reason a second time.
+var errStalenessBatchReported = errors.New("latest unmeasured: the batched resolution failed for the whole set")
 
 // openStalenessLedger opens the store purely for the staleness ledger.
 //
@@ -270,3 +354,26 @@ func majorNotes(rep staledomain.Republication, nm staledomain.NewerMajor, sameMa
 	}
 	return strings.Join(parts, "; ")
 }
+
+// deprecationNote renders the module's own deprecation notice as its own clause.
+//
+// The notice is REPRODUCED, not interpreted: the words are the author's, the
+// successor named is whichever one they named, and kanonarion adds no judgement
+// about it and infers no successor from name similarity. The only transformation
+// is that the notice's newlines become spaces, because a go.mod deprecation is
+// routinely two lines and a table row is one — the characters are otherwise the
+// published ones.
+//
+// A module whose deprecation state is not established renders nothing at all. It
+// is not "not deprecated": a per-path @latest lookup cannot see the notice, and
+// printing a negative there would state an answer nothing established.
+func deprecationNote(dep staledomain.Deprecation) string {
+	if !dep.Deprecated() {
+		return ""
+	}
+	return deprecatedLabel + ": " + strings.Join(strings.Fields(dep.Notice), " ")
+}
+
+// deprecatedLabel is the phrase the notice is reported under, shared by every
+// surface so no two commands name the same fact differently.
+const deprecatedLabel = "deprecated by its author"

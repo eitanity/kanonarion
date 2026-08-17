@@ -86,6 +86,26 @@ WHERE major_probe_from > 1
   AND newer_major_path <> ''
   AND (newer_major_path LIKE '%/v' || (major_probe_from - 1)
     OR newer_major_path LIKE '%.v' || (major_probe_from - 1));`},
+		// The module's own deprecation notice — the `// Deprecated:` comment on
+		// its go.mod module directive — is a FOURTH fact, and it gets its own
+		// columns for the reason the republication got its own: it is a different
+		// claim by a different mechanism, and the successor it names is often at
+		// a path no /vN walk can reach.
+		//
+		// deprecation_checked is separate from deprecation_notice for the reason
+		// major_probe_from is separate from newer_major_path. The notice is
+		// answered only where the answer's source can see it, and an empty notice
+		// alone cannot say whether the module declares none or was never asked —
+		// which is precisely the absence-as-answer this ledger exists to prevent.
+		//
+		// No pipeline bump and no back-fill: this table carries neither a content
+		// hash nor a pipeline version, and there is nothing stored to derive the
+		// notice from. Existing rows keep deprecation_checked = 0, which reads as
+		// "not established" and is the truth about them — nothing asked. They
+		// acquire the fact the next time their latest is resolved.
+		{Module: "staleness", Version: 3, SQL: `
+ALTER TABLE staleness_records ADD COLUMN deprecation_checked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE staleness_records ADD COLUMN deprecation_notice  TEXT NOT NULL DEFAULT '';`},
 	}
 }
 
@@ -106,8 +126,9 @@ INSERT INTO staleness_records (
     module_path, latest_version, latest_published_at,
     major_probe_from, newer_major_path, newer_major_version, newer_major_published_at,
     republication_asked, republication_path, republication_version, republication_published_at,
+    deprecation_checked, deprecation_notice,
     looked_up_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path) DO UPDATE SET
     latest_version             = excluded.latest_version,
     latest_published_at        = excluded.latest_published_at,
@@ -119,6 +140,8 @@ ON CONFLICT (module_path) DO UPDATE SET
     republication_path         = excluded.republication_path,
     republication_version      = excluded.republication_version,
     republication_published_at = excluded.republication_published_at,
+    deprecation_checked        = excluded.deprecation_checked,
+    deprecation_notice         = excluded.deprecation_notice,
     looked_up_at               = excluded.looked_up_at`
 
 	probeFrom := 0
@@ -129,10 +152,15 @@ ON CONFLICT (module_path) DO UPDATE SET
 	if rec.Republication.Asked {
 		repAsked = 1
 	}
+	depChecked := 0
+	if rec.Deprecation.Checked {
+		depChecked = 1
+	}
 	if _, err := s.db.DB().ExecContext(ctx, q,
 		rec.ModulePath, rec.LatestVersion, formatTime(rec.LatestPublishedAt),
 		probeFrom, rec.NewerMajor.Path, rec.NewerMajor.Version, formatTime(rec.NewerMajor.PublishedAt),
 		repAsked, rec.Republication.Path, rec.Republication.Version, formatTime(rec.Republication.PublishedAt),
+		depChecked, rec.Deprecation.Notice,
 		rec.LookedUpAt.UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("inserting staleness record for %s: %w", rec.ModulePath, err)
@@ -146,16 +174,18 @@ func (s *Store) GetStaleness(ctx context.Context, path string) (domain.Record, b
 	const q = `SELECT latest_version, latest_published_at,
        major_probe_from, newer_major_path, newer_major_version, newer_major_published_at,
        republication_asked, republication_path, republication_version, republication_published_at,
+       deprecation_checked, deprecation_notice,
        looked_up_at
 FROM staleness_records WHERE module_path = ?`
 
 	var latestVersion, latestPublished, majorPath, majorVersion, majorPublished, lookedUp string
-	var repPath, repVersion, repPublished string
-	var probeFrom, repAsked int
+	var repPath, repVersion, repPublished, depNotice string
+	var probeFrom, repAsked, depChecked int
 	row := s.db.DB().QueryRowContext(ctx, q, path)
 	if err := row.Scan(&latestVersion, &latestPublished, &probeFrom,
 		&majorPath, &majorVersion, &majorPublished,
-		&repAsked, &repPath, &repVersion, &repPublished, &lookedUp); errors.Is(err, sql.ErrNoRows) {
+		&repAsked, &repPath, &repVersion, &repPublished,
+		&depChecked, &depNotice, &lookedUp); errors.Is(err, sql.ErrNoRows) {
 		return domain.Record{}, false, nil
 	} else if err != nil {
 		return domain.Record{}, false, fmt.Errorf("querying staleness record for %s: %w", path, err)
@@ -194,6 +224,10 @@ FROM staleness_records WHERE module_path = ?`
 			Path:        repPath,
 			Version:     repVersion,
 			PublishedAt: repAt,
+		},
+		Deprecation: domain.Deprecation{
+			Checked: depChecked != 0,
+			Notice:  depNotice,
 		},
 		LookedUpAt: lookedUpAt,
 	}, true, nil

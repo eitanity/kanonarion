@@ -359,3 +359,90 @@ func TestMigration2_MovesASameMajorAnswerOutOfTheNewerMajorColumns(t *testing.T)
 		}
 	}
 }
+
+// The deprecation notice is three states in the ledger and the row must keep
+// them apart: never asked, asked and none declared, and the notice itself. An
+// empty notice alone cannot say which of the first two a row is in, which is
+// exactly the absence-as-answer this ledger exists to prevent.
+func TestRoundTrip_DistinguishesUncheckedDeprecationFromNoNotice(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+
+	const notice = "aws-sdk-go is deprecated. Use aws-sdk-go-v2.\nSee https://example.com/eol."
+	cases := []struct {
+		name string
+		dep  domain.Deprecation
+	}{
+		{name: "not established", dep: domain.Deprecation{}},
+		{name: "checked, none declared", dep: domain.Deprecation{Checked: true}},
+		{name: "checked, deprecated", dep: domain.Deprecation{Checked: true, Notice: notice}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := domain.Record{
+				ModulePath:    "example.com/mod-" + tc.name,
+				LatestVersion: "v1.0.0",
+				Deprecation:   tc.dep,
+				LookedUpAt:    time.Date(2026, 8, 17, 9, 0, 0, 0, time.UTC),
+			}
+			if err := s.PutStaleness(ctx, rec); err != nil {
+				t.Fatalf("PutStaleness: %v", err)
+			}
+			got, _, err := s.GetStaleness(ctx, rec.ModulePath)
+			if err != nil {
+				t.Fatalf("GetStaleness: %v", err)
+			}
+			if got.Deprecation.Checked != tc.dep.Checked {
+				t.Errorf("Deprecation.Checked = %v, want %v", got.Deprecation.Checked, tc.dep.Checked)
+			}
+			// The notice is stored verbatim, newline and all: it is reproduced,
+			// not interpreted, and the store is not where that starts changing.
+			if got.Deprecation.Notice != tc.dep.Notice {
+				t.Errorf("Deprecation.Notice = %q, want %q", got.Deprecation.Notice, tc.dep.Notice)
+			}
+			if got.Deprecation.Deprecated() != tc.dep.Deprecated() {
+				t.Errorf("Deprecated() = %v, want %v", got.Deprecation.Deprecated(), tc.dep.Deprecated())
+			}
+		})
+	}
+}
+
+// Migration 3 adds the deprecation columns. Existing rows keep
+// deprecation_checked = 0 — "not established", which is the truth about a row
+// written before anything asked — and they never read back as "not deprecated".
+func TestMigration3_ExistingRowsAreUncheckedNotUndeprecated(t *testing.T) {
+	ctx := context.Background()
+
+	all := stalesqlite.Migrations()
+	if len(all) < 3 {
+		t.Fatalf("expected at least 3 staleness migrations, got %d", len(all))
+	}
+	db, err := sqlitestore.Open(":memory:", all[:2])
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() {
+		if cerr := db.Close(); cerr != nil {
+			t.Errorf("Close: %v", cerr)
+		}
+	})
+	if _, err := db.DB().ExecContext(ctx,
+		`INSERT INTO staleness_records (module_path, latest_version, looked_up_at) VALUES (?, ?, ?)`,
+		"example.com/legacy", "v1.0.0", "2026-08-17T09:00:00Z"); err != nil {
+		t.Fatalf("seeding the pre-migration row: %v", err)
+	}
+	if err := sqlitestore.Apply(db, all); err != nil {
+		t.Fatalf("applying migration 3: %v", err)
+	}
+
+	got, found, err := stalesqlite.New(db).GetStaleness(ctx, "example.com/legacy")
+	if err != nil || !found {
+		t.Fatalf("GetStaleness: found=%v err=%v", found, err)
+	}
+	if got.Deprecation.Checked {
+		t.Error("a row written before the question existed reads as having been asked")
+	}
+	if got.Deprecation.Deprecated() {
+		t.Error("a row nothing asked about reads as deprecated")
+	}
+}

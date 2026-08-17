@@ -144,7 +144,7 @@ func TestLatestRowFor_OfflineWithoutARowIsUnmeasuredNotAnError(t *testing.T) {
 	t.Cleanup(restore)
 
 	var stderr bytes.Buffer
-	row := latestRowFor(context.Background(), newOfflineStalenessLookup(offlineLedger(t), time.Hour),
+	row, _ := latestRowFor(context.Background(), newOfflineStalenessLookup(offlineLedger(t), time.Hour),
 		offlineLatestModule, "v1.0.0", &stderr)
 	if row.Latest == "(error)" {
 		t.Errorf("offline row reported as an error: %+v", row)
@@ -230,5 +230,102 @@ func TestRunLatest_OfflineWiringOrder(t *testing.T) {
 				t.Errorf("the answer does not say it was served:\n%s", stdout.String())
 			}
 		})
+	}
+}
+
+// Offline behaviour is unchanged by the batched latest, and this asserts it
+// from both sides.
+//
+// The batch source is `go list -m -u`, which under GOPROXY=off exits 0 and
+// reports every module as having no update — output byte-identical to "your
+// whole dependency set is current". So the offline path never reaches the batch
+// at all: it is the ledger, exactly as before. A row inside the TTL is served
+// with its ORIGINAL lookup time, and a module without one is refused rather than
+// answered.
+func TestLatest_OfflineIsStillTheLedgerAndStillRefusesBeyondTheTTL(t *testing.T) {
+	restore := SetClockForTest(time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC))
+	t.Cleanup(restore)
+
+	recordedAt := cliNow().Add(-10 * time.Minute)
+
+	t.Run("inside the TTL, served with its own lookup time", func(t *testing.T) {
+		var stderr bytes.Buffer
+		row, err := latestRowFor(context.Background(),
+			newOfflineStalenessLookup(seedOfflineLatestRow(t, 10*time.Minute), time.Hour),
+			offlineLatestModule, "v1.0.0", &stderr)
+		if err != nil {
+			t.Fatalf("latestRowFor: %v", err)
+		}
+		if row.Latest != "v1.4.0" {
+			t.Errorf("latest = %q, want the recorded v1.4.0", row.Latest)
+		}
+		if !row.Served {
+			t.Error("the row does not say it came from the store")
+		}
+		if !row.LookedUpAt.Equal(recordedAt) {
+			t.Errorf("looked_up_at = %v, want the ORIGINAL lookup time %v", row.LookedUpAt, recordedAt)
+		}
+		// The offline answer states its deprecation only when the recorded row
+		// established it. This row was recorded before anything asked, so the
+		// state is "not established" — never "not deprecated".
+		if row.Deprecated != nil {
+			t.Errorf("deprecated = %q, want null for a row nothing asked about", *row.Deprecated)
+		}
+	})
+
+	t.Run("beyond the TTL, refused, never answered as current", func(t *testing.T) {
+		var stderr bytes.Buffer
+		row, err := latestRowFor(context.Background(),
+			newOfflineStalenessLookup(seedOfflineLatestRow(t, 90*time.Minute), time.Hour),
+			offlineLatestModule, "v1.0.0", &stderr)
+		if err != nil {
+			t.Fatalf("latestRowFor: %v", err)
+		}
+		if row.IsLatest != nil {
+			t.Errorf("is_latest = %v, want null — nothing was measured", *row.IsLatest)
+		}
+		if row.Latest != "" {
+			t.Errorf("latest = %q, want empty — a stale row is not served", row.Latest)
+		}
+		if row.StalenessUnmeasured != stalenessOfflineNoEntry {
+			t.Errorf("staleness_unmeasured = %q, want %q", row.StalenessUnmeasured, stalenessOfflineNoEntry)
+		}
+	})
+}
+
+// A deprecation recorded by an online run is served back offline, with the
+// lookup time of the run that recorded it. The notice is part of the answer that
+// lookup gave, so it travels with it.
+func TestLatest_OfflineServesARecordedDeprecation(t *testing.T) {
+	restore := SetClockForTest(time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC))
+	t.Cleanup(restore)
+
+	const notice = "aws-sdk-go is deprecated. Use aws-sdk-go-v2."
+	ledger := offlineLedger(t)
+	if err := ledger.PutStaleness(context.Background(), staledomain.Record{
+		ModulePath:    offlineLatestModule,
+		LatestVersion: "v1.4.0",
+		NewerMajor:    staledomain.NewerMajor{Probed: true, FromMajor: 2},
+		Deprecation:   staledomain.Deprecation{Checked: true, Notice: notice},
+		LookedUpAt:    cliNow().Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("filing staleness row: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	row, err := latestRowFor(context.Background(), newOfflineStalenessLookup(ledger, time.Hour),
+		offlineLatestModule, "v1.0.0", &stderr)
+	if err != nil {
+		t.Fatalf("latestRowFor: %v", err)
+	}
+	if row.Deprecated == nil || *row.Deprecated != notice {
+		t.Fatalf("deprecated = %v, want the recorded notice", row.Deprecated)
+	}
+	var out bytes.Buffer
+	if err := printLatestTable(&out, []latestResult{row}); err != nil {
+		t.Fatalf("printLatestTable: %v", err)
+	}
+	if !strings.Contains(out.String(), "deprecated by its author: "+notice) {
+		t.Errorf("offline table does not state the recorded notice:\n%s", out.String())
 	}
 }

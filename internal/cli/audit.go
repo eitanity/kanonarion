@@ -333,7 +333,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 
 	// Which lookup answers the staleness column, and why, is decided in one
 	// place so the offline and online wirings cannot drift apart.
-	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger)
+	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger, f.gomodPath, coords, stderr)
 	if serr != nil {
 		return serr
 	}
@@ -818,7 +818,8 @@ const (
 // What this does NOT promise is that the rest of the run succeeds. A walk that
 // has to fetch module bytes it has not got still fails — with its own error,
 // naming that obstacle, which is the one the operator can act on.
-func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog.Logger) (stalenessLookup, error) {
+func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog.Logger,
+	gomodPath string, coords []string, stderr io.Writer) (stalenessLookup, error) {
 	offline := newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	if modcacheMode {
 		return offline, nil
@@ -833,7 +834,14 @@ func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog
 	// The same ledger `latest` writes. Every successful lookup either command
 	// makes is served to the other inside the TTL, which is the whole point: the
 	// two commands were re-paying the same sweep minutes apart.
-	return newAuditStalenessResolver(newProxyLatestResolver(proxy, logger), ledger, activeConfig.Staleness.TTL), nil
+	//
+	// And it gets the same BATCHED source `latest --gomod` gets, over the same
+	// scope, for the same reason: this column asked the proxy once per module,
+	// serially, for a fact the go command answers for the whole set in one call.
+	// The two commands share the defect as they share the ledger, so they are
+	// fixed together rather than leaving `audit` on the sweep `latest` left.
+	return newReportOnceLookup(newGomodStalenessResolver(newProxyLatestResolver(proxy, logger), ledger,
+		activeConfig.Staleness.TTL, false, gomodPath, goproxy, pinnedModulesOf(coords)), stderr), nil
 }
 
 // applyAuditStaleness fills a row's staleness columns from one lookup.
@@ -858,7 +866,12 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 		// the mode working as designed and is already stated in the column, the
 		// coverage line and the JSON.
 		if lerr != nil && !errors.Is(lerr, errStalenessOffline) {
-			_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+			// errStalenessBatchReported is the exception: the batched resolution
+			// failed for the WHOLE set and has already said so once. Every row is
+			// still marked unmeasured; only the repeated sentence is dropped.
+			if !errors.Is(lerr, errStalenessBatchReported) {
+				_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+			}
 			res.markStalenessUnmeasured(stalenessLookupFailed)
 			return
 		}

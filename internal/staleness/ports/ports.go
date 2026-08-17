@@ -39,8 +39,79 @@ type LatestInfo struct {
 // LatestResolver resolves @latest for a module path. Implementations MUST
 // report an unknown path as ErrPathAbsent (wrapped is fine) so the probe can
 // tell absence from failure.
+//
+// Implementations MUST also be safe for concurrent use. The newer-major probe
+// asks about one path per module in the dependency closure — almost all of them
+// 404s — and it asks in bounded parallel rounds, so a resolver that keeps
+// mutable state across calls will be exercised from several goroutines at once.
+// Both shipped implementations are immutable after construction: the proxy
+// bridge holds an *http.Client, and the retry decorator holds its schedule.
 type LatestResolver interface {
 	LatestInfo(ctx context.Context, path string) (LatestInfo, error)
+}
+
+// BatchLatest is one module's answer from a batched resolution: the same
+// same-major latest a LatestResolver returns, plus the module's own deprecation
+// notice, which the batch source reports at no extra cost and a per-path
+// @latest lookup cannot see at all.
+type BatchLatest struct {
+	LatestInfo
+	// Deprecated is the module's deprecation notice, verbatim, or empty when the
+	// module declares none. Presence in the map is what says the question was
+	// ANSWERED; empty here means "answered, not deprecated".
+	Deprecated string
+
+	// Updated reports whether the batch found a NEWER version than the one the
+	// build list selected. It is not derivable from Version, which holds the
+	// selected version when there is no update.
+	//
+	// It matters because the batched source answers within the pin's own major
+	// and reports nothing when there is no higher version there — so "no update"
+	// covers both "you are on the newest release" and "you are sitting ABOVE the
+	// last tag on a pseudo-version". Only the second needs the module's @latest
+	// tag looked up to place the pin, and without this field every row would
+	// have to be looked up to find the few that do.
+	Updated bool
+}
+
+// PinnedModule is one module in a caller's scope: the path to answer for, and
+// the version the build list resolved for it.
+//
+// The VERSION is carried because the newer-major probe cannot be planned
+// without it — a +incompatible pin carries its major in the version while
+// living at the unsuffixed path, so the major the walk starts at is not
+// derivable from the path alone. A batched resolution that only knew paths
+// could resolve the latest and would still leave the probe with nothing to plan
+// from until each module came round one at a time.
+type PinnedModule struct {
+	Path    string
+	Version string
+}
+
+// BatchLatestResolver answers the same-major latest question for a whole set of
+// module paths in ONE call.
+//
+// It is a different SHAPE from LatestResolver, not a faster implementation of
+// it, and that is why it is a separate port. The latest-version fact for a set
+// of modules is a batched question the go command answers in seconds; a
+// LatestResolver can only be asked one path at a time, which is what made the
+// same sweep take tens of minutes and lose answers to the request rate it
+// provoked. Forcing a batch behind the per-path signature would have hidden the
+// one property that matters — that the whole set is resolved together.
+//
+// The newer-major probe stays on LatestResolver: it asks about paths that are
+// NOT in the build list, so no batched answer about the build list can contain
+// them.
+type BatchLatestResolver interface {
+	// LatestBatch answers for the given module paths.
+	//
+	// The map holds ONLY the paths that were answered. A path absent from it was
+	// NOT answered and must never be read as "this module is current" — an
+	// implementation that cannot check for updates is required to return an
+	// error rather than a map of every path with no update, because the two are
+	// byte-identical in the underlying tool's output and only one of them is an
+	// answer.
+	LatestBatch(ctx context.Context, paths []string) (map[string]BatchLatest, error)
 }
 
 // Ledger persists resolved staleness rows, keyed on module path.
