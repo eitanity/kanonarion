@@ -273,7 +273,8 @@ false`, `policy_unevaluated: false`, `pin_ahead_of_latest: false`,
 it names something that does not apply to the row at all: the string and list keys
 (`latest_version`, `newer_major_module`, `republished_module`, `vuln_reason`,
 `staleness_unmeasured`,
-`license_uncertainty`, `license_electable_arms`, `scope`).
+`license_uncertainty`, `license_electable_arms`, `license_governing_arms`,
+`scope`).
 
 `vuln_findings` counts **every** advisory on the record, retracted ones
 included. `vuln_withdrawn` is the retracted subset and live advisories are the
@@ -338,15 +339,15 @@ falling back on the affirmative answer:
 | `unmeasured (lookup failed)` | `null` | `unmeasured` | `lookup_failed` |
 | `unmeasured (toolchain-pinned)` | `null` | `unmeasured` | `toolchain_pinned` |
 
-`is_latest` is **null**, never `false`, on an unmeasured row: `false` is the
-claim "your pin is behind", which nobody established. `staleness_source` names
-which side answered a measured row - `proxy` (this run asked upstream) or
-`ledger` (a lookup recorded inside `staleness.ttl`, dated by
-`staleness_looked_up_at`). `toolchain_pinned` is the standard-library row, whose
-version is the build toolchain's and has no proxy `@latest` to compare against.
+`is_latest` is **null**, never `false`, on an unmeasured row: `false` claims
+"your pin is behind", which nobody established. `staleness_source` names which
+side answered a measured row - `proxy` (asked upstream) or `ledger` (recorded
+inside `staleness.ttl`, dated by `staleness_looked_up_at`). `toolchain_pinned`
+is the standard-library row, pinned to the build toolchain, with no proxy
+`@latest` to compare against.
 
-Beside the table, on stderr, `audit` states the column's **coverage** the way it
-already states verification coverage - measured split into asked-upstream and
+Beside the table, on stderr, `audit` states the column's **coverage** as it
+already does for verification - measured, split into asked-upstream and
 served-from-ledger, then a count per unmeasured reason:
 
 ```text
@@ -355,21 +356,20 @@ staleness coverage over 127 module(s):
   unmeasured (offline)                 127  100.0%
 ```
 
-The measured line prints even at zero: that is the entire point on an offline
-run, where a row that disappeared at zero could not report the collapse.
+The measured line prints even at zero: a line that disappeared at zero could
+not report the collapse, which is the whole point on an offline run.
 
 ### The unknown-licence gate
 
 `audit` is where the licence policy is enforced. A default or `--project` run
-evaluates every licence under the policy's `production` rule; `--tool`
-evaluates under `tool`. If evaluation ever finds no rule for the scope in
-force (possible with a hand-edited policy), the gate reports itself
-**unevaluated** — naming that scope and the scopes that do carry rules — and
-exits `5`; it never falls through to an allow.
+evaluates every licence under the policy's `production` rule; `--tool` evaluates
+under `tool`. Finding no rule for the scope in force (possible with a hand-edited
+policy), the gate reports itself **unevaluated** — naming that scope and the
+scopes that do carry rules — and exits `5`, never falling through to an allow.
 
-Under `--json` the two facts are `policy_blocking` and `policy_unevaluated`, and
-both are emitted on **every** row, `false` included. That is what lets a
-consumer separate the two states the words above describe:
+Under `--json` the two facts are `policy_blocking` and `policy_unevaluated`,
+both emitted on **every** row, `false` included, so a consumer can separate the
+two states above:
 
 | `policy_blocking` | `policy_unevaluated` | The row |
 |---|---|---|
@@ -378,41 +378,46 @@ consumer separate the two states the words above describe:
 | `true` | `true` | The scope in force matched no rule, so the gate decided nothing - reported and blocking, never an implicit allow |
 
 `false` on both is a measurement, not a missing field: it says the gate ran.
-There is no state in which the pair is unanswered, so neither key is ever `null`
-and neither is ever omitted.
+Neither key is ever `null` or omitted.
 
-A dependency whose licence
-could not be resolved to any SPDX identifier is **undetermined**, and
-undetermined is governed by `license_policy.rules[].unknown_license` - not by
-the rule's `default`. When that key resolves to `block` for the module's scope,
-`audit` prints the full table and then exits `5`, naming every blocked module.
+A dependency whose licence could not be resolved to any SPDX identifier is
+**undetermined**, and undetermined is governed by
+`license_policy.rules[].unknown_license`, not by the rule's `default`. When that
+key resolves to `block` for the module's scope, `audit` prints the full table
+and then exits `5`, naming every blocked module.
 
 A `Multiple` licence status - detection found more than one licence identity -
-splits in two.
+splits four ways.
 
-When the module offers a **choice** (a pure `A OR B` expression whose arms are
-identified SPDX identifiers, e.g. a dual-licensed module), each arm is evaluated
-against the rule and the row takes the most favourable arm's outcome. Every arm
-allowed reads `allow`; one allowed arm among stricter ones also reads `allow`;
-no allowed arm reads whatever the least-bad arm reads (a `warn` licence in a
-disjunction is still a `warn`, never a block). The policy column names the arms
-that carry the outcome — `allow [permissive] [electable: Apache-2.0 or MIT]` —
+When the module offers a **choice** (a pure `A OR B` expression of identified
+SPDX identifiers, e.g. a dual-licensed module), the row takes the most
+favourable arm's outcome: one allowed arm among stricter ones reads `allow`, and
+with no allowed arm a `warn` licence is still a `warn`, never a block. The
+policy column names the arms carrying the outcome — `allow [permissive]
+[electable: Apache-2.0 or MIT]` —
 and `--json` repeats them in `license_electable_arms`. Such a row is not an open
 item; recording the elected arm as a `license_overrides` entry still settles it
-wholesale and then the row is evaluated under that one licence.
+wholesale, and the row is then evaluated under that licence.
+
+When the module carries **every** arm (a pure `A AND B` expression) the row
+takes the **least** favourable arm's outcome: no choice exists, so the strictest
+obligation binds. `Apache-2.0 AND MIT` reads `allow [permissive]`; a row worse
+than allow names the arm responsible - `warn [strong_copyleft] [governing:
+GPL-3.0-only]` - and `--json` repeats it in `license_governing_arms`. An arm in
+no policy category is not folded: the strictest arm is then unknown, and the row
+is carried as below.
 
 When the expression names a **single** licence, that licence is the row's
-resolution and is evaluated as any determined licence is. A module whose one
-licence file bundles third-party texts (an omnibus attribution file) reads
-`Multiple` in the licence column while its expression names its own licence
-alone; the status describes how detection got there, not that it failed.
+resolution, evaluated as any determined licence is. A module whose one licence
+file bundles third-party texts (an omnibus attribution file) reads `Multiple`
+while its expression names its own licence alone: the status describes how
+detection got there, not that it failed.
 
-When the expression offers neither - a conjunction (`A AND B`), or candidates
-that could not be identified - nothing was determined: the row is carried as
-unresolved (uncertainty `multiple`) under every scope, governed by the same
-unknown-licence key, until an operator records the resolution as a
-`license_overrides` entry. The SPDX shown in the licence column for such a row
-is display information, not a resolution.
+When the expression names none of those - candidates that could not be
+identified - nothing was determined: the row is carried as unresolved
+(uncertainty `multiple`) under every scope, governed by the same unknown-licence
+key, until an operator records a `license_overrides` entry. The SPDX in the
+licence column is then display information, not a resolution.
 
 Left unset the key resolves to `block` for `scope: production` and `warn` for
 every other scope, so an undetermined dependency fails a production audit

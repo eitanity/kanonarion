@@ -273,6 +273,42 @@ func TestDisjunctionArms(t *testing.T) {
 	}
 }
 
+// TestConjunctionArms is the mirror of TestDisjunctionArms: an expression
+// yields arms to exactly one of the two, so every disjunctive and mixed shape
+// here must come back empty.
+func TestConjunctionArms(t *testing.T) {
+	cases := []struct {
+		name string
+		expr string
+		want []string
+	}{
+		{"empty", "", nil},
+		{"single identifier", "MIT", nil},
+		{"two arms", "Apache-2.0 AND MIT", []string{"Apache-2.0", "MIT"}},
+		{"three arms", "Apache-2.0 AND BSD-3-Clause AND MIT", []string{"Apache-2.0", "BSD-3-Clause", "MIT"}},
+		{"disjunction is not an obligation set", "Apache-2.0 OR MIT", nil},
+		{"mixed operators are not an obligation set", "MIT OR Apache-2.0 AND GPL-2.0-only", nil},
+		{"WITH exception qualifies an arm rather than adding one", "GPL-3.0 WITH Classpath-exception-2.0 AND MIT", nil},
+		{"duplicate arms collapse below two", "MIT AND MIT", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := domain.ConjunctionArms(tc.expr)
+			if len(got) != len(tc.want) {
+				t.Fatalf("ConjunctionArms(%q) = %v, want %v", tc.expr, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("ConjunctionArms(%q)[%d] = %q, want %q", tc.expr, i, got[i], tc.want[i])
+				}
+			}
+			if len(domain.DisjunctionArms(tc.expr)) > 0 && len(got) > 0 {
+				t.Errorf("%q yielded arms to both readings", tc.expr)
+			}
+		})
+	}
+}
+
 // TestSoleIdentifier pins the one-identifier reading: an expression naming a
 // single licence resolves to it, and anything carrying an operator resolves to
 // nothing — a choice and a set of obligations are both more than one licence.
