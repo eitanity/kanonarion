@@ -144,6 +144,9 @@ func printFullInterface(w *errWriter, ifc contextInterface, cmd string) {
 		if ifc.ExtractedAt != "" {
 			w.printf("Extracted At: %s\n", ifc.ExtractedAt)
 		}
+		if ifc.BuildFrame != "" {
+			w.printf("Build Frame:  %s\n", ifc.BuildFrame)
+		}
 		if ifc.Error != "" {
 			w.printf("Detail:       %s\n", ifc.Error)
 		}

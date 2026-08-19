@@ -207,10 +207,15 @@ type contextPackage struct {
 }
 
 type contextInterface struct {
-	ExtractedAt string           `json:"extracted_at,omitempty"`
-	Status      string           `json:"status"`
-	Packages    []contextPackage `json:"packages,omitempty"`
-	Error       string           `json:"error,omitempty"`
+	ExtractedAt string `json:"extracted_at,omitempty"`
+	Status      string `json:"status"`
+	// BuildFrame names the build the declarations below were measured in. The
+	// section reports one platform's public API, so a reader that cannot see
+	// which platform cannot tell an absent symbol from an unbuilt one. Absent
+	// only when no record was read at all.
+	BuildFrame string           `json:"build_frame,omitempty"`
+	Packages   []contextPackage `json:"packages,omitempty"`
+	Error      string           `json:"error,omitempty"`
 }
 
 type contextCallGraph struct {

@@ -231,10 +231,16 @@ func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 	out := contextInterface{
 		ExtractedAt: isoTime(rec.ExtractedAt),
 		Status:      rec.OverallStatus.String(),
+		BuildFrame:  rec.BuildFrame.String(),
 		Error:       rec.FailureDetail,
 	}
 	for _, pkg := range rec.Packages {
 		if pkg.IsInternal || pkg.IsMain {
+			continue
+		}
+		// A package the build does not contain carries no declarations, and
+		// listing it empty here would read as a package with no public API.
+		if pkg.OutOfFrame {
 			continue
 		}
 		if pkgFilter != "" && pkg.ImportPath != pkgFilter {

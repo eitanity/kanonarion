@@ -227,7 +227,23 @@ func fieldText(f domain.FieldDecl) string {
 }
 
 func printRecordText(r domain.InterfaceRecord, idx promotionIndex, stdout io.Writer) error {
+	// The frame leads, because every line under it is only true of that build.
+	// A record that predates build-constraint evaluation says so in those words
+	// rather than naming a platform it never measured.
+	if r.BuildFrame.IsZero() {
+		if _, err := fmt.Fprintf(stdout, "build frame: unrecorded — this record holds every platform's declarations at once\n"); err != nil {
+			return fmt.Errorf("writing build frame: %w", err)
+		}
+	} else if _, err := fmt.Fprintf(stdout, "build frame: %s\n", r.BuildFrame.String()); err != nil {
+		return fmt.Errorf("writing build frame: %w", err)
+	}
 	for _, pkg := range r.Packages {
+		if pkg.OutOfFrame {
+			if _, err := fmt.Fprintf(stdout, "\npackage %s // %s — not in this build frame\n", pkg.Name, pkg.ImportPath); err != nil {
+				return fmt.Errorf("writing package header: %w", err)
+			}
+			continue
+		}
 		if _, err := fmt.Fprintf(stdout, "\npackage %s // %s\n", pkg.Name, pkg.ImportPath); err != nil {
 			return fmt.Errorf("writing package header: %w", err)
 		}

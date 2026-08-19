@@ -25,10 +25,15 @@ var ErrNoRecordsToCompose = errors.New("no interface records to compose")
 //   - "artefact_identity": two identities for one pinned module version, which
 //     means the same module at the same version yielded two different sets of
 //     bytes. There is no ladder between answers about different bytes.
+//   - "build_frame": two records describing the SAME artefact that were measured
+//     in different build configurations. Their exported APIs are both correct and
+//     are answers to different questions, so there is no ladder between them
+//     either — and reporting it here keeps the difference from being mislabelled
+//     as extractor non-determinism by the check below.
 //   - "public_api": two records describing the SAME artefact at the SAME
-//     extraction status that disagree about the exported API. That narrow case is
-//     evidence of non-determinism in the extractor and is worth surfacing rather
-//     than absorbing.
+//     extraction status and in the SAME build frame that disagree about the
+//     exported API. That narrow case is evidence of non-determinism in the
+//     extractor and is worth surfacing rather than absorbing.
 //
 // The second is deliberately narrow. A public API is close to a function of the
 // artefact's bytes, but not purely: type resolution for exported generic and
@@ -49,8 +54,8 @@ type InterfaceConflict struct {
 	// written under.
 	PipelineVersion string
 
-	// Field names what the records disagree on: "artefact_identity" or
-	// "public_api".
+	// Field names what the records disagree on: "artefact_identity",
+	// "build_frame" or "public_api".
 	Field string
 
 	// Values are the distinct values recorded for Field, sorted, so the report is
@@ -150,6 +155,15 @@ func findConflict(records []InterfaceRecord) *InterfaceConflict {
 	// named an artefact and named different ones.
 	if c := disagreement(records, "artefact_identity",
 		func(r InterfaceRecord) string { return r.ArtefactIdentity }); c != nil {
+		return c
+	}
+
+	// A frame difference is named as one before the API comparison runs. Two
+	// records measured on different platforms hold different declarations by
+	// construction, and letting them fall through would report a correct pair of
+	// measurements as non-determinism in the extractor.
+	if c := disagreement(records, "build_frame",
+		func(r InterfaceRecord) string { return r.BuildFrame.String() }); c != nil {
 		return c
 	}
 

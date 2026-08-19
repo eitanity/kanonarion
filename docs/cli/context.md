@@ -288,15 +288,16 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 | Field | Type | Description |
 |---|---|---|
 | `status` | string | `not_run` / `superseded` / `read_error` / extractor status |
-| | | `superseded`: a record exists for this module but every stored generation predates this build's extraction logic, so none is served. `error` carries the statement and the re-extraction to run. |
-| `packages` | array | Public packages (internal and `main` packages excluded) |
-| `packages[].import_path` | string | Package import path |
-| `packages[].types` | array | Exported type signatures (doc comment included only with `--full`) |
-| `packages[].methods` | array | Signatures of the methods declared on those types (doc comment included only with `--full`) |
+| | | `superseded`: every stored generation predates this build's extraction logic, so none is served. `error` carries the statement and the re-extraction to run. |
+| `packages` | array | Public packages (internal, `main` and out-of-frame excluded) |
+| `packages[].import_path` | string | Import path |
+| `packages[].types` | array | Exported type signatures (doc only with `--full`) |
+| `packages[].methods` | array | Methods on those types (doc only with `--full`) |
 | `packages[].funcs` | array | Exported function signatures |
-| `packages[].consts` | array | Exported constant names (with type if present) |
-| `packages[].vars` | array | Exported variable names (with type if present) |
+| `packages[].consts` | array | Exported constant names, with type if present |
+| `packages[].vars` | array | Exported variable names, with type if present |
 | `extracted_at` | string | RFC3339 extraction timestamp |
+| `build_frame` | string | The build the API was measured in, or `unrecorded` |
 | `error` | string | Set when `status` is `read_error` |
 
 ### `call_graph`

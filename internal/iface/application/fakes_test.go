@@ -178,6 +178,7 @@ func (s *fakeInterfaceStore) FindSymbol(_ context.Context, _ string, _ string, _
 type fakeExtractor struct {
 	record domain.InterfaceRecord
 	err    error
+	frame  domain.BuildFrame
 }
 
 func (f *fakeExtractor) Extract(_ context.Context, _ fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error) {
@@ -188,6 +189,8 @@ func (f *fakeExtractor) Extract(_ context.Context, _ fs.FS, coord coordinate.Mod
 	r.Coordinate = coord
 	return r, nil
 }
+
+func (f *fakeExtractor) BuildFrame() domain.BuildFrame { return f.frame }
 
 // Compile-time interface checks.
 var _ fetchports.FactStore = (*fakeFactStore)(nil)

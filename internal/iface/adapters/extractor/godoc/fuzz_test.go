@@ -64,6 +64,21 @@ func Map[T any](xs []T, fn func(T) T) []T { return xs }
 		"package p\ntype Δ struct{}\nfunc (Δ) Method() {}\n",
 		// cgo + build constraints.
 		"//go:build linux\n\npackage p\nimport \"C\"\nfunc F() {}\n",
+		// Build-constraint text is untrusted input in its own right now that
+		// go/build evaluates it before anything is parsed: a malformed or
+		// adversarial line must be recorded as a failure, never panic, and never
+		// silently keep or silently drop the file.
+		"//go:build\n\npackage p\nfunc F() {}\n",
+		"//go:build &&\n\npackage p\nfunc F() {}\n",
+		"//go:build (linux\n\npackage p\nfunc F() {}\n",
+		"//go:build !!!linux\n\npackage p\nfunc F() {}\n",
+		"//go:build " + repeat("linux || ", 4096) + "linux\n\npackage p\nfunc F() {}\n",
+		"//go:build " + repeat("(", 4096) + "linux" + repeat(")", 4096) + "\n\npackage p\nfunc F() {}\n",
+		"//go:build \xff\xfe\n\npackage p\nfunc F() {}\n",
+		"//go:build ignore\n\npackage p\nfunc F() {}\n",
+		"//go:build linux\n// +build windows\n\npackage p\nfunc F() {}\n",
+		"// +build linux\n\npackage p\nfunc F() {}\n",
+		"//go:build linux && !linux\n\npackage p\nfunc F() {}\n",
 	}
 	for _, s := range seeds {
 		f.Add(s)

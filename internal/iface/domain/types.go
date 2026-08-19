@@ -77,6 +77,44 @@ func (k TypeKind) String() string {
 	}
 }
 
+// BuildFrame names the build configuration a public API was measured in.
+//
+// A Go package can declare the same exported symbol several times, once per
+// mutually exclusive build constraint, and only one of those declarations is in
+// any given build. An API measured at linux/amd64 and one measured at
+// windows/386 are therefore different facts about the same module version, and a
+// record that does not say which one it holds cannot be compared with another —
+// a reader cannot tell a symbol that was removed from a symbol that was never
+// built here.
+//
+// The zero value means "not recorded", which is the true value for records
+// written before the extractor evaluated build constraints at all: those hold
+// every variant of every file at once and belong to no build. It never reads as
+// a frame in its own right.
+type BuildFrame struct {
+	GOOS   string
+	GOARCH string
+	// CgoEnabled is part of the frame because the "cgo" build tag selects
+	// files, so two runs that disagree about it measure different packages.
+	CgoEnabled bool
+}
+
+// IsZero reports whether the frame was never recorded.
+func (f BuildFrame) IsZero() bool { return f.GOOS == "" && f.GOARCH == "" }
+
+// String renders the frame as "goos/goarch" plus the cgo state, or
+// "unrecorded" when nothing was measured.
+func (f BuildFrame) String() string {
+	if f.IsZero() {
+		return "unrecorded"
+	}
+	cgo := "cgo off"
+	if f.CgoEnabled {
+		cgo = "cgo on"
+	}
+	return f.GOOS + "/" + f.GOARCH + " (" + cgo + ")"
+}
+
 // SourcePosition identifies a location in a source file.
 type SourcePosition struct {
 	File string // relative to module root
@@ -160,6 +198,12 @@ type PackageInterface struct {
 	ParseFailures []ParseFailure
 	IsInternal    bool // import path contains "/internal/"
 	IsMain        bool // package name == "main"
+	// OutOfFrame is true when the directory holds Go source but none of it is
+	// in the record's BuildFrame — a package that exists in the module and not
+	// in this build. The package is kept, empty, rather than dropped, so the
+	// difference between "this module has no such package" and "this build has
+	// no such package" survives into the record.
+	OutOfFrame bool
 }
 
 // InterfaceRecord is the aggregate root for a module's interface extraction
@@ -167,11 +211,15 @@ type PackageInterface struct {
 type InterfaceRecord struct {
 	SchemaVersion string
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
-	Ecosystem       string
-	Coordinate      coordinate.ModuleCoordinate
-	Packages        []PackageInterface // sorted by ImportPath
-	OverallStatus   InterfaceStatus
-	FailureDetail   string
+	Ecosystem     string
+	Coordinate    coordinate.ModuleCoordinate
+	Packages      []PackageInterface // sorted by ImportPath
+	OverallStatus InterfaceStatus
+	FailureDetail string
+	// BuildFrame names the build configuration the packages were measured in.
+	// Zero on records written before the extractor evaluated build constraints;
+	// see BuildFrame's own documentation for why that is not a frame.
+	BuildFrame      BuildFrame
 	ExtractedAt     time.Time
 	PipelineVersion string
 	ContentHash     string

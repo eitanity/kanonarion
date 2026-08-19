@@ -43,6 +43,61 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Interface record: pipeline `0.4.0` → `0.5.0`
+
+**Record shape change; no store migration. This bump is also a repair** — the
+only one available for the coordinates the defect below has already killed.
+
+Extraction parsed every non-test `.go` file in a package directory and handed the
+set to `go/doc`, evaluating no build constraints. A package carrying mutually
+exclusive build-tag variants therefore presented `go/doc` with several
+declarations of one exported symbol, and `go/doc` resolves duplicates in **map
+iteration order**. Two extractions of one zip could disagree, and the winner
+described no build that exists. In this store's own history,
+`github.com/mattn/go-isatty@v0.0.20` — one zip, one linux/amd64 host — is held
+twice and the two records disagree: the `0.3.0` generation records `IsTerminal`
+at `isatty_windows.go`, the `0.4.0` generation at `isatty_bsd.go`. Neither file
+is in a linux build. Two hundred extractions of a six-variant package produced
+six distinct `public_api` hashes.
+
+Extraction now evaluates build constraints with `go/build` and reads only the
+files one configuration contains. Three things follow into the record:
+
+- **`build_frame`** names that configuration — `goos`, `goarch`, `cgo_enabled`.
+  An API measured at linux/amd64 and one measured at windows/386 are different
+  facts and must not collide on one coordinate.
+- **`out_of_frame`** marks a package directory whose files are all for other
+  platforms. It is kept, empty, rather than dropped: a package absent from the
+  module and a package this build does not contain are different facts.
+- The declarations narrow to one platform. `modernc.org/libc@v1.73.5` at
+  linux/amd64 goes from 69,298 exported declarations across 715 position files to
+  17,742 across 78, package count unchanged at 32, none left in a file for
+  another platform. That is not less than the old record said but a different
+  claim — the old one unioned every platform and picked arbitrarily where they
+  collided — so the two must not be served for one another.
+
+Both fields are omitted from the canonical bytes when unset, so every `0.3.0` and
+`0.4.0` row still verifies its stored content hash. A framed record hashes
+differently from the unframed record of the same zip.
+
+The cost is one re-extraction per module on its next `interface` run — 482 stored
+records at the bump, 472 already stranded at `0.3.0`. Until re-extracted each
+answers as a not-found naming the pipeline versions held and the command that
+produces a servable record, exactly as the `0.4.0` bump arranged.
+
+**Why the bump is the repair.** Interface records are append-only and nothing
+retires a generation. Two records for one artefact at one pipeline version that
+disagree about the exported API are a `public_api` conflict, and a conflicted
+coordinate is not served — on the reference store 17 are dead that way at
+`0.4.0`, five of them this project's own dependencies. Re-extracting one at
+`0.4.0` would append a third generation beside the two poisoned ones and change
+nothing, and the framed record would then conflict on `build_frame` too. The bump
+puts the poisoned generations behind the pipeline filter, so the first framed
+re-extraction at `0.5.0` is the only record in play and the coordinate answers
+again. Composition names a `build_frame` disagreement before it compares APIs, so
+a pair measured on different platforms reads as the frame difference it is rather
+than as non-determinism in the extractor.
+
 ## Interface record: pipeline `0.3.0` → `0.4.0`
 
 **Record shape change; no store migration.** Interface records are keyed

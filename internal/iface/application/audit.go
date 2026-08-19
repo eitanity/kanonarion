@@ -50,6 +50,12 @@ func interfaceExtractedEvent(record domain3.InterfaceRecord) audit.Event {
 	if record.SourceContentHash != "" {
 		payload["source_content_hash"] = record.SourceContentHash
 	}
+	// Which build the API was measured in. Omitted on a record that names no
+	// frame — every generation written before extraction evaluated build
+	// constraints — so absent reads as "not recorded" rather than as a platform.
+	if !record.BuildFrame.IsZero() {
+		payload["build_frame"] = record.BuildFrame.String()
+	}
 	// A failed or partial extraction states why on the record; the log states it
 	// too, so a reader does not have to open the ledger to tell a status apart
 	// from its reason.

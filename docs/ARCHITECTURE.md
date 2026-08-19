@@ -329,9 +329,9 @@ left no trace at all, so a stable audit line count read as "nothing ran".
 
 Interface and example extraction record what was *read out of the source*
 (`interface_extracted`: module, version, pipeline version, overall status,
-package count, content hash, plus the artefact identity and the fetch record's
-content hash; `examples_extracted`: the same identifying fields with example and
-parse-failure counts). Both state a `failure_detail` when the record carries a
+package count, build frame, content hash, the artefact identity and the fetch
+record's content hash; `examples_extracted`: the same fields with example and
+parse-failure counts). Both state a `failure_detail` when the record has a
 reason. One event per persisted generation, nothing on a cache hit.
 
 The extraction orchestrator records the *campaign* those per-stage events belong

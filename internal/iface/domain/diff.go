@@ -183,6 +183,25 @@ type InterfaceDiff struct {
 	// both sides because they sit under a testdata directory, named so their
 	// absence is a stated exclusion rather than a silent one.
 	ExcludedTestdataPackages []string
+
+	// FrameMismatch is true when the two records were not measured in the same
+	// build frame, including when only one of them names a frame at all.
+	//
+	// The comparison is still computed and still reported: refusing would leave
+	// the reader with nothing. But every difference it lists may be a difference
+	// between two platforms rather than between two versions, so the result
+	// carries this flag and the surfaces that print it say so.
+	FrameMismatch bool
+}
+
+// SameFrame reports whether two records describe the same build configuration.
+// Two records that name no frame are the same in name only — each holds every
+// platform's declarations at once — so that pair is NOT the same frame.
+func SameFrame(a, b InterfaceRecord) bool {
+	if a.BuildFrame.IsZero() || b.BuildFrame.IsZero() {
+		return false
+	}
+	return a.BuildFrame == b.BuildFrame
 }
 
 // BreakingCount is the number of exported declarations that changed in a way a
@@ -223,7 +242,7 @@ func DiffRecords(a, b InterfaceRecord, reader SignatureReader) InterfaceDiff {
 	if reader == nil {
 		reader = unreadSignatures{}
 	}
-	diff := InterfaceDiff{RecordA: a, RecordB: b}
+	diff := InterfaceDiff{RecordA: a, RecordB: b, FrameMismatch: !SameFrame(a, b)}
 
 	pkgsA, exclA := comparablePackages(a)
 	pkgsB, exclB := comparablePackages(b)

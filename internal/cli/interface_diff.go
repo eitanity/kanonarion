@@ -560,6 +560,9 @@ func printInterfaceDiff(diff ifacedomain.InterfaceDiff, used *usedByResult, stdo
 		return fmt.Errorf("writing counts: %w", err)
 	}
 
+	if err := printFrameStatement(diff, stdout); err != nil {
+		return err
+	}
 	if err := printCrossMajorStatement(diff, stdout); err != nil {
 		return err
 	}
@@ -771,6 +774,27 @@ func printRegistrySection(diff ifacedomain.InterfaceDiff, stdout io.Writer) erro
 	return nil
 }
 
+// printFrameStatement names the build configuration each side was measured in,
+// and says plainly when they are not the same one. A declaration that is in one
+// platform's build and not the other's is reported as removed or changed by a
+// comparison that cannot see the difference, so the reader is told which of the
+// two questions this answer is about before reading any count.
+func printFrameStatement(diff ifacedomain.InterfaceDiff, stdout io.Writer) error {
+	if !diff.FrameMismatch {
+		if _, err := fmt.Fprintf(stdout, "build frame: both sides %s\n", diff.RecordA.BuildFrame.String()); err != nil {
+			return fmt.Errorf("writing build frame: %w", err)
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"build frame: %s → %s — the two sides were not measured in the same build, "+
+			"so a change listed below may be a difference between platforms rather than between versions\n",
+		diff.RecordA.BuildFrame.String(), diff.RecordB.BuildFrame.String()); err != nil {
+		return fmt.Errorf("writing build frame mismatch: %w", err)
+	}
+	return nil
+}
+
 func printExcludedSection(diff ifacedomain.InterfaceDiff, stdout io.Writer) error {
 	if len(diff.ExcludedTestdataPackages) == 0 {
 		return nil
@@ -885,6 +909,12 @@ type interfaceDiffJSON struct {
 	RenamedPath      []renamedSymbolJSON   `json:"renamed_path"`
 	Registries       []registrySurfaceJSON `json:"registries"`
 	ExcludedTestdata []string              `json:"excluded_testdata_packages"`
+	// BuildFrameA and BuildFrameB name the configuration each side was measured
+	// in, and FrameMismatch is true when they are not the same one — the case in
+	// which a listed change may be a platform difference, not a version one.
+	BuildFrameA   string `json:"build_frame_a"`
+	BuildFrameB   string `json:"build_frame_b"`
+	FrameMismatch bool   `json:"frame_mismatch"`
 	// ZeroBreakingAdvisory carries the statement the text output prints beside a
 	// zero over a non-empty delta, and is absent exactly when that statement is
 	// not printed — so a machine consumer sees the same distinction a reader does.
@@ -997,6 +1027,9 @@ func toInterfaceDiffJSON(diff ifacedomain.InterfaceDiff, used *usedByResult) int
 		RenamedPath:      toRenamedPathJSON(diff.RenamedPath),
 		Registries:       toRegistriesJSON(diff.Registries),
 		ExcludedTestdata: nonNilStrings(diff.ExcludedTestdataPackages),
+		BuildFrameA:      diff.RecordA.BuildFrame.String(),
+		BuildFrameB:      diff.RecordB.BuildFrame.String(),
+		FrameMismatch:    diff.FrameMismatch,
 	}
 	if diff.ZeroBreakingOverNonTrivialDelta() {
 		out.ZeroBreakingAdvisory = zeroBreakingBehaviourNote

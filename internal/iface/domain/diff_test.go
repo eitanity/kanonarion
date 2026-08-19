@@ -766,3 +766,36 @@ func TestInterfaceDiff_ZeroBreakingOverNonTrivialDelta(t *testing.T) {
 		})
 	}
 }
+
+// A comparison across two build frames is still computed — refusing would leave
+// the reader with nothing — but it is flagged, because a declaration present in
+// one platform's build and not the other's is reported as removed or changed by
+// a comparison that cannot see why.
+func TestDiffRecords_FrameMismatchIsFlagged(t *testing.T) {
+	linux := domain.BuildFrame{GOOS: "linux", GOARCH: "amd64", CgoEnabled: true}
+	windows := domain.BuildFrame{GOOS: "windows", GOARCH: "amd64", CgoEnabled: true}
+
+	for _, tc := range []struct {
+		name       string
+		frameA     domain.BuildFrame
+		frameB     domain.BuildFrame
+		wantMismat bool
+	}{
+		{"same frame", linux, linux, false},
+		{"different platform", linux, windows, true},
+		{"one side names no frame", linux, domain.BuildFrame{}, true},
+		{"neither side names a frame", domain.BuildFrame{}, domain.BuildFrame{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := recordAt(t, "example.com/mod", "v1.0.0")
+			a.BuildFrame = tc.frameA
+			b := recordAt(t, "example.com/mod", "v1.1.0")
+			b.BuildFrame = tc.frameB
+
+			d := domain.DiffRecords(a, b, nil)
+			if d.FrameMismatch != tc.wantMismat {
+				t.Errorf("FrameMismatch = %v, want %v", d.FrameMismatch, tc.wantMismat)
+			}
+		})
+	}
+}

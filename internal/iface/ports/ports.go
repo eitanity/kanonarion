@@ -51,6 +51,13 @@ type InterfaceExtractor interface {
 	// The record may have OverallStatus == Partial if some files failed to
 	// parse; only fatal errors return a non-nil error.
 	Extract(ctx context.Context, sourceTree fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error)
+
+	// BuildFrame names the build configuration Extract measures in. A public
+	// API is only comparable with another measured in the same frame, so the
+	// caller needs the frame even when Extract returned an error: a record that
+	// says extraction failed and does not say at what configuration cannot be
+	// told apart from one measured elsewhere.
+	BuildFrame() domain.BuildFrame
 }
 
 // SignatureReader is the driven port for reading Go declaration TEXT.
