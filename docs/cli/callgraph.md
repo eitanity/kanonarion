@@ -204,9 +204,8 @@ golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
 | `2` | `LoadFailed`: no graph at all. The message repeats the recorded failure detail |
 | `3` | `Cancelled`: the run ended before the graph was walked |
 
-A `Partial` graph is an answer and exits `0`. Findings about the module never
-change the code — whether an unanalysable dependency should fail a build is a
-policy question this command does not answer.
+A `Partial` graph is an answer and exits `0`. Whether an unanalysable dependency
+should fail a build is a policy question this command does not answer.
 
 ### When a module does not load
 
@@ -227,12 +226,13 @@ reach through a `replace` — has all its packages under the declared path, and
 its nodes carry that path.
 
 The load does not require the artefact to ship a `go.sum` covering its own
-module graph. `go.sum` is an obligation of whatever is being *built*, and a
-module analysed on its own is a main module for the first time in its life; the
+module graph: `go.sum` is an obligation of whatever is being *built*, and the
 artefact's own integrity was established by the fetch that stored it.
 
 A second run is served from the store and says so with `(cached)`; `--force`
-re-extracts.
+re-extracts. A record the environment cut short is never served from cache, so a
+repeat re-analyses; a re-analysis that comes back identical appends nothing and
+says so.
 
 ### `callgraph-show`
 
@@ -351,12 +351,10 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
   version. A `+incompatible` module publishes a v2-or-later version under a path
   with no `/vN` suffix, and adding one would produce a graph whose every node ID
   named a module that does not exist;
-* the `go` directive is pinned to `1.17`, which is the lowest version that makes
-  the file work: below it the toolchain loads the complete, unpruned module
-  graph and reads the `go.mod` of every module reachable through every
-  requirement, so a load fails on a version nothing in the build compiles. It
-  stays well below 1.22, where loop-variable scoping changes and with it the SSA
-  and the call graph; between 1.16 and 1.17 the language does not move at all;
+* the `go` directive is pinned to `1.17`, the lowest version that works: below
+  it the toolchain loads the complete, unpruned module graph and the load fails
+  on a version nothing in the build compiles, and at 1.22 loop-variable scoping
+  changes the SSA and with it the call graph;
 * a zip that ships its own `go.mod` is **never** touched. Modules that publish
   one and still fail to load are failing for their own reasons, and overwriting
   the published file would hide that;
@@ -383,10 +381,9 @@ Asked for a single coordinate with no `--from-walk`, `callgraph` finds one
 itself: the most recent walk in the store that resolved this module supplies the
 pins, and the command says on stderr which walk it chose and how many versions
 that walk resolved. `--from-walk` always wins where it is given. The search runs
-before the analysis, not as a retry after one failed, because analysing twice
-would persist two failure generations differing only in which build list they
-were denied — and two generations disagreeing at one completeness are a
-divergence the composed read refuses outright.
+before the analysis, not as a retry after one failed: analysing twice would
+persist two failure generations differing only in which build list they were
+denied.
 
 The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
 note naming how many `require` directives were pinned, `--history` appends it to
@@ -434,29 +431,40 @@ A generation whose analysis failed carries a `failure:` line between `from:` and
 `graph:`, naming the recorded cause and detail:
 
 ```
-    failure:  environment: go: module lookup disabled by GOFLAGS=-mod=vendor
+    failure:  environment: lib/hooks.go:10:2: could not import example.com/dep
 ```
 
-Generations that did not record a failure print no such line.
+Generations that did not record a failure print no such line. Positions in a
+failure are module-relative; the directory a zip is staged in is gone by the
+time anyone reads the record.
 
 #### Composition
 
 A read returns one answer composed from the generations, on a stated ordering:
 
 1. **Highest completeness**, then
-2. **most recent**, then
-3. the record's own content hash, only so the served record does not depend on
+2. a graph the **module** limited over one **this host** limited, then
+3. **most recent**, then
+4. the record's own content hash, only so the served record does not depend on
    row order.
 
 Recency is never the authority. A `METADATA_ONLY` graph appended after a
 `BUILT_WITH_BODIES` one analysed less of the same module, so it is a weaker
-measurement rather than a newer answer, and it does not displace its better.
+measurement rather than a newer answer, and it does not displace its better. A
+graph cut short by a cold module cache is weaker at one level too, because
+`BUILT_WITH_BODIES` says how the loaded packages were analysed and not how much
+of the module was reached. It ranks below a complete analysis of the same
+artefact and never conflicts with one, so warming the cache and re-running is
+enough. Where no graph was produced the rung decides nothing and the newest
+account of the failure answers.
 
 The **analysis source is not on that ladder**. A zip graph and a worktree graph
 answer different questions about different bytes, so composition never serves one
 for the other; a read that names no source is answered from the zip records,
-because that is what a coordinate-keyed walk writes. `--source worktree` asks for
-the other one.
+because that is what a coordinate-keyed walk writes — unless you are standing in
+a checkout the ledger has analysed, and then that tree answers. A zip record at a
+project's own coordinate is a by-product of its own extraction rather than a
+competing analysis. `--source worktree` asks for the other one.
 
 Two disagreements are reported rather than resolved by picking: two analyses of
 one pinned version that name **different artefacts**, and two records at the
@@ -469,29 +477,25 @@ makes permanent and that names no route out is a dead end.
 The graph comparison is over the **graph** and nothing else: the node, edge,
 interface and implementation collections and the counts stated with them. Two
 generations that recorded the same graph and described their run differently —
-different `failure_cause`, different `failure_detail`, a different set of failed
-packages — are **not** in conflict, because no answer the tool serves depends on
-the difference. That difference is not thrown away: `--history` prints each
-generation's failure on its own line, so two analyses that failed for different
-reasons are still visible side by side.
+different `failure_cause`, `failure_detail` or failed-package set — are **not**
+in conflict, because no answer the tool serves depends on the difference. It is
+not thrown away: `--history` prints each generation's failure on its own line.
 
 A generation that says **nothing** about a field has not disagreed with one that
 does. Records are compared over the fields they all state, so a generation
-written before a field existed — and a generation whose value for an optional
-field is simply absent — is superseded by the newer one rather than reported as
-in conflict with it, and the newest generation answers. What it does not relax
-is a disagreement between two generations that both state a graph field: node
-and edge sets are stated by every generation, as empty when there are none, so a
-graph against an empty one is still a conflict.
+written before a field existed — or whose optional value is simply absent — is
+superseded by the newer one rather than reported as in conflict with it. It does
+not relax a disagreement between two generations that both state a graph field:
+node and edge sets are stated by every generation, as empty when there are none,
+so a graph against an empty one is still a conflict.
 
 Re-analysis clears a graph conflict only by getting **further** than the
-disagreeing generations did. Composition compares every generation at the highest
-completeness present, and the ledger is append-only, so an analysis that lands at
-the same completeness adds a third generation and the disagreement stands. The
-refusal names `kanonarion callgraph <module> --force` where a higher completeness
-is still available, and where the disagreeing generations are already
-`BUILT_WITH_BODIES` it says instead that nothing clears the conflict from the
-outside and sends you to `--history` to decide which measurement to trust.
+disagreeing generations did: the ledger is append-only and composition compares
+every generation at the highest completeness present, so an analysis landing at
+the same completeness adds a third and the disagreement stands. The refusal names
+`kanonarion callgraph <module> --force` where a higher completeness is still
+available, and where the pair is already `BUILT_WITH_BODIES` it sends you to
+`--history` to decide which measurement to trust instead.
 
 ### `callgraph-list`
 
@@ -658,11 +662,11 @@ Reflect-dispatched calls carry `Unknown` plus a separate `reflect_dispatch`
 attribute, so the reflect provenance is preserved without inventing a
 confidence rank for it.
 
-Confidence answers *how was the target resolved*, which is a different question
-from *what kind of edge is it*. A reference edge is usually `Direct` — the
-analyser knows exactly whose value was taken — and that is not a claim that a
-call happens. Read `kind` alongside `confidence`; a path is a chain of resolved
-calls only when every hop is `Direct` **and** no hop is a reference.
+Confidence answers *how was the target resolved*, a different question from
+*what kind of edge is it*. A reference edge is usually `Direct` — the analyser
+knows whose value was taken — and that is not a claim that a call happens. Read
+`kind` alongside `confidence`; a path is a chain of resolved calls only when
+every hop is `Direct` **and** no hop is a reference.
 
 ## Overall status
 
@@ -682,17 +686,16 @@ it were dropped and the symbol is not a node in its own module's graph — but
 edges INTO it recorded in a consumer's complete graph are unaffected, and those
 are what the answer lists. The output carries a `notice: unmeasured on one
 side …` line naming the package, and an empty answer is `verdict: UNRESOLVED`
-with a `dropped-package-edges` sink rather than a confident absence.
+with a `dropped-package-edges` sink.
 
-The remedy the notice names depends on whose module failed. A project
+The remedy the notice names depends on whose module failed: a project
 coordinate's package is yours to fix, so it names `local`; a fetched
-dependency's failure is in that dependency's own sources, which the notice says
-plainly before naming `callgraph-show` to see it and `callgraph … --force` to
-measure it again.
+dependency's failure is in its own sources, and the notice names
+`callgraph-show` to see it and `callgraph … --force` to measure it again.
 
 `interface-diff --used-by` discloses the same condition for the *consumer's*
-own packages, because its reach counts are a join against the consumer's graph
-and a call site in a package that never compiled cannot appear in one.
+own packages: its reach counts join against the consumer's graph, and a call
+site in a package that never compiled cannot appear in one.
 
 ## Storage
 
@@ -712,10 +715,10 @@ Records live in `<store-root>/mirror.db` (SQLite):
   - `callgraph_edges_to_idx ON (to_id, pipeline_version)` — used by `callers`
   - `callgraph_edges_from_idx ON (from_id, pipeline_version)` — used by `callees`
 
-Edges are keyed on the parent rather than the coordinate because a coordinate now
+Edges are keyed on the parent rather than the coordinate because a coordinate
 names every generation at once. `callers` and `callees` resolve the served
 generation first and answer from its edges alone, so a superseded generation's
-edges stay in the table as history and answer nothing.
+edges stay in the table and answer nothing.
 
 ### After a pipeline-version bump
 
@@ -745,10 +748,9 @@ differs from the binary's is treated as not found, so a schema bump is
 self-enforcing: stale records are re-derived rather than read with later fields
 silently zeroed.
 
-That read gate is also why the ledger does not purge. Four of the first seven
-migrations deleted both tables wholesale on an analyser shape change; the gate
-achieves what those purges were for — a stale-shape record answers nothing —
-without deleting the evidence, so the row survives for a history read.
+That read gate is also why the ledger does not purge: it achieves what a
+wholesale delete was for — a stale-shape record answers nothing — without
+deleting the evidence, so the row survives for a history read.
 
 ## Which working tree answered
 
@@ -758,10 +760,9 @@ answered from **the working tree you are standing in**: the read resolves the
 current directory to its module root and serves the newest generation analysed
 in that directory.
 
-Standing somewhere the ledger has no generation of - a fresh clone, a checkout
-never passed to `kanonarion local`, or anywhere outside the module - the read
-falls back to the newest generation of any tree, which is what every query did
-before this existed. Nothing returns empty because of routing.
+Standing somewhere the ledger has no generation of — a fresh clone, or anywhere
+outside the module — the read falls back to the newest generation of any tree.
+Nothing returns empty because of routing.
 
 The decision is printed, once, whenever there is one to see:
 
@@ -778,16 +779,15 @@ notice: NOT answered from the working tree you are in: /src/fresh-clone has no a
           kanonarion local /src/fresh-clone
 ```
 
-A single checkout that has been analysed has no decision to show and prints
-nothing. Generations written before the analysed directory was recorded state no
-tree; they still answer, and the notice names them as predating the field rather
-than attributing them to a checkout they may not be from.
+A single analysed checkout has no decision to show and prints nothing. A
+generation that states no tree is named for what it is — one written before the
+directory was recorded, or an analysis of the published zip, which reads no tree
+at all — rather than attributed to a checkout it may not be from.
 
-Routing is on the analysed **directory**, not on the worktree digest. The digest
+Routing is on the analysed **directory**, not on the worktree digest: the digest
 hashes content, so the tree in front of a developer with one uncommitted edit
-matches no stored generation - filtering on it would answer nothing in the
-ordinary case. The digest still says WHICH tree answered, which is what the
-notice reports.
+matches no stored generation. The digest still says WHICH tree answered, which is
+what the notice reports.
 
 `callgraph-show --history` is unaffected: it lists every generation of every
 tree, marking the one the composed read serves.

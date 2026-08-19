@@ -90,6 +90,16 @@ type WorktreeRouting struct {
 	// root is empty when the served generation predates the field.
 	ServedRoot   string
 	ServedDigest string
+	// ServedSource is what the served generation was analysed from.
+	//
+	// It is here because the counts above are over worktree rows and the served
+	// record is over all of them, and without it the two halves could be joined
+	// into a sentence neither supports: a ledger holding one located tree and no
+	// unlocated generations was reported as having answered from "a generation
+	// that recorded no working tree", which describes a row the counts never saw.
+	// A zip analysis states no root because it has none, not because it predates
+	// the field, and a reader told which it was can act on the difference.
+	ServedSource domain.AnalysisSource
 	// CallerRoot is the tree the reader is standing in, empty when they are not
 	// inside this module.
 	CallerRoot string

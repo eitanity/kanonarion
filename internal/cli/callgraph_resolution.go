@@ -645,9 +645,18 @@ func writeWorktreeNotice(ctx context.Context, symbolID string, uc QueryCallGraph
 
 // worktreeNoticeText renders the routing decision for one coordinate.
 func worktreeNoticeText(coord coordinate.ModuleCoordinate, r ports.WorktreeRouting) string {
+	// Three things a served generation can be, and the middle one used to be told
+	// as the last one. A zip analysis states no root because it was never read off
+	// a tree; a pre-location worktree generation states none because the field did
+	// not exist yet. Reporting the first as the second produced a notice that
+	// counted one located tree and no unlocated generations in the same breath as
+	// claiming the answer came from a generation that recorded no working tree.
 	served := "an earlier generation that recorded no working tree"
-	if r.ServedRoot != "" {
+	switch {
+	case r.ServedRoot != "":
 		served = "the working tree at " + r.ServedRoot
+	case r.ServedSource == domain.AnalysisSourceModuleZip:
+		served = "an analysis of the published module zip, which reads no working tree"
 	}
 	predating := fmt.Sprintf("%d %s written before the analysed tree was recorded",
 		r.UnlocatedGenerations, pluralise(r.UnlocatedGenerations, "generation", "generations"))
@@ -662,18 +671,25 @@ func worktreeNoticeText(coord coordinate.ModuleCoordinate, r ports.WorktreeRouti
 		held = fmt.Sprintf("the ledger holds %d working %s for %s, plus %s",
 			r.LocatedTrees, pluralise(r.LocatedTrees, "tree", "trees"), coord, predating)
 	}
+	// The tree digest is stated only by a generation that has one. Printing
+	// "(tree )" after a zip analysis names an empty value as though it were the
+	// answer's identity.
+	tree := ""
+	if r.ServedDigest != "" {
+		tree = fmt.Sprintf(" (tree %s)", r.ServedDigest)
+	}
 	switch {
 	case r.Matched:
-		return fmt.Sprintf("answered from the working tree you are in, %s (tree %s); %s",
-			r.ServedRoot, r.ServedDigest, held)
+		return fmt.Sprintf("answered from the working tree you are in, %s%s; %s",
+			r.ServedRoot, tree, held)
 	case r.CallerRoot != "":
 		return fmt.Sprintf("NOT answered from the working tree you are in: %s has no analysed generation, "+
-			"so the answer comes from %s (tree %s); %s. Analyse this tree to be answered from it:\n"+
+			"so the answer comes from %s%s; %s. Analyse this tree to be answered from it:\n"+
 			"  kanonarion local %s",
-			r.CallerRoot, served, r.ServedDigest, held, r.CallerRoot)
+			r.CallerRoot, served, tree, held, r.CallerRoot)
 	default:
-		return fmt.Sprintf("answered from %s (tree %s); %s, and you are not standing in any of them",
-			served, r.ServedDigest, held)
+		return fmt.Sprintf("answered from %s%s; %s, and you are not standing in any of them",
+			served, tree, held)
 	}
 }
 

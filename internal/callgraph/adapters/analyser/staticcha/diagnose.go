@@ -160,3 +160,39 @@ func describeEmptyTargetSet(target coordinate.ModuleCoordinate, pkgs []*packages
 func platformFrame() string {
 	return build.Default.GOOS + "/" + build.Default.GOARCH
 }
+
+// moduleRelative rewrites paths under the per-run staging directory into
+// module-relative ones.
+//
+// The staging directory is named for the process that made it and is deleted
+// when the run ends, so an absolute path through it identifies nothing a reader
+// can open. What survives it — lib/hooks.go:10:2 — is the whole of what the
+// diagnostic is for.
+//
+// It is not cosmetic. FailureDetail is inside the record's canonical hash and
+// inside the graph digest a reader compares generations by, so a random
+// component of it meant no two failing analyses of one module could ever produce
+// the same record: every repeat appended a generation, for ever, and two
+// identical graphs compared unequal. Measured on the maintainer's store: 122 of
+// 547 call-graph records name a staging directory that no longer exists.
+//
+// Both spellings of the root are stripped. The loader reports the path it
+// resolved, which on a host where the temporary directory is itself a symlink is
+// not the path this process created.
+func moduleRelative(detail, stagingRoot string) string {
+	if detail == "" || stagingRoot == "" {
+		return detail
+	}
+	roots := []string{stagingRoot}
+	if resolved, err := filepath.EvalSymlinks(stagingRoot); err == nil && resolved != stagingRoot {
+		roots = append(roots, resolved)
+	}
+	out := detail
+	for _, root := range roots {
+		out = strings.ReplaceAll(out, root+string(os.PathSeparator), "")
+		// The root named on its own is the module's own directory, which is what a
+		// relative path calls ".".
+		out = strings.ReplaceAll(out, root, ".")
+	}
+	return out
+}

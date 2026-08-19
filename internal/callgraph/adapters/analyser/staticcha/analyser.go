@@ -81,7 +81,7 @@ func (a *Analyser) Analyse(
 		// The zip is the module: bytes that will not unpack are a property of what
 		// was published, and unpacking them again tomorrow fails identically.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source), nil
+			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source, tempDir), nil
 	}
 
 	// A module published before Go modules ships no go.mod, and an extraction of
@@ -123,7 +123,7 @@ func (a *Analyser) Analyse(
 		// Failing to write into a directory this process just created is the run,
 		// not the module: the same zip on a working filesystem extracts and loads.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source), nil
+			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source, tempDir), nil
 	default:
 		a.logger.InfoContext(ctx, "callgraph_gomod_synthesised",
 			slog.String("module", coord.Path()),
@@ -137,14 +137,14 @@ func (a *Analyser) Analyse(
 
 	if ctx.Err() != nil {
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown,
-			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source), nil
+			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source, tempDir), nil
 	}
 
 	rec, err := a.analyseDir(ctx, tempDir, coord, synth, nil)
 	if err != nil {
 		return rec, err
 	}
-	return a.sourced(withDeclinedSynthesis(rec, declined), synth, inputs.Source), nil
+	return a.sourced(withDeclinedSynthesis(rec, declined), synth, inputs.Source, tempDir), nil
 }
 
 // withDeclinedSynthesis prefixes a failed record's detail with the reason no
@@ -187,10 +187,18 @@ func withDeclinedSynthesis(r domain.CallGraphRecord, declined string) domain.Cal
 // written before the field existed, and a failed analysis of a zip is still an
 // answer about that zip — including a failure of a tree kanonarion had to add a
 // file to, where the caveat is exactly as load-bearing as it is on a success.
-func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoMod, buildListSource string) domain.CallGraphRecord {
+//
+// It is also where the staging directory leaves the record, and for the same
+// reason: this is the one point every zip analysis passes through, so a return
+// path added tomorrow cannot carry a path out of it. See moduleRelative for why
+// a per-run directory inside the record is a defect rather than noise. The
+// working-tree path does not come through here — its root is a real place a
+// reader can open, and the record states it as a fact of its own.
+func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoMod, buildListSource, stagingRoot string) domain.CallGraphRecord {
 	r.AnalysisSource = domain.AnalysisSourceModuleZip
 	r.SynthesisedGoMod = synth
 	r.BuildListSource = buildListSource
+	r.FailureDetail = moduleRelative(r.FailureDetail, stagingRoot)
 	return r
 }
 

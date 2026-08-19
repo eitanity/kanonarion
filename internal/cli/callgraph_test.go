@@ -1195,3 +1195,34 @@ func TestPrintCallGraphSummary_CompleteGraphGetsNoRemedy(t *testing.T) {
 		t.Errorf("a complete graph was told how to re-analyse itself:\n%s", buf.String())
 	}
 }
+
+// TestWorktreeNoticeText_CannotDescribeAZipAnalysisAsAnUnlocatedTree.
+//
+// The counts are taken over worktree rows and the served record over all of
+// them, so the notice could join two true halves into a sentence neither
+// supports: one located tree, no unlocated generations, and an answer from "a
+// generation that recorded no working tree". A zip analysis states no root
+// because it reads none, which is a different fact and a different remedy.
+func TestWorktreeNoticeText_CannotDescribeAZipAnalysisAsAnUnlocatedTree(t *testing.T) {
+	coord, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	got := worktreeNoticeText(coord, cgports.WorktreeRouting{
+		LocatedTrees: 1, UnlocatedGenerations: 0,
+		CallerRoot:   "/src/fresh",
+		ServedSource: cgdomain.AnalysisSourceModuleZip,
+	})
+	if strings.Contains(got, "recorded no working tree") {
+		t.Errorf("a zip analysis was reported as a generation that recorded no working tree: %s", got)
+	}
+	if strings.Contains(got, "(tree )") {
+		t.Errorf("an empty tree digest was printed as the answer's identity: %s", got)
+	}
+	if !strings.Contains(got, "module zip") {
+		t.Errorf("the notice does not say what the answer was read from: %s", got)
+	}
+	if !strings.Contains(got, "kanonarion local /src/fresh") {
+		t.Errorf("the notice names no remedy: %s", got)
+	}
+}

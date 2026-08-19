@@ -1227,3 +1227,166 @@ func TestLedger_WorktreeRecordMustStateItsRoot(t *testing.T) {
 		t.Fatalf("PutCallGraphRecord accepted an unlocated worktree record: %v", perr)
 	}
 }
+
+// TestLedger_ProjectRootIsAnsweredFromItsWorkingTree is the loop the fast path
+// used to close.
+//
+// A project's own `extract` records a zip-sourced graph at its local coordinate.
+// The fast path stood aside for any zip record at all, so once one existed the
+// read served it and `kanonarion local` could never answer again — including
+// when it was run as the printed remedy for exactly that.
+func TestLedger_ProjectRootIsAnsweredFromItsWorkingTree(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	const root = "/src/mod"
+	zip := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain2.CompletenessBuiltWithBodies,
+		at:           testTime, callee: "example.com/mod.FromZip",
+	})
+	tree := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:t",
+		root: root, completeness: domain2.CompletenessBuiltWithBodies,
+		at: testTime.Add(time.Hour), callee: "example.com/mod.FromTree",
+	})
+	for _, r := range []domain2.CallGraphRecord{zip, tree} {
+		if perr := s.PutCallGraphRecord(ctx, r); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	s.PreferWorktree(ports.WorktreePreference{ModulePath: "example.com/mod", Root: root})
+	got, found, err := s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != tree.ContentHash {
+		t.Fatal("a reader standing in the analysed project root was answered from the zip snapshot")
+	}
+
+	// The edge read resolves the served generation through the same composition,
+	// so it is the path `callers` actually takes and must route the same way.
+	refs, err := s.FindCallers(ctx, "example.com/mod.FromTree", testPipeline, coordinate.ModuleSet{}, ports.EdgeQueryOptions{})
+	if err != nil {
+		t.Fatalf("FindCallers: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("the edge read returned %d edges from the working tree, want 1", len(refs))
+	}
+
+	// And the notice agrees with what was served, rather than counting one row
+	// set and reporting another.
+	r, ok, err := s.WorktreeRouting(ctx, local, testPipeline)
+	if err != nil || !ok {
+		t.Fatalf("WorktreeRouting: ok=%v err=%v", ok, err)
+	}
+	if !r.Matched || r.ServedRoot != root || r.ServedSource != domain2.AnalysisSourceWorktree {
+		t.Fatalf("routing report = %+v, want the caller's own tree", r)
+	}
+}
+
+// TestLedger_ZipStillAnswersOutsideAnAnalysedTree is the control the fix must
+// not cost.
+//
+// A local-path replace target's zip record IS a competing analysis, and a reader
+// who is not standing in an analysed checkout has made no claim about which of
+// the two questions they meant. The stated default answers, and the notice says
+// which kind of generation it came from rather than describing a zip analysis as
+// a working tree that recorded no root.
+func TestLedger_ZipStillAnswersOutsideAnAnalysedTree(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	zip := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain2.CompletenessBuiltWithBodies,
+		at:           testTime, callee: "example.com/mod.FromZip",
+	})
+	tree := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:t",
+		root: "/src/mod", completeness: domain2.CompletenessBuiltWithBodies,
+		at: testTime.Add(time.Hour), callee: "example.com/mod.FromTree",
+	})
+	for _, r := range []domain2.CallGraphRecord{zip, tree} {
+		if perr := s.PutCallGraphRecord(ctx, r); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	s.PreferWorktree(ports.WorktreePreference{ModulePath: "example.com/mod", Root: "/src/never-analysed"})
+	got, found, err := s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != zip.ContentHash {
+		t.Fatal("a reader outside every analysed checkout was redirected to a working tree")
+	}
+	r, ok, err := s.WorktreeRouting(ctx, local, testPipeline)
+	if err != nil || !ok {
+		t.Fatalf("WorktreeRouting: ok=%v err=%v", ok, err)
+	}
+	if r.LocatedTrees != 1 || r.UnlocatedGenerations != 0 {
+		t.Fatalf("routing counts = %+v, want one located tree and no unlocated generations", r)
+	}
+	if r.ServedSource != domain2.AnalysisSourceModuleZip {
+		t.Fatalf("the report does not say the answer came from a zip analysis: %+v", r)
+	}
+}
+
+// TestLedger_EnvironmentLimitedGraphDoesNotDecideTheAnswer is the ladder read
+// off COLUMNS, which is the path a project's own reads take.
+//
+// The store ranks generations without decoding them, so a rung the domain gained
+// and the columns did not would be honoured on one read path and not the other.
+func TestLedger_EnvironmentLimitedGraphDoesNotDecideTheAnswer(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	const root = "/src/mod"
+	complete := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:t",
+		scanDigest: "scanned-sha256:t", root: root,
+		completeness: domain2.CompletenessBuiltWithBodies,
+		at:           testTime, callee: "example.com/mod.Everything",
+	})
+	limited := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:t",
+		scanDigest: "scanned-sha256:t", root: root,
+		completeness: domain2.CompletenessBuiltWithBodies,
+		status:       domain2.CallGraphStatusPartial,
+		at:           testTime.Add(time.Hour), callee: "example.com/mod.Reached",
+	})
+	limited.FailureCause = domain2.FailureCauseEnvironment
+	limited.FailureDetail = "lib/hooks.go:10:2: could not import example.com/dep"
+	var h domain2.CallGraphRecordHasher
+	limited, err = h.SetContentHash(limited)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	for _, r := range []domain2.CallGraphRecord{complete, limited} {
+		if perr := s.PutCallGraphRecord(ctx, r); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	got, found, err := s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != complete.ContentHash {
+		t.Fatal("the newest generation won although its own row says this host cut it short")
+	}
+}

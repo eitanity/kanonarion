@@ -108,8 +108,17 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		return fmt.Errorf("extracting call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, "", stdout); err != nil {
+	if err := printCallGraphSummary(result.Record, result.FromCache || result.Reused, jsonOut, "", stdout); err != nil {
 		return err
+	}
+	if result.Reused {
+		// Said plainly, because the two are different facts and the distinction is
+		// the one a reader chasing a failing module needs: the analysis DID run,
+		// and it came back saying what the ledger already said.
+		if _, err := fmt.Fprintln(stderr,
+			"re-measured and found identical to the generation already recorded; no new generation was written"); err != nil {
+			return fmt.Errorf("writing re-measurement note: %w", err)
+		}
 	}
 	return callGraphExtractionExit(result.Record)
 }

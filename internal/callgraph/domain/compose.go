@@ -253,6 +253,17 @@ type ComposeRequest struct {
 	// Source restricts composition to records built from one kind of source. The
 	// zero value names none, and DefaultSource then decides.
 	Source AnalysisSource
+
+	// CallerRoot is the working tree the reader is standing in, empty when they
+	// are standing in none of this coordinate's.
+	//
+	// It selects between the two questions a local coordinate can hold answers
+	// to, and it does not rank anything: a reader inside a checkout of the module
+	// is asking about THAT tree, so a zip analysis recorded at the same
+	// coordinate answers a question they did not ask. Outside any recorded tree
+	// there is no such claim to make and the stated default stands. See
+	// defaultSourceGroup.
+	CallerRoot string
 }
 
 // Compose returns the call graph record a reader gets for one coordinate and
@@ -263,11 +274,14 @@ type ComposeRequest struct {
 // stops the read before it reaches here, so composition never has to decide what
 // to do about an unverifiable row.
 //
-// The ladder is COMPLETENESS, then recency. A BUILT_WITH_BODIES graph outranks a
-// METADATA_ONLY one regardless of which was written later, exactly as the fetch
-// ledger serves the strongest anchor rather than the newest measurement: the
-// weaker record analysed less of the same module, so it is a lesser measurement
-// rather than a competing answer. Recency is only ever the last tiebreaker.
+// The ladder is COMPLETENESS, then whether this host limited the run, then
+// recency. A BUILT_WITH_BODIES graph outranks a METADATA_ONLY one regardless of
+// which was written later, exactly as the fetch ledger serves the strongest
+// anchor rather than the newest measurement: the weaker record analysed less of
+// the same module, so it is a lesser measurement rather than a competing answer.
+// A record whose own row names the environment as what stopped it is the same
+// kind of lesser measurement at one rung — see GenerationRank. Recency is only
+// ever the last tiebreaker.
 //
 // The analysis source is NOT on that ladder. It is a dimension: a zip graph and
 // a worktree graph answer different questions, and serving one for the other
@@ -286,7 +300,7 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 		}
 	} else {
 		var err error
-		if candidates, err = defaultSourceGroup(records); err != nil {
+		if candidates, err = defaultSourceGroup(records, req.CallerRoot); err != nil {
 			return CallGraphRecord{}, err
 		}
 	}
@@ -360,18 +374,34 @@ func LatestObservation(records []CallGraphRecord) CallGraphRecord {
 }
 
 // GenerationRank is the ordering key of one generation: completeness first, then
-// recency, then the record's own seal.
+// whether this host limited the run, then recency, then the record's own seal.
 //
 // It is a value rather than a method on the record because a store holds every
 // one of these fields in COLUMNS and the record itself in a blob. Deciding which
 // of several generations to serve by decoding all of them, when the decision
-// only ever reads three fields, costs a full edge reconstruction per generation
+// only ever reads four fields, costs a full edge reconstruction per generation
 // to discard all but one of them. A store reads the columns, ranks, and decodes
 // the winner — against the same ladder composition uses, not a second one
 // written in SQL that would drift from it.
 type GenerationRank struct {
 	Completeness CompletenessLevel
-	ExtractedAt  time.Time
+	// EnvironmentLimited says the record's own row names THIS HOST, rather than
+	// the module, as what the analysis stopped short of.
+	//
+	// It is on the key because completeness alone cannot separate two very
+	// different runs. A run whose module cache could not resolve a requirement
+	// loads one package and analyses it with bodies; a run on a warm cache loads
+	// the module and analyses all of it with bodies. Both state
+	// BUILT_WITH_BODIES, because the level says how the loaded packages were
+	// analysed and not how much of the module was reached. Ranking on the level
+	// alone put a sixty-five node measurement of this host level with a
+	// five-thousand node measurement of the artefact, and the read then refused
+	// both. A record that says the environment limited it is a lesser measurement
+	// of the same thing, exactly as a METADATA_ONLY graph is, and is ordered the
+	// same way. A record that produced no graph at all sets it false however it
+	// failed — see EnvironmentLimitedGraph.
+	EnvironmentLimited bool
+	ExtractedAt        time.Time
 	// ContentHash is the last resort. It is not authority and is not claimed to be
 	// — it is here so the served record does not depend on the order rows happen
 	// to come back in.
@@ -381,9 +411,10 @@ type GenerationRank struct {
 // RankOf projects a record onto its ordering key.
 func RankOf(r CallGraphRecord) GenerationRank {
 	return GenerationRank{
-		Completeness: r.Completeness,
-		ExtractedAt:  r.ExtractedAt,
-		ContentHash:  r.ContentHash,
+		Completeness:       r.Completeness,
+		EnvironmentLimited: EnvironmentLimitedGraph(r.OverallStatus, r.FailureCause),
+		ExtractedAt:        r.ExtractedAt,
+		ContentHash:        r.ContentHash,
 	}
 }
 
@@ -391,6 +422,21 @@ func RankOf(r CallGraphRecord) GenerationRank {
 func (g GenerationRank) ServesBefore(o GenerationRank) bool {
 	if rg, ro := completenessRung(g.Completeness), completenessRung(o.Completeness); rg != ro {
 		return rg > ro
+	}
+	// Within a rung, a GRAPH this host limited loses to a graph it did not.
+	// Recency must not decide it either way round: the environment record is the
+	// older one when the cache is warmed after the fact and the newer one when it
+	// goes cold again, and serving whichever ran last is how a repaired host is
+	// answered with sixty-five nodes of a module it can now analyse completely.
+	//
+	// It applies only where there is a graph to be lesser — see
+	// EnvironmentLimitedGraph. Two records that produced none are two accounts of
+	// a run that measured nothing, and the newest account is the one a reader
+	// should act on: an older "the module is broken" served over a newer "this
+	// host could not reach a dependency" sends them looking for a fault in bytes
+	// nothing has read.
+	if g.EnvironmentLimited != o.EnvironmentLimited {
+		return !g.EnvironmentLimited
 	}
 	if !g.ExtractedAt.Equal(o.ExtractedAt) {
 		return g.ExtractedAt.After(o.ExtractedAt)
@@ -412,10 +458,11 @@ func withSource(records []CallGraphRecord, want AnalysisSource) []CallGraphRecor
 // defaultSourceGroup picks which records answer a read that named no source.
 //
 // A module zip is what production writes on a coordinate-keyed walk, so when the
-// ledger holds both kinds it is the default. A worktree record answers only when
-// the ledger holds no zip record for the coordinate — otherwise `kanonarion
-// local` on a project would quietly redirect every later query away from the
-// graphs the walk produced.
+// ledger holds both kinds it is the default for a reader standing outside the
+// module's checkouts — otherwise `kanonarion local` on a project would quietly
+// redirect every later query away from the graphs the walk produced. A reader
+// standing INSIDE a checkout this ledger holds a generation of is asking about
+// that tree, and it answers; callerRoot is what says so.
 //
 // AN UNRECORDED SOURCE IS NOT A THIRD KIND OF SOURCE. It is a record that did not
 // say, and the distinction is load-bearing: every record written before the field
@@ -433,7 +480,7 @@ func withSource(records []CallGraphRecord, want AnalysisSource) []CallGraphRecor
 // as identifiedOrAll — a measurement that says what it read is better evidence
 // than one that does not. Nothing is deleted either way; a history read still
 // returns every generation.
-func defaultSourceGroup(records []CallGraphRecord) ([]CallGraphRecord, error) {
+func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGraphRecord, error) {
 	zip := withSource(records, AnalysisSourceModuleZip)
 	tree := withSource(records, AnalysisSourceWorktree)
 	silent := withSource(records, AnalysisSourceUnrecorded)
@@ -453,8 +500,20 @@ func defaultSourceGroup(records []CallGraphRecord) ([]CallGraphRecord, error) {
 
 	switch {
 	case len(zip) > 0 && len(tree) > 0:
-		// Two questions are genuinely in play; serve the one production writes and
-		// leave the silent records out, since they cannot be attributed to either.
+		// Two questions are genuinely in play. Which one is being asked is settled
+		// by where the reader is standing: inside a checkout this ledger holds a
+		// generation of, the tree in front of them is the subject and the zip is a
+		// snapshot of something else. Outside one, the default above stands.
+		//
+		// The distinction matters because the zip record at a project's own
+		// coordinate is not a competing analysis at all — it is a by-product of the
+		// project's own extraction. Preferring it there meant `kanonarion local`
+		// could never be served again once an extract had run: the remedy the tool
+		// printed changed the ledger and never the answer.
+		if analysedIn(tree, callerRoot) {
+			return inAppendOrder(records, tree, nil), nil
+		}
+		// Leave the silent records out, since they cannot be attributed to either.
 		return zip, nil
 	case len(zip) > 0:
 		return inAppendOrder(records, zip, silent), nil
@@ -463,6 +522,22 @@ func defaultSourceGroup(records []CallGraphRecord) ([]CallGraphRecord, error) {
 	default:
 		return silent, nil
 	}
+}
+
+// analysedIn reports whether any of these records was analysed in root. An empty
+// root matches nothing: a reader standing in no recorded tree makes no claim
+// about which tree they meant, and a record that states no root cannot be shown
+// to be theirs.
+func analysedIn(records []CallGraphRecord, root string) bool {
+	if root == "" {
+		return false
+	}
+	for _, r := range records {
+		if r.AnalysisRoot == root {
+			return true
+		}
+	}
+	return false
 }
 
 // inAppendOrder merges two subsets back into the order they were appended in.
@@ -565,7 +640,7 @@ func findConflict(records []CallGraphRecord) *CallGraphConflict {
 		// A failed, cancelled or excluded extraction makes no claim about the graph
 		// at all, so it cannot contradict one that does. Letting it take part would
 		// report every "load failed, then extracted" pair as non-determinism.
-		if completenessRung(r.Completeness) == top && statesAGraph(r) {
+		if completenessRung(r.Completeness) == top && claimsTheModulesGraph(r) {
 			tied = append(tied, r)
 		}
 	}
@@ -890,6 +965,43 @@ func GraphDigest(r CallGraphRecord) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// SameMeasurement reports whether two records state the identical measurement,
+// differing at most in WHEN it was taken.
+//
+// It is the ledger's answer to "has this already been recorded". A re-analysis
+// that came back with the same graph, the same completeness, the same status and
+// the same diagnostic has added no fact — the only thing new about it is the
+// clock — and appending it grows the ledger without making any answer better.
+//
+// It matters most exactly where re-analysis is most frequent. A record the
+// environment cut short is never eligible as a cache hit, by design, so every
+// later run of a coordinate that keeps failing re-derives it; before this, each
+// of those runs appended a generation, without bound.
+//
+// extracted_at and the seal computed over it are the only fields set aside.
+// Everything else is compared, including the provenance GraphDigest deliberately
+// ignores: two runs that read different bytes, or were offered different build
+// lists, are two measurements even where their graphs agree.
+func SameMeasurement(a, b CallGraphRecord) (bool, error) {
+	ab, err := marshalCanonical(withoutMeasurementTime(a))
+	if err != nil {
+		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
+	}
+	bb, err := marshalCanonical(withoutMeasurementTime(b))
+	if err != nil {
+		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
+	}
+	return bytes.Equal(ab, bb), nil
+}
+
+// withoutMeasurementTime blanks when a record was measured, and the seal that
+// covers it.
+func withoutMeasurementTime(r CallGraphRecord) CallGraphRecord {
+	r.ExtractedAt = time.Time{}
+	r.ContentHash = ""
+	return r
+}
+
 // forGraphComparison strips a record down to what it claims about the graph, by
 // clearing what is provenance rather than claim.
 func forGraphComparison(r CallGraphRecord) CallGraphRecord {
@@ -969,6 +1081,29 @@ func statesAGraph(r CallGraphRecord) bool {
 	default:
 		return false
 	}
+}
+
+// claimsTheModulesGraph reports whether a record's graph is a claim about the
+// MODULE, and so something another record can contradict.
+//
+// Two ways it is not. A record that states no graph makes no claim to
+// contradict — statesAGraph. And a record whose own row says the environment
+// limited it describes what this host could reach, which is the same distinction
+// the fetch ledger draws when it says a failure is a statement about the lookup
+// and not about the module. Sixty-five nodes measured against a cold module
+// cache and five thousand measured against a warm one are not two analysers
+// disagreeing; they are one host answering twice.
+//
+// Admitting them reported that pair as non-determinism, and the refusal was
+// permanent: nothing retires a generation, so re-analysing appended a third
+// record and the coordinate stayed unqueryable however many complete analyses
+// followed. The record is still stored, still ranked, and still shown by a
+// history read — it just cannot contradict a measurement of the module.
+func claimsTheModulesGraph(r CallGraphRecord) bool {
+	if EnvironmentLimitedGraph(r.OverallStatus, r.FailureCause) {
+		return false
+	}
+	return statesAGraph(r)
 }
 
 // servesBefore orders two records by which should be served first.
