@@ -497,12 +497,17 @@ func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (do
 // GOPROXY=off stays as the guarantee that a vendored analysis fetches nothing —
 // a vendored build that reached the network would no longer be the build.
 //
+// GOTOOLCHAIN=local rides with GOSUMDB=off: a switch must verify what it
+// downloads, so with the checksum database off it can only fail, and fails
+// naming that setting rather than the version gap. Not on the vendored surface,
+// which leaves the database on and completes a switch from cached data.
+//
 // Duplicate keys are appended rather than replaced because exec.Cmd honours the
 // last value for a repeated key, so these overrides win over any inherited
-// GOWORK/GOFLAGS/GOSUMDB/GOPROXY.
+// GOWORK/GOFLAGS/GOSUMDB/GOPROXY/GOTOOLCHAIN.
 func scanEnv(base []string, goModCache string, surface domain.AnalysisSurface) []string {
 	// Copy rather than append onto base so a caller's slice is never mutated.
-	env := make([]string, len(base), len(base)+6)
+	env := make([]string, len(base), len(base)+7)
 	copy(env, base)
 	env = append(env, "GOGC=30", "GOWORK=off")
 	if surface == domain.AnalysisSurfaceVendored {
@@ -513,6 +518,7 @@ func scanEnv(base []string, goModCache string, surface domain.AnalysisSurface) [
 			"GOMODCACHE="+goModCache,
 			"GOFLAGS=-mod=mod",
 			"GOSUMDB=off",
+			"GOTOOLCHAIN=local",
 			"GOPROXY=off",
 		)
 	}

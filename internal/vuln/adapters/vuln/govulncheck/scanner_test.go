@@ -622,3 +622,42 @@ func TestScanProject_InputFaultsCarryDistinctReasons(t *testing.T) {
 		t.Errorf("UnscanReason = %q, want %q", res.UnscanReason, domain.UnscanReasonProjectNoGoMod)
 	}
 }
+
+// TestScanEnv_PinsTheLocalToolchainAlongsideTheDisabledChecksumDB is the
+// consistency this branch was missing: a toolchain switch must verify what it
+// downloads, so with GOSUMDB=off it can only fail, and it failed reporting that
+// setting — which the build-incompatibility classifier read as a broken module.
+func TestScanEnv_PinsTheLocalToolchainAlongsideTheDisabledChecksumDB(t *testing.T) {
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
+
+	if got["GOTOOLCHAIN"] != "local" {
+		t.Errorf("GOTOOLCHAIN = %q, want local: with GOSUMDB=off a toolchain switch cannot verify what it "+
+			"downloads, so leaving the switch enabled only chooses which error the scan reports", got["GOTOOLCHAIN"])
+	}
+	// The controls that must not have moved with it.
+	if got["GOSUMDB"] != "off" || got["GOPROXY"] != "off" {
+		t.Errorf("the hermetic pins changed: GOSUMDB=%q GOPROXY=%q, want both off", got["GOSUMDB"], got["GOPROXY"])
+	}
+}
+
+// TestScanEnv_LastValueWinsOverInheritedToolchain guards the direction of the
+// override against the ambient GOTOOLCHAIN=auto every shell carries.
+func TestScanEnv_LastValueWinsOverInheritedToolchain(t *testing.T) {
+	got := envMap(scanEnv([]string{"GOTOOLCHAIN=auto"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
+
+	if got["GOTOOLCHAIN"] != "local" {
+		t.Errorf("GOTOOLCHAIN = %q, want local to override the inherited setting", got["GOTOOLCHAIN"])
+	}
+}
+
+// TestScanEnv_NoModcacheLeavesTheToolchainSwitchAlone keeps the pin scoped to the
+// branch that earns it: without a cache the scan resolves over the network, where
+// a switch completes and pinning would break a scan that works today.
+func TestScanEnv_NoModcacheLeavesTheToolchainSwitchAlone(t *testing.T) {
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "", domain.AnalysisSurfaceFetched))
+
+	if v, ok := got["GOTOOLCHAIN"]; ok {
+		t.Errorf("scanEnv without a modcache set GOTOOLCHAIN=%q; the network is available there and a "+
+			"switch can complete", v)
+	}
+}

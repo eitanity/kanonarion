@@ -345,7 +345,6 @@ func (a *Analyser) analyseDir(
 	read *[]string,
 ) (domain.CallGraphRecord, error) {
 	fset := token.NewFileSet()
-	env := analysisEnv()
 
 	// classifyLoad names the cause of a load failure raised below. The directory
 	// is bound once, here, rather than passed at each call site: every load in
@@ -363,6 +362,10 @@ func (a *Analyser) analyseDir(
 		if isOfflineCacheMiss(detail) {
 			return domain.FailureCauseEnvironment
 		}
+		// Same shape, and the probe cannot see it either.
+		if isToolchainTooOld(detail) {
+			return domain.FailureCauseEnvironment
+		}
 		return a.classifyLoadFailure(ctx, tempDir)
 	}
 
@@ -374,6 +377,11 @@ func (a *Analyser) analyseDir(
 			domain.FailureCauseEnvironment, err.Error()), nil
 	}
 	defer envCleanup()
+
+	// After setupGoEnv, never before: it installs the analysis PATH and clears
+	// GOROOT, and an earlier snapshot hands the child a toolchain other than the
+	// one it is exec'd as.
+	env := analysisEnv()
 
 	// New Architecture: Multi-pass load to bypass go/packages memory limitations.
 	// Step 1: Discover ALL packages in the transitive dependency graph (metadata only).

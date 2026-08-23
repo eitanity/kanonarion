@@ -507,3 +507,51 @@ func TestAnalyseDir_PartialFromTheModulesOwnSourcesStaysCacheable(t *testing.T) 
 		t.Error("a module's own compile error is re-derived on every run rather than served")
 	}
 }
+
+// TestAnalysisEnv_PinsTheLocalToolchain is the control on the offline posture
+// being internally consistent: a switch left enabled alongside GOPROXY=off and
+// GOSUMDB=off can only fail, and it failed naming the checksum database.
+func TestAnalysisEnv_PinsTheLocalToolchain(t *testing.T) {
+	t.Parallel()
+	env := analysisEnv()
+	if !slices.Contains(env, "GOTOOLCHAIN=local") {
+		t.Error("analysisEnv leaves the toolchain switch enabled alongside GOPROXY=off and GOSUMDB=off: " +
+			"the switch cannot complete, and the load fails naming the checksum database instead of the version gap")
+	}
+	// The control that must still hold: GOFLAGS keeps the last position, so
+	// os/exec's keep-the-last dedupe cannot have the new pin displace it.
+	if idx := slices.Index(env, "GOFLAGS=-mod=mod"); idx != len(env)-1 {
+		t.Errorf("GOFLAGS at position %d of %d", idx, len(env))
+	}
+}
+
+// TestAnalysisEnv_OverridesInheritedToolchainSetting guards the direction of the
+// override: an ambient GOTOOLCHAIN=auto is the default every shell carries, and
+// it would otherwise win the duplicate-key dedupe.
+func TestAnalysisEnv_OverridesInheritedToolchainSetting(t *testing.T) {
+	t.Setenv("GOTOOLCHAIN", "auto")
+
+	env := analysisEnv()
+
+	last := ""
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GOTOOLCHAIN=") {
+			last = kv
+		}
+	}
+	if last != "GOTOOLCHAIN=local" {
+		t.Errorf("effective GOTOOLCHAIN = %q, want GOTOOLCHAIN=local to win over the inherited setting", last)
+	}
+}
+
+// TestAnalysisEnv_StaysOffline is the guarantee the pin must not loosen: the
+// point is to stop the child attempting a fetch, never to permit one.
+func TestAnalysisEnv_StaysOffline(t *testing.T) {
+	t.Parallel()
+	env := analysisEnv()
+	for _, want := range []string{"GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOWORK=off"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("analysisEnv does not set %s", want)
+		}
+	}
+}

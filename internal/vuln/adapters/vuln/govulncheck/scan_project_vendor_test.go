@@ -163,3 +163,19 @@ func writeVendoredFixture(t *testing.T) string {
 
 	return dir
 }
+
+// TestScanEnv_VendoredSurfaceLeavesTheToolchainSwitchAlone is the measured control
+// on where the pin belongs: this branch leaves the checksum database on, so a
+// switch here verifies from cached data and completes without touching the
+// network, and pinning would break a project that resolves today.
+func TestScanEnv_VendoredSurfaceLeavesTheToolchainSwitchAlone(t *testing.T) {
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceVendored))
+
+	if v, ok := got["GOTOOLCHAIN"]; ok {
+		t.Errorf("vendored scanEnv set GOTOOLCHAIN=%q; this surface leaves the checksum database on, so a "+
+			"toolchain switch completes here", v)
+	}
+	if v, ok := got["GOSUMDB"]; ok {
+		t.Errorf("vendored scanEnv set GOSUMDB=%q; the pin above is only owed where this is off", v)
+	}
+}

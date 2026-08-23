@@ -321,8 +321,13 @@ func hasVendorTree(dir string) (bool, error) {
 // as such: isOfflineCacheMiss matches the go command's own sentence and the
 // analyser files the record under FailureCauseEnvironment, so a warm cache
 // tomorrow still gets its chance to answer.
+//
+// GOTOOLCHAIN=local because the two settings above already make a toolchain
+// switch impossible; left at `auto` it is attempted anyway and the load fails
+// naming the checksum database instead of the version gap. Before GOFLAGS, so
+// that stays last.
 func analysisEnv() []string {
-	env := append(isolatedModuleEnv(), "GOPROXY=off", "GOSUMDB=off")
+	env := append(isolatedModuleEnv(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 	// -mod=mod on every load, not only the synthesised ones. Two reasons, and the
 	// second is why it moved out of the synthesis branch.
 	//

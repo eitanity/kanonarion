@@ -131,6 +131,15 @@ func TestClassifyBuildIncompatibility(t *testing.T) {
 			wantContain: "workspace mode",
 		},
 		{
+			// The host being a point release behind is not the module failing to
+			// build, and the generic default reads as an accusation. The operator
+			// needs the two versions, which is the one thing the go command's own
+			// sentence carries.
+			name:        "host toolchain older than the module's go directive",
+			detail:      "govulncheck: loading packages: err: exit status 1: stderr: go: go.mod requires go >= 1.26.6 (running go 1.26.5; GOTOOLCHAIN=local)",
+			wantContain: "host Go toolchain is older",
+		},
+		{
 			name:        "relative replace directive",
 			detail:      "reading metric/go.mod: replacement directory ../../metric does not exist",
 			wantContain: "relative replace directive",
