@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/goenv"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -476,4 +477,82 @@ func TestNoCoordinateAccessorMethodValues(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestNoInlineAnalysisEnvironments closes the shape three separate defects had:
+// a Go child handed an environment assembled at the call site, missing one
+// variable the builder beside it already sets. Every function that builds one by
+// appending to os.Environ() must be a registered producer with a stated posture,
+// and the registry must drain — an entry that no longer matches is as much a
+// failure as an unregistered site.
+func TestNoInlineAnalysisEnvironments(t *testing.T) {
+	seen := map[string]bool{}
+	for _, root := range []string{"../internal", "../cmd"} {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return fmt.Errorf("walk %s: %w", path, err)
+			}
+			if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			fset := token.NewFileSet()
+			f, perr := parser.ParseFile(fset, path, nil, 0)
+			if perr != nil {
+				return fmt.Errorf("parse %s: %w", path, perr)
+			}
+			pkgDir := strings.TrimPrefix(filepath.ToSlash(filepath.Dir(path)), "../")
+			for _, decl := range f.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil || !buildsEnvironInline(fn.Body) {
+					continue
+				}
+				key := pkgDir + " " + fn.Name.Name
+				if _, registered := goenv.EnvBuilders[key]; !registered {
+					t.Errorf("%s builds a process environment from os.Environ() inline; give it a stated posture "+
+						"or route it through the producer that already has one", key)
+					continue
+				}
+				seen[key] = true
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
+		}
+	}
+	for key, posture := range goenv.EnvBuilders {
+		if !seen[key] {
+			t.Errorf("registered environment builder %q (%s) no longer builds one — remove the entry", key, posture)
+		}
+	}
+}
+
+// buildsEnvironInline reports whether body contains an append whose arguments
+// include a call to os.Environ().
+func buildsEnvironInline(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if ident, ok := call.Fun.(*ast.Ident); !ok || ident.Name != "append" {
+			return true
+		}
+		for _, arg := range call.Args {
+			inner, ok := arg.(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+			sel, ok := inner.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Environ" {
+				continue
+			}
+			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "os" {
+				found = true
+			}
+		}
+		return true
+	})
+	return found
 }

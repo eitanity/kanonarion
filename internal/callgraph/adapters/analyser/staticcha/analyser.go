@@ -15,6 +15,7 @@ import (
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/goenv"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -140,7 +141,7 @@ func (a *Analyser) Analyse(
 			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source, tempDir), nil
 	}
 
-	rec, err := a.analyseDir(ctx, tempDir, coord, synth, nil)
+	rec, err := a.analyseDir(ctx, tempDir, coord, synth, nil, false)
 	if err != nil {
 		return rec, err
 	}
@@ -238,7 +239,7 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	// module and already declares itself, so nothing is synthesised into it and
 	// the record carries the zero value.
 	var read []string
-	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read)
+	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true)
 	if err != nil {
 		return rec, err
 	}
@@ -337,12 +338,16 @@ func treeDigest(root string, read []string) (string, error) {
 // rather than a second result because every failure return here is a RECORD —
 // a load that failed is an answer about the module, not an error — and threading
 // a second value through a dozen of them would obscure that.
+//
+// worktree selects the environment: a published zip's go.work is dev-time
+// configuration that does not apply, and a working tree's is the build.
 func (a *Analyser) analyseDir(
 	ctx context.Context,
 	tempDir string,
 	coord coordinate.ModuleCoordinate,
 	synth domain.SynthesisedGoMod,
 	read *[]string,
+	worktree bool,
 ) (domain.CallGraphRecord, error) {
 	fset := token.NewFileSet()
 
@@ -382,6 +387,9 @@ func (a *Analyser) analyseDir(
 	// GOROOT, and an earlier snapshot hands the child a toolchain other than the
 	// one it is exec'd as.
 	env := analysisEnv()
+	if worktree {
+		env = goenv.Worktree(os.Environ(), tempDir)
+	}
 
 	// New Architecture: Multi-pass load to bypass go/packages memory limitations.
 	// Step 1: Discover ALL packages in the transitive dependency graph (metadata only).
@@ -645,6 +653,15 @@ func (a *Analyser) analyseDir(
 		if miss != "" || firstOfflineCacheMiss(allLoadErrs) != "" {
 			rec.FailureCause = domain.FailureCauseEnvironment
 		}
+		// Same shape one step over: the type errors name the import and never the
+		// reason, and here the go command named the condition and its own remedy. It
+		// leads, because what follows it is its symptom; the cause does not move,
+		// because the gap is in the tree and not on this host.
+		if sum := firstMissingChecksum(metaErrs, allLoadErrs); sum != "" && miss == "" {
+			// The go command lays its remedy out over a second line; this is stored prose.
+			sum = strings.Join(strings.Fields(sum), " ")
+			rec.FailureDetail = strings.TrimSuffix("the loader reported: "+sum+"; "+rec.FailureDetail, "; ")
+		}
 	}
 	// FailedPackages scopes the incompleteness to the exact packages that did
 	// not typecheck, so callers/callees/reachability verdicts over this Partial
@@ -732,6 +749,18 @@ func firstOfflineCacheMiss(details []string) string {
 	for _, d := range details {
 		if isOfflineCacheMiss(d) {
 			return d
+		}
+	}
+	return ""
+}
+
+// firstMissingChecksum returns that sentence from whichever error set carried it.
+func firstMissingChecksum(sets ...[]string) string {
+	for _, set := range sets {
+		for _, d := range set {
+			if domain.IsMissingChecksumEntry(d) {
+				return d
+			}
 		}
 	}
 	return ""

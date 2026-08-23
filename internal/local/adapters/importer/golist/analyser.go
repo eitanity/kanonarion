@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sort"
 
+	"github.com/eitanity/kanonarion/internal/goenv"
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -33,6 +35,11 @@ func (a *Analyser) goBin() string {
 	return a.goBinary
 }
 
+// listEnv is the environment for the go list children. It is the same
+// resolution the call-graph load of this tree runs under; these children were
+// inheriting the caller's instead, so one command answered two build questions.
+func listEnv(root string) []string { return goenv.Worktree(os.Environ(), root) }
+
 // goListPackage mirrors the fields we need from `go list -json`.
 type goListPackage struct {
 	ImportPath string
@@ -51,6 +58,7 @@ type goListPackage struct {
 func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.ImportedModule, error) {
 	cmd := exec.CommandContext(ctx, a.goBin(), "list", "-json", "-deps", "./...") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	cmd.Dir = root
+	cmd.Env = listEnv(root)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -133,6 +141,7 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 func (a *Analyser) BuildModules(ctx context.Context, root string) ([]domain.BuildModule, error) {
 	cmd := exec.CommandContext(ctx, a.goBin(), "list", "-json", "-deps", "./...") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	cmd.Dir = root
+	cmd.Env = listEnv(root)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {

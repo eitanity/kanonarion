@@ -201,11 +201,13 @@ golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
 | Code | Meaning |
 |---|---|
 | `0` | A graph exists — `Extracted`, or `Partial` with its incompleteness scoped to the packages named on the `failed packages` line |
-| `2` | `LoadFailed`: no graph at all. The message repeats the recorded failure detail |
+| `2` | No graph at all: `LoadFailed`, or a `Partial` that measured no functions. The message repeats the recorded failure detail |
 | `3` | `Cancelled`: the run ended before the graph was walked |
 
-A `Partial` graph is an answer and exits `0`. Whether an unanalysable dependency
-should fail a build is a policy question this command does not answer.
+A `Partial` graph is an answer and exits `0`. A `Partial` carrying zero nodes is
+not one: nothing was measured, so it exits `2` alongside `LoadFailed`. Whether an
+unanalysable dependency should fail a build is a policy question this command
+does not answer.
 
 ### When a module does not load
 
@@ -218,6 +220,7 @@ it. The causes that recur:
 | `no package under <path>: the loader resolved N package(s) (…)` | Nothing the loader returned belongs to the module. The named packages say what it found instead — a nested module's `replace` target absent from the published zip is the usual reason |
 | `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
+| `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
 
 Package membership is decided by the module path the analysed tree **declares**,
 not by the coordinate it was published under. A fork republished at a new path

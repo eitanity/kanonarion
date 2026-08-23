@@ -136,16 +136,22 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 // "an answer exists" are right about it; promoting it to ExitPartial would
 // change the meaning of a hundred existing outcomes to make a point this defect
 // does not raise.
+//
+// A Partial carrying no nodes is not one of those: nothing was measured, so the
+// condition the exit code states — a graph exists — is false, and the script the
+// code exists for moves on from an extraction that produced nothing.
 func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
 	msg := fmt.Sprintf("%s: %s", r.Coordinate, r.OverallStatus.String())
 	if r.FailureDetail != "" {
 		msg += " — " + r.FailureDetail
 	}
-	switch r.OverallStatus {
-	case cgdomain.CallGraphStatusLoadFailed:
+	switch {
+	case r.OverallStatus == cgdomain.CallGraphStatusLoadFailed:
 		return &exitError{code: ExitFailed, msg: msg}
-	case cgdomain.CallGraphStatusCancelled:
+	case r.OverallStatus == cgdomain.CallGraphStatusCancelled:
 		return &exitError{code: ExitCancelled, msg: msg}
+	case r.OverallStatus == cgdomain.CallGraphStatusPartial && r.NodeCount == 0:
+		return &exitError{code: ExitFailed, msg: msg}
 	default:
 		return nil
 	}
@@ -204,7 +210,7 @@ func writeIncompletenessRemedy(stdout io.Writer, r cgdomain.CallGraphRecord, dir
 	if !cgdomain.RecordIsIncomplete(r) {
 		return nil
 	}
-	if _, err := fmt.Fprintln(stdout, cgdomain.IncompleteGraphRemedy(r.Coordinate, r.FailureCause, dir)); err != nil {
+	if _, err := fmt.Fprintln(stdout, cgdomain.IncompleteGraphRemedy(r.Coordinate, r.FailureCause, r.FailureDetail, dir)); err != nil {
 		return fmt.Errorf("writing incompleteness remedy: %w", err)
 	}
 	return nil

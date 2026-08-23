@@ -1,7 +1,10 @@
 package golist
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -125,4 +128,24 @@ func mustMarshal(t *testing.T, v any) []byte {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 	return b
+}
+
+// TestAnalyseImports_IgnoresAmbientResolution guards the same posture the
+// call-graph load of this tree runs under: an exported GOWORK decided how these
+// children resolved, while the load beside them was pinned.
+func TestAnalyseImports_IgnoresAmbientResolution(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GOWORK", filepath.Join(t.TempDir(), "absent.go.work"))
+	for name, content := range map[string]string{
+		"go.mod": "module example.com/imports\n\ngo 1.22\n",
+		"a.go":   "package imports\n\n// Answer is the module's only symbol.\nconst Answer = 42\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+
+	if _, err := New("").AnalyseImports(context.Background(), root); err != nil {
+		t.Fatalf("AnalyseImports under an inherited GOWORK: %v", err)
+	}
 }

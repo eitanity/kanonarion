@@ -170,6 +170,10 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 // present, so an unforced run would silently be the vendored analysis under a
 // fetched label. -mod=mod is forced explicitly there, which is what makes a
 // deliberate comparison run against the fetched artefacts a real comparison.
+//
+// Every branch takes its environment from scanEnv. Workspace mode rejects
+// -mod=mod outright, so a branch that forces the flag from os.Environ() exits 1
+// instead of comparing anything the moment a go.work is in scope.
 func projectScanSurface(projectDir string, wantVendored bool) (domain.AnalysisSurface, []string) {
 	_, err := os.Stat(filepath.Join(projectDir, "vendor", "modules.txt"))
 	hasVendorTree := err == nil
@@ -178,11 +182,12 @@ func projectScanSurface(projectDir string, wantVendored bool) (domain.AnalysisSu
 	case hasVendorTree && wantVendored:
 		return domain.AnalysisSurfaceVendored, scanEnv(os.Environ(), "", domain.AnalysisSurfaceVendored)
 	case hasVendorTree:
-		return domain.AnalysisSurfaceFetched, append(os.Environ(), "GOGC=30", "GOFLAGS=-mod=mod")
+		return domain.AnalysisSurfaceFetched,
+			append(scanEnv(os.Environ(), "", domain.AnalysisSurfaceFetched), "GOFLAGS=-mod=mod")
 	default:
 		// No vendor tree: the toolchain's own default resolution against the
 		// project's go.mod/go.sum is the fetched surface, and forcing a mode flag
 		// would only override whatever the project itself declares.
-		return domain.AnalysisSurfaceFetched, append(os.Environ(), "GOGC=30")
+		return domain.AnalysisSurfaceFetched, scanEnv(os.Environ(), "", domain.AnalysisSurfaceFetched)
 	}
 }

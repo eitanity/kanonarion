@@ -259,3 +259,23 @@ func TestProbe_AllMainsUnbuildable_IsAnError(t *testing.T) {
 		t.Fatal("expected an error when no main package could be probed")
 	}
 }
+
+// TestProbe_IgnoresAmbientResolution is the guard for the half of this command
+// that was ambient. The call-graph load of the same tree pins its resolution;
+// these children took whatever the caller had exported, so one command answered
+// two different build questions.
+func TestProbe_IgnoresAmbientResolution(t *testing.T) {
+	t.Setenv("GOWORK", filepath.Join(t.TempDir(), "absent.go.work"))
+	root := writeModule(t, map[string]string{
+		"go.mod":  goMod,
+		"main.go": "package main\n\nfunc main() {}\n",
+	})
+
+	res, err := New("").Probe(context.Background(), root)
+	if err != nil {
+		t.Fatalf("Probe under an inherited GOWORK: %v", err)
+	}
+	if len(res.BinarySymbols) == 0 {
+		t.Error("the probe binary yielded no symbols")
+	}
+}

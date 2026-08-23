@@ -273,6 +273,10 @@ type partialRoot struct {
 	// environment the analysis ran in. It decides which remedy is printed, and a
 	// remedy chosen without it sends the reader after the wrong fault.
 	cause domain.FailureCause
+	// detail is the record's own account. The cause axis cannot separate a
+	// package that does not compile from a checksum the tree does not carry, and
+	// those two need opposite remedies.
+	detail string
 }
 
 // rootPartialStatus loads the call graph record(s) owning symbolID and reports
@@ -319,6 +323,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 			out.failedPkg = fp
 			out.coord = coord
 			out.cause = rec.FailureCause
+			out.detail = rec.FailureDetail
 		}
 	}
 	if len(failedSet) > 0 {
@@ -552,7 +557,7 @@ func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
 	// the reader's to fix, and a gap this host's cold module cache opened is not a
 	// compile error to go looking for. Naming a command that cannot run and naming
 	// one that re-serves the record complained about are the same defect.
-	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, "")
+	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, pr.detail, "")
 }
 
 // writeDroppedEdgesNotice prints droppedEdgesNotice, in text mode only.

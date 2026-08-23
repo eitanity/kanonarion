@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 )
@@ -73,6 +74,26 @@ func IsReFetchable(coord coordinate.ModuleCoordinate) bool {
 // command, and it is the same command whatever the load happened to reach first.
 const ColdModuleCacheRemedy = "go mod download all"
 
+// The two halves of the go command's sentence for a module the tree's go.sum
+// does not cover. Both are required so a module quoting the phrase cannot match.
+const (
+	missingChecksumPhrase = "missing go.sum entry"
+	missingChecksumRemedy = "; to add"
+)
+
+// IsMissingChecksumEntry reports whether a failure detail is the go command
+// refusing a module the tree's go.sum does not cover. Asked at the boundary, to
+// put that sentence on the record, and again by the remedy, because this files
+// under the same cause as a package that does not compile and needs the
+// opposite advice.
+func IsMissingChecksumEntry(detail string) bool {
+	return strings.Contains(detail, missingChecksumPhrase) &&
+		strings.Contains(detail, missingChecksumRemedy)
+}
+
+// MissingChecksumRemedy makes the tree's go.sum cover what it imports.
+const MissingChecksumRemedy = "go mod tidy"
+
 // IncompleteGraphRemedy states what to do about a call graph that came back
 // incomplete, for a reader looking at an answer computed from it.
 //
@@ -91,10 +112,18 @@ const ColdModuleCacheRemedy = "go mod download all"
 // make the plain command re-analyse.
 //
 // dir is the working tree behind a local coordinate when the caller knows it.
-func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause, dir string) string {
+func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause, detail, dir string) string {
 	rerun := ReanalysisCommand(coord, dir)
 	if cause == FailureCauseModule && !coord.IsLocal() {
 		rerun = ForcedReanalysisCommand(coord, dir)
+	}
+	// Ahead of the cause branches below: this shares their axis and contradicts
+	// the advice they give.
+	if IsMissingChecksumEntry(detail) {
+		return "  The tree's go.sum does not cover every module the load needs, so the gap is in the\n" +
+			"  checksums and not in the source. Close it, then re-analyse:\n" +
+			"  " + MissingChecksumRemedy + "\n" +
+			"  " + rerun
 	}
 	if coord.IsLocal() {
 		if cause == FailureCauseEnvironment {

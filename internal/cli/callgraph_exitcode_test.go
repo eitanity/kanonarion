@@ -18,17 +18,22 @@ func TestCallGraphExtractionExit_FailedExtractionDoesNotReportSuccess(t *testing
 	t.Parallel()
 
 	cases := []struct {
-		name   string
-		status cgdomain.CallGraphStatus
-		want   int
+		name      string
+		status    cgdomain.CallGraphStatus
+		zeroNodes bool
+		want      int
 	}{
-		{"load failed", cgdomain.CallGraphStatusLoadFailed, ExitFailed},
-		{"cancelled", cgdomain.CallGraphStatusCancelled, ExitCancelled},
-		{"extracted", cgdomain.CallGraphStatusExtracted, ExitOK},
+		{"load failed", cgdomain.CallGraphStatusLoadFailed, false, ExitFailed},
+		{"cancelled", cgdomain.CallGraphStatusCancelled, false, ExitCancelled},
+		{"extracted", cgdomain.CallGraphStatusExtracted, false, ExitOK},
 		// A Partial graph IS an answer, with its incompleteness scoped to named
 		// packages. Promoting it here would change the meaning of every partial
 		// outcome in the store to make a point this defect does not raise.
-		{"partial", cgdomain.CallGraphStatusPartial, ExitOK},
+		{"partial", cgdomain.CallGraphStatusPartial, false, ExitOK},
+		// Unless it carries nothing: the condition the code states is that a graph
+		// exists, and a caller that keeps going has moved on from an extraction
+		// which measured no function at all.
+		{"partial with no nodes", cgdomain.CallGraphStatusPartial, true, ExitFailed},
 	}
 
 	for _, tc := range cases {
@@ -37,6 +42,9 @@ func TestCallGraphExtractionExit_FailedExtractionDoesNotReportSuccess(t *testing
 			rec := makeCGRecord(t)
 			rec.OverallStatus = tc.status
 			rec.FailureDetail = "no package under example.com/cg"
+			if tc.zeroNodes {
+				rec.Nodes, rec.Edges, rec.NodeCount, rec.EdgeCount = nil, nil, 0, 0
+			}
 
 			err := callGraphExtractionExit(rec)
 			if tc.want == ExitOK {
