@@ -22,10 +22,24 @@ var (
 
 func init() {
 	var err error
-	enc, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
+	// The encoder runs one worker, not one per core. zstd sizes an encoder's
+	// worker pool from GOMAXPROCS, and at SpeedBestCompression every worker
+	// holds its own compression window — measured at ~103 MB per core, so on a
+	// 32-core host each process that wrote a blob reserved 3.3 GB of window it
+	// never used. Encode hands EncodeAll one whole blob, which a single worker
+	// serves start to finish, so the pool bought nothing at any width. Restoring
+	// the default reintroduces KN-773: under -race, which faults in the whole
+	// reservation, it OOM-killed the test suite.
+	enc, err = zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.SpeedBestCompression),
+		zstd.WithEncoderConcurrency(1),
+	)
 	if err != nil {
 		panic("blobcodec: init encoder: " + err.Error())
 	}
+	// The decoder keeps the default width. Its per-worker state is ~1 MB against
+	// the encoder's ~103 MB, and reads do run concurrently, so pinning it would
+	// serialise them to save nothing worth saving.
 	dec, err = zstd.NewReader(nil)
 	if err != nil {
 		panic("blobcodec: init decoder: " + err.Error())
