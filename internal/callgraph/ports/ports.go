@@ -113,6 +113,10 @@ type WorktreeRouting struct {
 
 // WorthReporting reports whether a reader has a routing decision to see.
 //
+// It also says whether the served-generation fields above were established: a
+// store is free to leave them zero when this is false, because establishing them
+// means reading the record and nothing renders them. See the sqlite adapter.
+//
 // Two cases, and only two. Several located trees means the read chose between
 // them. A caller standing in a tree that did not answer means the read could not
 // choose theirs — including the upgrade case, where every generation predates
@@ -276,6 +280,50 @@ type CallGraphRecordLister interface {
 	// pipeline version, oldest first, each with its edges reconstructed and its
 	// content hash verified.
 	ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.CallGraphRecord, error)
+}
+
+// CallGraphCoordinate is one analysed (module, version, pipeline version)
+// triple as the ledger's COLUMNS state it.
+//
+// It answers "which modules has this store analysed, and at what versions" —
+// which is a question about the ledger's keys, not about any record's content.
+// CallGraphSummary answers the different question "what does the served
+// generation say", and pays a composition per multi-generation coordinate to do
+// it.
+type CallGraphCoordinate struct {
+	ModulePath      string
+	ModuleVersion   string
+	PipelineVersion string
+	// AnyPartial reports whether ANY generation at this coordinate states a
+	// Partial graph; AnyBelowFull whether any states a definite completeness
+	// below BUILT_WITH_BODIES.
+	//
+	// Both are one-way gates, and that is what makes them usable without
+	// composing. The generation composition serves is one of the generations, so
+	// false PROVES the served record does not state the condition and no blob need
+	// be decoded to learn it. True says only that it might, and a caller that
+	// needs to know composes.
+	AnyPartial   bool
+	AnyBelowFull bool
+}
+
+// CallGraphCoordinateLister is the optional column-only listing: which
+// coordinates the ledger holds an analysis of, without composing any of them.
+//
+// It exists because "which module owns this symbol" and "was this module
+// analysed at all" are decided by the coordinate alone. Every caller, callee and
+// implementer query asks that question two to four times before it looks at an
+// edge, and answering it through ListCallGraphRecords costs a blob decode plus a
+// full edge reconstruction for every generation of every multi-generation
+// coordinate in the store — work no part of the answer reads.
+//
+// A store that does not offer it is still a usable call graph store; callers
+// type-assert for it and fall back to the composing listing.
+type CallGraphCoordinateLister interface {
+	// ListCallGraphCoordinates returns one entry per (module, version, pipeline
+	// version) the ledger holds, in the same order ListCallGraphRecords returns
+	// its summaries, with the same filter applied.
+	ListCallGraphCoordinates(ctx context.Context, filter CallGraphFilter) ([]CallGraphCoordinate, error)
 }
 
 // CallGraphSourceReader is the optional dimension-scoped read: the same question

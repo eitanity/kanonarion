@@ -654,7 +654,17 @@ type FakeQueryCallGraph struct {
 	// ListCalls counts calls to this fake's listing method, so a test can
 	// assert that a listing which returned rows read the store exactly once and
 	// did not also pay the survey read the zero-result notice needs.
-	ListCalls           int
+	ListCalls int
+	// CoordinateListCalls counts calls to the column-only listing, and RecordReads
+	// every composed record read.
+	//
+	// They are counted separately from ListCalls because the difference between
+	// them IS the behaviour: an edge query asks which modules the store has
+	// analysed, which is a question about coordinates, and answering it through
+	// the composing listing decodes every generation of every multi-generation
+	// coordinate in the store to read fields no part of the answer looks at.
+	CoordinateListCalls int
+	RecordReads         int
 	mu                  sync.Mutex
 	records             map[string]cgdomain.CallGraphRecord
 	list                []cgports.CallGraphSummary
@@ -704,6 +714,7 @@ func (f *FakeQueryCallGraph) GetCallGraphRecord(_ context.Context, coord coordin
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.RecordReads++
 	rec, ok := f.records[coord.String()+"|"+pipelineVersion]
 	return rec, ok, nil
 }
@@ -766,6 +777,14 @@ func (f *FakeQueryCallGraph) ListCallGraphRecords(_ context.Context, filter cgpo
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ListCalls++
+	return f.filteredSummaries(filter), nil
+}
+
+// filteredSummaries is the filter itself, without the call counting, so the two
+// listings can be told apart by a test that counts them.
+//
+// The caller holds f.mu.
+func (f *FakeQueryCallGraph) filteredSummaries(filter cgports.CallGraphFilter) []cgports.CallGraphSummary {
 	// nil, not an empty slice, when nothing matches: the store's own adapter
 	// returns nil and every caller is written against that.
 	var out []cgports.CallGraphSummary
@@ -780,12 +799,62 @@ func (f *FakeQueryCallGraph) ListCallGraphRecords(_ context.Context, filter cgpo
 	}
 	if filter.Offset > 0 {
 		if filter.Offset >= len(out) {
-			return nil, nil
+			return nil
 		}
 		out = out[filter.Offset:]
 	}
 	if filter.Limit > 0 && len(out) > filter.Limit {
 		out = out[:filter.Limit]
+	}
+	return out
+}
+
+// ListCallGraphCoordinates projects the same filtered listing onto the ledger's
+// keys.
+//
+// The two flags are read off the RECORDS the fake holds, not off the summaries.
+// A real store reads them from denormalised columns that a write puts there from
+// the record itself, so the two can never disagree; in the fake they are set
+// independently, and deriving the flags from the summary would let a test whose
+// summary says nothing hide a Partial record the resolution helpers must see.
+func (f *FakeQueryCallGraph) ListCallGraphCoordinates(_ context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphCoordinate, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.CoordinateListCalls++
+	sums := f.filteredSummaries(filter)
+	var out []cgports.CallGraphCoordinate
+	for _, s := range sums {
+		c := cgports.CallGraphCoordinate{
+			ModulePath:      s.ModulePath,
+			ModuleVersion:   s.ModuleVersion,
+			PipelineVersion: s.PipelineVersion,
+			AnyPartial:      s.OverallStatus == cgdomain.CallGraphStatusPartial,
+			AnyBelowFull: s.Completeness != cgdomain.CompletenessUnknown &&
+				!s.Completeness.IsBuiltWithBodies(),
+		}
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if s.ModuleVersion == coordinate.LocalVersion {
+			coord, cErr = coordinate.NewLocalCoordinate(s.ModulePath)
+		}
+		if cErr == nil {
+			key := coord.String() + "|" + s.PipelineVersion
+			gens := append([]cgdomain.CallGraphRecord(nil), f.history[key]...)
+			if rec, ok := f.records[key]; ok {
+				gens = append(gens, rec)
+			}
+			for _, rec := range gens {
+				if rec.OverallStatus == cgdomain.CallGraphStatusPartial {
+					c.AnyPartial = true
+				}
+				if rec.Completeness != cgdomain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
+					c.AnyBelowFull = true
+				}
+			}
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }

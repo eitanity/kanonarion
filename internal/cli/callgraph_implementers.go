@@ -226,23 +226,19 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 	// Resolution reads everything the store holds so a module analysed only
 	// under superseded logic is still recognised as owning the interface; the
 	// answer itself is drawn only from what this binary serves.
-	stored, err := listStoredSummaries(ctx, uc, sc.modules)
+	stored, err := listStoredCoordinates(ctx, uc, sc.modules)
 	if err != nil {
 		return out, err
 	}
-	sums, err := listScopedSummaries(ctx, uc, sc.modules)
+	coords, err := listScopedCoordinates(ctx, uc, sc.modules)
 	if err != nil {
 		return out, err
 	}
-	paths := make([]string, 0, len(stored))
-	for _, s := range stored {
-		paths = append(paths, s.ModulePath)
-	}
-	modulePath, ok := domain.ResolveSymbolModule(interfaceID, paths)
+	modulePath, ok := domain.ResolveSymbolModule(interfaceID, coordinatePaths(stored))
 	if !ok {
 		return out, nil
 	}
-	if !moduleServedAtThisPipeline(modulePath, sums) {
+	if !moduleServedAtThisPipeline(modulePath, coords) {
 		// Empty here would read as "nothing implements this interface", which is
 		// a claim about the code rather than about what has been measured.
 		return out, supersededPipelineError(interfaceID, modulePath, stored)
@@ -251,7 +247,7 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 	out.moduleAnalysed = true
 
 	seen := make(map[string]struct{})
-	for _, s := range sums {
+	for _, s := range coords {
 		if s.ModulePath != modulePath {
 			continue
 		}

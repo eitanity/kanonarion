@@ -102,6 +102,39 @@ func (uc *QueryCallGraphUseCase) ListCallGraphRecords(ctx context.Context, filte
 	return sums, nil
 }
 
+// ListCallGraphCoordinates returns the coordinates the ledger holds an analysis
+// of, without composing any of them.
+//
+// A store that cannot answer it from columns falls back to the composing
+// listing, which answers the same question at a cost; the fallback is here
+// rather than at each call site so no caller has to know which kind of store it
+// is wired to.
+func (uc *QueryCallGraphUseCase) ListCallGraphCoordinates(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphCoordinate, error) {
+	if lister, ok := uc.store.(cgports.CallGraphCoordinateLister); ok {
+		coords, lerr := lister.ListCallGraphCoordinates(ctx, filter)
+		if lerr != nil {
+			return nil, fmt.Errorf("listing analysed coordinates: %w", lerr)
+		}
+		return coords, nil
+	}
+	sums, err := uc.ListCallGraphRecords(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]cgports.CallGraphCoordinate, 0, len(sums))
+	for _, s := range sums {
+		out = append(out, cgports.CallGraphCoordinate{
+			ModulePath:      s.ModulePath,
+			ModuleVersion:   s.ModuleVersion,
+			PipelineVersion: s.PipelineVersion,
+			AnyPartial:      s.OverallStatus == domain.CallGraphStatusPartial,
+			AnyBelowFull: s.Completeness != domain.CompletenessUnknown &&
+				!s.Completeness.IsBuiltWithBodies(),
+		})
+	}
+	return out, nil
+}
+
 // FindCallers returns all edges where the callee matches symbolID, restricted
 // to the modules in scope (the zero ModuleSet imposes no restriction).
 func (uc *QueryCallGraphUseCase) FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
