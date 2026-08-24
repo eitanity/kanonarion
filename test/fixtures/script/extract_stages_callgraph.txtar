@@ -5,8 +5,12 @@ seedcallgraph $WORK/stores
 # run extract with only the callgraph stage; walk A has two modules:
 #   example.com/app@v1.0.0  — callgraph record seeded, subprocess hits cache
 #   example.com/dep@v1.0.0  — no seeded callgraph record; subprocess may fail gracefully
-kanonarion extract 01ARZ3NDEKTSV4RRFFQ69G5FAV --stages callgraph --store-root=$WORK/stores
-stdout 'Extraction run .* completed'
+# dep's stage fails, so the run is recorded partial and the process says so:
+# app's graph IS stored and the breakdown names what is not.
+! kanonarion extract 01ARZ3NDEKTSV4RRFFQ69G5FAV --stages callgraph --store-root=$WORK/stores
+stdout 'Extraction run .* completed with status: partial'
+stdout 'Failed stages \(1\):'
+stderr 'extraction partial: 1 stage\(s\) failed'
 
 # the callgraph record for app is readable after the subprocess path persisted it
 kanonarion callgraph-show example.com/app@v1.0.0 --store-root=$WORK/stores --json

@@ -47,11 +47,42 @@ func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func runExtract(ctx context.Context, walkID string, f extractFlags, stdout, stderr io.Writer) error {
+	run, err := extractWalk(ctx, walkID, f, stderr)
+	if err != nil {
+		return err
+	}
+	return renderExtraction(run, jsonOut, stdout)
+}
+
+// renderExtraction writes the run and reports the exit it earns. One exit for
+// both formats: the JSON document said partial while the process said success.
+func renderExtraction(run domain.ExtractionRun, asJSON bool, stdout io.Writer) error {
+	if asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(run); err != nil {
+			return fmt.Errorf("failed to encode JSON output: %w", err)
+		}
+		return extractionExit(run)
+	}
+
+	_, _ = fmt.Fprintf(stdout, "Extraction run %s completed with status: %s\n", run.ID, run.OverallStatus)
+	_, _ = fmt.Fprintf(stdout, "Modules processed: %d\n", len(run.PerModuleResults))
+
+	printExtractionFailures(stdout, run)
+
+	return extractionExit(run)
+}
+
+// extractWalk runs the requested stages and hands back the run it recorded.
+// Split from the rendering because a partial run returns no error, so a caller
+// that needs its failures must read the record rather than a returned error.
+func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.Writer) (domain.ExtractionRun, error) {
 	logger := buildLogger(logLevel, stderr)
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
-		return fmt.Errorf("initialising store: %w", err)
+		return domain.ExtractionRun{}, fmt.Errorf("initialising store: %w", err)
 	}
 	defer func() { _ = cleanup() }()
 
@@ -67,61 +98,77 @@ func runExtract(ctx context.Context, walkID string, f extractFlags, stdout, stde
 		Progress: newExtractProgressReporter(stderr, f.noProgress, activeConfig, logLevel),
 	})
 	if err != nil {
-		return fmt.Errorf("extraction execution failed: %w", err)
+		return domain.ExtractionRun{}, fmt.Errorf("extraction execution failed: %w", err)
 	}
+	return run, nil
+}
 
-	if jsonOut {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(run); err != nil {
-			return fmt.Errorf("failed to encode JSON output: %w", err)
-		}
+// extractionExit maps the recorded run status onto the process exit code. A
+// partial run is exit 1's definition — completed, known-incomplete — and the
+// exit code is the only part of this output a CI step reads. Only Succeeded is
+// enumerated as clean, so a status added later cannot default into one.
+func extractionExit(run domain.ExtractionRun) error {
+	switch run.OverallStatus {
+	case domain.ExtractionRunSucceeded:
 		return nil
+	case domain.ExtractionRunFailed:
+		return &exitError{code: ExitFailed, msg: fmt.Sprintf(
+			"extraction failed: run %s produced no usable stage", run.ID)}
+	case domain.ExtractionRunCancelled:
+		return &exitError{code: ExitCancelled, msg: fmt.Sprintf(
+			"extraction cancelled: run %s did not reach every module", run.ID)}
+	default:
+		return &exitError{code: ExitPartial, msg: fmt.Sprintf(
+			"extraction %s: %d stage(s) failed; run %s records which modules and stages",
+			run.OverallStatus, len(extractionFailures(run)), run.ID)}
 	}
+}
 
-	_, _ = fmt.Fprintf(stdout, "Extraction run %s completed with status: %s\n", run.ID, run.OverallStatus)
-	_, _ = fmt.Fprintf(stdout, "Modules processed: %d\n", len(run.PerModuleResults))
+// extractStageFailure is one module/stage pair an extraction run recorded as
+// failed — what "N stages failed" is a count of.
+type extractStageFailure struct {
+	Module string `json:"module"`
+	Stage  string `json:"stage"`
+	Error  string `json:"error,omitempty"`
+}
 
-	printExtractionFailures(stdout, run)
-
-	return nil
+// extractionFailures lists the run's failed stages, ordered so two readings of
+// one run agree.
+func extractionFailures(run domain.ExtractionRun) []extractStageFailure {
+	failures := []extractStageFailure{}
+	for coord, modResult := range run.PerModuleResults {
+		for stageName, stageResult := range modResult.Stages {
+			if stageResult.Status == domain.StageFailed {
+				failures = append(failures, extractStageFailure{
+					Module: coord.String(),
+					Stage:  stageName,
+					Error:  stageResult.Error,
+				})
+			}
+		}
+	}
+	slices.SortFunc(failures, func(a, b extractStageFailure) int {
+		if a.Module != b.Module {
+			return strings.Compare(a.Module, b.Module)
+		}
+		return strings.Compare(a.Stage, b.Stage)
+	})
+	return failures
 }
 
 // printExtractionFailures prints a breakdown of failed stages when the run is
 // partial or failed. It is a no-op when every stage succeeded.
 func printExtractionFailures(w io.Writer, run domain.ExtractionRun) {
-	type stageFailure struct {
-		module string
-		stage  string
-		errMsg string
-	}
-	var failures []stageFailure
-	for coord, modResult := range run.PerModuleResults {
-		for stageName, stageResult := range modResult.Stages {
-			if stageResult.Status == domain.StageFailed {
-				failures = append(failures, stageFailure{
-					module: coord.String(),
-					stage:  stageName,
-					errMsg: stageResult.Error,
-				})
-			}
-		}
-	}
+	failures := extractionFailures(run)
 	if len(failures) == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "Failed stages (%d):\n", len(failures))
-	slices.SortFunc(failures, func(a, b stageFailure) int {
-		if a.module != b.module {
-			return strings.Compare(a.module, b.module)
-		}
-		return strings.Compare(a.stage, b.stage)
-	})
 	for _, f := range failures {
-		if f.errMsg != "" {
-			_, _ = fmt.Fprintf(w, "  %s  stage=%s  error=%s\n", f.module, f.stage, f.errMsg)
+		if f.Error != "" {
+			_, _ = fmt.Fprintf(w, "  %s  stage=%s  error=%s\n", f.Module, f.Stage, f.Error)
 		} else {
-			_, _ = fmt.Fprintf(w, "  %s  stage=%s\n", f.module, f.stage)
+			_, _ = fmt.Fprintf(w, "  %s  stage=%s\n", f.Module, f.Stage)
 		}
 	}
 }

@@ -19,6 +19,7 @@ package childproc
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"sync"
 	"time"
@@ -79,4 +80,21 @@ func (b *syncBuffer) Bytes() []byte {
 	defer b.mu.Unlock()
 	out := b.buf.Bytes()
 	return bytes.Clone(out)
+}
+
+// PartialExitCode is the exit code a kanonarion child uses for work it completed
+// and knows to be incomplete — a call graph missing some packages, an extraction
+// missing some stages.
+const PartialExitCode = 1
+
+// exitCoder is what an *exec.ExitError satisfies; the interface keeps the check
+// exercisable without spawning a process.
+type exitCoder interface{ ExitCode() int }
+
+// ExitedPartial reports whether err is a child exit carrying PartialExitCode. A
+// parent must not read that as a failure: the child wrote its record, and the
+// record is what says how complete it is.
+func ExitedPartial(err error) bool {
+	var ec exitCoder
+	return errors.As(err, &ec) && ec.ExitCode() == PartialExitCode
 }

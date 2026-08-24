@@ -200,14 +200,24 @@ golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
 
 | Code | Meaning |
 |---|---|
-| `0` | A graph exists — `Extracted`, or `Partial` with its incompleteness scoped to the packages named on the `failed packages` line |
+| `0` | `Extracted`: the graph covers every package the module builds |
+| `1` | `Partial`: a graph exists and is known-incomplete, with its incompleteness scoped to the packages named on the `failed packages` line |
 | `2` | No graph at all: `LoadFailed`, or a `Partial` that measured no functions. The message repeats the recorded failure detail |
 | `3` | `Cancelled`: the run ended before the graph was walked |
+| `10` | Two stored records for this coordinate disagree, or one failed its content-hash check. The message names the remedy, `callgraph-show --history` |
 
-A `Partial` graph is an answer and exits `0`. A `Partial` carrying zero nodes is
-not one: nothing was measured, so it exits `2` alongside `LoadFailed`. Whether an
-unanalysable dependency should fail a build is a policy question this command
-does not answer.
+`ExcludedByConfig` exits `0`: the module is listed in `callgraph.exclude`, so the
+absent graph is the outcome the operator asked for rather than one the run failed
+to produce. Every other status that produced no graph — `LoadFailed`,
+`OutOfMemory`, `ExtractionFailed` — exits `2`.
+
+A `Partial` graph is an answer, and `1` is [the code for an answer that is
+known-incomplete](conventions.md#exit-codes) — the same code a partial walk and a
+licence-incomplete SBOM use, so a caller for which an incomplete graph will do
+accepts `0` and `1` alike. A `Partial` carrying zero nodes is not an answer at
+all: nothing was measured, so it exits `2` alongside `LoadFailed`. Whether an
+incomplete or unanalysable dependency should fail a build is a policy question
+this command does not answer — it reports which of the three it has.
 
 ### When a module does not load
 

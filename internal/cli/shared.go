@@ -25,6 +25,12 @@ import (
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
+	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
+	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	licenceports "github.com/eitanity/kanonarion/internal/license/ports"
+	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -985,9 +991,30 @@ func ExitCodeFromError(err error) (int, bool) {
 	return 0, false
 }
 
+// evidenceInDoubt is every sentinel meaning the recorded evidence cannot be
+// trusted: a stored record whose content hash does not verify, or two records
+// for one coordinate that disagree. The table gives both to ExitIntegrity and
+// does not qualify either by which domain raised it.
+//
+// Only the walk sentinel was mapped, so the other twelve reached ExitConfig by
+// the fallback — which says the invocation itself was wrong, and routes a
+// store-integrity problem to whoever fixes broken command lines. A sentinel
+// added to a ports package must be added here; the contract test reads the
+// ports packages and fails if one is missing.
+var evidenceInDoubt = []error{
+	walkports.ErrWalkIntegrity,
+	cgports.ErrCallGraphIntegrity, cgports.ErrCallGraphConflict,
+	ifaceports.ErrInterfaceIntegrity, ifaceports.ErrInterfaceConflict,
+	licenceports.ErrLicenceIntegrity, licenceports.ErrLicenceConflict,
+	exampleports.ErrExampleIntegrity, exampleports.ErrExampleConflict,
+	extractports.ErrExtractionRunIntegrity,
+	vulnports.ErrVulnIntegrity, vulnports.ErrSnapshotIntegrity,
+	stdlibports.ErrFactsIntegrity, stdlibports.ErrFactsConflict,
+}
+
 // ExitCodeForError maps a Run error onto the process exit code. It honours an
 // explicit exit-code carrier on the chain first (so categories like ExitNotFound
-// survive), then the walk-integrity sentinel, and otherwise falls back to
+// survive), then the evidence-in-doubt sentinels, and otherwise falls back to
 // ExitConfig. Shared by every main package so the binary's exit semantics are
 // defined once here rather than duplicated per entry point.
 //
@@ -1006,8 +1033,10 @@ func ExitCodeForError(err error) int {
 	if code, ok := ExitCodeFromError(err); ok {
 		return code
 	}
-	if errors.Is(err, walkports.ErrWalkIntegrity) {
-		return ExitIntegrity
+	for _, sentinel := range evidenceInDoubt {
+		if errors.Is(err, sentinel) {
+			return ExitIntegrity
+		}
 	}
 	// A divergence — two records for one coordinate disagreeing on a hash they
 	// both carry — is an integrity failure, not a configuration error. A

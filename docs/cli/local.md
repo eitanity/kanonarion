@@ -109,6 +109,13 @@ can be scoped with one query instead of a grep:
 kanonarion implementers 'example.com/mod/internal/vuln/ports.VulnerabilityStore'
 ```
 
+## Exit codes
+
+`local` exits on what the extraction established, using the same mapping as
+[`callgraph`](callgraph.md#exit-codes): `0` for a complete graph, `1` for a
+`Partial` one (an answer, scoped by the `failed packages` line), `2` for no
+graph at all, `3` for a cancelled run.
+
 ## Flags
 
 | Flag | Default | Description |

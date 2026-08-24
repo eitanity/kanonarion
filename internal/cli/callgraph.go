@@ -125,35 +125,33 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 
 // callGraphExtractionExit maps an extraction outcome onto the process exit code.
 //
-// An extraction that produced no graph at all used to exit 0 while printing
-// LoadFailed, so any caller that branched on the exit code — a script, a make
-// rule, a batch loop over a build list — read a failed extraction as a
-// successful one and moved on. The record already carries the distinction; the
-// exit code simply was not reading it.
-//
-// Only the no-graph outcomes are mapped. A Partial graph is a real graph with a
-// named scope of incompleteness (FailedPackages), and callers that treat 0 as
-// "an answer exists" are right about it; promoting it to ExitPartial would
-// change the meaning of a hundred existing outcomes to make a point this defect
-// does not raise.
-//
-// A Partial carrying no nodes is not one of those: nothing was measured, so the
-// condition the exit code states — a graph exists — is false, and the script the
-// code exists for moves on from an extraction that produced nothing.
+// Three outcomes, three codes: a complete graph, one scoped by its
+// FailedPackages line, and no graph at all. Partial took the complete graph's 0
+// for being an answer — which it is, and 1 is the code for an answer that is
+// known-incomplete. A Partial carrying no nodes stays at 2 with LoadFailed.
 func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
 	msg := fmt.Sprintf("%s: %s", r.Coordinate, r.OverallStatus.String())
 	if r.FailureDetail != "" {
 		msg += " — " + r.FailureDetail
 	}
-	switch {
-	case r.OverallStatus == cgdomain.CallGraphStatusLoadFailed:
-		return &exitError{code: ExitFailed, msg: msg}
-	case r.OverallStatus == cgdomain.CallGraphStatusCancelled:
-		return &exitError{code: ExitCancelled, msg: msg}
-	case r.OverallStatus == cgdomain.CallGraphStatusPartial && r.NodeCount == 0:
-		return &exitError{code: ExitFailed, msg: msg}
-	default:
+	switch r.OverallStatus {
+	// ExcludedByConfig shares Extracted's 0 by decision, not by omission: the
+	// operator listed this module in callgraph.exclude, so the absent graph is
+	// the outcome they asked for rather than one this run failed to produce.
+	case cgdomain.CallGraphStatusExtracted, cgdomain.CallGraphStatusExcludedByConfig:
 		return nil
+	case cgdomain.CallGraphStatusPartial:
+		if r.NodeCount == 0 {
+			return &exitError{code: ExitFailed, msg: msg}
+		}
+		return &exitError{code: ExitPartial, msg: msg}
+	case cgdomain.CallGraphStatusCancelled:
+		return &exitError{code: ExitCancelled, msg: msg}
+	default:
+		// LoadFailed, OutOfMemory, ExtractionFailed, Unknown, and any status added
+		// later: no graph exists, so nothing downstream can consume this
+		// coordinate. Only the two answers above are enumerated as clean.
+		return &exitError{code: ExitFailed, msg: msg}
 	}
 }
 

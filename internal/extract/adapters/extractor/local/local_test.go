@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,6 +70,12 @@ func (f *fakeSubprocessExecutor) Execute(ctx context.Context, args []string) ([]
 	f.mu.Unlock()
 	return stderr, err
 }
+
+// fakeExitStatus stands in for the *exec.ExitError a real child produces.
+type fakeExitStatus struct{ code int }
+
+func (f fakeExitStatus) Error() string { return fmt.Sprintf("exit status %d", f.code) }
+func (f fakeExitStatus) ExitCode() int { return f.code }
 
 // fakeCallGraphReader is a controllable CallGraphReader for tests.
 type fakeCallGraphReader struct {
@@ -821,6 +828,59 @@ func TestAdapterExtractor_Extract_Misc(t *testing.T) {
 		_, err := adapter.Extract(ctx, coord, "unknown", false, "")
 		if err == nil {
 			t.Fatal("expected error for unknown stage")
+		}
+	})
+}
+
+// The parent classifies the record its callgraph child wrote, not the child's
+// exit status. Exit 1 is the child saying its graph is known-incomplete; reading
+// that as an execution fault reported measured modules as unmeasured.
+func TestAdapterExtractor_CallGraph_PartialChildExit(t *testing.T) {
+	ctx := t.Context()
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+
+	// A child that exited Partial built a graph and stored it. The stage is
+	// classified from that record, exactly as it is on a clean exit: reading the
+	// exit status as an execution fault reported the module's call graph as
+	// unmeasured when it had been measured, with named gaps.
+	t.Run("partial exit is classified from the stored record, not the exit status", func(t *testing.T) {
+		exec := &fakeSubprocessExecutor{
+			stderr: []byte("error: github.com/foo/bar@v1.0.0: Partial — could not import example.com/plot"),
+			err:    fakeExitStatus{code: 1},
+		}
+		reader := &fakeCallGraphReader{
+			found: true,
+			rec: cgdomain.CallGraphRecord{
+				ContentHash:   "hash-cg-partial",
+				OverallStatus: cgdomain.CallGraphStatusPartial,
+			},
+		}
+		adapter := newCallgraphAdapter(exec, reader)
+		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
+		if err != nil {
+			t.Fatalf("Extract failed: %v", err)
+		}
+		if res.Status != domain.StageSucceeded {
+			t.Errorf("Status = %v, want Succeeded: the graph IS in the store", res.Status)
+		}
+		if res.RecordID != "hash-cg-partial" {
+			t.Errorf("RecordID = %q, want the stored record's hash", res.RecordID)
+		}
+	})
+
+	// A child that exited saying it produced no graph is still a failed stage.
+	t.Run("no-graph exit still marks StageFailed", func(t *testing.T) {
+		exec := &fakeSubprocessExecutor{
+			stderr: []byte("error: github.com/foo/bar@v1.0.0: LoadFailed"),
+			err:    fakeExitStatus{code: 2},
+		}
+		adapter := newCallgraphAdapter(exec, &fakeCallGraphReader{})
+		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
+		if err != nil {
+			t.Fatalf("Extract failed: %v", err)
+		}
+		if res.Status != domain.StageFailed {
+			t.Errorf("Status = %v, want Failed", res.Status)
 		}
 	})
 }

@@ -26,10 +26,11 @@ func TestCallGraphExtractionExit_FailedExtractionDoesNotReportSuccess(t *testing
 		{"load failed", cgdomain.CallGraphStatusLoadFailed, false, ExitFailed},
 		{"cancelled", cgdomain.CallGraphStatusCancelled, false, ExitCancelled},
 		{"extracted", cgdomain.CallGraphStatusExtracted, false, ExitOK},
-		// A Partial graph IS an answer, with its incompleteness scoped to named
-		// packages. Promoting it here would change the meaning of every partial
-		// outcome in the store to make a point this defect does not raise.
-		{"partial", cgdomain.CallGraphStatusPartial, false, ExitOK},
+		// A Partial graph IS an answer, and 1 is the code for an answer that is
+		// known-incomplete. It shared 0 with a complete graph, so nothing a script
+		// reads distinguished a graph covering every package from one covering a
+		// fraction of them.
+		{"partial", cgdomain.CallGraphStatusPartial, false, ExitPartial},
 		// Unless it carries nothing: the condition the code states is that a graph
 		// exists, and a caller that keeps going has moved on from an extraction
 		// which measured no function at all.

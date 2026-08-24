@@ -8,9 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -231,6 +236,37 @@ func TestExitCodeContract_IncompleteArtefactIsPartial(t *testing.T) {
 			return sbomGenerateWith(context.Background(), ctr, "W1",
 				sbomFlags{format: "cyclonedx-1.6", operator: "tester"}, time.Time{}, &stdout, io.Discard)
 		}},
+		// An extraction run recorded partial has left named modules' public API
+		// permanently unmeasured, and the stages that did run are stored. Same
+		// class as the SBOM above, and it answered 0 — so a CI step running the
+		// documented pipeline step passed green over it.
+		{"extract with a failed stage", ExitPartial, func(_ *testing.T) error {
+			return extractionExit(extractdomain.ExtractionRun{
+				ID:            "01EXTRACTRUN00000000000001",
+				OverallStatus: extractdomain.ExtractionRunPartial,
+				PerModuleResults: map[coordinate.ModuleCoordinate]extractdomain.ModuleExtractionResult{
+					coordinatetest.MustNew("example.com/mod", "v1.0.0"): {
+						Stages: map[string]extractdomain.StageResult{
+							"interface": {Status: extractdomain.StageFailed, Error: "conflicting interface records"},
+						},
+					},
+				},
+			})
+		}},
+		// inspect over a dependency set some of which went unanalysed. The summary
+		// IS still printed and names the gap; the table has always listed inspect
+		// here, and the --gomod form answered 0.
+		{"inspect --gomod over a partial closure", ExitPartial, func(_ *testing.T) error {
+			return inspectExit(inspectSummaryStatus(0, 2, 0, vuldomain.WalkStatusAllClean))
+		}},
+		// A Partial call graph is the same artefact-with-a-hole: a graph exists,
+		// and the failed packages line scopes what it does not cover.
+		{"callgraph returning a Partial graph", ExitPartial, func(t *testing.T) error {
+			rec := makeCGRecord(t)
+			rec.OverallStatus = cgdomain.CallGraphStatusPartial
+			rec.FailureDetail = "could not import example.com/plot"
+			return callGraphExtractionExit(rec)
+		}},
 	})
 }
 
@@ -294,6 +330,17 @@ func TestExitCodeContract_PinnedFrameWithNoRecordIsNotFound(t *testing.T) {
 				uc, walks, nil, &bytes.Buffer{})
 		}},
 	})
+}
+
+// The taxonomy crosses a process boundary: `extract` spawns `kanonarion
+// callgraph` per module and classifies what comes back. If the child's Partial
+// code and the parent's idea of it ever drift, every incompletely-analysable
+// module is recorded as a failed stage while its graph sits in the store.
+func TestExitCodeContract_PartialSurvivesTheProcessBoundary(t *testing.T) {
+	if childproc.PartialExitCode != ExitPartial {
+		t.Errorf("childproc.PartialExitCode = %d, ExitPartial = %d; the parent reads the child's exit code and the two must be one number",
+			childproc.PartialExitCode, ExitPartial)
+	}
 }
 
 // The three classes must not collide. This is the whole contract in one

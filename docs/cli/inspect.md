@@ -173,12 +173,40 @@ not counted as findings)` with its retraction date. See
 ```json
 {
   "module_count": 21,
+  "node_fails": 0,
+  "extract_fails": 0,
+  "extract_failures": [],
+  "scan_fails": 0,
   "overall_status": "AllClean",
   "affected_count": 0,
   "snapshot_version": "2026-05-07T19:21:40Z",
   "walk_ids": ["01KQDBVW092ER1HNXZ60X27CMD"]
 }
 ```
+
+## When a stage does not measure a module
+
+`inspect` runs [`extract`](extract.md) over the walk it just made. A stage that
+fails leaves that module's licence, public API, call graph or examples
+unmeasured, and the summary says so on both paths rather than presenting the
+gap as a clean result:
+
+- `extract_fails` is the **count of failed stages** on the run this invocation
+  recorded — the same number `extract` prints as `Failed stages (N)`, not a 0/1
+  flag. It is emitted at zero like the tallies beside it.
+- `extract_failures` names them: one `{module, stage, error}` object per failed
+  stage, an empty list when none failed.
+- The breakdown is also printed to **stderr** as the extraction step runs, so a
+  text reader sees the coordinates without `--json`.
+- Any non-zero tally moves `Status` off `AllClean` to `Partial`; the text
+  summary adds an `Extract fails: N` line, and the run exits
+  [`1`](conventions.md#exit-codes) — the work completed and is
+  known-incomplete. The other roll-up words keep exit `0`.
+
+An extraction that could not run at all — rather than one that ran and lost
+stages — reports `extract_fails: 1` with an empty `extract_failures` and the
+reason on stderr: there is no breakdown to count, and zero is the one answer
+that would be wrong.
 
 ## Vendored builds
 

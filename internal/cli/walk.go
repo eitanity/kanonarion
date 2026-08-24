@@ -316,21 +316,36 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		}
 	}
 
-	switch rec.OverallStatus {
-	case domain.WalkFailed:
-		return result, &exitError{code: ExitFailed, msg: "walk failed: project go.mod could not be resolved"}
-	case domain.WalkCancelled:
-		return result, &exitError{code: ExitCancelled, msg: "walk cancelled"}
-	case domain.WalkPartial:
-		if !allowPartial {
-			msg := "walk partial: some dependencies could not be fetched"
-			if rootIngestErr != "" {
-				msg = "walk partial: the dependency graph is complete, but the project's own packages were not ingested"
-			}
-			return result, &exitError{code: ExitPartial, msg: msg}
-		}
+	partialMsg := "walk partial: some dependencies could not be fetched"
+	if rootIngestErr != "" {
+		partialMsg = "walk partial: the dependency graph is complete, but the project's own packages were not ingested"
 	}
-	return result, nil
+	return result, walkExit(rec.OverallStatus, allowPartial,
+		"walk failed: project go.mod could not be resolved", partialMsg)
+}
+
+// walkExit maps the recorded walk status onto the process exit code.
+//
+// Only Succeeded is enumerated as clean, and --allow-partial lifts Partial's
+// code alone. A status this build does not recognise is not a completed walk, so
+// it degrades to Partial rather than falling through to success.
+func walkExit(status domain.WalkStatus, allowPartial bool, failedMsg, partialMsg string) error {
+	switch status {
+	case domain.WalkSucceeded:
+		return nil
+	case domain.WalkFailed:
+		return &exitError{code: ExitFailed, msg: failedMsg}
+	case domain.WalkCancelled:
+		return &exitError{code: ExitCancelled, msg: "walk cancelled"}
+	case domain.WalkPartial:
+		if allowPartial {
+			return nil
+		}
+		return &exitError{code: ExitPartial, msg: partialMsg}
+	default:
+		return &exitError{code: ExitPartial, msg: fmt.Sprintf(
+			"the walk reports an unrecognised status %q; its completeness cannot be established", status)}
+	}
 }
 
 // rootIngestFailure returns the reason --analyse-root did not ingest the
@@ -424,17 +439,9 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 		}
 	}
 
-	switch rec.OverallStatus {
-	case domain.WalkFailed:
-		return result, &exitError{code: ExitFailed, msg: "walk failed: target module could not be fetched"}
-	case domain.WalkCancelled:
-		return result, &exitError{code: ExitCancelled, msg: "walk cancelled"}
-	case domain.WalkPartial:
-		if !allowPartial {
-			return result, &exitError{code: ExitPartial, msg: "walk partial: some dependencies could not be fetched"}
-		}
-	}
-	return result, nil
+	return result, walkExit(rec.OverallStatus, allowPartial,
+		"walk failed: target module could not be fetched",
+		"walk partial: some dependencies could not be fetched")
 }
 
 // ---- walk-list command ----
