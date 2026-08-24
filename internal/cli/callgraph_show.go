@@ -22,6 +22,7 @@ type callGraphShowFlags struct {
 	limitEdges int
 	nodeFilter string
 	history    bool
+	diff       bool
 	source     string
 }
 
@@ -36,6 +37,7 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node Execute
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node github.com/spf13/pflag
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --history
+  kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff
   kanonarion callgraph-show example.com/mod@local --source worktree`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -55,6 +57,7 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&f.limitNodes, "limit-nodes", 50, "max nodes to print (0=unlimited)")
 	cmd.Flags().IntVar(&f.limitEdges, "limit-edges", 100, "max edges to print (0=unlimited)")
 	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of the composed answer")
+	cmd.Flags().BoolVar(&f.diff, "diff", false, "report what the distinct stored measurements for the module differ about, instead of the composed answer")
 	cmd.Flags().StringVar(&f.source, "source", "", "restrict to graphs built from one source: zip or worktree")
 
 	return cmd
@@ -90,6 +93,9 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	}
 	if f.history {
 		return runCallGraphHistory(ctx, coord, uc, stdout)
+	}
+	if f.diff {
+		return runCallGraphDiff(ctx, coord, f, jsonOut, uc, stdout)
 	}
 
 	r, found, err := uc.GetCallGraphRecordFrom(ctx, coord, cgapp.PipelineVersion, source)

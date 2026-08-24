@@ -32,6 +32,17 @@ type composeSpec struct {
 	detail string
 	// nodeless drops the graph entirely, as a failed extraction's record does.
 	nodeless bool
+	// buildList names the walk whose resolved versions were offered to the
+	// analysis. Empty is a record that was offered none, which is every record
+	// written before the field existed.
+	buildList string
+	// externalNodeFile is the declaration file recorded for a node OUTSIDE the
+	// analysed module — a path in the analysing host's toolchain, which is what
+	// varies between two runs on two toolchains.
+	externalNodeFile string
+	// inModuleNodeFile is the same for the module's own node, where the path is
+	// relative to the module root and is a claim about this module.
+	inModuleNodeFile string
 }
 
 func composeRecord(t *testing.T, spec composeSpec) domain.CallGraphRecord {
@@ -74,6 +85,20 @@ func composeRecord(t *testing.T, spec composeSpec) domain.CallGraphRecord {
 		PipelineVersion:    "0.3.0",
 		FailureCause:       spec.cause,
 		FailureDetail:      spec.detail,
+		BuildListSource:    spec.buildList,
+	}
+	if spec.inModuleNodeFile != "" {
+		r.Nodes[0].Position = domain.SourcePosition{File: spec.inModuleNodeFile, Line: 1}
+	}
+	if spec.externalNodeFile != "" {
+		external := domain.CallNode{ID: "bytes.NewBuffer", Symbol: "NewBuffer", Package: "bytes", IsExternal: true}
+		// "(unrecorded)" stands for a generation that states no position at all,
+		// which is what every record written before positions were captured says.
+		if spec.externalNodeFile != "(unrecorded)" {
+			external.Position = domain.SourcePosition{File: spec.externalNodeFile, Line: 1}
+		}
+		r.Nodes = append(r.Nodes, external)
+		r.NodeCount = len(r.Nodes)
 	}
 	if spec.nodeless {
 		r.Nodes = []domain.CallNode{}

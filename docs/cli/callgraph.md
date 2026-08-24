@@ -204,7 +204,7 @@ golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
 | `1` | `Partial`: a graph exists and is known-incomplete, with its incompleteness scoped to the packages named on the `failed packages` line |
 | `2` | No graph at all: `LoadFailed`, or a `Partial` that measured no functions. The message repeats the recorded failure detail |
 | `3` | `Cancelled`: the run ended before the graph was walked |
-| `10` | Two stored records for this coordinate disagree, or one failed its content-hash check. The message names the remedy, `callgraph-show --history` |
+| `10` | Two stored records for this coordinate disagree, or one failed its content-hash check. The message names what differs and the remedy, `callgraph-show --diff` |
 
 `ExcludedByConfig` exits `0`: the module is listed in `callgraph.exclude`, so the
 absent graph is the outcome the operator asked for rather than one the run failed
@@ -261,6 +261,7 @@ kanonarion callgraph-show <module>@<version> [flags]
 | `--limit-nodes` | `50` | Maximum nodes to print (`0` = unlimited) |
 | `--limit-edges` | `100` | Maximum edges to print (`0` = unlimited) |
 | `--history` | `false` | List every stored generation for the module instead of the composed answer |
+| `--diff` | `false` | Report what the distinct stored measurements for the module differ about, instead of the composed answer |
 | `--source` | _(default)_ | Restrict to graphs built from one source: `zip` or `worktree` |
 
 ```
@@ -479,16 +480,28 @@ a checkout the ledger has analysed, and then that tree answers. A zip record at 
 project's own coordinate is a by-product of its own extraction rather than a
 competing analysis. `--source worktree` asks for the other one.
 
+A call graph is an analysis of a module resolved against a **build list**, and
+`build_list_source` names the walk that supplied it. Two generations offered
+different build lists were handed different dependency closures, so they answer
+different questions and are never compared for agreement — the ladder still ranks
+them, and the served record names its own build list. A generation that names no
+build list cannot be shown to have been asked a different question, so it goes on
+comparing against every other.
+
 Two disagreements are reported rather than resolved by picking: two analyses of
 one pinned version that name **different artefacts**, and two records at the
-**same completeness** that disagree about the graph (the narrow case that
-indicates non-determinism in the analyser). A disputed module is reported on its
+**same completeness**, offered the **same build list**, that disagree about the
+graph (the narrow case that indicates non-determinism in the analyser). A disputed module is reported on its
 own row in `callgraph-list` rather than failing the whole listing. Every such
 refusal prints the commands that address it — a refusal the append-only ledger
 makes permanent and that names no route out is a dead end.
 
 The graph comparison is over the **graph** and nothing else: the node, edge,
-interface and implementation collections and the counts stated with them. Two
+interface and implementation collections and the counts stated with them. Where
+a node **outside** the analysed module is declared is not part of it: that is a
+path in the analysing host's toolchain and module cache, so the same stdlib
+symbol comes back under whichever `GOROOT` loaded it. The module's own
+declaration positions are relative to its root and are compared. Two
 generations that recorded the same graph and described their run differently —
 different `failure_cause`, `failure_detail` or failed-package set — are **not**
 in conflict, because no answer the tool serves depends on the difference. It is
@@ -508,7 +521,14 @@ every generation at the highest completeness present, so an analysis landing at
 the same completeness adds a third and the disagreement stands. The refusal names
 `kanonarion callgraph <module> --force` where a higher completeness is still
 available, and where the pair is already `BUILT_WITH_BODIES` it sends you to
-`--history` to decide which measurement to trust instead.
+`--diff` to decide which measurement to trust instead.
+
+`callgraph-show --diff` is the instrument those refusals name. It groups the
+generations by what they measured, validates each by its own content hash — the
+hash is sealed over `extracted_at`, so it can answer "is this record intact" and
+never "do these two agree" — and then reports the record fields, nodes, edges,
+interfaces and implementations the first two measurements differ about. Where
+the graphs agree and only the inputs differ, it says so.
 
 ### `callgraph-list`
 

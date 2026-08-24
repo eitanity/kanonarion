@@ -82,6 +82,16 @@ type CallGraphConflict struct {
 
 	// ContentHashes name the records carrying each of Values, in the same order.
 	ContentHashes []string
+
+	// Difference is what the first two disagreeing generations actually differ
+	// about, when the conflict is one over the graph and both generations passed
+	// their own seal.
+	//
+	// It is on the conflict rather than left to a second command because the
+	// refusal is what the reader is handed, and two digests are not something
+	// they can act on. It is nil when the comparison could not be validated:
+	// an unverifiable record is not evidence, and a diff of one would read as one.
+	Difference *GenerationDiff
 }
 
 // The field names a CallGraphConflict can carry. They are constants rather than
@@ -210,10 +220,12 @@ func (c CallGraphConflict) Remedy() Remedy {
 		// route when there is not.
 		if c.Completeness == CompletenessBuiltWithBodies {
 			return Remedy{
-				Lead: "Two analyses of the same artefact disagree about the graph, and both built it as fully as this " +
-					"analyser can. Re-analysing appends a generation and retires neither, so nothing clears this from " +
-					"the outside — read the generations and decide which measurement to trust",
+				Lead: "Two analyses of the same artefact, offered the same build list, disagree about the graph, and " +
+					"both built it as fully as this analyser can. Re-analysing appends a generation and retires " +
+					"neither, so nothing clears this from the outside — compare the generations and decide which " +
+					"measurement to trust",
 				Lines: []string{
+					"kanonarion callgraph-show " + coord + " --diff",
 					"kanonarion callgraph-show " + coord + " --history",
 				},
 			}
@@ -221,8 +233,9 @@ func (c CallGraphConflict) Remedy() Remedy {
 		return Remedy{
 			Lead: "Two analyses of the same artefact at the same completeness disagree about the graph. " +
 				"Only an analysis that gets FURTHER than they did settles it — one that fails the same way appends " +
-				"a third generation and the disagreement stands. Inspect the generations, then measure again",
+				"a third generation and the disagreement stands. Compare the generations, then measure again",
 			Lines: []string{
+				"kanonarion callgraph-show " + coord + " --diff",
 				"kanonarion callgraph-show " + coord + " --history",
 				// --force is on the analysis because a stored answer already exists, so
 				// without it the run is served from cache and reads as the remedy having
@@ -241,9 +254,13 @@ func (c CallGraphConflict) Remedy() Remedy {
 // renders it, and a remedy the renderer had to remember to add is one that goes
 // missing on the paths nobody thought of.
 func (c CallGraphConflict) Error() string {
+	difference := ""
+	if c.Difference != nil {
+		difference = "\ndiffering: " + c.Difference.Summary()
+	}
 	return fmt.Sprintf(
-		"conflicting call graph records for %s at pipeline %s: %s disagrees (%v; records %v)\n%s",
-		c.Coordinate, c.PipelineVersion, c.Field, c.Values, c.ContentHashes, c.Remedy(),
+		"conflicting call graph records for %s at pipeline %s: %s disagrees (%v; records %v)%s\n%s",
+		c.Coordinate, c.PipelineVersion, c.Field, c.Values, c.ContentHashes, difference, c.Remedy(),
 	)
 }
 
@@ -644,7 +661,57 @@ func findConflict(records []CallGraphRecord) *CallGraphConflict {
 			tied = append(tied, r)
 		}
 	}
-	return graphDisagreement(tied)
+	for _, group := range answeringOneQuestion(tied) {
+		if c := graphDisagreement(group); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// answeringOneQuestion splits records into the groups whose members were asked
+// the same question, so that only those are compared for agreement.
+//
+// A call graph is an analysis of a module RESOLVED AGAINST A BUILD LIST: two
+// walks that pinned different dependency versions gave the analyser different
+// closures to build, and the two graphs that come back are two truthful answers
+// rather than one measurement taken twice. BuildListSource already records
+// which walk, and composition used to raise a conflict without reading it.
+//
+// A record naming no build list joins every group. Absence is not a third build
+// list — it is a record that cannot be shown to have answered a different
+// question, and segregating it would leave it comparing against nothing.
+//
+// Ranking is untouched. This decides only what may CONTRADICT what; which
+// generation the ladder serves is unchanged, and the served record names its own
+// build list, so an answer is never laundered into an answer to the other
+// question.
+func answeringOneQuestion(records []CallGraphRecord) [][]CallGraphRecord {
+	named := map[string]bool{}
+	for _, r := range records {
+		if r.BuildListSource != "" {
+			named[r.BuildListSource] = true
+		}
+	}
+	if len(named) < 2 {
+		return [][]CallGraphRecord{records}
+	}
+	sources := make([]string, 0, len(named))
+	for s := range named {
+		sources = append(sources, s)
+	}
+	sort.Strings(sources)
+	groups := make([][]CallGraphRecord, 0, len(sources))
+	for _, s := range sources {
+		group := make([]CallGraphRecord, 0, len(records))
+		for _, r := range records {
+			if r.BuildListSource == s || r.BuildListSource == "" {
+				group = append(group, r)
+			}
+		}
+		groups = append(groups, group)
+	}
+	return groups
 }
 
 // graphDisagreement reports whether these records make DIFFERENT claims about
@@ -702,7 +769,34 @@ func graphDisagreement(records []CallGraphRecord) *CallGraphConflict {
 		return nil
 	}
 	c.Completeness = records[0].Completeness
-	return reportedAsWholeDigests(c, records)
+	return describingTheDifference(reportedAsWholeDigests(c, records), records)
+}
+
+// describingTheDifference attaches what the first two named generations differ
+// about, so the refusal says more than which digests failed to match.
+//
+// A comparison that cannot be validated is left off rather than reported
+// unvalidated: a record that fails its own seal is not evidence of a
+// disagreement, and the refusal already stands on the digests.
+func describingTheDifference(c *CallGraphConflict, records []CallGraphRecord) *CallGraphConflict {
+	if c == nil || len(c.ContentHashes) < 2 {
+		return c
+	}
+	byHash := make(map[string]CallGraphRecord, len(records))
+	for _, r := range records {
+		byHash[r.ContentHash] = r
+	}
+	left, okL := byHash[c.ContentHashes[0]]
+	right, okR := byHash[c.ContentHashes[1]]
+	if !okL || !okR {
+		return c
+	}
+	diff, err := DiffGenerations(left, right)
+	if err != nil {
+		return c
+	}
+	c.Difference = &diff
+	return c
 }
 
 // GraphClaimFields names the canonical fields that ARE the call graph, sorted.
@@ -965,6 +1059,24 @@ func GraphDigest(r CallGraphRecord) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// MeasurementDigest is a hash of everything a record states except when it was
+// measured and the seal computed over that.
+//
+// It is SameMeasurement as a key, for a caller that has to group N generations
+// rather than compare two, and it is deliberately not GraphDigest: that answers
+// "do these agree about the graph", and two runs offered different build lists
+// are two measurements even where their graphs agree. Grouping generations for
+// comparison needs the second question, or the input that separated them is the
+// one thing the comparison cannot show.
+func MeasurementDigest(r CallGraphRecord) string {
+	data, err := marshalCanonical(withoutMeasurementTime(r))
+	if err != nil {
+		return "unhashable:" + err.Error()
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 // SameMeasurement reports whether two records state the identical measurement,
 // differing at most in WHEN it was taken.
 //
@@ -1032,7 +1144,28 @@ func forGraphComparison(r CallGraphRecord) CallGraphRecord {
 	// the digest itself is built on, applied to the field that deliberately does
 	// not follow it.
 	r.AnalysisRoot = ""
+	// WHERE an external symbol's declaration sits is a path in the analysing
+	// host's toolchain and module cache, not something this module's graph says:
+	// the same stdlib function comes back under whichever GOROOT loaded it.
+	// Comparing it made two runs that reached the identical symbols by the
+	// identical edges disagree about the graph. The node's identity and roles
+	// stay, so a run that genuinely reached a different symbol still disagrees.
+	r.Nodes = withoutExternalPositions(r.Nodes)
 	return r
+}
+
+// withoutExternalPositions returns nodes with the declaration position of every
+// node outside the analysed module cleared. In-module positions are relative to
+// the module root and are a claim, so they are left alone.
+func withoutExternalPositions(nodes []CallNode) []CallNode {
+	out := make([]CallNode, len(nodes))
+	copy(out, nodes)
+	for i := range out {
+		if out[i].IsExternal {
+			out[i].Position = SourcePosition{}
+		}
+	}
+	return out
 }
 
 // completenessRung orders records by how much of the module the analysis
