@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ErrNoRecordsToCompose is returned by Compose when handed no records. It is a
@@ -30,6 +31,10 @@ var ErrNoRecordsToCompose = errors.New("no interface records to compose")
 //     are answers to different questions, so there is no ladder between them
 //     either — and reporting it here keeps the difference from being mislabelled
 //     as extractor non-determinism by the check below.
+//   - "toolchain": two records extracted under different Go toolchains. The
+//     release tags come from the toolchain, so a //go:build go1.N file enters or
+//     leaves the API with it; two toolchains are two questions on exactly the
+//     terms a frame difference is, and are named on the same terms.
 //   - "public_api": two records describing the SAME artefact at the SAME
 //     extraction status and in the SAME build frame that disagree about the
 //     exported API. That narrow case is evidence of non-determinism in the
@@ -55,7 +60,7 @@ type InterfaceConflict struct {
 	PipelineVersion string
 
 	// Field names what the records disagree on: "artefact_identity",
-	// "build_frame" or "public_api".
+	// "build_frame", "toolchain" or "public_api".
 	Field string
 
 	// Values are the distinct values recorded for Field, sorted, so the report is
@@ -191,7 +196,28 @@ func findConflict(records []InterfaceRecord) *InterfaceConflict {
 			tied = append(tied, r)
 		}
 	}
-	return disagreement(tied, "public_api", APIDigest)
+	api := disagreement(tied, "public_api", APIDigest)
+	if api == nil {
+		return nil
+	}
+	// The API difference is the disagreement; the toolchain is what EXPLAINS it.
+	// Release tags come from the toolchain, so a //go:build go1.N file enters or
+	// leaves the API with it, and naming that is better evidence than reporting
+	// the extractor as non-deterministic.
+	//
+	// The label alone never refuses. Two toolchains that produced the identical
+	// API produced the same answer, and refusing there is the defect measured on
+	// the call-graph ledger: 18 of 30 refusals held byte-identical graphs. A
+	// record that states no toolchain takes no part either — disagreement skips an
+	// empty value — which is the DELIBERATE EXCEPTION to the rule that an absent
+	// value is not a dimension value: no stored interface record carries any
+	// toolchain marker, so there is nothing to ladder it to and assigning the
+	// reading host's would be fabrication.
+	if tc := disagreement(tied, "toolchain",
+		func(r InterfaceRecord) string { return string(r.Toolchain) }); tc != nil {
+		return tc
+	}
+	return api
 }
 
 // disagreement reports the distinct values of one field across records, as a
@@ -250,6 +276,11 @@ func APIDigest(r InterfaceRecord) string {
 	// content hashes, and this comparison only ever runs between records whose
 	// artefact identity already matches.
 	r.SourceContentHash = ""
+	// WHICH toolchain extracted the API is a dimension composition groups on, not
+	// the API. Two toolchains never reach this comparison — the conflict above is
+	// raised first — and leaving it in would relabel that refusal as extractor
+	// non-determinism wherever the digest is read directly.
+	r.Toolchain = gotoolchain.Unrecorded
 	data, err := marshalCanonical(r)
 	if err != nil {
 		// marshalCanonical fails only on a value json.Marshal cannot encode, which

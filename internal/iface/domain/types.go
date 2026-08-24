@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // InterfaceSchemaVersion is the version of the InterfaceRecord JSON schema.
@@ -219,7 +220,22 @@ type InterfaceRecord struct {
 	// BuildFrame names the build configuration the packages were measured in.
 	// Zero on records written before the extractor evaluated build constraints;
 	// see BuildFrame's own documentation for why that is not a frame.
-	BuildFrame      BuildFrame
+	BuildFrame BuildFrame
+	// Toolchain is the Go toolchain whose RELEASE TAGS decided which files this
+	// record's API was read from ("go1.26.6"). A //go:build go1.27 file enters or
+	// leaves the public API with the toolchain, and the frame cannot say which
+	// tags were in force: it states GOOS, GOARCH and cgo, which the extractor
+	// takes from the frame precisely so the extracting host cannot change a stored
+	// API — and then takes the release tags from the host, which is the one leak
+	// this closes.
+	//
+	// It is a DIMENSION, not a ladder position — see gotoolchain.Version.
+	// Composition names a toolchain difference as a conflict before it compares
+	// two APIs, exactly as it does a frame difference.
+	//
+	// Empty on records written before the field existed, which reads as "not
+	// recorded" and never as the reading host's toolchain.
+	Toolchain       gotoolchain.Version
 	ExtractedAt     time.Time
 	PipelineVersion string
 	ContentHash     string

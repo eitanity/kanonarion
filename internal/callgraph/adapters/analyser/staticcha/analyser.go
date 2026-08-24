@@ -348,8 +348,16 @@ func (a *Analyser) analyseDir(
 	synth domain.SynthesisedGoMod,
 	read *[]string,
 	worktree bool,
-) (domain.CallGraphRecord, error) {
+) (rec domain.CallGraphRecord, err error) {
 	fset := token.NewFileSet()
+
+	// The environment every Go child of this analysis is given. It is assigned
+	// after setupGoEnv below and captured by reference here, because both the
+	// classification and the toolchain stamp must ask about the environment the
+	// LOADER was handed: every analysis environment pins GOTOOLCHAIN=local, and a
+	// probe left to inherit this process's would auto-switch and answer about a
+	// toolchain nothing ran.
+	var env []string
 
 	// classifyLoad names the cause of a load failure raised below. The directory
 	// is bound once, here, rather than passed at each call site: every load in
@@ -371,7 +379,7 @@ func (a *Analyser) analyseDir(
 		if isToolchainTooOld(detail) {
 			return domain.FailureCauseEnvironment
 		}
-		return a.classifyLoadFailure(ctx, tempDir)
+		return a.classifyLoadFailure(ctx, tempDir, env)
 	}
 
 	envCleanup, err := a.setupGoEnv(ctx, tempDir)
@@ -386,10 +394,20 @@ func (a *Analyser) analyseDir(
 	// After setupGoEnv, never before: it installs the analysis PATH and clears
 	// GOROOT, and an earlier snapshot hands the child a toolchain other than the
 	// one it is exec'd as.
-	env := analysisEnv()
+	env = analysisEnv()
 	if worktree {
 		env = goenv.Worktree(os.Environ(), tempDir)
 	}
+
+	// Which toolchain ran is stamped on EVERY record this function returns,
+	// successes and failures alike, because a graph carries the toolchain's own
+	// stdlib and vendored trees and a record that cannot say which one built it
+	// cannot be told apart from one written before the field existed. It is asked
+	// in the loader's own directory and with the loader's own environment, so it
+	// names the toolchain that is about to be driven rather than the one this
+	// process was compiled by or the one an unpinned probe would switch to.
+	toolchain := probeToolchainVersion(ctx, tempDir, env)
+	defer func() { rec.Toolchain = toolchain }()
 
 	// New Architecture: Multi-pass load to bypass go/packages memory limitations.
 	// Step 1: Discover ALL packages in the transitive dependency graph (metadata only).
@@ -580,7 +598,7 @@ func (a *Analyser) analyseDir(
 		overallStatus = domain.CallGraphStatusPartial
 	}
 
-	rec := domain.CallGraphRecord{
+	rec = domain.CallGraphRecord{
 		SchemaVersion: domain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
 		Coordinate:    coord,

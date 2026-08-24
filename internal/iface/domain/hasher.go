@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -96,6 +97,7 @@ func (InterfaceRecordHasher) Unmarshal(data []byte) (InterfaceRecord, error) {
 		ContentHash:       c.ContentHash,
 		ArtefactIdentity:  c.ArtefactIdentity,
 		SourceContentHash: c.SourceContentHash,
+		Toolchain:         gotoolchain.Version(c.Toolchain),
 	}, nil
 }
 
@@ -131,6 +133,10 @@ type canonicalRecord struct {
 	PipelineVersion   string          `json:"pipeline_version"`
 	SchemaVersion     string          `json:"schema_version"`
 	SourceContentHash string          `json:"source_content_hash,omitempty"`
+	// Toolchain is omitted when empty so records that predate it keep their stored
+	// content hash verifiable, on the same terms every additive field on this
+	// shape has used. An absent toolchain is "not recorded", never a toolchain.
+	Toolchain string `json:"toolchain,omitempty"`
 }
 
 type canonicalPkg struct {
@@ -242,6 +248,7 @@ func marshalCanonical(r InterfaceRecord) ([]byte, error) {
 		PipelineVersion:   r.PipelineVersion,
 		SchemaVersion:     r.SchemaVersion,
 		SourceContentHash: r.SourceContentHash,
+		Toolchain:         string(r.Toolchain),
 	}
 
 	b, err := canonicalMarshal(c)

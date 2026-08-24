@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ErrNoRecordsToCompose is returned by Compose when handed no records. It is a
@@ -111,6 +112,10 @@ const (
 	// the same graph and described their run differently are not this: see
 	// GraphClaimFields.
 	ConflictFieldCallGraph = "call_graph"
+	// ConflictFieldToolchain is two Go toolchains for one coordinate. The graph
+	// carries the toolchain's stdlib and vendored trees, so two toolchains are two
+	// answers to two questions and there is no ladder between them.
+	ConflictFieldToolchain = "toolchain"
 )
 
 // ConflictFields lists every field a CallGraphConflict reports on.
@@ -119,6 +124,7 @@ func ConflictFields() []string {
 		ConflictFieldAnalysisSource,
 		ConflictFieldArtefactIdentity,
 		ConflictFieldCallGraph,
+		ConflictFieldToolchain,
 	}
 }
 
@@ -177,6 +183,23 @@ func (c CallGraphConflict) Remedy() Remedy {
 				"kanonarion callgraph-show " + coord + " --history",
 				"kanonarion callgraph-show " + coord + " --source " + string(readable),
 			},
+		}
+	case ConflictFieldToolchain:
+		// Naming a toolchain is the way through, so the remedy has to name one the
+		// ledger actually holds. Values are the identities that disagreed, and the
+		// first is a version whenever any of them is: a GOROOT that names no version
+		// cannot be asked for, so it is never offered as the selector.
+		lines := []string{"kanonarion callgraph-show " + coord + " --history"}
+		if sel := selectableToolchain(c.Values); sel != "" {
+			lines = append(lines, "kanonarion callgraph-show "+coord+" --toolchain "+sel)
+		}
+		lines = append(lines, ForcedReanalysisCommand(c.Coordinate, ""))
+		return Remedy{
+			Lead: "Two Go toolchains built this coordinate and produced different graphs, and a graph carries " +
+				"the toolchain's own stdlib and vendored trees, so neither answer supersedes the other. Name " +
+				"the toolchain you mean — callers, callees, implementers and interface-diff take --toolchain " +
+				"too — or measure again under the one you are using",
+			Lines: lines,
 		}
 	case ConflictFieldArtefactIdentity:
 		if !IsReFetchable(c.Coordinate) {
@@ -271,6 +294,27 @@ type ComposeRequest struct {
 	// zero value names none, and DefaultSource then decides.
 	Source AnalysisSource
 
+	// Toolchain restricts composition to graphs built by one Go toolchain, and a
+	// coordinate holding none of them has no answer. The zero value names none,
+	// and the records then group on their own.
+	//
+	// It is for a reader naming ONE coordinate, where "the ledger holds nothing
+	// built by that toolchain" is the answer they asked for.
+	Toolchain gotoolchain.Version
+
+	// ToolchainPreference resolves a toolchain refusal WITHOUT narrowing the read:
+	// it is consulted only where the records for a coordinate disagree about the
+	// toolchain, and a coordinate that holds no such generation is served exactly
+	// as it would be with no preference at all.
+	//
+	// The two are different questions and the distinction is load-bearing. A
+	// store-wide read — callers, callees, implementers — spans hundreds of modules
+	// of which almost none state a toolchain, so restricting it would answer "no
+	// record" for every one of them and turn a disambiguation into a silently
+	// short answer. What the reader means by naming a toolchain there is "when two
+	// generations disagree, use this one", which is exactly this.
+	ToolchainPreference gotoolchain.Version
+
 	// CallerRoot is the working tree the reader is standing in, empty when they
 	// are standing in none of this coordinate's.
 	//
@@ -322,13 +366,29 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 		}
 	}
 
+	if req.Toolchain.Recorded() {
+		candidates = withToolchain(candidates, req.Toolchain)
+		if len(candidates) == 0 {
+			return CallGraphRecord{}, ErrNoRecordsToCompose
+		}
+	}
+
 	if isWorktreeSequence(candidates) {
+		// A working tree is a SEQUENCE of observations of changing bytes, and the
+		// last one is the tree as it is now. Grouping that by toolchain would serve
+		// an older tree state whenever the toolchain moved, which is the defect
+		// LatestObservation exists to prevent; the served record still names its own
+		// toolchain.
 		return LatestObservation(candidates), nil
 	}
 
 	candidates = identifiedOrAll(candidates)
 	if c := findConflict(candidates); c != nil {
-		return CallGraphRecord{}, *c
+		resolved, ok := preferredToolchain(candidates, c, req.ToolchainPreference)
+		if !ok {
+			return CallGraphRecord{}, *c
+		}
+		candidates = resolved
 	}
 
 	ordered := make([]CallGraphRecord, len(candidates))
@@ -661,6 +721,25 @@ func findConflict(records []CallGraphRecord) *CallGraphConflict {
 			tied = append(tied, r)
 		}
 	}
+	// The toolchain is named before the graph comparison below, for the reason the
+	// interface pipeline names a frame difference first: two toolchains hold
+	// different stdlib and different vendored trees by construction, so letting the
+	// difference fall through would report a correct pair of measurements as
+	// non-determinism in the analyser.
+	//
+	// It is also ahead of the build-list grouping, because the toolchain axis and
+	// the build-list axis are independent: two generations offered different build
+	// lists never compare with each other, so a toolchain difference between them
+	// would otherwise never be reported at all.
+	//
+	// There is no separate check for "two records name different toolchains". A
+	// toolchain that produced the SAME graph produced the same answer, and refusing
+	// on the label alone is the defect this replaced — see
+	// toolchainExplainedGraphDifference.
+	if c := toolchainExplainedGraphDifference(tied); c != nil {
+		return c
+	}
+
 	for _, group := range answeringOneQuestion(tied) {
 		if c := graphDisagreement(group); c != nil {
 			return c
@@ -1151,6 +1230,11 @@ func forGraphComparison(r CallGraphRecord) CallGraphRecord {
 	// identical edges disagree about the graph. The node's identity and roles
 	// stay, so a run that genuinely reached a different symbol still disagrees.
 	r.Nodes = withoutExternalPositions(r.Nodes)
+	// WHICH toolchain built the graph is a dimension composition groups on, not a
+	// claim the graph makes. Two toolchains never reach a graph comparison — the
+	// toolchain conflict is raised first — and leaving it in would relabel that
+	// refusal as extractor non-determinism wherever a digest is read directly.
+	r.Toolchain = gotoolchain.Unrecorded
 	return r
 }
 
@@ -1242,4 +1326,32 @@ func claimsTheModulesGraph(r CallGraphRecord) bool {
 // servesBefore orders two records by which should be served first.
 func servesBefore(a, b CallGraphRecord) bool {
 	return RankOf(a).ServesBefore(RankOf(b))
+}
+
+// preferredToolchain narrows a refused group to the toolchain a reader named,
+// and reports whether that settled it.
+//
+// It applies only to a TOOLCHAIN refusal: a preference says which toolchain to
+// believe when two generations disagree about one, and it has nothing to say
+// about two artefact identities or an analyser contradicting itself. Naming a
+// toolchain must not silence a disagreement it does not speak to.
+//
+// It reports false when the preference names a toolchain this coordinate does
+// not hold, and the original refusal then stands. Serving some other generation
+// because the named one was absent would answer a question nobody asked.
+func preferredToolchain(records []CallGraphRecord, c *CallGraphConflict, want gotoolchain.Version) ([]CallGraphRecord, bool) {
+	if !want.Recorded() || c.Field != ConflictFieldToolchain {
+		return nil, false
+	}
+	kept := withToolchain(records, want)
+	if len(kept) == 0 {
+		return nil, false
+	}
+	// The narrowed group must itself be composable: a preference resolves the
+	// toolchain and nothing else, so two generations of ONE toolchain that
+	// disagree about the graph still refuse.
+	if inner := findConflict(kept); inner != nil {
+		return nil, false
+	}
+	return kept, true
 }

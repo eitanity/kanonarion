@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 )
 
@@ -25,6 +26,19 @@ func hostFrame() domain.BuildFrame {
 	}
 }
 
+// extractingToolchain names the Go toolchain whose release tags buildContext
+// takes from build.Default.
+//
+// It is runtime.Version() — THE TOOLCHAIN THAT COMPILED KANONARION — and that is
+// deliberate rather than a shortcut. build.Default.ReleaseTags is a constant of
+// the compiling toolchain's own standard library, so no child process decides
+// which //go:build go1.N files enter a stored API; this process does. Recording
+// a `go env GOVERSION` from PATH here would name a toolchain that took no part
+// in the extraction, which is the fabrication the axis exists to stop.
+func extractingToolchain() gotoolchain.Version {
+	return gotoolchain.Version(runtime.Version())
+}
+
 // buildContext returns the go/build context that decides which files in a
 // package directory belong to frame.
 //
@@ -38,7 +52,9 @@ func hostFrame() domain.BuildFrame {
 // tool tags, and the compiler name. Everything a caller's environment could
 // otherwise smuggle in is overridden: GOOS and GOARCH come from the frame, and
 // BuildTags is cleared so a GOFLAGS setting on the extracting host cannot change
-// what a stored public API contains.
+// what a stored public API contains. The release tags remain the host's, and are
+// now RECORDED — see extractingToolchain and InterfaceRecord.Toolchain — so the
+// one thing this override cannot hold constant is at least stated.
 func buildContext(frame domain.BuildFrame, fsys fs.FS) *build.Context {
 	ctxt := build.Default
 	ctxt.GOOS = frame.GOOS

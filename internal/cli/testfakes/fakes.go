@@ -721,12 +721,15 @@ func (f *FakeQueryCallGraph) AddGeneration(coord coordinate.ModuleCoordinate, pi
 	f.history[key] = append(f.history[key], rec)
 }
 
-func (f *FakeQueryCallGraph) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source cgdomain.AnalysisSource) (cgdomain.CallGraphRecord, bool, error) {
+func (f *FakeQueryCallGraph) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req cgdomain.ComposeRequest) (cgdomain.CallGraphRecord, bool, error) {
 	rec, found, err := f.GetCallGraphRecord(ctx, coord, pipelineVersion)
 	if err != nil || !found {
 		return rec, found, err
 	}
-	if source != cgdomain.AnalysisSourceUnrecorded && rec.AnalysisSource != source {
+	if req.Source != cgdomain.AnalysisSourceUnrecorded && rec.AnalysisSource != req.Source {
+		return cgdomain.CallGraphRecord{}, false, nil
+	}
+	if req.Toolchain.Recorded() && cgdomain.RecordToolchain(rec).Version != req.Toolchain {
 		return cgdomain.CallGraphRecord{}, false, nil
 	}
 	return rec, true, nil

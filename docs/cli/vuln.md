@@ -890,6 +890,19 @@ ledger, so it improves as the graph does and no re-scan is owed for it.
 was reached in. The same selection backs the `vulnerabilities` section of
 `context` and `inspect`, which report it as `frame`.
 
+`Toolchain:` names the Go toolchain that compiled the module for the scan, as
+`go env GOVERSION` of the process govulncheck was driven in. Which files build
+constraints selected, which stdlib was linked and which symbols the analysis
+could reach are all the toolchain's, so a verdict is a verdict about that build.
+Records written before it was recorded read `Toolchain: not recorded`. Two
+records for one coordinate naming different toolchains are reported as a conflict
+**when they reached different verdicts** — the verdict difference is the
+disagreement and the toolchain is what explains it; two toolchains that reached
+the same status, the same findings and the same reachability produced the same
+answer and compose. A record naming no toolchain never conflicts with one that
+does. Under `--json` the field is `toolchain`, emitted on every record, empty when
+not recorded.
+
 Use `--history` to list every stored scan record across all walks, snapshots
 and pipeline generations, ordered newest first. This is the primary way to
 determine whether a finding was present in an earlier scan or absent because

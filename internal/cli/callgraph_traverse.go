@@ -83,7 +83,7 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts := ports.EdgeQueryOptions{ExcludeTests: excludeTests}
+			opts := ports.EdgeQueryOptions{ExcludeTests: excludeTests, Toolchain: sc.toolchain}
 			if transitive {
 				return runCallersTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
 			}
@@ -103,7 +103,7 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
-	pr, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
+	pr, err := rootPartialStatus(ctx, symbolID, uc, sc)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	// build failure. The dropped-edges notice is the accurate reason, and it is
 	// printed instead.
 	if len(refs) == 0 && pr.failedPkg == "" {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
+		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc); cerr != nil {
 			return cerr
 		}
 	}
@@ -160,7 +160,7 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return writeEdgeScopeLine(stdout, "callers", opts)
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts, pr.failedPkg)
+		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
@@ -195,7 +195,7 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts := ports.EdgeQueryOptions{ExcludeTests: excludeTests}
+			opts := ports.EdgeQueryOptions{ExcludeTests: excludeTests, Toolchain: sc.toolchain}
 			if transitive {
 				return runCalleesTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
 			}
@@ -215,7 +215,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
-	pr, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
+	pr, err := rootPartialStatus(ctx, symbolID, uc, sc)
 	if err != nil {
 		return err
 	}
@@ -230,7 +230,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	// build failure. The dropped-edges notice is the accurate reason, and it is
 	// printed instead.
 	if len(refs) == 0 && pr.failedPkg == "" {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
+		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc); cerr != nil {
 			return cerr
 		}
 	}
@@ -272,7 +272,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return writeEdgeScopeLine(stdout, "callees", opts)
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts, pr.failedPkg)
+		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
@@ -395,7 +395,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
-	pr, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
+	pr, err := rootPartialStatus(ctx, symbolID, uc, sc)
 	if err != nil {
 		return err
 	}
@@ -409,7 +409,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	// nothing at this pipeline version — and an empty walk that names none of
 	// them reads as a measured absence.
 	if len(edges) == 0 && pr.failedPkg == "" {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
+		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc); cerr != nil {
 			return cerr
 		}
 	}
@@ -449,7 +449,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return writeEdgeScopeLine(stdout, "callers", opts)
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts, pr.failedPkg)
+		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
@@ -462,7 +462,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
-	pr, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
+	pr, err := rootPartialStatus(ctx, symbolID, uc, sc)
 	if err != nil {
 		return err
 	}
@@ -476,7 +476,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	// nothing at this pipeline version — and an empty walk that names none of
 	// them reads as a measured absence.
 	if len(edges) == 0 && pr.failedPkg == "" {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
+		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc); cerr != nil {
 			return cerr
 		}
 	}
@@ -516,7 +516,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return writeEdgeScopeLine(stdout, "callees", opts)
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts, pr.failedPkg)
+		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}

@@ -35,11 +35,11 @@ func swapProbe(t *testing.T, fn ToolchainProbe) {
 // it. The loader's message names the toolchain, not the module, and the record
 // must say so rather than filing the run's failure as the module's property.
 func TestClassifyLoadFailure_UnusableToolchainIsEnvironment(t *testing.T) {
-	swapProbe(t, func(context.Context, string) error {
-		return errors.New("exit status 1: mise ERROR No version is set for shim: go")
+	swapProbe(t, func(context.Context, string, []string) (string, error) {
+		return "", errors.New("exit status 1: mise ERROR No version is set for shim: go")
 	})
 
-	got := quietAnalyser().classifyLoadFailure(context.Background(), analysedDir)
+	got := quietAnalyser().classifyLoadFailure(context.Background(), analysedDir, nil)
 	if got != domain.FailureCauseEnvironment {
 		t.Errorf("classifyLoadFailure = %q, want %q", got, domain.FailureCauseEnvironment)
 	}
@@ -48,9 +48,9 @@ func TestClassifyLoadFailure_UnusableToolchainIsEnvironment(t *testing.T) {
 // TestClassifyLoadFailure_WorkingToolchainIsModule: the toolchain ran, so
 // whatever the loader reported was reported about the module.
 func TestClassifyLoadFailure_WorkingToolchainIsModule(t *testing.T) {
-	swapProbe(t, func(context.Context, string) error { return nil })
+	swapProbe(t, func(context.Context, string, []string) (string, error) { return "go1.26.6", nil })
 
-	got := quietAnalyser().classifyLoadFailure(context.Background(), analysedDir)
+	got := quietAnalyser().classifyLoadFailure(context.Background(), analysedDir, nil)
 	if got != domain.FailureCauseModule {
 		t.Errorf("classifyLoadFailure = %q, want %q", got, domain.FailureCauseModule)
 	}
@@ -63,12 +63,12 @@ func TestClassifyLoadFailure_WorkingToolchainIsModule(t *testing.T) {
 // filing the run's failure as the module's property and caching it forever.
 func TestClassifyLoadFailure_ProbesTheAnalysedDirectory(t *testing.T) {
 	var asked string
-	swapProbe(t, func(_ context.Context, dir string) error {
+	swapProbe(t, func(_ context.Context, dir string, _ []string) (string, error) {
 		asked = dir
-		return nil
+		return "go1.26.6", nil
 	})
 
-	quietAnalyser().classifyLoadFailure(context.Background(), analysedDir)
+	quietAnalyser().classifyLoadFailure(context.Background(), analysedDir, nil)
 
 	if asked != analysedDir {
 		t.Errorf("probe was asked about %q, want the analysed directory %q", asked, analysedDir)
@@ -99,9 +99,9 @@ func TestAnalyseDir_ProbesTheDirectoryItLoaded(t *testing.T) {
 	}
 
 	var asked []string
-	swapProbe(t, func(_ context.Context, probed string) error {
+	swapProbe(t, func(_ context.Context, probed string, _ []string) (string, error) {
 		asked = append(asked, probed)
-		return nil
+		return "go1.26.6", nil
 	})
 
 	coord, err := coordinate.NewModuleCoordinate("example.com/analysed", coordinate.LocalVersion)
@@ -131,15 +131,15 @@ func TestAnalyseDir_ProbesTheDirectoryItLoaded(t *testing.T) {
 // says nothing about the toolchain, so the cancellation is answered first.
 func TestClassifyLoadFailure_CancelledIsEnvironmentWithoutProbing(t *testing.T) {
 	probed := false
-	swapProbe(t, func(context.Context, string) error {
+	swapProbe(t, func(context.Context, string, []string) (string, error) {
 		probed = true
-		return nil
+		return "go1.26.6", nil
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if got := quietAnalyser().classifyLoadFailure(ctx, analysedDir); got != domain.FailureCauseEnvironment {
+	if got := quietAnalyser().classifyLoadFailure(ctx, analysedDir, nil); got != domain.FailureCauseEnvironment {
 		t.Errorf("classifyLoadFailure on a cancelled context = %q, want %q", got, domain.FailureCauseEnvironment)
 	}
 	if probed {
@@ -155,7 +155,7 @@ func TestClassifyLoadFailure_CancelledIsEnvironmentWithoutProbing(t *testing.T) 
 func TestClassifyLoadFailure_UnwiredProbeAssumesUsable(t *testing.T) {
 	swapProbe(t, assumeUsableToolchain)
 
-	if got := quietAnalyser().classifyLoadFailure(context.Background(), analysedDir); got != domain.FailureCauseModule {
+	if got := quietAnalyser().classifyLoadFailure(context.Background(), analysedDir, nil); got != domain.FailureCauseModule {
 		t.Errorf("classifyLoadFailure with the zero seam = %q, want %q", got, domain.FailureCauseModule)
 	}
 }
@@ -164,11 +164,11 @@ func TestClassifyLoadFailure_UnwiredProbeAssumesUsable(t *testing.T) {
 // the seam by passing nil: the previously-installed probe keeps answering.
 func TestSetToolchainProbe_NilIsRefused(t *testing.T) {
 	sentinel := errors.New("sentinel probe")
-	swapProbe(t, func(context.Context, string) error { return sentinel })
+	swapProbe(t, func(context.Context, string, []string) (string, error) { return "", sentinel })
 
 	SetToolchainProbe(nil)
 
-	if err := toolchainProbe(context.Background(), analysedDir); !errors.Is(err, sentinel) {
+	if _, err := toolchainProbe(context.Background(), analysedDir, nil); !errors.Is(err, sentinel) {
 		t.Error("SetToolchainProbe(nil) replaced the installed probe")
 	}
 }
@@ -246,7 +246,7 @@ func TestAnalyseDir_ToolchainDirectiveAboveTheRunningOneStillAnalyses(t *testing
 // The probe answers "usable" because that is what a real probe answers here, so
 // the cause has to come from the marker.
 func TestAnalyseDir_UnsatisfiableGoDirectiveNamesTheVersionGap(t *testing.T) {
-	swapProbe(t, func(context.Context, string) error { return nil })
+	swapProbe(t, func(context.Context, string, []string) (string, error) { return "go1.26.6", nil })
 	dir := writeModuleTree(t, "module example.com/analysed\n\ngo 1.99.0\n")
 
 	rec, err := quietAnalyser().AnalyseDir(context.Background(), dir, localCoord(t))
@@ -311,5 +311,41 @@ func TestIsToolchainTooOld_MatchesTheGoCommandsSentence(t *testing.T) {
 		if got := isToolchainTooOld(tc.detail); got != tc.want {
 			t.Errorf("%s: isToolchainTooOld = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestProbeToolchainVersion_AsksWithTheLoadersOwnEnvironment is the
+// reproduction the env argument exists for.
+//
+// Every analysis environment pins GOTOOLCHAIN=local. A probe left to inherit the
+// process environment switches to whatever the tree's go directive asks for and
+// names a toolchain the loader never ran — measured on a tree whose load failed
+// with "requires go >= 1.26.6 (running go 1.26.5)" while the record it wrote said
+// go1.26.6. The stamp is only evidence if it is asked the loader's question.
+func TestProbeToolchainVersion_AsksWithTheLoadersOwnEnvironment(t *testing.T) {
+	var got []string
+	swapProbe(t, func(_ context.Context, _ string, env []string) (string, error) {
+		got = env
+		return "go1.26.5", nil
+	})
+
+	want := []string{"GOTOOLCHAIN=local"}
+	if v := probeToolchainVersion(context.Background(), analysedDir, want); v != "go1.26.5" {
+		t.Errorf("probeToolchainVersion = %q, want the probe's answer go1.26.5", v)
+	}
+	if len(got) != 1 || got[0] != "GOTOOLCHAIN=local" {
+		t.Errorf("the probe was given %v; it must be handed the loader's own environment %v", got, want)
+	}
+}
+
+// TestProbeToolchainVersion_AFailedProbeRecordsNothing: a record that cannot say
+// which toolchain built it says so, and never borrows the reading host's.
+func TestProbeToolchainVersion_AFailedProbeRecordsNothing(t *testing.T) {
+	swapProbe(t, func(context.Context, string, []string) (string, error) {
+		return "go1.26.6", errors.New("no toolchain")
+	})
+
+	if v := probeToolchainVersion(context.Background(), analysedDir, nil); v != "" {
+		t.Errorf("probeToolchainVersion = %q after a failed probe, want the unrecorded zero value", v)
 	}
 }

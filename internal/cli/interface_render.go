@@ -237,6 +237,12 @@ func printRecordText(r domain.InterfaceRecord, idx promotionIndex, stdout io.Wri
 	} else if _, err := fmt.Fprintf(stdout, "build frame: %s\n", r.BuildFrame.String()); err != nil {
 		return fmt.Errorf("writing build frame: %w", err)
 	}
+	// The toolchain sits with the frame because it is the other half of the same
+	// statement: the frame says which platform's files were selected, the
+	// toolchain which release tags did the selecting.
+	if _, err := fmt.Fprintf(stdout, "toolchain:   %s\n", r.Toolchain.String()); err != nil {
+		return fmt.Errorf("writing toolchain: %w", err)
+	}
 	for _, pkg := range r.Packages {
 		if pkg.OutOfFrame {
 			if _, err := fmt.Fprintf(stdout, "\npackage %s // %s — not in this build frame\n", pkg.Name, pkg.ImportPath); err != nil {

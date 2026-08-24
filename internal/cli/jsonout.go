@@ -116,6 +116,11 @@ type interfaceRecordJSON struct {
 	// hold every platform's declarations at once and describe no build; absent
 	// reads as "not recorded", never as "any platform".
 	BuildFrame *buildFrameJSON `json:"build_frame,omitempty"`
+	// Toolchain names the Go toolchain whose release tags decided which files the
+	// API was read from. Emitted even when empty: a consumer that cannot see it
+	// cannot tell two toolchains' answers apart, and an absent value is itself the
+	// answer ("not recorded").
+	Toolchain string `json:"toolchain"`
 }
 
 func toPosJSON(p ifacedomain.SourcePosition) sourcePositionJSON {
@@ -190,6 +195,7 @@ func toInterfaceRecordJSON(r ifacedomain.InterfaceRecord) interfaceRecordJSON {
 	}
 	return interfaceRecordJSON{
 		BuildFrame:        frame,
+		Toolchain:         string(r.Toolchain),
 		SchemaVersion:     r.SchemaVersion,
 		Coordinate:        coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
 		Packages:          pkgs,

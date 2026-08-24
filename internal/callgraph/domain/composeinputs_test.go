@@ -111,11 +111,33 @@ func TestCompose_WhereAnExternalSymbolIsDeclaredIsNotThisModulesGraph(t *testing
 		name         string
 		a, b         domain.CallGraphRecord
 		wantConflict bool
+		// wantField pins WHICH disagreement was reported. A refusal that names the
+		// wrong one sends the reader at the wrong remedy, and the boolean alone
+		// cannot tell a toolchain difference from the analyser contradicting itself.
+		wantField string
 	}{
 		{
-			name: "one toolchain's GOROOT against another's",
+			// Two GOROOTs and the SAME graph. Where the records describe the same
+			// nodes and edges there is nothing for a toolchain to disagree about, so
+			// the label alone must not refuse: doing that made 25 of 30 refusals on
+			// a real store a named toolchain against an unnamed GOROOT, 18 of them
+			// over byte-identical graphs.
+			name: "one toolchain's GOROOT against another's, same graph",
 			a:    built(composeSpec{externalNodeFile: "usr/local/go/src/bytes/buffer.go"}),
 			b:    built(composeSpec{externalNodeFile: "home/u/go/pkg/mod/golang.org/toolchain@v1/src/bytes/buffer.go"}),
+		},
+		{
+			// The same two GOROOTs, now describing DIFFERENT graphs. That is a real
+			// difference with a stated cause, and naming the toolchain is better
+			// evidence than reporting the analyser as non-deterministic.
+			name: "one toolchain's GOROOT against another's, different graphs",
+			a:    built(composeSpec{externalNodeFile: "usr/local/go/src/bytes/buffer.go"}),
+			b: built(composeSpec{
+				externalNodeFile: "home/u/go/pkg/mod/golang.org/toolchain@v1/src/bytes/buffer.go",
+				symbol:           "OnlyUnderTheOtherToolchain",
+			}),
+			wantConflict: true,
+			wantField:    domain.ConflictFieldToolchain,
 		},
 		{
 			name: "a record predating recorded positions against one that has them",
@@ -127,12 +149,18 @@ func TestCompose_WhereAnExternalSymbolIsDeclaredIsNotThisModulesGraph(t *testing
 			a:            built(composeSpec{inModuleNodeFile: "a.go"}),
 			b:            built(composeSpec{inModuleNodeFile: "b.go"}),
 			wantConflict: true,
+			wantField:    domain.ConflictFieldCallGraph,
 		},
 		{
+			// The record with no external node establishes no toolchain, so it takes
+			// no part in the toolchain comparison — and must still be compared for
+			// the graph, or a run that reached a symbol the other did not would
+			// silently compose.
 			name:         "an external symbol one run reached and the other did not",
 			a:            built(composeSpec{externalNodeFile: "usr/local/go/src/bytes/buffer.go"}),
 			b:            built(composeSpec{}),
 			wantConflict: true,
+			wantField:    domain.ConflictFieldCallGraph,
 		},
 	}
 	for _, tc := range tests {
@@ -143,6 +171,9 @@ func TestCompose_WhereAnExternalSymbolIsDeclaredIsNotThisModulesGraph(t *testing
 			gotConflict := errors.As(err, &conflict)
 			if gotConflict != tc.wantConflict {
 				t.Fatalf("conflict=%v want %v (err=%v)", gotConflict, tc.wantConflict, err)
+			}
+			if gotConflict && conflict.Field != tc.wantField {
+				t.Errorf("conflict field=%q want %q", conflict.Field, tc.wantField)
 			}
 		})
 	}

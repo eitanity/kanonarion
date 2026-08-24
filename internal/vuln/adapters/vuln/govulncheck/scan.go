@@ -16,12 +16,13 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/vulndbdir"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
 // Scan performs a vulnerability scan on a module.
-func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.VulnerabilityRecord, error) {
+func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.VulnerabilityRecord, err error) {
 	coord, moduleSource, snapshot := req.Coordinate, req.ModuleSource, req.Snapshot
 	goModCache, dbDir, scanMode := req.GoModCache, req.DBDir, req.ScanMode
 	s.logMem(ctx, "start")
@@ -38,6 +39,15 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	// is no working tree and therefore no vendor/ tree to root at, so this path
 	// is fetched-surface by construction.
 	env := scanEnv(os.Environ(), goModCache, domain.AnalysisSurfaceFetched)
+
+	// Which toolchain compiled the module is stamped on EVERY record this scan
+	// returns, faults included, because the reachable set is the toolchain's and a
+	// verdict that cannot say which one produced it cannot be told apart from one
+	// written before the field existed. It is asked in the directory the scan will
+	// run in, under the scan's own environment, so it names the toolchain that
+	// will run rather than the one this process was compiled by.
+	toolchain := gotoolchain.Version(toolchainGoVersion(ctx, tmpDir, env))
+	defer func() { rec.Toolchain = toolchain }()
 
 	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, moduleSource, env, req.BuildList)
 	if err != nil {

@@ -5,11 +5,13 @@ exit 0
 2 generation(s) for example.com/mod@v1.2.0 at pipeline 0.5.0:
 * 2026-01-15T08:00:00Z  Extracted        BUILT_WITH_BODIES 2 node(s) / 1 edge(s)
     source:   zip
+    toolchain: not recorded
     from:     zip:h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=
     graph:    sha256:7019fffbcf8a53d9cf72c9a6e90f53034fff301af6a8cd29d54650fcff37a919
     record:   sha256:ad4ca72b29f7e12a73d8d5dabb4e8eda7e30a3a6074744a98f7d08dce0762941
   2026-01-16T08:00:00Z  Extracted        METADATA_ONLY     2 node(s) / 0 edge(s)
     source:   zip
+    toolchain: not recorded
     from:     zip:h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=
     graph:    sha256:6e5396157504510c474496b8d02f9a5e1b761ad02c6a6afdf0bb7dd12107d002
     record:   sha256:5088f436bc529414a0872e56e8c715f25020a80cb80fe03292f24cb244c71a09

@@ -12,7 +12,6 @@ import (
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
@@ -335,7 +334,7 @@ func TestGatherImplementers_RejectsARecordNamingNoModule(t *testing.T) {
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: implModule, ModuleVersion: "", PipelineVersion: implPipeline},
 	})
-	_, err := gatherImplementers(context.Background(), implPortID, uc, coordinate.ModuleSet{})
+	_, err := gatherImplementers(context.Background(), implPortID, uc, buildScope{})
 	if err == nil || !strings.Contains(err.Error(), "names no module") {
 		t.Fatalf("want a names-no-module error, got %v", err)
 	}

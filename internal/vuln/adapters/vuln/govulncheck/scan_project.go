@@ -9,6 +9,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -59,7 +60,7 @@ func projectScanStatus(byModule map[coordinate.ModuleCoordinate][]domain.Vulnera
 // so no version can be out of the toolchain. The surface that actually ran is
 // reported on the result rather than assumed by the caller: the caller asks,
 // the project on disk decides, and the verdict names which bytes were measured.
-func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
+func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest) (res domain.ProjectScanResult, err error) {
 	projectDir := req.ProjectDir
 	s.logMem(ctx, "project_scan_start")
 	s.logger.Info("vuln-scan: project-rooted scan starting", "dir", projectDir)
@@ -80,6 +81,12 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	}
 
 	surface, env := projectScanSurface(projectDir, req.Vendored)
+
+	// Stamped on every result this scan returns, faults included: a project's
+	// reachable set is the toolchain's, and it is resolved from the project
+	// directory, so it is asked there rather than wherever this process runs.
+	toolchain := gotoolchain.Version(toolchainGoVersion(ctx, projectDir, env))
+	defer func() { res.Toolchain = toolchain }()
 
 	dbArg, advisories, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
 	if err != nil {

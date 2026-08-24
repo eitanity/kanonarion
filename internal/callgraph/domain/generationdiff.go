@@ -409,11 +409,26 @@ func canonicalMember(field string, one CallGraphRecord) (map[string]json.RawMess
 }
 
 // identityOf renders a member's identity from its canonical fields.
+//
+// A field the member does not STATE is left out rather than joined as a blank.
+// An omitempty identity field — an edge's kind is the one in tree — is absent
+// from every edge sealed without it, and joining a blank for it gave every such
+// identity a trailing separator and made "states no kind" render identically to
+// "states the empty kind". A stated empty value is quoted for the same reason:
+// the two are different facts and an identity may not collapse them.
 func identityOf(field string, fields map[string]json.RawMessage) string {
 	keys := collectionIdentity[field]
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, renderJSON(fields[key]))
+		raw, stated := fields[key]
+		if !stated {
+			continue
+		}
+		if v := renderJSON(raw); v != "" {
+			parts = append(parts, v)
+		} else {
+			parts = append(parts, `""`)
+		}
 	}
 	return strings.Join(parts, " ")
 }

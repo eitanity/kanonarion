@@ -175,6 +175,7 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 			OverallStatus:   domain3.InterfaceStatusExtractionFailed,
 			FailureDetail:   extractErr.Error(),
 			BuildFrame:      uc.extractor.BuildFrame(),
+			Toolchain:       uc.extractor.Toolchain(),
 			ExtractedAt:     uc.clock.Now().UTC(),
 			PipelineVersion: uc.pipelineVersion,
 		}

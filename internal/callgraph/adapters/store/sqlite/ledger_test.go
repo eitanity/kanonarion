@@ -460,7 +460,7 @@ func TestLedger_TwoWorktreesAreTwoRecords(t *testing.T) {
 
 	// The composed read serves the LAST observation, because a tree mutates and the
 	// earlier record describes code that is no longer there.
-	got, found, err := s.GetCallGraphRecordFrom(ctx, local, testPipeline, domain2.AnalysisSourceWorktree)
+	got, found, err := s.GetCallGraphRecordFrom(ctx, local, testPipeline, domain2.ComposeRequest{Source: domain2.AnalysisSourceWorktree})
 	if err != nil || !found {
 		t.Fatalf("GetCallGraphRecordFrom: found=%v err=%v", found, err)
 	}
@@ -505,7 +505,7 @@ func TestLedger_SourceScopedReadSeparatesTheDimension(t *testing.T) {
 		t.Fatal("the unscoped read served the worktree graph; the stated default is the module zip")
 	}
 
-	scoped, found, err := s.GetCallGraphRecordFrom(ctx, local, testPipeline, domain2.AnalysisSourceWorktree)
+	scoped, found, err := s.GetCallGraphRecordFrom(ctx, local, testPipeline, domain2.ComposeRequest{Source: domain2.AnalysisSourceWorktree})
 	if err != nil || !found {
 		t.Fatalf("GetCallGraphRecordFrom: found=%v err=%v", found, err)
 	}
@@ -528,7 +528,7 @@ func TestLedger_SourceScopedReadReportsAbsenceNotError(t *testing.T) {
 	if err := s.PutCallGraphRecord(ctx, rec); err != nil {
 		t.Fatalf("PutCallGraphRecord: %v", err)
 	}
-	got, found, err := s.GetCallGraphRecordFrom(ctx, testCoord, testPipeline, domain2.AnalysisSourceWorktree)
+	got, found, err := s.GetCallGraphRecordFrom(ctx, testCoord, testPipeline, domain2.ComposeRequest{Source: domain2.AnalysisSourceWorktree})
 	if err != nil {
 		t.Fatalf("GetCallGraphRecordFrom: %v", err)
 	}

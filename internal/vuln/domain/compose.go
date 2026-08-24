@@ -38,6 +38,9 @@ func Compose(records []VulnerabilityRecord) (VulnerabilityRecord, error) {
 	if len(records) == 0 {
 		return VulnerabilityRecord{}, ErrNoRecordsToCompose
 	}
+	if c := findToolchainConflict(records); c != nil {
+		return VulnerabilityRecord{}, *c
+	}
 	return best(records), nil
 }
 
@@ -68,6 +71,11 @@ func ComposeAt(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRec
 	candidates := atRooting(records, rooting)
 	if len(candidates) == 0 {
 		return VulnerabilityRecord{}, false, nil
+	}
+	// The frame is selected first and the toolchain checked within it: two
+	// toolchains that scanned one frame are two verdicts about two builds.
+	if c := findToolchainConflict(candidates); c != nil {
+		return VulnerabilityRecord{}, false, *c
 	}
 	// best rather than Compose: the only error Compose has is an empty group, and
 	// the line above has just ruled it out. The error stays in the signature —
@@ -122,7 +130,16 @@ func ComposeForConsumer(records []VulnerabilityRecord, coord coordinate.ModuleCo
 		}
 	}
 	if len(consumer) == 0 {
+		if c := findToolchainConflict(records); c != nil {
+			return VulnerabilityRecord{}, VulnerabilityRecord{}, false, *c
+		}
 		return best(records), VulnerabilityRecord{}, false, nil
+	}
+	// Checked within the consumer frame, which is the group that answers. The
+	// isolated aside is reported alongside rather than competing, so it is not
+	// part of the question two toolchains could disagree about.
+	if c := findToolchainConflict(consumer); c != nil {
+		return VulnerabilityRecord{}, VulnerabilityRecord{}, false, *c
 	}
 	if len(isolated) == 0 {
 		return best(consumer), VulnerabilityRecord{}, false, nil
@@ -176,13 +193,19 @@ func ComposeForTree(records []VulnerabilityRecord, modulePath string) (Vulnerabi
 			isolated = append(isolated, r)
 		}
 	}
-	if len(own) > 0 {
-		return best(own), true, nil
-	}
-	if len(isolated) > 0 {
-		return best(isolated), true, nil
+	for _, group := range [][]VulnerabilityRecord{own, isolated} {
+		if len(group) == 0 {
+			continue
+		}
+		if c := findToolchainConflict(group); c != nil {
+			return VulnerabilityRecord{}, false, *c
+		}
+		return best(group), true, nil
 	}
 	if !anyStated {
+		if c := findToolchainConflict(records); c != nil {
+			return VulnerabilityRecord{}, false, *c
+		}
 		return best(records), true, nil
 	}
 	return VulnerabilityRecord{}, false, nil

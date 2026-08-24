@@ -57,7 +57,7 @@ the callers and callees queries also accept.`,
 				return err
 			}
 			return runImplementers(cmd.Context(), args[0], jsonOut, ctr.QueryCallGraph, stdout, sc,
-				ports.EdgeQueryOptions{ExcludeTests: excludeTests})
+				ports.EdgeQueryOptions{ExcludeTests: excludeTests, Toolchain: sc.toolchain})
 		},
 	}
 
@@ -106,7 +106,7 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 		return err
 	}
 
-	found, err := gatherImplementers(ctx, interfaceID, uc, sc.modules)
+	found, err := gatherImplementers(ctx, interfaceID, uc, sc)
 	if err != nil {
 		return err
 	}
@@ -219,18 +219,18 @@ func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) do
 // owning interfaceID. A module analysed at several versions contributes each of
 // them, and the result is the union — deduplicated on the type ID, because the
 // same declaration at two versions is one answer to "what must change".
-func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) (implementerLookup, error) {
+func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGraphUseCase, sc buildScope) (implementerLookup, error) {
 	var out implementerLookup
 	out.testScope = domain.TestScopeAnalysed
 
 	// Resolution reads everything the store holds so a module analysed only
 	// under superseded logic is still recognised as owning the interface; the
 	// answer itself is drawn only from what this binary serves.
-	stored, err := listStoredSummaries(ctx, uc, scope)
+	stored, err := listStoredSummaries(ctx, uc, sc.modules)
 	if err != nil {
 		return out, err
 	}
-	sums, err := listScopedSummaries(ctx, uc, scope)
+	sums, err := listScopedSummaries(ctx, uc, sc.modules)
 	if err != nil {
 		return out, err
 	}
@@ -259,7 +259,7 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 		if cErr != nil {
 			return out, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
-		rec, ok, gErr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
+		rec, ok, gErr := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: sc.toolchain})
 		if gErr != nil {
 			return out, fmt.Errorf("loading call graph for %s: %w", coord, gErr)
 		}

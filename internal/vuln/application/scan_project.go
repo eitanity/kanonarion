@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -56,7 +57,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 	})
 	if err != nil {
 		uc.logger.Error("project-rooted scan failed", "root", root, "error", err)
-		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, closure, requested, out, domain.StatusScanFailed, "", "", err.Error())
+		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, closure, requested, gotoolchain.Unrecorded, out, domain.StatusScanFailed, "", "", err.Error())
 	}
 	// A scan that extracted its own advisory database counted it. Rebind the
 	// local snapshot — not the caller's, which the run row already names — so
@@ -76,7 +77,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		// honestly across the build rather than as a false clean.
 		uc.logger.Warn("project-rooted scan could not analyse the project",
 			"root", root, "status", result.Status, "analysis_surface", string(surface))
-		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, closure, surface, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
+		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, closure, surface, result.Toolchain, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
 	}
 
 	for _, coord := range allCoords {
@@ -89,7 +90,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		// instead.
 		if reason, absent := absentFromVendor(surface, closure, coord, root); absent {
 			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusUnscannable,
-				domain.UnscanReasonAbsentFromVendor, reason, "", surface, params, snapshot)
+				domain.UnscanReasonAbsentFromVendor, reason, "", surface, result.Toolchain, params, snapshot)
 			if perr != nil {
 				return perr
 			}
@@ -117,7 +118,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 			// checked. Reporting it Clean would be the exact false negative this
 			// path is being fixed for, so it carries the fault instead.
 			uc.logger.Error("project-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), surface, params, snapshot)
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), surface, result.Toolchain, params, snapshot)
 			if perr != nil {
 				return perr
 			}
@@ -130,7 +131,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		status := domain.DetermineRecordOverallStatus(
 			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
 		)
-		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", surface, params, snapshot)
+		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", surface, result.Toolchain, params, snapshot)
 		if perr != nil {
 			return perr
 		}
@@ -281,6 +282,7 @@ func (uc *ScanWalkUseCase) fillProjectFault(
 	snapshot *domain.DatabaseSnapshot,
 	closure ports.VendoredClosure,
 	surface domain.AnalysisSurface,
+	toolchain gotoolchain.Version,
 	out map[coordinate.ModuleCoordinate]moduleResult,
 	status domain.VulnerabilityStatus,
 	unscanReason domain.UnscanReason,
@@ -291,7 +293,7 @@ func (uc *ScanWalkUseCase) fillProjectFault(
 		if reason, absent := absentFromVendor(surface, closure, coord, root); absent {
 			coordStatus, coordUnscan, coordReason, coordDetail = domain.StatusUnscannable, domain.UnscanReasonAbsentFromVendor, reason, ""
 		}
-		rec, err := uc.persistProjectRecord(ctx, root, coord, nil, coordStatus, coordUnscan, coordReason, coordDetail, surface, params, snapshot)
+		rec, err := uc.persistProjectRecord(ctx, root, coord, nil, coordStatus, coordUnscan, coordReason, coordDetail, surface, toolchain, params, snapshot)
 		if err != nil {
 			return err
 		}
@@ -465,6 +467,7 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 	unscanReason domain.UnscanReason,
 	unscannableReason, errorDetail string,
 	surface domain.AnalysisSurface,
+	toolchain gotoolchain.Version,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
 ) (domain.VulnerabilityRecord, error) {
@@ -512,6 +515,10 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		// verdict that did not name its surface could not be checked against the
 		// build it claims to describe.
 		AnalysisSurface: surface,
+		// The toolchain the analysis ran under, as the scanner reported it. A path
+		// that never ran one leaves it unrecorded rather than naming this process's,
+		// which took no part in the verdict.
+		Toolchain: toolchain,
 	}
 	domain.SortFindings(rec.Findings)
 	// govulncheck produced these reachability answers and knows nothing of the

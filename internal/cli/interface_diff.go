@@ -15,6 +15,7 @@ import (
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -68,6 +69,11 @@ const zeroBreakingNoUsedByNote = "what would answer it: exercise your own tests 
 
 type interfaceDiffFlags struct {
 	usedBy string
+	// toolchain restricts the consumer's own call graph to one Go toolchain. It is
+	// here because --used-by resolves a stored call graph, and a refusal that told
+	// the reader to name a toolchain while this command had no way to name one
+	// would be advice it could not act on.
+	toolchain string
 }
 
 // -- interface-diff command --
@@ -112,6 +118,8 @@ Both records must already be extracted — run 'kanonarion interface' first.`,
 	// A value-taking flag and nothing else: no NoOptDefVal, so "--used-by
 	// ./go.mod" is the grammar and a bare --used-by is rejected rather than
 	// silently swallowing the next positional.
+	cmd.Flags().StringVar(&f.toolchain, "toolchain", "",
+		"restrict the consumer's call graph to one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
 	cmd.Flags().StringVar(&f.usedBy, "used-by", "",
 		"join the delta against the stored call graph of the project this go.mod declares")
 
@@ -172,7 +180,7 @@ func interfaceDiffWith(
 
 	var used *usedByResult
 	if f.usedBy != "" {
-		used, err = joinUsedBy(ctx, ctr, diff, f.usedBy)
+		used, err = joinUsedBy(ctx, ctr, diff, f.usedBy, gotoolchain.Version(f.toolchain))
 		if err != nil {
 			return err
 		}
@@ -298,7 +306,7 @@ func (r *usedByResult) TouchedReach() (decls, sites int) {
 // It never parses the consumer's source. The answer is a read of what was
 // already measured and recorded, so it is reproducible and it cannot disagree
 // with what `callers` would say about the same symbol.
-func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string) (*usedByResult, error) {
+func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string, toolchain gotoolchain.Version) (*usedByResult, error) {
 	choice, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
 	if err != nil {
 		return nil, err
@@ -319,7 +327,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		ScopeSize: scope.Len(),
 	}
 
-	positions, dropped, found, err := consumerNodePositions(ctx, ctr.QueryCallGraph, rec.Target)
+	positions, dropped, found, err := consumerNodePositions(ctx, ctr.QueryCallGraph, rec.Target, toolchain)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +342,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		if !measurable {
 			return entry, nil
 		}
-		refs, ferr := ctr.QueryCallGraph.FindCallers(ctx, nodeID, cgapp.PipelineVersion, scope, cgports.EdgeQueryOptions{})
+		refs, ferr := ctr.QueryCallGraph.FindCallers(ctx, nodeID, cgapp.PipelineVersion, scope, cgports.EdgeQueryOptions{Toolchain: toolchain})
 		if ferr != nil {
 			return usedSymbol{}, fmt.Errorf("finding callers of %s: %w", nodeID, ferr)
 		}
@@ -455,8 +463,8 @@ func writeUsedByDroppedPackages(stdout io.Writer, used *usedByResult) error {
 // declared at. It also returns the consumer's own packages whose typecheck
 // failed, because a call site in one of them produced no SSA and so cannot join.
 // Returns found=false when the project has no stored graph.
-func consumerNodePositions(ctx context.Context, uc QueryCallGraphUseCase, consumer coordinate.ModuleCoordinate) (map[string]cgdomain.SourcePosition, []string, bool, error) {
-	rec, found, err := uc.GetCallGraphRecord(ctx, consumer, cgapp.PipelineVersion)
+func consumerNodePositions(ctx context.Context, uc QueryCallGraphUseCase, consumer coordinate.ModuleCoordinate, toolchain gotoolchain.Version) (map[string]cgdomain.SourcePosition, []string, bool, error) {
+	rec, found, err := uc.GetCallGraphRecordFrom(ctx, consumer, cgapp.PipelineVersion, cgdomain.ComposeRequest{ToolchainPreference: toolchain})
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("loading call graph for %s: %w", consumer, err)
 	}

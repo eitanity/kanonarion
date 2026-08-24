@@ -6,16 +6,30 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
-// ToolchainProbe reports whether the Go toolchain the analysis is about to use —
-// or has just failed to use — can be run at all. A nil error means it answered.
+// ToolchainProbe asks the Go toolchain the analysis is about to use — or has
+// just failed to use — to name itself. A nil error means it answered, and the
+// string is its `go env GOVERSION`.
+//
+// One question answers two: whether the environment can run the toolchain at all
+// (which classifies a load failure) and which toolchain it is (which the record
+// states). Asking them separately would be two subprocesses answering about one
+// environment, and nothing would hold them to the same answer.
 //
 // dir is the directory the load it is being asked about ran in. A toolchain is
 // resolved per directory — a version manager reads a version file from the tree
 // it is invoked in — so a probe that answered from anywhere else would be
-// answering about a different toolchain from the one that failed.
-type ToolchainProbe func(ctx context.Context, dir string) error
+// answering about a different toolchain from the one that ran.
+//
+// env is the environment the load itself was given, and passing it is not
+// optional. Every analysis environment pins GOTOOLCHAIN=local; a probe left to
+// inherit the process environment auto-switches to whatever the tree's go
+// directive asks for and names a toolchain the loader never ran. Measured: an
+// analysis that failed with "requires go >= 1.26.6 (running go 1.26.5)" recorded
+// go1.26.6, which is the fabrication this whole axis exists to stop.
+type ToolchainProbe func(ctx context.Context, dir string, env []string) (string, error)
 
 // toolchainProbe is the probe classifyLoadFailure consults. It defaults to
 // assumeUsableToolchain and is replaced by the composition root via
@@ -42,7 +56,9 @@ func SetToolchainProbe(fn ToolchainProbe) {
 // about the module. That is the classification a real probe returns wherever
 // the suite itself runs; a composition root that wants environment failures
 // told apart must wire a real probe.
-func assumeUsableToolchain(context.Context, string) error { return nil }
+// It names no version: a seam that invented one would put a toolchain on every
+// record written by a suite that never ran a toolchain at all.
+func assumeUsableToolchain(context.Context, string, []string) (string, error) { return "", nil }
 
 // classifyLoadFailure decides whether a failure raised by the package loader is
 // a fact about the module or about the run.
@@ -69,13 +85,13 @@ func assumeUsableToolchain(context.Context, string) error { return nil }
 // where the go/packages error is still a value rather than prose": the decision
 // is made here, once, at the moment of failure, and travels on the record. No
 // later reader re-derives it from a string.
-func (a *Analyser) classifyLoadFailure(ctx context.Context, dir string) domain.FailureCause {
+func (a *Analyser) classifyLoadFailure(ctx context.Context, dir string, env []string) domain.FailureCause {
 	// A cancelled or expired context is environmental on its own terms, and would
 	// also make the probe fail for a reason that says nothing about the toolchain.
 	if ctx.Err() != nil {
 		return domain.FailureCauseEnvironment
 	}
-	if err := toolchainProbe(ctx, dir); err != nil {
+	if _, err := toolchainProbe(ctx, dir, env); err != nil {
 		a.logger.WarnContext(ctx, "callgraph_toolchain_unusable",
 			slog.String("dir", dir),
 			slog.String("error", err.Error()),
@@ -116,4 +132,19 @@ func isOfflineCacheMiss(detail string) bool {
 // Both halves are required so a module quoting the phrase cannot match.
 func isToolchainTooOld(detail string) bool {
 	return strings.Contains(detail, " requires go >= ") && strings.Contains(detail, "(running go ")
+}
+
+// probeToolchainVersion names the toolchain this analysis is running under, or
+// the zero value when it could not be established.
+//
+// A failure is not reported: the analysis itself is what is being run, and a
+// record that cannot say which toolchain built it is a record that says so. The
+// classification path asks the same question again on the failure route, where
+// the error is the answer being sought.
+func probeToolchainVersion(ctx context.Context, dir string, env []string) gotoolchain.Version {
+	v, err := toolchainProbe(ctx, dir, env)
+	if err != nil {
+		return gotoolchain.Unrecorded
+	}
+	return gotoolchain.Version(strings.TrimSpace(v))
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -758,15 +759,16 @@ func (s *Store) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleC
 }
 
 // GetCallGraphRecordFrom answers the same question as GetCallGraphRecord but
-// restricted to records built from one kind of source.
+// restricted to the dimension values the request names.
 //
-// It exists because the source is a dimension: a graph built from a published
-// module zip and one built from a working tree describe different bytes, so
-// "which does the caller want" is a real question the coordinate cannot answer.
+// It exists because the source and the toolchain are dimensions: a graph built
+// from a published module zip and one built from a working tree describe
+// different bytes, and two toolchains carry two stdlibs, so "which does the
+// caller want" is a real question the coordinate cannot answer.
 // GetCallGraphRecord applies a stated default (see domain.Compose); this is how
 // a caller asks for the other one.
-func (s *Store) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source domain2.AnalysisSource) (domain2.CallGraphRecord, bool, error) {
-	return s.composeFor(ctx, coord, pipelineVersion, domain2.ComposeRequest{Source: source})
+func (s *Store) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain2.ComposeRequest) (domain2.CallGraphRecord, bool, error) {
+	return s.composeFor(ctx, coord, pipelineVersion, req)
 }
 
 func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain2.ComposeRequest) (domain2.CallGraphRecord, bool, error) {
@@ -1539,7 +1541,7 @@ func pageSummaries(sums []ports.CallGraphSummary, limit, offset int) []ports.Cal
 // The single-generation case — every module in the store today — is answered
 // from the column without decoding a blob, which matters at millions of edge
 // rows.
-func (s *Store) servedContentHash(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (string, bool, error) {
+func (s *Store) servedContentHash(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) (string, bool, error) {
 	const q = `SELECT content_hash FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 LIMIT 2`
@@ -1570,7 +1572,7 @@ LIMIT 2`
 	case 1:
 		return hashes[0], true, nil
 	default:
-		served, found, gerr := s.GetCallGraphRecord(ctx, coord, pipelineVersion)
+		served, found, gerr := s.composeFor(ctx, coord, pipelineVersion, domain2.ComposeRequest{ToolchainPreference: toolchain})
 		if gerr != nil {
 			return "", false, gerr
 		}
@@ -1589,7 +1591,7 @@ func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersio
 		q += ` AND is_test = 0`
 	}
 	q += ` ORDER BY from_module, from_version, from_id`
-	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope)
+	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
 }
 
 // FindCallees returns all edges where the caller matches symbolID, restricted
@@ -1603,7 +1605,7 @@ func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersio
 		q += ` AND is_test = 0`
 	}
 	q += ` ORDER BY from_module, from_version, to_id`
-	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope)
+	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
 }
 
 // queryEdges runs an edge query and drops rows whose owning module is outside
@@ -1613,7 +1615,7 @@ func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersio
 // queries are already driven by an index on the symbol ID, so the rows reaching
 // this loop are the matches for one symbol — a set small enough that filtering
 // in Go costs nothing the parameter list would not cost more of.
-func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
+func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion string, scope coordinate.ModuleSet, toolchain gotoolchain.Version) ([]ports.CallEdgeRef, error) {
 	rows, err := s.db.DB().QueryContext(ctx, q, symbolID, pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("querying callgraph edges: %w", err)
@@ -1651,7 +1653,7 @@ func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion str
 		return nil, fmt.Errorf("closing callgraph edge rows: %w", err)
 	}
 
-	return s.servedEdges(ctx, candidates, pipelineVersion)
+	return s.servedEdges(ctx, candidates, pipelineVersion, toolchain)
 }
 
 // edgeCandidate is one edge row together with the record it belongs to.
@@ -1674,7 +1676,7 @@ type edgeCandidate struct {
 // every module in the store, so one disputed module must not delete every correct
 // answer. Callers get the refs AND a non-nil error, so nothing is dropped
 // silently.
-func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pipelineVersion string) ([]ports.CallEdgeRef, error) {
+func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pipelineVersion string, toolchain gotoolchain.Version) ([]ports.CallEdgeRef, error) {
 	type moduleKey struct{ path, version string }
 	served := map[moduleKey]string{}
 	var conflicts []error
@@ -1688,7 +1690,7 @@ func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pip
 			if cerr != nil {
 				return nil, fmt.Errorf("callgraph edge row %s@%s names no module: %w", k.path, k.version, cerr)
 			}
-			h, found, herr := s.servedContentHash(ctx, coord, pipelineVersion)
+			h, found, herr := s.servedContentHash(ctx, coord, pipelineVersion, toolchain)
 			switch {
 			case errors.Is(herr, ports.ErrCallGraphConflict):
 				conflicts = append(conflicts, herr)

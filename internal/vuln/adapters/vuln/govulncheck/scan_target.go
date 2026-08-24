@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -40,7 +41,7 @@ import (
 // the result's Status so the caller can fall back rather than record a false
 // clean across the whole walk. The error return is reserved for infrastructure
 // failures (missing govulncheck) that abort the scan.
-func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequest) (domain.ProjectScanResult, error) {
+func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequest) (res domain.ProjectScanResult, err error) {
 	coord := req.Coordinate
 	s.logMem(ctx, "target_scan_start")
 	s.logger.Info("vuln-scan: target-rooted scan starting", "module", coord.Path(), "version", coord.Version())
@@ -55,6 +56,10 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// scratch directory, not a working tree, so there is no vendor/ tree to root
 	// at and this path is fetched-surface by construction.
 	env := scanEnv(os.Environ(), req.GoModCache, domain.AnalysisSurfaceFetched)
+
+	// Stamped on every result this scan returns, faults included; see ScanProject.
+	toolchain := gotoolchain.Version(toolchainGoVersion(ctx, tmpDir, env))
+	defer func() { res.Toolchain = toolchain }()
 
 	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, req.ModuleSource, env, req.BuildList)
 	if err != nil {

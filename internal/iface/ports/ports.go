@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
@@ -58,6 +59,12 @@ type InterfaceExtractor interface {
 	// says extraction failed and does not say at what configuration cannot be
 	// told apart from one measured elsewhere.
 	BuildFrame() domain.BuildFrame
+
+	// Toolchain names the Go toolchain whose release tags Extract measures under,
+	// for the same reason and on the same terms as BuildFrame: a failed extraction
+	// is still an attempt under one toolchain, and one that cannot say which is
+	// not comparable with anything.
+	Toolchain() gotoolchain.Version
 }
 
 // SignatureReader is the driven port for reading Go declaration TEXT.

@@ -241,3 +241,32 @@ func TestExtract_PackageDirOrderIsFixed(t *testing.T) {
 		}
 	}
 }
+
+// TestExtract_NamesTheToolchainThatSelectedTheFiles closes the frame's one leak.
+//
+// The frame overrides everything a caller's environment could smuggle in — GOOS
+// and GOARCH come from the frame, BuildTags is cleared — and then takes the
+// release tags (go1.1 … go1.N) from build.Default, which is a constant of the
+// toolchain that compiled THIS process. So a //go:build go1.N file enters or
+// leaves a stored API with the toolchain, and the record has to say which one.
+//
+// It is runtime.Version() and not a `go env GOVERSION` from PATH on purpose:
+// nothing here spawns a go command, so a version read off PATH would name a
+// toolchain that took no part in the extraction.
+func TestExtract_NamesTheToolchainThatSelectedTheFiles(t *testing.T) {
+	r, err := makeExtractor().Extract(context.Background(), variantFS(), coord(t))
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if !r.Toolchain.Recorded() {
+		t.Fatal("the record names no toolchain, so which release tags selected its files is unrecoverable")
+	}
+	if string(r.Toolchain) != runtime.Version() {
+		t.Errorf("Toolchain = %q, want the compiling toolchain %q", r.Toolchain, runtime.Version())
+	}
+	// The port carries it too, so a caller stamping a FAILED extraction states the
+	// same toolchain rather than leaving it blank.
+	if got := makeExtractor().Toolchain(); got != r.Toolchain {
+		t.Errorf("Toolchain() = %q but Extract recorded %q", got, r.Toolchain)
+	}
+}

@@ -22,7 +22,8 @@ exit 0
     "pipeline_version": "v24",
     "rooting": "target-rooted",
     "content_hash": "sha256:3a9dd143511331aea4a3d2a9a033f6085c522ae52f40afa9c86da84a4baa4a70",
-    "superseded": false
+    "superseded": false,
+    "toolchain": ""
   }
 ]
 --- stderr ---

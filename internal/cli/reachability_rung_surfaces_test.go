@@ -130,11 +130,10 @@ func TestRecordJSONCarriesTheRung(t *testing.T) {
 	}
 }
 
-// derivedRecordKeys are the keys the projection adds that no stored field
-// carries. Each is a fact about this build's reading of the record rather than
-// about the record, so writing it into the domain type would re-hash every
-// stored record to say something a comparison already settles — the reason the
-// projections wrap the domain types at all.
+// derivedRecordKeys are the keys the projection emits that the domain type's own
+// marshalling does not. Each is a fact about this build's reading of the record
+// rather than about the record, or a stored field the wire states unconditionally
+// where the seal must omit it.
 //
 // The list is explicit so that adding a key is a decision. Anything not named
 // here still fails the check below, which is the invention this guard exists to
@@ -145,6 +144,10 @@ var derivedRecordKeys = map[string]struct{}{
 	// the two reads that span generations, and it is emitted false elsewhere so
 	// a consumer can tell "current" from "not derived".
 	"superseded": {},
+	// A stored field, omitempty in the seal so records that predate it keep their
+	// hash, and emitted on every record here: absent would be indistinguishable
+	// from a producer that does not state it, and "not recorded" is the answer.
+	"toolchain": {},
 }
 
 // TestRecordJSONKeepsEveryDomainField guards the projection against the failure

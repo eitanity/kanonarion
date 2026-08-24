@@ -95,3 +95,33 @@ func TestOrderedBy_DoesNotCopyACanonicallyOrderedCollection(t *testing.T) {
 		t.Errorf("the caller's collection was reordered: %v", unsorted)
 	}
 }
+
+// TestIdentityOf_DistinguishesAnUnstatedFieldFromAStatedEmptyOne.
+//
+// An edge's kind is omitempty, so it is absent from the canonical bytes of every
+// edge sealed as a call. Joining a blank for it gave every edge identity a
+// trailing separator and rendered "states no kind" identically to "states the
+// empty kind" — two different facts collapsed into one identity, which is
+// exactly what an identity may not do.
+func TestIdentityOf_DistinguishesAnUnstatedFieldFromAStatedEmptyOne(t *testing.T) {
+	t.Parallel()
+	base := map[string]json.RawMessage{
+		"from_id":   json.RawMessage(`"a"`),
+		"to_id":     json.RawMessage(`"b"`),
+		"call_site": json.RawMessage(`{"file":"a.go","line":1}`),
+	}
+	unstated := identityOf("edges", base)
+
+	statedEmpty := map[string]json.RawMessage{}
+	for k, v := range base {
+		statedEmpty[k] = v
+	}
+	statedEmpty["kind"] = json.RawMessage(`""`)
+
+	if got := unstated; got != `a b {"file":"a.go","line":1}` {
+		t.Errorf("an unstated kind rendered %q; it must contribute nothing, not a trailing separator", got)
+	}
+	if identityOf("edges", statedEmpty) == unstated {
+		t.Errorf("an edge stating the empty kind shares an identity with one stating no kind: both %q", unstated)
+	}
+}

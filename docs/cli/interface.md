@@ -41,6 +41,22 @@ Records written before frames read as `build frame: unrecorded`. Two records
 naming different frames, or one naming a frame and one not, are reported as a
 `build_frame` conflict rather than composed; re-extract to replace them.
 
+The `toolchain:` line under it names the Go toolchain whose release tags
+(`go1.1 … go1.N`) selected the files. A `//go:build go1.27` file enters or leaves
+the recorded API with the toolchain, and the frame does not say which tags were
+in force, so the two lines are read together. Records written before the
+toolchain was recorded read `toolchain: not recorded`. Two records naming
+different toolchains are reported as a `toolchain` conflict **when their APIs also
+differ** — the API difference is the disagreement and the toolchain is what
+explains it; two toolchains that produced the identical API produced the same
+answer and compose. A record naming no toolchain never conflicts with one that
+does. Under `--json` the field is `toolchain`, emitted on every record, empty when
+not recorded.
+
+`interface-diff --toolchain` restricts the consumer call graph `--used-by`
+resolves, on the same terms as the other query commands: see
+[callgraph.md](callgraph.md).
+
 ## Commands
 
 ### `interface`
@@ -114,6 +130,7 @@ kanonarion interface-show <module>@<version> [flags]
 ```
 $ kanonarion interface-show github.com/spf13/cobra@v1.8.1 --package github.com/spf13/cobra
 build frame: linux/amd64 (cgo on)
+toolchain:   go1.26.6
 
 package cobra // github.com/spf13/cobra
   type Command (struct)

@@ -20,6 +20,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 )
 
@@ -57,6 +58,10 @@ var errZeroFrame = errors.New("names neither GOOS nor GOARCH")
 // which is not comparable with anything.
 func (e *Extractor) BuildFrame() domain.BuildFrame { return e.frame }
 
+// Toolchain returns the toolchain this extractor measures under, so the caller
+// can stamp it on records it builds without a successful extraction.
+func (e *Extractor) Toolchain() gotoolchain.Version { return extractingToolchain() }
+
 // Extract walks sourceTree and produces an InterfaceRecord holding the public
 // API of one buildable configuration of the module: for each package directory
 // it parses the non-test .go files that are in the extractor's build frame, and
@@ -89,6 +94,7 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 				Coordinate:      coord,
 				Packages:        pkgs,
 				BuildFrame:      frame,
+				Toolchain:       extractingToolchain(),
 				OverallStatus:   domain.InterfaceStatusCancelled,
 				ExtractedAt:     e.clock.Now().UTC(),
 				PipelineVersion: e.pipelineVersion,
@@ -127,6 +133,7 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 		Coordinate:      coord,
 		Packages:        pkgs,
 		BuildFrame:      frame,
+		Toolchain:       extractingToolchain(),
 		OverallStatus:   domain.InterfaceStatusExtracted,
 		ExtractedAt:     e.clock.Now().UTC(),
 		PipelineVersion: e.pipelineVersion,

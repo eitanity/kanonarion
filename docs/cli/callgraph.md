@@ -263,11 +263,12 @@ kanonarion callgraph-show <module>@<version> [flags]
 | `--history` | `false` | List every stored generation for the module instead of the composed answer |
 | `--diff` | `false` | Report what the distinct stored measurements for the module differ about, instead of the composed answer |
 | `--source` | _(default)_ | Restrict to graphs built from one source: `zip` or `worktree` |
+| `--toolchain` | _(default)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. `go1.26.6`). A coordinate holding none of them reports no record |
 
 ```
 $ kanonarion callgraph-show golang.org/x/mod@v0.30.0 --limit-nodes 2 --limit-edges 2
 golang.org/x/mod@v0.30.0  [CHA]  Extracted
-  fidelity: BUILT_WITH_BODIES   source: zip
+  fidelity: BUILT_WITH_BODIES   source: zip   toolchain: go1.26.6
   test scope: analysed — 290 of 1039 nodes are test declarations
   interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
 Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
@@ -353,6 +354,17 @@ describes a directory on disk rather than the published module of that version. 
 record written before the source was recorded prints `source: not recorded`,
 which is a statement rather than a default.
 
+The `toolchain:` line names the Go toolchain that built the graph — `go env
+GOVERSION` of the process the loader drove, not the toolchain kanonarion was
+compiled with and not the module's own `go` directive. A record written before
+the toolchain was recorded prints what its own stdlib positions still show: the
+version when the stdlib came from a toolchain downloaded as a module (`go1.26.6
+(from the recorded stdlib path)`), the directory when it came from an installed
+GOROOT (`unnamed version at GOROOT /usr/local/go`, which names no version because
+a GOROOT is upgraded in place), and `not recorded` when the graph carries no
+stdlib path at all. Under `--json`, `toolchain` carries that identity and
+`toolchain_stated` is `null` unless the record itself named one.
+
 ##### Modules published before Go modules
 
 A module published before Go modules ships no `go.mod` in its zip. Extracted into
@@ -423,11 +435,13 @@ $ kanonarion callgraph-show example.com/mod@local --history
 2 generation(s) for example.com/mod@local at pipeline 0.3.0:
   2026-01-01T10:00:00Z  Extracted        BUILT_WITH_BODIES 8334 node(s) / 89058 edge(s)
     source:   worktree
+    toolchain: go1.26.6
     from:     tree sha256:020268b3...
     graph:    sha256:7e1b556a...
     record:   sha256:286f5597...
 * 2026-01-01T10:02:00Z  Extracted        BUILT_WITH_BODIES 8335 node(s) / 89102 edge(s)
     source:   worktree
+    toolchain: go1.26.6
     from:     tree sha256:1c48c5a1...
     graph:    sha256:a5f1f9e3...
     record:   sha256:a03186a6...
@@ -472,6 +486,22 @@ artefact and never conflicts with one, so warming the cache and re-running is
 enough. Where no graph was produced the rung decides nothing and the newest
 account of the failure answers.
 
+The **Go toolchain is not on that ladder either**. A graph carries the
+toolchain's own stdlib and its vendored trees, so two toolchains that produced
+DIFFERENT graphs produced two answers about two builds and neither supersedes the
+other: composition names the toolchain and refuses rather than serving whichever
+ran last. `--toolchain go1.26.6` asks for one of them, and `callers`, `callees`,
+`implementers` and `interface-diff` take it too.
+
+The graph difference is what makes it a disagreement. Two toolchains that
+produced the **same** nodes and edges produced the same answer, so the read
+composes and the served record names its own toolchain — a patch bump moves no
+release tag and routinely produces byte-identical graphs. A record that
+establishes no toolchain at all is never read as a toolchain of its own: an
+unnamed GOROOT says where the stdlib was read, not which version read it, so it
+ladders **below** a record that names one rather than conflicting with it, and it
+is never read as "any toolchain" and never as the reading host's.
+
 The **analysis source is not on that ladder**. A zip graph and a worktree graph
 answer different questions about different bytes, so composition never serves one
 for the other; a read that names no source is answered from the zip records,
@@ -488,10 +518,14 @@ them, and the served record names its own build list. A generation that names no
 build list cannot be shown to have been asked a different question, so it goes on
 comparing against every other.
 
-Two disagreements are reported rather than resolved by picking: two analyses of
-one pinned version that name **different artefacts**, and two records at the
-**same completeness**, offered the **same build list**, that disagree about the
-graph (the narrow case that indicates non-determinism in the analyser). A disputed module is reported on its
+Three disagreements are reported rather than resolved by picking: two analyses of
+one pinned version that name **different artefacts**, two built by **different Go
+toolchains** that describe different graphs, and two records at the **same
+completeness**, offered the **same build list**, that disagree about the graph
+(the narrow case that indicates non-determinism in the analyser). The toolchain
+check runs first and across build lists, because the two axes are independent —
+generations offered different build lists are never compared with each other, so
+a toolchain difference between them would otherwise go unreported. A disputed module is reported on its
 own row in `callgraph-list` rather than failing the whole listing. Every such
 refusal prints the commands that address it — a refusal the append-only ledger
 makes permanent and that names no route out is a dead end.
@@ -849,3 +883,29 @@ re-extracting, so it appends nothing.
 - [`kanonarion capability`](capability.md) — capability analysis over the graph
 - [`kanonarion reachability`](reachability.md) — reachability from roots
 - [`kanonarion interface`](interface.md) — extract the public interface
+
+### Naming a toolchain on a query
+
+`callers`, `callees`, `implementers` and `interface-diff` accept `--toolchain`
+alongside `--walk-id` and `--gomod`. It behaves differently from
+`callgraph-show --toolchain`, and the difference is deliberate.
+
+`callgraph-show` names one coordinate, so the flag **restricts** the read: a
+coordinate the ledger holds no such generation of reports no record, which is the
+answer the reader asked for.
+
+A query spans every module in scope, almost none of which state a toolchain, so
+there the flag **disambiguates** rather than restricts. It is consulted only where
+one coordinate's generations disagree about the toolchain; every other module is
+served exactly as it would be without the flag. Restricting such a read would
+report "no record" for hundreds of modules and turn a disambiguation into a
+silently short answer.
+
+```
+$ kanonarion callers 'golang.org/x/tools/go/packages.Load'
+error: ... toolchain disagrees ([GOROOT usr/local/go go1.26.6]) ...
+
+$ kanonarion callers 'golang.org/x/tools/go/packages.Load' --toolchain go1.26.6
+297 callers of golang.org/x/tools/go/packages.Load:
+  ...
+```

@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/spf13/cobra"
 )
 
@@ -24,6 +25,7 @@ type callGraphShowFlags struct {
 	history    bool
 	diff       bool
 	source     string
+	toolchain  string
 }
 
 func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -38,7 +40,8 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node github.com/spf13/pflag
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --history
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff
-  kanonarion callgraph-show example.com/mod@local --source worktree`,
+  kanonarion callgraph-show example.com/mod@local --source worktree
+  kanonarion callgraph-show golang.org/x/tools@v0.49.0 --toolchain go1.26.6`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
@@ -59,6 +62,7 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of the composed answer")
 	cmd.Flags().BoolVar(&f.diff, "diff", false, "report what the distinct stored measurements for the module differ about, instead of the composed answer")
 	cmd.Flags().StringVar(&f.source, "source", "", "restrict to graphs built from one source: zip or worktree")
+	cmd.Flags().StringVar(&f.toolchain, "toolchain", "", "restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
 
 	return cmd
 }
@@ -98,11 +102,17 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		return runCallGraphDiff(ctx, coord, f, jsonOut, uc, stdout)
 	}
 
-	r, found, err := uc.GetCallGraphRecordFrom(ctx, coord, cgapp.PipelineVersion, source)
+	req := domain.ComposeRequest{Source: source, Toolchain: gotoolchain.Version(f.toolchain)}
+	r, found, err := uc.GetCallGraphRecordFrom(ctx, coord, cgapp.PipelineVersion, req)
 	if err != nil {
 		return fmt.Errorf("getting callgraph record: %w", err)
 	}
 	if !found {
+		if req.Toolchain.Recorded() {
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+				"no callgraph record for %s built by %s — the ledger may hold one built by another toolchain; try --history",
+				coord, req.Toolchain)}
+		}
 		if source != domain.AnalysisSourceUnrecorded {
 			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 				"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
@@ -200,10 +210,11 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
-			r.AnalysisSource.String(), historyOrigin(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
+			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(),
+			historyOrigin(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -323,7 +334,15 @@ type callGraphRecordJSON struct {
 	// ("not recorded") and must be visible as one.
 	Completeness   string `json:"completeness"`
 	AnalysisSource string `json:"analysis_source"`
-	WorktreeDigest string `json:"worktree_digest,omitempty"`
+	// Toolchain is emitted even when empty, on the same terms: a consumer that
+	// cannot see which Go built the graph cannot tell two toolchains' answers
+	// apart, and an absent value is itself the answer ("not recorded").
+	Toolchain string `json:"toolchain"`
+	// ToolchainStated is what the record ITSELF recorded, so a consumer can tell a
+	// toolchain the analysis named from one recovered out of the graph's own
+	// stdlib paths. Null when the record states none.
+	ToolchainStated *string `json:"toolchain_stated"`
+	WorktreeDigest  string  `json:"worktree_digest,omitempty"`
 	// WorktreeScanDigest names the tree state this record was taken of, which is
 	// the key a later run reuses it by. It is here so a reader can check a reuse
 	// claim against the record rather than taking the run's word for it; absent on
@@ -475,6 +494,8 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		Algorithm:          string(r.Algorithm),
 		Completeness:       string(r.Completeness),
 		AnalysisSource:     string(r.AnalysisSource),
+		Toolchain:          domain.RecordToolchain(r).Key(),
+		ToolchainStated:    statedToolchain(r),
 		WorktreeDigest:     r.WorktreeDigest,
 		WorktreeScanDigest: r.WorktreeScanDigest,
 
@@ -515,7 +536,8 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 // and a record that does not say is reported as not recording it rather than
 // silently reading as a zip.
 func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
-	line := fmt.Sprintf("  fidelity: %s   source: %s", r.Completeness.String(), r.AnalysisSource.String())
+	line := fmt.Sprintf("  fidelity: %s   source: %s   toolchain: %s",
+		r.Completeness.String(), r.AnalysisSource.String(), domain.RecordToolchain(r).String())
 	if r.AnalysisSource == domain.AnalysisSourceWorktree && r.WorktreeDigest != "" {
 		line += "  (tree " + r.WorktreeDigest + ")"
 	}
@@ -877,4 +899,15 @@ func supersededGenerationsNote(ctx context.Context, coord coordinate.ModuleCoord
 	sort.Strings(versions)
 	return fmt.Sprintf("the store holds it at superseded pipeline %s, which this build does not serve",
 		strings.Join(versions, ", ")), nil
+}
+
+// statedToolchain is the toolchain the record itself named, or nil when it named
+// none. It is a pointer so that "the record states no toolchain" is a null a
+// consumer can branch on rather than an empty string standing in for a state.
+func statedToolchain(r domain.CallGraphRecord) *string {
+	if !r.Toolchain.Recorded() {
+		return nil
+	}
+	v := string(r.Toolchain)
+	return &v
 }

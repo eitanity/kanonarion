@@ -105,7 +105,8 @@ exit 0
         "route_root": null
       }
     ],
-    "superseded": false
+    "superseded": false,
+    "toolchain": ""
   },
   {
     "ecosystem": "go",
@@ -186,7 +187,8 @@ exit 0
         }
       }
     ],
-    "superseded": false
+    "superseded": false,
+    "toolchain": ""
   }
 ]
 --- stderr ---
