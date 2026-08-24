@@ -27,11 +27,17 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/goenv"
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
 
 const probeHarnessDir = "_kanonarion_probe"
+
+// probeEnv is the environment for every go child this prober spawns. The probe
+// and the call-graph load measure one tree, and these children resolved by
+// whatever flags the caller happened to export while that load was pinned.
+func probeEnv(root string) []string { return goenv.Worktree(os.Environ(), root) }
 
 // Prober implements ports.SymbolTableProber.
 type Prober struct {
@@ -160,6 +166,7 @@ type goListPackage struct {
 func findMainPackages(ctx context.Context, root, goBin string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, goBin, "list", "-json", "./...") // #nosec G204
 	cmd.Dir = root
+	cmd.Env = probeEnv(root)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -192,6 +199,7 @@ func buildBinary(ctx context.Context, root, mainPkg, outBin, goBin string) error
 		mainPkg,
 	)
 	cmd.Dir = root
+	cmd.Env = probeEnv(root)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w\n%s", err, out)
 	}
@@ -231,6 +239,7 @@ func buildLibraryProbe(ctx context.Context, root, harnessDir, outBin, goBin stri
 		"./"+probeHarnessDir,
 	)
 	cmd.Dir = root
+	cmd.Env = probeEnv(root)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("building harness: %w\n%s", err, out)
 	}
@@ -240,6 +249,7 @@ func buildLibraryProbe(ctx context.Context, root, harnessDir, outBin, goBin stri
 func listWorkspacePackages(ctx context.Context, root, goBin string) ([]goListPackage, error) {
 	cmd := exec.CommandContext(ctx, goBin, "list", "-json", "./...") // #nosec G204
 	cmd.Dir = root
+	cmd.Env = probeEnv(root)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -384,6 +394,7 @@ func generateHarness(pkgs []goListPackage, exports map[string][]exportedFunc) st
 func readSymbolTable(ctx context.Context, root, binPath, goBin string) (map[string]struct{}, error) {
 	cmd := exec.CommandContext(ctx, goBin, "tool", "nm", binPath) // #nosec G204
 	cmd.Dir = root
+	cmd.Env = probeEnv(root)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {

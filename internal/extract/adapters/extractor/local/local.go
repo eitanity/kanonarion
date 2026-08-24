@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/extract/domain"
@@ -188,7 +189,10 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	}
 
 	stderr, execErr := a.cgExec.Execute(cgCtx, args)
-	if execErr != nil {
+	// A child that exited Partial wrote its graph; the record read below is what
+	// classifies it. Reading that exit as a fault made every incompletely
+	// analysable module a failed stage.
+	if execErr != nil && !childproc.ExitedPartial(execErr) {
 		detail := buildSubprocessErrorDetail(cgCtx, execErr, stderr)
 		return ports.StageResult{
 			Status: domain.StageFailed,

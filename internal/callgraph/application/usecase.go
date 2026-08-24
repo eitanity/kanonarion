@@ -132,6 +132,11 @@ type ExtractRequest struct {
 type ExtractResult struct {
 	Record    domain2.CallGraphRecord
 	FromCache bool
+	// Reused says the analysis ran and came back identical to a generation the
+	// ledger already holds, so nothing was appended. It is distinct from
+	// FromCache, which says the analysis did not run at all: a caller told the two
+	// apart can see that a re-measurement happened and changed nothing.
+	Reused bool
 }
 
 // Execute runs the call graph extraction pipeline for the given module.
@@ -180,8 +185,11 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	// A local coordinate (the project-walk root) is never served from cache:
 	// the working tree mutates between runs, so its records are recomputed
 	// fresh every time.
+	var existing domain2.CallGraphRecord
+	var found bool
 	if !req.Force && !req.Coordinate.IsLocal() {
-		existing, found, cerr := uc.store.GetCallGraphRecord(ctx, req.Coordinate, uc.pipelineVersion)
+		var cerr error
+		existing, found, cerr = uc.store.GetCallGraphRecord(ctx, req.Coordinate, uc.pipelineVersion)
 		if cerr != nil && !errors.Is(cerr, ports.ErrCallGraphIntegrity) {
 			return ExtractResult{}, fmt.Errorf("checking callgraph store: %w", cerr)
 		}
@@ -287,6 +295,27 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
+	}
+
+	// The analysis ran because the stored record was not eligible to answer — an
+	// environment failure never is — and it came back saying exactly what the
+	// stored one says. There is no new fact to append. Appending anyway is how a
+	// coordinate that keeps failing grows a generation per run for ever, and it
+	// is not free: each generation is a full blob plus its edge rows, and every
+	// composed read of the coordinate carries them.
+	if found {
+		same, serr := domain2.SameMeasurement(record, existing)
+		if serr != nil {
+			return ExtractResult{}, fmt.Errorf("comparing with the stored generation for %s: %w", req.Coordinate, serr)
+		}
+		if same {
+			log.InfoContext(ctx, "callgraph_remeasured_equal",
+				slog.String("overall_status", record.OverallStatus.String()),
+				slog.String("failure_cause", record.FailureCause.String()),
+				slog.String("content_hash", existing.ContentHash),
+			)
+			return ExtractResult{Record: existing, Reused: true}, nil
+		}
 	}
 
 	if err := uc.store.PutCallGraphRecord(ctx, record); err != nil {

@@ -241,3 +241,91 @@ func TestHasher_Unmarshal_MalformedCoordinate(t *testing.T) {
 		t.Error("Unmarshal() error = nil, want a parse error for an invalid coordinate")
 	}
 }
+
+// TestBuildFrame_AbsentOnRecordsThatNameNone keeps every generation written
+// before extraction evaluated build constraints verifiable: the new field is
+// omitted from the canonical bytes when the frame is zero, so a stored record's
+// hash does not move under it.
+func TestBuildFrame_AbsentOnRecordsThatNameNone(t *testing.T) {
+	h := domain2.InterfaceRecordHasher{}
+	r := recordWithFrame(t, domain2.BuildFrame{})
+
+	data, err := h.Marshal(r)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "build_frame") {
+		t.Errorf("canonical bytes carry build_frame for a record that names none: %s", data)
+	}
+
+	sealed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if err := h.VerifyContentHash(sealed); err != nil {
+		t.Errorf("VerifyContentHash: %v", err)
+	}
+}
+
+// TestBuildFrame_RoundTripsAndChangesTheSeal states the other half: a record
+// that names a frame carries it through the store, and two records measured on
+// different platforms are different records rather than one.
+func TestBuildFrame_RoundTripsAndChangesTheSeal(t *testing.T) {
+	h := domain2.InterfaceRecordHasher{}
+	linux := recordWithFrame(t, domain2.BuildFrame{GOOS: "linux", GOARCH: "amd64", CgoEnabled: true})
+	windows := recordWithFrame(t, domain2.BuildFrame{GOOS: "windows", GOARCH: "amd64", CgoEnabled: true})
+
+	sealedLinux, err := h.SetContentHash(linux)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	sealedWindows, err := h.SetContentHash(windows)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if sealedLinux.ContentHash == sealedWindows.ContentHash {
+		t.Error("two frames produced one content hash: the frame is not inside the seal")
+	}
+	if domain2.APIDigest(sealedLinux) == domain2.APIDigest(sealedWindows) {
+		t.Error("two frames produced one public API digest")
+	}
+
+	data, err := h.Marshal(sealedLinux)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	back, err := h.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if back.BuildFrame != linux.BuildFrame {
+		t.Errorf("BuildFrame round-tripped as %v, want %v", back.BuildFrame, linux.BuildFrame)
+	}
+	if !back.Packages[1].OutOfFrame || back.Packages[0].OutOfFrame {
+		t.Errorf("OutOfFrame did not round-trip: %v", back.Packages)
+	}
+	if err := h.VerifyContentHash(back); err != nil {
+		t.Errorf("VerifyContentHash after round trip: %v", err)
+	}
+}
+
+func recordWithFrame(t *testing.T, frame domain2.BuildFrame) domain2.InterfaceRecord {
+	t.Helper()
+	c, err := coordinate.NewModuleCoordinate("example.com/m", "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return domain2.InterfaceRecord{
+		SchemaVersion: domain2.InterfaceSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    c,
+		BuildFrame:    frame,
+		Packages: []domain2.PackageInterface{
+			{ImportPath: "example.com/m", Name: "m", Funcs: []domain2.FuncDecl{{Name: "F", Signature: "func F()"}}},
+			{ImportPath: "example.com/m/plan9", Name: "plan9", OutOfFrame: true},
+		},
+		OverallStatus:   domain2.InterfaceStatusExtracted,
+		ExtractedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		PipelineVersion: "0.4.0",
+	}
+}

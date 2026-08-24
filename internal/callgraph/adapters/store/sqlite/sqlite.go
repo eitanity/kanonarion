@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -758,15 +759,16 @@ func (s *Store) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleC
 }
 
 // GetCallGraphRecordFrom answers the same question as GetCallGraphRecord but
-// restricted to records built from one kind of source.
+// restricted to the dimension values the request names.
 //
-// It exists because the source is a dimension: a graph built from a published
-// module zip and one built from a working tree describe different bytes, so
-// "which does the caller want" is a real question the coordinate cannot answer.
+// It exists because the source and the toolchain are dimensions: a graph built
+// from a published module zip and one built from a working tree describe
+// different bytes, and two toolchains carry two stdlibs, so "which does the
+// caller want" is a real question the coordinate cannot answer.
 // GetCallGraphRecord applies a stated default (see domain.Compose); this is how
 // a caller asks for the other one.
-func (s *Store) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source domain2.AnalysisSource) (domain2.CallGraphRecord, bool, error) {
-	return s.composeFor(ctx, coord, pipelineVersion, domain2.ComposeRequest{Source: source})
+func (s *Store) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain2.ComposeRequest) (domain2.CallGraphRecord, bool, error) {
+	return s.composeFor(ctx, coord, pipelineVersion, req)
 }
 
 func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain2.ComposeRequest) (domain2.CallGraphRecord, bool, error) {
@@ -792,6 +794,14 @@ func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinat
 	if len(records) == 0 {
 		return domain2.CallGraphRecord{}, false, nil
 	}
+	// Where the reader is standing is composition's, not the store's: it selects
+	// between the two questions a local coordinate holds answers to. It is
+	// supplied here rather than by every caller because it is configuration of the
+	// read — see PreferWorktree — and a caller that had to remember it is one that
+	// gets a different answer from the fast path above.
+	if root, ok := s.preferredRoot(coord); ok {
+		req.CallerRoot = root
+	}
 	composed, err := domain2.Compose(records, req)
 	if errors.Is(err, domain2.ErrNoRecordsToCompose) {
 		// The ledger holds generations, but none from the source the caller asked
@@ -811,14 +821,19 @@ func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinat
 // back to composing the full history. It applies only when BOTH hold:
 //
 //   - the coordinate is local — nothing else stores a working tree; and
-//   - no generation at that coordinate came from a module zip.
+//   - no generation at that coordinate came from a module zip, OR the reader is
+//     standing in a tree this ledger holds a generation of.
 //
-// The second condition is the one that is easy to miss. A local coordinate can
-// legitimately hold a zip-sourced record too (a walk over a local-path replace
-// target fetches and analyses one), and then the answer is decided by the source
-// dimension and the completeness ladder rather than by the sequence — so the fast
-// path must stand aside. Both conditions are decided from COLUMNS, without
-// decoding anything.
+// The second condition is the one that is easy to miss, and it has two halves. A
+// local coordinate can legitimately hold a zip-sourced record (a walk over a
+// local-path replace target fetches and analyses one), and then the answer is
+// decided by the source dimension and the completeness ladder rather than by the
+// sequence — so the fast path stands aside. But a zip record of the PROJECT's own
+// coordinate is a by-product of the project's extraction rather than a competing
+// analysis, and standing aside for it meant a reader inside the checkout was
+// permanently answered from a stale snapshot. Where the reader is standing is
+// what tells the two apart; domain.Compose applies the same rule over whole
+// records. Every condition is decided from COLUMNS, without decoding anything.
 //
 // A request that explicitly names the module-zip source also stands aside: it is
 // asking the other question.
@@ -852,9 +867,17 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	for _, src := range sources {
-		if domain2.AnalysisSource(src) == domain2.AnalysisSourceModuleZip {
+		if domain2.AnalysisSource(src) != domain2.AnalysisSourceModuleZip {
+			continue
+		}
+		standing, serr := s.callerTreeIsAnalysed(ctx, coord, pipelineVersion)
+		if serr != nil {
+			return domain2.CallGraphRecord{}, false, serr
+		}
+		if !standing {
 			return domain2.CallGraphRecord{}, false, nil
 		}
+		break
 	}
 
 	row, found, qerr := s.latestGenerationRow(ctx, coord, pipelineVersion)
@@ -882,6 +905,40 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	return rec, true, nil
+}
+
+// callerTreeIsAnalysed reports whether the ledger holds a worktree generation
+// analysed in the tree the reader is standing in.
+//
+// It is the question that separates a zip record which competes with the working
+// tree from one that does not. A reader inside a checkout the ledger has analysed
+// is asking about that checkout; a reader outside every one of them has made no
+// such claim, and the stated default answers instead.
+//
+// It asks about the ROOT rather than the tree's content, on the same reasoning
+// latestGenerationRow does: the digest identifies a tree by its bytes, so a
+// caller with one uncommitted edit is standing in a tree no generation matches,
+// and that caller is exactly who this exists for.
+func (s *Store) callerTreeIsAnalysed(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (bool, error) {
+	root, ok := s.preferredRoot(coord)
+	if !ok {
+		return false, nil
+	}
+	const q = `SELECT 1 FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND analysis_source = ? AND analysis_root = ?
+LIMIT 1`
+	var one int
+	err := s.db.DB().QueryRowContext(ctx, q,
+		coord.Path(), coord.Version(), pipelineVersion,
+		string(domain2.AnalysisSourceWorktree), root).Scan(&one)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("querying analysed trees of %s at %s: %w", coord, root, err)
+	}
+	return true, nil
 }
 
 // latestGenerationRow returns the newest generation's blob for one coordinate,
@@ -934,7 +991,7 @@ type generationRow struct {
 // second share it.
 func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root string) (generationRow, bool, error) {
 	q := `SELECT serialised, content_hash, analysis_root, worktree_scan_digest,
-                 completeness, extracted_at
+                 overall_status, completeness, failure_cause, extracted_at
           FROM callgraph_records
           WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	args := []any{coord.Path(), coord.Version(), pipelineVersion}
@@ -947,16 +1004,17 @@ ORDER BY extracted_at DESC, rowid DESC
 LIMIT 1`
 
 	var row generationRow
-	var completeness, extractedAt string
+	var overallStatus int
+	var completeness, failureCause, extractedAt string
 	serr := s.db.DB().QueryRowContext(ctx, q, args...).Scan(
-		&row.blob, &row.hash, &row.root, &row.scanDigest, &completeness, &extractedAt)
+		&row.blob, &row.hash, &row.root, &row.scanDigest, &overallStatus, &completeness, &failureCause, &extractedAt)
 	switch {
 	case errors.Is(serr, sql.ErrNoRows):
 		return generationRow{}, false, nil
 	case serr != nil:
 		return generationRow{}, false, fmt.Errorf("querying latest generation for %s: %w", coord, serr)
 	}
-	rank, perr := rankOfColumns(completeness, extractedAt)
+	rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
 	if perr != nil {
 		return generationRow{}, false, perr
 	}
@@ -982,7 +1040,7 @@ func (s *Store) bestGenerationOfTreeState(ctx context.Context, coord coordinate.
 	if newest.scanDigest == "" {
 		return newest, nil
 	}
-	const q = `SELECT serialised, content_hash, completeness, extracted_at
+	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_root = ? AND worktree_scan_digest = ?`
@@ -994,12 +1052,13 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	best := newest
 	for rows.Next() {
 		candidate := generationRow{root: newest.root, scanDigest: newest.scanDigest}
-		var completeness, extractedAt string
-		if serr := rows.Scan(&candidate.blob, &candidate.hash, &completeness, &extractedAt); serr != nil {
+		var overallStatus int
+		var completeness, failureCause, extractedAt string
+		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness, &failureCause, &extractedAt); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return generationRow{}, fmt.Errorf("scanning generation of %s: %w", coord, serr)
 		}
-		rank, perr := rankOfColumns(completeness, extractedAt)
+		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
 		if perr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the parse error
 			return generationRow{}, perr
@@ -1020,18 +1079,23 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	return best, nil
 }
 
-// rankOfColumns builds a generation's ordering key from the two columns that
-// carry it. An unparsable timestamp stops the read: a generation whose time
+// rankOfColumns builds a generation's ordering key from the columns that carry
+// it. An unparsable timestamp stops the read: a generation whose time
 // cannot be read cannot be ordered, and defaulting it to the zero time would
 // silently sort it last.
-func rankOfColumns(completeness, extractedAt string) (domain2.GenerationRank, error) {
+func rankOfColumns(overallStatus int, completeness, failureCause, extractedAt string) (domain2.GenerationRank, error) {
 	t, err := time.Parse(time.RFC3339, extractedAt)
 	if err != nil {
 		return domain2.GenerationRank{}, fmt.Errorf("parsing extracted_at %q: %w", extractedAt, err)
 	}
 	return domain2.GenerationRank{
 		Completeness: domain2.CompletenessLevel(completeness),
-		ExtractedAt:  t.UTC(),
+		// Read through the domain's own predicate rather than compared to literals
+		// here: the ladder is one rule and this is a second reader of it, not a
+		// second statement of it.
+		EnvironmentLimited: domain2.EnvironmentLimitedGraph(
+			domain2.CallGraphStatus(overallStatus), domain2.FailureCause(failureCause)),
+		ExtractedAt: t.UTC(),
 	}, nil
 }
 
@@ -1049,7 +1113,7 @@ func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleC
 	if root == "" || scanDigest == "" {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	const q = `SELECT serialised, content_hash, completeness, extracted_at
+	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_root = ? AND worktree_scan_digest = ? AND analysis_source = ?`
@@ -1063,12 +1127,13 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	found := false
 	for rows.Next() {
 		candidate := generationRow{root: root, scanDigest: scanDigest}
-		var completeness, extractedAt string
-		if serr := rows.Scan(&candidate.blob, &candidate.hash, &completeness, &extractedAt); serr != nil {
+		var overallStatus int
+		var completeness, failureCause, extractedAt string
+		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness, &failureCause, &extractedAt); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return domain2.CallGraphRecord{}, false, fmt.Errorf("scanning generation of %s: %w", coord, serr)
 		}
-		rank, perr := rankOfColumns(completeness, extractedAt)
+		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
 		if perr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the parse error
 			return domain2.CallGraphRecord{}, false, perr
@@ -1138,6 +1203,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ? AND analys
 		UnlocatedGenerations: unlocated,
 		ServedRoot:           rec.AnalysisRoot,
 		ServedDigest:         rec.WorktreeDigest,
+		ServedSource:         rec.AnalysisSource,
 	}
 	if root, ok := s.preferredRoot(coord); ok {
 		out.CallerRoot = root
@@ -1475,7 +1541,7 @@ func pageSummaries(sums []ports.CallGraphSummary, limit, offset int) []ports.Cal
 // The single-generation case — every module in the store today — is answered
 // from the column without decoding a blob, which matters at millions of edge
 // rows.
-func (s *Store) servedContentHash(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (string, bool, error) {
+func (s *Store) servedContentHash(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) (string, bool, error) {
 	const q = `SELECT content_hash FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 LIMIT 2`
@@ -1506,7 +1572,7 @@ LIMIT 2`
 	case 1:
 		return hashes[0], true, nil
 	default:
-		served, found, gerr := s.GetCallGraphRecord(ctx, coord, pipelineVersion)
+		served, found, gerr := s.composeFor(ctx, coord, pipelineVersion, domain2.ComposeRequest{ToolchainPreference: toolchain})
 		if gerr != nil {
 			return "", false, gerr
 		}
@@ -1525,7 +1591,7 @@ func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersio
 		q += ` AND is_test = 0`
 	}
 	q += ` ORDER BY from_module, from_version, from_id`
-	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope)
+	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
 }
 
 // FindCallees returns all edges where the caller matches symbolID, restricted
@@ -1539,7 +1605,7 @@ func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersio
 		q += ` AND is_test = 0`
 	}
 	q += ` ORDER BY from_module, from_version, to_id`
-	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope)
+	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
 }
 
 // queryEdges runs an edge query and drops rows whose owning module is outside
@@ -1549,7 +1615,7 @@ func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersio
 // queries are already driven by an index on the symbol ID, so the rows reaching
 // this loop are the matches for one symbol — a set small enough that filtering
 // in Go costs nothing the parameter list would not cost more of.
-func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
+func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion string, scope coordinate.ModuleSet, toolchain gotoolchain.Version) ([]ports.CallEdgeRef, error) {
 	rows, err := s.db.DB().QueryContext(ctx, q, symbolID, pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("querying callgraph edges: %w", err)
@@ -1587,7 +1653,7 @@ func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion str
 		return nil, fmt.Errorf("closing callgraph edge rows: %w", err)
 	}
 
-	return s.servedEdges(ctx, candidates, pipelineVersion)
+	return s.servedEdges(ctx, candidates, pipelineVersion, toolchain)
 }
 
 // edgeCandidate is one edge row together with the record it belongs to.
@@ -1610,7 +1676,7 @@ type edgeCandidate struct {
 // every module in the store, so one disputed module must not delete every correct
 // answer. Callers get the refs AND a non-nil error, so nothing is dropped
 // silently.
-func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pipelineVersion string) ([]ports.CallEdgeRef, error) {
+func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pipelineVersion string, toolchain gotoolchain.Version) ([]ports.CallEdgeRef, error) {
 	type moduleKey struct{ path, version string }
 	served := map[moduleKey]string{}
 	var conflicts []error
@@ -1624,7 +1690,7 @@ func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pip
 			if cerr != nil {
 				return nil, fmt.Errorf("callgraph edge row %s@%s names no module: %w", k.path, k.version, cerr)
 			}
-			h, found, herr := s.servedContentHash(ctx, coord, pipelineVersion)
+			h, found, herr := s.servedContentHash(ctx, coord, pipelineVersion, toolchain)
 			switch {
 			case errors.Is(herr, ports.ErrCallGraphConflict):
 				conflicts = append(conflicts, herr)

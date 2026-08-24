@@ -36,6 +36,9 @@ func IsBuildIncompatibility(detail string) bool {
 func ClassifyBuildIncompatibility(detail string) string {
 	d := strings.ToLower(detail)
 	switch {
+	case isToolchainTooOldFailure(d):
+		return "host Go toolchain is older than the version the module asks for: the scan runs offline and cannot " +
+			"switch toolchains, so this is a property of this host and not of the module"
 	case isWorkspaceModeFailure(d):
 		return "scan environment entered Go workspace mode: a go.work applied to a module scanned in isolation"
 	case strings.Contains(d, "go.work file") && (strings.Contains(d, "no such file or directory") || strings.Contains(d, "cannot load module")):
@@ -68,6 +71,14 @@ func ClassifyBuildIncompatibility(detail string) string {
 // module fails to build, so it must not fall through to the generic default.
 func isWorkspaceModeFailure(d string) bool {
 	return strings.Contains(d, "in workspace mode") || strings.Contains(d, "gowork=off to disable workspace mode")
+}
+
+// isToolchainTooOldFailure reports whether an already-lowercased detail is the go
+// command refusing because the module asks for a newer Go than the one running.
+// Ahead of the generic default, which accuses a module that builds fine one point
+// release forward. Both halves required so a module quoting the phrase cannot match.
+func isToolchainTooOldFailure(d string) bool {
+	return strings.Contains(d, " requires go >= ") && strings.Contains(d, "(running go ")
 }
 
 // goProxyOffMarker is the toolchain's wording when an offline resolution needs a

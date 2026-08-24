@@ -15,6 +15,7 @@ import (
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 
+	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
 	vendports "github.com/eitanity/kanonarion/internal/vendortree/ports"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -175,9 +176,11 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		force:      f.force,
 		noProgress: f.noProgress,
 	}
-	if err := runExtract(ctx, walkID, ef, io.Discard, stderr); err != nil {
+	extractRun, err := extractWalk(ctx, walkID, ef, stderr)
+	if err != nil {
 		return fmt.Errorf("extract: %w", err)
 	}
+	printExtractionFailures(stderr, extractRun)
 
 	// Step 4: vuln-scan
 	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); err != nil {
@@ -232,13 +235,17 @@ type inspectSummary struct {
 	// run in which nothing failed is the result a reader most needs stated, and
 	// omitting the zeros made a clean run's summary the same document as one
 	// from a build that does not count failures at all.
-	NodeFails       int      `json:"node_fails"`
-	ExtractFails    int      `json:"extract_fails"`
-	ScanFails       int      `json:"scan_fails"`
-	OverallStatus   string   `json:"overall_status"`
-	AffectedCount   int      `json:"affected_count"`
-	SnapshotVersion string   `json:"snapshot_version,omitempty"`
-	WalkIDs         []string `json:"walk_ids"`
+	NodeFails    int `json:"node_fails"`
+	ExtractFails int `json:"extract_fails"`
+	// ExtractFailures names what ExtractFails counts. A tally on its own tells a
+	// reader that some module's public API is unmeasured without saying whose,
+	// and there is no prose on either stream that does.
+	ExtractFailures []extractStageFailure `json:"extract_failures"`
+	ScanFails       int                   `json:"scan_fails"`
+	OverallStatus   string                `json:"overall_status"`
+	AffectedCount   int                   `json:"affected_count"`
+	SnapshotVersion string                `json:"snapshot_version,omitempty"`
+	WalkIDs         []string              `json:"walk_ids"`
 	// WalkFrame is the GOOS/GOARCH the answering project walk resolved for, and
 	// WalkFrameBasis the same fact as data: "platform", "not_platform_scoped" for
 	// a module-rooted walk (no platform applies), or "unrecorded" (the platform
@@ -256,6 +263,20 @@ type inspectSummary struct {
 	// unanswered question, which is not the same as a negative answer, and the
 	// two must not decode alike.
 	Build *buildVendoring `json:"build,omitempty"`
+}
+
+// inspectExtractTally reports how many stages failed, and which.
+//
+// From the recorded run, not a returned error: a partial extraction returns
+// none, so deriving the tally from one could only ever read 0 or 1. An
+// extraction that produced no run at all yields 1 — nothing to count, and zero
+// is the answer it must not give.
+func inspectExtractTally(run extractdomain.ExtractionRun, err error) (int, []extractStageFailure) {
+	if err != nil {
+		return 1, []extractStageFailure{}
+	}
+	failures := extractionFailures(run)
+	return len(failures), failures
 }
 
 // inspectSummaryStatus derives the aggregate status for inspect's summary.
@@ -299,6 +320,18 @@ func inspectSummaryStatus(nodeFails, extractFails, scanFails int, scanStatus vul
 	}
 }
 
+// inspectExit maps the summary roll-up onto the process exit code.
+//
+// Only Partial is mapped: part of the dependency set went unanalysed, which is
+// exit 1's definition. The word alone was not enough — a caller reading the exit
+// code learned nothing from a run that had already stopped saying AllClean.
+func inspectExit(overallStatus string) error {
+	if overallStatus != string(vuldomain.WalkStatusPartial) {
+		return nil
+	}
+	return &exitError{code: ExitPartial, msg: "inspect partial: some of the dependency set was not analysed"}
+}
+
 // inspectBuildSection carries the vendoring answer into the summary document,
 // and carries nothing when the question could not be answered. A pointer rather
 // than a value because the absent case must decode as absent: a zero-valued
@@ -322,8 +355,9 @@ func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) 
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(inspectSummary{
-			OverallStatus: inspectSummaryStatus(0, 0, 0, ""),
-			WalkIDs:       []string{},
+			ExtractFailures: []extractStageFailure{},
+			OverallStatus:   inspectSummaryStatus(0, 0, 0, ""),
+			WalkIDs:         []string{},
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}
@@ -402,6 +436,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	}
 
 	var extractFails, scanFails int
+	extractFailures := []extractStageFailure{}
 	if walkID != "" {
 		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: extracting walk %s (frame %s)\n", walkID, projectWalk.BuildFrame())
 		ef := extractFlags{
@@ -410,10 +445,12 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			force:      f.force,
 			noProgress: f.noProgress,
 		}
-		if eerr := runExtract(ctx, walkID, ef, io.Discard, stderr); eerr != nil {
+		extractRun, eerr := extractWalk(ctx, walkID, ef, stderr)
+		extractFails, extractFailures = inspectExtractTally(extractRun, eerr)
+		if eerr != nil {
 			_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
-			extractFails = 1
 		}
+		printExtractionFailures(stderr, extractRun)
 
 		// The project walk roots at the consumer module but analyses its own code
 		// in consumer-mode, so the target's call graph is never loaded into the
@@ -494,6 +531,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			ModuleCount:     moduleCount,
 			NodeFails:       nodeFails,
 			ExtractFails:    extractFails,
+			ExtractFailures: extractFailures,
 			ScanFails:       scanFails,
 			OverallStatus:   overallStatus,
 			AffectedCount:   affectedCount,
@@ -508,7 +546,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}
-		return nil
+		return inspectExit(overallStatus)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Status:   %s\n", overallStatus)
@@ -528,7 +566,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		_, _ = fmt.Fprintf(stdout, "Frame:    %s\n", projectWalk.BuildFrame())
 		_, _ = fmt.Fprintf(stdout, "\nTo get module context: kanonarion context --gomod %s\n", f.gomodPath)
 	}
-	return nil
+	return inspectExit(overallStatus)
 }
 
 // printReachabilityClosureBanner discloses that --gomod reachability roots at

@@ -243,7 +243,7 @@ func TestRunCallers_DroppedEdgeRemedyNamesTheColdCacheWhenThatIsTheCause(t *test
 // because the record a cold cache produced is not served back.
 func TestDroppedEdgeRemedy_LocalColdCacheReanalysesWithoutForce(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/app", coordinate.LocalVersion)
-	got := cgdomain.IncompleteGraphRemedy(coord, cgdomain.FailureCauseEnvironment, "/work/tree")
+	got := cgdomain.IncompleteGraphRemedy(coord, cgdomain.FailureCauseEnvironment, "", "/work/tree")
 	if !strings.Contains(got, cgdomain.ColdModuleCacheRemedy) {
 		t.Errorf("the remedy does not warm the cache in one step:\n%s", got)
 	}

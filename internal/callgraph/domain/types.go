@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // CallGraphSchemaVersion is the version of the CallGraphRecord JSON schema.
@@ -600,6 +601,20 @@ type CallGraphRecord struct {
 	// It is provenance rather than claim — two copies of one tree at two paths
 	// describe the same graph — so it is cleared before a graph digest is taken.
 	AnalysisRoot string
+	// Toolchain is the Go toolchain that built this graph, as `go env GOVERSION`
+	// of the process the loader drove ("go1.26.6"). It is neither the version
+	// kanonarion was compiled with nor the module's own go directive: the graph
+	// carries the toolchain's stdlib and its vendored trees, so the toolchain that
+	// ran is what decided the answer.
+	//
+	// It is a DIMENSION, not a ladder position — see gotoolchain.Version.
+	// Composition groups on it and never picks between two values.
+	//
+	// Empty on records written before the field existed, which reads as "not
+	// recorded" and never as the reading host's toolchain. Read it back through
+	// RecordToolchain, which also recovers what such a record's own stdlib
+	// positions still show.
+	Toolchain gotoolchain.Version
 	// SynthesisedGoMod is non-zero when the analysed tree is not the published
 	// tree: the module zip shipped no go.mod and kanonarion wrote one before
 	// loading. It states which module path and which go directive that file

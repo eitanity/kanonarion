@@ -159,9 +159,11 @@ func printInterfaceRecord(r domain.InterfaceRecord, fromCache bool, jsonOut bool
 	if fromCache {
 		cached = " (cached)"
 	}
-	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d package(s)%s\n",
+	// The frame is on the headline because every count under it holds for one
+	// build and not for the module as a whole.
+	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d package(s), build frame %s%s\n",
 		r.Coordinate.Path(), r.Coordinate.Version(),
-		r.OverallStatus.String(), len(r.Packages), cached,
+		r.OverallStatus.String(), len(r.Packages), r.BuildFrame.String(), cached,
 	); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
@@ -171,6 +173,12 @@ func printInterfaceRecord(r domain.InterfaceRecord, fromCache bool, jsonOut bool
 		}
 	}
 	for _, pkg := range r.Packages {
+		if pkg.OutOfFrame {
+			if _, err := fmt.Fprintf(stdout, "  %-60s not in this build frame\n", pkg.ImportPath); err != nil {
+				return fmt.Errorf("writing package line: %w", err)
+			}
+			continue
+		}
 		if _, err := fmt.Fprintf(stdout, "  %-60s %dT %dF %dC %dV\n",
 			pkg.ImportPath,
 			len(pkg.Types), len(pkg.Funcs), len(pkg.Consts), len(pkg.Vars),

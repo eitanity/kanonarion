@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ErrNoRecordsToCompose is returned by Compose when handed no records. It is a
@@ -82,6 +83,16 @@ type CallGraphConflict struct {
 
 	// ContentHashes name the records carrying each of Values, in the same order.
 	ContentHashes []string
+
+	// Difference is what the first two disagreeing generations actually differ
+	// about, when the conflict is one over the graph and both generations passed
+	// their own seal.
+	//
+	// It is on the conflict rather than left to a second command because the
+	// refusal is what the reader is handed, and two digests are not something
+	// they can act on. It is nil when the comparison could not be validated:
+	// an unverifiable record is not evidence, and a diff of one would read as one.
+	Difference *GenerationDiff
 }
 
 // The field names a CallGraphConflict can carry. They are constants rather than
@@ -101,6 +112,10 @@ const (
 	// the same graph and described their run differently are not this: see
 	// GraphClaimFields.
 	ConflictFieldCallGraph = "call_graph"
+	// ConflictFieldToolchain is two Go toolchains for one coordinate. The graph
+	// carries the toolchain's stdlib and vendored trees, so two toolchains are two
+	// answers to two questions and there is no ladder between them.
+	ConflictFieldToolchain = "toolchain"
 )
 
 // ConflictFields lists every field a CallGraphConflict reports on.
@@ -109,6 +124,7 @@ func ConflictFields() []string {
 		ConflictFieldAnalysisSource,
 		ConflictFieldArtefactIdentity,
 		ConflictFieldCallGraph,
+		ConflictFieldToolchain,
 	}
 }
 
@@ -168,6 +184,23 @@ func (c CallGraphConflict) Remedy() Remedy {
 				"kanonarion callgraph-show " + coord + " --source " + string(readable),
 			},
 		}
+	case ConflictFieldToolchain:
+		// Naming a toolchain is the way through, so the remedy has to name one the
+		// ledger actually holds. Values are the identities that disagreed, and the
+		// first is a version whenever any of them is: a GOROOT that names no version
+		// cannot be asked for, so it is never offered as the selector.
+		lines := []string{"kanonarion callgraph-show " + coord + " --history"}
+		if sel := selectableToolchain(c.Values); sel != "" {
+			lines = append(lines, "kanonarion callgraph-show "+coord+" --toolchain "+sel)
+		}
+		lines = append(lines, ForcedReanalysisCommand(c.Coordinate, ""))
+		return Remedy{
+			Lead: "Two Go toolchains built this coordinate and produced different graphs, and a graph carries " +
+				"the toolchain's own stdlib and vendored trees, so neither answer supersedes the other. Name " +
+				"the toolchain you mean — callers, callees, implementers and interface-diff take --toolchain " +
+				"too — or measure again under the one you are using",
+			Lines: lines,
+		}
 	case ConflictFieldArtefactIdentity:
 		if !IsReFetchable(c.Coordinate) {
 			// A project coordinate names a working tree, not published bytes. There
@@ -210,10 +243,12 @@ func (c CallGraphConflict) Remedy() Remedy {
 		// route when there is not.
 		if c.Completeness == CompletenessBuiltWithBodies {
 			return Remedy{
-				Lead: "Two analyses of the same artefact disagree about the graph, and both built it as fully as this " +
-					"analyser can. Re-analysing appends a generation and retires neither, so nothing clears this from " +
-					"the outside — read the generations and decide which measurement to trust",
+				Lead: "Two analyses of the same artefact, offered the same build list, disagree about the graph, and " +
+					"both built it as fully as this analyser can. Re-analysing appends a generation and retires " +
+					"neither, so nothing clears this from the outside — compare the generations and decide which " +
+					"measurement to trust",
 				Lines: []string{
+					"kanonarion callgraph-show " + coord + " --diff",
 					"kanonarion callgraph-show " + coord + " --history",
 				},
 			}
@@ -221,8 +256,9 @@ func (c CallGraphConflict) Remedy() Remedy {
 		return Remedy{
 			Lead: "Two analyses of the same artefact at the same completeness disagree about the graph. " +
 				"Only an analysis that gets FURTHER than they did settles it — one that fails the same way appends " +
-				"a third generation and the disagreement stands. Inspect the generations, then measure again",
+				"a third generation and the disagreement stands. Compare the generations, then measure again",
 			Lines: []string{
+				"kanonarion callgraph-show " + coord + " --diff",
 				"kanonarion callgraph-show " + coord + " --history",
 				// --force is on the analysis because a stored answer already exists, so
 				// without it the run is served from cache and reads as the remedy having
@@ -241,9 +277,13 @@ func (c CallGraphConflict) Remedy() Remedy {
 // renders it, and a remedy the renderer had to remember to add is one that goes
 // missing on the paths nobody thought of.
 func (c CallGraphConflict) Error() string {
+	difference := ""
+	if c.Difference != nil {
+		difference = "\ndiffering: " + c.Difference.Summary()
+	}
 	return fmt.Sprintf(
-		"conflicting call graph records for %s at pipeline %s: %s disagrees (%v; records %v)\n%s",
-		c.Coordinate, c.PipelineVersion, c.Field, c.Values, c.ContentHashes, c.Remedy(),
+		"conflicting call graph records for %s at pipeline %s: %s disagrees (%v; records %v)%s\n%s",
+		c.Coordinate, c.PipelineVersion, c.Field, c.Values, c.ContentHashes, difference, c.Remedy(),
 	)
 }
 
@@ -253,6 +293,38 @@ type ComposeRequest struct {
 	// Source restricts composition to records built from one kind of source. The
 	// zero value names none, and DefaultSource then decides.
 	Source AnalysisSource
+
+	// Toolchain restricts composition to graphs built by one Go toolchain, and a
+	// coordinate holding none of them has no answer. The zero value names none,
+	// and the records then group on their own.
+	//
+	// It is for a reader naming ONE coordinate, where "the ledger holds nothing
+	// built by that toolchain" is the answer they asked for.
+	Toolchain gotoolchain.Version
+
+	// ToolchainPreference resolves a toolchain refusal WITHOUT narrowing the read:
+	// it is consulted only where the records for a coordinate disagree about the
+	// toolchain, and a coordinate that holds no such generation is served exactly
+	// as it would be with no preference at all.
+	//
+	// The two are different questions and the distinction is load-bearing. A
+	// store-wide read — callers, callees, implementers — spans hundreds of modules
+	// of which almost none state a toolchain, so restricting it would answer "no
+	// record" for every one of them and turn a disambiguation into a silently
+	// short answer. What the reader means by naming a toolchain there is "when two
+	// generations disagree, use this one", which is exactly this.
+	ToolchainPreference gotoolchain.Version
+
+	// CallerRoot is the working tree the reader is standing in, empty when they
+	// are standing in none of this coordinate's.
+	//
+	// It selects between the two questions a local coordinate can hold answers
+	// to, and it does not rank anything: a reader inside a checkout of the module
+	// is asking about THAT tree, so a zip analysis recorded at the same
+	// coordinate answers a question they did not ask. Outside any recorded tree
+	// there is no such claim to make and the stated default stands. See
+	// defaultSourceGroup.
+	CallerRoot string
 }
 
 // Compose returns the call graph record a reader gets for one coordinate and
@@ -263,11 +335,14 @@ type ComposeRequest struct {
 // stops the read before it reaches here, so composition never has to decide what
 // to do about an unverifiable row.
 //
-// The ladder is COMPLETENESS, then recency. A BUILT_WITH_BODIES graph outranks a
-// METADATA_ONLY one regardless of which was written later, exactly as the fetch
-// ledger serves the strongest anchor rather than the newest measurement: the
-// weaker record analysed less of the same module, so it is a lesser measurement
-// rather than a competing answer. Recency is only ever the last tiebreaker.
+// The ladder is COMPLETENESS, then whether this host limited the run, then
+// recency. A BUILT_WITH_BODIES graph outranks a METADATA_ONLY one regardless of
+// which was written later, exactly as the fetch ledger serves the strongest
+// anchor rather than the newest measurement: the weaker record analysed less of
+// the same module, so it is a lesser measurement rather than a competing answer.
+// A record whose own row names the environment as what stopped it is the same
+// kind of lesser measurement at one rung — see GenerationRank. Recency is only
+// ever the last tiebreaker.
 //
 // The analysis source is NOT on that ladder. It is a dimension: a zip graph and
 // a worktree graph answer different questions, and serving one for the other
@@ -286,18 +361,34 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 		}
 	} else {
 		var err error
-		if candidates, err = defaultSourceGroup(records); err != nil {
+		if candidates, err = defaultSourceGroup(records, req.CallerRoot); err != nil {
 			return CallGraphRecord{}, err
 		}
 	}
 
+	if req.Toolchain.Recorded() {
+		candidates = withToolchain(candidates, req.Toolchain)
+		if len(candidates) == 0 {
+			return CallGraphRecord{}, ErrNoRecordsToCompose
+		}
+	}
+
 	if isWorktreeSequence(candidates) {
+		// A working tree is a SEQUENCE of observations of changing bytes, and the
+		// last one is the tree as it is now. Grouping that by toolchain would serve
+		// an older tree state whenever the toolchain moved, which is the defect
+		// LatestObservation exists to prevent; the served record still names its own
+		// toolchain.
 		return LatestObservation(candidates), nil
 	}
 
 	candidates = identifiedOrAll(candidates)
 	if c := findConflict(candidates); c != nil {
-		return CallGraphRecord{}, *c
+		resolved, ok := preferredToolchain(candidates, c, req.ToolchainPreference)
+		if !ok {
+			return CallGraphRecord{}, *c
+		}
+		candidates = resolved
 	}
 
 	ordered := make([]CallGraphRecord, len(candidates))
@@ -360,18 +451,34 @@ func LatestObservation(records []CallGraphRecord) CallGraphRecord {
 }
 
 // GenerationRank is the ordering key of one generation: completeness first, then
-// recency, then the record's own seal.
+// whether this host limited the run, then recency, then the record's own seal.
 //
 // It is a value rather than a method on the record because a store holds every
 // one of these fields in COLUMNS and the record itself in a blob. Deciding which
 // of several generations to serve by decoding all of them, when the decision
-// only ever reads three fields, costs a full edge reconstruction per generation
+// only ever reads four fields, costs a full edge reconstruction per generation
 // to discard all but one of them. A store reads the columns, ranks, and decodes
 // the winner — against the same ladder composition uses, not a second one
 // written in SQL that would drift from it.
 type GenerationRank struct {
 	Completeness CompletenessLevel
-	ExtractedAt  time.Time
+	// EnvironmentLimited says the record's own row names THIS HOST, rather than
+	// the module, as what the analysis stopped short of.
+	//
+	// It is on the key because completeness alone cannot separate two very
+	// different runs. A run whose module cache could not resolve a requirement
+	// loads one package and analyses it with bodies; a run on a warm cache loads
+	// the module and analyses all of it with bodies. Both state
+	// BUILT_WITH_BODIES, because the level says how the loaded packages were
+	// analysed and not how much of the module was reached. Ranking on the level
+	// alone put a sixty-five node measurement of this host level with a
+	// five-thousand node measurement of the artefact, and the read then refused
+	// both. A record that says the environment limited it is a lesser measurement
+	// of the same thing, exactly as a METADATA_ONLY graph is, and is ordered the
+	// same way. A record that produced no graph at all sets it false however it
+	// failed — see EnvironmentLimitedGraph.
+	EnvironmentLimited bool
+	ExtractedAt        time.Time
 	// ContentHash is the last resort. It is not authority and is not claimed to be
 	// — it is here so the served record does not depend on the order rows happen
 	// to come back in.
@@ -381,9 +488,10 @@ type GenerationRank struct {
 // RankOf projects a record onto its ordering key.
 func RankOf(r CallGraphRecord) GenerationRank {
 	return GenerationRank{
-		Completeness: r.Completeness,
-		ExtractedAt:  r.ExtractedAt,
-		ContentHash:  r.ContentHash,
+		Completeness:       r.Completeness,
+		EnvironmentLimited: EnvironmentLimitedGraph(r.OverallStatus, r.FailureCause),
+		ExtractedAt:        r.ExtractedAt,
+		ContentHash:        r.ContentHash,
 	}
 }
 
@@ -391,6 +499,21 @@ func RankOf(r CallGraphRecord) GenerationRank {
 func (g GenerationRank) ServesBefore(o GenerationRank) bool {
 	if rg, ro := completenessRung(g.Completeness), completenessRung(o.Completeness); rg != ro {
 		return rg > ro
+	}
+	// Within a rung, a GRAPH this host limited loses to a graph it did not.
+	// Recency must not decide it either way round: the environment record is the
+	// older one when the cache is warmed after the fact and the newer one when it
+	// goes cold again, and serving whichever ran last is how a repaired host is
+	// answered with sixty-five nodes of a module it can now analyse completely.
+	//
+	// It applies only where there is a graph to be lesser — see
+	// EnvironmentLimitedGraph. Two records that produced none are two accounts of
+	// a run that measured nothing, and the newest account is the one a reader
+	// should act on: an older "the module is broken" served over a newer "this
+	// host could not reach a dependency" sends them looking for a fault in bytes
+	// nothing has read.
+	if g.EnvironmentLimited != o.EnvironmentLimited {
+		return !g.EnvironmentLimited
 	}
 	if !g.ExtractedAt.Equal(o.ExtractedAt) {
 		return g.ExtractedAt.After(o.ExtractedAt)
@@ -412,10 +535,11 @@ func withSource(records []CallGraphRecord, want AnalysisSource) []CallGraphRecor
 // defaultSourceGroup picks which records answer a read that named no source.
 //
 // A module zip is what production writes on a coordinate-keyed walk, so when the
-// ledger holds both kinds it is the default. A worktree record answers only when
-// the ledger holds no zip record for the coordinate — otherwise `kanonarion
-// local` on a project would quietly redirect every later query away from the
-// graphs the walk produced.
+// ledger holds both kinds it is the default for a reader standing outside the
+// module's checkouts — otherwise `kanonarion local` on a project would quietly
+// redirect every later query away from the graphs the walk produced. A reader
+// standing INSIDE a checkout this ledger holds a generation of is asking about
+// that tree, and it answers; callerRoot is what says so.
 //
 // AN UNRECORDED SOURCE IS NOT A THIRD KIND OF SOURCE. It is a record that did not
 // say, and the distinction is load-bearing: every record written before the field
@@ -433,7 +557,7 @@ func withSource(records []CallGraphRecord, want AnalysisSource) []CallGraphRecor
 // as identifiedOrAll — a measurement that says what it read is better evidence
 // than one that does not. Nothing is deleted either way; a history read still
 // returns every generation.
-func defaultSourceGroup(records []CallGraphRecord) ([]CallGraphRecord, error) {
+func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGraphRecord, error) {
 	zip := withSource(records, AnalysisSourceModuleZip)
 	tree := withSource(records, AnalysisSourceWorktree)
 	silent := withSource(records, AnalysisSourceUnrecorded)
@@ -453,8 +577,20 @@ func defaultSourceGroup(records []CallGraphRecord) ([]CallGraphRecord, error) {
 
 	switch {
 	case len(zip) > 0 && len(tree) > 0:
-		// Two questions are genuinely in play; serve the one production writes and
-		// leave the silent records out, since they cannot be attributed to either.
+		// Two questions are genuinely in play. Which one is being asked is settled
+		// by where the reader is standing: inside a checkout this ledger holds a
+		// generation of, the tree in front of them is the subject and the zip is a
+		// snapshot of something else. Outside one, the default above stands.
+		//
+		// The distinction matters because the zip record at a project's own
+		// coordinate is not a competing analysis at all — it is a by-product of the
+		// project's own extraction. Preferring it there meant `kanonarion local`
+		// could never be served again once an extract had run: the remedy the tool
+		// printed changed the ledger and never the answer.
+		if analysedIn(tree, callerRoot) {
+			return inAppendOrder(records, tree, nil), nil
+		}
+		// Leave the silent records out, since they cannot be attributed to either.
 		return zip, nil
 	case len(zip) > 0:
 		return inAppendOrder(records, zip, silent), nil
@@ -463,6 +599,22 @@ func defaultSourceGroup(records []CallGraphRecord) ([]CallGraphRecord, error) {
 	default:
 		return silent, nil
 	}
+}
+
+// analysedIn reports whether any of these records was analysed in root. An empty
+// root matches nothing: a reader standing in no recorded tree makes no claim
+// about which tree they meant, and a record that states no root cannot be shown
+// to be theirs.
+func analysedIn(records []CallGraphRecord, root string) bool {
+	if root == "" {
+		return false
+	}
+	for _, r := range records {
+		if r.AnalysisRoot == root {
+			return true
+		}
+	}
+	return false
 }
 
 // inAppendOrder merges two subsets back into the order they were appended in.
@@ -565,11 +717,80 @@ func findConflict(records []CallGraphRecord) *CallGraphConflict {
 		// A failed, cancelled or excluded extraction makes no claim about the graph
 		// at all, so it cannot contradict one that does. Letting it take part would
 		// report every "load failed, then extracted" pair as non-determinism.
-		if completenessRung(r.Completeness) == top && statesAGraph(r) {
+		if completenessRung(r.Completeness) == top && claimsTheModulesGraph(r) {
 			tied = append(tied, r)
 		}
 	}
-	return graphDisagreement(tied)
+	// The toolchain is named before the graph comparison below, for the reason the
+	// interface pipeline names a frame difference first: two toolchains hold
+	// different stdlib and different vendored trees by construction, so letting the
+	// difference fall through would report a correct pair of measurements as
+	// non-determinism in the analyser.
+	//
+	// It is also ahead of the build-list grouping, because the toolchain axis and
+	// the build-list axis are independent: two generations offered different build
+	// lists never compare with each other, so a toolchain difference between them
+	// would otherwise never be reported at all.
+	//
+	// There is no separate check for "two records name different toolchains". A
+	// toolchain that produced the SAME graph produced the same answer, and refusing
+	// on the label alone is the defect this replaced — see
+	// toolchainExplainedGraphDifference.
+	if c := toolchainExplainedGraphDifference(tied); c != nil {
+		return c
+	}
+
+	for _, group := range answeringOneQuestion(tied) {
+		if c := graphDisagreement(group); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// answeringOneQuestion splits records into the groups whose members were asked
+// the same question, so that only those are compared for agreement.
+//
+// A call graph is an analysis of a module RESOLVED AGAINST A BUILD LIST: two
+// walks that pinned different dependency versions gave the analyser different
+// closures to build, and the two graphs that come back are two truthful answers
+// rather than one measurement taken twice. BuildListSource already records
+// which walk, and composition used to raise a conflict without reading it.
+//
+// A record naming no build list joins every group. Absence is not a third build
+// list — it is a record that cannot be shown to have answered a different
+// question, and segregating it would leave it comparing against nothing.
+//
+// Ranking is untouched. This decides only what may CONTRADICT what; which
+// generation the ladder serves is unchanged, and the served record names its own
+// build list, so an answer is never laundered into an answer to the other
+// question.
+func answeringOneQuestion(records []CallGraphRecord) [][]CallGraphRecord {
+	named := map[string]bool{}
+	for _, r := range records {
+		if r.BuildListSource != "" {
+			named[r.BuildListSource] = true
+		}
+	}
+	if len(named) < 2 {
+		return [][]CallGraphRecord{records}
+	}
+	sources := make([]string, 0, len(named))
+	for s := range named {
+		sources = append(sources, s)
+	}
+	sort.Strings(sources)
+	groups := make([][]CallGraphRecord, 0, len(sources))
+	for _, s := range sources {
+		group := make([]CallGraphRecord, 0, len(records))
+		for _, r := range records {
+			if r.BuildListSource == s || r.BuildListSource == "" {
+				group = append(group, r)
+			}
+		}
+		groups = append(groups, group)
+	}
+	return groups
 }
 
 // graphDisagreement reports whether these records make DIFFERENT claims about
@@ -627,7 +848,34 @@ func graphDisagreement(records []CallGraphRecord) *CallGraphConflict {
 		return nil
 	}
 	c.Completeness = records[0].Completeness
-	return reportedAsWholeDigests(c, records)
+	return describingTheDifference(reportedAsWholeDigests(c, records), records)
+}
+
+// describingTheDifference attaches what the first two named generations differ
+// about, so the refusal says more than which digests failed to match.
+//
+// A comparison that cannot be validated is left off rather than reported
+// unvalidated: a record that fails its own seal is not evidence of a
+// disagreement, and the refusal already stands on the digests.
+func describingTheDifference(c *CallGraphConflict, records []CallGraphRecord) *CallGraphConflict {
+	if c == nil || len(c.ContentHashes) < 2 {
+		return c
+	}
+	byHash := make(map[string]CallGraphRecord, len(records))
+	for _, r := range records {
+		byHash[r.ContentHash] = r
+	}
+	left, okL := byHash[c.ContentHashes[0]]
+	right, okR := byHash[c.ContentHashes[1]]
+	if !okL || !okR {
+		return c
+	}
+	diff, err := DiffGenerations(left, right)
+	if err != nil {
+		return c
+	}
+	c.Difference = &diff
+	return c
 }
 
 // GraphClaimFields names the canonical fields that ARE the call graph, sorted.
@@ -890,6 +1138,61 @@ func GraphDigest(r CallGraphRecord) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// MeasurementDigest is a hash of everything a record states except when it was
+// measured and the seal computed over that.
+//
+// It is SameMeasurement as a key, for a caller that has to group N generations
+// rather than compare two, and it is deliberately not GraphDigest: that answers
+// "do these agree about the graph", and two runs offered different build lists
+// are two measurements even where their graphs agree. Grouping generations for
+// comparison needs the second question, or the input that separated them is the
+// one thing the comparison cannot show.
+func MeasurementDigest(r CallGraphRecord) string {
+	data, err := marshalCanonical(withoutMeasurementTime(r))
+	if err != nil {
+		return "unhashable:" + err.Error()
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// SameMeasurement reports whether two records state the identical measurement,
+// differing at most in WHEN it was taken.
+//
+// It is the ledger's answer to "has this already been recorded". A re-analysis
+// that came back with the same graph, the same completeness, the same status and
+// the same diagnostic has added no fact — the only thing new about it is the
+// clock — and appending it grows the ledger without making any answer better.
+//
+// It matters most exactly where re-analysis is most frequent. A record the
+// environment cut short is never eligible as a cache hit, by design, so every
+// later run of a coordinate that keeps failing re-derives it; before this, each
+// of those runs appended a generation, without bound.
+//
+// extracted_at and the seal computed over it are the only fields set aside.
+// Everything else is compared, including the provenance GraphDigest deliberately
+// ignores: two runs that read different bytes, or were offered different build
+// lists, are two measurements even where their graphs agree.
+func SameMeasurement(a, b CallGraphRecord) (bool, error) {
+	ab, err := marshalCanonical(withoutMeasurementTime(a))
+	if err != nil {
+		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
+	}
+	bb, err := marshalCanonical(withoutMeasurementTime(b))
+	if err != nil {
+		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
+	}
+	return bytes.Equal(ab, bb), nil
+}
+
+// withoutMeasurementTime blanks when a record was measured, and the seal that
+// covers it.
+func withoutMeasurementTime(r CallGraphRecord) CallGraphRecord {
+	r.ExtractedAt = time.Time{}
+	r.ContentHash = ""
+	return r
+}
+
 // forGraphComparison strips a record down to what it claims about the graph, by
 // clearing what is provenance rather than claim.
 func forGraphComparison(r CallGraphRecord) CallGraphRecord {
@@ -920,7 +1223,33 @@ func forGraphComparison(r CallGraphRecord) CallGraphRecord {
 	// the digest itself is built on, applied to the field that deliberately does
 	// not follow it.
 	r.AnalysisRoot = ""
+	// WHERE an external symbol's declaration sits is a path in the analysing
+	// host's toolchain and module cache, not something this module's graph says:
+	// the same stdlib function comes back under whichever GOROOT loaded it.
+	// Comparing it made two runs that reached the identical symbols by the
+	// identical edges disagree about the graph. The node's identity and roles
+	// stay, so a run that genuinely reached a different symbol still disagrees.
+	r.Nodes = withoutExternalPositions(r.Nodes)
+	// WHICH toolchain built the graph is a dimension composition groups on, not a
+	// claim the graph makes. Two toolchains never reach a graph comparison — the
+	// toolchain conflict is raised first — and leaving it in would relabel that
+	// refusal as extractor non-determinism wherever a digest is read directly.
+	r.Toolchain = gotoolchain.Unrecorded
 	return r
+}
+
+// withoutExternalPositions returns nodes with the declaration position of every
+// node outside the analysed module cleared. In-module positions are relative to
+// the module root and are a claim, so they are left alone.
+func withoutExternalPositions(nodes []CallNode) []CallNode {
+	out := make([]CallNode, len(nodes))
+	copy(out, nodes)
+	for i := range out {
+		if out[i].IsExternal {
+			out[i].Position = SourcePosition{}
+		}
+	}
+	return out
 }
 
 // completenessRung orders records by how much of the module the analysis
@@ -971,7 +1300,58 @@ func statesAGraph(r CallGraphRecord) bool {
 	}
 }
 
+// claimsTheModulesGraph reports whether a record's graph is a claim about the
+// MODULE, and so something another record can contradict.
+//
+// Two ways it is not. A record that states no graph makes no claim to
+// contradict — statesAGraph. And a record whose own row says the environment
+// limited it describes what this host could reach, which is the same distinction
+// the fetch ledger draws when it says a failure is a statement about the lookup
+// and not about the module. Sixty-five nodes measured against a cold module
+// cache and five thousand measured against a warm one are not two analysers
+// disagreeing; they are one host answering twice.
+//
+// Admitting them reported that pair as non-determinism, and the refusal was
+// permanent: nothing retires a generation, so re-analysing appended a third
+// record and the coordinate stayed unqueryable however many complete analyses
+// followed. The record is still stored, still ranked, and still shown by a
+// history read — it just cannot contradict a measurement of the module.
+func claimsTheModulesGraph(r CallGraphRecord) bool {
+	if EnvironmentLimitedGraph(r.OverallStatus, r.FailureCause) {
+		return false
+	}
+	return statesAGraph(r)
+}
+
 // servesBefore orders two records by which should be served first.
 func servesBefore(a, b CallGraphRecord) bool {
 	return RankOf(a).ServesBefore(RankOf(b))
+}
+
+// preferredToolchain narrows a refused group to the toolchain a reader named,
+// and reports whether that settled it.
+//
+// It applies only to a TOOLCHAIN refusal: a preference says which toolchain to
+// believe when two generations disagree about one, and it has nothing to say
+// about two artefact identities or an analyser contradicting itself. Naming a
+// toolchain must not silence a disagreement it does not speak to.
+//
+// It reports false when the preference names a toolchain this coordinate does
+// not hold, and the original refusal then stands. Serving some other generation
+// because the named one was absent would answer a question nobody asked.
+func preferredToolchain(records []CallGraphRecord, c *CallGraphConflict, want gotoolchain.Version) ([]CallGraphRecord, bool) {
+	if !want.Recorded() || c.Field != ConflictFieldToolchain {
+		return nil, false
+	}
+	kept := withToolchain(records, want)
+	if len(kept) == 0 {
+		return nil, false
+	}
+	// The narrowed group must itself be composable: a preference resolves the
+	// toolchain and nothing else, so two generations of ONE toolchain that
+	// disagree about the graph still refuse.
+	if inner := findConflict(kept); inner != nil {
+		return nil, false
+	}
+	return kept, true
 }

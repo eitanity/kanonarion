@@ -117,6 +117,11 @@ type vulnRecordJSON struct {
 	vuldomain.VulnerabilityRecord
 	Findings   []vulnFindingJSON `json:"findings,omitzero"`
 	Superseded bool              `json:"superseded"`
+	// Toolchain shadows the embedded field, which is omitempty because the record
+	// shape is what the seal covers. On the wire it is emitted on every record,
+	// empty included: absent would be indistinguishable from a producer that does
+	// not state it, and "not recorded" is itself the answer.
+	Toolchain string `json:"toolchain"`
 }
 
 // toVulnRecordJSON projects one record, classifying its routes against the
@@ -127,6 +132,7 @@ func toVulnRecordJSON(rec vuldomain.VulnerabilityRecord, bind recordRootFunc) vu
 	}
 	return vulnRecordJSON{
 		VulnerabilityRecord: rec,
+		Toolchain:           string(rec.Toolchain),
 		Findings:            toVulnFindingsJSON(rec.Findings, bind(rec)),
 		Superseded:          rec.PipelineVersion != vulnPipelineVersion,
 	}

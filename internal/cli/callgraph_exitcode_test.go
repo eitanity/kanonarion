@@ -18,17 +18,23 @@ func TestCallGraphExtractionExit_FailedExtractionDoesNotReportSuccess(t *testing
 	t.Parallel()
 
 	cases := []struct {
-		name   string
-		status cgdomain.CallGraphStatus
-		want   int
+		name      string
+		status    cgdomain.CallGraphStatus
+		zeroNodes bool
+		want      int
 	}{
-		{"load failed", cgdomain.CallGraphStatusLoadFailed, ExitFailed},
-		{"cancelled", cgdomain.CallGraphStatusCancelled, ExitCancelled},
-		{"extracted", cgdomain.CallGraphStatusExtracted, ExitOK},
-		// A Partial graph IS an answer, with its incompleteness scoped to named
-		// packages. Promoting it here would change the meaning of every partial
-		// outcome in the store to make a point this defect does not raise.
-		{"partial", cgdomain.CallGraphStatusPartial, ExitOK},
+		{"load failed", cgdomain.CallGraphStatusLoadFailed, false, ExitFailed},
+		{"cancelled", cgdomain.CallGraphStatusCancelled, false, ExitCancelled},
+		{"extracted", cgdomain.CallGraphStatusExtracted, false, ExitOK},
+		// A Partial graph IS an answer, and 1 is the code for an answer that is
+		// known-incomplete. It shared 0 with a complete graph, so nothing a script
+		// reads distinguished a graph covering every package from one covering a
+		// fraction of them.
+		{"partial", cgdomain.CallGraphStatusPartial, false, ExitPartial},
+		// Unless it carries nothing: the condition the code states is that a graph
+		// exists, and a caller that keeps going has moved on from an extraction
+		// which measured no function at all.
+		{"partial with no nodes", cgdomain.CallGraphStatusPartial, true, ExitFailed},
 	}
 
 	for _, tc := range cases {
@@ -37,6 +43,9 @@ func TestCallGraphExtractionExit_FailedExtractionDoesNotReportSuccess(t *testing
 			rec := makeCGRecord(t)
 			rec.OverallStatus = tc.status
 			rec.FailureDetail = "no package under example.com/cg"
+			if tc.zeroNodes {
+				rec.Nodes, rec.Edges, rec.NodeCount, rec.EdgeCount = nil, nil, 0, 0
+			}
 
 			err := callGraphExtractionExit(rec)
 			if tc.want == ExitOK {

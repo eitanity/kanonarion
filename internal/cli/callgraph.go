@@ -108,37 +108,50 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		return fmt.Errorf("extracting call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, "", stdout); err != nil {
+	if err := printCallGraphSummary(result.Record, result.FromCache || result.Reused, jsonOut, "", stdout); err != nil {
 		return err
+	}
+	if result.Reused {
+		// Said plainly, because the two are different facts and the distinction is
+		// the one a reader chasing a failing module needs: the analysis DID run,
+		// and it came back saying what the ledger already said.
+		if _, err := fmt.Fprintln(stderr,
+			"re-measured and found identical to the generation already recorded; no new generation was written"); err != nil {
+			return fmt.Errorf("writing re-measurement note: %w", err)
+		}
 	}
 	return callGraphExtractionExit(result.Record)
 }
 
 // callGraphExtractionExit maps an extraction outcome onto the process exit code.
 //
-// An extraction that produced no graph at all used to exit 0 while printing
-// LoadFailed, so any caller that branched on the exit code — a script, a make
-// rule, a batch loop over a build list — read a failed extraction as a
-// successful one and moved on. The record already carries the distinction; the
-// exit code simply was not reading it.
-//
-// Only the no-graph outcomes are mapped. A Partial graph is a real graph with a
-// named scope of incompleteness (FailedPackages), and callers that treat 0 as
-// "an answer exists" are right about it; promoting it to ExitPartial would
-// change the meaning of a hundred existing outcomes to make a point this defect
-// does not raise.
+// Three outcomes, three codes: a complete graph, one scoped by its
+// FailedPackages line, and no graph at all. Partial took the complete graph's 0
+// for being an answer — which it is, and 1 is the code for an answer that is
+// known-incomplete. A Partial carrying no nodes stays at 2 with LoadFailed.
 func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
 	msg := fmt.Sprintf("%s: %s", r.Coordinate, r.OverallStatus.String())
 	if r.FailureDetail != "" {
 		msg += " — " + r.FailureDetail
 	}
 	switch r.OverallStatus {
-	case cgdomain.CallGraphStatusLoadFailed:
-		return &exitError{code: ExitFailed, msg: msg}
+	// ExcludedByConfig shares Extracted's 0 by decision, not by omission: the
+	// operator listed this module in callgraph.exclude, so the absent graph is
+	// the outcome they asked for rather than one this run failed to produce.
+	case cgdomain.CallGraphStatusExtracted, cgdomain.CallGraphStatusExcludedByConfig:
+		return nil
+	case cgdomain.CallGraphStatusPartial:
+		if r.NodeCount == 0 {
+			return &exitError{code: ExitFailed, msg: msg}
+		}
+		return &exitError{code: ExitPartial, msg: msg}
 	case cgdomain.CallGraphStatusCancelled:
 		return &exitError{code: ExitCancelled, msg: msg}
 	default:
-		return nil
+		// LoadFailed, OutOfMemory, ExtractionFailed, Unknown, and any status added
+		// later: no graph exists, so nothing downstream can consume this
+		// coordinate. Only the two answers above are enumerated as clean.
+		return &exitError{code: ExitFailed, msg: msg}
 	}
 }
 
@@ -195,7 +208,7 @@ func writeIncompletenessRemedy(stdout io.Writer, r cgdomain.CallGraphRecord, dir
 	if !cgdomain.RecordIsIncomplete(r) {
 		return nil
 	}
-	if _, err := fmt.Fprintln(stdout, cgdomain.IncompleteGraphRemedy(r.Coordinate, r.FailureCause, dir)); err != nil {
+	if _, err := fmt.Fprintln(stdout, cgdomain.IncompleteGraphRemedy(r.Coordinate, r.FailureCause, r.FailureDetail, dir)); err != nil {
 		return fmt.Errorf("writing incompleteness remedy: %w", err)
 	}
 	return nil

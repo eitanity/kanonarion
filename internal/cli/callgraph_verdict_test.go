@@ -12,7 +12,6 @@ import (
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
@@ -155,7 +154,7 @@ func TestRunCalleesTransitive_ResolvedAbsent(t *testing.T) {
 // store yields a RESOLVED-ABSENT default (the caller has already errored on it).
 func TestNegativeCallVerdict_ModuleNotResolved(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph() // no summaries
-	v, err := negativeCallVerdict(context.Background(), "example.com/x.Fn", true, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}, "")
+	v, err := negativeCallVerdict(context.Background(), "example.com/x.Fn", true, uc, buildScope{}, cgports.EdgeQueryOptions{}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -169,7 +168,7 @@ func TestNegativeCallVerdict_ModuleNotResolved(t *testing.T) {
 func TestNegativeCallVerdict_NodeAbsentBelowFull(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Completeness: cgdomain.CompletenessMetadataOnly}
 	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
-	v, err := negativeCallVerdict(context.Background(), "example.com/m.Ghost", false, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}, "")
+	v, err := negativeCallVerdict(context.Background(), "example.com/m.Ghost", false, uc, buildScope{}, cgports.EdgeQueryOptions{}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -185,7 +184,7 @@ func TestNegativeCallVerdict_NodeAbsentBelowFull(t *testing.T) {
 func TestNegativeCallVerdict_ListError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.Err = errors.New("boom")
-	if _, err := negativeCallVerdict(context.Background(), "example.com/m.Fn", true, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}, ""); err == nil {
+	if _, err := negativeCallVerdict(context.Background(), "example.com/m.Fn", true, uc, buildScope{}, cgports.EdgeQueryOptions{}, ""); err == nil {
 		t.Fatal("expected error from list failure")
 	}
 }

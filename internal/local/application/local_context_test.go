@@ -252,3 +252,107 @@ func (c *callTrackingImportAnalyser) AnalyseImports(ctx context.Context, root st
 }
 
 var _ ports.ImportAnalyser = (*callTrackingImportAnalyser)(nil)
+
+// -- test scope --
+
+// testScopeModules is one production-only module and one reached only from
+// _test.go files, as an analyser would report them.
+func testScopeModules() []domain.ImportedModule {
+	return []domain.ImportedModule{
+		{
+			Path:             "example.com/prod",
+			ImportedPackages: []string{"example.com/prod"},
+			UsedSymbols:      []string{"example.com/prod.Run"},
+		},
+		{
+			Path:             "example.com/testonly",
+			ImportedPackages: []string{"example.com/testonly"},
+			UsedSymbols:      []string{"example.com/testonly.Helper"},
+			TestOnlyPackages: []string{"example.com/testonly"},
+			TestOnlySymbols:  []string{"example.com/testonly.Helper"},
+		},
+	}
+}
+
+// The default answer keeps the test-scope user and says so, so the caller can
+// see it and discount it. Dropping it silently is the defect.
+func TestExecute_DefaultKeepsTestScopeUsersAndSaysSo(t *testing.T) {
+	uc := application.NewLocalContextUseCase(
+		&fakeSnapshotBuilder{snap: snapWithMod("example.com/app")},
+		&fakeImportAnalyser{modules: testScopeModules()},
+		nil,
+	)
+	got, err := uc.Execute(context.Background(), application.LocalContextRequest{Root: "/ws"})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(got.Modules) != 2 {
+		t.Fatalf("Modules = %v, want both", got.Modules)
+	}
+	if got.TestsExcluded {
+		t.Error("an unnarrowed answer reports itself as narrowed")
+	}
+	if !got.Modules[1].TestOnly() {
+		t.Error("the test-only module is not marked as such")
+	}
+}
+
+// ExcludeTests narrows the answer and records that it did. What it must NOT do
+// is reach the analyser: the measurement stays wide so the narrow answer is a
+// subset of it rather than a second, differently-scoped question.
+func TestExecute_ExcludeTestsNarrowsTheAnswerNotTheMeasurement(t *testing.T) {
+	called := false
+	delegate := &fakeImportAnalyser{modules: testScopeModules()}
+	uc := application.NewLocalContextUseCase(
+		&fakeSnapshotBuilder{snap: snapWithMod("example.com/app")},
+		&callTrackingImportAnalyser{delegate: delegate, called: &called},
+		nil,
+	)
+	got, err := uc.Execute(context.Background(), application.LocalContextRequest{
+		Root:         "/ws",
+		ExcludeTests: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !called {
+		t.Fatal("the analyser was not run")
+	}
+	if !got.TestsExcluded {
+		t.Error("a narrowed answer does not record the narrowing")
+	}
+	if len(got.Modules) != 1 || got.Modules[0].Path != "example.com/prod" {
+		t.Fatalf("Modules = %v, want only example.com/prod", got.Modules)
+	}
+	// The analyser's own result is untouched: same slice, same contents.
+	if len(delegate.modules) != 2 {
+		t.Errorf("the analyser's result was narrowed in place: %v", delegate.modules)
+	}
+}
+
+// --exclude-tests states itself on a tree that had nothing to drop, too. An
+// answer that says nothing here is exactly as unreadable as one that dropped
+// something in silence.
+func TestExecute_ExcludeTestsIsRecordedWhenNothingWasDropped(t *testing.T) {
+	uc := application.NewLocalContextUseCase(
+		&fakeSnapshotBuilder{snap: snapWithMod("example.com/app")},
+		&fakeImportAnalyser{modules: []domain.ImportedModule{{
+			Path:             "example.com/prod",
+			ImportedPackages: []string{"example.com/prod"},
+		}}},
+		nil,
+	)
+	got, err := uc.Execute(context.Background(), application.LocalContextRequest{
+		Root:         "/ws",
+		ExcludeTests: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(got.Modules) != 1 {
+		t.Fatalf("Modules = %v, want the production module kept", got.Modules)
+	}
+	if !got.TestsExcluded {
+		t.Error("the narrowing is unrecorded when nothing was dropped")
+	}
+}

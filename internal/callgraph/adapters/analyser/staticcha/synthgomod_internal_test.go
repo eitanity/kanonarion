@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -330,6 +331,57 @@ func TestAnalysisEnv_LoadsOffline(t *testing.T) {
 	}
 }
 
+// coldCacheDep is a module this host has already fetched, so a fixture can carry
+// a real go.sum and still resolve nothing from an empty cache.
+const coldCacheDepPath, coldCacheDepVersion = "gopkg.in/yaml.v3", "v3.0.1"
+
+// seedGoSum writes the go.sum the tree's own toolchain would have written, from
+// this host's warm cache and with no network.
+//
+// The analysis posture is read-only, so a fixture that omits go.sum now tests a
+// missing checksum rather than the cold cache it means to test — these fixtures
+// were relying on the analysis to supply it.
+func seedGoSum(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("go", "list", "-deps", "./...") // #nosec G204 -- fixed binary, literal arguments
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GOFLAGS=-mod=mod", "GOWORK=off", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("cannot seed go.sum for %s@%s from this host's module cache: %v\n%s",
+			coldCacheDepPath, coldCacheDepVersion, err, out)
+	}
+}
+
+// modOnlyCache is a module cache holding the dependency's .mod but not its zip:
+// version selection reads the .mod and succeeds, and the package load that needs
+// the source meets the offline posture.
+func modOnlyCache(t *testing.T) string {
+	t.Helper()
+	cache := t.TempDir()
+	depDir := filepath.Join(cache, "cache", "download", filepath.FromSlash(coldCacheDepPath), "@v")
+	if err := os.MkdirAll(depDir, 0o750); err != nil {
+		t.Fatalf("module cache: %v", err)
+	}
+	out, err := exec.Command("go", "env", "GOMODCACHE").Output() // #nosec G204 -- fixed binary, literal arguments
+	if err != nil {
+		t.Skipf("cannot locate this host's module cache: %v", err)
+	}
+	src := filepath.Join(strings.TrimSpace(string(out)), "cache", "download",
+		filepath.FromSlash(coldCacheDepPath), "@v")
+	for _, name := range []string{coldCacheDepVersion + ".mod", coldCacheDepVersion + ".info"} {
+		data, rerr := os.ReadFile(filepath.Join(src, name)) // #nosec G304 -- this host's own module cache
+		if rerr != nil {
+			t.Skipf("%s is not in this host's module cache: %v", name, rerr)
+		}
+		// #nosec G703 -- both segments are package constants joined into t.TempDir()
+		if werr := os.WriteFile(filepath.Join(depDir, name), data, 0o600); werr != nil {
+			t.Fatalf("writing %s: %v", name, werr)
+		}
+	}
+	return cache
+}
+
 // TestAnalyseDir_AbsentDependencyNamesTheColdCache is the behaviour change the
 // offline default owes an account of. A working tree used to be loaded with
 // whatever GOPROXY the environment offered, so a dependency missing from the
@@ -344,17 +396,19 @@ func TestAnalysisEnv_LoadsOffline(t *testing.T) {
 // is nowhere on the record.
 func TestAnalyseDir_AbsentDependencyNamesTheColdCache(t *testing.T) {
 	dir := t.TempDir()
-	// An empty module cache, so the requirement below cannot be satisfied locally
-	// however warm this host's real cache is.
-	t.Setenv("GOMODCACHE", filepath.Join(t.TempDir(), "cold"))
 	write := func(name, content string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 			t.Fatalf("writing %s: %v", name, err)
 		}
 	}
-	write("go.mod", "module example.com/needsdep\n\ngo 1.21\n\nrequire gopkg.in/yaml.v3 v3.0.1\n")
-	write("a.go", "package needsdep\n\nimport _ \"gopkg.in/yaml.v3\"\n\nfunc F() {}\n")
+	write("go.mod", "module example.com/needsdep\n\ngo 1.21\n\nrequire "+
+		coldCacheDepPath+" "+coldCacheDepVersion+"\n")
+	write("a.go", "package needsdep\n\nimport _ \""+coldCacheDepPath+"\"\n\nfunc F() {}\n")
+	seedGoSum(t, dir)
+	// An empty module cache, so the requirement above cannot be satisfied locally
+	// however warm this host's real cache is.
+	t.Setenv("GOMODCACHE", filepath.Join(t.TempDir(), "cold"))
 
 	coord, err := coordinate.NewModuleCoordinate("example.com/needsdep", coordinate.LocalVersion)
 	if err != nil {
@@ -415,25 +469,6 @@ func TestOfflineCacheMissIsNotTheModulesFault(t *testing.T) {
 // happens, and the remedy the tool prints reads as tried and failed.
 func TestAnalyseDir_ColdCachePartialStatesTheEnvironmentCause(t *testing.T) {
 	dir := t.TempDir()
-	cache := t.TempDir()
-	// A dependency the cache can describe but not open: minimal version selection
-	// reads the .mod and succeeds, and the package load that needs the source
-	// meets the offline posture. No network and no real module is involved.
-	depDir := filepath.Join(cache, "cache", "download", "example.com", "dep", "@v")
-	if err := os.MkdirAll(depDir, 0o750); err != nil {
-		t.Fatalf("module cache: %v", err)
-	}
-	for name, content := range map[string]string{
-		"v1.0.0.mod":  "module example.com/dep\n\ngo 1.21\n",
-		"v1.0.0.info": `{"Version":"v1.0.0"}`,
-		"list":        "v1.0.0\n",
-	} {
-		if err := os.WriteFile(filepath.Join(depDir, name), []byte(content), 0o600); err != nil {
-			t.Fatalf("writing %s: %v", name, err)
-		}
-	}
-	t.Setenv("GOMODCACHE", cache)
-
 	write := func(name, content string) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o750); err != nil {
@@ -443,11 +478,14 @@ func TestAnalyseDir_ColdCachePartialStatesTheEnvironmentCause(t *testing.T) {
 			t.Fatalf("writing %s: %v", name, err)
 		}
 	}
-	write("go.mod", "module example.com/needsdep\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n")
-	write("a.go", "package needsdep\n\nimport _ \"example.com/dep\"\n\nfunc A() {}\n")
+	write("go.mod", "module example.com/needsdep\n\ngo 1.21\n\nrequire "+
+		coldCacheDepPath+" "+coldCacheDepVersion+"\n")
+	write("a.go", "package needsdep\n\nimport _ \""+coldCacheDepPath+"\"\n\nfunc A() {}\n")
 	// The package that carries the graph: nothing about it is missing, so the
 	// analysis produces something and the outcome is an incompleteness.
 	write("b/b.go", "package b\n\nfunc B() {}\n")
+	seedGoSum(t, dir)
+	t.Setenv("GOMODCACHE", modOnlyCache(t))
 
 	coord, err := coordinate.NewModuleCoordinate("example.com/needsdep", coordinate.LocalVersion)
 	if err != nil {
@@ -505,5 +543,101 @@ func TestAnalyseDir_PartialFromTheModulesOwnSourcesStaysCacheable(t *testing.T) 
 	}
 	if !domain.RecordIsCacheable(rec) {
 		t.Error("a module's own compile error is re-derived on every run rather than served")
+	}
+}
+
+// TestAnalysisEnv_PinsTheLocalToolchain is the control on the offline posture
+// being internally consistent: a switch left enabled alongside GOPROXY=off and
+// GOSUMDB=off can only fail, and it failed naming the checksum database.
+func TestAnalysisEnv_PinsTheLocalToolchain(t *testing.T) {
+	t.Parallel()
+	env := analysisEnv()
+	if !slices.Contains(env, "GOTOOLCHAIN=local") {
+		t.Error("analysisEnv leaves the toolchain switch enabled alongside GOPROXY=off and GOSUMDB=off: " +
+			"the switch cannot complete, and the load fails naming the checksum database instead of the version gap")
+	}
+	// The control that must still hold: GOFLAGS keeps the last position, so
+	// os/exec's keep-the-last dedupe cannot have the new pin displace it.
+	if idx := slices.Index(env, "GOFLAGS=-mod=mod"); idx != len(env)-1 {
+		t.Errorf("GOFLAGS at position %d of %d", idx, len(env))
+	}
+}
+
+// TestAnalysisEnv_OverridesInheritedToolchainSetting guards the direction of the
+// override: an ambient GOTOOLCHAIN=auto is the default every shell carries, and
+// it would otherwise win the duplicate-key dedupe.
+func TestAnalysisEnv_OverridesInheritedToolchainSetting(t *testing.T) {
+	t.Setenv("GOTOOLCHAIN", "auto")
+
+	env := analysisEnv()
+
+	last := ""
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GOTOOLCHAIN=") {
+			last = kv
+		}
+	}
+	if last != "GOTOOLCHAIN=local" {
+		t.Errorf("effective GOTOOLCHAIN = %q, want GOTOOLCHAIN=local to win over the inherited setting", last)
+	}
+}
+
+// TestAnalysisEnv_StaysOffline is the guarantee the pin must not loosen: the
+// point is to stop the child attempting a fetch, never to permit one.
+func TestAnalysisEnv_StaysOffline(t *testing.T) {
+	t.Parallel()
+	env := analysisEnv()
+	for _, want := range []string{"GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOWORK=off"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("analysisEnv does not set %s", want)
+		}
+	}
+}
+
+// TestAnalyseDir_MissingChecksumEntryNamesTheGapNotTheSource is the failure path
+// of the read-only posture. The tree is no longer edited to close a go.sum gap,
+// so the gap has to be reported instead — and the type errors that reach the
+// record name the import and never the reason, exactly as they do for a cold
+// cache. The go command said both the condition and its own remedy, one layer
+// down, and the SSA layer above replaced it with "invalid package name".
+func TestAnalyseDir_MissingChecksumEntryNamesTheGapNotTheSource(t *testing.T) {
+	dir := t.TempDir()
+	// Nothing here needs a real module or this host's cache: the go command
+	// refuses on the checksum before it looks anything up.
+	t.Setenv("GOMODCACHE", filepath.Join(t.TempDir(), "empty"))
+	for name, content := range map[string]string{
+		"go.mod": "module example.com/needsdep\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n",
+		"a.go":   "package needsdep\n\nimport _ \"example.com/dep\"\n\nfunc F() {}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+
+	coord := mustCoord(t, "example.com/needsdep", coordinate.LocalVersion)
+	rec, err := quietAnalyser().AnalyseDir(context.Background(), dir, coord)
+	if err != nil {
+		t.Fatalf("AnalyseDir: %v", err)
+	}
+
+	if !domain.IsMissingChecksumEntry(rec.FailureDetail) {
+		t.Errorf("the record does not name the checksum gap, so the reader is sent after a fault in "+
+			"source that compiles: %q", rec.FailureDetail)
+	}
+	// The gap is in the tree, not on this host, and the tree's digest moves when
+	// the developer closes it. The axis must not move with the message.
+	if rec.FailureCause != domain.FailureCauseModule {
+		t.Errorf("cause = %q, want %q: a checksum the tree does not carry is not this host's",
+			rec.FailureCause, domain.FailureCauseModule)
+	}
+	if !domain.RecordIsIncomplete(rec) {
+		t.Fatalf("the record is not incomplete, so no remedy is printed at all (status %s)", rec.OverallStatus)
+	}
+	remedy := domain.IncompleteGraphRemedy(coord, rec.FailureCause, rec.FailureDetail, dir)
+	if strings.Contains(remedy, "Fix the package so it compiles") {
+		t.Errorf("the reader is told to edit source that is fine:\n%s", remedy)
+	}
+	if !strings.Contains(remedy, domain.MissingChecksumRemedy) {
+		t.Errorf("the remedy names nothing that closes the checksum gap:\n%s", remedy)
 	}
 }

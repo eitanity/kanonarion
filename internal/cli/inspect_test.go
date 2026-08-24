@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -194,6 +195,161 @@ func TestInspectSummary_JSONShape(t *testing.T) {
 	for _, want := range []string{`"module_count"`, `"overall_status"`, `"walk_ids"`} {
 		if !strings.Contains(raw, want) {
 			t.Errorf("JSON missing required field %s: %s", want, raw)
+		}
+	}
+}
+
+// inspect's extract tally must equal the failed-stage count on the run it just
+// made. It was derived from whether runExtract returned a Go error, which a
+// partial run does not, so a run the store records as partial — with named
+// modules whose public API went unmeasured — was summarised as
+// `extract_fails: 0` and rolled up to AllClean.
+func TestInspectExtractTally_CountsTheRunsFailedStages(t *testing.T) {
+	run := extractdomain.ExtractionRun{
+		ID:            "01EXTRACTRUN00000000000001",
+		OverallStatus: extractdomain.ExtractionRunPartial,
+		PerModuleResults: map[coordinate.ModuleCoordinate]extractdomain.ModuleExtractionResult{
+			coordinatetest.MustNew("example.com/a", "v1.0.0"): {
+				Stages: map[string]extractdomain.StageResult{
+					"callgraph": {Status: extractdomain.StageFailed, Error: "no go.mod was synthesised"},
+					"license":   {Status: extractdomain.StageSucceeded},
+				},
+			},
+			coordinatetest.MustNew("example.com/b", "v2.0.0"): {
+				Stages: map[string]extractdomain.StageResult{
+					"callgraph": {Status: extractdomain.StageFailed},
+					"interface": {Status: extractdomain.StageFailed},
+				},
+			},
+		},
+	}
+
+	count, failures := inspectExtractTally(run, nil)
+	if count != 3 {
+		t.Errorf("extract_fails = %d, want 3 — the run's own failed-stage count, not a 0/1 flag", count)
+	}
+	if len(failures) != count {
+		t.Errorf("named %d failures for a count of %d; the two are one reading of one run", len(failures), count)
+	}
+	// The roll-up must move off AllClean on the strength of that count alone.
+	if got := inspectSummaryStatus(0, count, 0, vuldomain.WalkStatusAllClean); got == "AllClean" {
+		t.Errorf("status = %q over a partial extraction; AllClean over unmeasured modules is the defect", got)
+	}
+
+	// Control: a run in which every stage succeeded still counts zero and names
+	// nothing, and still rolls up AllClean.
+	clean := extractdomain.ExtractionRun{
+		OverallStatus: extractdomain.ExtractionRunSucceeded,
+		PerModuleResults: map[coordinate.ModuleCoordinate]extractdomain.ModuleExtractionResult{
+			coordinatetest.MustNew("example.com/a", "v1.0.0"): {
+				Stages: map[string]extractdomain.StageResult{"license": {Status: extractdomain.StageSucceeded}},
+			},
+		},
+	}
+	cleanCount, cleanFailures := inspectExtractTally(clean, nil)
+	if cleanCount != 0 || len(cleanFailures) != 0 {
+		t.Errorf("clean run tallied %d/%v, want 0 and nothing named", cleanCount, cleanFailures)
+	}
+	if got := inspectSummaryStatus(0, cleanCount, 0, vuldomain.WalkStatusAllClean); got != "AllClean" {
+		t.Errorf("clean run status = %q, want AllClean", got)
+	}
+
+	// An extraction that produced no run at all has no breakdown to count. The
+	// summary reports one rather than zero: nothing was measured, and zero is the
+	// answer it must not give.
+	errCount, errFailures := inspectExtractTally(extractdomain.ExtractionRun{}, errors.New("initialising store"))
+	if errCount != 1 {
+		t.Errorf("failed extraction tallied %d, want 1", errCount)
+	}
+	if errFailures == nil || len(errFailures) != 0 {
+		t.Errorf("failed extraction named %v, want an empty non-nil list", errFailures)
+	}
+}
+
+// The summary document must name what its extract tally counts. A number with
+// no coordinates behind it tells a consumer that some module's public API is
+// unmeasured without saying whose, and neither stream carried the pairs.
+func TestInspectSummary_JSONCarriesTheExtractFailures(t *testing.T) {
+	b, err := json.Marshal(inspectSummary{
+		ExtractFails: 1,
+		ExtractFailures: []extractStageFailure{
+			{Module: "example.com/a@v1.0.0", Stage: "callgraph", Error: "no go.mod was synthesised"},
+		},
+		OverallStatus: "Partial",
+		WalkIDs:       []string{"01KXXX"},
+	})
+	if err != nil {
+		t.Fatalf("marshal inspectSummary: %v", err)
+	}
+	raw := string(b)
+	for _, want := range []string{`"extract_failures"`, `"example.com/a@v1.0.0"`, `"callgraph"`, `"no go.mod was synthesised"`} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("JSON missing %s: %s", want, raw)
+		}
+	}
+	// Emitted at zero, like the tallies beside it: a clean run's document is the
+	// same document, with the list empty rather than absent.
+	empty, err := json.Marshal(inspectSummary{ExtractFailures: []extractStageFailure{}, WalkIDs: []string{}})
+	if err != nil {
+		t.Fatalf("marshal empty inspectSummary: %v", err)
+	}
+	if !strings.Contains(string(empty), `"extract_failures":[]`) {
+		t.Errorf("a clean run must emit extract_failures as an empty list: %s", empty)
+	}
+}
+
+// A --gomod roll-up of Partial must reach the exit code. Moving the word off
+// AllClean fixed what a human reads; the process still reported success, so a
+// caller branching on the exit code — which is the only thing a CI step reads —
+// still learned nothing about a dependency set that went unanalysed.
+//
+// The status under test is derived from a run the store recorded as partial and
+// carried through the same two functions the command uses, rather than being a
+// string set by hand: the defect was the chain, not any one link.
+func TestInspectExit_PartialRollUpIsNotASuccess(t *testing.T) {
+	run := extractdomain.ExtractionRun{
+		ID:            "01EXTRACTRUN00000000000001",
+		OverallStatus: extractdomain.ExtractionRunPartial,
+		PerModuleResults: map[coordinate.ModuleCoordinate]extractdomain.ModuleExtractionResult{
+			coordinatetest.MustNew("modernc.org/libc", "v1.73.5"): {
+				Stages: map[string]extractdomain.StageResult{
+					"callgraph": {Status: extractdomain.StageFailed, Error: "conflicting call graph records"},
+					"license":   {Status: extractdomain.StageSucceeded},
+				},
+			},
+			coordinatetest.MustNew("modernc.org/sqlite", "v1.53.0"): {
+				Stages: map[string]extractdomain.StageResult{
+					"callgraph": {Status: extractdomain.StageFailed, Error: "conflicting call graph records"},
+				},
+			},
+		},
+	}
+	extractFails, _ := inspectExtractTally(run, nil)
+	status := inspectSummaryStatus(0, extractFails, 0, vuldomain.WalkStatusAllClean)
+	if status != string(vuldomain.WalkStatusPartial) {
+		t.Fatalf("roll-up = %q, want Partial: the rest of this test is about the code that word earns", status)
+	}
+
+	err := inspectExit(status)
+	if err == nil {
+		t.Fatalf("roll-up %q returned no error: the process reports success over %d unmeasured stage(s)", status, extractFails)
+	}
+	code, ok := ExitCodeFromError(err)
+	if !ok {
+		t.Fatalf("roll-up %q returned an error carrying no exit code: %v", status, err)
+	}
+	if code != ExitPartial {
+		t.Errorf("exit code = %d, want %d (%v)", code, ExitPartial, err)
+	}
+
+	// Controls. An answer is not a gap: a clean set, a set with real findings,
+	// and a scan that failed outright all keep the code they have today.
+	for _, answer := range []vuldomain.WalkScanStatus{
+		vuldomain.WalkStatusAllClean, vuldomain.WalkStatusAffected, vuldomain.WalkStatusFailed,
+	} {
+		clean := inspectSummaryStatus(0, 0, 0, answer)
+		if got := inspectExit(clean); got != nil {
+			t.Errorf("roll-up %q returned %v, want no error", clean, got)
 		}
 	}
 }

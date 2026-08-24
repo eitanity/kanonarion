@@ -11,10 +11,9 @@ which of the breaking changes that project's own code actually calls.
 `interface-diff` counts **exported Go signatures**. It does not measure
 behaviour, and it never says a version bump is safe.
 
-That distinction is not pedantry. A measured zero-breaking bump
-(`github.com/spf13/cast` v1.4.1 → v1.10.0) changed 38 behavioural outcomes while
-changing no signature at all. The headline therefore states the fact and the
-scope it holds over on one line, and nothing more:
+A measured zero-breaking bump (`github.com/spf13/cast` v1.4.1 → v1.10.0) changed
+38 behavioural outcomes while changing no signature at all. The headline states
+the fact and the scope it holds over, and nothing more:
 
 ```
 0 breaking change(s) among exported Go declarations (github.com/spf13/cast@v1.4.1 → github.com/spf13/cast@v1.10.0); behaviour and string-keyed registries are outside this comparison
@@ -31,14 +30,10 @@ a zero here is not reassurance. This comparison reads exported signatures, so it
 
 With `--used-by` the second line is replaced by the measurement: how many of the
 declarations this bump moved the project's own code calls, and at how many
-recorded call sites. `zero breaking, 2 reached call sites` and `zero breaking,
-none reached` are different answers and the command already knows which it has.
-When the project has no stored call graph, that line says the reach could not be
-measured and names `kanonarion local .` rather than reporting a count of zero.
+recorded call sites. With no stored call graph, that line says the reach could
+not be measured and names `kanonarion local .` rather than reporting zero.
 
-A **genuinely empty** delta - nothing added, changed, respelt or renamed - keeps
-the terse two-line output. The statement is for the result that looks like
-nothing happened when something did.
+A **genuinely empty** delta keeps the terse two-line output.
 
 ## Prerequisites
 
@@ -128,10 +123,9 @@ output differs from a same-path comparison in four ways:
   (func)`), not a removal plus an addition;
 - declarations that genuinely disappeared or appeared are still `removed` and
   `added`, and still count;
-- the pair's own `package removed` / `package added` lines are suppressed, since
-  the module root did not come or go. A subpackage that really was dropped or
-  introduced is still reported, under the import path the side it exists on
-  spells.
+- the pair's own `package removed` / `package added` lines are suppressed. A
+  subpackage that really was dropped or introduced is still reported, under the
+  import path the side it exists on spells.
 
 A line above the delta states the pair and what it costs:
 
@@ -149,10 +143,18 @@ perform is work, but it is not a broken build, and it does not fire the gate.
 a `map[string]any`, or any other string-keyed table of functions has a contract
 this command cannot see: the keys are strings resolved at run time, so a key
 renamed or dropped changes what consumers get while every signature stays
-identical. Such a surface is **flagged** whenever either record exports one -
-as a variable, a constant, or the result of a function, which is how
-`github.com/Masterminds/sprig` publishes its. Detection only: the keys are never
+identical. Such a surface is **flagged** whenever either record exports one, as a
+variable, a constant or a function result. Detection only: the keys are never
 read and never diffed.
+
+**A build frame mismatch.** Every record names the build it was measured in, and
+the output opens with that frame. When the two sides disagree — different
+platforms, or one record too old to name a frame — the line says so, because a
+declaration in one platform's build and not the other's is reported as `removed`
+or `changed` by a comparison that cannot see why. The pre-frame records are the
+worst case: they hold every platform's declarations at once and pick between
+duplicates arbitrarily, which once made 36 of 37 reported breaking changes on
+one real version pair artefacts of the pick. Re-extract both sides.
 
 **`testdata` packages.** Packages under a `testdata` directory are excluded from
 the comparison on both sides. The go tool does not build them and no consumer
@@ -220,9 +222,8 @@ kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.
 
 `--json` emits a single deterministic object. **The declaration kinds use the
 interface record's own short names** - `func`, `type`, `method`, `const`, `var`,
-matching the `funcs` / `consts` / `vars` collections `interface-show --json`
-emits. Guessing them wrong produces a silent zero-declaration comparison, so
-they are stated here rather than left to be inferred.
+matching what `interface-show --json` emits. Guessing them wrong produces a
+silent zero-declaration comparison.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -241,6 +242,9 @@ they are stated here rather than left to be inferred.
 | `zero_breaking_advisory` | string or absent | Present exactly when the text output prints the zero-breaking statement |
 | `registries` | array | `{package, kind, name, shape, side}` - `side` is `A`, `B` or `both` |
 | `excluded_testdata_packages` | array of strings | Paths dropped from the comparison |
+| `build_frame_a` | string | Frame A was measured in, or `unrecorded` |
+| `build_frame_b` | string | Frame B was measured in, or `unrecorded` |
+| `frame_mismatch` | bool | The two sides are not the same build |
 | `used_by` | object or absent | Present only with `--used-by` |
 
 `used_by` carries `gomod`, `walk_id`, `walk_frame` (the `GOOS/GOARCH` that
@@ -290,11 +294,6 @@ rows carry `moved_to_package` when the declaration moved as well.
 | 5 | `--used-by` found a breaking change **within the used set**: the project's own code calls it |
 | 20 | Malformed invocation - an unparseable coordinate, a missing value for a flag |
 
-Exit 5 is the policy code because the command ran to completion, measured the
-stored evidence, and the gate the caller asked for fired on a real finding. That
-is the gate working, and CI must be able to route it to a human rather than to
-whoever fixes broken invocations.
-
 ## Scope notes
 
 - The comparison is a pure function over two records. Two runs over the same
@@ -306,9 +305,8 @@ whoever fixes broken invocations.
 - A cross-major pair is recognised from the module **paths** alone. The version
   strings are never consulted for it, so a `+incompatible` side pairs with a
   `/vN` side exactly as two `/vN` sides do.
-- Packages under `internal/` **are** compared. Their declarations are exported
-  Go declarations and appear in the record; that they are not importable from
-  outside the module is not something this command's counts distinguish.
+- Packages under `internal/` **are** compared: their declarations are exported
+  Go declarations and appear in the record.
 
 See also: [`interface`](interface.md), [`callgraph`](callgraph.md),
 [`local`](local.md), [`license-diff`](license-diff.md).

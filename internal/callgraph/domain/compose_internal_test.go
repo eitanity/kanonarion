@@ -192,6 +192,7 @@ func TestGraphClaimFields_ClassifiesEveryCanonicalField(t *testing.T) {
 		"synthesised_go_mod":         "what kanonarion wrote to make the build work",
 		"test_scope":                 "whether tests were analysed, which shows up in the nodes",
 		"test_scope_detail":          "how the test scope was decided",
+		"toolchain":                  "which Go built it: a dimension, compared as its own conflict first",
 		"worktree_digest":            "what the tree contained: identity, not graph",
 		"worktree_scan_digest":       "which tree the analysis was handed: the reuse key, not graph",
 	}

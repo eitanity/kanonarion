@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -208,6 +209,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		WorktreeScanDigest:       c.WorktreeScanDigest,
 		AnalysisRoot:             c.AnalysisRoot,
 		BuildListSource:          c.BuildListSource,
+		Toolchain:                gotoolchain.Version(c.Toolchain),
 		SynthesisedGoMod: SynthesisedGoMod{
 			ModulePath:        c.SynthesisedGoMod.ModulePath,
 			GoDirective:       c.SynthesisedGoMod.GoDirective,
@@ -315,8 +317,13 @@ type canonicalRecord struct {
 	// verifiable, on the same terms every additive field on this shape has used.
 	// An absent analysis_source is the "not recorded" value, not a fourth source.
 	AnalysisSource string `json:"analysis_source,omitempty"`
-	ArtifactKind   string `json:"artifact_kind,omitempty"`
-	Completeness   string `json:"completeness,omitempty"`
+	// Toolchain is omitted when empty on the same terms as every additive field
+	// on this shape: no record written before it existed carries it, so those
+	// marshal to the bytes they always did and keep their stored hash verifiable.
+	// An absent toolchain is "not recorded", never a toolchain of its own.
+	Toolchain    string `json:"toolchain,omitempty"`
+	ArtifactKind string `json:"artifact_kind,omitempty"`
+	Completeness string `json:"completeness,omitempty"`
 	// ArtefactIdentity and SourceContentHash are omitted when empty so
 	// records that predate them keep their stored content hash verifiable,
 	// on the same terms every additive field on this shape has used.
@@ -572,6 +579,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		WorktreeDigest:     r.WorktreeDigest,
 		WorktreeScanDigest: r.WorktreeScanDigest,
 		AnalysisRoot:       r.AnalysisRoot,
+		Toolchain:          string(r.Toolchain),
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {

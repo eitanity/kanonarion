@@ -149,7 +149,7 @@ Kanonarion is designed to be called directly from agent tool-use. The recommende
 | "What does function F call?"               | `callees '<fully.qualified.Symbol>'` |
 | "What calls function F?" / impact analysis | `callers '<fully.qualified.Symbol>'` |
 | "Which types implement this interface?" / port-change scoping | `implementers '<pkg/path.Interface>'` |
-| Scope an answer to production code only    | add `--exclude-tests` to any of the three |
+| Scope an answer to production code only    | add `--exclude-tests` to any of the three, or to `context <dir>` |
 | Make those queries resolve my own project's symbols | `local <dir>` |
 | Dependency upgraded - what changed?        | `walk-diff <old-id> <new-id>` |
 | "Is there a newer version of X?"           | `latest <module>` |
@@ -163,16 +163,16 @@ All query commands support `--json` for machine-readable output, making them eas
 
 - **Offline-first.** After the initial walk and extract, all queries are local SQLite reads. No network calls, no rate limits, no flaky CI.
 - **Deterministic.** Pinned versions, checksum-verified ZIPs, sorted JSON output. The same query returns the same result today and a year from now.
-- **No SaaS, no phone home.** A single binary that runs where you run it. No account, no telemetry, no vendor in the loop after install.
+- **No SaaS, no phone home.** A single binary that runs where you run it. No account, no telemetry, no vendor in the loop.
 - **Reachability-aware vulnerability scanning.** Integrates govulncheck with optional `--reachability` filtering. CVEs your code can't actually reach are triaged down, not paged on at 2am.
 - **Licence compliance with provenance.** Per-module SPDX licence detection with a full transitive summary, classified as Detected, Unclassified, or None.
-- **Interface extraction.** Full public API surface - types, functions, methods, constants - in structured JSON the agent can consume directly.
+- **Interface extraction.** Full public API surface - types, functions, methods, constants - in structured JSON the agent can consume directly, measured in one named build frame (`goos/goarch` plus cgo) rather than every platform at once.
 - **Call graph with a three-valued verdict.** Intra-module call graph for impact analysis and reachability queries. Every answer says whether an empty result is a *measurement* (`RESOLVED-ABSENT`) or an *undecided* one (`UNRESOLVED`, naming what blocked it) - so "nothing calls this" is never a guess dressed as a fact. `_test.go` declarations are in the graph and tagged, because test fakes are most of the edit surface of an interface change; `--exclude-tests` narrows any query to production code and says so on the answer, empty or not.
 - **Interface implementers.** `implementers` lists the concrete types satisfying an interface, including ones that satisfy it only by embedding - the question a port-signature change actually raises, and one a grep for the method name answers wrongly.
 - **Usage examples.** Verified code snippets extracted from module test files, so the agent codes against patterns that actually work.
 - **Policy gates.** Walk-traversal rules in YAML - max depth, whether replace directives and indirect requirements are followed, and which VCS forges may be cross-verified against - validated with `policy validate`.
 - **SBOM generation.** CycloneDX 1.6 software bill of materials from any walk, with a full dependency graph and per-component `SHA-256/384/512` artefact hashes computed at download. The Go standard library is a first-class component, verified against Go's published source-tarball checksum; `--stdlib-from-gomod` pins its version to the `go.mod` directive for reproducible release artifacts.
-- **Auditable evidence chain.** Every fetch, every verification, every policy decision is recorded in an append-only `audit.jsonl`. Reproducible, time-stamped evidence of what kanonarion did and when - useful for CI investigation, compliance reporting, or understanding why a build failed.
+- **Auditable evidence chain.** Every fetch, verification and policy decision is recorded in an append-only `audit.jsonl`: reproducible, time-stamped evidence of what kanonarion did and when.
 
 ---
 

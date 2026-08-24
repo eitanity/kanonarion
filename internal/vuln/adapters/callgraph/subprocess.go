@@ -30,7 +30,9 @@ func NewOsCallGraphSpawner(binary string) *OsCallGraphSpawner {
 
 // Spawn runs `<binary> callgraph <module@version> [--force] [--from-walk <id>]` as a child process under
 // a 10-minute timeout. It captures stderr and returns it alongside any exec error.
-// A non-zero exit, timeout, or OOM kill results in a non-nil error.
+// A timeout, an OOM kill, or an exit saying no graph was produced results in a
+// non-nil error; an exit saying the graph is incomplete does not, because the
+// graph is stored and the record states its own completeness.
 func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleCoordinate, force bool, walkID string) ([]byte, error) {
 	spawnCtx, cancel := context.WithTimeout(ctx, spawnTimeout)
 	defer cancel()
@@ -48,7 +50,13 @@ func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleC
 
 	// childproc, not exec directly: the child builds an SSA closure that can hold
 	// several GB, and must not survive an abnormal death of this process.
-	return childproc.Run(spawnCtx, s.binary, args...) //nolint:wrapcheck // the caller classifies the raw exec error (exit status, context deadline); wrapping it here would rewrite the text those classifiers read
+	stderr, err := childproc.Run(spawnCtx, s.binary, args...)
+	// A child that exited Partial stored a graph naming its own gaps. Calling that
+	// a spawn failure hides a usable graph behind a note saying there is none.
+	if childproc.ExitedPartial(err) {
+		return stderr, nil
+	}
+	return stderr, err //nolint:wrapcheck // the caller classifies the raw exec error (exit status, context deadline); wrapping it here would rewrite the text those classifiers read
 }
 
 var _ ports.CallGraphSpawner = (*OsCallGraphSpawner)(nil)

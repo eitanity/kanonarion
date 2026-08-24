@@ -78,6 +78,23 @@ kanonarion extract show 01J1Z... --json
 | `--store-root` | `~/.kanonarion` | Root directory for storage |
 | `--json` | false | Output as JSON |
 
+### Exit codes
+
+`extract` exits on the status of the run it recorded, and the `--json` document
+and the process agree:
+
+| Code | Meaning |
+|---|---|
+| `0` | `succeeded`: every requested stage completed for every module |
+| `1` | `partial`: some stage failed. The stages that ran ARE stored and usable; the `Failed stages (N)` breakdown names the module and stage of each one |
+| `2` | `failed`: the run produced no usable stage |
+| `3` | `cancelled`: the context ended before every module was reached |
+
+A partial run leaves the named modules' facts permanently unmeasured until they
+are re-extracted, so a pipeline step reading only the exit code must be able to
+see it. `extract show` is a store-inspection command and exits `0` whatever
+status it reprints.
+
 ## Orchestration Logic
 
 1.  **Walk Loading**: The orchestrator loads the module graph from the specified `walk-id`.
@@ -97,6 +114,12 @@ the blast radius of OOM conditions: if a module's SSA closure exhausts RAM the
 kernel kills only the child process; the parent captures the exit code and
 stderr, records `StageFailed` with `error_detail`, and continues to the next
 module.
+
+A child exiting `1` is the exception: that is the child saying it built a graph
+and knows it to be incomplete ([`callgraph` exit codes](callgraph.md#exit-codes)).
+The record is in the store, so the parent classifies the record — `Partial`
+counts as a stage that ran — rather than the exit status. Only an exit saying no
+graph was produced makes the stage failed.
 
 The `--workers` flag controls how many callgraph subprocesses run concurrently.
 On memory-constrained hosts, lower this to 1 or 2:

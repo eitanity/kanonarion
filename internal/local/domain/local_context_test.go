@@ -187,3 +187,111 @@ func TestSnapshotModulePath_LeadingWhitespaceInModuleLine(t *testing.T) {
 		t.Errorf("module path %q contains whitespace, expected trimmed", got)
 	}
 }
+
+// -- test scope --
+
+func TestImportedModule_TestOnly_SymbolsDecideWhenMeasured(t *testing.T) {
+	cases := map[string]struct {
+		mod  domain.ImportedModule
+		want bool
+	}{
+		"every symbol from a test file": {
+			mod: domain.ImportedModule{
+				ImportedPackages: []string{"example.com/dep"},
+				UsedSymbols:      []string{"example.com/dep.A", "example.com/dep.B"},
+				TestOnlyPackages: []string{"example.com/dep"},
+				TestOnlySymbols:  []string{"example.com/dep.A", "example.com/dep.B"},
+			},
+			want: true,
+		},
+		"one symbol from production": {
+			mod: domain.ImportedModule{
+				ImportedPackages: []string{"example.com/dep"},
+				UsedSymbols:      []string{"example.com/dep.A", "example.com/dep.B"},
+				TestOnlySymbols:  []string{"example.com/dep.B"},
+			},
+			want: false,
+		},
+		"import level, every package from a test file": {
+			mod: domain.ImportedModule{
+				ImportedPackages: []string{"example.com/dep"},
+				TestOnlyPackages: []string{"example.com/dep"},
+			},
+			want: true,
+		},
+		"import level, package imported by production": {
+			mod:  domain.ImportedModule{ImportedPackages: []string{"example.com/dep"}},
+			want: false,
+		},
+		// The zero value claims nothing was measured, so it must not claim the
+		// module is test-only either.
+		"zero value": {mod: domain.ImportedModule{}, want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := tc.mod.TestOnly(); got != tc.want {
+				t.Errorf("TestOnly() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// ExcludeTestScope must subtract, never re-measure: what survives has to be a
+// subset of what went in, and a module with nothing left goes.
+func TestExcludeTestScope_SubtractsAndDropsEmptied(t *testing.T) {
+	in := []domain.ImportedModule{
+		{
+			Path:             "example.com/mixed",
+			ImportedPackages: []string{"example.com/mixed/a", "example.com/mixed/b"},
+			UsedSymbols:      []string{"example.com/mixed/a.Prod", "example.com/mixed/b.OnlyTest"},
+			TestOnlyPackages: []string{"example.com/mixed/b"},
+			TestOnlySymbols:  []string{"example.com/mixed/b.OnlyTest"},
+		},
+		{
+			Path:             "example.com/testonly",
+			ImportedPackages: []string{"example.com/testonly"},
+			UsedSymbols:      []string{"example.com/testonly.Helper"},
+			TestOnlyPackages: []string{"example.com/testonly"},
+			TestOnlySymbols:  []string{"example.com/testonly.Helper"},
+		},
+		{
+			Path:             "example.com/prod",
+			ImportedPackages: []string{"example.com/prod"},
+			UsedSymbols:      []string{"example.com/prod.Run"},
+		},
+	}
+
+	got := domain.ExcludeTestScope(in)
+
+	if len(got) != 2 {
+		t.Fatalf("modules = %d, want 2 (the test-only module is dropped): %v", len(got), got)
+	}
+	if got[0].Path != "example.com/mixed" || got[1].Path != "example.com/prod" {
+		t.Fatalf("surviving modules = %q, %q", got[0].Path, got[1].Path)
+	}
+	if len(got[0].ImportedPackages) != 1 || got[0].ImportedPackages[0] != "example.com/mixed/a" {
+		t.Errorf("ImportedPackages = %v, want only the production package", got[0].ImportedPackages)
+	}
+	if len(got[0].UsedSymbols) != 1 || got[0].UsedSymbols[0] != "example.com/mixed/a.Prod" {
+		t.Errorf("UsedSymbols = %v, want only the production symbol", got[0].UsedSymbols)
+	}
+	if got[0].TestOnly() || got[1].TestOnly() {
+		t.Error("a narrowed answer still reports a module as test-only")
+	}
+	// The input is an argument, not a workspace: narrowing must not edit it.
+	if len(in[0].ImportedPackages) != 2 {
+		t.Errorf("input was modified: %v", in[0].ImportedPackages)
+	}
+}
+
+func TestExcludeTestScope_NoTestScopeIsIdentity(t *testing.T) {
+	in := []domain.ImportedModule{{
+		Path:             "example.com/prod",
+		ImportedPackages: []string{"example.com/prod"},
+		UsedSymbols:      []string{"example.com/prod.Run"},
+	}}
+	got := domain.ExcludeTestScope(in)
+	if len(got) != 1 || len(got[0].ImportedPackages) != 1 || len(got[0].UsedSymbols) != 1 {
+		t.Errorf("ExcludeTestScope changed an answer with no test scope: %v", got)
+	}
+}

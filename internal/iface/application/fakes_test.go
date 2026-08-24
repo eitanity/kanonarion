@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -176,8 +177,10 @@ func (s *fakeInterfaceStore) FindSymbol(_ context.Context, _ string, _ string, _
 
 // fakeExtractor returns a fixed InterfaceRecord.
 type fakeExtractor struct {
-	record domain.InterfaceRecord
-	err    error
+	record    domain.InterfaceRecord
+	err       error
+	frame     domain.BuildFrame
+	toolchain gotoolchain.Version
 }
 
 func (f *fakeExtractor) Extract(_ context.Context, _ fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error) {
@@ -188,6 +191,10 @@ func (f *fakeExtractor) Extract(_ context.Context, _ fs.FS, coord coordinate.Mod
 	r.Coordinate = coord
 	return r, nil
 }
+
+func (f *fakeExtractor) BuildFrame() domain.BuildFrame { return f.frame }
+
+func (f *fakeExtractor) Toolchain() gotoolchain.Version { return f.toolchain }
 
 // Compile-time interface checks.
 var _ fetchports.FactStore = (*fakeFactStore)(nil)

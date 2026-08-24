@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -32,7 +33,8 @@ type buildScopeFlags struct {
 	// A path is always given, so the two cases differ only in whether the caller
 	// spelled the flag, which the string value cannot carry: it is read from
 	// cobra at run time.
-	gomodSet bool
+	gomodSet  bool
+	toolchain string
 }
 
 // defaultGoModPath is the manifest a caller means when they name no other: the
@@ -46,6 +48,12 @@ func registerBuildScopeFlags(cmd *cobra.Command, f *buildScopeFlags) {
 		"restrict results to the resolved version set of this walk")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "",
 		"restrict results to the latest project walk for this go.mod; takes a path, e.g. --gomod "+defaultGoModPath)
+	// Registered here rather than per command so that every read which resolves a
+	// stored call graph by scope can act on a toolchain refusal. A refusal that
+	// names a flag the command does not have is a dead end: the reader is told to
+	// name a toolchain and has no way to name one.
+	cmd.Flags().StringVar(&f.toolchain, "toolchain", "",
+		"restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
 }
 
 // bind reads the flag state cobra holds but a string variable cannot express.
@@ -67,6 +75,12 @@ type buildScope struct {
 	// source names the build for diagnostics, e.g. `walk "abc123" (frame
 	// linux/amd64)`. Empty when no build was named and modules is unrestricted.
 	source string
+	// toolchain restricts the read to graphs built by one Go toolchain. The zero
+	// value names none and composition groups on its own. It rides on the scope
+	// rather than beside it because every helper that resolves a record already
+	// carries the scope, and a preference the caller had to thread separately is
+	// one the next read path forgets.
+	toolchain gotoolchain.Version
 	// staleness is the clause the notice appends when the build was named by a
 	// manifest rather than by walk id: the walk was found by the module path the
 	// manifest declares, and this read did not re-resolve the manifest to check
@@ -82,7 +96,9 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 		return buildScope{}, fmt.Errorf("--walk-id and --gomod are mutually exclusive: both name a build, and they may name different ones")
 	}
 	if !f.requested() {
-		return buildScope{}, nil
+		// A toolchain preference is not a build: it narrows WHICH measurement of a
+		// module answers, not which versions are in scope, so it stands on its own.
+		return buildScope{toolchain: gotoolchain.Version(f.toolchain)}, nil
 	}
 
 	walkID := f.walkID
@@ -107,6 +123,7 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 		modules:   walkModuleSet(rec),
 		source:    fmt.Sprintf("walk %q (frame %s)", walkID, rec.Graph.Frame()),
 		staleness: staleness,
+		toolchain: gotoolchain.Version(f.toolchain),
 	}, nil
 }
 

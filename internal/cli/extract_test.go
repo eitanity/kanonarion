@@ -160,3 +160,153 @@ func TestPrintExtractionFailures_SortedOutput(t *testing.T) {
 		t.Errorf("output not sorted: example.com/a at %d, example.com/z at %d\ngot:\n%s", aIdx, zIdx, got)
 	}
 }
+
+// An extraction run that recorded a failed stage must not exit 0. The stages
+// that ran are stored and the breakdown names the rest, which is exit 1's
+// meaning; a run reaching a CI step as a success left named modules' public API
+// permanently unmeasured and nothing the step reads said so.
+func TestExtractionExit_RecordedStatusReachesTheExitCode(t *testing.T) {
+	t.Parallel()
+
+	partial := func(status domain.ExtractionRunStatus) domain.ExtractionRun {
+		return domain.ExtractionRun{
+			ID:            "01EXTRACTRUN00000000000001",
+			OverallStatus: status,
+			PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
+				coordinatetest.MustNew("example.com/mod", "v1.0.0"): {
+					Stages: map[string]domain.StageResult{
+						"license":   {Status: domain.StageSucceeded},
+						"interface": {Status: domain.StageFailed, Error: "conflicting interface records"},
+					},
+				},
+			},
+		}
+	}
+
+	cases := []struct {
+		name   string
+		status domain.ExtractionRunStatus
+		want   int
+	}{
+		{"succeeded", domain.ExtractionRunSucceeded, ExitOK},
+		{"partial", domain.ExtractionRunPartial, ExitPartial},
+		{"failed", domain.ExtractionRunFailed, ExitFailed},
+		{"cancelled", domain.ExtractionRunCancelled, ExitCancelled},
+		// A status this build does not know is not a clean run. Falling through to
+		// 0 is how a later enum member would quietly become a success.
+		{"unrecognised future status", domain.ExtractionRunStatus(99), ExitPartial},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := extractionExit(partial(tc.status))
+			if tc.want == ExitOK {
+				if err != nil {
+					t.Fatalf("status %s returned %v, want no error", tc.status, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("status %s returned no error: a caller reading the exit code learns nothing", tc.status)
+			}
+			code, ok := ExitCodeFromError(err)
+			if !ok {
+				t.Fatalf("status %s returned an error carrying no exit code: %v", tc.status, err)
+			}
+			if code != tc.want {
+				t.Errorf("exit code = %d, want %d (%v)", code, tc.want, err)
+			}
+		})
+	}
+}
+
+// The document and the process must agree. `--json` already reported
+// "overall_status": 1 while the process reported 0, so a caller that read the
+// document and a caller that read the exit code got opposite answers about one
+// run.
+func TestRenderExtraction_JSONAndTextExitAlike(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		status domain.ExtractionRunStatus
+		want   int
+	}{
+		{"partial", domain.ExtractionRunPartial, ExitPartial},
+		{"succeeded", domain.ExtractionRunSucceeded, ExitOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			run := domain.ExtractionRun{
+				SchemaVersion: domain.ExtractionRunSchemaVersion,
+				ID:            "01EXTRACTRUN00000000000001",
+				OverallStatus: tc.status,
+				PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
+					coordinatetest.MustNew("example.com/mod", "v1.0.0"): {
+						Stages: map[string]domain.StageResult{
+							"interface": {Status: domain.StageFailed, Error: "boom"},
+						},
+					},
+				},
+			}
+			var text, jsonBuf bytes.Buffer
+			textErr := renderExtraction(run, false, &text)
+			jsonErr := renderExtraction(run, true, &jsonBuf)
+
+			textCode, jsonCode := ExitCodeForError(textErr), ExitCodeForError(jsonErr)
+			if textCode != tc.want || jsonCode != tc.want {
+				t.Errorf("exit codes: text=%d json=%d, want %d for both", textCode, jsonCode, tc.want)
+			}
+		})
+	}
+}
+
+// The count and the pairs behind it come from one reading of the run, so the
+// number inspect prints and the list it emits cannot disagree.
+func TestExtractionFailures_NamesEveryFailedStage(t *testing.T) {
+	t.Parallel()
+
+	run := domain.ExtractionRun{
+		OverallStatus: domain.ExtractionRunPartial,
+		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
+			coordinatetest.MustNew("example.com/z", "v1.0.0"): {
+				Stages: map[string]domain.StageResult{
+					"callgraph": {Status: domain.StageFailed, Error: "divergence"},
+					"license":   {Status: domain.StageSucceeded},
+				},
+			},
+			coordinatetest.MustNew("example.com/a", "v1.0.0"): {
+				Stages: map[string]domain.StageResult{
+					"interface": {Status: domain.StageFailed},
+					"callgraph": {Status: domain.StageFailed},
+				},
+			},
+		},
+	}
+
+	got := extractionFailures(run)
+	if len(got) != 3 {
+		t.Fatalf("failure count = %d, want 3; got %v", len(got), got)
+	}
+	want := []extractStageFailure{
+		{Module: "example.com/a@v1.0.0", Stage: "callgraph"},
+		{Module: "example.com/a@v1.0.0", Stage: "interface"},
+		{Module: "example.com/z@v1.0.0", Stage: "callgraph", Error: "divergence"},
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("failure %d = %+v, want %+v", i, got[i], w)
+		}
+	}
+	// A clean run counts zero and names nothing, and the empty list must be a
+	// list: a JSON consumer must not have to tell null from [].
+	clean := domain.ExtractionRun{PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
+		coordinatetest.MustNew("example.com/mod", "v1.0.0"): {
+			Stages: map[string]domain.StageResult{"license": {Status: domain.StageSucceeded}},
+		},
+	}}
+	if cleanFailures := extractionFailures(clean); cleanFailures == nil || len(cleanFailures) != 0 {
+		t.Errorf("clean run failures = %v, want an empty non-nil list", cleanFailures)
+	}
+}

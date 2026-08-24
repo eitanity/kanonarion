@@ -15,6 +15,7 @@ import (
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/goenv"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -81,7 +82,7 @@ func (a *Analyser) Analyse(
 		// The zip is the module: bytes that will not unpack are a property of what
 		// was published, and unpacking them again tomorrow fails identically.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source), nil
+			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source, tempDir), nil
 	}
 
 	// A module published before Go modules ships no go.mod, and an extraction of
@@ -123,7 +124,7 @@ func (a *Analyser) Analyse(
 		// Failing to write into a directory this process just created is the run,
 		// not the module: the same zip on a working filesystem extracts and loads.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source), nil
+			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source, tempDir), nil
 	default:
 		a.logger.InfoContext(ctx, "callgraph_gomod_synthesised",
 			slog.String("module", coord.Path()),
@@ -137,14 +138,14 @@ func (a *Analyser) Analyse(
 
 	if ctx.Err() != nil {
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown,
-			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source), nil
+			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source, tempDir), nil
 	}
 
-	rec, err := a.analyseDir(ctx, tempDir, coord, synth, nil)
+	rec, err := a.analyseDir(ctx, tempDir, coord, synth, nil, false)
 	if err != nil {
 		return rec, err
 	}
-	return a.sourced(withDeclinedSynthesis(rec, declined), synth, inputs.Source), nil
+	return a.sourced(withDeclinedSynthesis(rec, declined), synth, inputs.Source, tempDir), nil
 }
 
 // withDeclinedSynthesis prefixes a failed record's detail with the reason no
@@ -187,10 +188,18 @@ func withDeclinedSynthesis(r domain.CallGraphRecord, declined string) domain.Cal
 // written before the field existed, and a failed analysis of a zip is still an
 // answer about that zip — including a failure of a tree kanonarion had to add a
 // file to, where the caveat is exactly as load-bearing as it is on a success.
-func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoMod, buildListSource string) domain.CallGraphRecord {
+//
+// It is also where the staging directory leaves the record, and for the same
+// reason: this is the one point every zip analysis passes through, so a return
+// path added tomorrow cannot carry a path out of it. See moduleRelative for why
+// a per-run directory inside the record is a defect rather than noise. The
+// working-tree path does not come through here — its root is a real place a
+// reader can open, and the record states it as a fact of its own.
+func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoMod, buildListSource, stagingRoot string) domain.CallGraphRecord {
 	r.AnalysisSource = domain.AnalysisSourceModuleZip
 	r.SynthesisedGoMod = synth
 	r.BuildListSource = buildListSource
+	r.FailureDetail = moduleRelative(r.FailureDetail, stagingRoot)
 	return r
 }
 
@@ -230,7 +239,7 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	// module and already declares itself, so nothing is synthesised into it and
 	// the record carries the zero value.
 	var read []string
-	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read)
+	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true)
 	if err != nil {
 		return rec, err
 	}
@@ -329,15 +338,26 @@ func treeDigest(root string, read []string) (string, error) {
 // rather than a second result because every failure return here is a RECORD —
 // a load that failed is an answer about the module, not an error — and threading
 // a second value through a dozen of them would obscure that.
+//
+// worktree selects the environment: a published zip's go.work is dev-time
+// configuration that does not apply, and a working tree's is the build.
 func (a *Analyser) analyseDir(
 	ctx context.Context,
 	tempDir string,
 	coord coordinate.ModuleCoordinate,
 	synth domain.SynthesisedGoMod,
 	read *[]string,
-) (domain.CallGraphRecord, error) {
+	worktree bool,
+) (rec domain.CallGraphRecord, err error) {
 	fset := token.NewFileSet()
-	env := analysisEnv()
+
+	// The environment every Go child of this analysis is given. It is assigned
+	// after setupGoEnv below and captured by reference here, because both the
+	// classification and the toolchain stamp must ask about the environment the
+	// LOADER was handed: every analysis environment pins GOTOOLCHAIN=local, and a
+	// probe left to inherit this process's would auto-switch and answer about a
+	// toolchain nothing ran.
+	var env []string
 
 	// classifyLoad names the cause of a load failure raised below. The directory
 	// is bound once, here, rather than passed at each call site: every load in
@@ -355,7 +375,11 @@ func (a *Analyser) analyseDir(
 		if isOfflineCacheMiss(detail) {
 			return domain.FailureCauseEnvironment
 		}
-		return a.classifyLoadFailure(ctx, tempDir)
+		// Same shape, and the probe cannot see it either.
+		if isToolchainTooOld(detail) {
+			return domain.FailureCauseEnvironment
+		}
+		return a.classifyLoadFailure(ctx, tempDir, env)
 	}
 
 	envCleanup, err := a.setupGoEnv(ctx, tempDir)
@@ -366,6 +390,24 @@ func (a *Analyser) analyseDir(
 			domain.FailureCauseEnvironment, err.Error()), nil
 	}
 	defer envCleanup()
+
+	// After setupGoEnv, never before: it installs the analysis PATH and clears
+	// GOROOT, and an earlier snapshot hands the child a toolchain other than the
+	// one it is exec'd as.
+	env = analysisEnv()
+	if worktree {
+		env = goenv.Worktree(os.Environ(), tempDir)
+	}
+
+	// Which toolchain ran is stamped on EVERY record this function returns,
+	// successes and failures alike, because a graph carries the toolchain's own
+	// stdlib and vendored trees and a record that cannot say which one built it
+	// cannot be told apart from one written before the field existed. It is asked
+	// in the loader's own directory and with the loader's own environment, so it
+	// names the toolchain that is about to be driven rather than the one this
+	// process was compiled by or the one an unpinned probe would switch to.
+	toolchain := probeToolchainVersion(ctx, tempDir, env)
+	defer func() { rec.Toolchain = toolchain }()
 
 	// New Architecture: Multi-pass load to bypass go/packages memory limitations.
 	// Step 1: Discover ALL packages in the transitive dependency graph (metadata only).
@@ -556,7 +598,7 @@ func (a *Analyser) analyseDir(
 		overallStatus = domain.CallGraphStatusPartial
 	}
 
-	rec := domain.CallGraphRecord{
+	rec = domain.CallGraphRecord{
 		SchemaVersion: domain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
 		Coordinate:    coord,
@@ -628,6 +670,15 @@ func (a *Analyser) analyseDir(
 		// depend on which pass happened to hit the missing module first.
 		if miss != "" || firstOfflineCacheMiss(allLoadErrs) != "" {
 			rec.FailureCause = domain.FailureCauseEnvironment
+		}
+		// Same shape one step over: the type errors name the import and never the
+		// reason, and here the go command named the condition and its own remedy. It
+		// leads, because what follows it is its symptom; the cause does not move,
+		// because the gap is in the tree and not on this host.
+		if sum := firstMissingChecksum(metaErrs, allLoadErrs); sum != "" && miss == "" {
+			// The go command lays its remedy out over a second line; this is stored prose.
+			sum = strings.Join(strings.Fields(sum), " ")
+			rec.FailureDetail = strings.TrimSuffix("the loader reported: "+sum+"; "+rec.FailureDetail, "; ")
 		}
 	}
 	// FailedPackages scopes the incompleteness to the exact packages that did
@@ -716,6 +767,18 @@ func firstOfflineCacheMiss(details []string) string {
 	for _, d := range details {
 		if isOfflineCacheMiss(d) {
 			return d
+		}
+	}
+	return ""
+}
+
+// firstMissingChecksum returns that sentence from whichever error set carried it.
+func firstMissingChecksum(sets ...[]string) string {
+	for _, set := range sets {
+		for _, d := range set {
+			if domain.IsMissingChecksumEntry(d) {
+				return d
+			}
 		}
 	}
 	return ""

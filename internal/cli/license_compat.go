@@ -527,5 +527,10 @@ func compatExitCode(report domain.ClosureCompatibilityReport) error {
 	case hasIncompat:
 		return &exitError{code: ExitPartial, msg: "closure has license conflicts"}
 	}
-	return nil
+	// A report that says it is not clean and whose conflicts carry no verdict
+	// this build recognises is not a pass. Same rule as the three above: an
+	// unjudged pair is never silently "compatible".
+	return &exitError{code: ExitFailed, msg: fmt.Sprintf(
+		"closure is not clean and its %d conflict(s) carry no verdict this build recognises",
+		len(report.Conflicts))}
 }

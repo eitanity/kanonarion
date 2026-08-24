@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -780,7 +781,20 @@ type VulnerabilityRecord struct {
 	// RecordAnalysisSurface, which ladders those to fetched rather than to a
 	// third state.
 	AnalysisSurface AnalysisSurface `json:"analysis_surface,omitempty"`
-	ContentHash     string          `json:"content_hash"`
+	// Toolchain is the Go toolchain that compiled the module for this scan, as
+	// `go env GOVERSION` of the process govulncheck was driven in ("go1.26.6").
+	// Which files build constraints select, which stdlib is linked and which
+	// symbols the analysis can reach are all the toolchain's, so it is a fact
+	// about the verdict rather than about the host reading it.
+	//
+	// It is a DIMENSION, not a ladder position — see gotoolchain.Version.
+	// Composition names a toolchain difference as a conflict rather than choosing
+	// between two verdicts by recency.
+	//
+	// Empty on records written before the field existed, which reads as "not
+	// recorded" and never as the reading host's toolchain.
+	Toolchain   gotoolchain.Version `json:"toolchain,omitempty"`
+	ContentHash string              `json:"content_hash"`
 	// ArtefactIdentity names the fetched artefact this record was derived from,
 	// in the "zip:h1:..." / "gomod:h1:..." form fetchdomain.ArtefactIdentity
 	// renders. It answers the question the coordinate cannot: which bytes were
@@ -856,6 +870,11 @@ type ProjectScanResult struct {
 	// asks for a vendored analysis; only the scanner knows whether the project
 	// on disk could supply one, so the record names what ran.
 	AnalysisSurface AnalysisSurface
+	// Toolchain is the Go toolchain this scan actually ran under, reported by the
+	// adapter that ran it for the same reason AnalysisSurface is: only the scanner
+	// knows which toolchain the project directory resolved, and the records the
+	// caller builds from this result state it.
+	Toolchain gotoolchain.Version
 	// AdvisoryCount is how many advisories the database this scan consulted was
 	// measured to hold, when this scan is what extracted and measured it. Zero
 	// means unmeasured here — the database was supplied already-counted by the

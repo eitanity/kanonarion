@@ -59,6 +59,15 @@ const (
 	FailureCauseEnvironment FailureCause = "environment"
 )
 
+// IsEnvironmentLimit reports whether the cause says this HOST, rather than the
+// module, is what the analysis stopped short of.
+//
+// It is a predicate rather than a comparison written out at each site because
+// the ordering rule and the disagreement rule both read it, and a rule spelled
+// twice is one that holds in whichever copy was edited last. The store reads it
+// off a column and composition off a record; both ask this.
+func (c FailureCause) IsEnvironmentLimit() bool { return c == FailureCauseEnvironment }
+
 // String renders the cause, showing the zero value as "not recorded" rather than
 // as an empty field a reader would take for an absence of cause.
 func (c FailureCause) String() string {
@@ -140,7 +149,13 @@ func RecordIsCacheable(r CallGraphRecord) bool {
 // not to analyse is a decision, not a failure, and re-attempting it every run
 // would ignore the decision.
 func RecordIsFailure(r CallGraphRecord) bool {
-	switch r.OverallStatus {
+	return StatusIsFailure(r.OverallStatus)
+}
+
+// StatusIsFailure is RecordIsFailure over the status alone, for a store that
+// reads it from a column rather than from a decoded record.
+func StatusIsFailure(status CallGraphStatus) bool {
+	switch status {
 	case CallGraphStatusUnknown,
 		CallGraphStatusLoadFailed,
 		CallGraphStatusOutOfMemory,
@@ -170,4 +185,20 @@ func RecordIsFailure(r CallGraphRecord) bool {
 // successful one.
 func RecordIsIncomplete(r CallGraphRecord) bool {
 	return r.OverallStatus == CallGraphStatusPartial
+}
+
+// EnvironmentLimitedGraph reports whether a record carries a graph that THIS
+// HOST, rather than the module, cut short.
+//
+// It is the ordering rule's reading of the cause axis, and it is narrower than
+// the axis itself on purpose. A run that produced no graph at all measured
+// nothing either way, and there is no lesser measurement to demote: two accounts
+// of a run that got nowhere are ordered by recency, so the newest account of why
+// is what a reader is shown. What this names is the other case — a graph exists,
+// and the record's own row says the environment is why there is not more of it.
+//
+// Both halves come from columns, so a store answers it without decoding a
+// record. See GenerationRank for what the answer decides.
+func EnvironmentLimitedGraph(status CallGraphStatus, cause FailureCause) bool {
+	return cause.IsEnvironmentLimit() && !StatusIsFailure(status)
 }

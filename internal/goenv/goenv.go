@@ -15,6 +15,9 @@
 // env file only when the variable is unset or empty. The env file is
 // $GOENV when set (GOENV=off disables it entirely), otherwise
 // os.UserConfigDir()/go/env.
+//
+// It also holds the environment an analysis child is given and the table every
+// such environment is checked against — the same scattering, one layer out.
 package goenv
 
 import (

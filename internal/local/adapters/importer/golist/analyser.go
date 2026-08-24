@@ -9,9 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sort"
+	"strings"
 
+	"github.com/eitanity/kanonarion/internal/goenv"
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -33,12 +36,22 @@ func (a *Analyser) goBin() string {
 	return a.goBinary
 }
 
+// listEnv is the environment for the go list children. It is the same
+// resolution the call-graph load of this tree runs under; these children were
+// inheriting the caller's instead, so one command answered two build questions.
+func listEnv(root string) []string { return goenv.Worktree(os.Environ(), root) }
+
 // goListPackage mirrors the fields we need from `go list -json`.
 type goListPackage struct {
 	ImportPath string
 	Standard   bool
-	// Imports are the packages directly imported by this package's non-test files.
+	// Imports are the packages directly imported by this package's non-test
+	// files. Under `-test` the test surface arrives as separate packages
+	// instead: "p [p.test]", "p_test [p.test]" and the main "p.test".
 	Imports []string
+	// ForTest names the package under test, set only on the two test variants.
+	// It is how a test-scope package is told from a production one.
+	ForTest string
 	Module  *struct {
 		Path    string
 		Version string
@@ -46,11 +59,25 @@ type goListPackage struct {
 	}
 }
 
-// AnalyseImports runs go list -json -deps./... in root and returns one
-// ImportedModule per external dependency module that the workspace imports.
+// isTestScope reports whether this main-module package is a test variant or
+// the generated test main. The in-package variant "p [p.test]" carries p's
+// production imports too, so it cannot classify an import alone — it does not
+// have to, because plain "p" is listed as well and records those as production.
+func (p goListPackage) isTestScope() bool {
+	return p.ForTest != "" || strings.HasSuffix(p.ImportPath, ".test")
+}
+
+// AnalyseImports runs go list -json -deps -test ./... in root and returns one
+// ImportedModule per external dependency module the workspace imports, from
+// production and test files alike, with the test-only imports marked.
+//
+// Without `-test` a dependency reached only from _test.go is absent from the
+// answer with nothing saying so. BuildModules below deliberately runs without
+// it: that scope is about the artefact, which test-only modules never enter.
 func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.ImportedModule, error) {
-	cmd := exec.CommandContext(ctx, a.goBin(), "list", "-json", "-deps", "./...") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+	cmd := exec.CommandContext(ctx, a.goBin(), "list", "-json", "-deps", "-test", "./...") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	cmd.Dir = root
+	cmd.Env = listEnv(root)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -69,24 +96,31 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 		path, version string
 	}
 	pkgToMod := make(map[string]modInfo, len(pkgs))
-	workspacePkgs := make(map[string][]string) // importPath → imports
+	type workspacePkg struct {
+		imports   []string
+		testScope bool
+	}
+	workspacePkgs := make([]workspacePkg, 0, len(pkgs))
 
 	for _, pkg := range pkgs {
 		if pkg.Standard || pkg.Module == nil {
 			continue
 		}
 		if pkg.Module.Main {
-			// Workspace package: capture its imports.
-			workspacePkgs[pkg.ImportPath] = pkg.Imports
+			// Workspace package: capture its imports and which scope reaches them.
+			workspacePkgs = append(workspacePkgs, workspacePkg{imports: pkg.Imports, testScope: pkg.isTestScope()})
 			continue
 		}
 		pkgToMod[pkg.ImportPath] = modInfo{path: pkg.Module.Path, version: pkg.Module.Version}
 	}
 
-	// Collect external packages imported by any workspace package.
-	imported := make(map[string]map[string]struct{}) // modulePath → set of pkg importPaths
-	for _, imports := range workspacePkgs {
-		for _, imp := range imports {
+	// Collect external packages imported by any workspace package, and
+	// separately those a production file reaches. The difference is the
+	// test-only set.
+	imported := make(map[string]map[string]struct{})   // modulePath → set of pkg importPaths
+	production := make(map[string]map[string]struct{}) // same, production scope only
+	for _, ws := range workspacePkgs {
+		for _, imp := range ws.imports {
 			mod, ok := pkgToMod[imp]
 			if !ok {
 				continue
@@ -95,6 +129,13 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 				imported[mod.path] = make(map[string]struct{})
 			}
 			imported[mod.path][imp] = struct{}{}
+			if ws.testScope {
+				continue
+			}
+			if production[mod.path] == nil {
+				production[mod.path] = make(map[string]struct{})
+			}
+			production[mod.path][imp] = struct{}{}
 		}
 	}
 
@@ -113,26 +154,41 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 			pkgs = append(pkgs, p)
 		}
 		sort.Strings(pkgs)
+		testOnly := make([]string, 0, len(pkgs))
+		for _, p := range pkgs {
+			if _, isProduction := production[modPath][p]; !isProduction {
+				testOnly = append(testOnly, p)
+			}
+		}
+		if len(testOnly) == 0 {
+			testOnly = nil
+		}
 		mods = append(mods, domain.ImportedModule{
 			Path:             modPath,
 			Version:          modVersions[modPath],
 			ImportedPackages: pkgs,
+			TestOnlyPackages: testOnly,
 		})
 	}
 
 	return mods, nil
 }
 
-// BuildModules runs the same `go list -json -deps ./...` and projects it onto
-// every non-main module the build resolves, direct and transitive alike.
+// BuildModules runs `go list -json -deps ./...` and projects it onto every
+// non-main module the build resolves, direct and transitive alike.
 //
-// It is a second projection of one command rather than a filter applied to
-// AnalyseImports' result, because AnalyseImports discards the transitive
-// modules before it returns: they are exactly the entries missing from its
-// output, and no consumer can reconstruct them from what it kept.
+// It is a second projection rather than a filter applied to AnalyseImports'
+// result, because AnalyseImports discards the transitive modules before it
+// returns: they are exactly the entries missing from its output, and no
+// consumer can reconstruct them from what it kept.
+//
+// It runs without `-test` where AnalyseImports runs with it: a test-only
+// dependency is a real user for a context report and genuinely absent from the
+// shipped artefact, which is what this scope is read for.
 func (a *Analyser) BuildModules(ctx context.Context, root string) ([]domain.BuildModule, error) {
 	cmd := exec.CommandContext(ctx, a.goBin(), "list", "-json", "-deps", "./...") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	cmd.Dir = root
+	cmd.Env = listEnv(root)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {

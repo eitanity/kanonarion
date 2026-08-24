@@ -82,6 +82,18 @@ type packageInterfaceJSON struct {
 	ParseFailures []parseFailureJSON `json:"parse_failures,omitempty"`
 	IsInternal    bool               `json:"is_internal"`
 	IsMain        bool               `json:"is_main"`
+	// OutOfFrame marks a package that exists in the module and not in the build
+	// this record was measured in. Always emitted: false is the measurement that
+	// the package IS in this build, and erasing it would leave a reader unable
+	// to tell an in-frame package from one the answer says nothing about.
+	OutOfFrame bool `json:"out_of_frame"`
+}
+
+// buildFrameJSON names the build configuration a record was measured in.
+type buildFrameJSON struct {
+	GOOS       string `json:"goos"`
+	GOARCH     string `json:"goarch"`
+	CgoEnabled bool   `json:"cgo_enabled"`
 }
 
 type interfaceRecordJSON struct {
@@ -99,6 +111,16 @@ type interfaceRecordJSON struct {
 	// artefact, which reads as "not recorded", never as "derived from nothing".
 	ArtefactIdentity  string `json:"artefact_identity,omitempty"`
 	SourceContentHash string `json:"source_content_hash,omitempty"`
+	// BuildFrame names the configuration the public API was measured in. Absent
+	// on records written before extraction evaluated build constraints, which
+	// hold every platform's declarations at once and describe no build; absent
+	// reads as "not recorded", never as "any platform".
+	BuildFrame *buildFrameJSON `json:"build_frame,omitempty"`
+	// Toolchain names the Go toolchain whose release tags decided which files the
+	// API was read from. Emitted even when empty: a consumer that cannot see it
+	// cannot tell two toolchains' answers apart, and an absent value is itself the
+	// answer ("not recorded").
+	Toolchain string `json:"toolchain"`
 }
 
 func toPosJSON(p ifacedomain.SourcePosition) sourcePositionJSON {
@@ -164,9 +186,16 @@ func toInterfaceRecordJSON(r ifacedomain.InterfaceRecord) interfaceRecordJSON {
 			ImportPath: p.ImportPath, Name: p.Name, Doc: p.Doc,
 			Types: types, Funcs: funcs, Consts: consts, Vars: vars,
 			ParseFailures: pfs, IsInternal: p.IsInternal, IsMain: p.IsMain,
+			OutOfFrame: p.OutOfFrame,
 		})
 	}
+	var frame *buildFrameJSON
+	if !r.BuildFrame.IsZero() {
+		frame = &buildFrameJSON{GOOS: r.BuildFrame.GOOS, GOARCH: r.BuildFrame.GOARCH, CgoEnabled: r.BuildFrame.CgoEnabled}
+	}
 	return interfaceRecordJSON{
+		BuildFrame:        frame,
+		Toolchain:         string(r.Toolchain),
 		SchemaVersion:     r.SchemaVersion,
 		Coordinate:        coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
 		Packages:          pkgs,

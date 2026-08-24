@@ -611,7 +611,9 @@ func auditScope(
 
 	_, _ = fmt.Fprintf(progressOut, "==> audit: extracting licenses for walk %s\n", walkID)
 	ef := extractFlags{stages: []string{"license"}, force: f.force, noProgress: f.noProgress}
-	if eerr := runExtract(ctx, walkID, ef, io.Discard, stderr); eerr != nil {
+	// extractWalk, not runExtract: audit reports per-module licence rows and must
+	// not take the extraction's own exit code, which now reads partiality.
+	if _, eerr := extractWalk(ctx, walkID, ef, stderr); eerr != nil {
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
 

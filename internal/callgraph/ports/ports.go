@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -90,6 +91,16 @@ type WorktreeRouting struct {
 	// root is empty when the served generation predates the field.
 	ServedRoot   string
 	ServedDigest string
+	// ServedSource is what the served generation was analysed from.
+	//
+	// It is here because the counts above are over worktree rows and the served
+	// record is over all of them, and without it the two halves could be joined
+	// into a sentence neither supports: a ledger holding one located tree and no
+	// unlocated generations was reported as having answered from "a generation
+	// that recorded no working tree", which describes a row the counts never saw.
+	// A zip analysis states no root because it has none, not because it predates
+	// the field, and a reader told which it was can act on the difference.
+	ServedSource domain.AnalysisSource
 	// CallerRoot is the tree the reader is standing in, empty when they are not
 	// inside this module.
 	CallerRoot string
@@ -242,6 +253,14 @@ type EdgeQueryOptions struct {
 	// a false negative — the failure the three-valued verdict exists to prevent
 	// — while an unwanted one is merely noise the reader can see and discount.
 	ExcludeTests bool
+	// Toolchain restricts the query to graphs built by one Go toolchain. The zero
+	// value names none and composition groups on its own.
+	//
+	// It rides here because an edge query resolves, per module, WHICH generation's
+	// edges to serve, and that resolution composes: a coordinate holding two
+	// toolchains refuses, and without this the reader is told to name a toolchain
+	// by a query that has no way to carry one.
+	Toolchain gotoolchain.Version
 }
 
 // CallGraphRecordLister is the optional history read a store may offer: every
@@ -259,15 +278,17 @@ type CallGraphRecordLister interface {
 	ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.CallGraphRecord, error)
 }
 
-// CallGraphSourceReader is the optional source-scoped read: the same question
-// GetCallGraphRecord answers, restricted to one kind of analysis source.
+// CallGraphSourceReader is the optional dimension-scoped read: the same question
+// GetCallGraphRecord answers, restricted to the values of one or more dimensions.
 //
-// It exists because the source is a dimension rather than a ladder position, so
-// "zip or working tree" is a real question that a coordinate cannot answer.
-// GetCallGraphRecord applies a stated default; this is how a caller asks for the
-// other one.
+// It exists because the source and the toolchain are dimensions rather than
+// ladder positions, so "zip or working tree" and "which Go built it" are real
+// questions that a coordinate cannot answer. GetCallGraphRecord applies a stated
+// default; this is how a caller asks for the other one. It takes the whole
+// compose request so a dimension added later reaches every implementation
+// through the type rather than through a new parameter on each of them.
 type CallGraphSourceReader interface {
-	GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source domain.AnalysisSource) (domain.CallGraphRecord, bool, error)
+	GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain.ComposeRequest) (domain.CallGraphRecord, bool, error)
 }
 
 // WorktreeGenerationReader is the optional tree-scoped read: the generation the

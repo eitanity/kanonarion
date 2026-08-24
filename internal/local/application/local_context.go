@@ -14,6 +14,10 @@ type LocalContextRequest struct {
 	Root string
 	// AnalysisLevel controls the depth of analysis.
 	AnalysisLevel domain.AnalysisLevel
+	// ExcludeTests narrows the answer to production scope. It is applied to the
+	// analysis result, never passed down to it: the analysers always measure
+	// test-inclusively, so this is a subset rather than a second measurement.
+	ExcludeTests bool
 }
 
 // LocalContextUseCase builds an AI-ready context document for a local Go
@@ -73,6 +77,9 @@ func (uc *LocalContextUseCase) Execute(ctx context.Context, req LocalContextRequ
 	}
 
 	domain.SortModules(mods)
+	if req.ExcludeTests {
+		mods = domain.ExcludeTestScope(mods)
+	}
 
 	return domain.LocalContext{
 		Root:          req.Root,
@@ -80,5 +87,6 @@ func (uc *LocalContextUseCase) Execute(ctx context.Context, req LocalContextRequ
 		VersionID:     snap.VersionID,
 		AnalysisLevel: level,
 		Modules:       mods,
+		TestsExcluded: req.ExcludeTests,
 	}, nil
 }

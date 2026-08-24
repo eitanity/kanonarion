@@ -89,6 +89,11 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 	// reader take one for the other, which is exactly what happened while the two
 	// shared a row.
 	_, _ = fmt.Fprintf(stdout, "  Analysis frame:  %s\n", vuldomain.RecordRooting(rec))
+	// The toolchain is printed on every record, "not recorded" included. Which
+	// files build constraints selected and which symbols the analysis could reach
+	// are the toolchain's, so a verdict read without it is a verdict about a build
+	// the reader cannot identify.
+	_, _ = fmt.Fprintf(stdout, "  Toolchain:       %s\n", rec.Toolchain.String())
 	// First and last validated are stated as distinct facts: when the verdict was
 	// first established versus the run that last re-confirmed it. The reader, not
 	// kanonarion, judges whether that is acceptably fresh.

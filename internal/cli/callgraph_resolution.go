@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -210,11 +211,11 @@ func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphU
 // - the symbol's module was never analysed; or
 // - the module was analysed but the symbol is not a node in its graph
 // (a typo, or unexported/unreachable code).
-func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) error {
+func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, sc buildScope) error {
 	// The module is resolved against everything the store holds, not only what
 	// is served: a module analysed solely under superseded logic still owns its
 	// symbol, and reporting it as never analysed would name the wrong remedy.
-	stored, err := listStoredSummaries(ctx, uc, scope)
+	stored, err := listStoredSummaries(ctx, uc, sc.modules)
 	if err != nil {
 		return err
 	}
@@ -227,7 +228,7 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 		return unresolvedSymbolError(symbolID) // module never analysed
 	}
 
-	sums, err := listScopedSummaries(ctx, uc, scope)
+	sums, err := listScopedSummaries(ctx, uc, sc.modules)
 	if err != nil {
 		return err
 	}
@@ -237,7 +238,7 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 	// The module was analysed. Zero edges is only a genuine answer if the
 	// symbol is actually a vertex in the graph; otherwise "no callers/callees"
 	// is an absence-as-answer for a symbol the store has never seen.
-	known, err := symbolIsKnownNode(ctx, uc, symbolID, modulePath, sums)
+	known, err := symbolIsKnownNode(ctx, uc, symbolID, modulePath, sums, sc.toolchain)
 	if err != nil {
 		return err
 	}
@@ -273,6 +274,10 @@ type partialRoot struct {
 	// environment the analysis ran in. It decides which remedy is printed, and a
 	// remedy chosen without it sends the reader after the wrong fault.
 	cause domain.FailureCause
+	// detail is the record's own account. The cause axis cannot separate a
+	// package that does not compile from a checksum the tree does not carry, and
+	// those two need opposite remedies.
+	detail string
 }
 
 // rootPartialStatus loads the call graph record(s) owning symbolID and reports
@@ -280,9 +285,9 @@ type partialRoot struct {
 //
 // A module with no analysed record (symbol's module never analysed) yields the
 // zero value; that case is classified separately by classifyEmptyEdgeResult.
-func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) (partialRoot, error) {
+func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, sc buildScope) (partialRoot, error) {
 	var out partialRoot
-	sums, err := listScopedSummaries(ctx, uc, scope)
+	sums, err := listScopedSummaries(ctx, uc, sc.modules)
 	if err != nil {
 		return partialRoot{}, err
 	}
@@ -304,7 +309,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		if cErr != nil {
 			return partialRoot{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
-		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
+		rec, found, gerr := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: sc.toolchain})
 		if gerr != nil {
 			return partialRoot{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
 		}
@@ -319,6 +324,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 			out.failedPkg = fp
 			out.coord = coord
 			out.cause = rec.FailureCause
+			out.detail = rec.FailureDetail
 		}
 	}
 	if len(failedSet) > 0 {
@@ -390,8 +396,8 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 // droppedPkg: a symbol whose own package failed to typecheck is not a node in any
 // graph, so classifyEmptyEdgeResult is deliberately skipped for it and the
 // dropped package carried here is what keeps the verdict off ABSENT.
-func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions, droppedPkg string) (domain.Verdict, error) {
-	sums, err := listScopedSummaries(ctx, uc, scope)
+func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, sc buildScope, opts ports.EdgeQueryOptions, droppedPkg string) (domain.Verdict, error) {
+	sums, err := listScopedSummaries(ctx, uc, sc.modules)
 	if err != nil {
 		return domain.Verdict{}, err
 	}
@@ -435,7 +441,7 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 		if cErr != nil {
 			return domain.Verdict{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
-		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
+		rec, found, gerr := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: sc.toolchain})
 		if gerr != nil {
 			return domain.Verdict{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
 		}
@@ -552,7 +558,7 @@ func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
 	// the reader's to fix, and a gap this host's cold module cache opened is not a
 	// compile error to go looking for. Naming a command that cannot run and naming
 	// one that re-serves the record complained about are the same defect.
-	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, "")
+	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, pr.detail, "")
 }
 
 // writeDroppedEdgesNotice prints droppedEdgesNotice, in text mode only.
@@ -645,9 +651,18 @@ func writeWorktreeNotice(ctx context.Context, symbolID string, uc QueryCallGraph
 
 // worktreeNoticeText renders the routing decision for one coordinate.
 func worktreeNoticeText(coord coordinate.ModuleCoordinate, r ports.WorktreeRouting) string {
+	// Three things a served generation can be, and the middle one used to be told
+	// as the last one. A zip analysis states no root because it was never read off
+	// a tree; a pre-location worktree generation states none because the field did
+	// not exist yet. Reporting the first as the second produced a notice that
+	// counted one located tree and no unlocated generations in the same breath as
+	// claiming the answer came from a generation that recorded no working tree.
 	served := "an earlier generation that recorded no working tree"
-	if r.ServedRoot != "" {
+	switch {
+	case r.ServedRoot != "":
 		served = "the working tree at " + r.ServedRoot
+	case r.ServedSource == domain.AnalysisSourceModuleZip:
+		served = "an analysis of the published module zip, which reads no working tree"
 	}
 	predating := fmt.Sprintf("%d %s written before the analysed tree was recorded",
 		r.UnlocatedGenerations, pluralise(r.UnlocatedGenerations, "generation", "generations"))
@@ -662,18 +677,25 @@ func worktreeNoticeText(coord coordinate.ModuleCoordinate, r ports.WorktreeRouti
 		held = fmt.Sprintf("the ledger holds %d working %s for %s, plus %s",
 			r.LocatedTrees, pluralise(r.LocatedTrees, "tree", "trees"), coord, predating)
 	}
+	// The tree digest is stated only by a generation that has one. Printing
+	// "(tree )" after a zip analysis names an empty value as though it were the
+	// answer's identity.
+	tree := ""
+	if r.ServedDigest != "" {
+		tree = fmt.Sprintf(" (tree %s)", r.ServedDigest)
+	}
 	switch {
 	case r.Matched:
-		return fmt.Sprintf("answered from the working tree you are in, %s (tree %s); %s",
-			r.ServedRoot, r.ServedDigest, held)
+		return fmt.Sprintf("answered from the working tree you are in, %s%s; %s",
+			r.ServedRoot, tree, held)
 	case r.CallerRoot != "":
 		return fmt.Sprintf("NOT answered from the working tree you are in: %s has no analysed generation, "+
-			"so the answer comes from %s (tree %s); %s. Analyse this tree to be answered from it:\n"+
+			"so the answer comes from %s%s; %s. Analyse this tree to be answered from it:\n"+
 			"  kanonarion local %s",
-			r.CallerRoot, served, r.ServedDigest, held, r.CallerRoot)
+			r.CallerRoot, served, tree, held, r.CallerRoot)
 	default:
-		return fmt.Sprintf("answered from %s (tree %s); %s, and you are not standing in any of them",
-			served, r.ServedDigest, held)
+		return fmt.Sprintf("answered from %s%s; %s, and you are not standing in any of them",
+			served, tree, held)
 	}
 }
 
@@ -717,7 +739,7 @@ func localCoordinateOwning(ctx context.Context, symbolID string, uc QueryCallGra
 
 // symbolIsKnownNode reports whether symbolID is a node in any analysed call
 // graph record for modulePath (a module may have several analysed versions).
-func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, modulePath string, sums []ports.CallGraphSummary) (bool, error) {
+func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, modulePath string, sums []ports.CallGraphSummary, toolchain gotoolchain.Version) (bool, error) {
 	for _, s := range sums {
 		if s.ModulePath != modulePath {
 			continue
@@ -726,7 +748,7 @@ func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, 
 		if cErr != nil {
 			return false, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
-		rec, found, err := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
+		rec, found, err := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: toolchain})
 		if err != nil {
 			return false, fmt.Errorf("loading call graph for %s: %w", coord, err)
 		}

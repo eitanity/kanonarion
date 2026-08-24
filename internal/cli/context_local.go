@@ -22,6 +22,11 @@ type localWorkspaceInfo struct {
 	Module        string `json:"module"`
 	VersionID     string `json:"version_id"`
 	AnalysisLevel string `json:"analysis_level"`
+	// TestsExcluded states which files the dependency list was measured over,
+	// emitted on every answer because a tree with no test-only user renders the
+	// same either way. It is a bool rather than a scope name so its zero is
+	// right: false is exactly the default scope.
+	TestsExcluded bool `json:"tests_excluded"`
 }
 
 type localImportedModule struct {
@@ -29,6 +34,10 @@ type localImportedModule struct {
 	Version          string   `json:"version"`
 	ImportedPackages []string `json:"imported_packages"`
 	UsedSymbols      []string `json:"used_symbols,omitempty"`
+	// TestOnly reports that only test files reach this module. Emitted always,
+	// false included: an absent field reads as "not measured", which is not the
+	// same fact as "reached by production code".
+	TestOnly bool `json:"test_only"`
 }
 
 type localContextOutput struct {
@@ -83,6 +92,7 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 	lctx, err := uc.Execute(ctx, localapp.LocalContextRequest{
 		Root:          abs,
 		AnalysisLevel: level,
+		ExcludeTests:  f.excludeTests,
 	})
 	if err != nil {
 		return fmt.Errorf("local workspace analysis: %w", err)
@@ -95,6 +105,7 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 			Version:          m.Version,
 			ImportedPackages: m.ImportedPackages,
 			UsedSymbols:      m.UsedSymbols,
+			TestOnly:         m.TestOnly(),
 		})
 	}
 
@@ -104,6 +115,7 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 			Module:        lctx.ModulePath,
 			VersionID:     lctx.VersionID,
 			AnalysisLevel: string(lctx.AnalysisLevel),
+			TestsExcluded: lctx.TestsExcluded,
 		},
 		Dependencies: deps,
 	}
@@ -147,8 +159,10 @@ func printLocalContextText(out localContextOutput, stdout io.Writer) error {
 	w.printf("  Root:            %s\n", out.Workspace.Root)
 	w.printf("  Version:         %s\n", out.Workspace.VersionID)
 	w.printf("  Analysis level:  %s\n", out.Workspace.AnalysisLevel)
+	w.printf("  Test scope:      %s\n", localTestScopeLine(out.Workspace.TestsExcluded))
 
-	w.printf("  Dependencies:    %d module(s) imported\n", len(out.Dependencies))
+	w.printf("  Dependencies:    %d module(s) %s\n",
+		len(out.Dependencies), localCountVerb(out.Workspace.AnalysisLevel))
 	for _, d := range out.Dependencies {
 		ver := d.Version
 		if ver == "" {
@@ -158,7 +172,11 @@ func printLocalContextText(out localContextOutput, stdout io.Writer) error {
 		if len(d.UsedSymbols) > 0 {
 			w.printf(", %d symbol(s)", len(d.UsedSymbols))
 		}
-		w.printf(")\n")
+		w.printf(")")
+		if d.TestOnly {
+			w.printf("  [test]")
+		}
+		w.printf("\n")
 	}
 
 	if out.Reachability != nil {
@@ -169,6 +187,26 @@ func printLocalContextText(out localContextOutput, stdout io.Writer) error {
 		return fmt.Errorf("writing local context: %w", w.err)
 	}
 	return nil
+}
+
+// localCountVerb names what the dependency count counted. Symbol level counts
+// modules whose exported symbols are referenced, and a blank import is imported
+// while referencing nothing — "imported" there names a set the answer excludes.
+func localCountVerb(analysisLevel string) string {
+	if analysisLevel == string(localdomain.AnalysisLevelSymbol) {
+		return "referenced"
+	}
+	return "imported"
+}
+
+// localTestScopeLine states which files the answer was measured over, on every
+// answer rather than only a narrowed one: a tree with no test-only users is
+// otherwise indistinguishable from one whose test-only users were dropped.
+func localTestScopeLine(testsExcluded bool) string {
+	if testsExcluded {
+		return "excluded — production code only (--" + testScopeFlagName + " was given)"
+	}
+	return "included — users declared only in test files are tagged [test]"
 }
 
 // printLocalReachabilityText renders the reachability section of a working-tree

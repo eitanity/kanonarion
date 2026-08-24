@@ -150,7 +150,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 			// checked. Recording it Clean would be a false negative, so it carries
 			// the fault instead.
 			uc.logger.Error("target-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), domain.AnalysisSurfaceFetched, params, snapshot)
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot)
 			if perr != nil {
 				return false, perr
 			}
@@ -163,7 +163,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		status := domain.DetermineRecordOverallStatus(
 			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
 		)
-		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", domain.AnalysisSurfaceFetched, params, snapshot)
+		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot)
 		if perr != nil {
 			return false, perr
 		}
@@ -212,7 +212,7 @@ func (uc *ScanWalkUseCase) recordTargetFrameGap(
 	rec, err := uc.persistProjectRecord(
 		ctx, root, root, nil, domain.StatusUnscannable,
 		reason, note, result.ErrorDetail,
-		domain.AnalysisSurfaceFetched, params, snapshot,
+		domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot,
 	)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, err

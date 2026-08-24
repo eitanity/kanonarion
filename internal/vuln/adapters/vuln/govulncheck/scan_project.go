@@ -9,6 +9,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -59,7 +60,7 @@ func projectScanStatus(byModule map[coordinate.ModuleCoordinate][]domain.Vulnera
 // so no version can be out of the toolchain. The surface that actually ran is
 // reported on the result rather than assumed by the caller: the caller asks,
 // the project on disk decides, and the verdict names which bytes were measured.
-func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
+func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest) (res domain.ProjectScanResult, err error) {
 	projectDir := req.ProjectDir
 	s.logMem(ctx, "project_scan_start")
 	s.logger.Info("vuln-scan: project-rooted scan starting", "dir", projectDir)
@@ -80,6 +81,12 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	}
 
 	surface, env := projectScanSurface(projectDir, req.Vendored)
+
+	// Stamped on every result this scan returns, faults included: a project's
+	// reachable set is the toolchain's, and it is resolved from the project
+	// directory, so it is asked there rather than wherever this process runs.
+	toolchain := gotoolchain.Version(toolchainGoVersion(ctx, projectDir, env))
+	defer func() { res.Toolchain = toolchain }()
 
 	dbArg, advisories, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
 	if err != nil {
@@ -170,6 +177,10 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 // present, so an unforced run would silently be the vendored analysis under a
 // fetched label. -mod=mod is forced explicitly there, which is what makes a
 // deliberate comparison run against the fetched artefacts a real comparison.
+//
+// Every branch takes its environment from scanEnv. Workspace mode rejects
+// -mod=mod outright, so a branch that forces the flag from os.Environ() exits 1
+// instead of comparing anything the moment a go.work is in scope.
 func projectScanSurface(projectDir string, wantVendored bool) (domain.AnalysisSurface, []string) {
 	_, err := os.Stat(filepath.Join(projectDir, "vendor", "modules.txt"))
 	hasVendorTree := err == nil
@@ -178,11 +189,12 @@ func projectScanSurface(projectDir string, wantVendored bool) (domain.AnalysisSu
 	case hasVendorTree && wantVendored:
 		return domain.AnalysisSurfaceVendored, scanEnv(os.Environ(), "", domain.AnalysisSurfaceVendored)
 	case hasVendorTree:
-		return domain.AnalysisSurfaceFetched, append(os.Environ(), "GOGC=30", "GOFLAGS=-mod=mod")
+		return domain.AnalysisSurfaceFetched,
+			append(scanEnv(os.Environ(), "", domain.AnalysisSurfaceFetched), "GOFLAGS=-mod=mod")
 	default:
 		// No vendor tree: the toolchain's own default resolution against the
 		// project's go.mod/go.sum is the fetched surface, and forcing a mode flag
 		// would only override whatever the project itself declares.
-		return domain.AnalysisSurfaceFetched, append(os.Environ(), "GOGC=30")
+		return domain.AnalysisSurfaceFetched, scanEnv(os.Environ(), "", domain.AnalysisSurfaceFetched)
 	}
 }

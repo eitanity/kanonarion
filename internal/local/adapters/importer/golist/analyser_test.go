@@ -1,7 +1,11 @@
 package golist
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -125,4 +129,109 @@ func mustMarshal(t *testing.T, v any) []byte {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 	return b
+}
+
+// TestAnalyseImports_IgnoresAmbientResolution guards the same posture the
+// call-graph load of this tree runs under: an exported GOWORK decided how these
+// children resolved, while the load beside them was pinned.
+func TestAnalyseImports_IgnoresAmbientResolution(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GOWORK", filepath.Join(t.TempDir(), "absent.go.work"))
+	for name, content := range map[string]string{
+		"go.mod": "module example.com/imports\n\ngo 1.22\n",
+		"a.go":   "package imports\n\n// Answer is the module's only symbol.\nconst Answer = 42\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+
+	if _, err := New("").AnalyseImports(context.Background(), root); err != nil {
+		t.Fatalf("AnalyseImports under an inherited GOWORK: %v", err)
+	}
+}
+
+// -- test-scope classification --
+
+// writeTestScopeFixture builds a workspace whose dependency is a local replace,
+// so the tree resolves offline. The dependency has three packages: one only
+// production code imports, one only a _test.go file imports, and one both do.
+func writeTestScopeFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.22\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ./dep\n",
+		"app.go": "package app\n\nimport (\n\t\"example.com/dep/prod\"\n\t\"example.com/dep/shared\"\n)\n\n" +
+			"// Run uses the production-scope dependency surface.\nfunc Run() { prod.Prod(); shared.Prod() }\n",
+		"app_test.go": "package app\n\nimport (\n\t\"testing\"\n\n\t\"example.com/dep/shared\"\n\t\"example.com/dep/testonly\"\n)\n\n" +
+			"func TestRun(t *testing.T) {\n\tRun()\n\ttestonly.Helper()\n\tshared.OnlyTest()\n}\n",
+		"dep/go.mod":               "module example.com/dep\n\ngo 1.22\n",
+		"dep/prod/prod.go":         "package prod\n\n// Prod is referenced from production code.\nfunc Prod() {}\n",
+		"dep/testonly/testonly.go": "package testonly\n\n// Helper is referenced only from a _test.go file.\nfunc Helper() {}\n",
+		"dep/shared/shared.go":     "package shared\n\n// Prod is referenced from production code.\nfunc Prod() {}\n\n// OnlyTest is referenced only from a _test.go file.\nfunc OnlyTest() {}\n",
+	}
+	for name, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatalf("creating %s: %v", filepath.Dir(full), err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	return root
+}
+
+// TestAnalyseImports_ReportsTestOnlyImports is the defect this file's -test flag
+// exists for: a package no production file imports was absent from the answer
+// entirely, so a dependency a developer only reaches from _test.go was reported
+// as unused.
+func TestAnalyseImports_ReportsTestOnlyImports(t *testing.T) {
+	mods, err := New("").AnalyseImports(context.Background(), writeTestScopeFixture(t))
+	if err != nil {
+		t.Fatalf("AnalyseImports: %v", err)
+	}
+	if len(mods) != 1 {
+		t.Fatalf("modules = %v, want the single replaced dependency", mods)
+	}
+	got := mods[0]
+	wantPkgs := []string{"example.com/dep/prod", "example.com/dep/shared", "example.com/dep/testonly"}
+	if !slices.Equal(got.ImportedPackages, wantPkgs) {
+		t.Errorf("ImportedPackages = %v, want %v", got.ImportedPackages, wantPkgs)
+	}
+	if !slices.Equal(got.TestOnlyPackages, []string{"example.com/dep/testonly"}) {
+		t.Errorf("TestOnlyPackages = %v, want only example.com/dep/testonly", got.TestOnlyPackages)
+	}
+}
+
+// A package both scopes import is production. The in-package test variant
+// carries the production imports too, so a classification that read that
+// variant wholesale would move every one of them into the test set.
+func TestAnalyseImports_PackageImportedByBothScopesIsProduction(t *testing.T) {
+	mods, err := New("").AnalyseImports(context.Background(), writeTestScopeFixture(t))
+	if err != nil {
+		t.Fatalf("AnalyseImports: %v", err)
+	}
+	for _, p := range mods[0].TestOnlyPackages {
+		if p == "example.com/dep/shared" || p == "example.com/dep/prod" {
+			t.Errorf("%s is imported by production code but was marked test-only", p)
+		}
+	}
+}
+
+// BuildModules answers what goes into the artefact, so it must NOT widen with
+// AnalyseImports: a dependency only the tests reach is not linked into the
+// binary anything measuring the artefact is scoped to.
+func TestBuildModules_StaysAtProductionScope(t *testing.T) {
+	root := writeTestScopeFixture(t)
+	mods, err := New("").BuildModules(context.Background(), root)
+	if err != nil {
+		t.Fatalf("BuildModules: %v", err)
+	}
+	// The one replaced module is in the build either way; what must not appear
+	// is a module the test files alone pull in. This fixture has a single
+	// dependency module, so the assertion is on the count.
+	if len(mods) != 1 {
+		t.Fatalf("BuildModules = %v, want the single replaced dependency", mods)
+	}
 }

@@ -22,10 +22,18 @@ var (
 
 func init() {
 	var err error
-	enc, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
+	// One worker, not the default one per core: each holds a ~103 MB
+	// best-compression window, and EncodeAll only ever uses the first. The
+	// default reservation exhausts a many-core host under -race.
+	enc, err = zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.SpeedBestCompression),
+		zstd.WithEncoderConcurrency(1),
+	)
 	if err != nil {
 		panic("blobcodec: init encoder: " + err.Error())
 	}
+	// The decoder keeps the default width: ~1 MB per worker, and reads are
+	// genuinely concurrent.
 	dec, err = zstd.NewReader(nil)
 	if err != nil {
 		panic("blobcodec: init decoder: " + err.Error())

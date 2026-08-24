@@ -32,6 +32,17 @@ type composeSpec struct {
 	detail string
 	// nodeless drops the graph entirely, as a failed extraction's record does.
 	nodeless bool
+	// buildList names the walk whose resolved versions were offered to the
+	// analysis. Empty is a record that was offered none, which is every record
+	// written before the field existed.
+	buildList string
+	// externalNodeFile is the declaration file recorded for a node OUTSIDE the
+	// analysed module — a path in the analysing host's toolchain, which is what
+	// varies between two runs on two toolchains.
+	externalNodeFile string
+	// inModuleNodeFile is the same for the module's own node, where the path is
+	// relative to the module root and is a claim about this module.
+	inModuleNodeFile string
 }
 
 func composeRecord(t *testing.T, spec composeSpec) domain.CallGraphRecord {
@@ -74,6 +85,20 @@ func composeRecord(t *testing.T, spec composeSpec) domain.CallGraphRecord {
 		PipelineVersion:    "0.3.0",
 		FailureCause:       spec.cause,
 		FailureDetail:      spec.detail,
+		BuildListSource:    spec.buildList,
+	}
+	if spec.inModuleNodeFile != "" {
+		r.Nodes[0].Position = domain.SourcePosition{File: spec.inModuleNodeFile, Line: 1}
+	}
+	if spec.externalNodeFile != "" {
+		external := domain.CallNode{ID: "bytes.NewBuffer", Symbol: "NewBuffer", Package: "bytes", IsExternal: true}
+		// "(unrecorded)" stands for a generation that states no position at all,
+		// which is what every record written before positions were captured says.
+		if spec.externalNodeFile != "(unrecorded)" {
+			external.Position = domain.SourcePosition{File: spec.externalNodeFile, Line: 1}
+		}
+		r.Nodes = append(r.Nodes, external)
+		r.NodeCount = len(r.Nodes)
 	}
 	if spec.nodeless {
 		r.Nodes = []domain.CallNode{}
@@ -1134,5 +1159,190 @@ func TestCallGraphConflict_RemedyDoesNotFeedTheCondition(t *testing.T) {
 	partial.Completeness = domain.CompletenessMetadataOnly
 	if !strings.Contains(partial.Error(), "kanonarion callgraph example.com/mod@v1.0.0 --force") {
 		t.Errorf("a conflict below the top completeness names no re-analysis:\n%s", partial.Error())
+	}
+}
+
+// TestCompose_EnvironmentLimitedGraphIsALesserMeasurement is the defect this
+// rung was measured against.
+//
+// A run whose module cache could not resolve a requirement loads one package,
+// analyses it with bodies and records BUILT_WITH_BODIES with sixty-five nodes. A
+// run on a warm cache loads the module, analyses all of it with bodies and
+// records BUILT_WITH_BODIES with five thousand. The level says how the loaded
+// packages were analysed, not how much of the module was reached, so ranking on
+// it alone put the two level and the read refused both — permanently, because
+// nothing retires a generation and every later complete analysis landed at the
+// same level again.
+func TestCompose_EnvironmentLimitedGraphIsALesserMeasurement(t *testing.T) {
+	t.Parallel()
+	limited := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies,
+		status:       domain.CallGraphStatusPartial,
+		cause:        domain.FailureCauseEnvironment,
+		detail:       "lib/hooks.go:10:2: could not import example.com/dep",
+		symbol:       "Reached",
+		extractedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	complete := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies,
+		symbol:       "Everything",
+		extractedAt:  time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	})
+	got, err := domain.Compose([]domain.CallGraphRecord{limited, complete}, domain.ComposeRequest{})
+	if err != nil {
+		t.Fatalf("Compose refused a complete analysis against a graph this host cut short: %v", err)
+	}
+	if got.ContentHash != complete.ContentHash {
+		t.Errorf("Compose served %q, want the complete analysis %q", got.ContentHash, complete.ContentHash)
+	}
+
+	// The same pair with the environment record appended LAST. This is what
+	// --force produces on a host that went cold again, and recency must not carry
+	// it: the ledger is append-only, so a rule that let it win would be a wrong
+	// answer nothing could clear.
+	late := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies,
+		status:       domain.CallGraphStatusPartial,
+		cause:        domain.FailureCauseEnvironment,
+		detail:       "lib/hooks.go:10:2: could not import example.com/dep",
+		symbol:       "Reached",
+		extractedAt:  time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+	})
+	got, err = domain.Compose([]domain.CallGraphRecord{complete, late}, domain.ComposeRequest{})
+	if err != nil {
+		t.Fatalf("Compose refused after a later environment-limited run: %v", err)
+	}
+	if got.ContentHash != complete.ContentHash {
+		t.Errorf("a later environment-limited graph displaced the complete one: served %q", got.ContentHash)
+	}
+}
+
+// TestCompose_ModuleLimitedGraphStillConflicts is the control that keeps the
+// check meaning something.
+//
+// Both records were cut short by the MODULE — its own sources did not typecheck
+// — and they disagree about the graph. That is two measurements of the same
+// bytes coming back differently, which is what the check exists to surface, and
+// the environment rung must not absorb it.
+func TestCompose_ModuleLimitedGraphStillConflicts(t *testing.T) {
+	t.Parallel()
+	a := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies,
+		status:       domain.CallGraphStatusPartial, cause: domain.FailureCauseModule,
+		symbol: "Alpha",
+	})
+	b := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies,
+		status:       domain.CallGraphStatusPartial, cause: domain.FailureCauseModule,
+		symbol: "Beta",
+	})
+	_, err := domain.Compose([]domain.CallGraphRecord{a, b}, domain.ComposeRequest{})
+	var conflict domain.CallGraphConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want a CallGraphConflict", err)
+	}
+	if conflict.Field != domain.ConflictFieldCallGraph {
+		t.Fatalf("conflict field = %q, want %q", conflict.Field, domain.ConflictFieldCallGraph)
+	}
+}
+
+// TestCompose_TheTreeTheCallerStandsInAnswers. A local coordinate can hold both
+// a worktree graph and a zip one, and which of the two questions is being asked
+// is settled by where the reader is standing. Preferring the zip everywhere
+// meant a project whose own extract had run could never be answered from its
+// working tree again, and the remedy the tool printed — analyse this tree —
+// changed the ledger without ever changing the answer.
+func TestCompose_TheTreeTheCallerStandsInAnswers(t *testing.T) {
+	t.Parallel()
+	zip := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion,
+		source:  domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "FromZip",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	tree := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion,
+		source:  domain.AnalysisSourceWorktree, worktree: "analysed-sha256:t",
+		root:         "/src/mod",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "FromTree",
+		extractedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	})
+	records := []domain.CallGraphRecord{zip, tree}
+
+	got, err := domain.Compose(records, domain.ComposeRequest{CallerRoot: "/src/mod"})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if got.ContentHash != tree.ContentHash {
+		t.Errorf("a reader standing in /src/mod was answered from the module zip")
+	}
+
+	// Controls. Outside every analysed checkout there is no claim about which
+	// tree was meant, and the stated default stands — which is what a walk over a
+	// local-path replace target relies on.
+	for _, root := range []string{"", "/src/somewhere-else"} {
+		got, err = domain.Compose(records, domain.ComposeRequest{CallerRoot: root})
+		if err != nil {
+			t.Fatalf("Compose with caller root %q: %v", root, err)
+		}
+		if got.ContentHash != zip.ContentHash {
+			t.Errorf("caller root %q served the worktree graph; the stated default is the module zip", root)
+		}
+	}
+}
+
+// TestSameMeasurement_IgnoresOnlyTheClock. A re-analysis that came back saying
+// exactly what the ledger already says has added no fact, and appending it grows
+// the ledger without making any answer better. What it must not absorb is a
+// difference in what was measured or in what was read.
+func TestSameMeasurement_IgnoresOnlyTheClock(t *testing.T) {
+	t.Parallel()
+	base := composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies,
+		status:       domain.CallGraphStatusPartial,
+		cause:        domain.FailureCauseEnvironment,
+		detail:       "lib/hooks.go:10:2: could not import example.com/dep",
+		extractedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	first := composeRecord(t, base)
+	later := base
+	later.extractedAt = time.Date(2026, 1, 1, 0, 0, 8, 0, time.UTC)
+	second := composeRecord(t, later)
+	if first.ContentHash == second.ContentHash {
+		t.Fatal("the two generations seal to one hash, so nothing here is being compared")
+	}
+	same, err := domain.SameMeasurement(first, second)
+	if err != nil {
+		t.Fatalf("SameMeasurement: %v", err)
+	}
+	if !same {
+		t.Error("two identical measurements eight seconds apart were reported as different facts")
+	}
+
+	// Controls: a different graph, and the same graph read from different bytes.
+	differentGraph := base
+	differentGraph.symbol = "Other"
+	same, err = domain.SameMeasurement(first, composeRecord(t, differentGraph))
+	if err != nil {
+		t.Fatalf("SameMeasurement: %v", err)
+	}
+	if same {
+		t.Error("two different graphs were reported as one measurement")
+	}
+
+	differentBytes := first
+	differentBytes.ArtefactIdentity = "zip:h1:b"
+	same, err = domain.SameMeasurement(first, differentBytes)
+	if err != nil {
+		t.Fatalf("SameMeasurement: %v", err)
+	}
+	if same {
+		t.Error("two analyses of different bytes were reported as one measurement")
 	}
 }

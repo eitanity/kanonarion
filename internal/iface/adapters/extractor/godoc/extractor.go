@@ -3,8 +3,10 @@ package godoc
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/doc"
 	"go/format"
 	"go/parser"
@@ -18,6 +20,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 )
 
@@ -25,20 +28,61 @@ import (
 type Extractor struct {
 	pipelineVersion string
 	clock           interface{ Now() time.Time }
+	frame           domain.BuildFrame
 }
 
-// New constructs an Extractor.
+// New constructs an Extractor that measures the public API in the host's build
+// frame. Use WithFrame to measure another platform.
 func New(pipelineVersion string, clock interface{ Now() time.Time }) *Extractor {
-	return &Extractor{pipelineVersion: pipelineVersion, clock: clock}
+	return &Extractor{pipelineVersion: pipelineVersion, clock: clock, frame: hostFrame()}
 }
 
-// Extract walks sourceTree, parses every non-test.go file per package
-// directory, and produces an InterfaceRecord.
+// WithFrame returns the receiver measuring in frame instead of the host's.
+// A zero frame is refused rather than stored: an extractor with no frame would
+// go back to handing go/doc every platform's files at once, which is the
+// condition that made two extractions of one zip disagree.
+func (e *Extractor) WithFrame(frame domain.BuildFrame) (*Extractor, error) {
+	if frame.IsZero() {
+		return nil, fmt.Errorf("build frame: %w", errZeroFrame)
+	}
+	e.frame = frame
+	return e, nil
+}
+
+// errZeroFrame is returned when a caller offers a frame that names no platform.
+var errZeroFrame = errors.New("names neither GOOS nor GOARCH")
+
+// BuildFrame returns the frame this extractor measures in, so the caller can
+// stamp it on records it builds without a successful extraction — a failed
+// extraction is still an attempt at one configuration, and one that cannot say
+// which is not comparable with anything.
+func (e *Extractor) BuildFrame() domain.BuildFrame { return e.frame }
+
+// Toolchain returns the toolchain this extractor measures under, so the caller
+// can stamp it on records it builds without a successful extraction.
+func (e *Extractor) Toolchain() gotoolchain.Version { return extractingToolchain() }
+
+// Extract walks sourceTree and produces an InterfaceRecord holding the public
+// API of one buildable configuration of the module: for each package directory
+// it parses the non-test .go files that are in the extractor's build frame, and
+// hands only those to go/doc.
+//
+// The filter is what makes the result a fact. Handed every file in a directory,
+// go/doc receives one declaration of an exported symbol per build-tag variant —
+// six of IsTerminal in a package that supports six platforms — and resolves the
+// duplicates in map iteration order, so two runs over identical bytes produced
+// different public APIs and neither described a build that exists.
 func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error) {
 	dirs, err := collectPackageDirs(sourceTree)
 	if err != nil {
 		return domain.InterfaceRecord{}, fmt.Errorf("collecting package directories: %w", err)
 	}
+
+	frame := e.frame
+	if frame.IsZero() {
+		frame = hostFrame()
+	}
+	ctxt := buildContext(frame, sourceTree)
 
 	var pkgs []domain.PackageInterface
 
@@ -49,6 +93,8 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 				Ecosystem:       fetchdomain.EcosystemGo,
 				Coordinate:      coord,
 				Packages:        pkgs,
+				BuildFrame:      frame,
+				Toolchain:       extractingToolchain(),
 				OverallStatus:   domain.InterfaceStatusCancelled,
 				ExtractedAt:     e.clock.Now().UTC(),
 				PipelineVersion: e.pipelineVersion,
@@ -58,7 +104,7 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 			return r, nil //nolint:nilerr // intentional: context cancellation is reported via OverallStatus, not error
 		}
 
-		pkg, err := parsePackageDir(sourceTree, dir, coord)
+		pkg, err := parsePackageDir(sourceTree, ctxt, dir, coord)
 		if err != nil {
 			// A directory that yields no package at all still yields a fact: the
 			// reason it could not be read. It is recorded as a package carrying
@@ -86,6 +132,8 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 		Ecosystem:       fetchdomain.EcosystemGo,
 		Coordinate:      coord,
 		Packages:        pkgs,
+		BuildFrame:      frame,
+		Toolchain:       extractingToolchain(),
 		OverallStatus:   domain.InterfaceStatusExtracted,
 		ExtractedAt:     e.clock.Now().UTC(),
 		PipelineVersion: e.pipelineVersion,
@@ -178,7 +226,7 @@ func collectPackageDirs(fsys fs.FS) ([]string, error) {
 	for d := range seen {
 		dirs = append(dirs, d)
 	}
-	return dirs, nil
+	return sortedDirs(dirs), nil
 }
 
 // packageImportPath returns the full Go import path for a directory within a
@@ -191,9 +239,9 @@ func packageImportPath(modulePath, dir string) string {
 	return modulePath + "/" + dir
 }
 
-// parsePackageDir parses all non-test.go files in dir within fsys and
-// returns a PackageInterface.
-func parsePackageDir(fsys fs.FS, dir string, coord coordinate.ModuleCoordinate) (domain.PackageInterface, error) {
+// parsePackageDir parses the non-test .go files in dir that ctxt's build frame
+// contains, and returns a PackageInterface.
+func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordinate.ModuleCoordinate) (domain.PackageInterface, error) {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return domain.PackageInterface{}, fmt.Errorf("reading dir %s: %w", dir, err)
@@ -203,6 +251,7 @@ func parsePackageDir(fsys fs.FS, dir string, coord coordinate.ModuleCoordinate) 
 	var parsed []*ast.File
 	var failures []domain.ParseFailure
 	generatedFiles := map[string]bool{}
+	sawGoSource := false
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -212,8 +261,22 @@ func parsePackageDir(fsys fs.FS, dir string, coord coordinate.ModuleCoordinate) 
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
+		sawGoSource = true
 
 		filePath := path.Join(dir, name)
+
+		// The build frame decides membership before anything is parsed. A file
+		// excluded here is not a failure and not a fact the record withholds:
+		// it belongs to a different build of the same module, and the frame the
+		// record names says so for all of them at once.
+		match, merr := inFrame(ctxt, dir, name)
+		if merr != nil {
+			failures = append(failures, domain.ParseFailure{File: filePath, Error: merr.Error()})
+			continue
+		}
+		if !match {
+			continue
+		}
 		data, rerr := fs.ReadFile(fsys, filePath)
 		if rerr != nil {
 			failures = append(failures, domain.ParseFailure{File: filePath, Error: rerr.Error()})
@@ -240,6 +303,19 @@ func parsePackageDir(fsys fs.FS, dir string, coord coordinate.ModuleCoordinate) 
 			return domain.PackageInterface{
 				ImportPath:    importPath,
 				ParseFailures: failures,
+			}, nil
+		}
+		if sawGoSource {
+			// The directory holds Go source, all of it for other platforms. That
+			// is a fact about this build, not a missing measurement, so the
+			// package is kept and marked rather than dropped: a reader comparing
+			// two records can then tell a package that was removed from the
+			// module from one that this build does not contain.
+			return domain.PackageInterface{
+				ImportPath: importPath,
+				Name:       path.Base(importPath),
+				IsInternal: isInternalPath(importPath),
+				OutOfFrame: true,
 			}, nil
 		}
 		return domain.PackageInterface{}, fmt.Errorf("no parseable Go files in %s", dir)

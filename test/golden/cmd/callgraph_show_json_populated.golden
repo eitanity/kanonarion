@@ -11,6 +11,8 @@ exit 0
   "algorithm": "CHA",
   "completeness": "BUILT_WITH_BODIES",
   "analysis_source": "zip",
+  "toolchain": "",
+  "toolchain_stated": null,
   "nodes": [
     {
       "id": "example.com/mod.Handle",

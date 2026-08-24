@@ -268,3 +268,81 @@ func TestAnalyse_NoPackagesFoundNamesThePlatformFrame(t *testing.T) {
 		t.Errorf("failure detail names no platform frame: %s", rec.FailureDetail)
 	}
 }
+
+// brokenSourceFiles is a module whose own source does not typecheck, so the
+// loader reports a position inside the tree it was handed.
+var brokenSourceFiles = map[string]string{
+	"go.mod": "module example.com/broken\n\ngo 1.17\n",
+	"lib/hooks.go": `package lib
+
+// Hook does not compile: nothing declares missing.
+func Hook() int {
+	return missing()
+}
+`,
+	"ok.go": `package broken
+
+// Fine is here so the load has something to build.
+func Fine() int { return 1 }
+`,
+}
+
+// TestAnalyse_FailureDetailNamesNoStagingDirectory.
+//
+// The analyser stages a module zip in a per-run temporary directory, and the
+// loader reports positions inside it. That path went into failure_detail, which
+// is inside the record's canonical hash AND inside the graph digest, so no two
+// analyses of one failing module could ever produce the same record: every
+// repeat appended a generation, for ever, and two identical graphs compared
+// unequal. The directory is deleted when the run ends, so the path identified
+// nothing a reader could open either.
+func TestAnalyse_FailureDetailNamesNoStagingDirectory(t *testing.T) {
+	coord := mustTestCoord(t, "example.com/broken", "v1.0.0")
+	a := staticcha.New("0.1.0", "", slog.Default())
+
+	analyse := func() domain.CallGraphRecord {
+		t.Helper()
+		rec, err := a.Analyse(context.Background(),
+			writeZipToTemp(t, makeZip(t, coord, brokenSourceFiles)), coord, domain.AnalysisInputs{})
+		if err != nil {
+			t.Fatalf("Analyse returned error: %v", err)
+		}
+		return rec
+	}
+
+	first, second := analyse(), analyse()
+	if first.FailureDetail == "" {
+		t.Fatal("the analysis reported no failure, so this test measures nothing")
+	}
+	if strings.Contains(first.FailureDetail, os.TempDir()) || strings.Contains(first.FailureDetail, "kanonarion-cg-") {
+		t.Errorf("failure_detail names the staging directory: %s", first.FailureDetail)
+	}
+	// The diagnostic is not weakened: what a reader acts on is the module-relative
+	// position and the loader's own sentence.
+	if !strings.Contains(first.FailureDetail, "lib/hooks.go:") {
+		t.Errorf("failure_detail lost the position a reader can act on: %s", first.FailureDetail)
+	}
+	if first.FailureDetail != second.FailureDetail {
+		t.Errorf("two analyses of one module recorded different failures:\n%s\n%s",
+			first.FailureDetail, second.FailureDetail)
+	}
+	if domain.GraphDigest(first) != domain.GraphDigest(second) {
+		t.Error("two analyses of one module produced graphs that compare unequal")
+	}
+
+	// Control: two analyses that genuinely differ still differ. The point is to
+	// remove a random component of the diagnostic, not to stop recording it.
+	other := map[string]string{}
+	for k, v := range brokenSourceFiles {
+		other[k] = v
+	}
+	other["ok.go"] += "\n// Extra is a second function, so the graph is a different one.\nfunc Extra() int { return Fine() }\n"
+	differs, err := a.Analyse(context.Background(),
+		writeZipToTemp(t, makeZip(t, coord, other)), coord, domain.AnalysisInputs{})
+	if err != nil {
+		t.Fatalf("Analyse returned error: %v", err)
+	}
+	if domain.GraphDigest(differs) == domain.GraphDigest(first) {
+		t.Error("a genuinely different graph compares equal to the first")
+	}
+}

@@ -363,3 +363,73 @@ func TestAPIDigest_CoversTheClaimAndNotTheProvenance(t *testing.T) {
 		t.Errorf("digest = %q, want a sha256-prefixed hash", got)
 	}
 }
+
+// Two records measured on different platforms hold different declarations by
+// construction. Composition must not pick between them, and must not call the
+// difference non-determinism in the extractor — which is what "public_api
+// disagrees" says.
+func TestCompose_BuildFrameDisagreementIsNamedAsOne(t *testing.T) {
+	a := composedRecord(t, composed{
+		status: domain.InterfaceStatusExtracted, artefact: "zip:h1:aaa", hash: "sha256:a", funcName: "One",
+	})
+	a.BuildFrame = domain.BuildFrame{GOOS: "linux", GOARCH: "amd64", CgoEnabled: true}
+	b := composedRecord(t, composed{
+		status: domain.InterfaceStatusExtracted, artefact: "zip:h1:aaa", hash: "sha256:b", funcName: "Two",
+	})
+	b.BuildFrame = domain.BuildFrame{GOOS: "windows", GOARCH: "amd64", CgoEnabled: true}
+
+	_, err := domain.Compose([]domain.InterfaceRecord{a, b})
+	var conflict domain.InterfaceConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want an InterfaceConflict", err)
+	}
+	if conflict.Field != "build_frame" {
+		t.Errorf("conflict field = %q, want build_frame", conflict.Field)
+	}
+}
+
+// A record that names a frame and one that names none are not two measurements
+// of one thing: the second holds every platform's declarations at once. The
+// pipeline version is what separates them in the store; if two ever meet at one
+// pipeline version, the read says which axis they differ on.
+func TestCompose_FramedAndUnframedRecordsConflictOnTheFrame(t *testing.T) {
+	framed := composedRecord(t, composed{
+		status: domain.InterfaceStatusExtracted, artefact: "zip:h1:aaa", hash: "sha256:a", funcName: "One",
+	})
+	framed.BuildFrame = domain.BuildFrame{GOOS: "linux", GOARCH: "amd64", CgoEnabled: true}
+	unframed := composedRecord(t, composed{
+		status: domain.InterfaceStatusExtracted, artefact: "zip:h1:aaa", hash: "sha256:b", funcName: "One",
+	})
+
+	_, err := domain.Compose([]domain.InterfaceRecord{framed, unframed})
+	var conflict domain.InterfaceConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want an InterfaceConflict", err)
+	}
+	if conflict.Field != "build_frame" {
+		t.Errorf("conflict field = %q, want build_frame", conflict.Field)
+	}
+}
+
+// Records that agree on the frame still reach the API comparison: the new check
+// narrows nothing that was being caught before.
+func TestCompose_SameFrameStillReachesTheAPIComparison(t *testing.T) {
+	frame := domain.BuildFrame{GOOS: "linux", GOARCH: "amd64", CgoEnabled: true}
+	a := composedRecord(t, composed{
+		status: domain.InterfaceStatusExtracted, artefact: "zip:h1:aaa", hash: "sha256:a", funcName: "One",
+	})
+	a.BuildFrame = frame
+	b := composedRecord(t, composed{
+		status: domain.InterfaceStatusExtracted, artefact: "zip:h1:aaa", hash: "sha256:b", funcName: "Two",
+	})
+	b.BuildFrame = frame
+
+	_, err := domain.Compose([]domain.InterfaceRecord{a, b})
+	var conflict domain.InterfaceConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want an InterfaceConflict", err)
+	}
+	if conflict.Field != "public_api" {
+		t.Errorf("conflict field = %q, want public_api", conflict.Field)
+	}
+}

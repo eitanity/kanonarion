@@ -6,6 +6,7 @@
 kanonarion context <module>@<version> [flags]
 kanonarion context [--gomod <path>] [flags]
 kanonarion context --walk-id <id> [flags]
+kanonarion context <dir> [--symbol] [--reachability] [--exclude-tests] [flags]
 ```
 
 ## Description
@@ -39,6 +40,85 @@ The `dependencies` section is drawn from the most recent walk where this
 module was the root target. If no such walk exists it reports `not_run`.
 Other sections (license, interface, call graph, examples, vulnerabilities)
 are drawn from the extraction pipeline and are independent of walk records.
+
+## Working-tree form (`<dir>`)
+
+A positional argument that looks like a path - `.`, `..`, `./x` or an absolute
+path - analyses that working tree instead of reading stored records. It answers
+which dependency modules the tree's own code uses, and carries none of the
+stored-record sections, so the flags that shape those sections are refused here
+by name.
+
+Two analysis levels:
+
+| Level | How | Reports |
+|---|---|---|
+| `import` (default) | `go list` | Modules the tree's files import |
+| `symbol` (`--symbol`) | go/packages type-check, ~2-5s | Modules whose exported symbols the tree references, plus the symbol list |
+
+The two answer different questions and the count line names which: `module(s)
+imported` at import level, `module(s) referenced` at symbol level. A blank
+import (`_ "modernc.org/sqlite"`) is imported while referencing no symbol, so
+its module appears at import level and not at symbol level. Neither is a subset
+of the other - a module reached only through a dependency's exported types (for
+example `spf13/pflag` through `cobra`) is referenced without being imported.
+
+Both levels include dependency users declared in `_test.go` files and external
+test packages, and tag a module only test code reaches with `[test]`. The
+`Test scope` line states this on every answer, narrowed or not.
+
+```
+$ kanonarion context . --symbol
+github.com/eitanity/kanonarion
+  Root:            /home/mb/dev/kanonarion
+  Version:         local-7c28ebbc23b3709a...
+  Analysis level:  symbol
+  Test scope:      included — users declared only in test files are tagged [test]
+  Dependencies:    12 module(s) referenced
+    github.com/rogpeppe/go-internal@v1.15.0  (1 package(s), 8 symbol(s))  [test]
+    github.com/spf13/cobra@v1.10.2  (1 package(s), 37 symbol(s))
+    ...
+```
+
+`--exclude-tests` narrows the answer to what production files reach: packages
+and symbols only test code references are removed, and a module left with
+nothing is dropped. The result is always a subset of the default answer - the
+analysis itself is unchanged, so a symbol count can only fall.
+
+```
+$ kanonarion context . --symbol --exclude-tests
+  Test scope:      excluded — production code only (--exclude-tests was given)
+  Dependencies:    10 module(s) referenced
+```
+
+`--exclude-tests` acts on the reported dependency list only. The
+`--reachability` probe is scoped to the modules the build links into the
+artefact, which never included test-only dependencies, so its module count does
+not move with the flag.
+
+Under `--json` the working-tree document carries `workspace.tests_excluded` and
+a per-dependency `test_only`, both emitted always, `false` included:
+
+```json
+{
+  "workspace": {
+    "root": "/home/mb/dev/kanonarion",
+    "module": "github.com/eitanity/kanonarion",
+    "version_id": "local-7c28ebbc23b3709a...",
+    "analysis_level": "symbol",
+    "tests_excluded": false
+  },
+  "dependencies": [
+    {
+      "path": "go.uber.org/goleak",
+      "version": "v1.3.0",
+      "imported_packages": ["go.uber.org/goleak"],
+      "used_symbols": ["go.uber.org/goleak.VerifyTestMain"],
+      "test_only": true
+    }
+  ]
+}
+```
 
 ## Output format
 
@@ -288,15 +368,16 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 | Field | Type | Description |
 |---|---|---|
 | `status` | string | `not_run` / `superseded` / `read_error` / extractor status |
-| | | `superseded`: a record exists for this module but every stored generation predates this build's extraction logic, so none is served. `error` carries the statement and the re-extraction to run. |
-| `packages` | array | Public packages (internal and `main` packages excluded) |
-| `packages[].import_path` | string | Package import path |
-| `packages[].types` | array | Exported type signatures (doc comment included only with `--full`) |
-| `packages[].methods` | array | Signatures of the methods declared on those types (doc comment included only with `--full`) |
+| | | `superseded`: every stored generation predates this build's extraction logic, so none is served. `error` carries the statement and the re-extraction to run. |
+| `packages` | array | Public packages (internal, `main` and out-of-frame excluded) |
+| `packages[].import_path` | string | Import path |
+| `packages[].types` | array | Exported type signatures (doc only with `--full`) |
+| `packages[].methods` | array | Methods on those types (doc only with `--full`) |
 | `packages[].funcs` | array | Exported function signatures |
-| `packages[].consts` | array | Exported constant names (with type if present) |
-| `packages[].vars` | array | Exported variable names (with type if present) |
+| `packages[].consts` | array | Exported constant names, with type if present |
+| `packages[].vars` | array | Exported variable names, with type if present |
 | `extracted_at` | string | RFC3339 extraction timestamp |
+| `build_frame` | string | The build the API was measured in, or `unrecorded` |
 | `error` | string | Set when `status` is `read_error` |
 
 ### `call_graph`
@@ -456,6 +537,9 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--affected-only` | false | With `--walk-id`: emit context only for modules the walk's most recent scan run found affected. See [Narrowing a walk](#narrowing-a-walk) |
 | `--modules <path>` | | With `--walk-id`: emit context only for the `module@version` coordinates listed in this file, one per line. See [Narrowing a walk](#narrowing-a-walk) |
 | `--stream` | false | With `--walk-id` or `--gomod`: emit NDJSON (one document per module) without `--json`. Refused on the coordinate and local-path forms, which emit one document |
+| `--symbol` | false | With a local path: type-check the tree and report referenced symbols instead of imports. Local path only: refused by name on the other three forms |
+| `--reachability` | false | With a local path: build the tree's binaries and probe their symbol tables for CVE-affected symbols (~30s). Local path only: refused by name on the other three forms |
+| `--exclude-tests` | false | With a local path: omit dependency users declared in `_test.go` files and external test packages. Local path only: refused by name on the other three forms. See [Working-tree form](#working-tree-form-dir) |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--log-level <level>` | `warn` | Log verbosity: `debug` \| `info` \| `warn` \| `error` |
 

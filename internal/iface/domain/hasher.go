@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -78,8 +79,14 @@ func (InterfaceRecordHasher) Unmarshal(data []byte) (InterfaceRecord, error) {
 		pkgs[i] = fromCanonicalPackage(cp)
 	}
 
+	var frame BuildFrame
+	if c.BuildFrame != nil {
+		frame = BuildFrame{GOOS: c.BuildFrame.GOOS, GOARCH: c.BuildFrame.GOARCH, CgoEnabled: c.BuildFrame.Cgo}
+	}
+
 	return InterfaceRecord{
 		SchemaVersion:     c.SchemaVersion,
+		BuildFrame:        frame,
 		Ecosystem:         c.Ecosystem,
 		Coordinate:        coord,
 		Packages:          pkgs,
@@ -90,10 +97,20 @@ func (InterfaceRecordHasher) Unmarshal(data []byte) (InterfaceRecord, error) {
 		ContentHash:       c.ContentHash,
 		ArtefactIdentity:  c.ArtefactIdentity,
 		SourceContentHash: c.SourceContentHash,
+		Toolchain:         gotoolchain.Version(c.Toolchain),
 	}, nil
 }
 
 // -- canonical wire types --
+
+// canonicalFrame is the wire shape of BuildFrame. The whole object is omitted
+// when the frame was never recorded, so records written before the extractor
+// evaluated build constraints keep the content hash they were stored with.
+type canonicalFrame struct {
+	Cgo    bool   `json:"cgo_enabled"`
+	GOARCH string `json:"goarch"`
+	GOOS   string `json:"goos"`
+}
 
 type canonicalCoord struct {
 	Path    string `json:"path"`
@@ -104,17 +121,22 @@ type canonicalRecord struct {
 	// ArtefactIdentity and SourceContentHash are omitted when empty so
 	// records that predate them keep their stored content hash verifiable,
 	// on the same terms every additive field on this shape has used.
-	ArtefactIdentity  string         `json:"artefact_identity,omitempty"`
-	ContentHash       string         `json:"content_hash"`
-	Coordinate        canonicalCoord `json:"coordinate"`
-	Ecosystem         string         `json:"ecosystem"`
-	ExtractedAt       string         `json:"extracted_at"`
-	FailureDetail     string         `json:"failure_detail"`
-	OverallStatus     int            `json:"overall_status"`
-	Packages          []canonicalPkg `json:"packages"`
-	PipelineVersion   string         `json:"pipeline_version"`
-	SchemaVersion     string         `json:"schema_version"`
-	SourceContentHash string         `json:"source_content_hash,omitempty"`
+	ArtefactIdentity  string          `json:"artefact_identity,omitempty"`
+	BuildFrame        *canonicalFrame `json:"build_frame,omitempty"`
+	ContentHash       string          `json:"content_hash"`
+	Coordinate        canonicalCoord  `json:"coordinate"`
+	Ecosystem         string          `json:"ecosystem"`
+	ExtractedAt       string          `json:"extracted_at"`
+	FailureDetail     string          `json:"failure_detail"`
+	OverallStatus     int             `json:"overall_status"`
+	Packages          []canonicalPkg  `json:"packages"`
+	PipelineVersion   string          `json:"pipeline_version"`
+	SchemaVersion     string          `json:"schema_version"`
+	SourceContentHash string          `json:"source_content_hash,omitempty"`
+	// Toolchain is omitted when empty so records that predate it keep their stored
+	// content hash verifiable, on the same terms every additive field on this
+	// shape has used. An absent toolchain is "not recorded", never a toolchain.
+	Toolchain string `json:"toolchain,omitempty"`
 }
 
 type canonicalPkg struct {
@@ -124,6 +146,7 @@ type canonicalPkg struct {
 	ImportPath    string             `json:"import_path"`
 	IsInternal    bool               `json:"is_internal"`
 	IsMain        bool               `json:"is_main"`
+	OutOfFrame    bool               `json:"out_of_frame,omitempty"`
 	Name          string             `json:"name"`
 	ParseFailures []canonicalFailure `json:"parse_failures"`
 	Types         []canonicalType    `json:"types"`
@@ -207,8 +230,14 @@ func marshalCanonical(r InterfaceRecord) ([]byte, error) {
 		cPkgs[i] = toCanonicalPackage(p)
 	}
 
+	var frame *canonicalFrame
+	if !r.BuildFrame.IsZero() {
+		frame = &canonicalFrame{Cgo: r.BuildFrame.CgoEnabled, GOARCH: r.BuildFrame.GOARCH, GOOS: r.BuildFrame.GOOS}
+	}
+
 	c := canonicalRecord{
 		ArtefactIdentity:  r.ArtefactIdentity,
+		BuildFrame:        frame,
 		ContentHash:       r.ContentHash,
 		Coordinate:        canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
 		Ecosystem:         r.Ecosystem,
@@ -219,6 +248,7 @@ func marshalCanonical(r InterfaceRecord) ([]byte, error) {
 		PipelineVersion:   r.PipelineVersion,
 		SchemaVersion:     r.SchemaVersion,
 		SourceContentHash: r.SourceContentHash,
+		Toolchain:         string(r.Toolchain),
 	}
 
 	b, err := canonicalMarshal(c)
@@ -324,6 +354,7 @@ func toCanonicalPackage(p PackageInterface) canonicalPkg {
 		ImportPath:    p.ImportPath,
 		IsInternal:    p.IsInternal,
 		IsMain:        p.IsMain,
+		OutOfFrame:    p.OutOfFrame,
 		Name:          p.Name,
 		ParseFailures: failures,
 		Types:         types,
@@ -418,6 +449,7 @@ func fromCanonicalPackage(cp canonicalPkg) PackageInterface {
 		ImportPath:    cp.ImportPath,
 		IsInternal:    cp.IsInternal,
 		IsMain:        cp.IsMain,
+		OutOfFrame:    cp.OutOfFrame,
 		Name:          cp.Name,
 		ParseFailures: failures,
 		Types:         types,

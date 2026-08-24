@@ -58,17 +58,18 @@ func (uc *QueryCallGraphUseCase) CallGraphHistory(ctx context.Context, coord coo
 }
 
 // GetCallGraphRecordFrom retrieves the composed record for a coordinate,
-// restricted to one kind of analysis source. A store that cannot scope by source
-// answers ErrNoCallGraphHistory's sibling condition by falling back to the
-// unscoped read — there is nothing to restrict when only one source can exist.
-func (uc *QueryCallGraphUseCase) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source domain.AnalysisSource) (domain.CallGraphRecord, bool, error) {
+// restricted to the dimension values the request names. A store that cannot
+// scope by them answers ErrNoCallGraphHistory's sibling condition by falling
+// back to the unscoped read — there is nothing to restrict when only one value
+// of each dimension can exist.
+func (uc *QueryCallGraphUseCase) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain.ComposeRequest) (domain.CallGraphRecord, bool, error) {
 	reader, ok := uc.store.(cgports.CallGraphSourceReader)
 	if !ok {
 		return uc.GetCallGraphRecord(ctx, coord, pipelineVersion)
 	}
-	rec, found, err := reader.GetCallGraphRecordFrom(ctx, coord, pipelineVersion, source)
+	rec, found, err := reader.GetCallGraphRecordFrom(ctx, coord, pipelineVersion, req)
 	if err != nil {
-		return domain.CallGraphRecord{}, false, fmt.Errorf("getting %s call graph record for %s: %w", source, coord, err)
+		return domain.CallGraphRecord{}, false, fmt.Errorf("getting call graph record for %s: %w", coord, err)
 	}
 	return rec, found, nil
 }

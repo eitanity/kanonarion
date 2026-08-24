@@ -15,6 +15,7 @@ import (
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -68,6 +69,11 @@ const zeroBreakingNoUsedByNote = "what would answer it: exercise your own tests 
 
 type interfaceDiffFlags struct {
 	usedBy string
+	// toolchain restricts the consumer's own call graph to one Go toolchain. It is
+	// here because --used-by resolves a stored call graph, and a refusal that told
+	// the reader to name a toolchain while this command had no way to name one
+	// would be advice it could not act on.
+	toolchain string
 }
 
 // -- interface-diff command --
@@ -112,6 +118,8 @@ Both records must already be extracted — run 'kanonarion interface' first.`,
 	// A value-taking flag and nothing else: no NoOptDefVal, so "--used-by
 	// ./go.mod" is the grammar and a bare --used-by is rejected rather than
 	// silently swallowing the next positional.
+	cmd.Flags().StringVar(&f.toolchain, "toolchain", "",
+		"restrict the consumer's call graph to one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
 	cmd.Flags().StringVar(&f.usedBy, "used-by", "",
 		"join the delta against the stored call graph of the project this go.mod declares")
 
@@ -172,7 +180,7 @@ func interfaceDiffWith(
 
 	var used *usedByResult
 	if f.usedBy != "" {
-		used, err = joinUsedBy(ctx, ctr, diff, f.usedBy)
+		used, err = joinUsedBy(ctx, ctr, diff, f.usedBy, gotoolchain.Version(f.toolchain))
 		if err != nil {
 			return err
 		}
@@ -298,7 +306,7 @@ func (r *usedByResult) TouchedReach() (decls, sites int) {
 // It never parses the consumer's source. The answer is a read of what was
 // already measured and recorded, so it is reproducible and it cannot disagree
 // with what `callers` would say about the same symbol.
-func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string) (*usedByResult, error) {
+func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string, toolchain gotoolchain.Version) (*usedByResult, error) {
 	choice, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
 	if err != nil {
 		return nil, err
@@ -319,7 +327,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		ScopeSize: scope.Len(),
 	}
 
-	positions, dropped, found, err := consumerNodePositions(ctx, ctr.QueryCallGraph, rec.Target)
+	positions, dropped, found, err := consumerNodePositions(ctx, ctr.QueryCallGraph, rec.Target, toolchain)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +342,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		if !measurable {
 			return entry, nil
 		}
-		refs, ferr := ctr.QueryCallGraph.FindCallers(ctx, nodeID, cgapp.PipelineVersion, scope, cgports.EdgeQueryOptions{})
+		refs, ferr := ctr.QueryCallGraph.FindCallers(ctx, nodeID, cgapp.PipelineVersion, scope, cgports.EdgeQueryOptions{Toolchain: toolchain})
 		if ferr != nil {
 			return usedSymbol{}, fmt.Errorf("finding callers of %s: %w", nodeID, ferr)
 		}
@@ -455,8 +463,8 @@ func writeUsedByDroppedPackages(stdout io.Writer, used *usedByResult) error {
 // declared at. It also returns the consumer's own packages whose typecheck
 // failed, because a call site in one of them produced no SSA and so cannot join.
 // Returns found=false when the project has no stored graph.
-func consumerNodePositions(ctx context.Context, uc QueryCallGraphUseCase, consumer coordinate.ModuleCoordinate) (map[string]cgdomain.SourcePosition, []string, bool, error) {
-	rec, found, err := uc.GetCallGraphRecord(ctx, consumer, cgapp.PipelineVersion)
+func consumerNodePositions(ctx context.Context, uc QueryCallGraphUseCase, consumer coordinate.ModuleCoordinate, toolchain gotoolchain.Version) (map[string]cgdomain.SourcePosition, []string, bool, error) {
+	rec, found, err := uc.GetCallGraphRecordFrom(ctx, consumer, cgapp.PipelineVersion, cgdomain.ComposeRequest{ToolchainPreference: toolchain})
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("loading call graph for %s: %w", consumer, err)
 	}
@@ -560,6 +568,9 @@ func printInterfaceDiff(diff ifacedomain.InterfaceDiff, used *usedByResult, stdo
 		return fmt.Errorf("writing counts: %w", err)
 	}
 
+	if err := printFrameStatement(diff, stdout); err != nil {
+		return err
+	}
 	if err := printCrossMajorStatement(diff, stdout); err != nil {
 		return err
 	}
@@ -771,6 +782,27 @@ func printRegistrySection(diff ifacedomain.InterfaceDiff, stdout io.Writer) erro
 	return nil
 }
 
+// printFrameStatement names the build configuration each side was measured in,
+// and says plainly when they are not the same one. A declaration that is in one
+// platform's build and not the other's is reported as removed or changed by a
+// comparison that cannot see the difference, so the reader is told which of the
+// two questions this answer is about before reading any count.
+func printFrameStatement(diff ifacedomain.InterfaceDiff, stdout io.Writer) error {
+	if !diff.FrameMismatch {
+		if _, err := fmt.Fprintf(stdout, "build frame: both sides %s\n", diff.RecordA.BuildFrame.String()); err != nil {
+			return fmt.Errorf("writing build frame: %w", err)
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"build frame: %s → %s — the two sides were not measured in the same build, "+
+			"so a change listed below may be a difference between platforms rather than between versions\n",
+		diff.RecordA.BuildFrame.String(), diff.RecordB.BuildFrame.String()); err != nil {
+		return fmt.Errorf("writing build frame mismatch: %w", err)
+	}
+	return nil
+}
+
 func printExcludedSection(diff ifacedomain.InterfaceDiff, stdout io.Writer) error {
 	if len(diff.ExcludedTestdataPackages) == 0 {
 		return nil
@@ -885,6 +917,12 @@ type interfaceDiffJSON struct {
 	RenamedPath      []renamedSymbolJSON   `json:"renamed_path"`
 	Registries       []registrySurfaceJSON `json:"registries"`
 	ExcludedTestdata []string              `json:"excluded_testdata_packages"`
+	// BuildFrameA and BuildFrameB name the configuration each side was measured
+	// in, and FrameMismatch is true when they are not the same one — the case in
+	// which a listed change may be a platform difference, not a version one.
+	BuildFrameA   string `json:"build_frame_a"`
+	BuildFrameB   string `json:"build_frame_b"`
+	FrameMismatch bool   `json:"frame_mismatch"`
 	// ZeroBreakingAdvisory carries the statement the text output prints beside a
 	// zero over a non-empty delta, and is absent exactly when that statement is
 	// not printed — so a machine consumer sees the same distinction a reader does.
@@ -997,6 +1035,9 @@ func toInterfaceDiffJSON(diff ifacedomain.InterfaceDiff, used *usedByResult) int
 		RenamedPath:      toRenamedPathJSON(diff.RenamedPath),
 		Registries:       toRegistriesJSON(diff.Registries),
 		ExcludedTestdata: nonNilStrings(diff.ExcludedTestdataPackages),
+		BuildFrameA:      diff.RecordA.BuildFrame.String(),
+		BuildFrameB:      diff.RecordB.BuildFrame.String(),
+		FrameMismatch:    diff.FrameMismatch,
 	}
 	if diff.ZeroBreakingOverNonTrivialDelta() {
 		out.ZeroBreakingAdvisory = zeroBreakingBehaviourNote
