@@ -58,6 +58,35 @@ func TestContextLocalRefusesGoModScopeFlags(t *testing.T) {
 	}
 }
 
+// TestContextRefusesExcludeTestsOffTheLocalPath: --exclude-tests narrows a
+// working tree's dependency list to the code its production files reach. A
+// stored-record document is assembled from records that carry their own test
+// scope, so there is nothing here for the flag to narrow and it is refused by
+// name rather than parsed and dropped.
+func TestContextRefusesExcludeTestsOffTheLocalPath(t *testing.T) {
+	cases := map[string][]string{
+		"context <module>@<version>": {"context", "golang.org/x/mod@v0.35.0"},
+		"context --gomod":            {"context", "--gomod", "./go.mod"},
+		"context --walk-id":          {"context", "--walk-id", "nosuchwalk"},
+	}
+	for path, argv := range cases {
+		t.Run(path, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			args := append(append([]string{}, argv...), "--exclude-tests", "--store-root", t.TempDir())
+			err := Run(args, &stdout, &stderr)
+			if err == nil {
+				t.Fatalf("%s --exclude-tests must be refused, got exit 0", path)
+			}
+			if !strings.Contains(err.Error(), path+" does not act on --exclude-tests") {
+				t.Errorf("refusal must name the path and the flag, got: %v", err)
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("a refused invocation must write no document, got %d bytes", stdout.Len())
+			}
+		})
+	}
+}
+
 // TestContextWalkIDRefusesGoModScopeFlags: a walk id names the module set
 // already; there is no go.mod scope left to select.
 func TestContextWalkIDRefusesGoModScopeFlags(t *testing.T) {

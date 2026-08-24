@@ -139,3 +139,123 @@ func TestPrintLocalContextText_RendersReachabilityFindings(t *testing.T) {
 		}
 	}
 }
+
+// -- test scope on the working-tree answer --
+
+// localScopeSample is a working-tree answer with one production-only
+// dependency and one reached only from _test.go files.
+func localScopeSample(level string, testsExcluded bool) localContextOutput {
+	out := localContextOutput{
+		Workspace: localWorkspaceInfo{
+			Root:          "/home/dev/proj",
+			Module:        "example.com/proj",
+			VersionID:     "local-abc123",
+			AnalysisLevel: level,
+			TestsExcluded: testsExcluded,
+		},
+		Dependencies: []localImportedModule{
+			{
+				Path:             "example.com/prod",
+				Version:          "v1.0.0",
+				ImportedPackages: []string{"example.com/prod"},
+				UsedSymbols:      []string{"example.com/prod.Run"},
+			},
+			{
+				Path:             "example.com/testonly",
+				Version:          "v2.0.0",
+				ImportedPackages: []string{"example.com/testonly"},
+				UsedSymbols:      []string{"example.com/testonly.Helper"},
+				TestOnly:         true,
+			},
+		},
+	}
+	if testsExcluded {
+		out.Dependencies = out.Dependencies[:1]
+	}
+	return out
+}
+
+func renderLocal(t *testing.T, out localContextOutput) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := printLocalContextText(out, &buf); err != nil {
+		t.Fatalf("printLocalContextText: %v", err)
+	}
+	return buf.String()
+}
+
+// The scope is stated on every answer, narrowed or not. A reader cannot tell a
+// tree with no test-scope users from one whose test-scope users were dropped,
+// which is the whole reason the line exists.
+func TestPrintLocalContextText_StatesTestScopeBothWays(t *testing.T) {
+	wide := renderLocal(t, localScopeSample("symbol", false))
+	if !strings.Contains(wide, "Test scope:      included") {
+		t.Errorf("an unnarrowed answer does not state its scope:\n%s", wide)
+	}
+	if !strings.Contains(wide, "example.com/testonly@v2.0.0") || !strings.Contains(wide, "[test]") {
+		t.Errorf("the test-scope user is not present and tagged:\n%s", wide)
+	}
+	if strings.Contains(wide, "example.com/prod@v1.0.0  (1 package(s), 1 symbol(s))  [test]") {
+		t.Errorf("a production dependency was tagged [test]:\n%s", wide)
+	}
+
+	narrow := renderLocal(t, localScopeSample("symbol", true))
+	if !strings.Contains(narrow, "Test scope:      excluded") ||
+		!strings.Contains(narrow, "--exclude-tests was given") {
+		t.Errorf("a narrowed answer does not state the narrowing:\n%s", narrow)
+	}
+	if strings.Contains(narrow, "example.com/testonly") {
+		t.Errorf("a test-scope user survived the narrowing:\n%s", narrow)
+	}
+}
+
+// The narrowing is stated even when the tree had no test-scope user to drop:
+// that answer is otherwise byte-identical to the unnarrowed one.
+func TestPrintLocalContextText_StatesTheNarrowingWhenNothingWasDropped(t *testing.T) {
+	out := localScopeSample("import", true)
+	got := renderLocal(t, out)
+	if !strings.Contains(got, "Test scope:      excluded") {
+		t.Errorf("the narrowing is unstated when nothing was dropped:\n%s", got)
+	}
+	if !strings.Contains(got, "Dependencies:    1 module(s) imported") {
+		t.Errorf("unexpected dependency line:\n%s", got)
+	}
+}
+
+// The count line names what was counted. Symbol level counts references, and a
+// blank import is imported while referencing nothing — the word "imported"
+// there describes a set the answer deliberately excludes.
+func TestPrintLocalContextText_CountVerbMatchesTheAnalysisLevel(t *testing.T) {
+	symbol := renderLocal(t, localScopeSample("symbol", false))
+	if !strings.Contains(symbol, "Dependencies:    2 module(s) referenced") {
+		t.Errorf("symbol level does not count references:\n%s", symbol)
+	}
+	if strings.Contains(symbol, "module(s) imported") {
+		t.Errorf("symbol level still claims \"imported\":\n%s", symbol)
+	}
+	imports := renderLocal(t, localScopeSample("import", false))
+	if !strings.Contains(imports, "Dependencies:    2 module(s) imported") {
+		t.Errorf("import level does not count imports:\n%s", imports)
+	}
+}
+
+// Both derived scope fields are emitted at their zero. An absent key reads as
+// "not measured", which is a different fact from "tests were included" and
+// "production code reaches this module".
+func TestLocalContextJSON_ScopeFieldsAreEmittedAtFalse(t *testing.T) {
+	out := localScopeSample("symbol", false)
+	ws := sectionKeys(t, out.Workspace)
+	if v := requireKey(t, ws, "tests_excluded",
+		"an absent scope leaves the reader unable to tell a wide answer from a narrowed one"); v != false {
+		t.Errorf("tests_excluded = %v, want false", v)
+	}
+	dep := sectionKeys(t, out.Dependencies[0])
+	if v := requireKey(t, dep, "test_only",
+		"an absent tag reads as unmeasured, not as reached by production code"); v != false {
+		t.Errorf("test_only = %v, want false", v)
+	}
+	tagged := sectionKeys(t, out.Dependencies[1])
+	if v := requireKey(t, tagged, "test_only", "the tag is the machine-readable half of [test]"); v != true {
+		t.Errorf("test_only = %v, want true", v)
+	}
+}

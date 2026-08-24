@@ -149,7 +149,7 @@ Kanonarion is designed to be called directly from agent tool-use. The recommende
 | "What does function F call?"               | `callees '<fully.qualified.Symbol>'` |
 | "What calls function F?" / impact analysis | `callers '<fully.qualified.Symbol>'` |
 | "Which types implement this interface?" / port-change scoping | `implementers '<pkg/path.Interface>'` |
-| Scope an answer to production code only    | add `--exclude-tests` to any of the three |
+| Scope an answer to production code only    | add `--exclude-tests` to any of the three, or to `context <dir>` |
 | Make those queries resolve my own project's symbols | `local <dir>` |
 | Dependency upgraded - what changed?        | `walk-diff <old-id> <new-id>` |
 | "Is there a newer version of X?"           | `latest <module>` |

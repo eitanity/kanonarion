@@ -185,6 +185,9 @@ func contextLocalOnlyFlags(f contextFlags) []inapplicableFlag {
 	if f.reachability {
 		out = append(out, inapplicableFlag{flag: "--reachability", where: where})
 	}
+	if f.excludeTests {
+		out = append(out, inapplicableFlag{flag: "--" + testScopeFlagName, where: where})
+	}
 	return out
 }
 

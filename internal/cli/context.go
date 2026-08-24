@@ -31,6 +31,7 @@ type contextFlags struct {
 	modulesFile     string
 	symbol          bool // local workspace: enable symbol-level analysis
 	reachability    bool // local workspace: build probe binary and check CVE symbol presence
+	excludeTests    bool // local workspace: narrow the answer to production-scope dependency users
 	// compactSet records whether the caller typed --compact. The flag defaults
 	// to true, so its value alone cannot distinguish "asked for compact" from
 	// "did not ask"; a path that has to refuse the flag needs the difference.
@@ -350,7 +351,7 @@ func newContextCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f contextFlags
 
 	cmd := &cobra.Command{
-		Use:   "context [<module>@<version>]",
+		Use:   "context [<module>@<version> | <dir>]",
 		Short: "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
 		Long: `Aggregate all stored records for a module — verification, dependencies,
 license, interface, call graph, examples, vulnerabilities — into AI-ready
@@ -363,7 +364,8 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 		Example: `  kanonarion context golang.org/x/mod@v0.35.0
   kanonarion context --walk-id <id> --stream
   kanonarion context
-  kanonarion context --gomod ./go.mod --json`,
+  kanonarion context --gomod ./go.mod --json
+  kanonarion context . --symbol --exclude-tests`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.compactSet = cmd.Flags().Changed("compact")
@@ -418,6 +420,7 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 	cmd.Flags().StringVar(&f.modulesFile, "modules", "", "with --walk-id: emit context only for module coordinates listed in this file (newline-delimited)")
 	cmd.Flags().BoolVar(&f.symbol, "symbol", false, "with a local path: enable symbol-level analysis (go/packages type-check, ~2-5s)")
 	cmd.Flags().BoolVar(&f.reachability, "reachability", false, "with a local path: probe the binary for CVE-affected symbols (~30s)")
+	cmd.Flags().BoolVar(&f.excludeTests, testScopeFlagName, false, "with a local path: omit dependency users declared in _test.go files and external test packages")
 
 	return cmd
 }

@@ -34,6 +34,66 @@ type ImportedModule struct {
 	// from this module that are referenced in the workspace. Sorted. Nil
 	// unless the analysis level is AnalysisLevelSymbol or higher.
 	UsedSymbols []string
+	// TestOnlyPackages is the subset of ImportedPackages that no production
+	// file reaches — only _test.go files and external test packages do. Sorted.
+	TestOnlyPackages []string
+	// TestOnlySymbols is the subset of UsedSymbols that only test-scope code
+	// references. Sorted.
+	TestOnlySymbols []string
+}
+
+// TestOnly reports that every use this module was recorded for is test scope.
+// Symbols decide it when the analysis measured any, because that is what the
+// module's presence was decided on at that level; otherwise packages do.
+func (m ImportedModule) TestOnly() bool {
+	if len(m.UsedSymbols) > 0 {
+		return len(m.TestOnlySymbols) == len(m.UsedSymbols)
+	}
+	return len(m.ImportedPackages) > 0 && len(m.TestOnlyPackages) == len(m.ImportedPackages)
+}
+
+// ExcludeTestScope returns mods narrowed to production scope: every package and
+// symbol only test code reaches is removed, and a module left with nothing is
+// dropped. Input order is preserved and the input is not modified.
+//
+// It narrows an answer already measured wide, so the result is always a subset
+// of it — the flag cannot become a second route that measures something else.
+func ExcludeTestScope(mods []ImportedModule) []ImportedModule {
+	out := make([]ImportedModule, 0, len(mods))
+	for _, m := range mods {
+		pkgs := subtract(m.ImportedPackages, m.TestOnlyPackages)
+		syms := subtract(m.UsedSymbols, m.TestOnlySymbols)
+		if len(pkgs) == 0 && len(syms) == 0 {
+			continue
+		}
+		m.ImportedPackages = pkgs
+		m.UsedSymbols = syms
+		m.TestOnlyPackages = nil
+		m.TestOnlySymbols = nil
+		out = append(out, m)
+	}
+	return out
+}
+
+// subtract returns the elements of all that are not in drop, order preserved.
+func subtract(all, drop []string) []string {
+	if len(drop) == 0 {
+		return all
+	}
+	dropped := make(map[string]struct{}, len(drop))
+	for _, d := range drop {
+		dropped[d] = struct{}{}
+	}
+	kept := make([]string, 0, len(all))
+	for _, a := range all {
+		if _, isDropped := dropped[a]; !isDropped {
+			kept = append(kept, a)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 // LocalContext is the result of a local workspace analysis run.
@@ -49,6 +109,10 @@ type LocalContext struct {
 	AnalysisLevel AnalysisLevel
 	// Modules contains one entry per imported dependency module, sorted by path.
 	Modules []ImportedModule
+	// TestsExcluded records that Modules was narrowed to production scope at the
+	// caller's request. It is carried rather than inferred: an unnarrowed tree
+	// with no test-only users renders identically to a narrowed one.
+	TestsExcluded bool
 }
 
 // SortModules sorts mods in place by Path for deterministic output.
