@@ -106,6 +106,7 @@ func newConfigGetCmd(stdout io.Writer) *cobra.Command {
 		Example: `  kanonarion config get preferences.json
   kanonarion config get preferences.log_level
   kanonarion config get license_policy.categories.permissive
+  kanonarion config get copyright_declarations
   kanonarion config get callgraph.exclude
   kanonarion config get staleness.ttl`,
 		// Exempt from the rejected-config refusal: it reports a single value in
@@ -161,6 +162,15 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 			return "", &exitError{code: ExitConfig, msg: fmt.Sprintf("no license override for %q", module)}
 		}
 		return val, nil
+	case key == "copyright_declarations":
+		return marshalConfigYAML(cfg.CopyrightDeclarations)
+	case strings.HasPrefix(key, "copyright_declarations."):
+		module := strings.TrimPrefix(key, "copyright_declarations.")
+		d, ok := cfg.CopyrightDeclarations[module]
+		if !ok {
+			return "", &exitError{code: ExitConfig, msg: fmt.Sprintf("no copyright declaration for %q", module)}
+		}
+		return marshalConfigYAML(d)
 	case key == "callgraph.exclude":
 		return marshalConfigYAML(cfg.Callgraph.Exclude)
 	case key == "staleness.ttl":

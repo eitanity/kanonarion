@@ -53,6 +53,12 @@ license_policy:
       unknown_license: warn
 license_overrides:
   # golang.org/x/mod: MIT
+copyright_declarations:
+  # example.com/mod:
+  #   copyright: "Copyright 2019 Example Authors"
+  #   declared_by: "you@example.com"
+  #   declared_on: "2026-01-31"
+  #   basis: "LICENSE header at example.com/mod v1.2.3, read 2026-01-31"
 callgraph:
   exclude: []
 ```

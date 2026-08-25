@@ -30,6 +30,26 @@ governance posture (`DefaultConfig`), and an unset outcome resolves to an
 implicit allow. To adopt v2 explicitly, set `version: "2"` and add any blocks
 you wish to override.
 
+### Additive within v2 - `copyright_declarations`
+
+**Additive, backward-compatible, no version bump.** `config.yaml` gains an
+optional top-level `copyright_declarations` section: per module path (optionally
+`path@version`), the copyright line a human read upstream, who declared it, when,
+and the basis they cite. It exists so `notice` can publish an attribution
+document for a module whose archive carries no copyright statement.
+
+All four fields (`copyright`, `declared_by`, `declared_on`, `basis`) are
+required; an incomplete entry is refused at config load, naming the coordinate.
+`declared_on` is an ISO 8601 date.
+
+Migration for existing configs: **none required.** An absent section resolves to
+no declarations and every existing refusal and document is unchanged.
+
+`store config show --json` gains a matching `copyright_declarations` object under
+the same additive rule (consumers ignore unknown fields). No store table and no
+store migration: a human-supplied copyright is an operator assertion, not a
+measurement, so it lives in configuration rather than in the measurement ledger.
+
 ## JSON output sections
 
 The following top-level `--json` sections are introduced **additively** by the

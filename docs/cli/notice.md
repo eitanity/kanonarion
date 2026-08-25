@@ -6,7 +6,10 @@ SPDX identifier, verbatim copyright notices, and verbatim licence text.
 
 Modules with an ambiguous or multiple licence status, or with no copyright
 notice, are reported on stderr and cause a non-zero exit - they require human
-review before the document can be published.
+review before the document can be published. Where a module genuinely carries no
+copyright statement, record the one you read upstream as a
+`copyright_declarations` entry; see
+[Recording a copyright a human read](#recording-a-copyright-a-human-read).
 
 The document also covers third-party code **copied into first-party source**,
 which has no `go.mod` entry and so is invisible to module licence extraction.
@@ -372,12 +375,71 @@ diagnostic to stderr and exits non-zero:
 notice: 2 module(s) require human review before publishing:
 
   example.com/foo@v1.0.0: ambiguous licence (Apache-2.0 / MIT)
-  example.com/bar@v2.0.0: no copyright notice found
+  example.com/bar@v2.0.0: copyright not found (status: none_found)
 ```
 
 Resolve by checking the module manually and either:
 - Adding a licence override in `config.yaml` (for ambiguous identifications), or
-- Filing an issue with the upstream project to add a copyright notice.
+- Recording the copyright you read upstream as a `copyright_declarations` entry
+  (for a missing copyright notice), and filing an issue with the upstream
+  project to add one.
+
+When a missing copyright is among the reasons, the refusal prints the
+`copyright_declarations` block to fill in, keyed to the first module that needs
+it. It is not printed for any other refusal: recording a copyright settles
+nothing for an ambiguous licence.
+
+A missing **licence** is a different gate. `no license found` means the module
+carries no grant kanonarion could identify, and no copyright declaration
+resolves it - a copyright line is an attribution, not a grant.
+
+## Recording a copyright a human read
+
+Some modules ship no copyright statement anywhere extraction can reach it. For
+those, record what you read in the upstream repository in
+`<store-root>/config.yaml`:
+
+```yaml
+copyright_declarations:
+  github.com/example/mod:
+    copyright: "Copyright 2019 Example Authors"
+    declared_by: "you@example.com"
+    declared_on: "2026-01-31"
+    basis: "LICENSE header at github.com/example/mod v1.2.3, read 2026-01-31"
+```
+
+The key may be pinned to a version (`github.com/example/mod@v1.2.3`), which
+wins over a module-level entry. All four fields are required; an incomplete
+entry is refused when the config loads, naming the coordinate. See
+[`config`](config.md#copyright_declarations---copyright-a-human-read-upstream).
+
+The module is then attributed, and the document says the line is an assertion
+rather than a measurement:
+
+```
+================================================================================
+Module:  github.com/example/mod@v1.2.3
+License: Apache-2.0
+
+Copyright notices (human-supplied; none found in the module):
+  Copyright 2019 Example Authors
+    declared by you@example.com on 2026-01-31
+    basis: LICENSE header at github.com/example/mod v1.2.3, read 2026-01-31
+```
+
+**An extracted notice always wins.** Recording a declaration for a module whose
+archive does carry a copyright does not change what is attributed; the extracted
+lines stay, and the declaration is printed below them as corroboration:
+
+```
+Copyright notices:
+  Copyright 2020 The Example Authors
+
+Human-supplied copyright (corroboration; the extracted notice above is authoritative):
+  Copyright 2019 Example Authors
+    declared by you@example.com on 2026-01-31
+    basis: LICENSE header at github.com/example/mod v1.2.3, read 2026-01-31
+```
 
 ## Copyright extraction
 

@@ -1,7 +1,11 @@
 // Package domain contains the core types for the config bounded context.
 package domain
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // SupportedSchemaVersion is the config schema version this implementation
 // produces and consumes.
@@ -62,8 +66,13 @@ type Config struct {
 	Preferences      Preferences
 	LicensePolicy    LicensePolicy
 	LicenseOverrides map[string]string // module path → SPDX license expression
-	Callgraph        CallgraphConfig
-	Staleness        StalenessConfig
+	// CopyrightDeclarations records, per module path (optionally @version), a
+	// copyright line a human read upstream for a module whose archive carries
+	// none. It is an operator assertion, not a measurement, which is why it
+	// lives here beside license_overrides rather than in the store.
+	CopyrightDeclarations map[string]CopyrightDeclaration
+	Callgraph             CallgraphConfig
+	Staleness             StalenessConfig
 
 	// Unified supply-chain governance policy. Each block is a
 	// top-level config section; rules are wired by the gap tickets
@@ -92,6 +101,55 @@ type FetchPolicy struct {
 	AllowedVCSHosts []string
 }
 
+// CopyrightDeclaration is one operator-recorded copyright line for a module
+// the copyright extractor found nothing in.
+//
+// Every field is required. An SPDX identifier is self-evidencing — a reviewer
+// checks it against the licence text — but a copyright line is an assertion
+// about what a person read somewhere, and without an author, a date and a cited
+// basis it cannot be checked by anyone. A partial entry is refused at load
+// rather than carried into an attribution document that cannot be audited.
+//
+// The yaml tags are for `config get`, which marshals the loaded value straight
+// back out: without them the output spells keys as Go field names and is not
+// valid config to paste back into the file.
+type CopyrightDeclaration struct {
+	// Copyright is the verbatim line to attribute, exactly as it reads upstream.
+	Copyright string `yaml:"copyright"`
+	// DeclaredBy names the person accountable for the assertion.
+	DeclaredBy string `yaml:"declared_by"`
+	// DeclaredOn is the date they read the basis, as an ISO 8601 date.
+	DeclaredOn string `yaml:"declared_on"`
+	// Basis cites what they read: the upstream file, commit or repository page.
+	Basis string `yaml:"basis"`
+}
+
+// declarationDateLayout is the only accepted DeclaredOn form. A free-text date
+// ("last week", "2024") cannot be compared against a module version's release,
+// which is the one thing a reviewer wants to do with it.
+const declarationDateLayout = "2006-01-02"
+
+// Validate reports why a declaration cannot be used. The caller prefixes the
+// coordinate, so the message names which entry is at fault.
+func (d CopyrightDeclaration) Validate() error {
+	for _, f := range []struct {
+		name, value string
+	}{
+		{"copyright", d.Copyright},
+		{"declared_by", d.DeclaredBy},
+		{"declared_on", d.DeclaredOn},
+		{"basis", d.Basis},
+	} {
+		if strings.TrimSpace(f.value) == "" {
+			return fmt.Errorf("%s is required: a copyright a human supplied is only auditable with the line, who declared it, when, and the basis they cite", f.name)
+		}
+	}
+	if _, err := time.Parse(declarationDateLayout, d.DeclaredOn); err != nil {
+		return fmt.Errorf("declared_on %q: must be an ISO 8601 date (YYYY-MM-DD)", d.DeclaredOn)
+	}
+	return nil
+}
+
 // Preferences holds sticky per-user output preferences.
 type Preferences struct {
 	JSON     bool
@@ -115,15 +173,19 @@ type LicensePolicy struct {
 // A scope with no rule at all is different: the gate is unevaluated there and
 // EvaluateLicense reports it as blocking, never as an implicit allow.
 type LicensePolicyRule struct {
-	Scope   string        // "production" | "tool" | "test"
-	Allow   []string      // category names with outcome allow
-	Notify  []string      // category names with outcome notify
-	Warn    []string      // category names with outcome warn
-	Default PolicyOutcome // outcome for categories not listed above; "" → allow
+	Scope   string        `yaml:"scope"`   // "production" | "tool" | "test"
+	Allow   []string      `yaml:"allow"`   // category names with outcome allow
+	Notify  []string      `yaml:"notify"`  // category names with outcome notify
+	Warn    []string      `yaml:"warn"`    // category names with outcome warn
+	Default PolicyOutcome `yaml:"default"` // outcome for categories not listed above; "" → allow
 	// UnknownLicense governs *undetermined* licenses (no resolvable SPDX)
 	// for this scope. Empty resolves to a scope default: "block" for
 	// production, "warn" for any other scope (see DefaultUnknownLicense).
-	UnknownLicense UnknownLicensePolicy
+	//
+	// Tagged because `config get license_policy.rules` marshals this struct
+	// back out, and the untagged Go name ("unknownlicense") is not the config
+	// key an operator would paste back into the file.
+	UnknownLicense UnknownLicensePolicy `yaml:"unknown_license"`
 }
 
 // DefaultUnknownLicense is the fallback UnknownLicensePolicy for a scope
@@ -221,7 +283,8 @@ func DefaultConfig() Config {
 				},
 			},
 		},
-		LicenseOverrides: map[string]string{},
+		LicenseOverrides:      map[string]string{},
+		CopyrightDeclarations: map[string]CopyrightDeclaration{},
 		Callgraph: CallgraphConfig{
 			Exclude: []string{},
 		},

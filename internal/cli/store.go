@@ -14,6 +14,7 @@ import (
 
 	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/composition"
+	"github.com/eitanity/kanonarion/internal/config/domain"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
@@ -136,12 +137,17 @@ type configShowResult struct {
 	// reading only the values cannot tell that from an operator who wrote them.
 	ConfigFile configFileResult `json:"config_file"`
 
-	Version          string                `json:"version"`
-	Preferences      configPrefsResult     `json:"preferences"`
-	LicensePolicy    configPolicyResult    `json:"license_policy"`
-	LicenseOverrides map[string]string     `json:"license_overrides"`
-	Callgraph        configCGResult        `json:"callgraph"`
-	Staleness        configStalenessResult `json:"staleness"`
+	Version          string             `json:"version"`
+	Preferences      configPrefsResult  `json:"preferences"`
+	LicensePolicy    configPolicyResult `json:"license_policy"`
+	LicenseOverrides map[string]string  `json:"license_overrides"`
+	// CopyrightDeclarations is the operator's recorded copyright lines, keyed by
+	// module path (optionally @version). Surfaced here because an attribution
+	// document built with one is only auditable if the assertion behind it is
+	// readable from the effective configuration.
+	CopyrightDeclarations map[string]configCopyrightResult `json:"copyright_declarations"`
+	Callgraph             configCGResult                   `json:"callgraph"`
+	Staleness             configStalenessResult            `json:"staleness"`
 
 	// Unified supply-chain governance blocks (schema v2). Surfaced
 	// in the effective-config view so the schema bump and the resolved
@@ -152,6 +158,35 @@ type configShowResult struct {
 	VendorPolicy    configVendorResult    `json:"vendor_policy"`
 	FIPSPolicy      configFIPSResult      `json:"fips_policy"`
 	FetchPolicy     configFetchResult     `json:"fetch_policy"`
+}
+
+// configCopyrightResult is one operator-recorded copyright in the effective
+// configuration view. It names the whole assertion, not just the line: a
+// copyright a person supplied is checkable only through who supplied it, when,
+// and what they read.
+type configCopyrightResult struct {
+	Copyright  string `json:"copyright"`
+	DeclaredBy string `json:"declared_by"`
+	DeclaredOn string `json:"declared_on"`
+	Basis      string `json:"basis"`
+}
+
+// copyrightDeclarationsResult maps the loaded declarations to the view. A nil
+// map stays nil so the JSON reports absence rather than an empty object.
+func copyrightDeclarationsResult(in map[string]domain.CopyrightDeclaration) map[string]configCopyrightResult {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]configCopyrightResult, len(in))
+	for k, d := range in {
+		out[k] = configCopyrightResult{
+			Copyright:  d.Copyright,
+			DeclaredBy: d.DeclaredBy,
+			DeclaredOn: d.DeclaredOn,
+			Basis:      d.Basis,
+		}
+	}
+	return out
 }
 
 // configFetchResult reports the resolved cross-verification posture.
@@ -303,8 +338,9 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				Categories: cfg.LicensePolicy.Categories,
 				Rules:      rules,
 			},
-			LicenseOverrides: cfg.LicenseOverrides,
-			Callgraph:        configCGResult{Exclude: cfg.Callgraph.Exclude},
+			LicenseOverrides:      cfg.LicenseOverrides,
+			CopyrightDeclarations: copyrightDeclarationsResult(cfg.CopyrightDeclarations),
+			Callgraph:             configCGResult{Exclude: cfg.Callgraph.Exclude},
 			Staleness: configStalenessResult{
 				TTL:              cfg.Staleness.TTL.String(),
 				ProbeConcurrency: cfg.Staleness.ProbeConcurrency,

@@ -460,9 +460,14 @@ func (f *FakeDiffInterface) Diff(_ context.Context, _, _ coordinate.ModuleCoordi
 type FakeGenerateNotice struct {
 	Result licapp.NoticeResult
 	Err    error
+	// LastRequest records what the caller asked for, so a test can assert on
+	// inputs the fake result cannot reflect — the operator's recorded copyright
+	// declarations among them.
+	LastRequest licapp.NoticeRequest
 }
 
-func (f *FakeGenerateNotice) Generate(_ context.Context, _ licapp.NoticeRequest) (licapp.NoticeResult, error) {
+func (f *FakeGenerateNotice) Generate(_ context.Context, req licapp.NoticeRequest) (licapp.NoticeResult, error) {
+	f.LastRequest = req
 	return f.Result, f.Err
 }
 

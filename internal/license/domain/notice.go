@@ -35,10 +35,26 @@ type NoticeEntry struct {
 	// module governed by more than one grant, and the document is read by a
 	// person building an obligations list. It is set only where it says
 	// something SPDX does not; see writeNoticeDocument.
-	Expression         string
-	LicenseTexts       []NoticeLicenseFile       // root-level non-vendored license files, sorted by Path
-	Copyrights         []string                  // verbatim copyright statements, deduped, sorted
+	Expression   string
+	LicenseTexts []NoticeLicenseFile // root-level non-vendored license files, sorted by Path
+	Copyrights   []string            // verbatim copyright statements, deduped, sorted
+	// Declaration is the operator's recorded copyright for this module, when
+	// one is configured; nil otherwise. It is carried alongside Copyrights, not
+	// merged into it, because the document must be able to say which lines were
+	// measured from the archive and which a person asserted.
+	Declaration        *CopyrightDeclaration
 	EmbeddedComponents []NoticeEmbeddedComponent // vendored/embedded third-party components
+}
+
+// DeclarationAttributes reports whether the recorded declaration is what this
+// entry attributes, as opposed to corroborating an extracted notice.
+//
+// The test is on the extracted lines that actually reached the entry, not on the
+// record's copyright status: an extracted line present is the measurement, and a
+// measurement always wins. Only where extraction yielded nothing does the
+// operator's assertion become the attribution.
+func (e NoticeEntry) DeclarationAttributes() bool {
+	return e.Declaration != nil && len(e.Copyrights) == 0
 }
 
 // NoticeLicenseFile holds one license file's attribution, and says what the
@@ -101,6 +117,12 @@ type NoticeEmbeddedComponent struct {
 type ReviewItem struct {
 	Coordinate coordinate.ModuleCoordinate
 	Reason     string
+	// MissingCopyright is true when the module was held back solely because no
+	// copyright notice could be extracted — the one review class an operator can
+	// clear by recording what they read upstream. Carried as a field rather than
+	// recovered by matching Reason, so the remedy the caller prints is keyed to
+	// the gate that fired.
+	MissingCopyright bool
 }
 
 // EffectiveSource returns the entry's source, treating the empty zero value as

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -48,8 +49,12 @@ type configYAML struct {
 	Preferences      preferencesYAML   `yaml:"preferences"`
 	LicensePolicy    licensePolicyYAML `yaml:"license_policy"`
 	LicenseOverrides map[string]string `yaml:"license_overrides"`
-	Callgraph        callgraphYAML     `yaml:"callgraph"`
-	Staleness        *stalenessYAML    `yaml:"staleness"`
+	// CopyrightDeclarations is a map so an entry is addressed by coordinate,
+	// and a struct value rather than a string because the line alone is not
+	// auditable. Every field is required; see parseCopyrightDeclarations.
+	CopyrightDeclarations map[string]copyrightDeclarationYAML `yaml:"copyright_declarations"`
+	Callgraph             callgraphYAML                       `yaml:"callgraph"`
+	Staleness             *stalenessYAML                      `yaml:"staleness"`
 
 	// Unified supply-chain governance blocks (schema v2). Absent
 	// blocks fall back to DefaultConfig so v1 files load unchanged.
@@ -58,6 +63,14 @@ type configYAML struct {
 	VendorPolicy    *vendorPolicyYAML    `yaml:"vendor_policy"`
 	FIPSPolicy      *fipsPolicyYAML      `yaml:"fips_policy"`
 	FetchPolicy     *fetchPolicyYAML     `yaml:"fetch_policy"`
+}
+
+// copyrightDeclarationYAML is the wire form of one operator-recorded copyright.
+type copyrightDeclarationYAML struct {
+	Copyright  string `yaml:"copyright"`
+	DeclaredBy string `yaml:"declared_by"`
+	DeclaredOn string `yaml:"declared_on"`
+	Basis      string `yaml:"basis"`
 }
 
 // fetchPolicyYAML is a pointer in configYAML and its list is left nil when
@@ -183,6 +196,32 @@ func parseStalenessTTL(s string) (time.Duration, error) {
 	return d, nil
 }
 
+// parseCopyrightDeclarations converts and validates the copyright_declarations
+// block. Validation happens here, at load, rather than at first use: an entry
+// missing its author or its basis is an unfinished edit, and discovering that
+// halfway through a notice run leaves the operator with a refusal that names
+// the module rather than the config line that is wrong.
+func parseCopyrightDeclarations(in map[string]copyrightDeclarationYAML) (map[string]domain.CopyrightDeclaration, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]domain.CopyrightDeclaration, len(in))
+	for _, key := range slices.Sorted(maps.Keys(in)) {
+		y := in[key]
+		d := domain.CopyrightDeclaration{
+			Copyright:  y.Copyright,
+			DeclaredBy: y.DeclaredBy,
+			DeclaredOn: y.DeclaredOn,
+			Basis:      y.Basis,
+		}
+		if err := d.Validate(); err != nil {
+			return nil, fmt.Errorf("copyright_declarations.%s: %w", key, err)
+		}
+		out[key] = d
+	}
+	return out, nil
+}
+
 // Parse parses YAML config bytes into a Config. Exported so callers can
 // validate config content without a filesystem path.
 func Parse(data []byte) (domain.Config, error) {
@@ -218,6 +257,12 @@ func Parse(data []byte) (domain.Config, error) {
 		Staleness: defaults.Staleness,
 	}
 
+	decls, err := parseCopyrightDeclarations(y.CopyrightDeclarations)
+	if err != nil {
+		return domain.Config{}, err
+	}
+	cfg.CopyrightDeclarations = decls
+
 	if y.Staleness != nil {
 		ttl, err := parseStalenessTTL(y.Staleness.TTL)
 		if err != nil {
@@ -243,6 +288,9 @@ func Parse(data []byte) (domain.Config, error) {
 	}
 	if cfg.LicenseOverrides == nil {
 		cfg.LicenseOverrides = defaults.LicenseOverrides
+	}
+	if cfg.CopyrightDeclarations == nil {
+		cfg.CopyrightDeclarations = defaults.CopyrightDeclarations
 	}
 	if cfg.Callgraph.Exclude == nil {
 		cfg.Callgraph.Exclude = defaults.Callgraph.Exclude

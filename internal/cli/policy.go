@@ -63,6 +63,7 @@ func runPolicyValidate(ctx context.Context, path string, stdout io.Writer) error
 var governanceMarkers = []string{
 	"license_policy", "directive_policy", "godebug_policy",
 	"vendor_policy", "fips_policy", "preferences", "license_overrides",
+	"copyright_declarations",
 }
 
 func runPolicyValidateFile(path string, stdout io.Writer) error {

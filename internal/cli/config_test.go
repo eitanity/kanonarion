@@ -377,3 +377,41 @@ func TestSetYAMLNode_NewKey(t *testing.T) {
 		t.Errorf("yaml = %q, expected newkey: hello", out.String())
 	}
 }
+
+// TestConfigGetValue_YAMLKeysRoundTrip: what `config get` prints must be the
+// config file's own key spelling. It marshals the loaded domain value straight
+// back out, so an untagged Go field name reaches the operator as a key
+// ("declaredby", "unknownlicense") that the loader would then reject — output
+// that looks like the file and is not.
+func TestConfigGetValue_YAMLKeysRoundTrip(t *testing.T) {
+	cfg := configdomain.DefaultConfig()
+	cfg.CopyrightDeclarations = map[string]configdomain.CopyrightDeclaration{
+		"example.com/mod": {
+			Copyright:  "Copyright SYNTHETIC-FIXTURE-HOLDER",
+			DeclaredBy: "test-operator@example.invalid",
+			DeclaredOn: "2026-08-25",
+			Basis:      "synthetic fixture; no upstream source was read",
+		},
+	}
+
+	got, err := configGetValue(cfg, "copyright_declarations.example.com/mod")
+	if err != nil {
+		t.Fatalf("configGetValue: %v", err)
+	}
+	for _, want := range []string{"copyright:", "declared_by:", "declared_on:", "basis:"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("declaration output is missing the config key %q:\n%s", want, got)
+		}
+	}
+
+	rules, err := configGetValue(cfg, "license_policy.rules")
+	if err != nil {
+		t.Fatalf("configGetValue(rules): %v", err)
+	}
+	if !strings.Contains(rules, "unknown_license:") {
+		t.Errorf("rules output does not use the config key unknown_license:\n%s", rules)
+	}
+	if strings.Contains(rules, "unknownlicense:") {
+		t.Errorf("rules output spells the Go field name, not the config key:\n%s", rules)
+	}
+}
