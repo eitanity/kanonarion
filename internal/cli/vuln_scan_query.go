@@ -236,7 +236,7 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, ctr.QueryCallGraph, stdout, stderr)
+			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, ctr.QueryCallGraph, ctr.QueryWalks, stdout, stderr)
 		},
 	}
 
@@ -254,8 +254,15 @@ type scanAffectedModule struct {
 }
 
 type scanShowJSON struct {
-	ID               string                                 `json:"id"`
-	WalkID           string                                 `json:"walk_id"`
+	ID     string `json:"id"`
+	WalkID string `json:"walk_id"`
+	// Build is the platform and toolchain the walk this run scanned was resolved
+	// under. A run names its walk and the walk decides which standard library the
+	// answer is about, so a consumer reading a verdict off this document without
+	// it is reading a dated statement about a build it cannot identify. Every
+	// field is emitted, empty included: empty says the walk recorded no build
+	// environment, and that is not the same statement as the key being absent.
+	Build            walkBuildJSON                          `json:"build"`
 	Snapshot         vuldomain.DatabaseSnapshot             `json:"snapshot"`
 	PerModuleResults map[coordinate.ModuleCoordinate]string `json:"per_module_results"`
 	StartedAt        time.Time                              `json:"started_at"`
@@ -322,7 +329,7 @@ type scanShowSummary struct {
 	scanFailed  []scanRecordFault
 }
 
-func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout, stderr io.Writer) error {
+func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, graphs QueryCallGraphUseCase, walks QueryWalksUseCase, stdout, stderr io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
 	// vuln-scan-list names the rows it could not verify, and this is the command
 	// an operator runs next against one of those names. Refusing here would send
@@ -343,6 +350,13 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		return fmt.Errorf("getting scan run: %w", perr)
 	}
 
+	// The walk decides which standard library this run's verdicts are about, so
+	// the run states the build it was resolved in wherever it names the walk. A
+	// walk that cannot be read leaves the zero build, which says "not recorded" —
+	// the run's own answer stands either way, and inputs_unresolvable is where an
+	// unreadable walk is reported.
+	scannedWalk, walkReadable := storedWalkFor(ctx, walks, run.WalkID, walkPresent)
+
 	// The route root is derived for the JSON surface only. It is a read-time
 	// classification over the stored call graphs — never a computation, but a
 	// decode of one graph per module the routes start in — and this command's TEXT
@@ -361,6 +375,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		out := scanShowJSON{
 			ID:               run.ID,
 			WalkID:           run.WalkID,
+			Build:            walkBuildOf(scannedWalk),
 			Snapshot:         run.Snapshot,
 			PerModuleResults: run.PerModuleResults,
 			StartedAt:        run.StartedAt,
@@ -419,6 +434,16 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		}
 		_, _ = fmt.Fprintf(stdout, "%s\n", line)
 	}
+	// The build the walk was resolved in, and the reachability split over the
+	// findings below, are both whole-run statements: they belong beside Status,
+	// ahead of the per-module detail a reader drops into afterwards. The build
+	// block is skipped only when there is no walk to describe.
+	if walkReadable {
+		if berr := writeWalkBuild(stdout, scannedWalk, readerWalkToolchain(ctx, scannedWalk)); berr != nil {
+			return berr
+		}
+	}
+	writeScanReachabilitySplit(stdout, reachabilitySplitOf(affected))
 	// The two ways a counted module produces no line above: a store read error
 	// (a fault) and a record that was never persisted (a coverage gap). Each gets
 	// its own heading in the unscannableRollup section shape rather than a silent

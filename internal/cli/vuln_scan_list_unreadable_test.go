@@ -191,7 +191,7 @@ func TestRunScanShow_ReportsTheUnreadableRunItWasAskedFor(t *testing.T) {
 	fake.GetErr = driftedRuns("vscan-bad")
 
 	var out bytes.Buffer
-	if err := runScanShow(t.Context(), "vscan-bad", false, fake, nil, nil, &out, io.Discard); err != nil {
+	if err := runScanShow(t.Context(), "vscan-bad", false, fake, nil, nil, nil, &out, io.Discard); err != nil {
 		t.Fatalf("runScanShow() = %v, want nil — an inspection command names the fault and exits 0", err)
 	}
 	got := out.String()
@@ -212,7 +212,7 @@ func TestRunScanShow_JSONNamesTheRun(t *testing.T) {
 	fake.GetErr = driftedRuns("")
 
 	var out bytes.Buffer
-	if err := runScanShow(t.Context(), "vscan-bad", true, fake, nil, nil, &out, io.Discard); err != nil {
+	if err := runScanShow(t.Context(), "vscan-bad", true, fake, nil, nil, nil, &out, io.Discard); err != nil {
 		t.Fatalf("runScanShow(--json) = %v, want nil", err)
 	}
 	var got struct {
@@ -237,14 +237,14 @@ func TestRunScanShow_OtherFailuresStillAbort(t *testing.T) {
 		fake := testfakes.NewFakeQueryScanRuns()
 		fake.GetErr = errors.New("database is locked")
 		var out bytes.Buffer
-		if err := runScanShow(t.Context(), "vscan-x", false, fake, nil, nil, &out, io.Discard); err == nil {
+		if err := runScanShow(t.Context(), "vscan-x", false, fake, nil, nil, nil, &out, io.Discard); err == nil {
 			t.Errorf("runScanShow() = nil, want the database failure to abort")
 		}
 	})
 	t.Run("not found", func(t *testing.T) {
 		fake := testfakes.NewFakeQueryScanRuns()
 		var out bytes.Buffer
-		if err := runScanShow(t.Context(), "vscan-absent", false, fake, nil, nil, &out, io.Discard); err == nil {
+		if err := runScanShow(t.Context(), "vscan-absent", false, fake, nil, nil, nil, &out, io.Discard); err == nil {
 			t.Errorf("runScanShow() = nil, want a missing run to still be reported missing")
 		}
 	})

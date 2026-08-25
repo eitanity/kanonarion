@@ -103,6 +103,25 @@ Print a single stored walk record by ID.
 kanonarion walk-show <walk-id> [--json]
 ```
 
+The text output states the build the walk was resolved in — its platform and the
+Go toolchain that compiled it — under a `build:` heading:
+
+```
+build:
+  linux/amd64 under go1.26.6
+```
+
+A walk that recorded no toolchain says so and never reports the reader's own; a
+walk rooted at a published coordinate is `not-platform-scoped`. Where the project
+the walk was taken from is still present and `go env GOVERSION` there no longer
+resolves the recorded toolchain, a second line names both versions. The
+comparison is against that project's directory, never the directory the reader
+happens to be standing in.
+
+`--json` is unchanged: it already carries the same fact at
+`.graph.build_env.{goos,goarch,go_version}`, and stdout there is the walk
+record's own sealed bytes.
+
 When the walk's target, or any module in its graph, resolved under pre-modules
 semantics, the output carries a caveat naming those coordinates — see
 [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).

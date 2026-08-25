@@ -12,6 +12,12 @@ Snapshot:    govulndb@v2026-02-14T00-00-00
 Advisories:  not recorded (this record predates the advisory count)
 Modules:     3
 Metadata-only — only the go.mod was fetched, not the module source: 1
+build:
+  not-platform-scoped under a toolchain that is not recorded
+Reachability of 1 finding(s):
+  reachable         1
+  not reachable     0 — a search ran at a fidelity that can support a negative and found no route
+  undecided         0 — a recorded negative no search stands behind; none of these is a clean negative
 
 Affected modules (1):
   example.com/mod@v1.2.0  GO-2026-0001  GO-2026-0002 (withdrawn 2026-02-10T00:00:00Z)

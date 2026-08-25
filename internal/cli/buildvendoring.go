@@ -88,3 +88,16 @@ func writeBuildVendoring(w io.Writer, v buildVendoring) error {
 	}
 	return nil
 }
+
+// buildJSON is the build a walk-scoped answer describes, in one object: the
+// platform and toolchain the walk resolved under, and whether the project it was
+// taken from compiles from a vendored tree.
+//
+// The two halves are one object because they answer one question — what build is
+// this answer about — and a reader who has to assemble them from two keys will
+// read one and not the other. Both are embedded so each half keeps its own
+// field names and its own reasons for them.
+type buildJSON struct {
+	buildVendoring
+	walkBuildJSON
+}

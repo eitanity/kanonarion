@@ -688,7 +688,53 @@ Completed:   2024-01-15T10:30:02Z
 Snapshot:    vuln.go.dev@20240115000000
 Advisories:  6027 in the snapshot scanned against
 Modules:     3
+build:
+  linux/amd64 under go1.26.6
+Reachability of 61 finding(s):
+  reachable        28
+  not reachable     0 — a search ran at a fidelity that can support a negative and found no route
+  undecided        33 — a recorded negative no search stands behind; none of these is a clean negative
+    inferred       31 — no search ran; the negative reads a source-fidelity analysis's silence
+    unsearchable    2 — the advisory names no symbol for this module path, so no search was ever possible
 ```
+
+#### The build the run's verdicts are about
+
+`build:` names the platform and Go toolchain the walk this run scanned was
+resolved under — the toolchain that pins the `stdlib` node the run reported on.
+A walk that recorded none says so and never reports the reader's own. Where the
+project the walk was taken from is still present and `go env GOVERSION` there no
+longer resolves the recorded toolchain, a second line names both versions.
+`--json` carries the same fact as a `build` object of `goos`, `goarch` and
+`go_version`.
+
+#### The reachability split
+
+`Reachability of N finding(s)` is the run's findings in the three buckets a
+release decision turns on. It covers the findings in the affected modules;
+withdrawn advisories are excluded wherever they sit, matching the
+"not counted as findings" heading below.
+
+| Bucket | Meaning |
+|---|---|
+| `reachable` | A route exists. The route itself is in `--json` and in `vuln-show`. |
+| `not reachable` | A negative on the `confirmed` rung, and nothing else. This is the only clean negative. |
+| `undecided` | Every remaining negative, broken down by the rung it earned. |
+
+The undecided breakdown lists each rung the run holds, with what that rung means
+— see [soundness](reachability.md). `disputed` always gets its own line: it is a
+*contradicted* negative, where a search found the path the record denies, and it
+is never tallied beside `inferred`.
+
+The split is not derivable from `is_reachable` alone. A negative may be recorded
+with no search behind it, and counting negatives would report those as clean.
+A run with no findings prints no block at all. A complete scan whose findings are
+all undecided is not a pass: coverage and reachability are separate axes.
+
+Deriving the split costs the text path nothing — every field it reads is already
+on the findings — and it does not trigger the route-root classification the text
+path deliberately skips. Per-finding routes and roots stay in `--json` and in
+`vuln-show`.
 
 When the walk this run analysed is no longer in the store, the reference says so
 on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field:

@@ -113,7 +113,7 @@ func runVerificationCoverage(
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if encErr := enc.Encode(verificationCoverageJSON(rec.ID, coverage, rows, vendoring)); encErr != nil {
+		if encErr := enc.Encode(verificationCoverageJSON(rec.ID, coverage, rows, vendoring, walkBuildOf(rec))); encErr != nil {
 			return fmt.Errorf("encoding coverage: %w", encErr)
 		}
 		return nil
@@ -121,6 +121,13 @@ func runVerificationCoverage(
 
 	if _, werr := fmt.Fprintf(stdout, "walk %s\n", rec.ID); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
+	}
+	// Coverage is a statement about a graph, and which graph that is depends on
+	// the platform and toolchain the walk resolved: build constraints select the
+	// files that import the modules being counted, and the toolchain pins the
+	// stdlib node among them.
+	if berr := writeWalkBuild(stdout, rec, readerWalkToolchain(ctx, rec)); berr != nil {
+		return berr
 	}
 	if verr := writeBuildVendoring(stdout, vendoring); verr != nil {
 		return verr
@@ -219,12 +226,16 @@ type coverageJSON struct {
 
 	VCS coverageVCSJSON `json:"vcs"`
 
-	// Build states whether the project this walk was taken from compiles from a
-	// vendored tree — what the coverage figures are therefore about. Absent when
-	// the walk names no project directory, or names one that is no longer there:
-	// an unanswered question, which must not decode the same as a negative
-	// answer.
-	Build *buildVendoring `json:"build,omitempty"`
+	// Build is what the coverage figures are about: the platform and toolchain
+	// the walk was resolved under, and whether the project it was taken from
+	// compiles from a vendored tree.
+	//
+	// It is emitted on every document. An unanswered question is stated as one —
+	// vendoring_known is false where there was no project directory to look in,
+	// and the platform and toolchain are empty where the walk recorded none —
+	// which is a different statement from the key being absent, and neither may
+	// decode as a negative answer.
+	Build buildJSON `json:"build"`
 
 	// Modules is every node with its class and the reason recorded for it. It is
 	// always present on the JSON path — the classes without their reasons is
@@ -254,16 +265,13 @@ func verificationCoverageJSON(
 	c fetchdomain.VerificationCoverage,
 	rows []moduleVerification,
 	vendoring buildVendoring,
+	env walkBuildJSON,
 ) coverageJSON {
 	if rows == nil {
 		rows = []moduleVerification{}
 	}
-	var build *buildVendoring
-	if vendoring.Known {
-		build = &vendoring
-	}
 	return coverageJSON{
-		Build:           build,
+		Build:           buildJSON{buildVendoring: vendoring, walkBuildJSON: env},
 		Modules:         rows,
 		WalkID:          walkID,
 		Total:           c.Total,

@@ -1073,6 +1073,15 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 		}
 	}()
 
+	// A re-scan is what an operator reaches for when they want a DATED statement,
+	// and the date is the only thing it refreshes: the build stays the one the
+	// walk recorded. The pre-flight says so before the most expensive run the CLI
+	// offers, on the narration channel, so the answer is not read as being about
+	// the toolchain standing here now.
+	if berr := writeRescanBuildPreflight(ctx, stderr, ctr.QueryWalks, walkID); berr != nil {
+		return berr
+	}
+
 	req := application2.RescanRequest{
 		WalkID:             walkID,
 		EnableReachability: f.enableReachability,
