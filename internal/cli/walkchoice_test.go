@@ -603,3 +603,43 @@ func TestBuildDependencies_AnswersFromTheManifestMatchingWalk(t *testing.T) {
 		t.Errorf("count = %d, want the matching walk's %d direct nodes", got.Count, len(matching.Graph.Nodes))
 	}
 }
+
+// TestWalkChoice_StatesTheToolchainOnlyWhenTheCandidatesDisagree: the choice
+// between two walks that differ on the toolchain decides which standard library
+// the answer is about, so it is stated. Where every candidate was resolved by one
+// toolchain there is nothing to have chosen, and a line printed anyway is
+// boilerplate that teaches a reader to skip the notice.
+func TestWalkChoice_StatesTheToolchainOnlyWhenTheCandidatesDisagree(t *testing.T) {
+	local, err := coordinate.NewLocalCoordinate("example.com/myapp")
+	if err != nil {
+		t.Fatalf("local coordinate: %v", err)
+	}
+	summary := func(id, goVersion string) walkports.WalkSummary {
+		return walkports.WalkSummary{
+			ID: id, Target: local, Scope: walkdomain.WalkScopeCode,
+			OverallStatus: walkdomain.WalkSucceeded,
+			GOOS:          "linux", GOARCH: "amd64", GoVersion: goVersion,
+		}
+	}
+	qw := testfakes.NewFakeQueryWalks()
+
+	mixed := chooseWalk(context.Background(), qw,
+		[]walkports.WalkSummary{summary("walk-new", "go1.26.6"), summary("walk-old", "go1.26.5")}, "")
+	for _, want := range []string{"go1.26.5", "go1.26.6", "standard library"} {
+		if !strings.Contains(mixed.statement(), want) {
+			t.Errorf("the notice does not name %q:\n%s", want, mixed.statement())
+		}
+	}
+	if !strings.Contains(mixed.statementClause(), "go1.26.6") {
+		t.Errorf("the clause does not name the toolchain chosen: %s", mixed.statementClause())
+	}
+
+	uniform := chooseWalk(context.Background(), qw,
+		[]walkports.WalkSummary{summary("walk-a", "go1.26.6"), summary("walk-b", "go1.26.6")}, "")
+	if strings.Contains(uniform.statement(), "standard library") {
+		t.Errorf("a single-toolchain target got a toolchain note:\n%s", uniform.statement())
+	}
+	if strings.Contains(uniform.statementClause(), "standard library") {
+		t.Errorf("a single-toolchain target got a toolchain clause: %s", uniform.statementClause())
+	}
+}

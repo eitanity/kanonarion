@@ -87,21 +87,35 @@ Example policies are available in `docs/examples/policies/`.
 
 ## The build frame
 
-A walk records the `GOOS`/`GOARCH` it resolved for. One store can hold walks of
-the same project for several platforms — a cross-compiled release run produces
-one per target — and the two behave differently:
+A walk records the `GOOS`/`GOARCH` it resolved for **and the Go toolchain that
+resolved it** (`go env GOVERSION` in the project's own directory, after any
+`toolchain` directive or `GOTOOLCHAIN` switch). One store can hold walks of the
+same project for several platforms — a cross-compiled release run produces one
+per target — and for several toolchains, because which `go` leads `PATH` decides
+which one a walk records. The two kinds of command behave differently:
 
-**Commands that run analysis over a walk** select the walk resolved for the
-current environment's `go env GOOS`/`GOARCH`, not the newest one. This covers
-`vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan <module@version>`,
-and `sbom --package` without `--force`.
+**Commands that run analysis over a walk** select the walk resolved in the
+current environment — both the platform and the toolchain — not the newest one.
+This covers `vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan
+<module@version>`, and `sbom --package` without `--force`.
 
-`vuln-scan` refuses when no such walk exists, naming the platform and the
+The toolchain is part of the question because the walk names the standard
+library the project links, and the standard library is what toolchain advisories
+are judged against. Answering from a walk resolved by a different toolchain
+reports the advisories of a Go release the project does not compile with — and
+because a newer patch release clears advisories, the error runs towards a clean
+answer.
+
+`vuln-scan` refuses when no such walk exists, naming the build and the
 command that produces one:
 
 ```
-no succeeded code project walk for example.com/myapp on darwin/arm64 — run: kanonarion walk --gomod ./go.mod
+no succeeded code project walk for example.com/myapp on darwin/arm64 under go1.26.5 — run: kanonarion walk --gomod ./go.mod
 ```
+
+When the `go env` probe cannot answer, the toolchain is not pinned at all rather
+than pinned to "unrecorded": the read widens to any toolchain and names the one
+the walk it selected was resolved by.
 
 `sbom --package` builds the missing walk itself in the current frame rather
 than refusing.
@@ -123,6 +137,19 @@ A module-rooted walk resolves no platform and reads `not-platform-scoped`; an
 unknown platform reads `unrecorded`. JSON carries the token in `frame` /
 `walk_frame` and the basis (`platform`, `not_platform_scoped`, `unrecorded`)
 in `frame_basis` / `walk_frame_basis`.
+
+Where such a command chooses among walks that were **resolved by different
+toolchains**, it names the one it chose, because that choice decides which
+standard library the answer is about:
+
+```
+notice: no walk was named and the store holds 2 for this target, so one was chosen: walk "01M0RE94X8VJ8C0PT9Z3VJJQ0S" (frame linux/amd64), the most recent — ...; the candidates were resolved by go1.26.5 and go1.26.6 and this one by go1.26.6, which is the standard library the answer is about; pin one with --walk-id ...
+```
+
+Where every walk of the target was resolved by one toolchain there is nothing to
+have chosen and nothing is said. `walk-list --json` carries the toolchain as
+`go_version`, and `walk-list --latest` returns one walk per
+`(target, scope, toolchain)` rather than one per `(target, scope)`.
 
 ---
 

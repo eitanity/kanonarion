@@ -83,17 +83,21 @@ func (r *Resolver) Resolve(ctx context.Context, projectDir string) (walkports.Bu
 	}, nil
 }
 
-// TargetPlatform returns the GOOS/GOARCH a Resolve of projectDir would record
-// on the graph it produces. It is the same `go env` probe Resolve uses, so a
-// caller selecting a stored walk by platform asks the question in exactly the
-// terms the walk answered it in — including any GOOS/GOARCH override in the
-// environment and any GOTOOLCHAIN switch.
+// BuildEnvironment returns the toolchain version and target platform a Resolve
+// of projectDir would record on the graph it produces. It is the same single
+// `go env` probe Resolve uses, in the same directory, so a caller selecting a
+// stored walk by build environment asks the question in exactly the terms the
+// walk answered it in — including any go.mod toolchain directive, any
+// GOTOOLCHAIN switch and any GOOS/GOARCH override in the environment.
+//
+// The toolchain is returned beside the platform rather than probed separately
+// because both come out of one subprocess, and because a caller that pins one
+// and not the other is answering about a build nobody performed.
 //
 // A probe failure returns empty strings. The caller decides what to do with
-// that; this type will not invent a platform it did not measure.
-func (r *Resolver) TargetPlatform(ctx context.Context, projectDir string) (goos, goarch string) {
-	_, goos, goarch = r.buildEnv(ctx, projectDir)
-	return goos, goarch
+// that; this type will not invent a build environment it did not measure.
+func (r *Resolver) BuildEnvironment(ctx context.Context, projectDir string) (goVersion, goos, goarch string) {
+	return r.buildEnv(ctx, projectDir)
 }
 
 // buildEnv returns the effective toolchain version and target platform for

@@ -186,6 +186,17 @@ func (f *FakeQueryWalks) ListWalks(_ context.Context, filter walkports.WalkFilte
 		}
 		out = filtered
 	}
+	if filter.Toolchain != nil {
+		// Mirrors the adapter's `go_version = ?`: exact, with the empty string
+		// selecting the walks that recorded no toolchain rather than any.
+		var filtered []walkports.WalkSummary
+		for _, s := range out {
+			if s.GoVersion == *filter.Toolchain {
+				filtered = append(filtered, s)
+			}
+		}
+		out = filtered
+	}
 	if filter.Offset > 0 {
 		if filter.Offset >= len(out) {
 			return nil, nil

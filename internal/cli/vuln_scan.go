@@ -164,10 +164,12 @@ func runVulnScanScope(ctx context.Context, f vulnScanFlags, stdout, stderr io.Wr
 	}
 	// Build constraints select files per platform and govulncheck's reachability
 	// follows those files, so a scan run in this environment must read a walk
-	// resolved for this environment. Without the axis the newest walk answered,
-	// whichever platform produced it.
-	platform := currentBuildEnvFilter(ctx, f.goBinary, filepath.Dir(gomodPath), logger)
-	selected, err := selectProjectWalkToScan(ctx, ctr.QueryWalks, coord, scope, platform, gomodPath)
+	// resolved for this environment. The toolchain is part of that environment:
+	// it pins the standard library the walk records, so a walk resolved by
+	// another one is judged against another stdlib. Without either axis the
+	// newest walk answered, whichever build produced it.
+	env := currentWalkBuildEnv(ctx, f.goBinary, filepath.Dir(gomodPath), logger)
+	selected, err := selectProjectWalkToScan(ctx, ctr.QueryWalks, coord, scope, env, gomodPath)
 	if err != nil {
 		return err
 	}
@@ -180,7 +182,8 @@ func runVulnScanScope(ctx context.Context, f vulnScanFlags, stdout, stderr io.Wr
 		return err
 	}
 
-	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning %s project walk %s (%s)\n", scope, walkID, selected.BuildFrame())
+	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning %s project walk %s (%s under %s)\n",
+		scope, walkID, selected.BuildFrame(), selected.Toolchain())
 	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, filepath.Dir(gomodPath), f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
 }
 
@@ -236,28 +239,32 @@ func scanWalkForCurrentManifest(
 }
 
 // selectProjectWalkToScan returns the succeeded project walk of the requested
-// scope that was resolved for platform, or a refusal naming that platform and
-// the command that produces such a walk.
+// scope that was resolved in env, or a refusal naming that build and the command
+// that produces such a walk.
 //
-// The platform is part of the question, not a preference: it is never relaxed
-// to "some other platform's walk of the same project" on a miss, because a
-// reachability answer computed over another platform's file set is not a weaker
-// answer to this question, it is an answer to a different one.
+// The build is part of the question, not a preference: it is never relaxed to
+// "some other build's walk of the same project" on a miss. A reachability answer
+// computed over another platform's file set is not a weaker answer to this
+// question, it is an answer to a different one — and a walk resolved by another
+// toolchain names another standard library, so serving it reports the advisories
+// of a Go release this project does not compile with.
 func selectProjectWalkToScan(
 	ctx context.Context,
 	qw QueryWalksUseCase,
 	coord coordinate.ModuleCoordinate,
 	scope depScope,
-	platform walkports.BuildEnvFilter,
+	env walkBuildEnv,
 	gomodPath string,
 ) (walkports.WalkSummary, error) {
 	walkScope := walkScopeFor(scope)
 	succeeded := walkdomain.WalkSucceeded
+	platform := env.platform
 	walks, err := qw.ListWalks(ctx, walkports.WalkFilter{
 		Target:        &coord,
 		Scope:         &walkScope,
 		OverallStatus: &succeeded,
 		BuildEnv:      &platform,
+		Toolchain:     env.toolchainFilter(),
 		Limit:         1,
 	})
 	if err != nil {
@@ -265,7 +272,7 @@ func selectProjectWalkToScan(
 	}
 	if len(walks) == 0 {
 		return walkports.WalkSummary{}, fmt.Errorf("no succeeded %s project walk for %s on %s — run: kanonarion walk --gomod %s%s",
-			scope, coord.Path(), platform, gomodPath, scopeWalkFlagHint(scope))
+			scope, coord.Path(), env, gomodPath, scopeWalkFlagHint(scope))
 	}
 	return walks[0], nil
 }

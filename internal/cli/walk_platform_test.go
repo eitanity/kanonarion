@@ -26,11 +26,23 @@ func otherPlatform() walkports.BuildEnvFilter {
 	return walkports.BuildEnvFilter{GOOS: "darwin", GOARCH: "arm64"}
 }
 
-// hostPlatform is the frame currentBuildEnvFilter resolves for this process. It
+// hostPlatform is the frame currentWalkBuildEnv resolves for this process. It
 // is the host platform whether the `go env` probe runs or fails, which is what
 // makes these tests independent of a toolchain being on PATH.
 func hostPlatform() walkports.BuildEnvFilter {
 	return walkports.BuildEnvFilter{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
+}
+
+// hostEnv is the host platform with no toolchain pinned, which is what a probe
+// that could not answer produces. The platform-axis tests below ask in it so
+// they keep testing exactly the platform.
+func hostEnv() walkBuildEnv {
+	return walkBuildEnv{platform: hostPlatform()}
+}
+
+// hostEnvUnder is the host platform under a named toolchain.
+func hostEnvUnder(toolchain string) walkBuildEnv {
+	return walkBuildEnv{platform: hostPlatform(), toolchain: toolchain}
 }
 
 // platformSummaries builds two summaries of ONE target that differ only in the
@@ -70,7 +82,7 @@ func TestSelectProjectWalkToScan_PicksThisPlatformNotTheNewestWalk(t *testing.T)
 	const modulePath = "example.com/myapp"
 	wantedID, qw, local := platformSummaries(t, modulePath)
 
-	got, err := selectProjectWalkToScan(context.Background(), qw, local, scopeCode, hostPlatform(), "./go.mod")
+	got, err := selectProjectWalkToScan(context.Background(), qw, local, scopeCode, hostEnv(), "./go.mod")
 	if err != nil {
 		t.Fatalf("selectProjectWalkToScan: %v", err)
 	}
@@ -101,7 +113,7 @@ func TestSelectProjectWalkToScan_RefusesNamingThePlatformAndTheRemedy(t *testing
 		},
 	})
 
-	_, err = selectProjectWalkToScan(context.Background(), qw, local, scopeCode, hostPlatform(), "./go.mod")
+	_, err = selectProjectWalkToScan(context.Background(), qw, local, scopeCode, hostEnv(), "./go.mod")
 	if err == nil {
 		t.Fatal("a store holding only another platform's walk must refuse, not answer from it")
 	}
@@ -125,7 +137,7 @@ func TestSelectProjectWalkToScan_ARefusalNamesTheScopeFlag(t *testing.T) {
 		t.Fatalf("local coordinate: %v", err)
 	}
 	_, err = selectProjectWalkToScan(context.Background(), testfakes.NewFakeQueryWalks(),
-		local, scopeTool, hostPlatform(), "./go.mod")
+		local, scopeTool, hostEnv(), "./go.mod")
 	if err == nil {
 		t.Fatal("expected a refusal on an empty store")
 	}
@@ -191,7 +203,7 @@ func TestFindLatestProjectWalk_WillNotReuseAnotherPlatformsWalk(t *testing.T) {
 	const modulePath = "example.com/myapp"
 	wantedID, qw, _ := platformSummaries(t, modulePath)
 
-	id, err := findLatestProjectWalk(context.Background(), qw, modulePath, hostPlatform())
+	id, err := findLatestProjectWalk(context.Background(), qw, modulePath, hostEnv())
 	if err != nil {
 		t.Fatalf("findLatestProjectWalk: %v", err)
 	}
@@ -279,5 +291,135 @@ func TestDependentsText_StatesTheFrameItAnsweredFrom(t *testing.T) {
 func TestBuildFrame_AWalkWithNoKnownPlatformSaysUnrecorded(t *testing.T) {
 	if got := (walkports.WalkSummary{}).BuildFrame(); got != "unrecorded" {
 		t.Errorf("a frame-unrecorded walk renders as %q, want unrecorded", got)
+	}
+}
+
+// toolchainSummaries builds two summaries of ONE target that differ only in the
+// toolchain that resolved them, with the OTHER toolchain's stored first — the
+// order a started_at DESC listing puts the newer one in. This is the shape the
+// live store held when one project was reported both affected and clean.
+func toolchainSummaries(t testing.TB, modulePath, wantedToolchain, newerToolchain string) (wantedID string, qw *testfakes.FakeQueryWalks, local coordinate.ModuleCoordinate) {
+	t.Helper()
+	local, err := coordinate.NewLocalCoordinate(modulePath)
+	if err != nil {
+		t.Fatalf("local coordinate: %v", err)
+	}
+	host := hostPlatform()
+	qw = testfakes.NewFakeQueryWalks()
+	qw.SetSummaries([]walkports.WalkSummary{
+		{
+			ID: "walk-newer-toolchain", Target: local, Scope: walkdomain.WalkScopeCode,
+			OverallStatus: walkdomain.WalkSucceeded,
+			StartedAt:     time.Date(2026, 8, 23, 23, 11, 21, 0, time.UTC),
+			GOOS:          host.GOOS, GOARCH: host.GOARCH, GoVersion: newerToolchain,
+		},
+		{
+			ID: "walk-this-toolchain", Target: local, Scope: walkdomain.WalkScopeCode,
+			OverallStatus: walkdomain.WalkSucceeded,
+			StartedAt:     time.Date(2026, 8, 14, 1, 10, 4, 0, time.UTC),
+			GOOS:          host.GOOS, GOARCH: host.GOARCH, GoVersion: wantedToolchain,
+		},
+	})
+	return "walk-this-toolchain", qw, local
+}
+
+// TestSelectProjectWalkToScan_PicksThisToolchainNotTheNewestWalk is the headline
+// gate. The walk pins the standard library the scan judges, so serving the
+// newest walk when it was resolved by another toolchain reports the advisories
+// of a Go release this project does not compile with — and because a newer patch
+// release clears advisories, the error runs towards "clean".
+func TestSelectProjectWalkToScan_PicksThisToolchainNotTheNewestWalk(t *testing.T) {
+	wantedID, qw, local := toolchainSummaries(t, "example.com/myapp", "go1.26.5", "go1.26.6")
+
+	got, err := selectProjectWalkToScan(context.Background(), qw, local, scopeCode, hostEnvUnder("go1.26.5"), "./go.mod")
+	if err != nil {
+		t.Fatalf("selectProjectWalkToScan: %v", err)
+	}
+	if got.ID != wantedID {
+		t.Errorf("scanned walk %s, want this toolchain's %s", got.ID, wantedID)
+	}
+	if got.Toolchain() != "go1.26.5" {
+		t.Errorf("selected toolchain %s, want go1.26.5", got.Toolchain())
+	}
+}
+
+// TestSelectProjectWalkToScan_RefusalNamesTheToolchain: when only another
+// toolchain's walk exists, the answer is a refusal that names the build asked
+// for and the command that produces it. Answering from that walk is the defect.
+func TestSelectProjectWalkToScan_RefusalNamesTheToolchain(t *testing.T) {
+	local, err := coordinate.NewLocalCoordinate("example.com/myapp")
+	if err != nil {
+		t.Fatalf("local coordinate: %v", err)
+	}
+	host := hostPlatform()
+	qw := testfakes.NewFakeQueryWalks()
+	qw.SetSummaries([]walkports.WalkSummary{{
+		ID: "walk-other-toolchain", Target: local, Scope: walkdomain.WalkScopeCode,
+		OverallStatus: walkdomain.WalkSucceeded,
+		GOOS:          host.GOOS, GOARCH: host.GOARCH, GoVersion: "go1.26.6",
+	}})
+
+	_, err = selectProjectWalkToScan(context.Background(), qw, local, scopeCode, hostEnvUnder("go1.26.5"), "./go.mod")
+	if err == nil {
+		t.Fatal("a store holding only another toolchain's walk must refuse, not answer from it")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "go1.26.5") {
+		t.Errorf("refusal does not name the toolchain asked for: %s", msg)
+	}
+	if strings.Contains(msg, "walk-other-toolchain") {
+		t.Errorf("the refusal offered another toolchain's walk: %s", msg)
+	}
+}
+
+// TestSelectProjectWalkToScan_AnUnprobedToolchainDoesNotNarrowToUnrecorded: when
+// the `go env` probe cannot answer, the read widens rather than filtering on the
+// empty string. Filtering on it would select only the walks that recorded no
+// toolchain, which is a different question and would refuse every real walk.
+func TestSelectProjectWalkToScan_AnUnprobedToolchainDoesNotNarrowToUnrecorded(t *testing.T) {
+	_, qw, local := toolchainSummaries(t, "example.com/myapp", "go1.26.5", "go1.26.6")
+
+	got, err := selectProjectWalkToScan(context.Background(), qw, local, scopeCode, hostEnv(), "./go.mod")
+	if err != nil {
+		t.Fatalf("an unprobed toolchain must not refuse: %v", err)
+	}
+	// Recency still decides when the axis is unknown, which is the behaviour
+	// this run cannot improve on — but the walk it picks is a real one, and the
+	// line that names it says which toolchain resolved it.
+	if got.ID != "walk-newer-toolchain" {
+		t.Errorf("an unprobed toolchain selected %s, want the newest walk", got.ID)
+	}
+	if got.Toolchain() != "go1.26.6" {
+		t.Errorf("the selected walk's toolchain is %s, want it stated as go1.26.6", got.Toolchain())
+	}
+}
+
+// TestFindLatestProjectWalk_WillNotReuseAnotherToolchainsWalk is the same gate on
+// the SBOM's reuse lookup: the stdlib component it inventories comes from the
+// walk, so reusing another toolchain's walk names a standard library version
+// this build does not link.
+func TestFindLatestProjectWalk_WillNotReuseAnotherToolchainsWalk(t *testing.T) {
+	const modulePath = "example.com/myapp"
+	wantedID, qw, _ := toolchainSummaries(t, modulePath, "go1.26.5", "go1.26.6")
+
+	id, err := findLatestProjectWalk(context.Background(), qw, modulePath, hostEnvUnder("go1.26.5"))
+	if err != nil {
+		t.Fatalf("findLatestProjectWalk: %v", err)
+	}
+	if id != wantedID {
+		t.Errorf("SBOM would reuse walk %s, want this toolchain's %s", id, wantedID)
+	}
+}
+
+// TestWalkBuildEnvString_NamesBothAxes: the line a read prints to say which walk
+// answered names the toolchain beside the platform, because the toolchain
+// decides which standard library the answer is about.
+func TestWalkBuildEnvString_NamesBothAxes(t *testing.T) {
+	if got := hostEnvUnder("go1.26.5").String(); !strings.Contains(got, "go1.26.5") ||
+		!strings.Contains(got, hostPlatform().String()) {
+		t.Errorf("build environment rendered as %q, want both the platform and the toolchain", got)
+	}
+	if got := hostEnv().String(); !strings.Contains(got, "unrecorded") {
+		t.Errorf("an unprobed toolchain rendered as %q, want it stated as unrecorded", got)
 	}
 }
