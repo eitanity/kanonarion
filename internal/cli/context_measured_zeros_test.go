@@ -185,7 +185,7 @@ func TestContextJSON_LowConfidenceCoverageIsNullNotAbsent(t *testing.T) {
 		OverallStatus: licdomain.LicenseStatusDetected,
 		PrimarySPDX:   "MIT",
 	})
-	keys := sectionKeys(t, buildLicense(context.Background(), coord, classified))
+	keys := sectionKeys(t, buildLicense(context.Background(), coord, classified, nil))
 	got := requireKey(t, keys, "low_confidence_coverage",
 		"the key states whether a sub-threshold match was measured at all; absent, a consumer cannot tell a clean licence from a build that does not look for fragments")
 	if got != nil {
@@ -203,7 +203,7 @@ func TestContextJSON_LowConfidenceCoverageIsNullNotAbsent(t *testing.T) {
 			{Path: "LICENSE", LowConfidenceSPDX: "AGPL-3.0-or-later", LowConfidenceCoverage: 0.0279},
 		},
 	})
-	fragment := sectionKeys(t, buildLicense(context.Background(), coord, unclassified))
+	fragment := sectionKeys(t, buildLicense(context.Background(), coord, unclassified, nil))
 	if got := fragment["low_confidence_coverage"]; got == nil || got.(float64) != 0.0279 {
 		t.Errorf("low_confidence_coverage = %v on a fragment match, want 0.0279", got)
 	}

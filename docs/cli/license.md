@@ -22,6 +22,9 @@ The module must have been fetched first:
 kanonarion fetch github.com/spf13/cobra@v1.8.1
 ```
 
+The one exception is the Go standard library, which is never fetched — see
+[Standard library](#standard-library-stdlibvtoolchain).
+
 ## Commands
 
 ### `kanonarion licence <module>@<version>`
@@ -132,6 +135,75 @@ whose only matching span is the "how to apply" appendix - the `context` /
 (~3% coverage)`). It is a caveated inference about a malformed file, never a
 confident SPDX classification.
 
+## Standard library (`stdlib@v<toolchain>`)
+
+`kanonarion licence stdlib@v1.26.5` answers from the **chain of custody** the
+walk stage records for the toolchain, not from a licence record. The standard
+library ships with the toolchain rather than through the module proxy, so
+nothing fetches or extracts it and it holds no `LicenceRecord` — `kanonarion
+fetch` rejects the coordinate outright (`malformed module path "stdlib"`) and is
+never named as a remedy for it.
+
+```
+kanonarion licence stdlib@v1.26.5
+
+stdlib@v1.26.5: Detected — BSD-3-Clause
+  basis: extracted from the acquired source tree's LICENSE file (VerifiedGoDevChecksum)
+  acquired via: godev
+  source:       https://go.dev/dl/go1.26.5.src.tar.gz
+  sha256:       495be4bc…
+  vcs:          https://go.googlesource.com/go go1.26.5
+  commit:       c19862e5f8415b4f24b189d065ed739517c548ba
+```
+
+The status word is the one `audit` prints in its Licence column for the same
+node, and `context`, `sbom` and `licence-compat` resolve the same identity:
+
+| Status | Basis | Meaning |
+|---|---|---|
+| `Detected` | `stdlib-tarball` | The SPDX identifier was extracted from the acquired source tree's `LICENSE` file |
+| `Known` | `stdlib-known` | No measurement carried an identifier, so the answer is the `BSD-3-Clause` the Go project publishes |
+
+The basis and the **verification status** are separate axes. A `Known` answer
+over a recorded measurement says the measurement identified no licence; a
+`Known` answer with no verification status says nothing has been acquired for
+that toolchain at all, and names the command that would acquire it:
+
+```
+kanonarion licence stdlib@v1.99.0
+
+stdlib@v1.99.0: Known — BSD-3-Clause
+  basis: published knowledge of the Go project's licence; no chain of custody is
+         recorded for go1.99.0 — establish one with: kanonarion walk --gomod ./go.mod
+```
+
+The offline (`--from-modcache`) anchor records `VerifiedLocalToolchain` and is
+never reported as `VerifiedGoDevChecksum`: it establishes custody from
+`$GOROOT`, having deliberately not consulted the published checksum.
+
+`--history` lists every custody measurement the ledger holds for that toolchain
+version, oldest first — the standard library's answer to the question `--history`
+asks of every other module:
+
+```
+kanonarion licence stdlib@v1.26.5 --history
+
+2 custody measurement(s) for stdlib@v1.26.5 (go1.26.5):
+  2026-08-13T04:12:57Z  BSD-3-Clause  VerifiedGoDevChecksum  via godev
+    artefact: sha256:495be4bc…
+```
+
+`--force`, `--per-file` and `--recursive` do not apply to the standard library
+itself: there is nothing to re-extract, no source files to scan and no
+dependency closure below it. A **project's** `--recursive --all` listing does
+carry the `stdlib` row, resolved the same way — it is a node of the walk like
+any other.
+
+Because no record exists, `licence-list` never lists the standard library,
+`licence-diff` refuses it by name (pointing at `--history` instead), and
+`notice` carries it as a review item — its licence identity is known but no
+stage extracts the toolchain's licence text for verbatim attribution.
+
 ### `kanonarion licence-list`
 
 List extracted licence records.
@@ -167,7 +239,7 @@ immediately. A new pipeline version invalidates all existing records for that
 stage (but not fetch records or walk records).
 
 The database schema is versioned via the shared `schema_migrations` table
-(numbered per module). The current pipeline version is `1.2.0`.
+(numbered per module). The current pipeline version is `1.3.0`.
 
 ## Assurance log
 

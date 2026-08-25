@@ -137,6 +137,11 @@ MIT → Apache-2.0) produce no escalation flag.
 - Both records are loaded at the current pipeline version. A record extracted
   with an older pipeline version will not be found; re-run `kanonarion license`
   to refresh it.
+- The **standard library** (`stdlib@v<toolchain>`) is refused by name. It holds
+  no licence records to diff - it ships with the toolchain and carries its
+  licence on the chain of custody - so the refusal points at `kanonarion licence
+  stdlib@v<toolchain> --history`, which lists every custody measurement the
+  ledger holds for that toolchain version.
 
 See also: [`licence`](license.md), [`license-compat`](license-compat.md),
 [`notice`](notice.md).

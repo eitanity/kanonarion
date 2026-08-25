@@ -66,6 +66,20 @@ func runLicenseDiff(ctx context.Context, argA, argB string, stdout, stderr io.Wr
 // from runLicenseDiff so the not-found contract and render selection are
 // testable without a live store.
 func licenseDiffWith(ctx context.Context, ctr *Container, coordA, coordB coordinate.ModuleCoordinate, stdout io.Writer) error {
+	// The standard library holds no licence records to diff, and never will:
+	// its licence rides on the chain of custody the walk stage records. Saying
+	// "run kanonarion license first" here sent the reader to a command that
+	// answers the licence question and still leaves this one with nothing to
+	// compare, so the refusal names the read that does hold generations.
+	for _, coord := range []coordinate.ModuleCoordinate{coordA, coordB} {
+		if isStdlibCoordinate(coord) {
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+				"%s holds no licence records to diff: the standard library ships with the toolchain "+
+					"and carries its licence on the chain of custody — compare generations with: "+
+					"kanonarion license %s --history", coord, coord)}
+		}
+	}
+
 	diff, err := ctr.DiffLicense.Diff(ctx, coordA, coordB)
 	if err != nil {
 		if notFound, ok := errors.AsType[*licapp.ErrLicenseRecordNotFound](err); ok {

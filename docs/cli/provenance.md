@@ -149,6 +149,17 @@ example.com/some/app
   Copyright Signal:  no indicators (licence copyright lines, record example.com/some/app@v1.0.0)
 ```
 
+The **standard library** has no licence record for the copyright tier to read,
+and no command will produce one - it ships with the toolchain rather than
+through the module proxy. The tier says so and names where the licence identity
+does live rather than a remedy that would leave the answer where it is:
+
+```
+stdlib@v1.26.5
+  Fork Heuristic:    no indicators (name-path, catalogue 1.0.0)
+  Copyright Signal:  not analysed - the standard library holds no licence record - its licence identity comes from the recorded chain of custody, reported by: kanonarion license stdlib@<version>
+```
+
 ### JSON (`--json`)
 
 ```json

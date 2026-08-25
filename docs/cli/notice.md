@@ -393,6 +393,15 @@ A missing **licence** is a different gate. `no license found` means the module
 carries no grant kanonarion could identify, and no copyright declaration
 resolves it - a copyright line is an attribution, not a grant.
 
+Under `--walk-id` the **standard library** (`stdlib@v<toolchain>`) is in scope
+and always lands in the review list. It holds no licence record and never will:
+it ships with the toolchain, so nothing fetches or extracts it, and its licence
+identity comes from the chain of custody instead (`kanonarion licence
+stdlib@v<toolchain>` reports it as `BSD-3-Clause`). No stage extracts the
+toolchain's licence text, so verbatim attribution for it has to be supplied by
+hand. The `--gomod` and `--package` scopes do not raise it: `go list` marks
+standard-library packages as `Standard` and they carry no module coordinate.
+
 ## Recording a copyright a human read
 
 Some modules ship no copyright statement anywhere extraction can reach it. For

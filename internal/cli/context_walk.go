@@ -75,7 +75,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 
 	// --size-only with --walk-id: accumulate per-module JSON sizes.
 	if f.sizeOnly {
-		return runContextWalkSizeOnly(ctx, f, nodes, compact, ctr.QueryVuln, vulnBatch, ctr.QueryFetch, ctr.QueryLicense, ctr.QueryInterface, ctr.QueryCallGraph, ctr.QueryExamples, ctr.QueryWalks, stdout)
+		return runContextWalkSizeOnly(ctx, f, nodes, compact, ctr.QueryVuln, vulnBatch, ctr.QueryFetch, ctr.QueryLicense, ctr.StdlibCustody, ctr.QueryInterface, ctr.QueryCallGraph, ctr.QueryExamples, ctr.QueryWalks, stdout)
 	}
 
 	if !jsonOut && !f.stream {
@@ -94,7 +94,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 				Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 				Provenance:      buildProvenance(coord),
 				Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
-				License:         buildLicense(ctx, coord, ctr.QueryLicense),
+				License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 				Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 				CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 				Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
@@ -127,7 +127,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
-			License:         buildLicense(ctx, coord, ctr.QueryLicense),
+			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
@@ -275,6 +275,7 @@ func runContextWalkSizeOnly(
 	vulnBatch *vulnBatchCtx,
 	fetchUC QueryFetchUseCase,
 	licUC QueryLicenseUseCase,
+	stdlibCustody StdlibCustodyReader,
 	ifaceUC QueryInterfaceUseCase,
 	cgUC QueryCallGraphUseCase,
 	exUC QueryExamplesUseCase,
@@ -298,7 +299,7 @@ func runContextWalkSizeOnly(
 			Verification:    buildVerification(ctx, coord, fetchUC),
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, walkUC),
-			License:         buildLicense(ctx, coord, licUC),
+			License:         buildLicense(ctx, coord, licUC, stdlibCustody),
 			Interface:       buildInterface(ctx, coord, ifaceUC, compact, f.packageFilter),
 			CallGraph:       buildCallGraph(ctx, coord, cgUC, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, exUC, compact, f.packageFilter),

@@ -13,6 +13,7 @@ import (
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // GenerateNoticeUseCase assembles a THIRD-PARTY-LICENSES attribution document
@@ -91,6 +92,20 @@ func (uc *GenerateNoticeUseCase) processModule(
 		return nil, nil, fmt.Errorf("getting license record: %w", err)
 	}
 	if !found {
+		// The standard library is never fetched or extracted, so no run of
+		// `kanonarion license` will ever produce a record for it — its licence
+		// identity comes off the chain of custody instead. The review item still
+		// stands, because a NOTICE needs the licence TEXT and no stage extracts
+		// the toolchain's, but it no longer names a remedy that cannot be
+		// followed to an answer.
+		if coord.Path() == walkdomain.StdlibModulePath {
+			return nil, &licensedomain.ReviewItem{
+				Coordinate: coord,
+				Reason: "the standard library holds no licence record — it ships with the toolchain, " +
+					"and its licence identity comes from the recorded chain of custody " +
+					"(kanonarion license " + coord.String() + "); its attribution text is not extracted",
+			}, nil
+		}
 		return nil, &licensedomain.ReviewItem{
 			Coordinate: coord,
 			Reason:     "no license record: run 'kanonarion license' first",

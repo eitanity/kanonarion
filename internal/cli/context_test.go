@@ -722,7 +722,7 @@ func TestBuildLicense_CopyrightFound(t *testing.T) {
 		},
 	})
 
-	l := buildLicense(context.Background(), coord, uc)
+	l := buildLicense(context.Background(), coord, uc, nil)
 
 	if l.CopyrightStatus != "found" {
 		t.Errorf("CopyrightStatus = %q, want %q", l.CopyrightStatus, "found")
@@ -754,7 +754,7 @@ func TestBuildLicense_LowConfidenceFromUnclassifiedRoot(t *testing.T) {
 		},
 	})
 
-	l := buildLicense(context.Background(), coord, uc)
+	l := buildLicense(context.Background(), coord, uc, nil)
 
 	if l.Status != "Unclassified" {
 		t.Errorf("Status = %q, want Unclassified", l.Status)
@@ -782,7 +782,7 @@ func TestBuildLicense_NoLowConfidenceWhenClassified(t *testing.T) {
 		},
 	})
 
-	l := buildLicense(context.Background(), coord, uc)
+	l := buildLicense(context.Background(), coord, uc, nil)
 
 	if l.LowConfidenceSPDX != "" {
 		t.Errorf("classified module must not carry a low-confidence fallback, got %q", l.LowConfidenceSPDX)
@@ -812,7 +812,7 @@ func TestBuildLicense_CopyrightDeduplication(t *testing.T) {
 		},
 	})
 
-	l := buildLicense(context.Background(), coord, uc)
+	l := buildLicense(context.Background(), coord, uc, nil)
 
 	if len(l.CopyrightStatements) != 1 {
 		t.Errorf("expected 1 deduplicated statement, got %d", len(l.CopyrightStatements))
@@ -828,7 +828,7 @@ func TestBuildLicense_CopyrightNotAnalysed(t *testing.T) {
 		CopyrightStatus: licdomain.CopyrightStatusNotAnalysed,
 	})
 
-	l := buildLicense(context.Background(), coord, uc)
+	l := buildLicense(context.Background(), coord, uc, nil)
 
 	if l.CopyrightStatus != "not_analysed" {
 		t.Errorf("CopyrightStatus = %q, want not_analysed", l.CopyrightStatus)

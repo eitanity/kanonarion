@@ -215,6 +215,9 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			line += " (" + statusWithReason(out.License.Status, out.License.Error) + ")"
 		}
 		w.printf("  License:         %s\n", line)
+		if c := out.License.Custody; c != nil {
+			w.printf("    basis:         %s\n", c.Statement)
+		}
 	}
 
 	switch out.Interface.Status {

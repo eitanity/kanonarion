@@ -83,6 +83,8 @@ import (
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 
+	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
+
 	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
 	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
@@ -136,6 +138,12 @@ type Container struct {
 	GenerateNotice     GenerateNoticeUseCase
 	CheckCompatibility CheckCompatibilityUseCase
 	LicenseOverrides   licports.LicenseOverrideStore
+
+	// StdlibCustody is the recorded chain of custody for the standard library,
+	// which carries its licence on the acquisition rather than in a licence
+	// record. Every command asked about the stdlib coordinate reads it here, so
+	// the answer is the one audit and the SBOM already give.
+	StdlibCustody StdlibCustodyReader
 
 	// iface
 	ExtractInterface ExtractInterfaceUseCase
@@ -499,6 +507,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	queryExtractUC := extractapp.NewQueryExtractionUseCase(extStore)
 
 	// ---- license query / notice / compatibility / diff use cases ----
+	stdlibCustody := stdlibsqlite.New(dbHandle)
 	queryLicenseUC := licapp.NewQueryLicenseUseCaseWithWalks(licStore, walkStore)
 	diffLicenseUC := licapp.NewDiffLicenseUseCase(licStore)
 	checkCompatUC := licapp.NewCheckCompatibilityUseCase(licStore, walkStore)
@@ -654,6 +663,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		ExtractLicense:     licExtractUC,
 		QueryLicense:       queryLicenseUC,
+		StdlibCustody:      stdlibCustody,
 		DiffLicense:        diffLicenseUC,
 		GenerateNotice:     generateNoticeUC,
 		CheckCompatibility: checkCompatUC,

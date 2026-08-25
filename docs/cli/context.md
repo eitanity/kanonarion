@@ -348,6 +348,7 @@ suggests a fork of `<canonical>` - verify"* - never a verdict.
 | `low_confidence_spdx` | string | A recognisable but sub-threshold licence fragment, set only when `spdx` is empty. Present when a root licence file was found and a known licence was partially matched but coverage fell below the substantive floor - e.g. a truncated AGPL-3.0 whose only matching span is the "how to apply" appendix |
 | `low_confidence_coverage` | float\|null | Coverage fraction (0.0-1.0) of the `low_confidence_spdx` match. Always present; `null` when no sub-threshold fragment was matched, which is every confidently classified module |
 | `extracted_at` | string | RFC3339 extraction timestamp |
+| `custody` | object | Standard library only - the chain of custody its licence identity comes from (see below) |
 | `error` | string | Set when `status` is `read_error` or extraction detail |
 
 An `Unclassified` status means a licence file **was** found at the module root
@@ -362,6 +363,32 @@ recognised, the summary surfaces it as a caveat rather than a verdict:
 This is a *caveated inference*, not a classification: the file is AGPL-shaped
 but its licence text is incomplete, so kanonarion reports what it matched and
 the coverage it saw, never a confident SPDX it cannot stand behind.
+
+#### Standard library
+
+The `stdlib` node holds no licence record - it ships with the toolchain rather
+than through the module proxy, so nothing fetches or extracts it. Its section is
+answered from the chain of custody the walk stage records, and is never
+`not_run`: that value means nothing looked, and here something did.
+
+```
+  License:         BSD-3-Clause
+    basis:         extracted from the acquired source tree's LICENSE file (VerifiedGoDevChecksum)
+```
+
+`status` is `Detected` when the identifier was extracted from the acquired
+source, `Known` when it is the `BSD-3-Clause` the Go project publishes and no
+measurement carried one - the same two words `audit` prints for the same node.
+
+| `custody` field | Type | Description |
+|---|---|---|
+| `basis` | string | `stdlib-tarball` (extracted evidence) or `stdlib-known` (published knowledge) |
+| `verification` | string | The recorded stdlib verification status - `VerifiedGoDevChecksum`, `VerifiedLocalToolchain`, `GoDevChecksumMismatch`, `UnverifiedGoDevUnavailable`. **Absent when nothing has been acquired for this toolchain**, which is a different statement from `stdlib-known` |
+| `detail` | string | The verification summary: checksum source and, when resolved, the googlesource commit |
+| `route` | string | `godev` (published tarball) or `local-toolchain` (`$GOROOT`) |
+| `source_url`, `vcs_url`, `vcs_ref`, `vcs_commit`, `sha256` | string | The acquired artefact and its VCS anchor |
+| `acquired_at` | string | RFC3339 acquisition timestamp |
+| `statement` | string | What the answer rests on, in one clause; on an unestablished chain it names the command that would establish one |
 
 ### `interface`
 

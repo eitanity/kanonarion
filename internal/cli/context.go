@@ -191,7 +191,31 @@ type contextLicense struct {
 	CopyrightStatus       string                      `json:"copyright_status,omitempty"`
 	CopyrightStatements   []contextCopyrightStatement `json:"copyright_statements,omitempty"`
 	Obligations           *contextLicenseObligations  `json:"obligations,omitempty"`
-	Error                 string                      `json:"error,omitempty"`
+	// Custody carries the standard library's chain of custody, which is where
+	// its licence identity comes from: it is never fetched or extracted, so it
+	// has no licence record and the fields above are answered from the
+	// acquisition instead. Absent for every other module.
+	Custody *contextLicenseCustody `json:"custody,omitempty"`
+	Error   string                 `json:"error,omitempty"`
+}
+
+// contextLicenseCustody states what a standard-library licence identity rests
+// on: which of the two bases answered, and — separately — how far the acquired
+// bytes were verified. An empty Verification is the case the section must not
+// blur: no measurement was found, so the identifier beside it is published
+// knowledge and nothing has been established about these bytes.
+type contextLicenseCustody struct {
+	Basis        string `json:"basis"`
+	Verification string `json:"verification,omitempty"`
+	Detail       string `json:"detail,omitempty"`
+	Route        string `json:"route,omitempty"`
+	SourceURL    string `json:"source_url,omitempty"`
+	VCSURL       string `json:"vcs_url,omitempty"`
+	VCSRef       string `json:"vcs_ref,omitempty"`
+	VCSCommit    string `json:"vcs_commit,omitempty"`
+	SHA256       string `json:"sha256,omitempty"`
+	AcquiredAt   string `json:"acquired_at,omitempty"`
+	Statement    string `json:"statement"`
 }
 
 type contextPackage struct {
@@ -479,7 +503,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 		Provenance:      buildProvenance(coord),
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
-		License:         buildLicense(ctx, coord, ctr.QueryLicense),
+		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 		Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),

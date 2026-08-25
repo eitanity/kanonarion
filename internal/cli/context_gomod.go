@@ -124,7 +124,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
-			License:         buildLicense(ctx, coord, ctr.QueryLicense),
+			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),

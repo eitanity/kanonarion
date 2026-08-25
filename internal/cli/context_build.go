@@ -142,7 +142,19 @@ func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, w
 	}
 }
 
-func buildLicense(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryLicenseUseCase) contextLicense {
+func buildLicense(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	uc QueryLicenseUseCase,
+	custody StdlibCustodyReader,
+) contextLicense {
+	// The standard library is never fetched or extracted, so it holds no licence
+	// record and an absent one here said not_run — "nothing looked" — about a
+	// licence the same store serves to audit and the SBOM. Its identity comes
+	// off the chain of custody instead.
+	if isStdlibCoordinate(coord) {
+		return buildStdlibLicense(ctx, coord, custody)
+	}
 	rec, found, err := uc.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
 	if err != nil {
 		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
@@ -205,6 +217,57 @@ func buildLicense(ctx context.Context, coord coordinate.ModuleCoordinate, uc Que
 			ExplicitPatentGrant: ob.ExplicitPatentGrant,
 			CatalogueVersion:    licdomain.ObligationCatalogueVersion,
 		}
+	}
+	return l
+}
+
+// buildStdlibLicense answers the licence section for the standard-library
+// coordinate from its recorded chain of custody.
+//
+// The status word is the one audit prints for the same node: Detected when the
+// identifier was extracted from the acquired source, Known when it is the
+// published BSD-3-Clause and no measurement carried one. Neither is not_run,
+// which is reserved for a section nothing has looked at.
+func buildStdlibLicense(ctx context.Context, coord coordinate.ModuleCoordinate, custody StdlibCustodyReader) contextLicense {
+	answer, err := resolveStdlibLicence(ctx, coord, custody)
+	if err != nil {
+		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
+	}
+
+	status := "Known"
+	if answer.Basis == stdlibLicenceBasisTarball {
+		status = licdomain.LicenseStatusDetected.String()
+	}
+	l := contextLicense{
+		ExtractedAt: isoTime(answer.AcquiredAt),
+		SPDX:        answer.SPDX,
+		Status:      status,
+		Custody: &contextLicenseCustody{
+			Basis:        answer.Basis,
+			Verification: answer.Verification,
+			Detail:       answer.Detail,
+			Route:        answer.Route,
+			SourceURL:    answer.SourceURL,
+			VCSURL:       answer.VCSURL,
+			VCSRef:       answer.VCSRef,
+			VCSCommit:    answer.VCSCommit,
+			SHA256:       answer.SHA256,
+			AcquiredAt:   isoTime(answer.AcquiredAt),
+			Statement:    answer.basisStatement(),
+		},
+	}
+	ob := licdomain.LookupObligations(answer.SPDX)
+	l.Obligations = &contextLicenseObligations{
+		Status:              ob.Status.String(),
+		IncludeNotice:       ob.IncludeNotice,
+		IncludeLicenseText:  ob.IncludeLicenseText,
+		StateChanges:        ob.StateChanges,
+		DiscloseSource:      ob.DiscloseSource,
+		SameLicense:         ob.SameLicense.String(),
+		NetworkUseTrigger:   ob.NetworkUseTrigger,
+		NoTrademarkUse:      ob.NoTrademarkUse,
+		ExplicitPatentGrant: ob.ExplicitPatentGrant,
+		CatalogueVersion:    licdomain.ObligationCatalogueVersion,
 	}
 	return l
 }

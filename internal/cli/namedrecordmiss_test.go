@@ -304,7 +304,7 @@ func missSurfaces() []missSurface {
 				var stdout, stderr bytes.Buffer
 				err := printLicenseRecursive(context.Background(),
 					mustCoord(t, "example.com/never-walked", "v9.9.9"), walksWithRecords(t),
-					&testfakes.FakeExtractLicense{}, testfakes.NewFakeQueryLicense(), licenseFlags{},
+					&testfakes.FakeExtractLicense{}, testfakes.NewFakeQueryLicense(), nil, licenseFlags{},
 					&stdout, &stderr)
 				return stderr.String(), err
 			},
