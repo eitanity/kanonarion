@@ -101,36 +101,74 @@ func Migrations() []sqlitestore.Migration {
         ALTER TABLE walks ADD COLUMN goarch TEXT NOT NULL DEFAULT '';
         CREATE INDEX IF NOT EXISTS walks_platform_idx ON walks(target_path, target_version, scope, goos, goarch)`,
 			Fn: backfillBuildEnv},
+		// The toolchain that resolved the walk. Like goos/goarch it lives inside
+		// the sealed blob as part of the graph's build environment, so this is a
+		// projection of already-sealed data: no purge, no pipeline bump, every
+		// stored row still hashes to exactly what it did.
+		//
+		// It is back-filled for the reason goos/goarch are. The value is already
+		// in the blob, and without it every stored walk is invisible to a
+		// toolchain-filtered lookup — so a read would fall through to recency and
+		// answer about whichever standard library happened to be newest, which is
+		// the read this column exists to make impossible. A row whose record
+		// carries no build environment back-fills to the empty string, which means
+		// the toolchain was never recorded.
+		{Module: "walk", Version: 9, SQL: `ALTER TABLE walks ADD COLUMN go_version TEXT NOT NULL DEFAULT '';
+        CREATE INDEX IF NOT EXISTS walks_toolchain_idx ON walks(target_path, target_version, scope, go_version)`,
+			Fn: backfillGoVersion},
 	}
 }
 
-// backfillBuildEnv fills the goos/goarch columns of migration 8 from each
-// stored walk's own record. It decodes the blob rather than re-verifying it: the
-// build environment is read out of the bytes exactly as stored, so a row whose
-// seal no longer verifies is still projected honestly instead of being silently
-// dropped from every platform-filtered read.
+// backfillGoVersion fills the go_version column of migration 9 from each stored
+// walk's own record, on the same terms as backfillBuildEnv: the blob is decoded
+// but not re-verified, so a row whose seal no longer verifies is still projected
+// honestly, and a row that cannot be decoded at all is left at the empty
+// toolchain rather than failing the migration.
+func backfillGoVersion(tx *sql.Tx) error {
+	envs, err := scanWalkBuildEnvs(tx)
+	if err != nil {
+		return err
+	}
+	for _, e := range envs {
+		if e.env.GoVersion == "" {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE walks SET go_version = ? WHERE id = ?`, e.env.GoVersion, e.id); err != nil {
+			return fmt.Errorf("back-filling toolchain for walk %s: %w", e.id, err)
+		}
+	}
+	return nil
+}
+
+// walkBuildEnv is one stored row's id and the build environment read out of its
+// record.
+type walkBuildEnv struct {
+	id  string
+	env domain.BuildEnv
+}
+
+// scanWalkBuildEnvs reads the build environment of every stored walk. It exists
+// so a projection migration states only what it projects: the two rules below
+// are the same for all of them.
 //
-// A row that cannot be decoded at all is left at the empty frame rather than
-// failing the migration. The alternative is a store that refuses to open because
-// one historical row is unreadable, and an unreadable row's frame is genuinely
-// unrecorded as far as this column can say.
-func backfillBuildEnv(tx *sql.Tx) error {
+// It decodes the blob rather than re-verifying it, so a row whose seal no longer
+// verifies is still projected honestly instead of being silently dropped from
+// every read the new column serves. A row that cannot be decoded at all is
+// skipped rather than failing the migration: the alternative is a store that
+// refuses to open because one historical row is unreadable, and an unreadable
+// row's build environment is genuinely unrecorded as far as a column can say.
+func scanWalkBuildEnvs(tx *sql.Tx) ([]walkBuildEnv, error) {
 	rows, err := tx.Query(`SELECT id, serialised FROM walks`)
 	if err != nil {
-		return fmt.Errorf("reading walks for build-environment back-fill: %w", err)
+		return nil, fmt.Errorf("reading walks for build-environment back-fill: %w", err)
 	}
-	type filled struct {
-		id     string
-		goos   string
-		goarch string
-	}
-	var updates []filled
+	var envs []walkBuildEnv
 	for rows.Next() {
 		var id string
 		var blob []byte
 		if err := rows.Scan(&id, &blob); err != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
-			return fmt.Errorf("scanning walk row for build-environment back-fill: %w", err)
+			return nil, fmt.Errorf("scanning walk row for build-environment back-fill: %w", err)
 		}
 		raw, decErr := blobcodec.Decode(blob)
 		if decErr != nil {
@@ -141,22 +179,33 @@ func backfillBuildEnv(tx *sql.Tx) error {
 		if uErr != nil {
 			continue
 		}
-		if rec.Graph.BuildEnv.IsZero() {
-			continue
-		}
-		updates = append(updates, filled{id: id, goos: rec.Graph.BuildEnv.GOOS, goarch: rec.Graph.BuildEnv.GOARCH})
+		envs = append(envs, walkBuildEnv{id: id, env: rec.Graph.BuildEnv})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close() //nolint:errcheck // returning the iteration error
-		return fmt.Errorf("iterating walks for build-environment back-fill: %w", err)
+		return nil, fmt.Errorf("iterating walks for build-environment back-fill: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return fmt.Errorf("closing walk rows after build-environment back-fill: %w", err)
+		return nil, fmt.Errorf("closing walk rows after build-environment back-fill: %w", err)
 	}
+	return envs, nil
+}
 
-	for _, u := range updates {
-		if _, err := tx.Exec(`UPDATE walks SET goos = ?, goarch = ? WHERE id = ?`, u.goos, u.goarch, u.id); err != nil {
-			return fmt.Errorf("back-filling build environment for walk %s: %w", u.id, err)
+// backfillBuildEnv fills the goos/goarch columns of migration 8 from each
+// stored walk's own record. See scanWalkBuildEnvs for the two rules it reads
+// under: the blob is decoded but not re-verified, and a row that cannot be
+// decoded is left at the empty frame rather than failing the migration.
+func backfillBuildEnv(tx *sql.Tx) error {
+	envs, err := scanWalkBuildEnvs(tx)
+	if err != nil {
+		return err
+	}
+	for _, e := range envs {
+		if e.env.IsZero() {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE walks SET goos = ?, goarch = ? WHERE id = ?`, e.env.GOOS, e.env.GOARCH, e.id); err != nil {
+			return fmt.Errorf("back-filling build environment for walk %s: %w", e.id, err)
 		}
 	}
 	return nil
@@ -224,8 +273,8 @@ INSERT INTO walks (
     started_at, completed_at, overall_status,
     pipeline_version, operator, content_hash,
     node_count, failure_count, scope, depth, project_dir, identity_hash,
-    goos, goarch, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    goos, goarch, go_version, serialised
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     target_path      = excluded.target_path,
     target_version   = excluded.target_version,
@@ -243,6 +292,7 @@ ON CONFLICT (id) DO UPDATE SET
     identity_hash    = excluded.identity_hash,
     goos             = excluded.goos,
     goarch           = excluded.goarch,
+    go_version       = excluded.go_version,
     serialised       = excluded.serialised`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
@@ -255,7 +305,7 @@ ON CONFLICT (id) DO UPDATE SET
 		// Projected from the sealed record, never from the running process: a
 		// column that reported the host would answer for a cross-compiled walk in
 		// a frame that walk never resolved.
-		rec.Graph.BuildEnv.GOOS, rec.Graph.BuildEnv.GOARCH, blob,
+		rec.Graph.BuildEnv.GOOS, rec.Graph.BuildEnv.GOARCH, rec.Graph.BuildEnv.GoVersion, blob,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting walk record: %w", err)
@@ -400,7 +450,7 @@ func (s *Store) ListWalks(ctx context.Context, filter walkports.WalkFilter) ([]w
 			&status,
 			&sum.NodeCount, &sum.FailureCount,
 			&scope, &depth, &sum.IdentityHash,
-			&sum.GOOS, &sum.GOARCH,
+			&sum.GOOS, &sum.GOARCH, &sum.GoVersion,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning walk summary: %w", serr)
 		}
@@ -445,17 +495,18 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	if f.LatestOnly {
 		q = `SELECT id, target_path, target_version, started_at, completed_at,
 	             overall_status, node_count, failure_count, scope, depth, identity_hash,
-	             goos, goarch
+	             goos, goarch, go_version
 	      FROM walks w1
 	      WHERE started_at = (
 	          SELECT MAX(started_at) FROM walks w2
 	          WHERE w2.target_path = w1.target_path AND w2.target_version = w1.target_version
 	          AND w2.scope = w1.scope
+	          AND w2.go_version = w1.go_version
 	      )`
 	} else {
 		q = `SELECT id, target_path, target_version, started_at, completed_at,
 	             overall_status, node_count, failure_count, scope, depth, identity_hash,
-	             goos, goarch
+	             goos, goarch, go_version
 	      FROM walks`
 	}
 	var conditions []string
@@ -491,6 +542,14 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 		// would hand a platform-filtered caller a frame-unrecorded walk.
 		conditions = append(conditions, "goos = ? AND goarch = ?")
 		args = append(args, f.BuildEnv.GOOS, f.BuildEnv.GOARCH)
+	}
+	if f.Toolchain != nil {
+		// Matched exactly, for the reason BuildEnv is: the empty string names the
+		// walks that recorded no toolchain, and widening it to "any" here would
+		// hand a caller asking about one standard library a walk that links
+		// another. A caller that wants any toolchain leaves the field nil.
+		conditions = append(conditions, "go_version = ?")
+		args = append(args, *f.Toolchain)
 	}
 	if f.Depth != nil {
 		// Full walks are stored as "" in the DB (omitempty convention).

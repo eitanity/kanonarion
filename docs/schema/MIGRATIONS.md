@@ -745,6 +745,61 @@ Measured on the real store at migration time: 92 rows, 72 back-filled to
 walks. Only the project resolver writes a `BuildEnv`, so a walk rooted at a
 published coordinate structurally has no frame and can never gain one.
 
+## Walk store: module `walk`, migration 9
+
+**Additive; one new column, no record shape change and no pipeline bump.**
+`walks` gains `go_version`: the Go toolchain that resolved the walk, as
+`go env GOVERSION` reported it in the project's own directory. The whole store's
+migration count goes `v80` -> `v81`.
+
+Like `goos`/`goarch` the value already lived in the sealed blob, as the graph's
+`BuildEnv`. The column is a projection of it — the canonical shape the content
+hash covers is unchanged, so every stored walk still verifies against the hash it
+was written with, `identity_hash` is untouched, and nothing is purged. **Walk
+migrations 4 and 5 are `DELETE FROM walks`; this one deliberately is not.** The
+blob already holds the value, so back-filling it is the entire point, and a purge
+here would destroy the evidence the column exists to make selectable.
+
+**Why the toolchain needs a column when the platform already has one.** Selection
+partitioned latest-for-target on `(target, version, scope)` and let recency decide
+the rest. Two walks of one project, one scope and one platform can still differ in
+the toolchain that resolved them — whichever `go` led `PATH`, or a `toolchain`
+directive the project acquired — and the toolchain pins the synthetic stdlib node,
+so the two walks name different standard library versions. A read that fell
+through to recency therefore answered about whichever Go release happened to be
+newest. Because a newer patch release CLEARS toolchain advisories, the error was
+not symmetric: it ran towards reporting the toolchain clean, on the one module
+every Go project links.
+
+**Back-filled**, on exactly the terms migration 8 established. The migration
+decompresses each stored walk once and copies the toolchain out of its own
+record; leaving it empty would make every stored walk permanently invisible to
+the toolchain-filtered lookups the column exists for. A row whose record carries
+no build environment back-fills to the empty string; a row this build cannot
+decode is skipped rather than failing the migration, because an unreadable row's
+toolchain is genuinely unknown.
+
+Empty means **the toolchain was never recorded**, and it never matches an
+explicit filter. `WalkFilter.Toolchain` matches exactly and "any toolchain" is
+expressible only by leaving it nil — which is also what a read does when its own
+`go env` probe cannot answer, because filtering on the empty string would select
+the unrecorded rows rather than widening.
+
+`WalkFilter.Toolchain` is a field of its own rather than a third field on
+`BuildEnvFilter`. The two axes are asked independently: a caller pinning the
+platform is asking which files the build selects, a caller pinning the toolchain
+is asking which standard library it links, and folding them together would force
+every platform-filtered read to pin a toolchain with no value meaning "any".
+
+`LatestOnly` now partitions on `(target, version, scope, go_version)`. Two walks
+under two toolchains are two builds, not two attempts at one.
+
+Measured on the real store at migration time: 17 rows, all 17 retained, 12
+back-filled (7 to `go1.26.5`, 5 to `go1.26.6`) and 5 left unrecorded — and those
+5 are exactly the module-rooted walks, which record no build environment at all.
+Every row's `content_hash`, `identity_hash` and stored bytes came back
+byte-identical.
+
 ## Call graph store: module `callgraph`, migration 12
 
 **Additive; one new column, no record-shape purge, no schema-version bump and no

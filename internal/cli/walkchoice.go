@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -78,6 +80,11 @@ type walkChoice struct {
 	// that fell back to recency says what it could not check rather than only
 	// that it did not.
 	uncheckable string
+	// toolchains are the distinct Go toolchains the candidate walks were
+	// resolved by, sorted. More than one means the candidates disagree about
+	// which standard library the target links, and the choice between them
+	// decides which toolchain advisories the answer is about.
+	toolchains []string
 }
 
 // chooseWalk picks the walk a read answers from out of a store-ordered
@@ -102,26 +109,27 @@ func chooseWalk(
 		rule:         walkChosenSole,
 		candidates:   len(summaries),
 		manifestPath: manifest,
+		toolchains:   distinctToolchains(summaries),
 	}
 	if len(summaries) == 1 {
 		return c
 	}
 	c.rule = walkChosenRecencyUnchecked
 
-	probe := len(summaries)
-	if probe > walkChoiceProbeLimit {
-		probe = walkChoiceProbeLimit
+	probed := summaries
+	if len(probed) > walkChoiceProbeLimit {
+		probed = probed[:walkChoiceProbeLimit]
 	}
-	c.probed = probe
+	c.probed = len(probed)
 
-	for i := range probe {
+	for i, candidate := range probed {
 		if err := ctx.Err(); err != nil {
 			c.noteUncheckable(fmt.Sprintf("the comparison was cancelled: %v", err))
 			break
 		}
-		rec, err := walks.GetWalk(ctx, summaries[i].ID)
+		rec, err := walks.GetWalk(ctx, candidate.ID)
 		if err != nil {
-			c.noteUncheckable(fmt.Sprintf("walk %s could not be read back: %v", summaries[i].ID, err))
+			c.noteUncheckable(fmt.Sprintf("walk %s could not be read back: %v", candidate.ID, err))
 			continue
 		}
 		path := manifest
@@ -141,7 +149,7 @@ func chooseWalk(
 			c.manifestPath = path
 		}
 		if len(disagreements) == 0 {
-			c.summary, c.record, c.loaded = summaries[i], rec, true
+			c.summary, c.record, c.loaded = candidate, rec, true
 			c.rule = walkChosenManifestMatch
 			return c
 		}
@@ -158,6 +166,43 @@ func chooseWalk(
 		c.rule = walkChosenRecencyUnchecked
 	}
 	return c
+}
+
+// distinctToolchains returns the toolchains the candidates were resolved by,
+// sorted and deduplicated. A candidate that recorded none is named as such
+// rather than dropped: "some walks under go1.26.6 and some under no recorded
+// toolchain" is a disagreement, and hiding the unrecorded half would make it
+// read as agreement.
+func distinctToolchains(summaries []walkports.WalkSummary) []string {
+	seen := make(map[string]struct{}, len(summaries))
+	out := make([]string, 0, len(summaries))
+	for _, s := range summaries {
+		t := s.Toolchain()
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// toolchainNote states the toolchain the chosen walk was resolved by, and is
+// empty unless the candidates disagreed about it.
+//
+// It is conditional because that is where the harm is. Where every walk of a
+// target was resolved by one toolchain there is nothing to have chosen, and a
+// line printed anyway is boilerplate. Where they were not, the choice silently
+// decides which standard library — and therefore which toolchain advisories —
+// the answer is about, and an unstated choice there is how one project came to
+// be reported both affected and clean.
+func (c walkChoice) toolchainNote() string {
+	if len(c.toolchains) < 2 {
+		return ""
+	}
+	return fmt.Sprintf("the candidates were resolved by %s and this one by %s, which is the standard library the answer is about",
+		strings.Join(c.toolchains, " and "), c.summary.Toolchain())
 }
 
 // noteUncheckable keeps the FIRST reason a comparison could not be made. The
@@ -194,6 +239,11 @@ func (c walkChoice) statement() string {
 	}
 	head := fmt.Sprintf("no walk was named and the store holds %d for this target, so one was chosen", c.candidates)
 	pin := fmt.Sprintf("pin one with --walk-id (kanonarion walk-list --target %s lists them)", c.summary.Target)
+	// The toolchain note rides in front of the pin so it lands in every branch:
+	// the choice it describes was made whichever rule made it.
+	if note := c.toolchainNote(); note != "" {
+		pin = note + "; " + pin
+	}
 	switch c.rule {
 	case walkChosenManifestMatch:
 		return fmt.Sprintf("notice: %s: walk %q (frame %s), the most recent whose recorded resolution still agrees with %s; %s\n",
@@ -244,7 +294,12 @@ func (c walkChoice) statementClause() string {
 	if c.candidates <= 1 {
 		return ""
 	}
-	return fmt.Sprintf("; the store holds %d walks of this target and none was named, so this one was chosen — name one with --walk-id to choose it yourself", c.candidates)
+	toolchain := c.toolchainNote()
+	if toolchain != "" {
+		toolchain = "; " + toolchain
+	}
+	return fmt.Sprintf("; the store holds %d walks of this target and none was named, so this one was chosen%s — name one with --walk-id to choose it yourself",
+		c.candidates, toolchain)
 }
 
 // selectionJSON is the machine-readable form of the same statement, for the

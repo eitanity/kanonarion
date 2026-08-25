@@ -243,10 +243,30 @@ type WalkFilter struct {
 	// linux/amd64 therefore never receives a walk written before the platform was
 	// projected into its own columns, and a caller asking for those rows has to
 	// say so with an explicitly empty filter.
-	BuildEnv   *BuildEnvFilter
-	Limit      int // 0 = no limit
-	Offset     int
-	LatestOnly bool // true: return only the latest unique (target, scope) combination
+	BuildEnv *BuildEnvFilter
+	// Toolchain restricts results to walks resolved by one Go toolchain, as
+	// `go env GOVERSION` reported it for the project. nil = any toolchain, and
+	// like BuildEnv the empty string is a value rather than a wildcard: it
+	// selects the walks that recorded no toolchain at all.
+	//
+	// It is separate from BuildEnv rather than a third field on it because the
+	// two are asked independently. A caller pinning the platform is asking which
+	// files the build selects; a caller pinning the toolchain is asking which
+	// standard library it links. Folding them into one struct would force every
+	// platform-filtered read to also pin a toolchain, and there is no value it
+	// could pass to mean "any".
+	Toolchain *string
+	Limit     int // 0 = no limit
+	Offset    int
+	// LatestOnly returns only the latest walk of each unique
+	// (target, scope, toolchain) combination.
+	//
+	// The toolchain is in the partition because two walks under two toolchains
+	// are two builds, not two attempts at one. They link different standard
+	// libraries, so collapsing them by clock makes the newer toolchain's answer
+	// stand for the older one's — which is a wrong answer, not merely an
+	// unfiltered one.
+	LatestOnly bool
 }
 
 // BuildEnvFilter names the target platform a walk was resolved for, as
@@ -254,9 +274,9 @@ type WalkFilter struct {
 // WalkFilter.BuildEnv for what the empty string means.
 //
 // It is deliberately not walkdomain.BuildEnv: that type also carries GoVersion,
-// which the store does not project into a column and therefore cannot filter on.
-// A filter type that accepted a field it silently ignored would be worse than
-// one that cannot express it.
+// and the toolchain is a separate question from the platform. It has a column
+// and a filter of its own — WalkFilter.Toolchain — so that a caller can pin
+// either axis without being made to pin the other.
 type BuildEnvFilter struct {
 	// GOOS is the target operating system (e.g. "linux"), as `go env GOOS`
 	// reports it for the project the walk resolved.
@@ -297,6 +317,22 @@ type WalkSummary struct {
 	// written together, so one empty means both are.
 	GOOS   string `json:"goos,omitempty"`
 	GOARCH string `json:"goarch,omitempty"`
+	// GoVersion is the toolchain that resolved this walk, as `go env GOVERSION`
+	// reported it in the project's own directory. Empty for a walk that recorded
+	// no build environment, and for one written before the toolchain was
+	// projected into a column of its own.
+	GoVersion string `json:"go_version,omitempty"`
+}
+
+// Toolchain names the toolchain this walk was resolved by, for output that says
+// which standard library the answer is about. A walk that recorded none says so
+// rather than rendering an empty string: a reader cannot tell an unrecorded
+// toolchain from an unstated one.
+func (s WalkSummary) Toolchain() string {
+	if s.GoVersion == "" {
+		return "unrecorded"
+	}
+	return s.GoVersion
 }
 
 // Frame is the frame this walk answers in, derived over its own target so a

@@ -167,6 +167,12 @@ type QueryCallGraphUseCase interface {
 	GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req callgraphdomain.ComposeRequest) (callgraphdomain.CallGraphRecord, bool, error)
 	CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error)
 	ListCallGraphRecords(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error)
+	// ListCallGraphCoordinates answers "which modules has the store analysed, and
+	// at what versions" from the ledger's keys. It is what the resolution helpers
+	// ask, and it is separate from ListCallGraphRecords because that one answers
+	// the different question "what does the served generation say" — and pays a
+	// composition per multi-generation coordinate to do it.
+	ListCallGraphCoordinates(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphCoordinate, error)
 	FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
 	FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
 	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error)

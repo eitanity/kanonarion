@@ -551,6 +551,29 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 	return best, bestVer
 }
 
+// resetInvocationState puts the process-wide state a command DERIVES back to
+// what a fresh invocation starts from. newRootCmd calls it, so it runs once
+// per Run.
+//
+// The flag-BOUND variables (storeRoot, logLevel, jsonOut,
+// allowVerificationDowngrade) are absent because they need no help:
+// StringVar/BoolVar assign the flag's default at registration, and newRootCmd
+// registers every flag on every invocation. The ones below are written by a
+// resolve* helper or by PersistentPreRunE, and a helper that is not called
+// leaves the previous command's value in place. Three call sites reach
+// resolveModcacheMode; sixty-odd reach NewContainer, which reads modcacheMode.
+//
+// cliClock is deliberately absent for the opposite reason: it is the test seam
+// SetClockForTest pins BEFORE the invocation runs, and resetting it here would
+// unpin every golden.
+func resetInvocationState() {
+	modcacheMode, modcacheDir, goSumPath = false, "", ""
+	projectGoSumPath = ""
+	// The built-in defaults, which is what a store with no config file loads —
+	// never the previous store's policy.
+	activeConfig, activeConfigErr = domain.DefaultConfig(), nil
+}
+
 // storeRoot is the effective store directory for the current invocation.
 // Bound to --store-root on the root command; the env-var override
 // (KANONARION_STORE) is applied in root's PersistentPreRunE.
@@ -665,14 +688,21 @@ var projectGoSumPath string
 // simply means the cross-check never fires (unlike --from-modcache, where a
 // missing go.sum is a hard error). It is a no-op in --from-modcache mode, which
 // threads go.sum via resolveModcacheMode/goSumPath instead. Idempotent.
+//
+// Every path here ASSIGNS, including the two that select no file. Leaving the
+// variable alone would let a project whose go.sum is absent verify against the
+// go.sum of whatever project the previous invocation resolved.
 func resolveProjectGoSum(gomodPath string) {
 	if modcacheMode {
+		projectGoSumPath = ""
 		return
 	}
 	goSum := filepath.Join(filepath.Dir(gomodPath), "go.sum")
-	if _, err := os.Stat(goSum); err == nil {
-		projectGoSumPath = goSum
+	if _, err := os.Stat(goSum); err != nil {
+		projectGoSumPath = ""
+		return
 	}
+	projectGoSumPath = goSum
 }
 
 // allowVerificationDowngrade carries --allow-verification-downgrade across the

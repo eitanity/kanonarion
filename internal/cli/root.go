@@ -13,6 +13,10 @@ import (
 )
 
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
+	// A new invocation starts from a known state, not from whatever the last
+	// one left in the process-wide variables the resolve* helpers write.
+	resetInvocationState()
+
 	root := &cobra.Command{
 		Use:     "kanonarion",
 		Short:   "Dependency assurance software for Go",

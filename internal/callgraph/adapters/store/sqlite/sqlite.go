@@ -1194,19 +1194,32 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ? AND analys
 		return ports.WorktreeRouting{}, false, nil
 	}
 
+	out := ports.WorktreeRouting{LocatedTrees: located, UnlocatedGenerations: unlocated}
+	root, standing := s.preferredRoot(coord)
+	out.CallerRoot = root
+
+	// Both halves of WorthReporting are already decided: one located tree means
+	// the read chose between nothing, and a reader outside every recorded tree
+	// has made no claim a miss could contradict. There is no routing decision to
+	// show, so the served generation is not read — and reading it costs a blob
+	// decode plus a reconstruction of the whole module's edge set, on every
+	// text-mode edge query, to fill three fields nothing then renders.
+	//
+	// The served fields are left at their zero values rather than guessed. A
+	// caller can tell: WorthReporting is false on exactly the struct this returns,
+	// and it is what gates every use of them.
+	if located < 2 && !standing {
+		return out, true, nil
+	}
+
 	rec, found, err := s.composeFor(ctx, coord, pipelineVersion, domain2.ComposeRequest{})
 	if err != nil || !found {
 		return ports.WorktreeRouting{}, false, err
 	}
-	out := ports.WorktreeRouting{
-		LocatedTrees:         located,
-		UnlocatedGenerations: unlocated,
-		ServedRoot:           rec.AnalysisRoot,
-		ServedDigest:         rec.WorktreeDigest,
-		ServedSource:         rec.AnalysisSource,
-	}
-	if root, ok := s.preferredRoot(coord); ok {
-		out.CallerRoot = root
+	out.ServedRoot = rec.AnalysisRoot
+	out.ServedDigest = rec.WorktreeDigest
+	out.ServedSource = rec.AnalysisSource
+	if standing {
 		// An unlocated generation never matches. It may well BE this tree; nothing
 		// records that it was, and asserting it would be the silent wrong answer
 		// with an extra step.
@@ -1513,6 +1526,104 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 	return pageSummaries(out, filter.Limit, filter.Offset), nil
 }
 
+// ListCallGraphCoordinates returns one entry per analysed (module, version,
+// pipeline version), read entirely from columns.
+//
+// It composes nothing, and that is its whole point. ListCallGraphRecords answers
+// "what does the served generation say", so for every coordinate holding more
+// than one generation it composes — which decodes each generation's blob and
+// reconstructs its entire edge set from callgraph_edges to read eight scalar
+// fields off the winner. On a ledger of 40M edge rows that is a minute of work
+// per listing, and a caller/callee query performs the listing two to four times
+// before it looks at a single edge.
+//
+// The two flags are the only content facts the columns can prove. They are
+// deliberately one-way: see ports.CallGraphCoordinate.
+func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallGraphFilter) ([]ports.CallGraphCoordinate, error) {
+	q := `SELECT module_path, module_version, pipeline_version, overall_status, completeness
+	      FROM callgraph_records`
+	var args []any
+	var where []string
+	if filter.ModulePath != "" {
+		where = append(where, "module_path = ?")
+		args = append(args, filter.ModulePath)
+	}
+	if filter.PipelineVersion != "" {
+		where = append(where, "pipeline_version = ?")
+		args = append(args, filter.PipelineVersion)
+	}
+	if filter.AnalysisSource != domain2.AnalysisSourceUnrecorded {
+		where = append(where, "analysis_source = ?")
+		args = append(args, string(filter.AnalysisSource))
+	}
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	// The same order ListCallGraphRecords uses, so a caller that swaps one listing
+	// for the other sees the coordinates in the same sequence.
+	q += " ORDER BY extracted_at DESC, rowid DESC"
+
+	rows, err := s.db.DB().QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing callgraph coordinates: %w", err)
+	}
+
+	type generationKey struct{ path, version, pipeline string }
+	seen := map[generationKey]int{}
+	out := make([]ports.CallGraphCoordinate, 0)
+
+	for rows.Next() {
+		var k generationKey
+		var status int
+		var completeness string
+		if serr := rows.Scan(&k.path, &k.version, &k.pipeline, &status, &completeness); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return nil, fmt.Errorf("scanning callgraph coordinate: %w", serr)
+		}
+		idx, known := seen[k]
+		if !known {
+			idx = len(out)
+			seen[k] = idx
+			out = append(out, ports.CallGraphCoordinate{
+				ModulePath: k.path, ModuleVersion: k.version, PipelineVersion: k.pipeline,
+			})
+		}
+		if domain2.CallGraphStatus(status) == domain2.CallGraphStatusPartial {
+			out[idx].AnyPartial = true
+		}
+		// Read through the domain's own predicate rather than compared to a literal
+		// in SQL: the ladder is one rule, and a second statement of it in the query
+		// text would drift from it.
+		if level := domain2.CompletenessLevel(completeness); level != domain2.CompletenessUnknown && !level.IsBuiltWithBodies() {
+			out[idx].AnyBelowFull = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return nil, fmt.Errorf("iterating callgraph coordinates: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("closing callgraph coordinate rows: %w", err)
+	}
+
+	return pageCoordinates(out, filter.Limit, filter.Offset), nil
+}
+
+// pageCoordinates applies the caller's limit and offset to the collapsed list,
+// on the same terms pageSummaries does: they count coordinates, not rows.
+func pageCoordinates(coords []ports.CallGraphCoordinate, limit, offset int) []ports.CallGraphCoordinate {
+	if offset > 0 {
+		if offset >= len(coords) {
+			return nil
+		}
+		coords = coords[offset:]
+	}
+	if limit > 0 && limit < len(coords) {
+		coords = coords[:limit]
+	}
+	return coords
+}
+
 // pageSummaries applies the caller's limit and offset to the collapsed list.
 func pageSummaries(sums []ports.CallGraphSummary, limit, offset int) []ports.CallGraphSummary {
 	if offset > 0 {
@@ -1723,8 +1834,9 @@ func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pip
 // Ensure Store implements ports.CallGraphStore and the optional ledger reads at
 // compile time.
 var (
-	_ ports.CallGraphStore          = (*Store)(nil)
-	_ ports.CallGraphRecordLister   = (*Store)(nil)
-	_ ports.CallGraphSourceReader   = (*Store)(nil)
-	_ ports.CallGraphWorktreeRouter = (*Store)(nil)
+	_ ports.CallGraphStore            = (*Store)(nil)
+	_ ports.CallGraphRecordLister     = (*Store)(nil)
+	_ ports.CallGraphCoordinateLister = (*Store)(nil)
+	_ ports.CallGraphSourceReader     = (*Store)(nil)
+	_ ports.CallGraphWorktreeRouter   = (*Store)(nil)
 )

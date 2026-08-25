@@ -144,12 +144,11 @@ func TestListWalks_ExplicitPlatformNeverMatchesAnUnrecordedFrame(t *testing.T) {
 func TestMigration8_BackfillsTheFrameFromTheSealedRecord(t *testing.T) {
 	ctx := context.Background()
 
-	// Open at the pre-BuildEnv schema: every walk migration EXCEPT the last.
+	// Open at the pre-BuildEnv schema: every walk migration BEFORE 8. It is
+	// selected by version rather than by position so a later migration does not
+	// silently turn this into a test of something else.
 	all := walksqlite.Migrations()
-	if len(all) < 8 {
-		t.Fatalf("walk module has %d migrations, expected at least 8", len(all))
-	}
-	pre := all[:len(all)-1]
+	pre := walkMigrationsBefore(t, 8)
 
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
 	handle, err := sqlitestore.Open(dsn, pre)
@@ -226,7 +225,7 @@ func TestMigration8_UndecodableRowKeepsAnUnrecordedFrame(t *testing.T) {
 	ctx := context.Background()
 
 	all := walksqlite.Migrations()
-	pre := all[:len(all)-1]
+	pre := walkMigrationsBefore(t, 8)
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
 	handle, err := sqlitestore.Open(dsn, pre)
 	if err != nil {
