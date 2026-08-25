@@ -101,6 +101,11 @@ const (
 	// build serves none of them. Distinct from not_run: the work was done and
 	// must be done again, which is a different instruction to the reader.
 	sectionStatusSuperseded = "superseded"
+	// sectionStatusNotInWalk: the walk this document is based on does not hold
+	// the module, so the build the rest of the document describes never resolved
+	// it. Distinct from not_run, which claims nothing looked; here a build was
+	// measured and the module was not in it.
+	sectionStatusNotInWalk = "not_in_basis_walk"
 )
 
 // Fork-heuristic status strings, mirrored from the domain status names so the
@@ -138,6 +143,12 @@ type contextDependencies struct {
 	// dependency list for a project is a list for one platform.
 	Frame      string `json:"frame,omitempty"`
 	FrameBasis string `json:"frame_basis,omitempty"`
+	// Rooting is the answering walk's root in the same words the vulnerability
+	// section's walk_basis_frame uses, so a consumer can check the two sections
+	// answered in one build without recognising a walk id. Emitted whenever a
+	// walk answered, including the walk that holds the module but does not root
+	// at it.
+	Rooting string `json:"rooting,omitempty"`
 	// Count and Partial are emitted whenever this section is rendered, zero and
 	// false included. A module with no direct dependencies is a measurement, and
 	// so is a walk that resolved every node; Status carries the cases where no
@@ -498,11 +509,16 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 			cmdWalkID = walks[0].ID
 		}
 	}
+	// The vulnerability section names the build this document reports in, so the
+	// dependency section answers in that same build rather than selecting one of
+	// its own. A document that selected twice could name one walk and count in
+	// another.
+	basis := resolveBasisWalk(ctx, ctr.QueryWalks, vulns.WalkBasisID)
 	out := contextOutput{
 		Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 		Provenance:      buildProvenance(coord),
-		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
+		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 		Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),

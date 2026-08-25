@@ -186,12 +186,21 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	case sectionStatusNotRun:
 		w.printf("  Dependencies:    (not run — run: %s)\n",
 			walkInvocationForRendered(out.Module.Path+"@"+out.Module.Version))
+	case sectionStatusNotInWalk:
+		w.printf("  Dependencies:    (not measured in this build — %s does not hold %s@%s)\n",
+			dependencyBasisPhrase(out.Dependencies), out.Module.Path, out.Module.Version)
 	case sectionStatusReadError:
 		w.printf("  Dependencies:    (failed: %s)\n", out.Dependencies.Error)
 	default:
 		line := fmt.Sprintf("%d direct (%s)", out.Dependencies.Count, out.Dependencies.Status)
 		if out.Dependencies.Partial {
 			line += " [partial]"
+		}
+		// The count is a fact about one build — a module's dependency set differs
+		// between frames by scope and by resolved version — so the build is named
+		// beside it, in the words the Walk basis line below uses.
+		if basis := dependencyBasisPhrase(out.Dependencies); basis != "" {
+			line += " [" + basis + "]"
 		}
 		w.printf("  Dependencies:    %s\n", line)
 		printPreModulesCaveat(w, out.Dependencies.PreModulesCaveat)
@@ -409,4 +418,17 @@ func walkAnnotation(v contextVulnerabilities) string {
 		parts = append(parts, "[walk: affected-peer status unavailable]")
 	}
 	return strings.Join(parts, " ")
+}
+
+// dependencyBasisPhrase names the walk the dependency section answered in, and
+// the frame that walk was rooted at. Empty when no walk answered, so a section
+// with nothing to name prints nothing rather than an empty bracket.
+func dependencyBasisPhrase(d contextDependencies) string {
+	if d.WalkID == "" {
+		return ""
+	}
+	if d.Rooting == "" {
+		return "walk " + d.WalkID
+	}
+	return fmt.Sprintf("walk %s, frame %s", d.WalkID, d.Rooting)
 }

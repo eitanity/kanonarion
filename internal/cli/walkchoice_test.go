@@ -595,7 +595,7 @@ func TestBuildDependencies_AnswersFromTheManifestMatchingWalk(t *testing.T) {
 	}
 	walks := selectionStore(rehearsal, matching)
 
-	got := buildDependencies(context.Background(), matching.Target, walks)
+	got := buildDependencies(context.Background(), matching.Target, walks, basisWalk{})
 	if got.WalkID != matching.ID {
 		t.Errorf("dependency section answered from walk %q, want the manifest-matching %q", got.WalkID, matching.ID)
 	}

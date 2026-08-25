@@ -511,3 +511,96 @@ func TestSupersededRequirements_sortsAcrossPaths(t *testing.T) {
 		t.Errorf("order = [%s, %s], want alpha before zeta", got[0], got[1])
 	}
 }
+
+// directDepsGraph is a project graph: the root requires its whole build list
+// (an edge to every node) but marks only two of those requirements direct, and
+// one dependency has an outgoing edge of its own.
+func directDepsGraph() domain.Graph {
+	root := coord("example.com/app", "v1.0.0")
+	lib := coord("example.com/lib", "v3.3.0")
+	extra := coord("example.com/extra", "v1.0.0")
+	cast := coord("example.com/cast", "v1.10.0")
+	g := domain.Graph{
+		Target: root,
+		Nodes: []domain.GraphNode{
+			{Coordinate: root},
+			{Coordinate: lib, DirectDependency: true},
+			{Coordinate: extra, DirectDependency: true},
+			{Coordinate: cast},
+		},
+		Edges: []domain.GraphEdge{
+			{From: root, To: lib, ConstraintVersion: "v3.3.0"},
+			{From: root, To: extra, ConstraintVersion: "v1.0.0"},
+			{From: root, To: cast, ConstraintVersion: "v1.10.0"},
+			{From: lib, To: cast, ConstraintVersion: "v1.7.0"},
+		},
+	}
+	g.Sort()
+	return g
+}
+
+func coordStrings(cs []coordinate.ModuleCoordinate) []string {
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, c.String())
+	}
+	return out
+}
+
+// DirectDependency is a fact about the ROOT's manifest. Reading it for a
+// dependency reports the root's direct dependencies as that dependency's, so a
+// non-root module is answered from its outgoing edges.
+func TestDirectDependenciesOf_ANonRootModuleIsAnsweredByItsEdges(t *testing.T) {
+	g := directDepsGraph()
+	got, held := g.DirectDependenciesOf(coord("example.com/lib", "v3.3.0"))
+	if !held {
+		t.Fatalf("graph does not hold the module it lists as a node")
+	}
+	want := []string{"example.com/cast@v1.10.0"}
+	if s := coordStrings(got); len(s) != 1 || s[0] != want[0] {
+		t.Errorf("DirectDependenciesOf(lib) = %v, want %v", s, want)
+	}
+}
+
+// The root is answered by the flag, not by its edges: a main module's go.mod
+// requires its whole build list, so the root's outgoing edges are that list
+// while the flag records what the manifest did not mark indirect.
+func TestDirectDependenciesOf_TheRootIsAnsweredByItsManifest(t *testing.T) {
+	g := directDepsGraph()
+	got, held := g.DirectDependenciesOf(g.Target)
+	if !held {
+		t.Fatalf("the root is not in its own closure")
+	}
+	want := []string{"example.com/extra@v1.0.0", "example.com/lib@v3.3.0"}
+	s := coordStrings(got)
+	if len(s) != len(want) {
+		t.Fatalf("DirectDependenciesOf(root) = %v, want %v", s, want)
+	}
+	for i := range want {
+		if s[i] != want[i] {
+			t.Fatalf("DirectDependenciesOf(root) = %v, want %v", s, want)
+		}
+	}
+}
+
+// A module the graph does not hold is reported as absent, not as a module with
+// no dependencies: the caller's two answers are different sentences.
+func TestDirectDependenciesOf_AModuleTheGraphDoesNotHold(t *testing.T) {
+	g := directDepsGraph()
+	got, held := g.DirectDependenciesOf(coord("example.com/absent", "v1.0.0"))
+	if held {
+		t.Errorf("reported a module the graph does not hold as held, with %v", coordStrings(got))
+	}
+}
+
+// A leaf the graph holds has no outgoing edges, and that is a measurement.
+func TestDirectDependenciesOf_ALeafIsHeldWithNoDependencies(t *testing.T) {
+	g := directDepsGraph()
+	got, held := g.DirectDependenciesOf(coord("example.com/cast", "v1.10.0"))
+	if !held {
+		t.Fatalf("a node the graph lists was reported absent")
+	}
+	if len(got) != 0 {
+		t.Errorf("DirectDependenciesOf(leaf) = %v, want none", coordStrings(got))
+	}
+}

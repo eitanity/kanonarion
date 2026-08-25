@@ -136,7 +136,7 @@ func dependenciesSection(t *testing.T, rec walkdomain.WalkRecord) map[string]any
 	uc := testfakes.NewFakeQueryWalks()
 	uc.AddWalk(rec)
 	uc.SetSummaries([]walkports.WalkSummary{{ID: rec.ID, Target: rec.Target, OverallStatus: rec.OverallStatus}})
-	return sectionKeys(t, buildDependencies(context.Background(), rec.Target, uc))
+	return sectionKeys(t, buildDependencies(context.Background(), rec.Target, uc, basisWalk{}))
 }
 
 // TestContextJSON_DependencyCountAndPartialAreEmittedAtZero pins the pair on a

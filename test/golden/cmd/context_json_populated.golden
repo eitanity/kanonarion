@@ -28,9 +28,19 @@ exit 0
     }
   },
   "dependencies": {
-    "status": "not_run",
-    "count": 0,
-    "partial": false
+    "status": "succeeded",
+    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "frame": "not-platform-scoped",
+    "frame_basis": "not_platform_scoped",
+    "rooting": "target-rooted:example.com/app@v1.0.0",
+    "count": 1,
+    "partial": false,
+    "dependencies": [
+      {
+        "path": "example.com/shallow",
+        "version": "v1.0.0"
+      }
+    ]
   },
   "license": {
     "extracted_at": "2026-01-15T08:00:00Z",

@@ -510,3 +510,53 @@ func (g Graph) ReachableFrom(origin coordinate.ModuleCoordinate) map[coordinate.
 	}
 	return reached
 }
+
+// DirectDependenciesOf returns the modules m depends on directly in this graph,
+// and whether the graph holds m at all. The order is the graph's own: sorted by
+// (Path, Version) after Sort.
+//
+// For any module other than the root the answer is m's outgoing edges.
+// GraphNode.DirectDependency is a fact about the ROOT's manifest, so reading it
+// for a dependency reports the root's direct dependencies as that dependency's —
+// 76 against the queried module's 4, measured on a project walk.
+//
+// For the root itself the flag is what answers, and the edges are not: a main
+// module's go.mod requires its whole build list, so the root's outgoing edges
+// are that list (127 of 128 nodes on the same walk) while the flag records the
+// half the manifest did not mark indirect.
+func (g Graph) DirectDependenciesOf(m coordinate.ModuleCoordinate) ([]coordinate.ModuleCoordinate, bool) {
+	// The root is in its own closure whether or not a node row was materialised
+	// for it, so containment is never decided by the node list for the root.
+	if m == g.Target {
+		var out []coordinate.ModuleCoordinate
+		for _, n := range g.Nodes {
+			if n.DirectDependency {
+				out = append(out, n.Coordinate)
+			}
+		}
+		return out, true
+	}
+	held := false
+	for _, n := range g.Nodes {
+		if n.Coordinate == m {
+			held = true
+			break
+		}
+	}
+	if !held {
+		return nil, false
+	}
+	var out []coordinate.ModuleCoordinate
+	seen := make(map[coordinate.ModuleCoordinate]struct{})
+	for _, e := range g.Edges {
+		if e.From != m {
+			continue
+		}
+		if _, dup := seen[e.To]; dup {
+			continue
+		}
+		seen[e.To] = struct{}{}
+		out = append(out, e.To)
+	}
+	return out, true
+}

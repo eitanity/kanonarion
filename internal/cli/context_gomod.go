@@ -80,8 +80,12 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// the build it pinned to — so without this line the pin is invisible, and an
 	// invisible pin to a walk taken before the last go.mod edit reads as a
 	// statement about the tree in front of the reader.
+	var basis basisWalk
 	if choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
 		vulnBatch.anchorTo(ctx, choice.summary.ID)
+		// The same walk the verdicts are read in answers the dependency section,
+		// so every document in the stream reports one build.
+		basis = resolveBasisWalk(ctx, ctr.QueryWalks, choice.summary.ID)
 		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (frame %s)%s%s\n",
 			choice.summary.ID, choice.summary.BuildFrame(), choice.stalenessNote(), choice.statementClause())
 	}
@@ -123,7 +127,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 			Provenance:      buildProvenance(coord),
-			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
+			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),

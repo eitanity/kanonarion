@@ -36,8 +36,14 @@ that encountered a store error reports `"status": "read_error"` with an
 always read `out.dependencies.status` without checking whether the key
 exists.
 
-The `dependencies` section is drawn from the most recent walk where this
-module was the root target. If no such walk exists it reports `not_run`.
+The `dependencies` section is drawn from the walk the rest of the document is
+based on - the walk the vulnerability section names as its `walk basis`, the
+walk `--walk-id` names, or the project walk `--gomod` anchors to - wherever that
+walk holds the module. One document therefore reports one build. Where the
+document names no walk at all, the section falls back to the walks rooted at the
+module itself and picks the one the shared default rule picks. It reports
+`not_run` only when no walk in either route holds the module, and
+`not_in_basis_walk` when the document's build did not contain it.
 Other sections (license, interface, call graph, examples, vulnerabilities)
 are drawn from the extraction pipeline and are independent of walk records.
 
@@ -182,7 +188,7 @@ Compact mode (the default) renders one line per section:
 go.uber.org/goleak@v1.3.0
   Verification:    Verified (git: https://github.com/uber-go/goleak)
   Provenance:      no fork indicators (name-path heuristic, catalogue 1.0.0)
-  Dependencies:    6 direct (succeeded)
+  Dependencies:    6 direct (succeeded) [walk 01M0VG1267S1XDJGDFZTVRPM84, frame target-rooted:github.com/cortezaproject/corteza/server@local]
   License:         MIT
   Interface:       (not run)
   Call Graph:      93 nodes, 134 edges (Extracted)
@@ -239,6 +245,7 @@ truncated.
     "status": "succeeded",
     "walk_id": "01KQN2KMSRQ6EJHMAYBG8139NG",
     "frame": "linux/amd64",
+    "rooting": "target-rooted:example.com/app@local",
     "count": 6,
     "dependencies": [
       { "path": "github.com/davecgh/go-spew", "version": "v1.1.1" },
@@ -285,17 +292,25 @@ truncated.
 
 ### `dependencies`
 
-Direct dependencies drawn from the most recent walk where this module was the
-root target. Versions are the MVS-selected versions recorded in that walk, not
-the `require` versions from `go.mod` (which may differ after minimum version
-selection). The list is sorted lexicographically by module path.
+Direct dependencies drawn from the walk this document is based on. Versions are
+the MVS-selected versions recorded in that walk, not the `require` versions from
+`go.mod` (which may differ after minimum version selection). The list is sorted
+lexicographically by module path.
+
+The set is frame-dependent, and the difference is not cosmetic: a library walked
+on its own resolves its test-only dependencies and its own declared versions,
+while a build that consumes it resolves neither - measured, 15 dependencies for
+one module in its own walk against 10 in a project that uses it, with one shared
+dependency at `v1.7.0` in the first and `v1.10.0` in the second. `walk_id` and
+`rooting` name the build the count is for.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / walk status (`succeeded`, `partial`, `failed`, `cancelled`) |
+| `status` | string | `not_run` / `not_in_basis_walk` / `read_error` / walk status (`succeeded`, `partial`, `failed`, `cancelled`) |
 | `walk_id` | string | ID of the walk record this was drawn from |
 | `frame` | string | `GOOS/GOARCH` that walk resolved for, or `not-platform-scoped` for a module-rooted walk |
 | `frame_basis` | string | `platform`, `not_platform_scoped` or `unrecorded` |
+| `rooting` | string | The answering walk's root, in the same words `vulnerabilities.walk_basis_frame` uses, so the two sections can be compared without recognising a walk id |
 | `count` | int | Number of direct dependencies. Always present; `0` is the measurement that the module has none |
 | `partial` | bool | True when the walk graph was partial - some transitive deps could not be resolved, so the direct dep list may be incomplete. Always present; `false` is the measurement that the graph resolved completely |
 | `dependencies` | array | Direct dependencies sorted by path |
@@ -304,8 +319,12 @@ selection). The list is sorted lexicographically by module path.
 | `error` | string | Set when `status` is `read_error` |
 
 The dependency list is the list for one platform: `GOOS` gates which files
-build. `context` answers from the most recent walk of the module whatever its
-platform, so `frame` says which one answered.
+build, so `frame` says which platform answered.
+
+`not_run` means no walk in the store holds the module, and its remedy is to walk
+it. `not_in_basis_walk` means the build this document reports on did not contain
+the module - a walk was measured and this module was not in it, which is a
+different fact and a different remedy.
 
 The `walk_id` field is present so an agent can call `kanonarion walk-show
 <walk_id>` to retrieve the full transitive closure, or `kanonarion dependents
