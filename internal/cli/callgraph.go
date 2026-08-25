@@ -274,10 +274,20 @@ func discoveredBuildList(
 	coord coordinate.ModuleCoordinate,
 	stderr io.Writer,
 ) cgdomain.AnalysisInputs {
-	walkID, err := findWalkContaining(ctx, walks, coord)
+	found, err := findWalkContaining(ctx, walks, coord,
+		fmt.Sprintf("kanonarion callgraph %s --from-walk <walk of that build>", coord))
 	if err != nil {
+		// A search that finds nothing still says nothing. An AMBIGUOUS one does:
+		// the store holds the build list this analysis needs, in more than one
+		// build, and the analysis is about to run without it. Degrading silently
+		// there would record an empty graph while naming neither the builds that
+		// could have filled it nor the flag that picks one.
+		if amb, ok := errors.AsType[*ambiguousBuildRefusal](err); ok {
+			_, _ = fmt.Fprintf(stderr, "no build list was named; %s\n", amb)
+		}
 		return cgdomain.AnalysisInputs{}
 	}
+	walkID := found.walkID
 	inputs, err := analysisInputsForWalk(ctx, walks, walkID)
 	if err != nil || !inputs.HasBuildList() {
 		return cgdomain.AnalysisInputs{}

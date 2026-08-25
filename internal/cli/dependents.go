@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 func newDependentsCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -63,7 +62,7 @@ Flag combinations:
 		},
 	}
 
-	cmd.Flags().StringVar(&walkID, "walk-id", "", "walk record ID to query (optional; defaults to most recent walk containing the target module)")
+	cmd.Flags().StringVar(&walkID, "walk-id", "", "walk record ID to query (optional; defaults to the walk of a build that consumes the target module)")
 	cmd.Flags().BoolVar(&directOnly, "direct-only", false, "only show direct dependencies of the walk root")
 	cmd.Flags().BoolVar(&includeRoot, "include-root", false, "show the walk root module itself if it depends on the target")
 
@@ -93,12 +92,14 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, walkID string,
 	jsonOut, directOnly, includeRoot bool, stdout, stderr io.Writer,
 ) error {
+	var containment walkContainment
 	if walkID == "" {
-		resolved, rerr := findWalkContaining(ctx, ctr.QueryWalks, coord)
+		found, rerr := findWalkContaining(ctx, ctr.QueryWalks, coord,
+			fmt.Sprintf("kanonarion dependents %s --walk-id <walk of that build>", coord))
 		if rerr != nil {
 			return rerr
 		}
-		walkID = resolved
+		containment, walkID = found, found.walkID
 	}
 
 	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
@@ -124,8 +125,12 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 	}
 
 	// The frame comes off the record, so it is stated whether the walk was named
-	// with --walk-id or found by the containment search — the search takes the
-	// newest walk containing the coordinate and cannot tell two platforms apart.
+	// with --walk-id or found by the containment search. Which walk answered is
+	// carried alongside it: two walks holding one coordinate answer two
+	// questions, and the id alone does not say which was asked.
+	if containment.rule == "" {
+		containment = pinnedContainment(rec)
+	}
 	walkFrame := rec.Graph.Frame()
 	// Both directions of the question are bounded by the same fact. Asking about a
 	// +incompatible target, the answer covers only edges the module system
@@ -135,8 +140,15 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 	// as a measurement.
 	preModules := preModulesNodesIn(rec.Graph)
 	if jsonOut {
-		return writeDependentsJSON(stdout, walkID, walkFrame, coord.String(), deps,
+		return writeDependentsJSON(stdout, walkID, walkFrame, containment.selection(), coord.String(), deps,
 			preModulesCaveatFor(append(preModules, coord)...))
+	}
+	// Above the answer, not after it: it says which build the rows below describe,
+	// and a reader who has read the rows has already decided what they are about.
+	if note := containment.statement(coord); note != "" {
+		if _, werr := fmt.Fprint(stdout, note); werr != nil {
+			return fmt.Errorf("writing walk selection notice: %w", werr)
+		}
 	}
 	if err := writeDependentsText(stdout, walkID, walkFrame, coord.String(), deps, directOnly, rootExcluded, includeRoot); err != nil {
 		return err
@@ -215,10 +227,16 @@ type dependentsJSON struct {
 	// data: "platform", "not_platform_scoped" for a module-rooted walk (no
 	// platform applies, and re-walking never produces one), or "unrecorded" (the
 	// platform is simply not known). Both are always emitted.
-	WalkFrame      string               `json:"walk_frame"`
-	WalkFrameBasis string               `json:"walk_frame_basis"`
-	Target         string               `json:"target"`
-	Dependents     []dependentEntryJSON `json:"dependents"`
+	WalkFrame      string `json:"walk_frame"`
+	WalkFrameBasis string `json:"walk_frame_basis"`
+	// WalkSelection says how that walk was reached: pinned by the caller, chosen
+	// because it is rooted at a build that consumes the target, or fallen back to
+	// because the only walks holding the target are rooted at the target itself.
+	// The last of those answers a different question and the field is what says
+	// so on a stream that carries no prose.
+	WalkSelection walkSelectionJSON    `json:"walk_selection"`
+	Target        string               `json:"target"`
+	Dependents    []dependentEntryJSON `json:"dependents"`
 	// PreModulesCaveat is present only when the answer is bounded by a module
 	// resolved under pre-modules semantics; absent means no coordinate in scope is
 	// one, so an answer that never meets the class marshals exactly as before.
@@ -236,6 +254,7 @@ func writeDependentsJSON(
 	w io.Writer,
 	walkID string,
 	walkFrame walkdomain.WalkFrame,
+	selection walkSelectionJSON,
 	target string,
 	deps []dependentResult,
 	caveat *preModulesCaveatJSON,
@@ -253,6 +272,7 @@ func writeDependentsJSON(
 		WalkID:           walkID,
 		WalkFrame:        walkFrame.Text,
 		WalkFrameBasis:   string(walkFrame.Basis),
+		WalkSelection:    selection,
 		Target:           target,
 		Dependents:       entries,
 		PreModulesCaveat: caveat,
@@ -263,55 +283,6 @@ func writeDependentsJSON(
 		return fmt.Errorf("encoding JSON: %w", err)
 	}
 	return nil
-}
-
-// walkSearchLimit is how many of the newest walks the containment search reads.
-// It is a bound on cost — each candidate costs a whole walk record read — and
-// not a statement that older walks hold nothing.
-const walkSearchLimit = 50
-
-// findWalkContaining returns the ID of the most recent walk (by started_at) that
-// contains coord as a node in its graph.
-//
-// The search is bounded, and its failure says so. A negative from a search that
-// did not exhaust the population is not an absence: phrased flat, "no walk found
-// containing X" reads as "this store has never seen X" while the walk holding it
-// sits at position 51. That is the same rule the call-graph verdict applies —
-// RESOLVED-ABSENT only where the axis was measurable — on a store search.
-//
-// One extra row is fetched so the search knows whether its own bound bit,
-// exactly as the listings do. When it did not, the population WAS exhausted and
-// the negative is stated plainly: a caveat emitted unconditionally would teach
-// the reader to discount it in the case where it is real.
-func findWalkContaining(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate) (string, error) {
-	summaries, err := uc.ListWalks(ctx, walkports.WalkFilter{Limit: truncationFetchLimit(walkSearchLimit)})
-	if err != nil {
-		return "", fmt.Errorf("listing walks: %w", err)
-	}
-	searched, bounded := truncateList(summaries, walkSearchLimit)
-	for _, s := range searched {
-		rec, rerr := uc.GetWalk(ctx, s.ID)
-		if rerr != nil {
-			continue
-		}
-		for _, node := range rec.Graph.Nodes {
-			if node.Coordinate == coord {
-				return s.ID, nil
-			}
-		}
-	}
-	if !bounded {
-		return "", fmt.Errorf("no walk in this store contains %s (all %d walk(s) searched)", coord, len(searched))
-	}
-	// Only now is the store's own size worth a read: it is what turns "the
-	// search stopped" into a number the caller can act on.
-	total := len(searched)
-	if all, aerr := uc.ListWalks(ctx, walkports.WalkFilter{}); aerr == nil {
-		total = len(all)
-	}
-	return "", fmt.Errorf("no walk containing %s among the %d most recent walks searched — the store holds %d; "+
-		"name the walk to query with --walk-id, or list them with: kanonarion walk-list --limit 0",
-		coord, walkSearchLimit, total)
 }
 
 // Scope suffixes for the answer line. The root is excluded by default, so

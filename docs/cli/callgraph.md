@@ -185,7 +185,7 @@ kanonarion callgraph <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--force` | `false` | Re-extract even if a cached record exists |
-| `--from-walk` | _(auto-discovered)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. Unset, the most recent walk containing the module is used. See [Modules published before Go modules](#modules-published-before-go-modules). |
+| `--from-walk` | _(auto-discovered)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. Unset, the walk of a build that consumes the module is used; where the store holds it in more than one build, no build list is discovered and the builds are named on stderr so you can pin one. See [Modules published before Go modules](#modules-published-before-go-modules). |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--json` | `false` | Emit the record as JSON to stdout |
 

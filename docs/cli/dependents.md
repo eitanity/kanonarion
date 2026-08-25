@@ -3,7 +3,7 @@
 ## Synopsis
 
 ```
-kanonarion dependents <module>@<version> --walk-id <id> [flags]
+kanonarion dependents <module>@<version> [--walk-id <id>] [flags]
 ```
 
 ## Description
@@ -37,8 +37,56 @@ N module(s) in walk <id> (frame linux/amd64) depend on <target>:
 
 `frame` is the `GOOS/GOARCH` the answering walk resolved for, or
 `not-platform-scoped` for a module-rooted walk. Without `--walk-id` it comes
-from the most recent containing walk, whatever its platform.
+from the walk the search chose, whatever its platform.
 JSON carries `walk_frame` and `walk_frame_basis`.
+
+### Without `--walk-id`: which walk answers
+
+Who depends on a module is a property of one build, so the search picks the walk
+of a build that **consumes** the target. A walk rooted at the target itself is
+passed over while any other walk holds it: that walk holds the target's own
+dependency closure, so it answers with the target's own dependencies rather than
+with anything that depends on it. The answer says so:
+
+```
+notice: no walk was named; walk 01M0VG1267S1XDJGDFZTVRPM84 was chosen because it
+is rooted at github.com/cortezaproject/corteza/server@local, which builds
+golang.org/x/net@v0.33.0 — 1 walk(s) rooted at golang.org/x/net@v0.33.0 itself
+were passed over, since a module has no dependents inside its own graph; pin one
+with --walk-id (kanonarion walk-list lists them)
+```
+
+Where the target's own walk is the **only** walk holding it — a module vetted in
+isolation and walked nowhere else — it still answers, and states what the answer
+is about:
+
+```
+notice: the only walk holding github.com/spf13/cobra@v1.8.1 in this store is
+rooted at github.com/spf13/cobra@v1.8.1 itself, so the answer below is drawn from
+that module's own dependency graph and names no consuming build; walk
+01KZWK6GHN7CK9Y54YTHMTNRKJ
+```
+
+Several walks of one build are not a choice between builds: the most recent of
+them answers.
+
+### Without `--walk-id`: two builds is a refusal, not a coin toss
+
+Where more than one build holds the target, there is no answer that is not about
+somebody's build, so the command refuses (exit 20) and names the candidates —
+the same refusal `vuln-show` gives for two consumer frames:
+
+```
+the store holds github.com/pkg/errors@v0.9.1 in 3 builds, and this question names none:
+  walk 01M0VG1267S1XDJGDFZTVRPM84  rooted at github.com/cortezaproject/corteza/server@local
+  walk 01M0ABH9573T0TW1BBRSQ7KCZ1  rooted at github.com/eitanity/kanonarion@local
+  walk 01M04P06Y1GJKX225K01M22E4Q  rooted at ragflow@local
+what a coordinate is surrounded by is a property of one build, so name the build you mean:
+  kanonarion dependents github.com/pkg/errors@v0.9.1 --walk-id <walk of that build>
+kanonarion walk-list lists every walk in the store
+```
+
+`--walk-id` overrides the ranking entirely: a named walk is queried as named.
 
 ### Without `--walk-id`: the search is bounded, and says so
 
@@ -75,6 +123,13 @@ absence.
 ```json
 {
   "walk_id": "01KQKHYNTDYYQET4D1EZZ8E79E",
+  "walk_frame": "linux/amd64",
+  "walk_frame_basis": "platform",
+  "walk_selection": {
+    "rule": "consumer-rooted",
+    "root": "github.com/caddyserver/caddy/v2@v2.11.2",
+    "self_rooted_passed_over": 1
+  },
   "target":  "golang.org/x/net@v0.51.0",
   "dependents": [
     {
@@ -104,6 +159,11 @@ absence.
 | Field | Type | Description |
 |---|---|---|
 | `walk_id` | string | The walk record that was queried |
+| `walk_frame` | string | The `GOOS/GOARCH` that walk resolved for, or a token standing for the reason there is none |
+| `walk_frame_basis` | string | The same fact as data: `platform`, `not_platform_scoped`, `unrecorded` |
+| `walk_selection.rule` | string | How that walk was reached: `pinned` (you named it), `consumer-rooted` (a build that consumes the target), `self-rooted-only` (the only walks holding the target are rooted at the target, so the answer is from its own graph) |
+| `walk_selection.root` | string | The answering walk's target: the build the answer is about |
+| `walk_selection.self_rooted_passed_over` | int | How many walks rooted at the queried coordinate a consuming build outranked |
 | `target` | string | The queried coordinate (`module@version`) |
 | `dependents` | array | All modules with an edge to the target, sorted by path |
 | `dependents[].module` | string | Module import path |
@@ -119,7 +179,7 @@ dependency, not both. To find all first-party-relevant entries, filter on
 
 | Flag | Default | Description |
 |---|---|---|
-| `--walk-id <id>` | _(required)_ | Walk record ID to query |
+| `--walk-id <id>` | _(chosen for you)_ | Walk record ID to query. Unset, the walk of a build that consumes the target is chosen — see [which walk answers](#without---walk-id-which-walk-answers). |
 | `--direct-only` | false | Only return direct dependencies of the walk root |
 | `--include-root` | false | Include the walk root module if it has an edge to the target |
 | `--json` | false | Emit results as JSON to stdout |
@@ -139,8 +199,9 @@ dependency, not both. To find all first-party-relevant entries, filter on
 | Code | Meaning |
 |---|---|
 | 0 | Success (zero results is not an error) |
-| 10 | Walk record integrity check failed |
 | 4 | Walk ID not found |
+| 10 | Walk record integrity check failed |
+| 20 | Malformed invocation; no walk in the store contains the target; or no `--walk-id` and the store holds the target in more than one build |
 
 ## Examples
 
@@ -186,6 +247,10 @@ kanonarion dependents golang.org/x/crypto@v0.48.0 \
 - A zero-result response is not an error (exit 0). It means either the module is
   not present in the walk, or it is only the walk root (which is excluded by
   default).
+- Without `--walk-id` the answer is about one build, and which build is stated on
+  every surface — in the answer line, in the notice above it, and as
+  `walk_selection` under `--json`. Relaying the count without the build it came
+  from drops the half of the answer that makes it true.
 - A module in the walk that resolved under pre-modules semantics can never
   appear as a dependent, in either direction of the question: the go command
   ignores its `go.mod`, so no requirement edge was resolved under it. The answer
