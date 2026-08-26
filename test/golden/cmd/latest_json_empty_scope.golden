@@ -4,4 +4,4 @@ exit 0
 --- stdout ---
 []
 --- stderr ---
-(empty)
+notice: code scope resolved 0 module(s); test-scope dependencies included (narrow with --exclude-tests)

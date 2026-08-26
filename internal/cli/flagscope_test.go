@@ -59,14 +59,17 @@ func TestContextLocalRefusesGoModScopeFlags(t *testing.T) {
 }
 
 // TestContextRefusesExcludeTestsOffTheLocalPath: --exclude-tests narrows a
-// working tree's dependency list to the code its production files reach. A
-// stored-record document is assembled from records that carry their own test
-// scope, so there is nothing here for the flag to narrow and it is refused by
-// name rather than parsed and dropped.
+// working tree's dependency list to the code its production files reach, and a
+// go.mod scope's resolution to the packages production code imports. The other
+// two forms name a module set that was fixed elsewhere — a coordinate names
+// itself, a walk id names a stored record — so there is nothing there for the
+// flag to narrow and it is refused by name rather than parsed and dropped.
+//
+// context --gomod is deliberately absent: it honours the flag. See
+// TestContextGoMod_ExcludeTestsChangesTheStatedScope.
 func TestContextRefusesExcludeTestsOffTheLocalPath(t *testing.T) {
 	cases := map[string][]string{
 		"context <module>@<version>": {"context", "golang.org/x/mod@v0.35.0"},
-		"context --gomod":            {"context", "--gomod", "./go.mod"},
 		"context --walk-id":          {"context", "--walk-id", "nosuchwalk"},
 	}
 	for path, argv := range cases {

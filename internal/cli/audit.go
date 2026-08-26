@@ -43,6 +43,10 @@ type auditFlags struct {
 	fromModcache    string
 	policyPath      string
 	noProgress      bool
+	// excludeTests is parsed only so the refusal can name it. audit records a
+	// walk, and a walk record cannot name the test axis; see
+	// refuseTestScopeOnRecordingCommand.
+	excludeTests bool
 }
 
 func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -104,6 +108,7 @@ Exit codes:
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
 	return cmd
 }
@@ -296,6 +301,18 @@ type auditModuleResult struct {
 	policyScope      string
 	policyRuleScopes []string
 
+	// DependencyScope names the go.mod dependency scope that selected this row
+	// and the test axis that scope applied.
+	//
+	// It is a row field, unlike the coverage aggregate above, and the difference
+	// is what the fact is about: coverage is a figure about the whole graph, which
+	// a row cannot carry a copy of without claiming to be its own measurement,
+	// while the scope is the criterion by which THIS row exists. A row lifted out
+	// of the array otherwise cannot be placed — 20 rows resolved with test imports
+	// and 18 without decode identically — and --json emits a bare array with no
+	// envelope to state it once.
+	DependencyScope *scopeJSON `json:"dependency_scope,omitempty"`
+
 	// coverage is this module's contribution to the run's verification-coverage
 	// aggregate, captured from the same record read that filled Verification.
 	// Taking it from the same read is what makes the aggregate equal the rows by
@@ -325,9 +342,21 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
-	coords, err := resolveScopeModules(f.gomodPath, scope)
+	// audit drives a project walk, so it is one of the commands whose stored
+	// record would have to name the axis before it could be narrowed.
+	if rerr := refuseTestScopeOnRecordingCommand("audit", f.excludeTests); rerr != nil {
+		return rerr
+	}
+	coords, res, err := resolveScopeModules(f.gomodPath, scope, false)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
+	}
+	// The set the table is the whole of, stated before it and on the channel the
+	// derivation, frame and coverage lines already use. It is written before the
+	// empty-scope return so a run that audited nothing still says which set was
+	// empty.
+	if nerr := writeDepScopeNotice(stderr, res, len(coords), false); nerr != nil {
+		return nerr
 	}
 	// An empty scope is a valid answer, not an error, and it is answered on
 	// the caller's own channel: an empty array under --json, prose only on the
@@ -363,6 +392,12 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
 	if err != nil {
 		return err
+	}
+	// Stamped on every row from the same resolution that produced the coords, so
+	// the field and the set cannot come apart.
+	scopeField := newScopeJSON(res)
+	for i := range results {
+		results[i].DependencyScope = scopeField
 	}
 
 	// What the answer is ABOUT, before where it came from. A vendored project

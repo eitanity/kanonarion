@@ -28,14 +28,27 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
 		return err
 	}
+	// The complete scope has no test partition to narrow, so the flag is refused
+	// against it rather than parsed and dropped: accepting it would emit
+	// byte-identical output and report the narrowing as honoured.
+	if f.excludeTests && scope == scopeComplete {
+		return refuseTestScopeOnCompleteScope("context --gomod")
+	}
 	ndjson := jsonOut || f.stream
 
 	logger := buildLogger(logLevel, stderr)
 
-	coords, err := resolveScopeModules(f.gomodPath, scope)
+	coords, res, err := resolveScopeModules(f.gomodPath, scope, f.excludeTests)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
+	// The scope the document set was selected by, stated before the documents,
+	// on the channel the vulnerability frame is stated on. An empty scope states
+	// it too: which set came back empty is the whole answer there.
+	if nerr := writeDepScopeNotice(stderr, res, len(coords), true); nerr != nil {
+		return nerr
+	}
+	scopeField := newScopeJSON(res)
 	if len(coords) == 0 {
 		if f.sizeOnly {
 			// --size-only asks a size question, so an empty scope answers it with a
@@ -137,6 +150,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
+			DependencyScope: scopeField,
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 			Provenance:      buildProvenance(coord),

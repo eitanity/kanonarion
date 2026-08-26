@@ -8,6 +8,7 @@ stdlib@$GOVERSION                                           VerifiedLocalToolcha
 
 latest as of 2026-02-28 23:50 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
 --- stderr ---
+notice: code scope resolved 2 module(s); test-scope dependencies included
 ==> audit: walking project $AUDIT_PROJECT/go.mod (2 code dependencies)
 ==> audit: extracting licenses for walk $ULID
 Starting extraction for walk $ULID...

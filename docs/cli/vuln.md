@@ -358,6 +358,9 @@ go.mod command - default `code`, `--tool` the tooling supply chain, `--project`
 the complete set; see [`walk` Scopes](walk.md#scopes-code-tool-complete). With no
 walk-id and no `--module`, `--gomod` defaults to `./go.mod`. A scope scan is
 mutually exclusive with a positional walk-id and with `--module`.
+`--exclude-tests` is **refused by name**: a scope scan re-walks when the manifest
+has drifted, and a walk record names its scope but not its test axis. See
+[Test scope](walk.md#test-scope---exclude-tests).
 
 **The walk must match this platform.** Selection filters on the current
 environment's `go env GOOS`/`GOARCH`, because build constraints select which

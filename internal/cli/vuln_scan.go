@@ -40,6 +40,10 @@ type vulnScanFlags struct {
 	policyPath         string
 	noVendor           bool
 	noProgress         bool
+	// excludeTests is parsed only so the refusal can name it. A scope scan
+	// re-walks when the manifest has drifted; see
+	// refuseTestScopeOnRecordingCommand.
+	excludeTests bool
 }
 
 func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -99,6 +103,7 @@ it. It is reported on its own and counted in no roll-up.`,
 	cmd.Flags().BoolVar(&f.noVendor, "no-vendor", false,
 		"analyse the fetched artefacts even when the project is vendored (default: analyse vendor/, the source the project compiles)")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
 	return cmd
 }
@@ -107,8 +112,9 @@ it. It is reported on its own and counted in no roll-up.`,
 // named walk is scanned as it stands, so the flags that select a walk for the
 // caller are refused by name rather than parsed and dropped.
 func runVulnScanByWalkID(ctx context.Context, walkID string, f vulnScanFlags, stdout, stderr io.Writer) error {
-	if rerr := refuseInapplicableFlags("vuln-scan <walk-id>",
-		append(vulnScanModuleFlag(f), vulnScanGoModScopeFlags(f)...)); rerr != nil {
+	refused := append(vulnScanModuleFlag(f), vulnScanGoModScopeFlags(f)...)
+	refused = append(refused, testScopeNoScopeFlag(f.excludeTests)...)
+	if rerr := refuseInapplicableFlags("vuln-scan <walk-id>", refused); rerr != nil {
 		return rerr
 	}
 	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, f.binaryModePrePass, jsonOut, f.goBinary, f.operator, "", f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
@@ -125,6 +131,9 @@ func runVulnScanByWalkID(ctx context.Context, walkID string, f vulnScanFlags, st
 func runVulnScanScope(ctx context.Context, f vulnScanFlags, stdout, stderr io.Writer) error {
 	if f.moduleCoord != "" {
 		return fmt.Errorf("a go.mod scope scan and --module are mutually exclusive")
+	}
+	if rerr := refuseTestScopeOnRecordingCommand("vuln-scan --gomod/--tool/--project", f.excludeTests); rerr != nil {
+		return rerr
 	}
 	scope, serr := scopeFromFlags(f.tool, f.project)
 	if serr != nil {
@@ -904,8 +913,9 @@ func runVulnScanByModule(ctx context.Context, f vulnScanFlags, stdout, stderr io
 			where: "vuln-scan <walk-id> or a go.mod scope scan",
 		})
 	}
-	if rerr := refuseInapplicableFlags("vuln-scan --module",
-		append(refused, vulnScanGoModScopeFlags(f)...)); rerr != nil {
+	refused = append(refused, vulnScanGoModScopeFlags(f)...)
+	refused = append(refused, testScopeNoScopeFlag(f.excludeTests)...)
+	if rerr := refuseInapplicableFlags("vuln-scan --module", refused); rerr != nil {
 		return rerr
 	}
 

@@ -4,7 +4,7 @@
 
 ```
 kanonarion context <module>@<version> [flags]
-kanonarion context [--gomod <path>] [flags]
+kanonarion context [--gomod <path>] [--tool | --project] [--exclude-tests] [flags]
 kanonarion context --walk-id <id> [flags]
 kanonarion context <dir> [--symbol] [--reachability] [--exclude-tests] [flags]
 ```
@@ -22,8 +22,12 @@ dependency **scope** - NDJSON with `--json`, text blocks otherwise. The scope is
 consistent with every other go.mod command: the default is the project's own
 **code** dependencies (`go list -deps -test ./...`); `--tool` selects the
 tooling supply chain; `--project` the complete set (code + tooling). `--tool`
-and `--project` are mutually exclusive. See
-[`walk` Scopes](walk.md#scopes-code-tool-complete). This is the same module set
+and `--project` are mutually exclusive. `--exclude-tests` narrows the `code`
+scope to production packages; the answer states which axis it used on stderr and
+in a `dependency_scope` field on every document, whichever scope was asked for.
+See
+[`walk` Scopes](walk.md#scopes-code-tool-complete) and
+[Test scope](walk.md#test-scope---exclude-tests). This is the same module set
 a bare `kanonarion inspect` walks, extracts, and vuln-scans, so the no-arg pair
 composes: `kanonarion inspect` followed by `kanonarion context` covers every
 enumerated module. To cover a full transitive closure of an arbitrary walk use
@@ -598,7 +602,7 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--stream` | false | With `--walk-id` or `--gomod`: emit NDJSON (one document per module) without `--json`. Refused on the coordinate and local-path forms, which emit one document |
 | `--symbol` | false | With a local path: type-check the tree and report referenced symbols instead of imports. Local path only: refused by name on the other three forms |
 | `--reachability` | false | With a local path: build the tree's binaries and probe their symbol tables for CVE-affected symbols (~30s). Local path only: refused by name on the other three forms |
-| `--exclude-tests` | false | With a local path: omit dependency users declared in `_test.go` files and external test packages. Local path only: refused by name on the other three forms. See [Working-tree form](#working-tree-form-dir) |
+| `--exclude-tests` | false | Narrow to production code. With `--gomod`: resolve the `code` scope without test imports, and say so; on `--tool` it is accepted and changes nothing, because the scope already excludes them, and the answer says so. With a local path: omit dependency users declared in `_test.go` files and external test packages. Refused by name on the coordinate and `--walk-id` forms, which name a module set fixed elsewhere, and against `--project`, whose build list carries no test partition. See [Working-tree form](#working-tree-form-dir) and [Test scope](walk.md#test-scope---exclude-tests) |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--log-level <level>` | `warn` | Log verbosity: `debug` \| `info` \| `warn` \| `error` |
 

@@ -25,7 +25,11 @@ exit 0
     "major_probed": false,
     "republished_probed": false,
     "deprecated": null,
-    "direct": true
+    "direct": true,
+    "dependency_scope": {
+      "scope": "code",
+      "test_scope": "included"
+    }
   },
   {
     "coordinate": "example.com/mod@v1.2.0",
@@ -50,7 +54,11 @@ exit 0
     "republished_probed": false,
     "deprecated": null,
     "staleness_looked_up_at": "2026-02-28T23:50:00Z",
-    "direct": true
+    "direct": true,
+    "dependency_scope": {
+      "scope": "code",
+      "test_scope": "included"
+    }
   },
   {
     "coordinate": "stdlib@$GOVERSION",
@@ -74,10 +82,15 @@ exit 0
     "major_probed": false,
     "republished_probed": false,
     "deprecated": null,
-    "direct": true
+    "direct": true,
+    "dependency_scope": {
+      "scope": "code",
+      "test_scope": "included"
+    }
   }
 ]
 --- stderr ---
+notice: code scope resolved 2 module(s); test-scope dependencies included
 ==> audit: walking project $AUDIT_PROJECT/go.mod (2 code dependencies)
 ==> audit: extracting licenses for walk $ULID
 Starting extraction for walk $ULID...

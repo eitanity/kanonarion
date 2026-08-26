@@ -266,11 +266,42 @@ const goListModuleFmt = `{{if .Module}}{{if and (not .Standard) .Module.Version}
 //
 // This is the single definition of each scope, shared by every go.mod-walking
 // command so they answer the same question with the same set.
-func resolveScopeModules(gomodPath string, scope depScope) ([]string, error) {
-	dir := filepath.Dir(gomodPath)
+//
+// It returns the test axis it applied alongside the set, so a caller cannot
+// state one axis and resolve another: the disclosure and the resolution come out
+// of the same call. The two -deps scopes default differently on that axis, and
+// correctly so — see testScopeFor, which is the only place the axis is decided.
+func resolveScopeModules(gomodPath string, scope depScope, excludeTests bool) ([]string, scopeResolution, error) {
+	res := newScopeResolution(scope, excludeTests)
+	args, err := scopeGoListArgs(gomodPath, scope, res.Tests)
+	if err != nil {
+		return nil, res, err
+	}
+	if args == nil {
+		// The tool scope with no tool directives: an empty set, resolved without
+		// asking the toolchain a question about no packages.
+		return nil, res, nil
+	}
+	coords, err := runGoListCoords(filepath.Dir(gomodPath), args)
+	return coords, res, err
+}
+
+// scopeGoListArgs is the `go list` invocation a scope and a test axis resolve to,
+// or nil args for a tool scope with no tool directives to close over.
+//
+// It is separated from running it because this IS the scope: which invocation a
+// scope produces is the whole of what distinguishes the three, and it is the half
+// the two -deps scopes silently disagreed on — code passed -test and tool did
+// not, so --tool moved the closure and the test axis at once. Separated, that
+// decision can be exercised without a toolchain, a module cache or a network.
+func scopeGoListArgs(gomodPath string, scope depScope, ts testScope) ([]string, error) {
 	switch scope {
 	case scopeComplete:
-		return goListBuildList(dir)
+		return []string{
+			"list", "-m", "-mod=readonly",
+			"-f", `{{if and (not .Main) .Version}}{{.Path}}@{{.Version}}{{end}}`,
+			"all",
+		}, nil
 	case scopeTool:
 		toolPkgs, err := readGoModToolPackages(gomodPath)
 		if err != nil {
@@ -279,36 +310,24 @@ func resolveScopeModules(gomodPath string, scope depScope) ([]string, error) {
 		if len(toolPkgs) == 0 {
 			return nil, nil
 		}
-		return goListDeps(dir, toolPkgs, false)
+		return goListDepsArgs(toolPkgs, ts), nil
 	case scopeCode:
-		return goListDeps(dir, []string{"./..."}, true)
+		return goListDepsArgs([]string{"./..."}, ts), nil
 	default:
 		return nil, fmt.Errorf("unknown dependency scope %q", scope)
 	}
 }
 
-// goListDeps runs `go list -deps [-test] -f <module> <patterns>` in dir and
-// returns the de-duplicated, sorted module coordinates of every non-standard,
-// non-main package reachable from the patterns. withTest includes test imports.
-func goListDeps(dir string, patterns []string, withTest bool) ([]string, error) {
+// goListDepsArgs builds `go list -deps [-test] -f <module> <patterns>`. The -test
+// flag comes from the axis and from nothing else, so the decision lives in
+// testScopeFor rather than being spelled again at each resolution.
+func goListDepsArgs(patterns []string, ts testScope) []string {
 	args := []string{"list", "-deps"}
-	if withTest {
+	if ts.withTests() {
 		args = append(args, "-test")
 	}
 	args = append(args, "-f", goListModuleFmt)
-	args = append(args, patterns...)
-	return runGoListCoords(dir, args)
-}
-
-// goListBuildList runs `go list -m all` in dir and returns the de-duplicated,
-// sorted coordinates of every module in the build list except the main module
-// and local-replace targets (no version).
-func goListBuildList(dir string) ([]string, error) {
-	return runGoListCoords(dir, []string{
-		"list", "-m", "-mod=readonly",
-		"-f", `{{if and (not .Main) .Version}}{{.Path}}@{{.Version}}{{end}}`,
-		"all",
-	})
+	return append(args, patterns...)
 }
 
 // runGoList executes `go <args>` in dir and returns its raw stdout. The absence

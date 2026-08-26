@@ -51,7 +51,15 @@ type contextCommands struct {
 }
 
 type contextOutput struct {
-	Module          contextModuleInfo      `json:"module"`
+	Module contextModuleInfo `json:"module"`
+	// DependencyScope names the go.mod dependency scope that selected this
+	// document and the test axis that scope applied. It rides on the document
+	// rather than on an envelope because the go.mod form emits NDJSON, which has
+	// none: a document lifted out of the stream must still say which set it was
+	// selected from. Absent on the three forms that project no go.mod scope — a
+	// coordinate, a pinned walk, a working tree — where the field would name a
+	// selection that never happened.
+	DependencyScope *scopeJSON             `json:"dependency_scope,omitempty"`
 	Commands        contextCommands        `json:"commands"`
 	Verification    contextVerification    `json:"verification"`
 	Provenance      contextProvenance      `json:"provenance"`
@@ -400,6 +408,7 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
   kanonarion context --walk-id <id> --stream
   kanonarion context
   kanonarion context --gomod ./go.mod --json
+  kanonarion context --gomod ./go.mod --exclude-tests
   kanonarion context . --symbol --exclude-tests`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -455,7 +464,7 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 	cmd.Flags().StringVar(&f.modulesFile, "modules", "", "with --walk-id: emit context only for module coordinates listed in this file (newline-delimited)")
 	cmd.Flags().BoolVar(&f.symbol, "symbol", false, "with a local path: enable symbol-level analysis (go/packages type-check, ~2-5s)")
 	cmd.Flags().BoolVar(&f.reachability, "reachability", false, "with a local path: probe the binary for CVE-affected symbols (~30s)")
-	cmd.Flags().BoolVar(&f.excludeTests, testScopeFlagName, false, "with a local path: omit dependency users declared in _test.go files and external test packages")
+	cmd.Flags().BoolVar(&f.excludeTests, testScopeFlagName, false, "narrow to production code: with --gomod, resolve the scope without test imports; with a local path, omit dependency users declared in _test.go files")
 
 	return cmd
 }
@@ -464,6 +473,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	refused := append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)
 	refused = append(refused, contextGoModOnlyFlags(f)...)
 	refused = append(refused, contextStreamFlag(f)...)
+	refused = append(refused, contextTestScopeFlag(f)...)
 	if err := refuseInapplicableFlags("context <module>@<version>", refused); err != nil {
 		return err
 	}

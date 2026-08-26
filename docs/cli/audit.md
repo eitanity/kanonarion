@@ -22,6 +22,20 @@ one invocation. The scope is consistent with every other go.mod command:
 `code`. See [`walk` Scopes](walk.md#scopes-code-tool-complete) for the shared
 definition.
 
+`audit` states the scope and its test axis on stderr, beside the derivation and
+frame lines, with the count it resolved:
+
+```
+notice: code scope resolved 20 module(s); test-scope dependencies included
+```
+
+Every `--json` row carries the same fact as `dependency_scope`. `--exclude-tests`
+is **refused by name** here: `audit` drives a project walk, and a walk record
+names its scope but not its test axis, so a narrowed walk would be stored as
+indistinguishable from a full one. Read a narrowed set with
+`context --gomod --exclude-tests` or `latest --gomod --exclude-tests`. See
+[Test scope](walk.md#test-scope---exclude-tests).
+
 For each module in the scope, `audit` emits a single line containing:
 
 - **Coordinate** - `module@version`

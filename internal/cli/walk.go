@@ -54,6 +54,9 @@ type walkFlags struct {
 	analyseRoot     bool
 	stdlibFromGoMod bool
 	noProgress      bool
+	// excludeTests is parsed only so the refusal can name it. A walk record names
+	// its scope and not its test axis; see refuseTestScopeOnRecordingCommand.
+	excludeTests bool
 }
 
 func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -134,6 +137,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.analyseRoot, "analyse-root", false, "ingest the project's own working tree so all extraction stages analyse the project's own packages; re-reads the tree fresh on every run (requires a go.mod walk)")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 	return cmd
 }
 
@@ -145,6 +149,9 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 func runWalkCmdProject(ctx context.Context, f walkFlags, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
 	if f.shallow {
 		return fmt.Errorf("--shallow applies to a positional module walk, not a go.mod walk")
+	}
+	if rerr := refuseTestScopeOnRecordingCommand("walk --gomod", f.excludeTests); rerr != nil {
+		return rerr
 	}
 	scope, scopeErr := scopeFromFlags(f.tool, f.project)
 	if scopeErr != nil {
@@ -172,6 +179,9 @@ func runWalkCmdProject(ctx context.Context, f walkFlags, progress walkports.Prog
 func runWalkCmdModule(ctx context.Context, arg string, f walkFlags, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
 	if f.tool || f.project {
 		return fmt.Errorf("--tool and --project apply to a go.mod walk, not a positional module walk")
+	}
+	if rerr := refuseTestScopeOnRecordingCommand("walk <module@version>", f.excludeTests); rerr != nil {
+		return rerr
 	}
 	if f.analyseRoot {
 		return fmt.Errorf("--analyse-root requires a go.mod walk (only a project walk has a local root to analyse)")
@@ -236,12 +246,34 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	// code and tool scopes restrict it to their toolchain-resolved module set,
 	// the same set every other go.mod command uses for that scope.
 	var scopeModules []string
+	res := newScopeResolution(scope, false)
 	if scope != scopeComplete {
-		scopeModules, err = resolveScopeModules(gomodPath, scope)
+		var coords []string
+		coords, res, err = resolveScopeModules(gomodPath, scope, false)
 		if err != nil {
 			return application.ExecuteWalkResult{}, fmt.Errorf("resolving %s scope: %w", scope, err)
 		}
-		scopeModules = coordsToPaths(scopeModules)
+		scopeModules = coordsToPaths(coords)
+	}
+	// The test axis this walk was resolved over, stated on the same channel as
+	// the build-vendoring and coverage disclosures and for the same reason: the
+	// record on stdout is the content-hashed artefact and a fact about the run is
+	// not part of what the seal covers. The axis is not narrowable here — the
+	// record has no field to name it — so no flag is offered in the line.
+	//
+	// It is gated on the same nil reader those two are: a nil reader is a caller
+	// using the walk as a means (audit, inspect, the vuln-scan re-walk), and each
+	// of those states the scope of its own answer.
+	if records != nil {
+		var nerr error
+		if scope == scopeComplete {
+			nerr = writeDepScopeAxisNotice(stderr, res)
+		} else {
+			nerr = writeDepScopeNotice(stderr, res, len(scopeModules), false)
+		}
+		if nerr != nil {
+			return application.ExecuteWalkResult{}, nerr
+		}
 	}
 
 	result, err := uc.Execute(ctx, application.WalkRequest{

@@ -34,8 +34,9 @@ func contextWalkRecord(ctx context.Context, uc QueryWalksUseCase, walkID string,
 }
 
 func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Writer) error {
-	if err := refuseInapplicableFlags("context --walk-id",
-		append(contextLocalOnlyFlags(f), contextGoModOnlyFlags(f)...)); err != nil {
+	refused := append(contextLocalOnlyFlags(f), contextGoModOnlyFlags(f)...)
+	refused = append(refused, contextTestScopeFlag(f)...)
+	if err := refuseInapplicableFlags("context --walk-id", refused); err != nil {
 		return err
 	}
 

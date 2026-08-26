@@ -20,7 +20,13 @@ go.mod command: the default is the project's own **code** dependencies (`go list
 -deps -test ./...`); `--tool` reports the tooling supply chain; `--project`
 reports the complete set (code + tooling, the full Go build list). `--tool` and
 `--project` are mutually exclusive. See
-[`walk` Scopes](walk.md#scopes-code-tool-complete).
+[`walk` Scopes](walk.md#scopes-code-tool-complete). `--exclude-tests` narrows
+the `code` scope to production packages; on `--tool` it is accepted and reports
+the same set, saying the exclusion is the scope's own. The run states which test
+axis it resolved over on stderr, and every JSON row carries it as
+`dependency_scope`. Refused against `--project`, whose build list carries no test
+partition, and against a positional module, which names its own set. See
+[Test scope](walk.md#test-scope---exclude-tests).
 
 Without a module argument or `--gomod`, `latest` defaults to `./go.mod` in the
 current directory. If no `go.mod` exists there, it returns an error.
@@ -177,6 +183,7 @@ need the `--json` output for a structured pipeline.
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project` |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
 | `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy, honoured not rewritten. Under `off`, a lookup younger than `staleness.ttl` is served and nothing is written; without one, exit `20`. `direct` and `--fresh` refuse. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
+| `--exclude-tests` | false | With `--gomod`: resolve the `code` scope without test imports, and state the narrowing. On `--tool` it is accepted and changes nothing - the scope already excludes them - and the answer says so. Refused against `--project` (its build list carries no test partition) and against a positional module. See [Test scope](walk.md#test-scope---exclude-tests) |
 | `--fresh` | false | Re-query the proxy instead of serving recorded lookups from the store |
 | `--json` | false | Emit output as JSON (global flag) |
 

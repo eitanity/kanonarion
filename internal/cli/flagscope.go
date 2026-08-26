@@ -176,6 +176,10 @@ func contextStreamFlag(f contextFlags) []inapplicableFlag {
 
 // contextLocalOnlyFlags returns the context flags that only a local working-tree
 // path can act on, for whichever of them the caller set.
+//
+// --exclude-tests is no longer one of them: it narrows the go.mod dependency
+// scopes too, and is refused separately by the two paths that project no scope
+// at all. See contextTestScopeFlag.
 func contextLocalOnlyFlags(f contextFlags) []inapplicableFlag {
 	const where = "context <local path>"
 	var out []inapplicableFlag
@@ -185,10 +189,20 @@ func contextLocalOnlyFlags(f contextFlags) []inapplicableFlag {
 	if f.reachability {
 		out = append(out, inapplicableFlag{flag: "--reachability", where: where})
 	}
-	if f.excludeTests {
-		out = append(out, inapplicableFlag{flag: "--" + testScopeFlagName, where: where})
-	}
 	return out
+}
+
+// contextTestScopeFlag returns --exclude-tests when the caller set it on a path
+// that measures no test axis: a single coordinate and a pinned walk each name a
+// module set that was fixed elsewhere, so there is nothing here to narrow.
+func contextTestScopeFlag(f contextFlags) []inapplicableFlag {
+	if !f.excludeTests {
+		return nil
+	}
+	return []inapplicableFlag{{
+		flag:  "--" + testScopeFlagName,
+		where: "context <local path> or context --gomod",
+	}}
 }
 
 // contextRenderFlags returns the context flags that shape a stored-record

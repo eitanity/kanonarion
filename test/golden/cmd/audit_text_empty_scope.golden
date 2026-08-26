@@ -4,4 +4,4 @@ exit 0
 --- stdout ---
 no code dependencies found in $PROJECT/go.mod
 --- stderr ---
-(empty)
+notice: code scope resolved 0 module(s); test-scope dependencies included

@@ -110,7 +110,11 @@ func manifestDriftAgainstWalk(
 	// back on the walk. The toolchain's own diagnostic carries the remedy — a
 	// vendored tree whose go.mod moved without `go mod vendor` says exactly that
 	// — and it is named here as what it stopped: the check, not the scan.
-	resolved, err := resolveScopeModules(gomodPath, scope)
+	// The default axis for the scope, never the caller's: this check compares the
+	// current resolution against a stored walk, and that walk was taken over the
+	// scope's default. Resolving with a narrowed axis here would report every
+	// test-only module as removed and re-walk on drift that is not there.
+	resolved, _, err := resolveScopeModules(gomodPath, scope, false)
 	if err != nil {
 		return manifestDrift{}, rec, fmt.Errorf("checking whether walk %s still describes %s (resolving the %s scope): %w", walkID, gomodPath, scope, err)
 	}

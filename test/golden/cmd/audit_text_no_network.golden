@@ -10,6 +10,7 @@ stdlib@$GOVERSION                                           VerifiedLocalToolcha
 
 latest as of 2026-02-28 23:50 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
 --- stderr ---
+notice: code scope resolved 2 module(s); test-scope dependencies included
 time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
 ==> audit: walking project $AUDIT_PROJECT/go.mod (2 code dependencies)
 time=$TIME level=WARN msg=walk.fetch.failed module.path=example.com/clean module.version=v1.0.0 error.type=fetch_failed error="inner fetcher: fetching module: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"

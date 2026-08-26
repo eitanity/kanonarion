@@ -112,6 +112,12 @@ tooling). `--tool` and `--project` are mutually exclusive. See
 [`walk` Scopes](walk.md#scopes-code-tool-complete). A bare `kanonarion inspect`
 (no positional module) is shorthand for `inspect --gomod ./go.mod`.
 
+The summary states the test axis the scope resolved over on its own line
+(`Scope:    code — test-scope dependencies included`), and the `--json` summary
+carries it as `dependency_scope`, always present, beside `walk_frame`.
+`--exclude-tests` is **refused by name**: `inspect` records a project walk, and a
+walk record names its scope but not its test axis. See [Test scope](walk.md#test-scope---exclude-tests).
+
 ```
 kanonarion inspect
 kanonarion inspect --gomod ./go.mod

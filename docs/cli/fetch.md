@@ -79,6 +79,11 @@ chain, `--project` the complete set. See
 combined with a positional module or with `--list-versions`; every module in the
 scope is fetched, continuing on per-module errors.
 
+The run states which scope and test axis it resolved over on stderr before the
+first fetch. `--exclude-tests` is **refused by name**: a scope fetch populates the
+store for a walk of that scope, and a walk record names no test axis. See
+[Test scope](walk.md#test-scope---exclude-tests).
+
 ### Trusted VCS forges
 
 Cross-verification clones the repository the module's proxy `Origin` metadata
