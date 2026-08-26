@@ -22,8 +22,13 @@ const (
 	// walkHeldPinned is the caller naming the walk with --walk-id. Nothing was
 	// ranked.
 	walkHeldPinned walkContainmentRule = "pinned"
+	// walkHeldByGoMod is the walk a manifest named: the latest project walk of
+	// the requested scope for a --gomod path, or for the working directory's own
+	// go.mod. It is the default rooting, and the only one that answers a question
+	// about the build the caller is standing in.
+	walkHeldByGoMod walkContainmentRule = "gomod-rooted"
 	// walkHeldByConsumer is a walk rooted at a build that consumes the
-	// coordinate.
+	// coordinate. Reached only under --any-build.
 	walkHeldByConsumer walkContainmentRule = "consumer-rooted"
 	// walkHeldSelfRootedOnly is the fallback where the only walks holding the
 	// coordinate are rooted AT it. The answer is then drawn from the module's own
@@ -31,12 +36,12 @@ const (
 	walkHeldSelfRootedOnly walkContainmentRule = "self-rooted-only"
 )
 
-// walkContainment is the walk a question about a coordinate is answered in when
-// the caller named none, and the rule that picked it.
+// walkContainment is the walk a question about a coordinate is answered in, and
+// the rule that got it there — a manifest, a walk id, or the store-wide search.
 //
-// The rule is carried rather than discarded because the choice decides what the
-// answer means. A walk rooted AT the coordinate holds that module's own
-// dependency closure, so it answers "who depends on this" with the module's own
+// The rule is carried rather than discarded because it decides what the answer
+// means. A walk rooted AT the coordinate holds that module's own dependency
+// closure, so it answers "who depends on this" with the module's own
 // dependencies — a plausible number from the one build where the question has no
 // consumer in it.
 type walkContainment struct {
@@ -47,6 +52,34 @@ type walkContainment struct {
 	// selfRootedPassedOver counts the walks rooted at the queried coordinate
 	// that a consumer build outranked.
 	selfRootedPassedOver int
+
+	// manifest is the go.mod that named the build, and scope the dependency
+	// scope it was read in. Set only for walkHeldByGoMod.
+	manifest string
+	scope    depScope
+	// build renders the answering walk as `walk X (code scope, frame
+	// linux/amd64)`, the form every other --gomod read states its build in.
+	build string
+	// choice is the selector's own account of which of the project's walks
+	// answered and what it could not check. It rides along so the notice and the
+	// JSON carry the staleness and toolchain clauses the sibling reads carry,
+	// rather than a rooting that discloses less than vuln-show does.
+	choice walkChoice
+}
+
+// gomodContainment is the containment a caller established by naming a manifest
+// — with --gomod, or by standing in the project whose go.mod the read fell back
+// to — together with the scope that manifest was projected into.
+func gomodContainment(choice walkChoice, rec walkdomain.WalkRecord, scope depScope) walkContainment {
+	return walkContainment{
+		walkID:   rec.ID,
+		rule:     walkHeldByGoMod,
+		root:     rec.Target,
+		manifest: choice.manifestPath,
+		scope:    scope,
+		build:    fmt.Sprintf("walk %s (%s, frame %s)", rec.ID, walkScopeLabel(rec.Scope), rec.Graph.Frame()),
+		choice:   choice,
+	}
 }
 
 // ambiguousBuildRefusal is the refusal a containment search returns when more
@@ -193,12 +226,21 @@ func graphHolds(g walkdomain.Graph, coord coordinate.ModuleCoordinate) bool {
 // statement is the line a defaulting read prints above its answer to say which
 // build the answer is about, and why that walk rather than another.
 //
-// It is empty for the ordinary case — one consumer build holds the coordinate
-// and nothing was passed over — because the answer line already names the walk
-// and a notice on every query is a notice nobody reads. It is not empty for the
-// two cases where the walk decides what the answer MEANS.
+// It is empty for the ordinary search result — one consumer build holds the
+// coordinate and nothing was passed over — because the answer line already names
+// the walk and a notice on every query is a notice nobody reads. It is not empty
+// for the cases where the walk decides what the answer MEANS: a manifest that
+// selected one of a project's several builds, and the two rankings the search
+// makes on the caller's behalf.
 func (c walkContainment) statement(coord coordinate.ModuleCoordinate) string {
 	switch {
+	case c.rule == walkHeldByGoMod:
+		// Stated on every rooted answer, unlike the two below, because the manifest
+		// is what the reader can check and the walk id is not: a project walked in
+		// three scopes has three answers to this question, and the line is where a
+		// caller sees which of them the flags selected.
+		return fmt.Sprintf("notice: %s names the build, so the answer below is %s rooted at %s%s\n",
+			c.manifest, c.build, c.root, c.choice.basisNotes())
 	case c.rule == walkHeldSelfRootedOnly:
 		return fmt.Sprintf("notice: the only walk holding %s in this store is rooted at %s itself, so the answer below is "+
 			"drawn from that module's own dependency graph and names no consuming build; walk %s\n", coord, coord, c.walkID)
@@ -225,17 +267,34 @@ type walkSelectionJSON struct {
 	// Root is the answering walk's target: the build the answer is about.
 	Root string `json:"root"`
 	// SelfRootedPassedOver is how many walks rooted at the queried coordinate a
-	// consumer build outranked. Always 0 for the other two rules.
+	// consumer build outranked. Always 0 for the other rules.
 	SelfRootedPassedOver int `json:"self_rooted_passed_over"`
+	// GoMod is the manifest that named the build and Scope the dependency scope
+	// it was projected into, present only for "gomod-rooted". A consumer that
+	// reads the rooting has to be able to tell a code build from a tool one:
+	// they hold different modules, and on this store they differ by 235 of them.
+	GoMod string `json:"gomod,omitempty"`
+	Scope string `json:"scope,omitempty"`
+	// Choice is the selector's account of which of the project's walks answered:
+	// how many were candidates, what the manifest comparison proved, and whether
+	// the answering walk's toolchain is still the one the project resolves. Same
+	// object the other --gomod reads publish; absent for the rules that consult
+	// no manifest.
+	Choice *selectionJSON `json:"choice,omitempty"`
 }
 
 // selection renders the containment for a JSON document.
 func (c walkContainment) selection() walkSelectionJSON {
-	return walkSelectionJSON{
+	out := walkSelectionJSON{
 		Rule:                 string(c.rule),
 		Root:                 c.root.String(),
 		SelfRootedPassedOver: c.selfRootedPassedOver,
 	}
+	if c.rule == walkHeldByGoMod {
+		choice := c.choice.selection()
+		out.GoMod, out.Scope, out.Choice = c.manifest, string(c.scope), &choice
+	}
+	return out
 }
 
 // pinnedContainment is the containment a caller established with --walk-id.

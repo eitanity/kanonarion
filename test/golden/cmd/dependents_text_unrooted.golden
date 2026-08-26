@@ -1,0 +1,12 @@
+# error-shaped: no walk id, no manifest and no go.mod here, so there is no build for the question to be about. The refusal names all three ways to give one instead of searching.
+$ kanonarion dependents example.com/shallow@v1.0.0
+exit 20
+--- error ---
+execute root command: what a coordinate is surrounded by is a property of one build, and this question names none: no --walk-id, no --gomod, and no go.mod in the working directory. Name the build you mean:
+  --gomod ./go.mod    answer from the latest project walk for that go.mod (add --tool or --project for another scope)
+  --walk-id <id>      answer from one stored walk (kanonarion walk-list lists them)
+  --any-build         search this store for a build that holds example.com/shallow@v1.0.0
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

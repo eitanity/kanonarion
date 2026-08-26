@@ -1,5 +1,5 @@
-# populated: which modules in a stored walk depend on this one, read off the graph edges.
-$ kanonarion dependents example.com/shallow@v1.0.0 --json
+# populated: which modules in a stored walk depend on this one, read off the graph edges. --any-build is the store-wide search; it is what this case has always recorded, and it is now the flag that reaches it.
+$ kanonarion dependents example.com/shallow@v1.0.0 --any-build --json
 exit 0
 --- stdout ---
 {

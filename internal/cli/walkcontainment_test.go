@@ -211,8 +211,8 @@ func TestDependents_AnswersFromTheConsumerBuildNotTheModulesOwnWalk(t *testing.T
 	})
 
 	var stdout, stderr bytes.Buffer
-	if err := dependentsWith(context.Background(), &Container{QueryWalks: uc}, lib, "",
-		false, false, false, &stdout, &stderr); err != nil {
+	if err := dependentsWith(context.Background(), &Container{QueryWalks: uc}, lib,
+		dependentsFlags{anyBuild: true}, false, &stdout, &stderr); err != nil {
 		t.Fatalf("dependentsWith: %v", err)
 	}
 	out := stdout.String()
@@ -253,8 +253,8 @@ func TestDependentsJSON_StatesHowTheWalkWasChosen(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			if err := dependentsWith(context.Background(), &Container{QueryWalks: uc}, lib, tc.walkID,
-				true, false, false, &stdout, &stderr); err != nil {
+			if err := dependentsWith(context.Background(), &Container{QueryWalks: uc}, lib,
+				dependentsFlags{walkID: tc.walkID, anyBuild: tc.walkID == ""}, true, &stdout, &stderr); err != nil {
 				t.Fatalf("dependentsWith: %v", err)
 			}
 			var out struct {

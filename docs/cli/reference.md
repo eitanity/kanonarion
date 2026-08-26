@@ -30,7 +30,7 @@ depth policy, store layout, and exit codes - see
 - [`examples`](examples.md) - harvest Example\* functions
 - [`symbol-context`](symbol-context.md) - assemble a per-module symbol record (signature, godoc, examples) for AI context
 - [`context`](context.md) - aggregate all stored records for a module into AI-ready context
-- [`dependents`](dependents.md) - find which modules in a walk depend on a given module
+- [`dependents`](dependents.md) - find which modules in one build depend on a given module
 
 ### Licence & attribution
 

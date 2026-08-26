@@ -171,15 +171,15 @@ func missSurfaces() []missSurface {
 			miss: func(t *testing.T) (string, error) {
 				ctr := &Container{QueryWalks: walksWithRecords(t)}
 				var stdout, stderr bytes.Buffer
-				err := dependentsWith(context.Background(), ctr, missTargetCoord(t), missingWalkID,
-					false, false, false, &stdout, &stderr)
+				err := dependentsWith(context.Background(), ctr, missTargetCoord(t),
+					dependentsFlags{walkID: missingWalkID}, false, &stdout, &stderr)
 				return stderr.String(), err
 			},
 			found: func(t *testing.T) (string, int, error) {
 				uc := walksWithRecords(t)
 				var stdout, stderr bytes.Buffer
 				err := dependentsWith(context.Background(), &Container{QueryWalks: uc},
-					mustCoord(t, "example.com/dep", "v2.0.0"), "walk-0", false, false, false, &stdout, &stderr)
+					mustCoord(t, "example.com/dep", "v2.0.0"), dependentsFlags{walkID: "walk-0"}, false, &stdout, &stderr)
 				return stderr.String(), uc.ListCalls, err
 			},
 			wantFragments: walkStatement,

@@ -215,3 +215,33 @@ func contextRenderFlags(f contextFlags) []inapplicableFlag {
 	}
 	return out
 }
+
+// dependentsRootFlags returns the dependents flags that name a root other than
+// --walk-id, for whichever of them the caller set. A pinned walk IS the build,
+// so a manifest or a scope beside it names a second one and only one of the two
+// can be answered.
+func dependentsRootFlags(f dependentsFlags) []inapplicableFlag {
+	out := dependentsScopeFlags(f)
+	if f.anyBuild {
+		out = append(out, inapplicableFlag{flag: "--any-build", where: "dependents --any-build, which names no walk"})
+	}
+	return out
+}
+
+// dependentsScopeFlags returns the dependents flags that project a go.mod into
+// one of its build scopes, for whichever of them the caller set. The search and
+// a pinned walk each arrive at a build without a manifest to project.
+func dependentsScopeFlags(f dependentsFlags) []inapplicableFlag {
+	const where = "dependents --gomod (or no flag, which reads ./go.mod)"
+	var out []inapplicableFlag
+	if f.gomod != "" {
+		out = append(out, inapplicableFlag{flag: "--gomod", where: where})
+	}
+	if f.tool {
+		out = append(out, inapplicableFlag{flag: "--tool", where: where})
+	}
+	if f.project {
+		out = append(out, inapplicableFlag{flag: "--project", where: where})
+	}
+	return out
+}
