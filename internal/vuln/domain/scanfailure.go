@@ -381,6 +381,9 @@ func moduleFromCachePath(pos string) (coordinate.ModuleCoordinate, bool) {
 // cannot name a coordinate and must not assert one.
 func LongestModulePrefix(importPath string, modulePaths map[string]struct{}) (string, bool) {
 	best := ""
+	// Map order cannot reach the answer: two distinct keys of the same length
+	// cannot both be a prefix of one path, so the longest match is unique and
+	// `len > len(best)` never ties.
 	for m := range modulePaths {
 		if m == "" {
 			continue

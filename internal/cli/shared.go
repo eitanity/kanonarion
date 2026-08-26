@@ -542,6 +542,9 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 	}
 	best := ""
 	bestVer := ""
+	// Map order cannot reach the answer: two distinct keys of the same length
+	// cannot both be a prefix of one path, so the longest match is unique and
+	// `len > len(best)` never ties.
 	for mp, ver := range reqVersions {
 		if strings.HasPrefix(toolPath, mp+"/") && len(mp) > len(best) {
 			best = mp

@@ -1,7 +1,9 @@
 package rootclass_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -177,5 +179,117 @@ func TestClassify_TheNearestEntryPointWins(t *testing.T) {
 	}
 	if a.Weakest != string(cgdomain.ConfidenceUnknown) {
 		t.Errorf("Weakest = %q, want Unknown: the nearest path is the one being described", a.Weakest)
+	}
+}
+
+// TestClassify_EquallyStrongEntryPointsAreNamedByAStableOrder is the
+// reproducibility property. Two ServeHTTP methods sit the same distance above
+// the leaf on paths of the same strength, so `stronger` cannot separate them;
+// whichever the search names has to be the same one on every read, or one
+// stored run renders a different document each time it is looked at.
+func TestClassify_EquallyStrongEntryPointsAreNamedByAStableOrder(t *testing.T) {
+	const (
+		alpha = "example.com/app/handlers.(*Alpha).ServeHTTP"
+		zulu  = "example.com/app/handlers.(*Zulu).ServeHTTP"
+		mid   = "example.com/app/handlers.mid"
+		leaf  = "example.com/app/handlers.leaf"
+	)
+	rec := appRecord([]cgdomain.CallNode{
+		node(alpha, "*Alpha", "ServeHTTP", exported),
+		node(zulu, "*Zulu", "ServeHTTP", exported),
+		node(mid, "", "mid"),
+		node(leaf, "", "leaf"),
+	}, []cgdomain.CallEdge{
+		{FromID: alpha, ToID: mid, Confidence: cgdomain.ConfidenceDirect},
+		{FromID: zulu, ToID: mid, Confidence: cgdomain.ConfidenceDirect},
+		{FromID: mid, ToID: leaf, Confidence: cgdomain.ConfidenceDirect},
+	})
+
+	first, err := json.Marshal(classifyEntry(t, rec, "leaf", ""))
+	if err != nil {
+		t.Fatalf("rendering the classified root: %v", err)
+	}
+	// Go randomises where every range over a map starts, so a search that keeps
+	// the first candidate it happens to meet disagrees with itself long before
+	// this many renders are done.
+	for i := range 200 {
+		again, mErr := json.Marshal(classifyEntry(t, rec, "leaf", ""))
+		if mErr != nil {
+			t.Fatalf("rendering the classified root: %v", mErr)
+		}
+		if !bytes.Equal(first, again) {
+			t.Fatalf("render %d is a different document from the first:\n %s\n %s", i, first, again)
+		}
+	}
+
+	a := classifyEntry(t, rec, "leaf", "").Ancestry
+	if a.EntryPointID != alpha {
+		t.Errorf("EntryPointID = %q, want %q: equals are separated by the node id, not by the map", a.EntryPointID, alpha)
+	}
+	if a.Hops != 2 {
+		t.Errorf("Hops = %d, want 2", a.Hops)
+	}
+}
+
+// TestClassify_AWeakerCandidateNeverWinsOnItsName is the other half of the
+// ruling: the id separates candidates `stronger` calls equal, and never
+// overrides it. Alpha sorts first and is reached through a CHA hop, so the
+// all-Direct Zulu is the one owed to the reader.
+func TestClassify_AWeakerCandidateNeverWinsOnItsName(t *testing.T) {
+	const (
+		alpha = "example.com/app/handlers.(*Alpha).ServeHTTP"
+		zulu  = "example.com/app/handlers.(*Zulu).ServeHTTP"
+		leaf  = "example.com/app/handlers.leaf"
+	)
+	rec := appRecord([]cgdomain.CallNode{
+		node(alpha, "*Alpha", "ServeHTTP", exported),
+		node(zulu, "*Zulu", "ServeHTTP", exported),
+		node(leaf, "", "leaf"),
+	}, []cgdomain.CallEdge{
+		{FromID: alpha, ToID: leaf, Confidence: cgdomain.ConfidenceCHAOverapprox},
+		{FromID: zulu, ToID: leaf, Confidence: cgdomain.ConfidenceDirect},
+	})
+	for range 50 {
+		a := classifyEntry(t, rec, "leaf", "").Ancestry
+		if a.EntryPointID != zulu {
+			t.Fatalf("EntryPointID = %q, want %q: the stronger path wins, and the id only separates equals", a.EntryPointID, zulu)
+		}
+		if a.Weakest != string(cgdomain.ConfidenceDirect) {
+			t.Fatalf("Weakest = %q, want Direct", a.Weakest)
+		}
+	}
+}
+
+// TestClassify_TwoEquallyRankedConfidencesReportTheSameWeakestHop covers the
+// same defect one level down. ConfidenceRank puts every value this build does
+// not recognise with Unknown, so two paths of different weakest hops can rank
+// equal — and the weakest hop is published beside the distance.
+func TestClassify_TwoEquallyRankedConfidencesReportTheSameWeakestHop(t *testing.T) {
+	const (
+		unrecognised = cgdomain.EdgeConfidence("Speculative")
+		mainFn       = "example.com/app/handlers.main"
+		viaUnknown   = "example.com/app/handlers.viaUnknown"
+		viaOther     = "example.com/app/handlers.viaOther"
+		leaf         = "example.com/app/handlers.leaf"
+	)
+	rec := appRecord([]cgdomain.CallNode{
+		node(mainFn, "", "main"),
+		node(viaUnknown, "", "viaUnknown"),
+		node(viaOther, "", "viaOther"),
+		node(leaf, "", "leaf"),
+	}, []cgdomain.CallEdge{
+		{FromID: mainFn, ToID: viaUnknown, Confidence: cgdomain.ConfidenceUnknown},
+		{FromID: mainFn, ToID: viaOther, Confidence: unrecognised},
+		{FromID: viaUnknown, ToID: leaf, Confidence: cgdomain.ConfidenceDirect},
+		{FromID: viaOther, ToID: leaf, Confidence: cgdomain.ConfidenceDirect},
+	})
+	want := classifyEntry(t, rec, "leaf", "").Ancestry.Weakest
+	if want != string(unrecognised) {
+		t.Errorf("Weakest = %q, want %q: equally ranked confidences are separated by the value", want, unrecognised)
+	}
+	for range 200 {
+		if got := classifyEntry(t, rec, "leaf", "").Ancestry.Weakest; got != want {
+			t.Fatalf("Weakest = %q on a later render, %q on the first", got, want)
+		}
 	}
 }

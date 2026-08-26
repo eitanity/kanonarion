@@ -833,6 +833,9 @@ func timestampBasisProperties(derived bool, licenceExtraction time.Time) []cdx.P
 // this document was built from, zero when there are none.
 func licenceExtractionTime(licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord) time.Time {
 	var t time.Time
+	// A maximum, so the map order cannot reach the answer: the kept value is the
+	// same instant whichever record is seen first, and no record's identity is
+	// published beside it.
 	for _, lic := range licenses {
 		if lic.ExtractedAt.After(t) {
 			t = lic.ExtractedAt

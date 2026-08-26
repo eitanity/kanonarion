@@ -1373,6 +1373,9 @@ INSERT INTO walk_scan_run_modules (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (walk_scan_run_id, module_path, module_version) DO NOTHING`
 
+	// The row set, not a winner: each coordinate is a distinct key and the
+	// conflict clause makes a repeat a no-op, and every read of this table
+	// orders on the record columns rather than on insertion.
 	for coord, contentHash := range run.PerModuleResults {
 		if _, err = tx.ExecContext(ctx, modQ,
 			run.ID, coord.Path(), coord.Version(),

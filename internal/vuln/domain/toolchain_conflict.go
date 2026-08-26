@@ -112,6 +112,9 @@ func verdictDigest(r VulnerabilityRecord) string {
 // answer, in which case there is nothing to choose between them.
 func sameVerdicts(byToolchain map[string]string) bool {
 	var first string
+	// An all-equal check, so the map order cannot reach the answer. The empty
+	// string is safe as the "nothing seen yet" marker because verdictDigest
+	// joins at least five fields and so never returns one.
 	for _, v := range byToolchain {
 		if first == "" {
 			first = v

@@ -110,6 +110,9 @@ func candidateVersions(
 // so "example.com/mod-extra" is never taken for "example.com/mod".
 func providingModulePath(importPath string, candidates map[string]string) (string, bool) {
 	best := ""
+	// Map order cannot reach the answer: two distinct keys of the same length
+	// cannot both be a prefix of one path, so the longest match is unique and
+	// `len > len(best)` never ties.
 	for path := range candidates {
 		if importPath != path && !strings.HasPrefix(importPath, path+"/") {
 			continue
