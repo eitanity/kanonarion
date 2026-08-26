@@ -69,6 +69,12 @@ type walkChoice struct {
 	// many of them were compared against a manifest.
 	candidates int
 	probed     int
+	// candidateSet names the set candidates counts, for a caller that narrowed
+	// the listing before choosing — "in the code scope on linux/amd64". Empty
+	// means every walk of the target was a candidate. Without it a filtered
+	// count reads as a count of all of them, and a reader who has walked the
+	// project in three scopes is told the store holds one.
+	candidateSet string
 	// manifestPath is the go.mod the comparison was made against, empty when none
 	// could be read.
 	manifestPath string
@@ -205,6 +211,33 @@ func (c walkChoice) toolchainNote() string {
 		strings.Join(c.toolchains, " and "), c.summary.Toolchain())
 }
 
+// candidateSetClause renders candidateSet as a clause the count sentences append,
+// and is empty when the candidates were every walk of the target.
+func (c walkChoice) candidateSetClause() string {
+	if c.candidateSet == "" {
+		return ""
+	}
+	return " " + c.candidateSet
+}
+
+// walkScopeLabel names the dependency scope a walk covered, for the notices that
+// disclose which build answered.
+//
+// A restriction that is not named is not disclosed: the notices already name the
+// walk, the platform, the module count and the toolchain, so a caller whose
+// --tool was ignored read ordinary provenance and had nothing to notice. Scopes
+// select different module sets — measured, 22 versions against 246 for one
+// project — so the scope belongs on the same footing as the platform.
+//
+// A walk written before scopes were recorded says so rather than being shown as
+// the default; "code" is a measurement, not a value to assume.
+func walkScopeLabel(scope walkdomain.WalkScope) string {
+	if scope == "" {
+		return "unrecorded scope"
+	}
+	return string(scope) + " scope"
+}
+
 // noteUncheckable keeps the FIRST reason a comparison could not be made. The
 // notice states one reason, and the first is the one belonging to the walk
 // nearest the front of the candidate list — the one the answer came from.
@@ -237,7 +270,7 @@ func (c walkChoice) statement() string {
 	if c.candidates <= 1 {
 		return ""
 	}
-	head := fmt.Sprintf("no walk was named and the store holds %d for this target, so one was chosen", c.candidates)
+	head := fmt.Sprintf("no walk was named and the store holds %d for this target%s, so one was chosen", c.candidates, c.candidateSetClause())
 	pin := fmt.Sprintf("pin one with --walk-id (kanonarion walk-list --target %s lists them)", c.summary.Target)
 	// The toolchain note rides in front of the pin so it lands in every branch:
 	// the choice it describes was made whichever rule made it.
@@ -298,8 +331,8 @@ func (c walkChoice) statementClause() string {
 	if toolchain != "" {
 		toolchain = "; " + toolchain
 	}
-	return fmt.Sprintf("; the store holds %d walks of this target and none was named, so this one was chosen%s — name one with --walk-id to choose it yourself",
-		c.candidates, toolchain)
+	return fmt.Sprintf("; the store holds %d walks of this target%s and none was named, so this one was chosen%s — name one with --walk-id to choose it yourself",
+		c.candidates, c.candidateSetClause(), toolchain)
 }
 
 // selectionJSON is the machine-readable form of the same statement, for the
@@ -312,11 +345,18 @@ type selectionJSON struct {
 	// Rule is "pinned", "sole", "manifest-match", "recency-no-match" or
 	// "recency-unchecked".
 	Rule string `json:"rule"`
-	// Candidates is how many walks of this target the store holds. It is a
-	// pointer emitted always, and null is the answer for a caller-pinned walk:
-	// nothing was enumerated, and 0 would state a count that is never true of a
-	// document carrying a walk id — the store holds at least the walk it names.
+	// Candidates is how many walks the store held that could have answered — of
+	// this target, and, where CandidateSet says so, of one scope and platform
+	// only. It is a pointer emitted always, and null is the answer for a
+	// caller-pinned walk: nothing was enumerated, and 0 would state a count that
+	// is never true of a document carrying a walk id — the store holds at least
+	// the walk it names.
 	Candidates *int `json:"candidates"`
+	// CandidateSet names what Candidates counted when the listing was narrowed
+	// before choosing, e.g. "in the code scope on linux/amd64". Absent when every
+	// walk of the target was a candidate. Without it a consumer reads a filtered
+	// count as a count of all of them.
+	CandidateSet string `json:"candidate_set,omitempty"`
 	// ManifestPath is the go.mod the recorded resolutions were compared against.
 	ManifestPath string `json:"manifest_path,omitempty"`
 	// Disagreements are the versions the chosen walk and the manifest differ on,
@@ -331,7 +371,7 @@ type selectionJSON struct {
 // selection renders the choice for a JSON document.
 func (c walkChoice) selection() selectionJSON {
 	candidates := c.candidates
-	out := selectionJSON{Candidates: &candidates, ManifestPath: c.manifestPath}
+	out := selectionJSON{Candidates: &candidates, CandidateSet: c.candidateSet, ManifestPath: c.manifestPath}
 	switch c.rule {
 	case walkChosenSole:
 		out.Rule = "sole"

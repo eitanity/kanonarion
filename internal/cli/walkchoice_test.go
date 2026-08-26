@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -55,7 +56,7 @@ func selectionWalk(t *testing.T, id, modulePath, dir, jwtVersion string) walkdom
 				{Coordinate: coordinatetest.MustNew("github.com/golang-jwt/jwt/v4", jwtVersion), ResolutionSource: walkdomain.ResolutionMVS},
 				{Coordinate: coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1"), ResolutionSource: walkdomain.ResolutionMVS},
 			},
-			BuildEnv: walkdomain.BuildEnv{GOOS: "linux", GOARCH: "amd64", GoVersion: "go1.26.4"},
+			BuildEnv: walkdomain.BuildEnv{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, GoVersion: "go1.26.4"},
 		},
 	}
 }
@@ -238,7 +239,7 @@ func TestLatestWalkForGoMod_PrefersTheManifestMatchingWalk(t *testing.T) {
 	matching := selectionWalk(t, "W-matching", modulePath, dir, "v4.5.1")
 	walks := selectionStore(rehearsal, matching)
 
-	choice, err := latestWalkForGoMod(context.Background(), walks, filepath.Join(dir, "go.mod"))
+	choice, err := latestWalkForGoMod(context.Background(), walks, filepath.Join(dir, "go.mod"), scopeCode)
 	if err != nil {
 		t.Fatalf("latestWalkForGoMod: %v", err)
 	}

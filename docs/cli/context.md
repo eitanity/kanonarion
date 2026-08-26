@@ -492,7 +492,20 @@ window covered everything and there is nothing to disclose.
 `--gomod` names it on stderr, and says what the naming does not prove:
 
 ```
-notice: vulnerability verdicts read in walk "01KZ3VA296P8KTP265M6CDBCHB" (frame linux/amd64); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod records the current resolution
+notice: vulnerability verdicts read in walk "01KZ3VA296P8KTP265M6CDBCHB" (code scope, frame linux/amd64); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod records the current resolution
+```
+
+The anchoring walk is the one of the **scope this invocation asked for** —
+`--tool` and `--project` select it, as they already select the module set printed
+below — resolved for this platform. Anchoring `--tool` verdicts to a code walk
+that happened to be walked more recently reports one build's dependencies against
+another build's scan, so the notice names the scope it anchored in.
+
+A survey is not refused for want of a walk of that scope: it prints its sections
+unanchored and says which walk it could not find, so the reader can take it.
+
+```
+notice: no walk anchors these vulnerability verdicts: no succeeded tool project walk for example.com/myapp on linux/amd64, though the store holds 1 succeeded walk(s) of it (code on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod --tool
 ```
 
 The walk is found by the module path the manifest declares, and a survey does

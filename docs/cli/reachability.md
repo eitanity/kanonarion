@@ -56,16 +56,23 @@ A stored verdict is a verdict about one build. Name the build:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
   records that walk covered.
-- `--gomod <path>` does the same for the succeeded project walk of that `go.mod`
-  that the [default-frame rule](conventions.md#the-default-walk) picks — the
-  most recent one whose recorded resolution still agrees with the manifest,
-  else the most recent. The path is required and may be written either way round
+- `--gomod <path>` does the same for the succeeded **code-scope** project walk of
+  that `go.mod`, resolved for **this platform**, that the
+  [default-frame rule](conventions.md#the-default-walk) picks — the most recent
+  one whose recorded resolution still agrees with the manifest, else the most
+  recent. The path is required and may be written either way round
   (`--gomod ./go.mod` or `--gomod=./go.mod`). Mutually exclusive with
   `--walk-id`, and rejected alongside `--local`, which measures the tree it is
   given.
 
-Either flag prints a `notice:` line naming the walk and its frame above the
-answer, and the verdict names its rooting as it always has.
+  `reachability` has no scope flag, so it asks for the code scope. A project
+  walked only in the `tool` or `complete` scope gets a refusal naming the scopes
+  the store holds and the `walk` command that produces the missing one — never an
+  answer read out of another build. The toolchain is not part of the selection;
+  among the walks of one scope and platform, recency still decides.
+
+Either flag prints a `notice:` line naming the walk, its scope and its frame
+above the answer, and the verdict names its rooting as it always has.
 
 With neither flag, and the coordinate present in more than one consumer's build,
 the query **refuses** (exit 20) and names the frames it found plus the flags
@@ -501,7 +508,7 @@ command is safe to run from the root of a repository with fixture modules under
 |---|---|---|
 | `--vuln` | *(empty)* | Vulnerability ID to query (stored-module mode); requires a `<module>@<version>` argument |
 | `--walk-id` | *(empty)* | Answer the stored query in the frame of this walk's scans |
-| `--gomod <path>` | *(empty)* | Answer the stored query in the frame of the latest project walk for this go.mod. Takes a path, e.g. `--gomod ./go.mod` |
+| `--gomod <path>` | *(empty)* | Answer the stored query in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform |
 | `--local` | *(empty)* | Path to the local Go workspace to probe (live local mode) |
 | `--json` | false | Emit output as JSON (global flag) |
 

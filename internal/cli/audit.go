@@ -579,14 +579,15 @@ func auditScope(
 	//
 	// The lookup it replaces asked the store for the latest walk of this target
 	// and scope, which is not the same question. Two walks of one target differ
-	// on more than target and scope — the build environment among them, and
-	// WalkFilter carries no axis for it — so a cross-compiled audit of one
-	// platform would extract, scan and report against another platform's walk
-	// whenever that one happened to be newer, while the derivation line named the
-	// walk this run actually resolved. One audit, two walks, and the report said
-	// nothing about the disagreement. This was invisible while every audit minted
-	// a fresh walk, because then the latest walk always was this run's; walk reuse
-	// is what let the two come apart.
+	// on more than target and scope — the build environment among them, which
+	// that lookup did not pin (WalkFilter carries a BuildEnv axis; it simply went
+	// unpassed) — so a cross-compiled audit of one platform would extract, scan
+	// and report against another platform's walk whenever that one happened to be
+	// newer, while the derivation line named the walk this run actually resolved.
+	// One audit, two walks, and the report said nothing about the disagreement.
+	// This was invisible while every audit minted a fresh walk, because then the
+	// latest walk always was this run's; walk reuse is what let the two come
+	// apart.
 	if walkResult.Record.ID == "" {
 		return nil, derivation, fmt.Errorf("project walk produced no record for %s", localCoord)
 	}

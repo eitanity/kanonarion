@@ -170,10 +170,34 @@ is chosen, by this rule:
    walk itself recorded;
 2. failing that, the most recent walk.
 
+Under `--gomod` the rule ranks **within one build**, never across builds. The
+candidates are the succeeded walks of that project in the **scope** the command
+asked for — the caller's `--tool` / `--project` where the command has them,
+otherwise `code` — resolved for **this platform**. One project walked in three
+scopes is three different module sets (measured on this repo: 22, 246 and 474
+modules), so ranking them together by recency answers whichever was walked last.
+
+Where no walk matches, the command **refuses and names the remedy**, and the
+refusal distinguishes "no walk of that scope" from "no walk at all":
+
+```
+error: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
+```
+
+The **toolchain is not** part of this selection. Two walks under two toolchains
+link different standard libraries, so this narrowing is not complete: among the
+walks of one scope and platform, recency still decides which toolchain's walk
+answers. The choice states the toolchain it landed on whenever the candidates
+disagreed, which is the disclosure offered in place of a filter.
+
 The choice is always stated when there was one to make: a store holding one walk
 of the target says nothing, and a store holding several says which walk answered
-and which of the two rules picked it. Under `--json` the same fact is a
-`walk_selection` object rather than a line.
+and which of the two rules picked it. The statement names the scope and platform
+the candidates were counted in, because a count of "1 walk of this target" would
+otherwise be read as a count of every walk of it. Under `--json` the same facts
+are a `walk_selection` object — `candidates` beside `candidate_set` — rather
+than a line, and every `notice:` line that names a walk names its scope beside
+its frame.
 
 Rule 1 exists because recency alone answers from the wrong build after any
 rehearsal. A walk taken while a manifest was temporarily edited stays the newest

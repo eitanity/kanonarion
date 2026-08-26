@@ -220,9 +220,17 @@ func runVulnShow(
 // are one step apart, and only one of them is an answer to the question asked.
 func frameRecordAbsence(coord coordinate.ModuleCoordinate, anchor vulnFrameAnchor, candidates []vuldomain.VulnerabilityRecord) error {
 	if len(candidates) == 0 {
+		// The anchor's own description names the walk's scope beside its frame, so
+		// the reader can tell "this build does not contain the module" from
+		// "nothing measured it" — a --gomod read pins the project's code scope,
+		// and a module in the tooling closure alone lands here.
+		named := anchor.source
+		if named == "" {
+			named = fmt.Sprintf("walk %s", anchor.walkID)
+		}
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"walk %s holds no vulnerability record for %s — the walk may not contain the module, or may not have been scanned; run: kanonarion vuln-scan %s",
-			anchor.walkID, coord, anchor.walkID)}
+			"%s holds no vulnerability record for %s — that build may not contain the module, or may not have been scanned; run: kanonarion vuln-scan %s",
+			named, coord, anchor.walkID)}
 	}
 	frame := "that walk's own frame"
 	if anchor.rooting.IsRecorded() {
@@ -320,9 +328,19 @@ func explainWalkRecordAbsence(
 		}
 	}
 	if covering == nil {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"walk %s has %d vulnerability scan run(s), none covering %s — the walk does not contain this module",
-			walkID, len(scanRuns), coord)}
+		// The walk is named with the scope it covered, and the remedy is the other
+		// scopes. A --gomod read asks for the project's code scope, so a module
+		// that lives only in the tooling closure lands here — and "the walk does
+		// not contain this module", said of a walk the reader did not choose and
+		// whose scope was never stated, reads as "nothing measured it".
+		scopeLabel, target := walkBuildLabel(ctx, walks, walkID)
+		msg := fmt.Sprintf("walk %s%s has %d vulnerability scan run(s), none covering %s — that build does not contain this module",
+			walkID, scopeLabel, len(scanRuns), coord)
+		if target != "" {
+			msg += fmt.Sprintf("; a module that is only in another scope's closure is answered from that scope's walk — kanonarion walk-list --target %s lists them, and --walk-id names one",
+				target)
+		}
+		return &exitError{code: ExitNotFound, msg: msg}
 	}
 	if covering.PipelineVersion != vulnPipelineVersion {
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
@@ -335,6 +353,20 @@ func explainWalkRecordAbsence(
 	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 		"walk %s scan run %s records %s at pipeline version %s, but no record was readable — the store may be inconsistent; re-run: kanonarion vuln-scan %s",
 		walkID, covering.ID, coord, vulnPipelineVersion, walkID)}
+}
+
+// walkBuildLabel names the scope a walk covered, as a parenthesised suffix, and
+// the coordinate it was rooted at, for a refusal that holds only a walk id.
+//
+// Both are empty when the walk cannot be read. The refusal it decorates is
+// already correct, and a failed decoration must not turn into a second error
+// about a different thing.
+func walkBuildLabel(ctx context.Context, walks QueryWalksUseCase, walkID string) (scopeSuffix, target string) {
+	rec, err := walks.GetWalk(ctx, walkID)
+	if err != nil {
+		return "", ""
+	}
+	return " (" + walkScopeLabel(rec.Scope) + ")", rec.Target.String()
 }
 
 // newerWalkNote reports, as one appendable line, whether a succeeded walk of

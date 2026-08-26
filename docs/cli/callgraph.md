@@ -601,7 +601,7 @@ kanonarion callers <symbol-id> [flags]
 | `--exclude-tests` | `false` | Omit callers declared in `_test.go` files and external test packages |
 | `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
 | `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited) |
-| `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest project walk for this `go.mod`. Takes a path, e.g. `--gomod ./go.mod`. The scope notice names that walk, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
+| `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 
 ```
@@ -649,7 +649,7 @@ method — an ID `callers` and `callees` also accept.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
-| `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest project walk for this `go.mod`. Takes a path, e.g. `--gomod ./go.mod`. The scope notice names that walk, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
+| `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 | `--json` | `false` | Emit the result, verdict and scope as JSON |
 

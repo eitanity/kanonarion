@@ -68,10 +68,18 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	if err != nil {
 		return fmt.Errorf("loading vuln batch context: %w", err)
 	}
-	// The go.mod names the build, so its own latest project walk is the frame
-	// these verdicts are read in. A project with no walk yet is left unanchored
-	// rather than refused: context is a survey, and every section it prints
-	// states its own basis.
+	// The go.mod and the scope together name the build, so the latest project
+	// walk OF THAT SCOPE is the frame these verdicts are read in. The scope is
+	// passed rather than left to recency because --tool and --project already
+	// chose the module set printed below: anchoring their verdicts to whichever
+	// scope was walked last reports one build's dependencies against another
+	// build's scan.
+	//
+	// A project with no walk of that scope is left unanchored rather than
+	// refused: context is a survey, and every section it prints states its own
+	// basis. But the miss is stated, because an unanchored survey and an anchored
+	// one differ only in a line that is now absent, and a reader who asked for
+	// --tool needs to be told which walk to take.
 	//
 	// The anchor is stated on stderr, and it states its own limit: the walk was
 	// found by the module path this manifest declares, and a survey does not
@@ -81,13 +89,18 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// invisible pin to a walk taken before the last go.mod edit reads as a
 	// statement about the tree in front of the reader.
 	var basis basisWalk
-	if choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
+	choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath, scope)
+	switch {
+	case werr != nil:
+		_, _ = fmt.Fprintf(stderr, "notice: no walk anchors these vulnerability verdicts: %v\n", werr)
+	default:
 		vulnBatch.anchorTo(ctx, choice.summary.ID)
 		// The same walk the verdicts are read in answers the dependency section,
 		// so every document in the stream reports one build.
 		basis = resolveBasisWalk(ctx, ctr.QueryWalks, choice.summary.ID)
-		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (frame %s)%s%s\n",
-			choice.summary.ID, choice.summary.BuildFrame(), choice.stalenessNote(), choice.statementClause())
+		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (%s, frame %s)%s%s\n",
+			choice.summary.ID, walkScopeLabel(choice.summary.Scope), choice.summary.BuildFrame(),
+			choice.stalenessNote(), choice.statementClause())
 	}
 
 	compact := f.compact && !f.full

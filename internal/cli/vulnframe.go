@@ -25,7 +25,7 @@ type vulnFrameAnchor struct {
 	walkID  string
 	rooting vuldomain.Rooting
 	// source names the anchor for the notice, e.g.
-	// `walk "01K…" (frame target-rooted:example.com/app@local)`.
+	// `walk "01K…" (code scope, frame target-rooted:example.com/app@local)`.
 	source string
 	// staleness is the clause the notice appends when --gomod named the build:
 	// the walk was found by the module path the manifest declares, and this read
@@ -37,11 +37,18 @@ type vulnFrameAnchor struct {
 // resolveVulnFrameAnchor turns --walk-id / --gomod into the frame a read is
 // answered in. ok is false when neither was passed.
 //
-// --gomod resolves to the succeeded project walk for that go.mod that the shared
-// default rule picks — the most recent whose recorded resolution still agrees
-// with the manifest, else the most recent — which is the same resolution the
-// build-scoped query commands perform; both routes end at a walk, and the frame
-// is read off the walk record so the two say the same thing.
+// --gomod resolves to the succeeded CODE-scope project walk for that go.mod that
+// the shared default rule picks — the most recent whose recorded resolution
+// still agrees with the manifest, else the most recent — which is the same
+// resolution the build-scoped query commands perform; both routes end at a walk,
+// and the frame is read off the walk record so the two say the same thing.
+//
+// These commands register no scope flag, so the code scope is the question they
+// can express: the modules the project's own code builds against. A module that
+// is only in the tooling closure is not answered from a tool walk that happens
+// to be in the store — the read refuses and names the walk that would answer,
+// because "reachable in your build" said of a build the caller did not ask about
+// is the wrong answer rather than a partial one.
 func resolveVulnFrameAnchor(
 	ctx context.Context,
 	walks QueryWalksUseCase,
@@ -62,7 +69,7 @@ func resolveVulnFrameAnchor(
 
 	var staleness string
 	if gomodSet {
-		choice, err := latestWalkForGoMod(ctx, walks, gomod)
+		choice, err := latestWalkForGoMod(ctx, walks, gomod, scopeCode)
 		if err != nil {
 			return vulnFrameAnchor{}, false, err
 		}
@@ -81,7 +88,7 @@ func resolveVulnFrameAnchor(
 			// ranking, which refuses rather than guesses when it is ambiguous.
 			return vulnFrameAnchor{
 				walkID:    walkID,
-				source:    fmt.Sprintf("walk %q (frame unknown — the walk record is not in the store)", walkID),
+				source:    fmt.Sprintf("walk %q (scope and frame unknown — the walk record is not in the store)", walkID),
 				staleness: staleness,
 			}, true, nil
 		}
@@ -92,7 +99,7 @@ func resolveVulnFrameAnchor(
 	return vulnFrameAnchor{
 		walkID:    walkID,
 		rooting:   rooting,
-		source:    fmt.Sprintf("walk %q (frame %s)", walkID, rooting),
+		source:    fmt.Sprintf("walk %q (%s, frame %s)", walkID, walkScopeLabel(rec.Scope), rooting),
 		staleness: staleness,
 	}, true, nil
 }

@@ -836,10 +836,25 @@ answer depends on which build you mean:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
   records that walk covered. A `notice:` line names the walk and its frame.
-- `--gomod <path>` does the same for the newest succeeded project walk of that
-  `go.mod`. The path is required and may be written either way round
-  (`--gomod ./go.mod` or `--gomod=./go.mod`). Mutually exclusive with
-  `--walk-id`.
+- `--gomod <path>` does the same for the newest succeeded **code-scope** project
+  walk of that `go.mod`, resolved for **this platform**. The path is required and
+  may be written either way round (`--gomod ./go.mod` or `--gomod=./go.mod`).
+  Mutually exclusive with `--walk-id`.
+
+  `vuln-show` has no scope flag, so the code scope is the question it can ask:
+  the modules the project's own code builds against. A module that is only in the
+  tooling closure is **not** answered from a `--tool` walk that happens to be in
+  the store — the read refuses and names the walk that would answer it:
+
+  ```
+  error: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
+  ```
+
+  Where the project has no walk at all the refusal says that instead, so the two
+  are not confused. The toolchain is **not** part of this selection: two walks
+  under two toolchains link different standard libraries, and among the walks of
+  one scope and platform recency still decides which answers. The notice names
+  the toolchain it landed on whenever the candidates disagreed.
 - With neither, the record that answers a **consumer's** question about the
   module is returned: one produced by an analysis rooted at a project that
   consumes it, if the store holds one.
@@ -967,7 +982,7 @@ counts them: those rows are history, not the answer a scan would give today. In
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
-| `--gomod <path>` | _(none)_ | Answer in the frame of the latest project walk for this go.mod. Takes a path, e.g. `--gomod ./go.mod`. The notice states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
+| `--gomod <path>` | _(none)_ | Answer in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The notice names the walk's scope and frame, and states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
 | `--history` | `false` | List all scan records across walks, snapshots and pipeline generations, marking superseded rows |
 | `--json` | `false` | Emit record as JSON |
 

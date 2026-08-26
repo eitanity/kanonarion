@@ -165,10 +165,18 @@ paths are listed rather than dropped silently.
 ## `--used-by`: does MY code call any of it?
 
 `--used-by ./go.mod` resolves the module that `go.mod` declares to the **latest
-succeeded project walk** for it - the same resolution `callers --gomod`
-performs - and asks the **stored** call graph which of the breaking deltas the
-project's own code calls. It never re-parses the consumer's source, so the
-answer cannot disagree with what `callers` says about the same symbol.
+succeeded code-scope project walk** for it, on this platform - the same
+resolution `callers --gomod` performs - and asks the **stored** call graph which
+of the breaking deltas the project's own code calls. It never re-parses the
+consumer's source, so the answer cannot disagree with what `callers` says about
+the same symbol.
+
+The code scope is the question: this asks what the consumer's own code calls, so
+it is answered in the build that code compiles into. A project walked only in
+another scope is refused, naming the scopes the store holds and the `walk`
+command that produces the missing one. The section header names the scope of the
+walk that answered, beside its frame; `walk_scope` carries the same fact in the
+JSON.
 
 The walk is found by the module path the `go.mod` declares, and the `go.mod` is
 not re-resolved for the read: the section header says so beneath itself, because
