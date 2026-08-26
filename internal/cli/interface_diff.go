@@ -845,7 +845,7 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 	// resolves to now. Stated here because "your code does not call the removed
 	// symbol" is exactly the answer an out-of-date scope gets wrong quietly.
 	if used.GoMod != "" {
-		basis := used.choice.stalenessNote() + used.choice.statementClause()
+		basis := used.choice.basisNotes()
 		if _, err := fmt.Fprintf(stdout, "  %s\n", strings.TrimPrefix(basis, "; ")); err != nil {
 			return fmt.Errorf("writing used-by staleness: %w", err)
 		}

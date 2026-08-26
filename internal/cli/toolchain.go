@@ -272,15 +272,35 @@ func walkBuildLines(rec walkdomain.WalkRecord, readerToolchain string) []string 
 		return []string{frame + " under " + walkBuildToolchainUnrecorded}
 	}
 	lines := []string{frame + " under " + version}
-	switch {
-	case readerToolchain == "":
-		lines = append(lines, "the project it was resolved in is not present here, so "+version+
+	if readerToolchain == "" {
+		return append(lines, "the project it was resolved in is not present here, so "+version+
 			" could not be compared with what that project resolves today")
-	case readerToolchain != version:
-		lines = append(lines, "that project resolves "+readerToolchain+" today: this answer describes "+version+
-			"'s standard library, not the one a build taken there now would use")
+	}
+	if divergence := toolchainDivergenceLine(version, readerToolchain); divergence != "" {
+		lines = append(lines, divergence)
 	}
 	return lines
+}
+
+// toolchainDivergenceLine states that the walk an answer came from was resolved
+// by a toolchain its project no longer resolves, naming both. Empty when there
+// is nothing to compare or the two agree.
+//
+// One wording, one place, because two surfaces state this now: the build block a
+// named walk prints, and the basis a --gomod read appends to the walk it
+// selected for the caller. A walk that recorded no toolchain gets its own
+// sentence rather than the recorded one with an empty version in it, which would
+// read as a claim about a standard library called "".
+func toolchainDivergenceLine(recorded, resolvedNow string) string {
+	if resolvedNow == "" || recorded == resolvedNow {
+		return ""
+	}
+	if recorded == "" {
+		return "that project resolves " + resolvedNow + " today: this answer comes from a walk under " +
+			walkBuildToolchainUnrecorded + ", so which standard library it describes is not stated"
+	}
+	return "that project resolves " + resolvedNow + " today: this answer describes " + recorded +
+		"'s standard library, not the one a build taken there now would use"
 }
 
 // writeWalkBuild states the build block for a walk a command was asked for by

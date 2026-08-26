@@ -812,7 +812,11 @@ is asking which standard library it links, and folding them together would force
 every platform-filtered read to pin a toolchain with no value meaning "any".
 
 `LatestOnly` now partitions on `(target, version, scope, go_version)`. Two walks
-under two toolchains are two builds, not two attempts at one.
+under two toolchains are two builds, not two attempts at one. *(Corrected later,
+with no migration: the partition also takes `goos` and `goarch`. Those columns
+arrived with migration 8 and the filter had always matched on them, so only the
+`SELECT` was short — one statement disagreeing with itself, which collapsed a
+cross-compiled store's platforms by clock.)*
 
 Measured on the real store at migration time: 17 rows, all 17 retained, 12
 back-filled (7 to `go1.26.5`, 5 to `go1.26.6`) and 5 left unrecorded — and those

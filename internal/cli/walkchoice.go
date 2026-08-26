@@ -91,6 +91,12 @@ type walkChoice struct {
 	// which standard library the target links, and the choice between them
 	// decides which toolchain advisories the answer is about.
 	toolchains []string
+	// resolvedToolchain is what `go env GOVERSION` answers in the project's own
+	// directory now, for a selector that narrowed on it. Empty when nothing was
+	// probed. The divergence is derived by comparing it with the chosen walk
+	// rather than flagged by the selector, so a selector that widens and one that
+	// found a match cannot disagree about whether to say so.
+	resolvedToolchain string
 }
 
 // chooseWalk picks the walk a read answers from out of a store-ordered
@@ -218,6 +224,34 @@ func (c walkChoice) candidateSetClause() string {
 		return ""
 	}
 	return " " + c.candidateSet
+}
+
+// toolchainDivergenceClause says that the walk this read answered from was
+// resolved by a toolchain the project no longer resolves. Empty when they agree,
+// and when the selector probed nothing to compare against.
+//
+// It is separate from toolchainNote, which reports a choice made BETWEEN
+// candidates and is silent when they all agree. This one fires precisely when
+// they agree and are all wrong for the reader — the case a note about
+// disagreement cannot reach, and the case where the answer names a standard
+// library the reader does not link.
+func (c walkChoice) toolchainDivergenceClause() string {
+	line := toolchainDivergenceLine(c.summary.GoVersion, c.resolvedToolchain)
+	if line == "" {
+		return ""
+	}
+	return "; " + line
+}
+
+// basisNotes is everything a read owes about the walk it selected for a caller
+// who named none: what it proved about the manifest, whether that walk's
+// toolchain is still the one its project resolves, and that a choice was made at
+// all.
+//
+// One method rather than a composition at each surface, because four of them
+// print this and a fact added to three is a fact the fourth goes on omitting.
+func (c walkChoice) basisNotes() string {
+	return c.stalenessNote() + c.toolchainDivergenceClause() + c.statementClause()
 }
 
 // walkScopeLabel names the dependency scope a walk covered, for the notices that
@@ -366,12 +400,23 @@ type selectionJSON struct {
 	// Reason says why no comparison could be made, present only for
 	// "recency-unchecked".
 	Reason string `json:"reason,omitempty"`
+	// ToolchainDivergence says that no candidate was resolved by the toolchain
+	// the project resolves today, and names both. Absent when they agree and when
+	// nothing was probed. A consumer reading the walk id gets the same statement
+	// the text surface prints, because a JSON reader is exactly the one that
+	// would otherwise take another standard library's answer for its own.
+	ToolchainDivergence string `json:"toolchain_divergence,omitempty"`
 }
 
 // selection renders the choice for a JSON document.
 func (c walkChoice) selection() selectionJSON {
 	candidates := c.candidates
-	out := selectionJSON{Candidates: &candidates, CandidateSet: c.candidateSet, ManifestPath: c.manifestPath}
+	out := selectionJSON{
+		Candidates:          &candidates,
+		CandidateSet:        c.candidateSet,
+		ManifestPath:        c.manifestPath,
+		ToolchainDivergence: toolchainDivergenceLine(c.summary.GoVersion, c.resolvedToolchain),
+	}
 	switch c.rule {
 	case walkChosenSole:
 		out.Rule = "sole"

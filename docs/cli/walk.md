@@ -91,7 +91,7 @@ a miss on either exits `4` and the message names how many walk records were
 searched and the invocation that lists them.
 
 | `--walk-id` | _(none)_ | Fetch a single walk summary by ID |
-| `--latest` | `false` | Return only the latest unique `(target, scope, toolchain)` combination. Two walks of one project resolved by two Go toolchains are two candidates, not one winner by clock: they record different standard libraries |
+| `--latest` | `false` | Return only the latest unique `(target, scope, platform, toolchain)` combination. Two walks of one project that differ on any of those axes are two candidates, not one winner by clock: another platform selects other files, and another toolchain records a different standard library |
 | `--latest-success` | `false` | Return only the single most recent succeeded walk (as a JSON object, not an array) |
 | `--json` | `false` | Emit the list as JSON |
 

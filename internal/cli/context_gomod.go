@@ -98,9 +98,9 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		// The same walk the verdicts are read in answers the dependency section,
 		// so every document in the stream reports one build.
 		basis = resolveBasisWalk(ctx, ctr.QueryWalks, choice.summary.ID)
-		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (%s, frame %s)%s%s\n",
+		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (%s, frame %s)%s\n",
 			choice.summary.ID, walkScopeLabel(choice.summary.Scope), choice.summary.BuildFrame(),
-			choice.stalenessNote(), choice.statementClause())
+			choice.basisNotes())
 	}
 
 	compact := f.compact && !f.full

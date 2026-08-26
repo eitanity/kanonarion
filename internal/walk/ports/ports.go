@@ -259,13 +259,14 @@ type WalkFilter struct {
 	Limit     int // 0 = no limit
 	Offset    int
 	// LatestOnly returns only the latest walk of each unique
-	// (target, scope, toolchain) combination.
+	// (target, scope, platform, toolchain) combination.
 	//
-	// The toolchain is in the partition because two walks under two toolchains
-	// are two builds, not two attempts at one. They link different standard
-	// libraries, so collapsing them by clock makes the newer toolchain's answer
-	// stand for the older one's — which is a wrong answer, not merely an
-	// unfiltered one.
+	// All four axes are in the partition because each of them names a different
+	// build rather than another attempt at one: a platform selects other files
+	// and a toolchain links another standard library, so collapsing either by
+	// clock makes one build's answer stand for another's — a wrong answer, not
+	// merely an unfiltered one. The platform was the axis the filter matched and
+	// the partition did not, so one SQL statement disagreed with itself.
 	LatestOnly bool
 }
 

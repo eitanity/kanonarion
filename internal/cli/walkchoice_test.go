@@ -75,6 +75,10 @@ func selectionStore(recs ...walkdomain.WalkRecord) *testfakes.FakeQueryWalks {
 			OverallStatus: rec.OverallStatus,
 			GOOS:          rec.Graph.BuildEnv.GOOS,
 			GOARCH:        rec.Graph.BuildEnv.GOARCH,
+			// The toolchain rides on the summary because the adapter projects it into
+			// a column of its own and the selector now filters on it: a fixture that
+			// left it blank could not tell a toolchain match from a widened miss.
+			GoVersion: rec.Graph.BuildEnv.GoVersion,
 		})
 	}
 	qw.SetSummaries(summaries)

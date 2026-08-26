@@ -155,7 +155,9 @@ notice: no walk was named and the store holds 2 for this target, so one was chos
 Where every walk of the target was resolved by one toolchain there is nothing to
 have chosen and nothing is said. `walk-list --json` carries the toolchain as
 `go_version`, and `walk-list --latest` returns one walk per
-`(target, scope, toolchain)` rather than one per `(target, scope)`.
+`(target, scope, platform, toolchain)`: each of those four names a different
+build, so collapsing any of them by clock makes one build's answer stand for
+another's.
 
 ---
 
@@ -184,11 +186,26 @@ refusal distinguishes "no walk of that scope" from "no walk at all":
 error: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
 ```
 
-The **toolchain is not** part of this selection. Two walks under two toolchains
-link different standard libraries, so this narrowing is not complete: among the
-walks of one scope and platform, recency still decides which toolchain's walk
-answers. The choice states the toolchain it landed on whenever the candidates
-disagreed, which is the disclosure offered in place of a filter.
+The **toolchain ranks above recency, and then relaxes**. Two walks under two
+toolchains link different standard libraries, so a candidate resolved by the
+toolchain the project resolves today beats a newer one that was not — recency
+deciding that axis is how one project was reported both affected and clean by
+two commands minutes apart. Where no candidate was resolved by it, the read
+still answers from the newest and states which standard library that answer is
+about:
+
+```
+notice: results restricted to the 22 module versions resolved by walk "01M0RE94X8VJ8C0PT9Z3VJJQ0S" (code scope, frame linux/amd64); ...; that project resolves go1.26.6 today: this answer describes go1.26.5's standard library, not the one a build taken there now would use
+```
+
+That is the same sentence `walk-show` and `vuln-show` print in their `build:`
+block, and it appears under `--json` as `walk_selection.toolchain_divergence`.
+The read does not refuse: unlike `vuln-scan`, which measures and can take the
+walk it needs, a query has an answer to give and the reader needs to be told
+what it is about rather than denied it. Where the `go env` probe cannot answer,
+nothing is pinned and nothing is claimed. Where the toolchain did narrow the
+candidates, the count says so — `in the code scope on linux/amd64 under
+go1.26.6`.
 
 The choice is always stated when there was one to make: a store holding one walk
 of the target says nothing, and a store holding several says which walk answered

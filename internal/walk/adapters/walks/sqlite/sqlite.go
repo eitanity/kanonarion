@@ -501,6 +501,7 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	          SELECT MAX(started_at) FROM walks w2
 	          WHERE w2.target_path = w1.target_path AND w2.target_version = w1.target_version
 	          AND w2.scope = w1.scope
+	          AND w2.goos = w1.goos AND w2.goarch = w1.goarch
 	          AND w2.go_version = w1.go_version
 	      )`
 	} else {

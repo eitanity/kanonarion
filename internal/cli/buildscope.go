@@ -118,7 +118,7 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 			return buildScope{}, err
 		}
 		walkID = choice.summary.ID
-		staleness = choice.stalenessNote() + choice.statementClause()
+		staleness = choice.basisNotes()
 	}
 
 	rec, err := walks.GetWalk(ctx, walkID)
@@ -170,12 +170,16 @@ func writeScopeNotice(stdout io.Writer, sc buildScope) error {
 // The platform is pinned for the same reason, in the same terms the walk
 // recorded it: a build for another GOOS/GOARCH selects other files.
 //
-// The toolchain is deliberately NOT pinned here. Two walks under two toolchains
-// link different standard libraries, so this selection is not complete — it
-// narrows to one scope and one platform, and among those recency still decides
-// which toolchain's walk answers. The choice states the toolchain it landed on
-// whenever the candidates disagreed (walkChoice.toolchainNote), which is the
-// disclosure this read offers in place of a filter.
+// The toolchain is pinned on the same terms, and then relaxed rather than
+// refused. Two walks under two toolchains link different standard libraries, so
+// a candidate resolved by the toolchain this project resolves NOW beats a newer
+// one that was not — recency deciding that axis is how a project came to be
+// reported both affected and clean by two commands minutes apart. Where no
+// candidate was resolved by it the read still answers from the newest and states
+// the divergence (walkChoice.toolchainDivergenceClause), because the failure was
+// a silent choice and not an answer: refusing here would cost every read on this
+// selector an answer it can give, and give the reader nothing the sentence does
+// not.
 //
 // The whole choice is returned rather than the ID alone because a scope derived
 // from this walk has to be able to say which platform's build it pins, and,
@@ -203,27 +207,65 @@ func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod stri
 	if err != nil {
 		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("building project coordinate for %s: %w", modulePath, err)
 	}
+	// One `go env` probe, in the project's own directory, answering both axes at
+	// once — the same probe the walk resolver runs, so the read asks in the terms
+	// the walk answered in, including any GOOS/GOARCH override and any go.mod
+	// toolchain directive. A failed platform probe falls back to the host, which
+	// is the resolver's own fallback; a failed toolchain probe pins nothing,
+	// because a guessed toolchain excludes the walks it was meant to find.
+	env := currentWalkBuildEnv(ctx, "", filepath.Dir(gomodPath), nil)
+	return selectProjectWalkToRead(ctx, walks, coord, scope, env, gomodPath)
+}
+
+// selectProjectWalkToRead is latestWalkForGoMod's selection, over a build the
+// caller states rather than one probed here, so the rule can be exercised
+// against a build this host does not have.
+func selectProjectWalkToRead(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	coord coordinate.ModuleCoordinate,
+	scope depScope,
+	env walkBuildEnv,
+	gomodPath string,
+) (walkChoice, error) {
 	succeeded := walkdomain.WalkSucceeded
 	walkScope := walkScopeFor(scope)
-	// The same `go env` probe the walk resolver runs, in the same directory, so
-	// the read asks for the platform in the terms the walk answered in —
-	// including any GOOS/GOARCH override in the environment. A failed probe falls
-	// back to the host platform, which is the resolver's own fallback.
-	platform := currentWalkBuildEnv(ctx, "", filepath.Dir(gomodPath), nil).platform
-	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{
+	platform := env.platform
+	filter := walkports.WalkFilter{
 		Target:        &coord,
 		Scope:         &walkScope,
 		OverallStatus: &succeeded,
 		BuildEnv:      &platform,
-	})
+		Toolchain:     env.toolchainFilter(),
+	}
+	summaries, err := walks.ListWalks(ctx, filter)
 	if err != nil {
-		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing %s project walks for %s: %w", scope, modulePath, err)
+		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
+	}
+	pinnedToolchain := filter.Toolchain != nil
+	if len(summaries) == 0 && pinnedToolchain {
+		// Nothing this project's toolchain resolved. The read widens rather than
+		// refusing, and the choice states the divergence: a reader whose toolchain
+		// moved since their last walk still gets the answer, and is told which
+		// standard library it is about.
+		pinnedToolchain = false
+		filter.Toolchain = nil
+		if summaries, err = walks.ListWalks(ctx, filter); err != nil {
+			return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
+		}
 	}
 	if len(summaries) == 0 {
 		return walkChoice{manifestPath: gomodPath}, noProjectWalkOfScope(ctx, walks, coord, scope, platform, gomodPath)
 	}
 	choice := chooseWalk(ctx, walks, summaries, gomodPath)
+	choice.resolvedToolchain = env.toolchain
 	choice.candidateSet = fmt.Sprintf("in the %s scope on %s", scope, platform)
+	if pinnedToolchain {
+		// The count is of the walks under this toolchain only, so the set it counted
+		// has to name the toolchain too, or a reader with four walks of the project
+		// is told the store holds two and cannot see which axis removed the others.
+		choice.candidateSet += " under " + env.toolchain
+	}
 	return choice, nil
 }
 
@@ -246,7 +288,11 @@ func noProjectWalkOfScope(
 ) error {
 	remedy := fmt.Sprintf("run: kanonarion walk --gomod %s%s", gomodPath, scopeWalkFlagHint(scope))
 	succeeded := walkdomain.WalkSucceeded
-	others, err := walks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, OverallStatus: &succeeded})
+	// Every axis but the target is deliberately unpinned, Toolchain included: this
+	// listing exists to say what the store DOES hold when the narrowed one held
+	// nothing, and a refusal that filtered on the same axes it is explaining would
+	// report the project as never walked.
+	others, err := walks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, OverallStatus: &succeeded, Toolchain: nil})
 	if err != nil || len(others) == 0 {
 		return fmt.Errorf("no succeeded project walk for %s — %s", coord.Path(), remedy)
 	}

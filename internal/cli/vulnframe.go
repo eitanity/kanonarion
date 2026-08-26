@@ -74,7 +74,7 @@ func resolveVulnFrameAnchor(
 			return vulnFrameAnchor{}, false, err
 		}
 		walkID = choice.summary.ID
-		staleness = choice.stalenessNote() + choice.statementClause()
+		staleness = choice.basisNotes()
 	}
 
 	rec, err := walks.GetWalk(ctx, walkID)
