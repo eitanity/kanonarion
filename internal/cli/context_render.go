@@ -306,6 +306,7 @@ func printVulnerabilitiesSummary(w *errWriter, out contextOutput) {
 		}
 		w.printf("  Vulnerabilities: %s\n", line)
 		printWalkBasis(w, "  Walk basis:      %s\n", out.Vulnerabilities)
+		printRunContextNote(w, "  Run context:     %s\n", out.Vulnerabilities)
 		printScanProvenance(w, out.Vulnerabilities)
 	}
 }
@@ -338,12 +339,6 @@ func printScanProvenance(w *errWriter, v contextVulnerabilities) {
 // in words, because a missing frame is a gap in what is known about the answer,
 // not a property of the answer.
 func printWalkBasis(w *errWriter, format string, v contextVulnerabilities) {
-	if v.WalkWindowNote != "" {
-		// Printed even without a basis id: the note is precisely the case where
-		// the run context is missing, and a reader has to be able to tell a
-		// bounded read from a scan that found nothing to say.
-		w.printf(format, v.WalkWindowNote)
-	}
 	if v.WalkBasisID == "" {
 		return
 	}
@@ -352,6 +347,21 @@ func printWalkBasis(w *errWriter, format string, v contextVulnerabilities) {
 		return
 	}
 	w.printf(format, fmt.Sprintf("%s (frame %s)", v.WalkBasisID, v.WalkBasisFrame))
+}
+
+// printRunContextNote says why a section carries no run context. It has its own
+// label because the fact is about the report's read, not about the walk the
+// answer came from, and sharing the basis label made one record show two
+// "Walk basis" lines saying different kinds of thing.
+//
+// Printed even without a basis id: the note is precisely the case where the run
+// context is missing, and a reader has to be able to tell a bounded read from a
+// scan that found nothing to say.
+func printRunContextNote(w *errWriter, format string, v contextVulnerabilities) {
+	if v.WalkWindowNote == "" {
+		return
+	}
+	w.printf(format, v.WalkWindowNote)
 }
 
 // walkAnnotation renders the inline walk-level note appended to a module's

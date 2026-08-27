@@ -98,11 +98,11 @@ github.com/spf13/cobra@v1.8.1
   Call Graph:      1362 nodes, 6330 edges (Extracted)
   Examples:        2 (Found)
   Vulnerabilities: Clean
-  Walk basis:      no run context: this record was measured in a walk outside the 10 most recent this report loaded runs for
   Walk basis:      01KZWK6GHN7CK9Y54YTHMTNRKJ (frame target-rooted:github.com/spf13/cobra@v1.8.1)
+  Run context:     this record was measured in a walk outside the 10 most recent walks this report loaded, so there is no run context to show
   Snapshot:        2026-08-21T20:38:00Z (pipeline v24)
 
-Context size: ~6057 tokens (24231 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
+Context size: ~6062 tokens (24248 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 ```
 
 Read it line by line.
@@ -117,6 +117,9 @@ Read it line by line.
 - `Examples` - how many `Example*` functions the module ships.
 - `Vulnerabilities` - `Clean`, or the findings.
 - `Walk basis` - which walk each fact came from.
+- `Run context` - why kanonarion has no scan-run detail for a fact. Here the walk
+  is not one of the 10 newest walks in the store. kanonarion shows this line only
+  when it has something to say.
 - `Snapshot` - the date of the advisory database the scan used.
 
 Run this once. Now you know the shape of an answer.
@@ -134,11 +137,10 @@ the modules your packages import, tests included. That is the same set as
 `go list -deps -test ./...`. It prints a summary:
 
 ```
-Status:   Partial
+Status:   AllClean
 Scope:    code — test-scope dependencies included
 Modules:  22 (0 failed)
 Affected: 0
-Extract fails: 4
 Snapshot: 2026-08-21T20:38:00Z
 Walk ID:  01M0RGVEZH7BN09G63JX3B1X88
 Frame:    linux/amd64
@@ -155,9 +157,9 @@ Read it line by line.
 - `Affected` - how many modules have vulnerability findings. kanonarion counts
   this separately from `Status`, so a run that ends `Partial` still reports its
   real `Affected` count.
-- `Extract fails` - how many extraction stages did not finish. kanonarion prints
-  the reason for each one on stderr, and every reason names the command that
-  fixes it.
+- `Extract fails` - how many extraction stages did not finish. kanonarion shows
+  this line only when the number is above zero. It prints the reason for each one
+  on stderr, and every reason names the command that fixes it.
 - `Snapshot` - the date of the advisory database the scan used. Pass `--fresh` to
   pull a newer one.
 - `Walk ID` - the ID of the walk. Pass it to `walk-show`, `sbom` or
@@ -180,7 +182,7 @@ project. Empty lists mean kanonarion looked and found none.
 | Run | Measured | What takes the time |
 |---|---|---|
 | First run, empty store | ~16 min | resolving the require graph, then downloading, verifying and extracting every module zip, then fetching the advisory database and scanning |
-| Later run, warm store | ~11 s | kanonarion checks its records instead of measuring again |
+| Later run, warm store | ~17 s | kanonarion checks its records instead of measuring again |
 
 Cost grows with the number of dependencies, and it grows fast. One large project
 (velociraptor, 594 modules) took about 45 minutes for its first full run. Plan
@@ -213,7 +215,7 @@ kanonarion context
 Bare `context` prints one block per module in your code scope. That is the same
 set of modules bare `inspect` filled in, so the two commands fit together:
 nothing you see here is unanalysed. On this project that is 20 modules, and it
-takes about 10 seconds.
+takes about 13 seconds.
 
 For one module at a time:
 
@@ -228,7 +230,7 @@ provenance, direct dependencies, licence with its obligations and copyright
 lines, public interface, call graph, examples and vulnerabilities. The JSON also
 carries a `commands` section, which names the exact command for each part.
 
-The JSON is large. For all 20 modules of this project it is 1.5 MB. When you feed
+The JSON is large. For all 20 modules of this project it is 1.6 MB. When you feed
 an LLM, ask for one module at a time.
 
 ### 4. One line per dependency: `audit`
@@ -430,10 +432,10 @@ kanonarion local .
 ```
 
 ```
-github.com/eitanity/kanonarion@local: Extracted — 14501 nodes, 196513 edges [CHA] (cached)
+github.com/eitanity/kanonarion@local: Extracted — 14819 nodes, 198790 edges [CHA] (cached)
 ```
 
-That is 14,501 nodes and 196,513 call edges for this codebase. 8,368 of the
+That is 14,819 nodes and 198,790 call edges for this codebase. 8,584 of the
 nodes are declarations in `_test.go` files.
 
 The first analysis takes about 11 seconds. After that kanonarion re-reads the
@@ -543,10 +545,10 @@ detail. A re-run on a warm store takes seconds.
 
 Then answer questions from these. All of them read the local store.
 
-    kanonarion context --json                      # every module, ~10s. NOT one JSON
+    kanonarion context --json                      # every module, ~13s. NOT one JSON
                                                    # document: one JSON object per line
                                                    # (NDJSON). Parse it line by line.
-                                                   # 1.5 MB for a 20-module project
+                                                   # 1.6 MB for a 20-module project
     kanonarion context <module>@<version> --json   # one module, ~40ms
     kanonarion audit --json                        # one line per module: licence, vuln,
                                                    # staleness. ~1s warm

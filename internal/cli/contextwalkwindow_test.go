@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -99,5 +100,36 @@ func TestVulnContextWindow_SaysNothingForAWalkInsideIt(t *testing.T) {
 	batch.nameWindowBound(&result, batch.window[0])
 	if result.WalkWindowNote != "" {
 		t.Errorf("a walk inside the window drew a window note: %q", result.WalkWindowNote)
+	}
+}
+
+// The note a reader actually sees. It carries its own label, because the walk
+// the answer came from is a different fact from the report's read of it, and
+// one record must show one "Walk basis" line.
+func TestVulnContextWindow_RendersTheNoteUnderItsOwnLabel(t *testing.T) {
+	batch := loadWindow(t, vulnContextWalkWindow+5)
+	var v contextVulnerabilities
+	v.Status = "Clean"
+	v.WalkBasisID = "walk-042"
+	v.WalkBasisFrame = "target-rooted:example.com/app@v1.0.0"
+	batch.nameWindowBound(&v, "walk-042")
+
+	var buf bytes.Buffer
+	w := &errWriter{w: &buf}
+	printVulnerabilitiesSummary(w, contextOutput{Vulnerabilities: v})
+	if w.err != nil {
+		t.Fatalf("rendering the summary: %v", w.err)
+	}
+	got := buf.String()
+
+	want := "  Run context:     this record was measured in a walk outside the 10 most recent walks this report loaded, so there is no run context to show\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("rendered summary =\n%s\nwant a line %q", got, want)
+	}
+	if n := strings.Count(got, "Walk basis:"); n != 1 {
+		t.Errorf("the record shows %d walk-basis lines, want 1:\n%s", n, got)
+	}
+	if strings.Contains(got, "Walk basis:      this record was measured") {
+		t.Errorf("the note is still printed under the walk-basis label:\n%s", got)
 	}
 }
