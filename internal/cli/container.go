@@ -530,7 +530,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 	// ---- vuln use cases ----
 	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger)
-	database := osvdb.New(nil, vulnStore).WithLogger(logger)
+	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger)
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
 

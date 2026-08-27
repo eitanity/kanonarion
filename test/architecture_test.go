@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/goenv"
@@ -20,14 +21,91 @@ import (
 // trimming this prefix.
 const modulePath = "github.com/eitanity/kanonarion"
 
-// boundedContexts is the closed set of DDD bounded contexts (CLAUDE.md /
-// ). Only these count as "another context" for the cross-context
-// import rule; the shared kernel under internal/adapters/** and
-// internal/adapters generally is deliberately exempt.
-var boundedContexts = map[string]bool{
-	"fetch": true, "walk": true, "license": true, "iface": true,
-	"callgraph": true, "example": true, "extract": true,
-	"vuln": true, "sbom": true, "local": true,
+// boundedContexts is the set of DDD bounded contexts, DERIVED from the tree: a
+// directory under internal/ holding an application or a domain layer is one.
+// Only these count as "another context" for the cross-context import rule; the
+// shared kernel under internal/adapters/** has neither layer and so is exempt by
+// construction rather than by an entry somebody remembered to leave out.
+//
+// It is derived because a hand-written list drifts and this one had — it named
+// ten contexts while the tree held eighteen, so the application and domain
+// layers of eight contexts sat outside every guard below while reading as
+// covered. The derivation is the one test/determinism_registry_test.go makes,
+// for the same reason: a requirement read off the code cannot fall behind it.
+//
+// It is computed on first use rather than at package initialisation because
+// TestScript re-executes this binary as the CLI from a script's own working
+// directory, where ../internal does not exist. A guard calls this; the CLI
+// entry point does not.
+var boundedContexts = sync.OnceValue(deriveBoundedContexts)
+
+// notBoundedContexts names a directory that holds an application or a domain
+// layer and is still not a bounded context, with the reason it is not.
+//
+// It is empty. config is the shape that invites an entry — a domain layer and no
+// application layer — and it does not get one: a supporting context is entitled
+// to that shape, its domain is where the governance overlay's rules live, and
+// nothing about the shape makes those rules cheaper to leave unguarded.
+//
+// An entry here is checked by TestBoundedContextExemptionsAreLive, so one that
+// stops applying is a failure rather than a fossil.
+var notBoundedContexts = map[string]string{}
+
+// deriveBoundedContexts reads the context set off the tree.
+//
+// It panics rather than returning an error because it runs at package
+// initialisation, before any test has a *testing.T to fail: a broken derivation
+// must stop the package, since the alternative is an empty set under which every
+// guard below passes by finding nothing to check.
+func deriveBoundedContexts() map[string]bool {
+	const internalDir = "../internal"
+	entries, err := os.ReadDir(internalDir)
+	if err != nil {
+		panic(fmt.Sprintf("deriving the bounded-context set from %s: %v", internalDir, err))
+	}
+	out := map[string]bool{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, exempt := notBoundedContexts[entry.Name()]; exempt {
+			continue
+		}
+		for _, layer := range []string{"application", "domain"} {
+			if info, serr := os.Stat(filepath.Join(internalDir, entry.Name(), layer)); serr == nil && info.IsDir() {
+				out[entry.Name()] = true
+				break
+			}
+		}
+	}
+	if len(out) == 0 {
+		panic("no bounded contexts derived from ../internal: the derivation is broken, " +
+			"which would make every guard in this file pass by finding nothing to check")
+	}
+	return out
+}
+
+// TestBoundedContextExemptionsAreLive fails on an entry in notBoundedContexts
+// that no longer names a directory with an application or a domain layer. Such
+// an entry exempts nothing and reads as a live decision, which is how the list
+// this file replaced came to describe a tree that had moved on.
+func TestBoundedContextExemptionsAreLive(t *testing.T) {
+	for dir, reason := range notBoundedContexts {
+		if boundedContexts()[dir] {
+			t.Errorf("internal/%s is exempt (%s) and also derived as a context — the derivation and the exemption disagree", dir, reason)
+			continue
+		}
+		layered := false
+		for _, layer := range []string{"application", "domain"} {
+			if info, err := os.Stat(filepath.Join("../internal", dir, layer)); err == nil && info.IsDir() {
+				layered = true
+			}
+		}
+		if !layered {
+			t.Errorf("notBoundedContexts exempts %q (%s), which has no application or domain layer — "+
+				"the derivation already skips it, so remove the entry", dir, reason)
+		}
+	}
 }
 
 // forbiddenLayerImports are infrastructure/parsing packages that must never
@@ -62,7 +140,7 @@ func layerOf(rel string) (ctx, layer string) {
 	if len(parts) < 3 || parts[0] != "internal" {
 		return "", ""
 	}
-	if !boundedContexts[parts[1]] {
+	if !boundedContexts()[parts[1]] {
 		return "", ""
 	}
 	return parts[1], parts[2]
@@ -86,6 +164,132 @@ func loadInternalPackages(t *testing.T) []*packages.Package {
 
 func rel(pkgPath string) string {
 	return strings.TrimPrefix(pkgPath, modulePath+"/")
+}
+
+// zipWriterPackages names the packages allowed to construct an archive/zip
+// writer in non-test code, with the reason each one may.
+//
+// A module zip fetched from a proxy or the module cache is stored byte for byte
+// as it arrived: its hash is what the checksum database attests and what every
+// later reader recomputes, so recompressing one would replace the artefact the
+// anchor covers with a different one that says the same thing. Nothing in the
+// tree may build a zip writer without saying why, because "we never re-zip" is
+// only worth stating while it is true of every path, and a second re-zipper
+// would be indistinguishable from the first at a glance.
+//
+// The one entry is the local working tree, which has no upstream zip at all.
+// Key: repo-relative package directory.
+var zipWriterPackages = map[string]string{
+	"internal/walk/adapters/localfs": "a local module is packaged from its working tree rather than fetched, " +
+		"and modzip requires a canonical semver, so the synthetic zip is rewritten to carry the local " +
+		"coordinate's entry prefix; no fetched artefact reaches this path",
+}
+
+// TestNoZipRewritingOutsideNamedPackages enforces that module zips are stored
+// verbatim: an archive/zip writer exists only where zipWriterPackages says one
+// may, and each entry states why.
+//
+// It fails on a NEW writer and on a STALE entry that no longer constructs one,
+// so the list drains as paths change rather than accumulating permissions
+// nobody needs. Test files are exempt: a fixture zip is an input to a test, not
+// an artefact any store keeps.
+//
+// It resolves the local name bound to "archive/zip" per file, so an aliased
+// import is caught and an unrelated package that happens to be called zip is
+// not.
+func TestNoZipRewritingOutsideNamedPackages(t *testing.T) {
+	seen := map[string]bool{}
+	for _, path := range repoGoFiles(t, "../internal", "../pkg", "../cmd") {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", path, err)
+		}
+		local := zipImportName(f)
+		if local == "" {
+			continue
+		}
+		pkgDir := strings.TrimPrefix(filepath.ToSlash(filepath.Dir(path)), "../")
+		ast.Inspect(f, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "NewWriter" {
+				return true
+			}
+			ident, ok := sel.X.(*ast.Ident)
+			if !ok || ident.Name != local {
+				return true
+			}
+			if _, allowed := zipWriterPackages[pkgDir]; allowed {
+				seen[pkgDir] = true
+				return true
+			}
+			pos := fset.Position(sel.Pos())
+			t.Errorf("%s:%d: constructs an archive/zip writer — a fetched module zip is stored verbatim and "+
+				"never recompressed, so a writer here either re-zips an artefact (which breaks the hash its "+
+				"trust anchor covers) or builds one that is not a fetched artefact. If it is the second, add "+
+				"%s to zipWriterPackages with the reason no fetched artefact reaches it",
+				strings.TrimPrefix(filepath.ToSlash(path), "../"), pos.Line, pkgDir)
+			return true
+		})
+	}
+	for pkgDir, reason := range zipWriterPackages {
+		if !seen[pkgDir] {
+			t.Errorf("zipWriterPackages allows %q (%s), which no longer constructs an archive/zip writer — "+
+				"remove the entry rather than leaving a permission nothing uses", pkgDir, reason)
+		}
+	}
+}
+
+// zipImportName returns the name "archive/zip" is bound to in f, or "" when f
+// does not import it. A blank or dot import binds no selector and is reported
+// as absent.
+func zipImportName(f *ast.File) string {
+	for _, spec := range f.Imports {
+		if spec.Path.Value != `"archive/zip"` {
+			continue
+		}
+		if spec.Name == nil {
+			return "zip"
+		}
+		if spec.Name.Name == "_" || spec.Name.Name == "." {
+			return ""
+		}
+		return spec.Name.Name
+	}
+	return ""
+}
+
+// repoGoFiles lists every non-test Go file under the given roots. A root that
+// does not exist is an error, not an empty result: a guard reading nothing
+// passes by finding nothing.
+func repoGoFiles(t *testing.T, roots ...string) []string {
+	t.Helper()
+	var out []string
+	for _, root := range roots {
+		before := len(out)
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return fmt.Errorf("walk %s: %w", path, err)
+			}
+			if info.IsDir() {
+				if info.Name() == "testdata" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+				out = append(out, path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
+		}
+		if len(out) == before {
+			t.Fatalf("%s holds no non-test Go files: the walk is reading the wrong place", root)
+		}
+	}
+	return out
 }
 
 // TestNoCrossContextApplicationImports enforces that an application layer
@@ -123,7 +327,7 @@ func TestNoWallClockInApplicationOrDomain(t *testing.T) {
 	const repoRoot = ".."
 	banned := map[string]bool{"Now": true, "Since": true}
 
-	for _, ctx := range keysOf(boundedContexts) {
+	for _, ctx := range keysOf(boundedContexts()) {
 		for _, layer := range []string{"application", "domain"} {
 			root := filepath.Join(repoRoot, "internal", ctx, layer)
 			if _, err := os.Stat(root); err != nil {

@@ -18,7 +18,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
@@ -27,6 +29,12 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
+
+// testClock is the clock every Database in this package is built with. It is
+// fixed rather than the system clock because the instant it hands out is sealed
+// — Snapshot stamps it as the snapshot's retrieval time, and the snapshot is
+// hashed inside every vulnerability record and walk scan run that names it.
+var testClock = clock.Fixed{T: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}
 
 // gzipJSON compresses JSON bytes with gzip.
 func gzipJSON(t *testing.T, v any) []byte {
@@ -144,7 +152,7 @@ func TestSnapshot_ReturnsBulkZipWithLayout(t *testing.T) {
 	srv, _ := buildFakeServer(t)
 	defer srv.Close()
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	snap, rc, err := db.Snapshot(t.Context())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -184,7 +192,7 @@ func TestSnapshot_IssuesSingleRequest(t *testing.T) {
 	srv, zipHits := buildFakeServer(t)
 	defer srv.Close()
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	_, rc, err := db.Snapshot(t.Context())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -198,7 +206,7 @@ func TestSnapshot_IssuesSingleRequest(t *testing.T) {
 
 func TestGetSnapshot_DelegatesToStore(t *testing.T) {
 	store := &fakeVulnStore{content: "snapshot-content"}
-	db := osv.New(nil, store)
+	db := osv.New(nil, store, testClock)
 
 	snap := vulntest.MustNew("govulndb", "v2024-01-01")
 	rc, err := db.GetSnapshot(t.Context(), snap)
@@ -219,7 +227,7 @@ func TestSnapshot_ServerError_ReturnsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	_, _, err := db.Snapshot(t.Context())
 	if err == nil {
 		t.Fatal("expected error on server 500, got nil")
@@ -233,7 +241,7 @@ func TestSnapshot_RateLimited_ReturnsRetryAfter(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	_, _, err := db.Snapshot(t.Context())
 	if err == nil {
 		t.Fatal("expected error on HTTP 429, got nil")
@@ -279,7 +287,7 @@ func TestSnapshot_FailsClosedOnLayout(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+			db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 			_, _, err := db.Snapshot(t.Context())
 			if err == nil {
 				t.Fatalf("expected fail-closed error for %s, got nil", tc.name)
@@ -454,7 +462,7 @@ func TestSnapshot_LogsByteProgress(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}).WithLogger(logger)
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock).WithLogger(logger)
 	_, rc, err := db.Snapshot(t.Context())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -496,7 +504,7 @@ const pinnedSnapshotVersion = "2026-07-27T20:14:16Z"
 // service happens to publish today.
 func advisorySnapshotDB(t *testing.T, modules []map[string]any, advisories map[string]string) *osv.Database {
 	t.Helper()
-	return osv.New(nil, &fakeVulnStore{content: string(advisorySnapshotZip(t, modules, advisories))})
+	return osv.New(nil, &fakeVulnStore{content: string(advisorySnapshotZip(t, modules, advisories))}, testClock)
 }
 
 // advisorySnapshotZip builds a stored snapshot in the published layout: the
@@ -670,19 +678,19 @@ func TestLookupFindings_UnreadableSnapshotIsRefused(t *testing.T) {
 	}{
 		{
 			name:     "the store will not produce the snapshot",
-			db:       osv.New(nil, &failingSnapshotStore{err: errors.New("blob missing")}),
+			db:       osv.New(nil, &failingSnapshotStore{err: errors.New("blob missing")}, testClock),
 			identity: pinnedSnapshot(t),
 		},
 		{
 			name:     "the stored bytes are not an archive",
-			db:       osv.New(nil, &fakeVulnStore{content: "not a zip"}),
+			db:       osv.New(nil, &fakeVulnStore{content: "not a zip"}, testClock),
 			identity: pinnedSnapshot(t),
 		},
 		{
 			name: "the archive carries no modules index",
 			db: osv.New(nil, &fakeVulnStore{content: string(buildVulnDBZip(t, []zipEntry{
 				{name: "index/db.json", content: []byte(`{"modified":"` + pinnedSnapshotVersion + `"}`)},
-			}))}),
+			}))}, testClock),
 			identity: pinnedSnapshot(t),
 		},
 	}
@@ -933,7 +941,7 @@ func TestLatestVersion_ReadsTheStandaloneIndexWithoutTheBody(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	got, err := db.LatestVersion(t.Context())
 	if err != nil {
 		t.Fatalf("LatestVersion: %v", err)
@@ -957,7 +965,7 @@ func TestLatestVersion_RefusesAnEmptyGeneration(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	if _, err := db.LatestVersion(t.Context()); err == nil {
 		t.Fatal("an index with no modified field was accepted as a generation")
 	}
@@ -972,7 +980,7 @@ func TestLatestVersion_ServerError_ReturnsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	if _, err := db.LatestVersion(t.Context()); err == nil {
 		t.Fatal("expected error on server 500, got nil")
 	}
@@ -1001,7 +1009,7 @@ func TestPublishedAdvisoryIndex_ReadsTheStandaloneIndexWithoutTheBody(t *testing
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	got, err := db.PublishedAdvisoryIndex(t.Context())
 	if err != nil {
 		t.Fatalf("PublishedAdvisoryIndex: %v", err)
@@ -1029,7 +1037,7 @@ func TestSnapshotAdvisoryIndex_ReadsTheStoredSnapshotsOwnIndex(t *testing.T) {
 		{name: "ID/GO-2026-0001.json", content: []byte(`{"id":"GO-2026-0001"}`)},
 	})
 
-	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)})
+	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)}, testClock)
 	got, err := db.SnapshotAdvisoryIndex(t.Context(), vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z"))
 	if err != nil {
 		t.Fatalf("SnapshotAdvisoryIndex: %v", err)
@@ -1048,7 +1056,7 @@ func TestSnapshotAdvisoryIndex_RefusesASnapshotWithoutAnIndex(t *testing.T) {
 		{name: "index/db.json", content: []byte(`{"modified":"2026-07-27T20:14:16Z"}`)},
 	})
 
-	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)})
+	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)}, testClock)
 	if _, err := db.SnapshotAdvisoryIndex(t.Context(), vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z")); err == nil {
 		t.Fatal("a snapshot with no index/modules.json was accepted")
 	}

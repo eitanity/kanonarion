@@ -56,7 +56,7 @@ func divergenceWindow(t *testing.T) (*osv.Database, *atomic.Int64) {
 		map[string]string{pinnedAdvisory: `{"id":"` + pinnedAdvisory + `","summary":"in the pinned generation"}`},
 	))}
 
-	return osv.New(clientRewritingTo(t, srv), store), &hits
+	return osv.New(clientRewritingTo(t, srv), store, testClock), &hits
 }
 
 // TestLookupFindings_DoesNotReportWhatTheSnapshotCannotProduce is the coordinate
