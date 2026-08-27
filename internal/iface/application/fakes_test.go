@@ -181,9 +181,13 @@ type fakeExtractor struct {
 	err       error
 	frame     domain.BuildFrame
 	toolchain gotoolchain.Version
+	// calls counts extractions, so a test can tell a served answer from a
+	// measured one without inspecting what was served.
+	calls int
 }
 
 func (f *fakeExtractor) Extract(_ context.Context, _ fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error) {
+	f.calls++
 	if f.err != nil {
 		return domain.InterfaceRecord{}, f.err
 	}

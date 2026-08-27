@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
+
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // goToolchainVersionProbe asks the go command on PATH to state its own version,
@@ -56,3 +58,24 @@ func goToolchainVersionProbe(ctx context.Context, dir string, env []string) (str
 // errEmptyToolchainVersion is returned by the probe when the go command exits
 // zero without naming a version.
 var errEmptyToolchainVersion = errors.New("go env GOVERSION produced no version")
+
+// runToolchainNamer names the Go this process analyses under, for the extraction
+// cache lookup that has to decide whether a stored generation was measured under
+// it.
+//
+// It asks the same question, of the same go on PATH, as the analyser's own probe
+// — so the version compared against a stored record is the version the next
+// analysis would record. It passes no directory and no environment because it is
+// asking about this process rather than about a load that has not been set up
+// yet: nil env is documented as "the caller has none to offer and the process's
+// is the honest answer".
+//
+// A probe that fails names nothing, and the caller then leaves the disagreement
+// unresolved and measures — which is what it did before this existed.
+func runToolchainNamer(ctx context.Context) gotoolchain.Version {
+	v, err := goToolchainVersionProbe(ctx, "", nil)
+	if err != nil {
+		return gotoolchain.Unrecorded
+	}
+	return gotoolchain.Version(v)
+}

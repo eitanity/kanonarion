@@ -427,7 +427,7 @@ func newLocalWalkExtract(
 		// directory: it has no --from-modcache concept and always reads bytes
 		// through the content-addressed blob store.
 		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion,
-			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC),
+			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC).WithLogger(logger),
 		Stages:    stages,
 		Clock:     clk,
 		Stopwatch: stopwatch,

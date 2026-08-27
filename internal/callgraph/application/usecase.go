@@ -7,12 +7,14 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // PipelineVersion identifies this release of the call graph extraction
@@ -71,6 +73,12 @@ type ExtractCallGraphUseCase struct {
 	logger          *slog.Logger
 	hasher          domain2.CallGraphRecordHasher
 	audit           ports.AuditSink // optional; nil disables audit emission
+	// toolchain names the Go this run analyses under, asked at most once. It is
+	// optional: without it a disagreeing ledger simply falls through to
+	// measuring, which is what every run did before this resolution existed.
+	toolchain     ports.ToolchainNamer
+	toolchainOnce sync.Once
+	toolchainName gotoolchain.Version
 }
 
 // Config holds all construction parameters for ExtractCallGraphUseCase.
@@ -86,6 +94,9 @@ type Config struct {
 	// analysis). Normalised on construction.
 	Exclusions []string
 	Logger     *slog.Logger
+	// Toolchain names the Go this run analyses under. Optional: a nil namer
+	// leaves a disagreeing ledger to be re-measured, as it was before.
+	Toolchain ports.ToolchainNamer
 }
 
 // NewExtractCallGraphUseCase constructs an ExtractCallGraphUseCase from a Config.
@@ -103,6 +114,7 @@ func NewExtractCallGraphUseCase(cfg Config) *ExtractCallGraphUseCase {
 		pipelineVersion: cfg.PipelineVersion,
 		exclusions:      domain2.NormaliseExclusions(cfg.Exclusions),
 		logger:          cfg.Logger,
+		toolchain:       cfg.Toolchain,
 	}
 }
 
@@ -190,7 +202,26 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	if !req.Force && !req.Coordinate.IsLocal() {
 		var cerr error
 		existing, found, cerr = uc.store.GetCallGraphRecord(ctx, req.Coordinate, uc.pipelineVersion)
-		if cerr != nil && !errors.Is(cerr, ports.ErrCallGraphIntegrity) {
+		if errors.Is(cerr, ports.ErrCallGraphConflict) {
+			// The question this lookup is asking is narrower than the one it just
+			// asked. It does not need to know which generation answers the
+			// coordinate for every reader; it needs to know whether one was
+			// measured under the toolchain this run analyses under. A generation
+			// built by a Go this run is not using is not a reason to re-measure,
+			// and treating it as one re-analyses the same module every run for ever.
+			existing, found, cerr = uc.resolvedForThisToolchain(ctx, log, req.Coordinate, cerr)
+		}
+		// A composition refusal that even the toolchain could not resolve says no
+		// single stored generation answers this coordinate. Refusing to SERVE that
+		// is right; refusing to MEASURE a new answer is not, so it is a cache miss
+		// here. Extraction appends, and the ladder decides which generation answers
+		// afterwards.
+		switch {
+		case errors.Is(cerr, ports.ErrCallGraphConflict):
+			log.InfoContext(ctx, "callgraph_cache_conflict_remeasuring",
+				slog.String("conflict", cerr.Error()),
+			)
+		case cerr != nil && !errors.Is(cerr, ports.ErrCallGraphIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking callgraph store: %w", cerr)
 		}
 		// Presence is not eligibility. A record whose failure was the analysis
@@ -336,6 +367,59 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// resolvedForThisToolchain re-asks the disagreeing coordinate for the generation
+// built by the toolchain this run analyses under, and returns the original
+// refusal unchanged when there is no such generation.
+//
+// It is ToolchainPreference rather than Toolchain, and the difference is the
+// whole point. Toolchain NARROWS the read: a coordinate holding no generation
+// built by that Go has no answer, which would make every record written before
+// the current toolchain was installed a cache miss and re-analyse a whole build
+// on every run. ToolchainPreference is consulted only where the generations
+// already disagree, and a coordinate that composes cleanly is served exactly as
+// it was. That is the question this site asks — resolve a disagreement, do not
+// impose a filter — and it is the same field --toolchain passes on the read
+// side, so the resolution a reader is told to use is the one extraction applies.
+func (uc *ExtractCallGraphUseCase) resolvedForThisToolchain(
+	ctx context.Context,
+	log *slog.Logger,
+	coord coordinate.ModuleCoordinate,
+	conflict error,
+) (domain2.CallGraphRecord, bool, error) {
+	reader, ok := uc.store.(ports.CallGraphSourceReader)
+	if !ok {
+		return domain2.CallGraphRecord{}, false, conflict
+	}
+	name := uc.runToolchain(ctx)
+	if !name.Recorded() {
+		return domain2.CallGraphRecord{}, false, conflict
+	}
+	rec, found, err := reader.GetCallGraphRecordFrom(ctx, coord, uc.pipelineVersion,
+		domain2.ComposeRequest{ToolchainPreference: name})
+	if err != nil {
+		// Including a refusal the preference could not resolve: two generations of
+		// ONE toolchain that disagree about the graph are still a disagreement, and
+		// the caller treats it as the cache miss it is. Wrapped, never replaced —
+		// the caller routes on the sentinel underneath.
+		return domain2.CallGraphRecord{}, false,
+			fmt.Errorf("resolving %s under %s: %w", coord, name, err)
+	}
+	log.InfoContext(ctx, "callgraph_cache_resolved_by_run_toolchain",
+		slog.String("toolchain", string(name)),
+		slog.String("content_hash", rec.ContentHash),
+	)
+	return rec, found, nil
+}
+
+// runToolchain names the Go this run analyses under, asking at most once.
+func (uc *ExtractCallGraphUseCase) runToolchain(ctx context.Context) gotoolchain.Version {
+	if uc.toolchain == nil {
+		return gotoolchain.Unrecorded
+	}
+	uc.toolchainOnce.Do(func() { uc.toolchainName = uc.toolchain(ctx) })
+	return uc.toolchainName
 }
 
 // requireFetchRecord asks the ledger what it has measured about coord and

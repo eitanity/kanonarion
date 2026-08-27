@@ -2,7 +2,6 @@ package domain
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -325,28 +324,13 @@ type GraphEdge struct {
 }
 
 // Sort sorts Nodes and Edges in place, establishing the deterministic ordering
-// required for canonical serialisation. Must be called after graph construction.
+// required for canonical serialisation. Must be called after graph
+// construction. The comparators live in ordering.go; each is a total order, so
+// the result is a function of the graph's contents and not of the order
+// resolution emitted them in.
 func (g *Graph) Sort() {
-	sort.Slice(g.Nodes, func(i, j int) bool {
-		a, b := g.Nodes[i].Coordinate, g.Nodes[j].Coordinate
-		if a.Path() != b.Path() {
-			return a.Path() < b.Path()
-		}
-		return a.Version() < b.Version()
-	})
-	sort.Slice(g.Edges, func(i, j int) bool {
-		a, b := g.Edges[i], g.Edges[j]
-		if a.From.Path() != b.From.Path() {
-			return a.From.Path() < b.From.Path()
-		}
-		if a.From.Version() != b.From.Version() {
-			return a.From.Version() < b.From.Version()
-		}
-		if a.To.Path() != b.To.Path() {
-			return a.To.Path() < b.To.Path()
-		}
-		return a.To.Version() < b.To.Version()
-	})
+	sortSlice(g.Nodes, GraphNodeLess)
+	sortSlice(g.Edges, GraphEdgeLess)
 }
 
 // SupersededRequirements returns the intermediate module versions named by a
@@ -418,12 +402,7 @@ func (g Graph) supersededRequirements(from map[coordinate.ModuleCoordinate]struc
 	for c := range seen {
 		out = append(out, c)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Path() != out[j].Path() {
-			return out[i].Path() < out[j].Path()
-		}
-		return out[i].Version() < out[j].Version()
-	})
+	sortSlice(out, CoordinateLess)
 	return out
 }
 

@@ -8,6 +8,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -555,4 +556,274 @@ func buildsEnvironInline(body *ast.BlockStmt) bool {
 		return true
 	})
 	return found
+}
+
+// orderingFuncs are the sort entry points whose comparator this guard reads.
+// sort.Strings, slices.Sort and the rest take no comparator: they order values
+// that ARE their own key, so there is nothing to be keyed on incompletely.
+var orderingFuncs = map[string]map[string]bool{
+	"sort":   {"Slice": true, "SliceStable": true},
+	"slices": {"SortFunc": true, "SortStableFunc": true},
+}
+
+// primitiveComparisons are the three-way comparison helpers that stand in for
+// an operator. A call to one is a KEY, exactly as `a.X < b.X` is, and never a
+// delegation to a named ordering.
+var primitiveComparisons = map[string]bool{
+	"cmp.Compare": true, "strings.Compare": true, "bytes.Compare": true,
+}
+
+// singleKeyComparators exempts an inline comparator that IS keyed on one field,
+// where that field provably cannot repeat among the elements reaching the sort.
+// The value states why. "Probably unique" is not a reason; the reason has to be
+// a property of how the slice was built, visible at the call site.
+//
+// The map must drain: an entry whose site no longer exists, or no longer has a
+// single-key comparator, fails as loudly as an unexempted one. Key is
+// "<repo-relative file> <enclosing function>".
+var singleKeyComparators = map[string]string{
+	"internal/local/domain/local_context.go SnapshotModulePath": "the elements are the snapshot's own file-path map keys, so no value repeats, " +
+		"and they are compared in full rather than on a field of themselves: two strings that tie ARE the same element",
+}
+
+// TestOrderingComparatorsAreTotal reads every sort in a domain package and
+// fails the ones whose comparator is keyed on a single field.
+//
+// A comparator is an ordering only if it answers for every pair. Keyed on one
+// field it does not: when two elements tie, it says neither is less, and
+// sort.Slice — which is not stable — then puts them in whatever order the input
+// happened to be in. The input order comes from a directory walk and from map
+// iteration, so the result is not a property of the data, and every collection
+// that reaches a content hash seals that arrangement.
+//
+// This is not a hypothetical. internal/iface/domain sorted a package's
+// functions on Name alone; golang.org/x/tools ships testdata directories where
+// two files each declare a function of one name; golang.org/x/tools@v0.49.0
+// accumulated eight interface records under seven digests, five of them taken
+// minutes apart, and the coordinate could never be served because no two
+// extractions agreed.
+//
+// It lives here rather than in .golangci.yml for the reason
+// TestNoWallClockInApplicationOrDomain does: `make lint` does not run
+// golangci-lint, so `make test` is what gates CI.
+//
+// sort.SliceStable is read too, and is not an escape. Stability decides a tie by
+// INPUT order, which is the input the sealed bytes must not depend on.
+func TestOrderingComparatorsAreTotal(t *testing.T) {
+	seen := map[string]bool{}
+	err := filepath.Walk("../internal", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("walk %s: %w", path, err)
+		}
+		if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		if _, layer := layerOfDir(filepath.Dir(path)); layer != "domain" {
+			return nil
+		}
+		fset := token.NewFileSet()
+		f, perr := parser.ParseFile(fset, path, nil, 0)
+		if perr != nil {
+			return fmt.Errorf("parse %s: %w", path, perr)
+		}
+		rp := strings.TrimPrefix(filepath.ToSlash(path), "../")
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			key := rp + " " + fn.Name.Name
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				lit, name, ok := orderingComparator(n)
+				if !ok {
+					return true
+				}
+				if comparatorDelegates(lit) {
+					return true
+				}
+				keys := comparatorKeys(lit)
+				if len(keys) >= 2 {
+					return true
+				}
+				if _, exempt := singleKeyComparators[key]; exempt {
+					seen[key] = true
+					return true
+				}
+				pos := fset.Position(n.Pos())
+				t.Errorf("%s:%d: the %s comparator in %s is keyed on %v — one key is not an ordering, "+
+					"because two elements that tie are left to the sort and the sort reads them off a "+
+					"directory walk or a map. Give the collection a named Less helper keyed on every "+
+					"field it puts on the wire, as internal/callgraph/domain/ordering.go does, or exempt "+
+					"it in singleKeyComparators with the reason the key cannot repeat",
+					rp, pos.Line, name, fn.Name.Name, keys)
+				return true
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking ../internal: %v", err)
+	}
+	for key, reason := range singleKeyComparators {
+		if !seen[key] {
+			t.Errorf("singleKeyComparators exempts %q (%s), which no longer holds a single-key comparator — remove the entry", key, reason)
+		}
+	}
+}
+
+// layerOfDir reports the bounded context and layer for a directory path like
+// "../internal/vuln/domain". Unlike layerOf it accepts any context name, since
+// the ordering rule is about the layer and not about the closed context set.
+func layerOfDir(dir string) (ctx, layer string) {
+	parts := strings.Split(filepath.ToSlash(strings.TrimPrefix(filepath.ToSlash(dir), "../")), "/")
+	if len(parts) < 3 || parts[0] != "internal" {
+		return "", ""
+	}
+	return parts[1], parts[2]
+}
+
+// orderingComparator reports the function literal passed as a comparator to one
+// of orderingFuncs, and the name of the call it was passed to.
+func orderingComparator(n ast.Node) (*ast.FuncLit, string, bool) {
+	call, ok := n.(*ast.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return nil, "", false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, "", false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	if !ok || !orderingFuncs[pkg.Name][sel.Sel.Name] {
+		return nil, "", false
+	}
+	lit, ok := call.Args[len(call.Args)-1].(*ast.FuncLit)
+	if !ok {
+		return nil, "", false
+	}
+	return lit, pkg.Name + "." + sel.Sel.Name, true
+}
+
+// comparatorDelegates reports whether the literal hands the whole decision to a
+// named function — `return CallNodeLess(a, b)`, `return servesBefore(x, y)` —
+// rather than making it inline.
+//
+// The test is the SHAPE, not the name: one return, one call. That is what makes
+// the ordering reviewable and testable in one place, which is the property this
+// guard is protecting; requiring the name to end in Less or Compare would fail
+// the composition ladders, whose comparator is correctly named for what it
+// decides. A three-way primitive — cmp.Compare and friends — is a comparison
+// rather than a delegation, so `return cmp.Compare(a.ID, b.ID)` is still read as
+// the single-key comparator it is.
+func comparatorDelegates(lit *ast.FuncLit) bool {
+	if len(lit.Body.List) != 1 {
+		return false
+	}
+	ret, ok := lit.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != 1 {
+		return false
+	}
+	call, ok := ret.Results[0].(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	_, qualified := calleeName(call)
+	return !primitiveComparisons[qualified]
+}
+
+// comparatorKeys returns the distinct fields the literal compares: the fields
+// appearing as operands of a comparison operator or of a three-way primitive.
+//
+// An operand is named by its dotted path with array indices removed and the
+// comparator's OWN parameters dropped, so that `x.Path` and `y.Path` are one key
+// and `p.Funcs[i].Name` and `p.Funcs[j].Name` are one key. That is the point of
+// the count: two sides of one comparison are one key, and a comparator that
+// reaches only one key over its whole body has only one key.
+func comparatorKeys(lit *ast.FuncLit) []string {
+	params := map[string]bool{}
+	for _, field := range lit.Type.Params.List {
+		for _, name := range field.Names {
+			params[name.Name] = true
+		}
+	}
+	keys := map[string]bool{}
+	record := func(e ast.Expr) {
+		if name, ok := comparisonKey(e, params); ok {
+			keys[name] = true
+		}
+	}
+	ast.Inspect(lit.Body, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.BinaryExpr:
+			switch v.Op {
+			case token.LSS, token.GTR, token.LEQ, token.GEQ, token.EQL, token.NEQ:
+				record(v.X)
+				record(v.Y)
+			}
+		case *ast.CallExpr:
+			if _, qualified := calleeName(v); primitiveComparisons[qualified] && len(v.Args) == 2 {
+				record(v.Args[0])
+				record(v.Args[1])
+			}
+		}
+		return true
+	})
+	out := make([]string, 0, len(keys))
+	for k := range keys {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// comparisonKey names the field an operand reads. A call taking no arguments —
+// `a.Path()` — names the method. An operand that reads no field at all (a
+// length, a literal, a loop index) is not a key.
+func comparisonKey(e ast.Expr, params map[string]bool) (string, bool) {
+	switch v := e.(type) {
+	case *ast.SelectorExpr:
+		if inner, ok := comparisonKey(v.X, params); ok && inner != "" {
+			return inner + "." + v.Sel.Name, true
+		}
+		return v.Sel.Name, true
+	case *ast.CallExpr:
+		if len(v.Args) == 0 {
+			// A no-argument method on the element — `a.Path()` — names the field
+			// it reads.
+			return comparisonKey(v.Fun, params)
+		}
+		// A key COMPUTED from the element — `confRank(e.Confidence)`,
+		// `strings.ToLower(e.Name)` — is keyed on what it was computed from.
+		return comparisonKey(v.Args[0], params)
+	case *ast.IndexExpr:
+		return comparisonKey(v.X, params)
+	case *ast.StarExpr:
+		return comparisonKey(v.X, params)
+	case *ast.ParenExpr:
+		return comparisonKey(v.X, params)
+	case *ast.Ident:
+		if params[v.Name] {
+			// The comparator's own parameter: the two sides of the comparison,
+			// which name one key between them and not two.
+			return "", true
+		}
+		// A slice of scalars compared whole: the element IS the key.
+		return v.Name, true
+	}
+	return "", false
+}
+
+// calleeName returns the callee's bare name and, for a package-qualified call,
+// its "pkg.Name" spelling.
+func calleeName(call *ast.CallExpr) (name, qualified string) {
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		return fn.Name, fn.Name
+	case *ast.SelectorExpr:
+		if pkg, ok := fn.X.(*ast.Ident); ok {
+			return fn.Sel.Name, pkg.Name + "." + fn.Sel.Name
+		}
+		return fn.Sel.Name, fn.Sel.Name
+	}
+	return "", ""
 }

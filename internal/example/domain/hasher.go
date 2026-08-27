@@ -167,22 +167,11 @@ func marshalCanonicalExample(r ExampleRecord) ([]byte, error) {
 	// Sort for determinism even if caller omitted SortExamples.
 	examples := make([]ExampleEntry, len(r.Examples))
 	copy(examples, r.Examples)
-	sort.Slice(examples, func(i, j int) bool {
-		a, b := examples[i], examples[j]
-		if a.Package != b.Package {
-			return a.Package < b.Package
-		}
-		if a.AssociatedSymbol != b.AssociatedSymbol {
-			return a.AssociatedSymbol < b.AssociatedSymbol
-		}
-		return a.Name < b.Name
-	})
+	sortExamples(examples)
 
 	failures := make([]ParseFailure, len(r.ParseFailures))
 	copy(failures, r.ParseFailures)
-	sort.Slice(failures, func(i, j int) bool {
-		return failures[i].File < failures[j].File
-	})
+	sortSlice(failures, ParseFailureLess)
 
 	cExamples := make([]canonicalExampleEntry, len(examples))
 	for i, e := range examples {

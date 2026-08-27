@@ -180,7 +180,16 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 	// mutates between runs, so its records are recomputed fresh every time.
 	if !req.Force && !req.Coordinate.IsLocal() {
 		existing, found, cerr := uc.licenses.GetLicenseRecord(ctx, req.Coordinate, uc.pipelineVersion)
-		if cerr != nil && !errors.Is(cerr, ports.ErrLicenceIntegrity) {
+		// A composition refusal says no single stored generation answers this
+		// coordinate. Refusing to SERVE that is right; refusing to MEASURE a new
+		// answer is not, so it is a cache miss here. Extraction appends, and the
+		// ladder decides which generation answers afterwards.
+		switch {
+		case errors.Is(cerr, ports.ErrLicenceConflict):
+			log.InfoContext(ctx, "licence_cache_conflict_remeasuring",
+				slog.String("conflict", cerr.Error()),
+			)
+		case cerr != nil && !errors.Is(cerr, ports.ErrLicenceIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking license store: %w", cerr)
 		}
 		if found {

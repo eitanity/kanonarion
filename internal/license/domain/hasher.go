@@ -213,27 +213,21 @@ func marshalCanonicalLicense(r LicenseRecord) ([]byte, error) {
 	// didn't call SortFiles.
 	files := make([]LicenseFileEntry, len(r.LicenseFiles))
 	copy(files, r.LicenseFiles)
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Path < files[j].Path
-	})
+	sortLicenseFiles(files)
 
 	cFiles := make([]canonicalFileEntry, len(files))
 	for i, f := range files {
 		alts := make([]AltMatch, len(f.AltMatches))
 		copy(alts, f.AltMatches)
-		sort.Slice(alts, func(a, b int) bool {
-			return alts[a].Confidence > alts[b].Confidence
-		})
+		sortSlice(alts, AltMatchLess)
 		cAlts := make([]canonicalAltMatch, len(alts))
 		for j, a := range alts {
 			cAlts[j] = canonicalAltMatch{Confidence: a.Confidence, SPDX: a.SPDX}
 		}
-		// Sort copyright statements by Verbatim for determinism.
+		// Sort copyright statements for determinism.
 		cstmts := make([]CopyrightStatement, len(f.CopyrightStatements))
 		copy(cstmts, f.CopyrightStatements)
-		sort.Slice(cstmts, func(a, b int) bool {
-			return cstmts[a].Verbatim < cstmts[b].Verbatim
-		})
+		sortSlice(cstmts, CopyrightStatementLess)
 		cCopyright := make([]canonicalCopyrightStatement, len(cstmts))
 		for j, s := range cstmts {
 			holders := s.Holders
@@ -262,17 +256,30 @@ func marshalCanonicalLicense(r LicenseRecord) ([]byte, error) {
 		}
 	}
 
+	// The two remaining lists on the wire are SETS, not sequences: a signal or
+	// a bundled identifier appears at most once and means the same wherever it
+	// sits. Their producers already emit them sorted, so ordering them here
+	// changes no stored hash; it makes the seal a function of the set rather
+	// than of the producer remembering to sort.
 	cSignals := make([]int, len(r.Provenance.Signals))
 	for i, s := range r.Provenance.Signals {
 		cSignals[i] = int(s)
 	}
+	sort.Ints(cSignals)
 	if len(cSignals) == 0 {
 		cSignals = []int{}
 	}
 
+	bundled := make([]string, len(r.BundledSPDXs))
+	copy(bundled, r.BundledSPDXs)
+	sort.Strings(bundled)
+	if r.BundledSPDXs == nil {
+		bundled = nil
+	}
+
 	c := canonicalLicenseRecord{
 		ArtefactIdentity: r.ArtefactIdentity,
-		BundledSPDXs:     r.BundledSPDXs,
+		BundledSPDXs:     bundled,
 		ContentHash:      r.ContentHash,
 		Coordinate: canonicalCoord{
 			Path:    r.Coordinate.Path(),

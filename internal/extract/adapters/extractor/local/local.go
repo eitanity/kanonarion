@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/extract/ports"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
@@ -42,10 +45,20 @@ type SubprocessExecutor interface {
 	Execute(ctx context.Context, args []string) (stderr []byte, err error)
 }
 
-// CallGraphReader reads a persisted call graph record from the store.
-// It is satisfied by [*cgapp.QueryCallGraphUseCase].
+// CallGraphReader reads the call graph generations the ledger holds for a
+// coordinate. It is satisfied by the sqlite call graph store.
+//
+// Two reads, because the stage asks two different questions. GetCallGraphRecord
+// COMPOSES — "which generation answers questions about this coordinate" — and
+// may refuse when two of them disagree. ListCallGraphRecordsFor does not
+// compose. Confirming a write is the second question: the subprocess appended a
+// generation, and that is the one the stage reports, whatever composition would
+// serve to a reader afterwards.
 type CallGraphReader interface {
 	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error)
+	// ListCallGraphRecordsFor returns every generation for the coordinate and
+	// pipeline version, oldest first.
+	ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]cgdomain.CallGraphRecord, error)
 }
 
 type ExampleUseCase interface {
@@ -67,6 +80,24 @@ type AdapterExtractor struct {
 	// therefore does not otherwise cross the subprocess boundary.
 	cgExtraArgs []string
 	example     ExampleUseCase
+	// logger is optional; a nil one discards. See WithLogger.
+	logger *slog.Logger
+}
+
+// WithLogger wires a logger so the stage can say when it reported the
+// generation it measured rather than the one composition would serve. It is
+// optional — a nil logger discards — and returns the receiver for chaining.
+func (a *AdapterExtractor) WithLogger(l *slog.Logger) *AdapterExtractor {
+	a.logger = l
+	return a
+}
+
+// log returns a usable logger, so an adapter constructed without one still runs.
+func (a *AdapterExtractor) log() *slog.Logger {
+	if a.logger == nil {
+		return slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return a.logger
 }
 
 // CallGraphSubprocessArgs builds the extra arguments a callgraph child needs to
@@ -201,6 +232,20 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	}
 
 	rec, found, err := a.cgReader.GetCallGraphRecord(ctx, coord, a.cgPipelineVersion)
+	if errors.Is(err, cgports.ErrCallGraphConflict) {
+		// The child has just appended a generation that disagrees with an older
+		// one, so composition refuses to name which of them answers the
+		// coordinate. That refusal is correct for a reader and irrelevant here:
+		// this stage reports the measurement it just took, not a served answer.
+		a.log().InfoContext(ctx, "callgraph_stage_reports_measured_generation",
+			slog.String("extraction.module.path", coord.Path()),
+			slog.String("extraction.module.version", coord.Version()),
+			slog.String("extraction.stage", "callgraph"),
+			slog.String("pipeline_version", a.cgPipelineVersion),
+			slog.String("conflict", err.Error()),
+		)
+		rec, found, err = a.measuredGeneration(ctx, coord)
+	}
 	if err != nil {
 		return ports.StageResult{}, fmt.Errorf("reading callgraph record after subprocess: %w", err)
 	}
@@ -221,6 +266,22 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 		Status:   status,
 		Error:    failureReason("callgraph", status, rec.OverallStatus.String(), rec.FailureDetail),
 	}, nil
+}
+
+// measuredGeneration returns the generation the subprocess just appended.
+//
+// The ledger is append-only and lists in insertion order, so the newest row is
+// the child's own write. LatestObservation states that rule, and stating it once
+// is why this does not index the slice itself.
+func (a *AdapterExtractor) measuredGeneration(ctx context.Context, coord coordinate.ModuleCoordinate) (cgdomain.CallGraphRecord, bool, error) {
+	recs, err := a.cgReader.ListCallGraphRecordsFor(ctx, coord, a.cgPipelineVersion)
+	if err != nil {
+		return cgdomain.CallGraphRecord{}, false, fmt.Errorf("listing callgraph generations for %s: %w", coord, err)
+	}
+	if len(recs) == 0 {
+		return cgdomain.CallGraphRecord{}, false, nil
+	}
+	return cgdomain.LatestObservation(recs), true, nil
 }
 
 // buildSubprocessErrorDetail formats the error_detail for a failed callgraph

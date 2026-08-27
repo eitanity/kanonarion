@@ -63,9 +63,7 @@ func DeriveExpressionResult(entries []LicenseFileEntry, texts map[string]string)
 		return ExpressionResult{}
 	}
 
-	sort.Slice(roots, func(i, j int) bool {
-		return roots[i].Confidence > roots[j].Confidence
-	})
+	sortSlice(roots, RootCandidateLess)
 
 	primary := roots[0]
 

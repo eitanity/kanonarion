@@ -461,6 +461,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
 		Stopwatch:  stopwatch,
 		Exclusions: cfg.Callgraph.Exclude,
+		Toolchain:  runToolchainNamer,
 	}).WithAudit(factStore)
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
@@ -487,7 +488,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		cgModcacheDir = modcacheDir
 	}
 	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
-	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC)
+	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
+		WithLogger(logger)
 	pipelineVersions := map[string]string{
 		"license":   "0.1.0",
 		"interface": "0.1.0",

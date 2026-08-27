@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"sort"
@@ -49,13 +50,40 @@ func ContentDigest(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// SortAttestations orders attestation records deterministically by subject kind
-// then subject digest, so any serialisation over a set is stable.
+// AttestationRecordLess is the canonical ordering for AttestationRecord slices:
+// the subject first, because that is what a reader scans an attestation list
+// by, then the coordinate and the signature it carries.
+//
+// One subject can be attested more than once — a second signer, or the same
+// signer after a key rotation — so the subject is not an identity, and a
+// comparator stopping there hands the pair's order to the sort.
+func AttestationRecordLess(a, b AttestationRecord) bool {
+	if a.SubjectKind != b.SubjectKind {
+		return a.SubjectKind < b.SubjectKind
+	}
+	if a.SubjectDigest != b.SubjectDigest {
+		return a.SubjectDigest < b.SubjectDigest
+	}
+	if a.SubjectAlgorithm != b.SubjectAlgorithm {
+		return a.SubjectAlgorithm < b.SubjectAlgorithm
+	}
+	if a.Coordinate.Path() != b.Coordinate.Path() {
+		return a.Coordinate.Path() < b.Coordinate.Path()
+	}
+	if a.Coordinate.Version() != b.Coordinate.Version() {
+		return a.Coordinate.Version() < b.Coordinate.Version()
+	}
+	if a.PipelineVersion != b.PipelineVersion {
+		return a.PipelineVersion < b.PipelineVersion
+	}
+	if !a.SignedAt.Equal(b.SignedAt) {
+		return a.SignedAt.Before(b.SignedAt)
+	}
+	return bytes.Compare(a.Bundle, b.Bundle) < 0
+}
+
+// SortAttestations orders attestation records by AttestationRecordLess, a total
+// order, so any serialisation over a set is a function of the set alone.
 func SortAttestations(records []AttestationRecord) {
-	sort.Slice(records, func(i, j int) bool {
-		if records[i].SubjectKind != records[j].SubjectKind {
-			return records[i].SubjectKind < records[j].SubjectKind
-		}
-		return records[i].SubjectDigest < records[j].SubjectDigest
-	})
+	sort.Slice(records, func(i, j int) bool { return AttestationRecordLess(records[i], records[j]) })
 }

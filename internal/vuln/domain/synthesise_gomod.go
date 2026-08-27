@@ -110,7 +110,15 @@ func goModRequires(coord coordinate.ModuleCoordinate, imports []string, buildLis
 	for path := range selected {
 		reqs = append(reqs, coordByPath[path])
 	}
-	sort.Slice(reqs, func(i, j int) bool { return reqs[i].Path() < reqs[j].Path() })
+	// Path is a map key here, so no two requires share one; the version is keyed
+	// anyway so the comparator reads as a total order without a reader having to
+	// trace the map back.
+	sort.Slice(reqs, func(i, j int) bool {
+		if reqs[i].Path() != reqs[j].Path() {
+			return reqs[i].Path() < reqs[j].Path()
+		}
+		return reqs[i].Version() < reqs[j].Version()
+	})
 	return reqs
 }
 

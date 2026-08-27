@@ -244,10 +244,37 @@ func collectFindings(
 	for _, f := range best {
 		findings = append(findings, f)
 	}
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].Capability < findings[j].Capability
-	})
+	sort.Slice(findings, func(i, j int) bool { return CapabilityFindingLess(findings[i], findings[j]) })
 	return findings
+}
+
+// CapabilityFindingLess is the canonical ordering for CapabilityFinding slices.
+// The capability leads, because that is what a reader scans the report by; the
+// sink and the witnessing path follow, so two findings for one capability — a
+// report that ever carried more than the single best witness — still have a
+// defined order.
+func CapabilityFindingLess(a, b CapabilityFinding) bool {
+	if a.Capability != b.Capability {
+		return a.Capability < b.Capability
+	}
+	if a.SinkPackage != b.SinkPackage {
+		return a.SinkPackage < b.SinkPackage
+	}
+	if a.SinkSymbol != b.SinkSymbol {
+		return a.SinkSymbol < b.SinkSymbol
+	}
+	if a.WeakestConfidence != b.WeakestConfidence {
+		return a.WeakestConfidence < b.WeakestConfidence
+	}
+	if len(a.Path) != len(b.Path) {
+		return len(a.Path) < len(b.Path)
+	}
+	for i := range a.Path {
+		if a.Path[i] != b.Path[i] {
+			return a.Path[i] < b.Path[i]
+		}
+	}
+	return false
 }
 
 // strongerFinding reports whether candidate is a better witness than current:

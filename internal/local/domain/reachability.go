@@ -68,15 +68,22 @@ type UncoveredModule struct {
 	Reason  string
 }
 
-// SortUncovered sorts mods in place by Path then Version for deterministic
-// output.
+// UncoveredModuleLess is the canonical ordering for UncoveredModule slices.
+// The reason is keyed too: one coordinate can be uncovered for more than one
+// reason, and a comparator that stops before it leaves the pair to the sort.
+func UncoveredModuleLess(a, b UncoveredModule) bool {
+	if a.Path != b.Path {
+		return a.Path < b.Path
+	}
+	if a.Version != b.Version {
+		return a.Version < b.Version
+	}
+	return a.Reason < b.Reason
+}
+
+// SortUncovered sorts mods in place by UncoveredModuleLess, a total order.
 func SortUncovered(mods []UncoveredModule) {
-	sort.Slice(mods, func(i, j int) bool {
-		if mods[i].Path != mods[j].Path {
-			return mods[i].Path < mods[j].Path
-		}
-		return mods[i].Version < mods[j].Version
-	})
+	sort.Slice(mods, func(i, j int) bool { return UncoveredModuleLess(mods[i], mods[j]) })
 }
 
 // ProbedBinary is one main package of the local build, and whether the probe
@@ -97,9 +104,19 @@ type ProbedBinary struct {
 	BuildError string
 }
 
-// SortProbedBinaries sorts bins in place by ImportPath for deterministic output.
+// ProbedBinaryLess is the canonical ordering for ProbedBinary slices. The build
+// error is keyed after the import path: one main can be enumerated twice, once
+// per build attempt, and only the error tells the two apart.
+func ProbedBinaryLess(a, b ProbedBinary) bool {
+	if a.ImportPath != b.ImportPath {
+		return a.ImportPath < b.ImportPath
+	}
+	return a.BuildError < b.BuildError
+}
+
+// SortProbedBinaries sorts bins in place by ProbedBinaryLess, a total order.
 func SortProbedBinaries(bins []ProbedBinary) {
-	sort.Slice(bins, func(i, j int) bool { return bins[i].ImportPath < bins[j].ImportPath })
+	sort.Slice(bins, func(i, j int) bool { return ProbedBinaryLess(bins[i], bins[j]) })
 }
 
 // ProbeCoverage states what a local probe's answer was drawn from and what it
@@ -311,9 +328,29 @@ type LocalReachabilityResult struct {
 	Notice string
 }
 
-// SortProbeModules sorts mods in place by Path for deterministic output.
+// ModuleProbeResultLess is the canonical ordering for ModuleProbeResult
+// slices: the coordinate, then the findings the probe returned for it. Path
+// alone is not an identity, and the findings are what distinguishes two results
+// on one coordinate.
+func ModuleProbeResultLess(a, b ModuleProbeResult) bool {
+	if a.Path != b.Path {
+		return a.Path < b.Path
+	}
+	if a.Version != b.Version {
+		return a.Version < b.Version
+	}
+	if len(a.Findings) != len(b.Findings) {
+		return len(a.Findings) < len(b.Findings)
+	}
+	for i := range a.Findings {
+		if a.Findings[i].CVEID != b.Findings[i].CVEID {
+			return a.Findings[i].CVEID < b.Findings[i].CVEID
+		}
+	}
+	return false
+}
+
+// SortProbeModules sorts mods in place by ModuleProbeResultLess, a total order.
 func SortProbeModules(mods []ModuleProbeResult) {
-	sort.Slice(mods, func(i, j int) bool {
-		return mods[i].Path < mods[j].Path
-	})
+	sort.Slice(mods, func(i, j int) bool { return ModuleProbeResultLess(mods[i], mods[j]) })
 }

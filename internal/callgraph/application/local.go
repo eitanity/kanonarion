@@ -127,7 +127,7 @@ func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalEx
 	}
 
 	if !req.Force {
-		existing, found, rerr := uc.heldRecord(ctx, req.Coordinate, identity)
+		existing, found, rerr := uc.heldRecord(ctx, log, req.Coordinate, identity)
 		if rerr != nil {
 			return ExtractResult{}, rerr
 		}
@@ -197,6 +197,7 @@ func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalEx
 // existed, so a store without the capability loses time rather than correctness.
 func (uc *ExtractLocalCallGraphUseCase) heldRecord(
 	ctx context.Context,
+	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
 	identity domain2.WorktreeIdentity,
 ) (domain2.CallGraphRecord, bool, error) {
@@ -208,9 +209,12 @@ func (uc *ExtractLocalCallGraphUseCase) heldRecord(
 	if err != nil {
 		// A record that cannot be read is not a reason to refuse to measure: the
 		// run holds the tree and can answer from it. It is a reason not to be
-		// silent about the ledger's state, which the integrity error already is
-		// when a reader asks for it directly.
+		// silent about the ledger's state, which is why the run says which
+		// coordinate it is re-measuring and why.
 		if errors.Is(err, ports.ErrCallGraphIntegrity) || errors.Is(err, ports.ErrCallGraphConflict) {
+			log.InfoContext(ctx, "callgraph_local_cache_unreadable_remeasuring",
+				slog.String("reason", err.Error()),
+			)
 			return domain2.CallGraphRecord{}, false, nil
 		}
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("checking callgraph store: %w", err)

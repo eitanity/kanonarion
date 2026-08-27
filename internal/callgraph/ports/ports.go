@@ -389,6 +389,20 @@ type CallGraphCoordinateLister interface {
 	ListCallGraphCoordinates(ctx context.Context, filter CallGraphFilter) ([]CallGraphCoordinate, error)
 }
 
+// ToolchainNamer names the Go toolchain this process's analyses run under, or
+// the zero value when the environment cannot say.
+//
+// It is a function rather than a value because asking costs a subprocess, and
+// most runs never need the answer: only a cache lookup that has already met a
+// disagreement asks, and a process that extracts nothing never asks at all. The
+// caller memoises, so the cost is paid at most once.
+//
+// It names the toolchain the RUN would analyse under, which is the only thing a
+// cache lookup can compare a stored generation against. Nothing here reads a
+// record: a record states its own toolchain, and attributing this host's to one
+// that named none is the fabrication the toolchain axis exists to stop.
+type ToolchainNamer func(ctx context.Context) gotoolchain.Version
+
 // CallGraphSourceReader is the optional dimension-scoped read: the same question
 // GetCallGraphRecord answers, restricted to the values of one or more dimensions.
 //

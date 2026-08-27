@@ -541,6 +541,8 @@ func buildDependencies(components []cdx.Component, root *cdx.Component, graph wa
 	for _, c := range components {
 		add(c.BOMRef, c.BOMRef)
 	}
+	// Ref cannot tie: the `seen` set above admits one entry per ref, so this is a
+	// total order over the elements that reach it.
 	sort.Slice(deps, func(i, j int) bool { return deps[i].Ref < deps[j].Ref })
 	return deps
 }

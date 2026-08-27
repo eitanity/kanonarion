@@ -76,7 +76,7 @@ func PinRequires(
 	for path, version := range selected {
 		pinned = append(pinned, SynthesisedRequire{Path: path, Version: version})
 	}
-	sort.Slice(pinned, func(i, j int) bool { return pinned[i].Path < pinned[j].Path })
+	sort.Slice(pinned, func(i, j int) bool { return SynthesisedRequireLess(pinned[i], pinned[j]) })
 	return pinned, nil
 }
 

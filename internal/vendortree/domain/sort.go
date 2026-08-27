@@ -8,34 +8,95 @@ import (
 	"strings"
 )
 
-// SortModules orders modules by path then version (determinism).
-func SortModules(ms []VendoredModule) {
-	sort.SliceStable(ms, func(i, j int) bool {
-		if ms[i].Path != ms[j].Path {
-			return ms[i].Path < ms[j].Path
-		}
-		return ms[i].Version < ms[j].Version
-	})
+// VendoredModuleLess is the canonical ordering for VendoredModule slices: the
+// coordinate first, then everything the reconciliation measured about it.
+//
+// Path and version alone are not an identity here. A vendor tree can present one
+// coordinate twice — once as itself and once as the target of a replace — and
+// the two entries then differ in the replacement coordinate, the package count
+// and the files compared, all of which reach Hash. Every field the type carries
+// is keyed here, so two distinct entries always have a defined order.
+func VendoredModuleLess(a, b VendoredModule) bool {
+	if a.Path != b.Path {
+		return a.Path < b.Path
+	}
+	if a.Version != b.Version {
+		return a.Version < b.Version
+	}
+	if a.ReplacementPath != b.ReplacementPath {
+		return a.ReplacementPath < b.ReplacementPath
+	}
+	if a.ReplacementVersion != b.ReplacementVersion {
+		return a.ReplacementVersion < b.ReplacementVersion
+	}
+	if a.ExpectedHash != b.ExpectedHash {
+		return a.ExpectedHash < b.ExpectedHash
+	}
+	if a.PackageCount != b.PackageCount {
+		return a.PackageCount < b.PackageCount
+	}
+	if a.FilesCompared != b.FilesCompared {
+		return a.FilesCompared < b.FilesCompared
+	}
+	if a.Explicit != b.Explicit {
+		return !a.Explicit
+	}
+	if a.Present != b.Present {
+		return !a.Present
+	}
+	return a.Dir < b.Dir
 }
 
-// SortFindings orders findings by module, then kind, then version, then file so
-// output is stable before hashing/serialising. The file is part of the order
-// because the drift axis emits one finding per file, so module/kind/version
-// alone no longer identifies a finding.
-func SortFindings(fs []Finding) {
-	sort.SliceStable(fs, func(i, j int) bool {
-		a, b := fs[i], fs[j]
-		if a.Module != b.Module {
-			return a.Module < b.Module
-		}
-		if a.Kind != b.Kind {
-			return a.Kind < b.Kind
-		}
-		if a.Version != b.Version {
-			return a.Version < b.Version
-		}
+// FindingLess is the canonical ordering for Finding slices: the module first,
+// because that is what a reader scans the list by, then the kind, the version
+// and the file the drift was found in.
+//
+// The expected and actual values were invisible to the comparator, and both
+// reach Hash: two findings of one kind on one file, differing only in what was
+// expected against what was found, were left to the sort. Every field the type
+// carries is keyed here.
+func FindingLess(a, b Finding) bool {
+	if a.Module != b.Module {
+		return a.Module < b.Module
+	}
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	if a.Version != b.Version {
+		return a.Version < b.Version
+	}
+	if a.File != b.File {
 		return a.File < b.File
-	})
+	}
+	if a.Expected != b.Expected {
+		return a.Expected < b.Expected
+	}
+	if a.Actual != b.Actual {
+		return a.Actual < b.Actual
+	}
+	if a.Detail != b.Detail {
+		return a.Detail < b.Detail
+	}
+	if a.PolicyOutcome != b.PolicyOutcome {
+		return a.PolicyOutcome < b.PolicyOutcome
+	}
+	if a.PolicyBlocking != b.PolicyBlocking {
+		return !a.PolicyBlocking
+	}
+	return false
+}
+
+// SortModules orders modules by VendoredModuleLess, a total order, so the
+// result is a function of the set and not of the order the vendor tree was
+// walked in.
+func SortModules(ms []VendoredModule) {
+	sort.Slice(ms, func(i, j int) bool { return VendoredModuleLess(ms[i], ms[j]) })
+}
+
+// SortFindings orders findings by FindingLess, a total order, so the result is
+// a function of the set and not of the order reconciliation produced it in.
+func SortFindings(fs []Finding) {
+	sort.Slice(fs, func(i, j int) bool { return FindingLess(fs[i], fs[j]) })
 }
 
 // Hash returns a deterministic content hash over the sorted module and

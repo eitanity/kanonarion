@@ -133,6 +133,10 @@ func (s *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdent
 // fakeExampleStore holds example records keyed by (path, version, pipeline_version).
 type fakeExampleStore struct {
 	records map[exampleKey]domain.ExampleRecord
+	// getErr makes the read leg fail, which is the only way to reach a caller's
+	// store-failure branch: a fake that can only be empty proves absence
+	// handling and nothing else.
+	getErr error
 }
 
 type exampleKey struct{ path, version, pipeline string }
@@ -146,6 +150,9 @@ func (s *fakeExampleStore) PutExampleRecord(_ context.Context, r domain.ExampleR
 }
 
 func (s *fakeExampleStore) GetExampleRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.ExampleRecord, bool, error) {
+	if s.getErr != nil {
+		return domain.ExampleRecord{}, false, s.getErr
+	}
 	if s.records == nil {
 		return domain.ExampleRecord{}, false, nil
 	}
