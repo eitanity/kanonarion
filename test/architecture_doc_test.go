@@ -12,7 +12,11 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/mod/modfile"
+
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/cli"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // architectureDoc is the design specification these guards hold to the code.
@@ -271,4 +275,436 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ---- guards over the shipped command surface -------------------------------
+//
+// Three properties tie the documents to the CLI they describe: a document names
+// no command that does not exist, an example coordinate is not one a dependency
+// bump strands, and a shipped command is documented or explicitly exempt.
+
+// onboardingDocs are the two documents that teach the tool rather than
+// reference it. The coordinate guard reads these; the command guards read every
+// shipped document.
+var onboardingDocs = []string{"../docs/getting-started.md", "../docs/writing-quality-code.md"}
+
+// undocumentedByDecision names the shipped commands no document has to show
+// being run, with the reason each is exempt. It is a list of decisions: a
+// command that arrives without documentation belongs here only when someone
+// decided it needs none, which is what stops the list becoming a blanket.
+var undocumentedByDecision = map[string]string{
+	"help":                  "cobra's built-in; it prints the help every other command already carries",
+	"completion bash":       "cobra's built-in shell-completion generator, not a kanonarion answer",
+	"completion fish":       "cobra's built-in shell-completion generator, not a kanonarion answer",
+	"completion powershell": "cobra's built-in shell-completion generator, not a kanonarion answer",
+	"completion zsh":        "cobra's built-in shell-completion generator, not a kanonarion answer",
+}
+
+// shippedDocs lists every document the repository ships: the README and every
+// page under docs/. The list is walked rather than written down, so a page
+// added later is covered without anyone remembering to add it.
+func shippedDocs(t *testing.T) []string {
+	t.Helper()
+	out := []string{"../README.md"}
+	err := filepath.Walk("../docs", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("walk %s: %w", path, err)
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".md") {
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking docs/: %v", err)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// docInvocation is one `kanonarion …` command line taken from a fenced code
+// block, carrying where it was found so a failure can be opened at the line.
+type docInvocation struct {
+	doc  string
+	line int
+	text string
+	args []string // everything after the program name, flags included
+}
+
+// fencedInvocations returns every kanonarion command line inside a fenced code
+// block of doc.
+//
+// Fenced blocks ONLY. Prose says things like "kanonarion never reports a
+// verdict" and "kanonarion at a pinned version", and a match on the program
+// name followed by a word reads both of those as commands: that is how a count
+// of the commands in one document came back as eighteen while the document
+// named sixteen. A fence is where a document puts what it means to be typed.
+//
+// The line is reduced to the command a shell would run: a `$ ` prompt, a
+// trailing comment, a line continuation and anything past a pipe or redirect
+// are all removed, because none of them is part of the command's name.
+func fencedInvocations(t *testing.T, doc string) []docInvocation {
+	t.Helper()
+	raw, err := os.ReadFile(doc) // #nosec G304 -- doc comes from walking this repository's own docs/
+	if err != nil {
+		t.Fatalf("reading %s: %v", doc, err)
+	}
+	var out []docInvocation
+	inFence := false
+	for i, line := range strings.Split(string(raw), "\n") {
+		text := strings.TrimSpace(line)
+		if strings.HasPrefix(text, "```") {
+			inFence = !inFence
+			continue
+		}
+		if !inFence {
+			continue
+		}
+		text = strings.TrimPrefix(text, "$ ")
+		for _, op := range []string{" | ", " > ", " >> ", " < ", " && ", " ; "} {
+			if j := strings.Index(text, op); j >= 0 {
+				text = text[:j]
+			}
+		}
+		if j := strings.Index(text, " #"); j >= 0 {
+			text = text[:j]
+		}
+		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), "\\"))
+		fields := strings.Fields(text)
+		if len(fields) == 0 {
+			continue
+		}
+		if fields[0] != "kanonarion" && fields[0] != "./kanonarion" {
+			continue
+		}
+		out = append(out, docInvocation{doc: doc, line: i + 1, text: text, args: fields[1:]})
+	}
+	return out
+}
+
+// commandTree indexes the registered command set by the path a caller types,
+// with each level's aliases folded in so `licence` reaches `license`.
+type commandTree struct {
+	byPath map[string]cli.RegisteredCommand
+	// child maps a parent path to the names AND aliases accepted beneath it,
+	// each resolving to the canonical name.
+	child map[string]map[string]string
+}
+
+// registeredCommands builds the tree from the CLI's own registration, so the
+// guards below ask the code what exists instead of restating it.
+func registeredCommands(t *testing.T) commandTree {
+	t.Helper()
+	tree := commandTree{
+		byPath: map[string]cli.RegisteredCommand{},
+		child:  map[string]map[string]string{},
+	}
+	for _, c := range cli.RegisteredCommands() {
+		path := strings.Join(c.Path, " ")
+		tree.byPath[path] = c
+		parent := strings.Join(c.Path[:len(c.Path)-1], " ")
+		if tree.child[parent] == nil {
+			tree.child[parent] = map[string]string{}
+		}
+		name := c.Path[len(c.Path)-1]
+		tree.child[parent][name] = name
+		for _, alias := range c.Aliases {
+			tree.child[parent][alias] = name
+		}
+	}
+	if len(tree.byPath) == 0 {
+		t.Fatal("the CLI registered no commands: the guards below would then hold every document to nothing")
+	}
+	return tree
+}
+
+// resolve walks args down the command tree the way cobra does, returning the
+// command path reached and the first argument that was not a subcommand.
+//
+// Descent stops at the first command with no subcommands, so a positional
+// argument that happens to spell a sibling's name cannot be mistaken for one.
+func (tree commandTree) resolve(args []string) (path []string, rest string) {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		here := strings.Join(path, " ")
+		name, ok := tree.child[here][arg]
+		if !ok {
+			return path, arg
+		}
+		path = append(path, name)
+		if len(tree.byPath[strings.Join(path, " ")].Children) == 0 {
+			return path, ""
+		}
+	}
+	return path, ""
+}
+
+// TestShippedDocsNameOnlyRegisteredCommands fails when a document tells a
+// reader to run something the CLI does not register.
+//
+// A renamed or removed command leaves the instruction reading as live, and the
+// reader discovers it by being refused. The registered set is read from the
+// CLI, so the rename fails here instead.
+func TestShippedDocsNameOnlyRegisteredCommands(t *testing.T) {
+	tree := registeredCommands(t)
+	total := 0
+	for _, doc := range shippedDocs(t) {
+		for _, inv := range fencedInvocations(t, doc) {
+			total++
+			path, rest := tree.resolve(inv.args)
+			if len(path) == 0 {
+				t.Errorf("%s:%d runs `%s`, and %q is not a registered command: "+
+					"rename it to the command that now does this, or drop the line",
+					inv.doc, inv.line, inv.text, rest)
+				continue
+			}
+			named := strings.Join(path, " ")
+			if !tree.byPath[named].Runnable {
+				t.Errorf("%s:%d runs `%s`, and `%s` is a grouping command that does not run on its own "+
+					"(%q is not one of its subcommands): name the subcommand",
+					inv.doc, inv.line, inv.text, named, rest)
+			}
+		}
+	}
+	if total == 0 {
+		t.Fatal("no kanonarion invocation was read out of any shipped document: the fence or prompt shape changed and this guard reads nothing")
+	}
+}
+
+// TestEveryShippedCommandIsDocumented fails when a command ships without a
+// document showing it being run.
+//
+// Both sides are derived: the commands from the CLI's registration, the
+// documentation from the fenced blocks of every shipped page. A command added
+// without documentation then becomes a decision — put it in
+// undocumentedByDecision with the reason — rather than an oversight nobody
+// sees. Only runnable paths are required: a grouping command such as `store`
+// cannot be typed on its own, and is documented through its subcommands.
+func TestEveryShippedCommandIsDocumented(t *testing.T) {
+	tree := registeredCommands(t)
+
+	documented := map[string]bool{}
+	for _, doc := range shippedDocs(t) {
+		for _, inv := range fencedInvocations(t, doc) {
+			if path, _ := tree.resolve(inv.args); len(path) > 0 {
+				documented[strings.Join(path, " ")] = true
+			}
+		}
+	}
+
+	for _, path := range sortedKeys(tree.byPath) {
+		if !tree.byPath[path].Runnable || documented[path] {
+			continue
+		}
+		if reason, exempt := undocumentedByDecision[path]; exempt {
+			if reason == "" {
+				t.Errorf("`kanonarion %s` is exempt from documentation with no reason given: state why it needs none", path)
+			}
+			continue
+		}
+		t.Errorf("`kanonarion %s` ships and no document under docs/ shows it being run: "+
+			"add a fenced example, or name it in undocumentedByDecision with the reason it needs none", path)
+	}
+
+	for path, reason := range undocumentedByDecision {
+		if _, live := tree.byPath[path]; !live {
+			t.Errorf("undocumentedByDecision exempts %q (%s), which is not a registered command: the exemption outlived what it exempted", path, reason)
+		}
+	}
+}
+
+// pinnedExampleByDecision names the example coordinates that are deliberately a
+// version this repository pins, keyed by "<doc> <coordinate>", with the reason.
+// `dependents` answers about the build you are standing in, and the output
+// recorded beneath it is this repository's own walk, so that one example has to
+// name a coordinate this go.mod resolves. Every other example must survive a
+// bump, which is why this is a list of decisions and not a rule.
+var pinnedExampleByDecision = map[string]string{
+	"../docs/getting-started.md github.com/spf13/pflag@v1.0.10": "`dependents` is answered from the build you are in, and the output recorded beneath it is this repository's own walk",
+}
+
+// TestOnboardingExampleCoordinatesAreNotThisModulesOwnPins fails when a teaching
+// document uses a module version this repository itself pins.
+//
+// Such an example is strandable: the store holds that version because this
+// repository's own walks put it there, and the next bump of that dependency
+// takes it away. The reader then runs the documented command and is told the
+// coordinate has no record — which is how `golang.org/x/mod@v0.36.0` came to be
+// the one example in the quality guide while the go.mod had moved to v0.40.0.
+//
+// The pins are read from go.mod, so the guard cannot go stale against it.
+//
+// It does NOT check that each coordinate resolves against a populated store:
+// that store is the operator's ~/.kanonarion, and a test that opens it would
+// migrate a production database on every `make test`. What is checkable
+// offline is the property that makes an example survive a bump at all.
+func TestOnboardingExampleCoordinatesAreNotThisModulesOwnPins(t *testing.T) {
+	raw, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatalf("reading go.mod: %v", err)
+	}
+	mf, err := modfile.Parse("go.mod", raw, nil)
+	if err != nil {
+		t.Fatalf("parsing go.mod: %v", err)
+	}
+	pinned := map[string]string{}
+	for _, req := range mf.Require {
+		pinned[req.Mod.Path] = req.Mod.Version
+	}
+	if len(pinned) == 0 {
+		t.Fatal("go.mod requires nothing: this guard would then pass over any example")
+	}
+
+	seen := 0
+	exempted := map[string]bool{}
+	for _, doc := range onboardingDocs {
+		for _, inv := range fencedInvocations(t, doc) {
+			for _, arg := range inv.args {
+				arg = strings.Trim(arg, "'\"")
+				if strings.HasPrefix(arg, "-") || strings.ContainsAny(arg, "<>") || !strings.Contains(arg, "@") {
+					continue
+				}
+				coord, cerr := coordinate.ParseModuleCoordinate(arg)
+				if cerr != nil || !strings.HasPrefix(coord.Version(), "v") {
+					continue
+				}
+				seen++
+				if pinned[coord.Path()] != coord.Version() {
+					continue
+				}
+				key := doc + " " + arg
+				if reason, ok := pinnedExampleByDecision[key]; ok {
+					exempted[key] = true
+					if reason == "" {
+						t.Errorf("%s:%d is exempt from the stranding rule with no reason given: state why the example has to name a pinned version", inv.doc, inv.line)
+					}
+					continue
+				}
+				t.Errorf("%s:%d uses %s as an example, which is the version this repository's own go.mod pins: "+
+					"the next bump of %s strands it, so pick a version this module does not depend on, "+
+					"or name it in pinnedExampleByDecision with the reason it has to be pinned",
+					inv.doc, inv.line, arg, coord.Path())
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("no example coordinate was read out of %v: the guard reads nothing", onboardingDocs)
+	}
+	for key, reason := range pinnedExampleByDecision {
+		if !exempted[key] {
+			t.Errorf("pinnedExampleByDecision exempts %q (%s), and no such pinned example is there any more: the exemption outlived what it exempted", key, reason)
+		}
+	}
+}
+
+// docFlags returns the long flag names written on one documented invocation.
+//
+// A synopsis line writes its optional flags in brackets and its exclusive ones
+// as an alternation - `[--tool|--project]` - and a worked example attaches the
+// value with `=`. None of that is part of the flag's name, so it is stripped
+// here rather than in the guard. Short flags and a bare `--` are out of scope:
+// a single letter says too little to be worth holding a document to.
+func docFlags(args []string) []string {
+	var out []string
+	for _, arg := range args {
+		for _, tok := range strings.Split(arg, "|") {
+			tok = strings.Trim(tok, "[](),'\"`")
+			if !strings.HasPrefix(tok, "--") || tok == "--" {
+				continue
+			}
+			name := strings.Trim(strings.SplitN(tok[2:], "=", 2)[0], "[](),'\"`")
+			if name != "" {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
+// TestShippedDocsUseOnlyRealFlags fails when a document writes a long flag on a
+// command that does not accept it.
+//
+// The flag is resolved against the command it is WRITTEN ON, subcommand
+// included: `--event-type` belongs to `store ledger` and not to `store`, and
+// checking it against the parent would pass a flag the reader cannot use. The
+// accepted set is read from the assembled command tree, persistent and
+// inherited flags included, because `--json` and `--store-root` are declared on
+// the root and are legitimately typed on every command beneath it.
+//
+// Fenced blocks only, for the reason the command guard reads them: prose
+// discusses flags it is not telling anyone to type.
+func TestShippedDocsUseOnlyRealFlags(t *testing.T) {
+	tree := registeredCommands(t)
+	uses, commands := 0, map[string]bool{}
+	for _, doc := range shippedDocs(t) {
+		for _, inv := range fencedInvocations(t, doc) {
+			path, _ := tree.resolve(inv.args)
+			if len(path) == 0 {
+				continue // the command guard reports this line
+			}
+			named := strings.Join(path, " ")
+			accepted := map[string]bool{}
+			for _, f := range tree.byPath[named].Flags {
+				accepted[f] = true
+			}
+			for _, f := range docFlags(inv.args) {
+				uses++
+				commands[named] = true
+				if !accepted[f] {
+					t.Errorf("%s:%d writes --%s on `kanonarion %s`, which does not accept it: "+
+						"`%s`\n\tuse the flag the command has, or move the line to the command that has this one",
+						inv.doc, inv.line, f, named, inv.text)
+				}
+			}
+		}
+	}
+	if uses == 0 {
+		t.Fatal("no flag was read off any documented invocation: the guard reads nothing")
+	}
+	t.Logf("checked %d flag uses across %d commands", uses, len(commands))
+}
+
+// TestDocumentedFlagsResolveToTheSubcommand pins the case the flag guard exists
+// to get right, with the real invocation from the shipped documentation.
+//
+// `--event-type` is declared on `store ledger`. Its parent `store` does not
+// have it, so a guard that resolved a flag to the first word after the program
+// name would accept `kanonarion store --event-type …`, which is refused when a
+// reader types it. The assertion is on the tree, not on a copy of it.
+func TestDocumentedFlagsResolveToTheSubcommand(t *testing.T) {
+	tree := registeredCommands(t)
+	has := func(path, flag string) bool {
+		for _, f := range tree.byPath[path].Flags {
+			if f == flag {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("store ledger", "event-type") {
+		t.Error("`store ledger` no longer declares --event-type: the documented invocation this guard is built on has moved")
+	}
+	if has("store", "event-type") {
+		t.Error("`store` now declares --event-type, so it no longer distinguishes a flag resolved to the parent from one resolved to the subcommand")
+	}
+
+	found := false
+	for _, doc := range shippedDocs(t) {
+		for _, inv := range fencedInvocations(t, doc) {
+			path, _ := tree.resolve(inv.args)
+			if strings.Join(path, " ") != "store ledger" {
+				continue
+			}
+			for _, f := range docFlags(inv.args) {
+				if f == "event-type" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("no shipped document writes --event-type on `store ledger` any more: this guard is pinned to a case the documentation no longer contains")
+	}
 }

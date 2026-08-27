@@ -1451,7 +1451,7 @@ kanonarion walk github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
 kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
 
 # 3. Inspect the scan run
-kanonarion vuln-scan-list --walk-id <walk-id> --store-root ~/.kanonarion
+kanonarion vuln-scan-list --store-root ~/.kanonarion
 kanonarion vuln-scan-show <run-id> --store-root ~/.kanonarion
 
 # 4. Drill into a specific module (walk-id optional; defaults to most recent scan)

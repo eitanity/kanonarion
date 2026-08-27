@@ -11,7 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
-// Scanner wraps golang.org/x/vuln/scan as a library.
+// Scanner runs the govulncheck binary, resolved from PATH.
 type Scanner struct {
 	pipelineVersion string
 	vulnStore       ports.VulnerabilityStore
