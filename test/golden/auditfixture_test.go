@@ -166,7 +166,7 @@ func (a *auditFixture) newStore(t *testing.T) string {
 	migrations = append(migrations, licsqlite.Migrations()...)
 	migrations = append(migrations, stalesqlite.Migrations()...)
 
-	db, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), migrations)
+	db, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), migrations, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening audit fixture store: %v", err)
 	}

@@ -50,8 +50,9 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f vulnScanFlags
 
 	cmd := &cobra.Command{
-		Use:   "vuln-scan [walk-id]",
-		Short: "Scan all modules in a walk for vulnerabilities (no args: code deps of ./go.mod)",
+		Use:         "vuln-scan [walk-id]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Scan all modules in a walk for vulnerabilities (no args: code deps of ./go.mod)",
 		Long: `Scan every module in a walk against the advisory database.
 
 Beside the result, on stderr, vuln-scan states the toolchain axis: the Go
@@ -993,9 +994,10 @@ func newVulnScanRescanCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f vulnScanRescanFlags
 
 	cmd := &cobra.Command{
-		Use:     "vuln-scan-rescan <walk-id>",
-		Aliases: []string{"vuln-scan-regate"}, // deprecated: renamed from regate
-		Short:   "Re-scan an existing walk against a fresh vulnerability database snapshot",
+		Use:         "vuln-scan-rescan <walk-id>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Aliases:     []string{"vuln-scan-regate"}, // deprecated: renamed from regate
+		Short:       "Re-scan an existing walk against a fresh vulnerability database snapshot",
 		Long: `vuln-scan-rescan re-runs the vulnerability scanner for every module in an existing
 walk against a fresh (or explicitly pinned) database snapshot. It always
 bypasses the per-module cache so the new snapshot is actually consulted.

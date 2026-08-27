@@ -158,16 +158,15 @@ type Queries struct {
 // the read-side store adapters, and constructs every Query* use case. It returns
 // the populated Queries together with a cleanup function that closes the DB.
 //
-// The store root is created if absent. Only read stores are wired — no proxy,
-// VCS, extractor, or signer — so the read surface stays independent of the
-// pipeline-construction machinery.
+// A store root that does not exist is refused, not created. Every use case
+// here answers from records some other run wrote, so a root this call brought
+// into existence could only ever answer "nothing recorded" — a true sentence
+// about a store one millisecond old and a false one about the store the caller
+// meant. Only read stores are wired — no proxy, VCS, extractor, or signer — so
+// the read surface stays independent of the pipeline-construction machinery.
 func NewQueries(storeRoot string) (*Queries, func() error, error) {
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
-	}
-
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	db, err := sqlitestore.Open(dbPath, Migrations())
+	db, err := sqlitestore.Open(dbPath, Migrations(), sqlitestore.IntentRead)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -219,7 +218,7 @@ var ErrStoreSchemaNewer = errors.New("store schema is newer than this build supp
 // newer build reports all of this build's migrations as applied and opens
 // cleanly. The mismatch only shows up later, as a failed write per statement.
 func openStoreForWriting(dbPath string) (sqlitestore.DB, error) {
-	db, err := sqlitestore.Open(dbPath, nil)
+	db, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -283,6 +282,9 @@ func NewDriver(storeRoot string) (*Driver, func() error, error) {
 // so it is also the only place a test can observe the arguments the driver
 // builds without spawning anything.
 func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecutor) (*Driver, func() error, error) {
+	// This surface writes, so it creates the root it writes into: a first fetch
+	// or walk on a clean machine must not need a preparatory step. NewQueries,
+	// which only reads, deliberately does the opposite.
 	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
 	}

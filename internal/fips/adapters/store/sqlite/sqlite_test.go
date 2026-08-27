@@ -13,7 +13,7 @@ import (
 
 func openTestStore(t *testing.T) *fipssqlite.Store {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", fipssqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", fipssqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

@@ -394,8 +394,9 @@ func newContextCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f contextFlags
 
 	cmd := &cobra.Command{
-		Use:   "context [<module>@<version> | <dir>]",
-		Short: "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
+		Use:         "context [<module>@<version> | <dir>]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
 		Long: `Aggregate all stored records for a module — verification, dependencies,
 license, interface, call graph, examples, vulnerabilities — into AI-ready
 context.

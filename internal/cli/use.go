@@ -35,8 +35,9 @@ type useFlags struct {
 func newUseCmd(stdout, stderr io.Writer) *cobra.Command {
 	f := useFlags{}
 	cmd := &cobra.Command{
-		Use:   "use <module@version>",
-		Short: "Copy walked modules from kanonarion's store to your local Go module cache",
+		Use:         "use <module@version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Copy walked modules from kanonarion's store to your local Go module cache",
 		Long: `Copies the version set of one walk of <module>@<version> out of the store
 and into a Go module cache a later go build can compile against.
 
@@ -132,7 +133,9 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	dbHandle, err := sqlitestore.Open(dbPath, nil)
+	// `use` rewrites the caller's go.mod from a stored walk; it records nothing,
+	// so it reads the store and does not bring one into existence.
+	dbHandle, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentRead)
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
 	}

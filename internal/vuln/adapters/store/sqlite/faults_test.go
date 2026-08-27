@@ -220,7 +220,7 @@ func TestMigration_DropsReachabilityColumn(t *testing.T) {
 		}
 	}
 	path := t.TempDir() + "/reach.db"
-	db, err := sqlitestore.Open(path, pre)
+	db, err := sqlitestore.Open(path, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening the store before the drop: %v", err)
 	}
@@ -237,7 +237,7 @@ INSERT INTO vulnerability_findings_index (
 		t.Fatalf("closing the store: %v", err)
 	}
 
-	migrated, err := sqlitestore.Open(path, sqlite.Migrations())
+	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("applying the drop: %v", err)
 	}

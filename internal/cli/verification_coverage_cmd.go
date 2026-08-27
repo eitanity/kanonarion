@@ -26,8 +26,9 @@ import (
 func newVerificationCoverageCmd(stdout, stderr io.Writer) *cobra.Command {
 	var detail bool
 	cmd := &cobra.Command{
-		Use:   "verification-coverage <walk-id>",
-		Short: "Report how a walk's modules were verified",
+		Use:         "verification-coverage <walk-id>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Report how a walk's modules were verified",
 		Long: `Report aggregate verification coverage over a stored walk's graph.
 
 The figures say how many modules carry the strongest assurance — a checksum

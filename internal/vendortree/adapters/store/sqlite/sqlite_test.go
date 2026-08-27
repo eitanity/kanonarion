@@ -13,7 +13,7 @@ import (
 
 func openTestStore(t *testing.T) *vendorstore.Store {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", vendorstore.Migrations())
+	db, err := sqlitestore.Open(":memory:", vendorstore.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

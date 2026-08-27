@@ -1,11 +1,18 @@
-# store info: not initialised yet
+# store info: the store root is not there yet. The refusal comes from the
+# root gate, which names the path it looked at and the command that creates
+# a store there; nothing is written to disk to answer it.
 ! kanonarion store info
-stderr 'store not found'
-stderr 'run a kanonarion command'
+stderr 'no store at'
+stderr 'kanonarion inspect'
+! exists $WORK/.kanonarion
 
-# Initialise the store by running a command that creates mirror.db.
-# extract list creates the DB with its migration subset.
-kanonarion extract list
+# Initialise the store by running a command that creates mirror.db. `extract`
+# writes records, so it creates the store root and the database before it looks
+# for the walk; naming a walk that is not there leaves the store behind and
+# fails on the record, which is exactly the state this case needs. The reads
+# above cannot be used for this any more — a read no longer creates a store.
+! kanonarion extract 01JX0000000000000000000000
+stderr 'walk record not found'
 
 # store info now reports the schema state.
 kanonarion store info

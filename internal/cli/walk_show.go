@@ -12,8 +12,9 @@ import (
 func newWalkShowCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
-		Use:   "walk-show <id>",
-		Short: "Print a stored walk record",
+		Use:         "walk-show <id>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Print a stored walk record",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)

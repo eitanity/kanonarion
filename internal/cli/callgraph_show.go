@@ -32,8 +32,9 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f callGraphShowFlags
 
 	cmd := &cobra.Command{
-		Use:   "callgraph-show <module>@<version>",
-		Short: "Show the full call graph record for a module",
+		Use:         "callgraph-show <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Show the full call graph record for a module",
 		Example: `  kanonarion callgraph-show github.com/spf13/cobra@v1.8.1
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --json
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node Execute

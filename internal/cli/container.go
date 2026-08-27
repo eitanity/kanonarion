@@ -221,8 +221,8 @@ type Container struct {
 // `store info` deliberately does not come through here — it opens with nil
 // migrations and never applies any — so the command that names the remedy stays
 // available after this refuses.
-func openMigratedStore(dbPath string) (sqlitestore.DB, error) {
-	dbHandle, err := sqlitestore.Open(dbPath, nil)
+func openMigratedStore(dbPath string, intent sqlitestore.Intent) (sqlitestore.DB, error) {
+	dbHandle, err := sqlitestore.Open(dbPath, nil, intent)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -253,12 +253,19 @@ func offlineStdlibAnchor(modcacheMode bool) bool {
 }
 
 func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg domain.Config, logger *slog.Logger) (*Container, func() error, error) {
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
+	// The store root is created only for a command that declared it writes
+	// records. Every other command gets a container over a store that already
+	// exists, which is why a mistyped --store-root now reaches the caller as a
+	// refusal instead of as an empty store with a truthful-sounding answer.
+	intent := storeOpenIntent()
+	if intent == sqlitestore.IntentCreate {
+		if err := os.MkdirAll(storeRoot, 0o750); err != nil {
+			return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
+		}
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	dbHandle, err := openMigratedStore(dbPath)
+	dbHandle, err := openMigratedStore(dbPath, intent)
 	if err != nil {
 		return nil, nil, err
 	}

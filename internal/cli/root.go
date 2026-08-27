@@ -35,7 +35,17 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 				}
 			}
 
-			// 2. Load config from store root. A store with no config file
+			// 2. Refuse a store root that is not there, unless this command
+			// declared that it creates one. It happens here, before the config
+			// load and before any command body opens the store, because the
+			// defect is not the wrong answer but the directory: a check made
+			// after the open would still leave a store behind.
+			storeIntent = storeIntentOf(cmd)
+			if err := requireStoreRoot(storeRoot); err != nil {
+				return err
+			}
+
+			// 3. Load config from store root. A store with no config file
 			// resolves to the built-in defaults and is not an error. A file
 			// that exists and cannot be loaded is a refusal: running on
 			// built-in defaults would evaluate every later answer against a
@@ -47,7 +57,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 				return &exitError{code: ExitConfig, msg: activeConfigErr.Error()}
 			}
 
-			// 3. Apply config defaults for flags not explicitly set (flag > config > default).
+			// 4. Apply config defaults for flags not explicitly set (flag > config > default).
 			if !cmd.Flags().Changed("log-level") {
 				logLevel = activeConfig.Preferences.LogLevel
 			}
@@ -55,13 +65,13 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 				jsonOut = activeConfig.Preferences.JSON
 			}
 
-			// 4. Install one process-wide logger now that the format (--json) is
+			// 5. Install one process-wide logger now that the format (--json) is
 			// resolved, so subsystems that log via slog.Default — e.g. the
 			// vulnerability scanner and OSV client — emit the same single format
 			// on stderr as every injected logger.
 			slog.SetDefault(buildLogger(logLevel, stderr))
 
-			// 5. An exempted command still says what happened. Reaching here
+			// 6. An exempted command still says what happened. Reaching here
 			// with a rejection means this command is part of the repair path,
 			// and its answers describe the built-in defaults rather than the
 			// file. It goes to stderr so a --json document on stdout stays
@@ -143,7 +153,42 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newUseCmd(stdout, stderr),
 		newLocalCmd(stdout, stderr),
 	)
+
 	return root
+}
+
+// installDefaultSubcommands adds cobra's own `help` and `completion` and gives
+// them a store intent, which cobra has no notion of.
+//
+// They open no store, so the only honest declaration is "none". Without one
+// they would inherit the safe default and refuse to print help on a machine
+// that has no store yet — a refusal about a store the command never opens.
+//
+// It is called by the two entry points that need the real, executable tree —
+// Run before Execute, and RegisteredCommands — rather than by newRootCmd,
+// because the tree newRootCmd returns is what this package's own guards read,
+// and cobra's built-ins are not this package's to answer for. Both Init calls
+// are idempotent, so the ones Execute makes later are no-ops.
+func installDefaultSubcommands(root *cobra.Command) {
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	for _, name := range []string{"help", "completion"} {
+		if cmd, _, err := root.Find([]string{name}); err == nil && cmd != root {
+			declareStoreIntentTree(cmd, StoreIntentNone)
+		}
+	}
+}
+
+// declareStoreIntentTree annotates cmd and everything under it, for the
+// command trees this package does not construct itself.
+func declareStoreIntentTree(cmd *cobra.Command, intent string) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[annotationStoreIntent] = intent
+	for _, sub := range cmd.Commands() {
+		declareStoreIntentTree(sub, intent)
+	}
 }
 
 // usageErr returns a non-zero usage error for a command invoked with the
@@ -163,6 +208,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	defer stop()
 
 	root := newRootCmd(stdout, stderr)
+	installDefaultSubcommands(root)
 	root.SetArgs(args)
 	if err := root.ExecuteContext(ctx); err != nil {
 		return fmt.Errorf("execute root command: %w", err)

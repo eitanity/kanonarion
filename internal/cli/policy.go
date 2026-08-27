@@ -31,8 +31,9 @@ func newPolicyCmd(stdout, stderr io.Writer) *cobra.Command {
 
 func newPolicyValidateCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
-		Use:   "validate <path>",
-		Short: "Validate a depth-policy or governance policy YAML file against its schema",
+		Use:         "validate <path>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentNone},
+		Short:       "Validate a depth-policy or governance policy YAML file against its schema",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
@@ -136,8 +137,9 @@ func newPolicyShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var policyPath string
 
 	cmd := &cobra.Command{
-		Use:   "show",
-		Short: "Print the effective depth policy for the current invocation",
+		Use:         "show",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentNone},
+		Short:       "Print the effective depth policy for the current invocation",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runPolicyShow(cmd.Context(), policyPath, stdout, stderr)
 		},

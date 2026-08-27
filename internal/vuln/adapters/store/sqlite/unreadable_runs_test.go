@@ -84,7 +84,7 @@ func driftBlob(t *testing.T, run domain.WalkScanRun) []byte {
 // command's fail-closed branch is unchanged.
 func TestListWalkScanRuns_ReportsUnreadableRowsAndKeepsTheRest(t *testing.T) {
 	ctx := t.Context()
-	db, err := sqlitestore.Open(":memory:", sqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening in-memory db: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestListWalkScanRuns_CleanStoreIsUnchanged(t *testing.T) {
 // prevent.
 func TestListWalkScanRuns_UnparseableRowIsStillReported(t *testing.T) {
 	ctx := t.Context()
-	db, err := sqlitestore.Open(":memory:", sqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening in-memory db: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestListWalkScanRuns_UnparseableRowIsStillReported(t *testing.T) {
 // it exactly as it did before.
 func TestGetWalkScanRun_ReportsUnreadableRowAsSuch(t *testing.T) {
 	ctx := t.Context()
-	db, err := sqlitestore.Open(":memory:", sqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening in-memory db: %v", err)
 	}

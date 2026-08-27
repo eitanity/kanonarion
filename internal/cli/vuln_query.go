@@ -30,8 +30,9 @@ func newVulnShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var history bool
 
 	cmd := &cobra.Command{
-		Use:   "vuln-show <module>@<version>",
-		Short: "Show the vulnerability record for a module",
+		Use:         "vuln-show <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Show the vulnerability record for a module",
 		Long: `Show the vulnerability record for a module.
 
 A stored record answers "what did this advisory do in THIS build", so the
@@ -560,8 +561,9 @@ func newVulnByIDCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 
 	cmd := &cobra.Command{
-		Use:   "vuln-by-id <finding-id>",
-		Short: "Find all modules affected by a specific vulnerability ID",
+		Use:         "vuln-by-id <finding-id>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Find all modules affected by a specific vulnerability ID",
 		Long: `Find all modules affected by a specific vulnerability ID.
 
 With no --walk-id, the answer spans the entire store: every module version,

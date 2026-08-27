@@ -362,7 +362,7 @@ func TestMigration7_CarriesExistingRowsInUnpurged(t *testing.T) {
 
 	// Open at migration 6 — after the broken generation is purged, before the
 	// ledger — and seal rows through the store as it stood then.
-	pre, err := sqlitestore.Open(dsn, all[:6])
+	pre, err := sqlitestore.Open(dsn, all[:6], sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at migration 6: %v", err)
 	}

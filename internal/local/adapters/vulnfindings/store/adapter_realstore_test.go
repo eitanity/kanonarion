@@ -25,7 +25,7 @@ import (
 // row would leave the filter nothing to choose from and the defect intact.
 func TestLoadFindings_TwoConsumersInOneLedger(t *testing.T) {
 	ctx := t.Context()
-	db, err := sqlitestore.Open(":memory:", vulnsqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", vulnsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening in-memory db: %v", err)
 	}

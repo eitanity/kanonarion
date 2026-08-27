@@ -48,8 +48,9 @@ func newInspectCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f inspectFlags
 
 	cmd := &cobra.Command{
-		Use:   "inspect [<module>@<version>]",
-		Short: "Run the full pipeline (walk → extract → vuln-scan → context); no args: code deps of ./go.mod",
+		Use:         "inspect [<module>@<version>]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Run the full pipeline (walk → extract → vuln-scan → context); no args: code deps of ./go.mod",
 		Long: `Run the full pipeline (walk → extract → vuln-scan → context) for a module.
 
 With no arguments, inspect defaults to --gomod ./go.mod and runs the pipeline

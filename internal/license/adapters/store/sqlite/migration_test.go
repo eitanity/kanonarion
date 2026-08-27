@@ -22,7 +22,7 @@ func TestMigration6_PurgesTheUnverifiableGeneration(t *testing.T) {
 	// written. Seeding through the store instead would seal each row with the
 	// current shape, which is the one thing the 1.0.0 rows demonstrably are not.
 	all := licensesqlite.Migrations()
-	db, err := sqlitestore.Open(dsn, all[:5])
+	db, err := sqlitestore.Open(dsn, all[:5], sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at migration 5: %v", err)
 	}

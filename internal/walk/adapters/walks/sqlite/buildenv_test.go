@@ -151,7 +151,7 @@ func TestMigration8_BackfillsTheFrameFromTheSealedRecord(t *testing.T) {
 	pre := walkMigrationsBefore(t, 8)
 
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	handle, err := sqlitestore.Open(dsn, pre)
+	handle, err := sqlitestore.Open(dsn, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at the pre-migration schema: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestMigration8_UndecodableRowKeepsAnUnrecordedFrame(t *testing.T) {
 	all := walksqlite.Migrations()
 	pre := walkMigrationsBefore(t, 8)
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	handle, err := sqlitestore.Open(dsn, pre)
+	handle, err := sqlitestore.Open(dsn, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at the pre-migration schema: %v", err)
 	}

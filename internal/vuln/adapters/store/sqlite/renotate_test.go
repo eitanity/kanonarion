@@ -40,7 +40,7 @@ func migrationsBeforeNotation() []sqlitestore.Migration {
 // a test can seed the rows the migration will find.
 func preNotationStore(t *testing.T) sqlitestore.DB {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", migrationsBeforeNotation())
+	db, err := sqlitestore.Open(":memory:", migrationsBeforeNotation(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening the pre-notation store: %v", err)
 	}

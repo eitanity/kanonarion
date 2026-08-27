@@ -262,7 +262,7 @@ var errStalenessBatchReported = errors.New("latest unmeasured: the batched resol
 // the same migrated-and-gated door as every other write path, so an older binary
 // still refuses a newer store here.
 func openStalenessLedger(storeRoot string) (staleports.Ledger, func() error, error) {
-	dbHandle, err := openMigratedStore(filepath.Join(storeRoot, "mirror.db"))
+	dbHandle, err := openMigratedStore(filepath.Join(storeRoot, "mirror.db"), storeOpenIntent())
 	if err != nil {
 		return nil, nil, err
 	}

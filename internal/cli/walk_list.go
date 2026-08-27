@@ -26,8 +26,9 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var latestSuccess bool
 
 	cmd := &cobra.Command{
-		Use:   "walk-list",
-		Short: "List stored walk records",
+		Use:         "walk-list",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "List stored walk records",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if tool && scopeStr != "" {
 				return fmt.Errorf("cannot combine --tool and --scope")

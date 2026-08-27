@@ -16,8 +16,9 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 
 	cmd := &cobra.Command{
-		Use:   "callgraph-list [<module>]",
-		Short: "List extracted call graph records",
+		Use:         "callgraph-list [<module>]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "List extracted call graph records",
 		Example: `  kanonarion callgraph-list
   kanonarion callgraph-list github.com/spf13/cobra`,
 		RunE: func(cmd *cobra.Command, args []string) error {

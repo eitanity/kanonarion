@@ -18,9 +18,10 @@ import (
 
 func newLicenseDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "license-diff <module>@<versionA> <module>@<versionB>",
-		Aliases: []string{"licence-diff"},
-		Short:   "Report license changes between two versions of a module",
+		Use:         "license-diff <module>@<versionA> <module>@<versionB>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Aliases:     []string{"licence-diff"},
+		Short:       "Report license changes between two versions of a module",
 		Long: `license-diff compares two stored license records and reports SPDX changes,
 status changes, added/removed license files, and copyright-holder changes.
 

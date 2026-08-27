@@ -26,6 +26,14 @@ type RegisteredCommand struct {
 	// including the persistent flags inherited from parent commands: a caller
 	// can write --json on any command, and --help on all of them.
 	Flags []string
+	// StoreIntent is what the command declared about the store root: "create"
+	// if running it may bring that directory into existence, "read" if it must
+	// not, "none" if it opens no store at all, and "" if it declared nothing.
+	//
+	// The empty string is reported rather than folded into "read" so a guard
+	// can tell a command that decided from one that never did. At runtime both
+	// refuse — the default is the safe one — but only one of them is a bug.
+	StoreIntent string
 }
 
 // RegisteredCommands returns every command the CLI registers, parents before
@@ -37,8 +45,7 @@ type RegisteredCommand struct {
 // completion protocol's `__complete` is not a command anyone runs.
 func RegisteredCommands() []RegisteredCommand {
 	root := newRootCmd(io.Discard, io.Discard)
-	root.InitDefaultHelpCmd()
-	root.InitDefaultCompletionCmd()
+	installDefaultSubcommands(root)
 
 	var out []RegisteredCommand
 	var walk func(path []string, c *cobra.Command)
@@ -53,11 +60,12 @@ func RegisteredCommands() []RegisteredCommand {
 		sort.Strings(children)
 		if len(path) > 0 {
 			out = append(out, RegisteredCommand{
-				Path:     path,
-				Aliases:  append([]string(nil), c.Aliases...),
-				Runnable: c.Runnable(),
-				Children: children,
-				Flags:    longFlags(c),
+				Path:        path,
+				Aliases:     append([]string(nil), c.Aliases...),
+				Runnable:    c.Runnable(),
+				Children:    children,
+				Flags:       longFlags(c),
+				StoreIntent: c.Annotations[annotationStoreIntent],
 			})
 		}
 		for _, sub := range c.Commands() {

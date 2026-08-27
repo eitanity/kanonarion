@@ -66,7 +66,7 @@ func auditLines(t *testing.T, storeRoot, want string) []map[string]any {
 // one by construction.
 func TestOfflineStdlibAcquirer_WiresTheAssuranceLog(t *testing.T) {
 	storeRoot := t.TempDir()
-	handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), composition.Migrations())
+	handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), composition.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening store: %v", err)
 	}

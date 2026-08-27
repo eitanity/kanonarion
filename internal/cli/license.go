@@ -37,7 +37,8 @@ func newLicenseCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f licenseFlags
 
 	cmd := &cobra.Command{
-		Use: "license <module>@<version>",
+		Use:         "license <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
 		// The docs and the store speak British English; accept both spellings so
 		// neither the documented form nor the SPDX-conventional one is wrong.
 		Aliases: []string{"licence"},
@@ -823,9 +824,10 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 
 	cmd := &cobra.Command{
-		Use:     "license-list",
-		Aliases: []string{"licence-list"},
-		Short:   "List extracted license records",
+		Use:         "license-list",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Aliases:     []string{"licence-list"},
+		Short:       "List extracted license records",
 		// The command filters by flag only. Without this a stray positional was
 		// accepted and silently ignored, so `license-list <module>` printed the
 		// whole store and read as "this module holds every one of these".

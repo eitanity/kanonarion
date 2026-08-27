@@ -708,3 +708,46 @@ func TestDocumentedFlagsResolveToTheSubcommand(t *testing.T) {
 		t.Error("no shipped document writes --event-type on `store ledger` any more: this guard is pinned to a case the documentation no longer contains")
 	}
 }
+
+// TestEveryCommandDeclaresItsStoreIntent fails when a runnable command says
+// nothing about whether running it may create the store root.
+//
+// The declaration is a cobra annotation on the command, so it lives beside the
+// command and a new one carries it without editing a list here. This guard is
+// what makes "beside the command" a rule rather than a habit: a command added
+// with no annotation still fails safe at runtime — the default is read, which
+// refuses a root that is not there — but silently inheriting a default is not
+// the same as having decided, and the difference is exactly what goes wrong
+// when the next writing command is added and refuses to run on a clean machine.
+//
+// Only runnable commands are checked. A grouping command such as `store` is
+// never executed, so cobra returns its help before any PersistentPreRunE, and
+// nothing it could declare would ever be read.
+func TestEveryCommandDeclaresItsStoreIntent(t *testing.T) {
+	valid := map[string]bool{
+		cli.StoreIntentRead:   true,
+		cli.StoreIntentCreate: true,
+		cli.StoreIntentNone:   true,
+	}
+
+	checked := 0
+	for _, c := range cli.RegisteredCommands() {
+		if !c.Runnable {
+			continue
+		}
+		checked++
+		path := strings.Join(c.Path, " ")
+		switch {
+		case c.StoreIntent == "":
+			t.Errorf("`kanonarion %s` declares no store intent: add %q to its cobra Annotations with %s if it writes records into the store root, %s if it reads them, or %s if it opens no store",
+				path, "kanonarion/store-intent", "cli.StoreIntentCreate", "cli.StoreIntentRead", "cli.StoreIntentNone")
+		case !valid[c.StoreIntent]:
+			t.Errorf("`kanonarion %s` declares store intent %q, which this build does not know: it will be treated as %q and refuse a store root that does not exist",
+				path, c.StoreIntent, cli.StoreIntentRead)
+		}
+	}
+
+	if checked == 0 {
+		t.Fatal("the CLI registered no runnable commands: this guard would then hold nothing to anything")
+	}
+}

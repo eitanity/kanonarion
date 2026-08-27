@@ -52,8 +52,9 @@ var tempPrefixes = []string{
 
 func newStoreCleanCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
-		Use:   "clean",
-		Short: "Remove orphaned temp files left by interrupted operations",
+		Use:         "clean",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Remove orphaned temp files left by interrupted operations",
 		Long: `Remove orphaned temporary files left by interrupted kanonarion operations.
 
 Cleans two categories:
@@ -288,8 +289,11 @@ func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 		// Exempt from the rejected-config refusal for the same reason as
 		// `config show`, which it is an alias for: it is the command that
 		// answers what is in force, and it states the rejection itself.
-		Annotations: map[string]string{annotationUsableWithRejectedConfig: "reports the file and what is actually in force"},
-		Args:        cobra.NoArgs,
+		Annotations: map[string]string{
+			annotationUsableWithRejectedConfig: "reports the file and what is actually in force",
+			annotationStoreIntent:              StoreIntentRead,
+		},
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runStoreConfigShow(storeRoot, jsonOut, stdout)
 		},
@@ -487,8 +491,9 @@ type storeInfoResult struct {
 
 func newStoreInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "info",
-		Short: "Report the store schema version and migration status",
+		Use:         "info",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Report the store schema version and migration status",
 		Example: `  kanonarion store info --store-root ~/kanonarion/.mirror
   kanonarion store info --store-root ~/kanonarion/.mirror --json`,
 		Args: cobra.NoArgs,
@@ -586,7 +591,7 @@ func runStoreInfo(storeRoot string, jsonOut bool, stdout, _ io.Writer) error {
 	// is what lets it still answer for a store this binary refuses to operate on:
 	// the command an operator reaches for to diagnose the refusal must not be
 	// subject to it.
-	dbHandle, err := sqlitestore.Open(dbPath, nil)
+	dbHandle, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentRead)
 	if err != nil {
 		return fmt.Errorf("opening store at %s: %w", dbPath, err)
 	}

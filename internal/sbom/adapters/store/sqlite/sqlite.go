@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS sbom_records_cache_idx
 
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 func Open(dsn string) (*Store, error) {
-	db, err := sqlitestore.Open(dsn, Migrations())
+	db, err := sqlitestore.Open(dsn, Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening sbom store: %w", err)
 	}

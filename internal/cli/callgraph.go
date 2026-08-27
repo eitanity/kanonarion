@@ -26,8 +26,9 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 	var localShim bool
 
 	cmd := &cobra.Command{
-		Use:   "callgraph <module>@<version>",
-		Short: "Extract and summarise the call graph of a Go module",
+		Use:         "callgraph <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Extract and summarise the call graph of a Go module",
 		Long: `Extract and summarise the call graph of a Go module.
 
 Cost: one run loads the module's full transitive dependency closure into SSA in

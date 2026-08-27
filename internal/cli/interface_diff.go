@@ -82,8 +82,9 @@ func newInterfaceDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f interfaceDiffFlags
 
 	cmd := &cobra.Command{
-		Use:   "interface-diff <moduleA>@<versionA> <moduleB>@<versionB>",
-		Short: "Report exported API changes between two versions of a module",
+		Use:         "interface-diff <moduleA>@<versionA> <moduleB>@<versionB>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Report exported API changes between two versions of a module",
 		Long: `interface-diff compares two stored interface records and reports the exported
 declarations added, removed and changed between them.
 

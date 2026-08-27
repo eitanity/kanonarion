@@ -170,8 +170,9 @@ func newReachabilityCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f reachabilityFlags
 
 	cmd := &cobra.Command{
-		Use:   "reachability (<module>@<version> --vuln <id> | --local <dir>)",
-		Short: "Report whether a CVE is reachable in a module (stored query) or the local working tree",
+		Use:         "reachability (<module>@<version> --vuln <id> | --local <dir>)",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Report whether a CVE is reachable in a module (stored query) or the local working tree",
 		Long: `reachability has two modes.
 
 Stored-module query (read-only): 'reachability <module>@<version> --vuln <id>'

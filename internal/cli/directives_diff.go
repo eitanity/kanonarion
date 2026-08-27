@@ -85,8 +85,9 @@ func newDirectivesListCmd(stdout, stderr io.Writer) *cobra.Command {
 		offset    int
 	)
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List recent directive scans for a project",
+		Use:         "list",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "List recent directive scans for a project",
 		Long: `list prints the directive scan history for a project, newest first.
 
 The project module path is inferred from ./go.mod (or --gomod) when --project
@@ -303,9 +304,10 @@ func directiveScanMiss(ctx context.Context, ctr *Container, scanID string, stder
 
 func newDirectivesShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "show <scan-id>",
-		Short: "Show a specific directive scan by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:         "show <scan-id>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Show a specific directive scan by ID",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDirectivesShow(cmd.Context(), args[0], stdout, stderr)
 		},
@@ -355,8 +357,9 @@ func directivesShowWith(ctx context.Context, ctr *Container, scanID string, stdo
 
 func newDirectivesDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "diff <scan-id-a> <scan-id-b>",
-		Short: "Compare two directive scans of the same project",
+		Use:         "diff <scan-id-a> <scan-id-b>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Compare two directive scans of the same project",
 		Long: `diff compares two directive scans of the same project and reports
 directives added, removed, or reclassified between the two scans. Mirrors
 vuln-scan-diff. scan-id-a is the baseline (older); scan-id-b is the newer

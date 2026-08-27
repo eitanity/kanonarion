@@ -238,7 +238,7 @@ func TestMigration9_BackfillsTheToolchainFromTheSealedRecord(t *testing.T) {
 	pre := walkMigrationsBefore(t, 9)
 
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	handle, err := sqlitestore.Open(dsn, pre)
+	handle, err := sqlitestore.Open(dsn, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at the pre-migration schema: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestMigration9_DoesNotDeleteWalks(t *testing.T) {
 	pre := walkMigrationsBefore(t, 9)
 
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	handle, err := sqlitestore.Open(dsn, pre)
+	handle, err := sqlitestore.Open(dsn, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at the pre-migration schema: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestMigration9_UndecodableRowKeepsAnUnrecordedToolchain(t *testing.T) {
 	all := walksqlite.Migrations()
 	pre := walkMigrationsBefore(t, 9)
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	handle, err := sqlitestore.Open(dsn, pre)
+	handle, err := sqlitestore.Open(dsn, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at the pre-migration schema: %v", err)
 	}

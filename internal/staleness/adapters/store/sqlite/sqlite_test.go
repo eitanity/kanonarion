@@ -12,7 +12,7 @@ import (
 
 func newStore(t *testing.T) *stalesqlite.Store {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", stalesqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", stalesqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestMigration2_MovesASameMajorAnswerOutOfTheNewerMajorColumns(t *testing.T)
 	// Open at version 1 only, write the rows the way that shape wrote them, then
 	// apply version 2 over the top.
 	v1 := stalesqlite.Migrations()[:1]
-	db, err := sqlitestore.Open(":memory:", v1)
+	db, err := sqlitestore.Open(":memory:", v1, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestMigration3_ExistingRowsAreUncheckedNotUndeprecated(t *testing.T) {
 	if len(all) < 3 {
 		t.Fatalf("expected at least 3 staleness migrations, got %d", len(all))
 	}
-	db, err := sqlitestore.Open(":memory:", all[:2])
+	db, err := sqlitestore.Open(":memory:", all[:2], sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

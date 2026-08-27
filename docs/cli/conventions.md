@@ -482,6 +482,30 @@ All state lives under `--store-root` (default `~/.kanonarion`):
   blobs/          # fetched module ZIP content
 ```
 
+### A store root that does not exist
+
+Commands that write records - `fetch`, `walk`, `extract`, `inspect`, `audit`,
+`callgraph`, `local`, `license`, `interface`, `examples`, `directives`,
+`godebug`, `vendor`, `fips`, `sbom`, `latest`, `vuln-scan`, `vuln-scan-rescan`,
+`config init`, `config set` - create the store root if it is not there. A first
+run on a clean machine needs no preparatory step.
+
+Every other command reads, and a read does not create the store it reads from.
+Point one at a root that does not exist and it refuses with exit code **20**,
+naming the path it looked at:
+
+```
+no store at ./typo-store
+  this command reads recorded evidence; it does not create a store, so nothing was written there
+  to create one and record the module set: kanonarion inspect --store-root ./typo-store
+```
+
+This is what a mistyped `--store-root` looks like. Without it the read would
+build an empty store at the typo and answer truthfully about *that* store -
+"the store holds no scan run at all" - which is the wrong answer to the question
+asked. Note that `--store-root` takes the next token as its value, so
+`--store-root --help` makes `--help` the store root and earns the same refusal.
+
 ---
 
 ## Exit codes
@@ -499,7 +523,7 @@ and repeated in that command's `--help`.
 | 4 | NotFound | A record requested by ID or coordinate does not exist. The message names the command that produces it |
 | 5 | Policy | A governance or publication gate fired on real findings. The scan succeeded and the finding is genuine |
 | 10 | Integrity | Recorded evidence is in doubt: a record failed its content-hash check, or two records for one coordinate diverge. Every domain that stores records raises it — walk, fetch, extraction run, call graph, interface, licence, example, vulnerability, advisory snapshot, stdlib facts — and the code does not depend on which one did |
-| 20 | Config | The command never got as far as an answer: malformed argument, unparseable coordinate, missing toolchain, absent policy *file*, a `config.yaml` the loader rejected, or a store whose schema is newer than this binary |
+| 20 | Config | The command never got as far as an answer: malformed argument, unparseable coordinate, missing toolchain, absent policy *file*, a store root that does not exist under a command that only reads, a `config.yaml` the loader rejected, or a store whose schema is newer than this binary |
 
 The distinction that matters to an automation caller is **4 vs 5 vs 20**. A 4
 means the request was well-formed and the named remedy command fixes it. A 5

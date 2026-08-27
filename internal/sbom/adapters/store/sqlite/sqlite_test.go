@@ -225,7 +225,7 @@ func TestPutSBOMRecordLicensesIncompleteRoundTrip(t *testing.T) {
 
 // New wires a raw database handle into a usable store.
 func TestNewWrapsRawHandle(t *testing.T) {
-	db, err := sqlitestore.Open(":memory:", sbomstore.Migrations())
+	db, err := sqlitestore.Open(":memory:", sbomstore.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("sqlitestore.Open: %v", err)
 	}

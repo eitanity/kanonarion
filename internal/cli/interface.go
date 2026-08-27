@@ -27,8 +27,9 @@ func newInterfaceCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f ifaceFlags
 
 	cmd := &cobra.Command{
-		Use:   "interface <module>@<version>",
-		Short: "Extract and summarise the public API of a Go module",
+		Use:         "interface <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Extract and summarise the public API of a Go module",
 		Example: `  kanonarion interface github.com/spf13/cobra@v1.8.1
   kanonarion interface github.com/spf13/cobra@v1.8.1 --json
   kanonarion interface github.com/spf13/cobra@v1.8.1 --force`,
@@ -195,8 +196,9 @@ func newInterfaceShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var pkgFilter, symbolFilter string
 
 	cmd := &cobra.Command{
-		Use:   "interface-show <module>@<version>",
-		Short: "Show the full interface record for a module",
+		Use:         "interface-show <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Show the full interface record for a module",
 		Example: `  kanonarion interface-show github.com/spf13/cobra@v1.8.1
   kanonarion interface-show github.com/spf13/cobra@v1.8.1 --package github.com/spf13/cobra
   kanonarion interface-show github.com/spf13/cobra@v1.8.1 --symbol Command`,
@@ -309,8 +311,9 @@ func newSymbolFindCmd(stdout, stderr io.Writer) *cobra.Command {
 	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
-		Use:   "symbol-find <name>",
-		Short: "Find all modules that export a symbol with the given name",
+		Use:         "symbol-find <name>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Find all modules that export a symbol with the given name",
 		Example: `  kanonarion symbol-find Client
   kanonarion symbol-find Marshal
   kanonarion symbol-find Marshal --json
@@ -464,8 +467,9 @@ func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 
 	cmd := &cobra.Command{
-		Use:   "interface-list [<module>@<version>]",
-		Short: "List interface records, or packages within a specific module",
+		Use:         "interface-list [<module>@<version>]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "List interface records, or packages within a specific module",
 		Example: `  kanonarion interface-list
   kanonarion interface-list github.com/spf13/cobra@v1.8.1
   kanonarion interface-list github.com/spf13/cobra@v1.8.1 --json`,

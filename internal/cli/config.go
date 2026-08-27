@@ -50,8 +50,12 @@ func newConfigInitCmd(stdout io.Writer) *cobra.Command {
 		// Exempt from the rejected-config refusal: it writes the commented
 		// template, which is where an operator reads the legal values for the
 		// key that was rejected. It never consults the loaded configuration.
-		Annotations: map[string]string{annotationUsableWithRejectedConfig: "creates or completes the config file"},
-		Args:        cobra.NoArgs,
+		Annotations: map[string]string{
+			annotationUsableWithRejectedConfig: "creates or completes the config file",
+			// Writes config.yaml into the store root, so it may make the root.
+			annotationStoreIntent: StoreIntentCreate,
+		},
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runConfigInit(storeRoot, stdout)
 		},
@@ -89,8 +93,11 @@ func newConfigShowCmd(stdout io.Writer) *cobra.Command {
 		// whole job is answering "what is in force", so it is the one that must
 		// keep working when the answer is "not what your file says". It states
 		// the rejection in its own output.
-		Annotations: map[string]string{annotationUsableWithRejectedConfig: "reports the file and what is actually in force"},
-		Args:        cobra.NoArgs,
+		Annotations: map[string]string{
+			annotationUsableWithRejectedConfig: "reports the file and what is actually in force",
+			annotationStoreIntent:              StoreIntentRead,
+		},
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runStoreConfigShow(storeRoot, jsonOut, stdout)
 		},
@@ -113,8 +120,11 @@ func newConfigGetCmd(stdout io.Writer) *cobra.Command {
 		// force, which with a rejected file is the built-in default. That is a
 		// true answer, and the rejection is stated on stderr beside it, so an
 		// operator can read the value the rejection left them with.
-		Annotations: map[string]string{annotationUsableWithRejectedConfig: "reports one value in force"},
-		Args:        cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			annotationUsableWithRejectedConfig: "reports one value in force",
+			annotationStoreIntent:              StoreIntentRead,
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runConfigGet(activeConfig, args[0], stdout)
 		},
@@ -213,8 +223,12 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
 		// the YAML document directly and never consults the loaded
 		// configuration, so refusing it would make a rejected file unfixable by
 		// the tool that wrote it.
-		Annotations: map[string]string{annotationUsableWithRejectedConfig: "repairs the config file"},
-		Args:        cobra.ExactArgs(2),
+		Annotations: map[string]string{
+			annotationUsableWithRejectedConfig: "repairs the config file",
+			// Writes config.yaml into the store root, so it may make the root.
+			annotationStoreIntent: StoreIntentCreate,
+		},
+		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runConfigSet(storeRoot, args[0], args[1], stdout)
 		},

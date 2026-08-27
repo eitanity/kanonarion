@@ -63,8 +63,9 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f walkFlags
 
 	cmd := &cobra.Command{
-		Use:   "walk <module@version>",
-		Short: "Walk the dependency graph for a module and persist the walk record",
+		Use:         "walk <module@version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Walk the dependency graph for a module and persist the walk record",
 		Example: `  kanonarion walk github.com/spf13/cobra@v1.8.1
   kanonarion walk github.com/spf13/cobra@v1.8.1 --json
   kanonarion walk github.com/spf13/cobra@v1.8.1 --force --store-root /var/mirror

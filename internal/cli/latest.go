@@ -29,8 +29,9 @@ func newLatestCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f latestFlags
 
 	cmd := &cobra.Command{
-		Use:   "latest [<module>...]",
-		Short: "Resolve the latest published version of one or more modules",
+		Use:         "latest [<module>...]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Resolve the latest published version of one or more modules",
 		Long: `latest queries the Go module proxy for the latest published version of one or
 more modules.
 

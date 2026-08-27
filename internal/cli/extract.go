@@ -26,9 +26,10 @@ type extractFlags struct {
 func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f extractFlags
 	cmd := &cobra.Command{
-		Use:   "extract [walk-id]",
-		Short: "Run extraction stages for all modules in a walk",
-		Args:  cobra.ExactArgs(1),
+		Use:         "extract [walk-id]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Run extraction stages for all modules in a walk",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExtract(cmd.Context(), args[0], f, stdout, stderr)
 		},
@@ -175,9 +176,10 @@ func printExtractionFailures(w io.Writer, run domain.ExtractionRun) {
 
 func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "show [run-id]",
-		Short: "Show details of an extraction run",
-		Args:  cobra.ExactArgs(1),
+		Use:         "show [run-id]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Show details of an extraction run",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -219,8 +221,9 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List extraction runs",
+		Use:         "list",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "List extraction runs",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)

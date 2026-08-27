@@ -81,13 +81,48 @@ func (d *db) Close() error {
 	return nil
 }
 
-// Open opens (or creates) the SQLite database at dsn and runs migrations.
-// Use ":memory:" for tests.
-func Open(dsn string, migrations []Migration) (DB, error) {
+// Intent says whether Open may bring the database's containing directory into
+// existence. It is a parameter rather than a default because a caller that
+// creates a store and a caller that reads one want opposite things from the
+// same call, and the one that reads has no way to say so if Open always
+// creates: a mistyped path then becomes a new, empty, entirely truthful store.
+//
+// The zero value is IntentRead. A caller that says nothing gets the refusal.
+type Intent int
+
+const (
+	// IntentRead opens a database whose directory must already exist. A
+	// missing directory is refused, not created.
+	IntentRead Intent = iota
+	// IntentCreate creates the directory if it is absent, for a caller that is
+	// about to write records into it.
+	IntentCreate
+)
+
+// ErrDirMissing is the refusal from an IntentRead open whose directory is not
+// there. It is a sentinel so a caller can tell "nothing has been recorded here
+// yet" from a corrupt or unreadable store and name its own remedy.
+var ErrDirMissing = errors.New("database directory does not exist")
+
+// Open opens the SQLite database at dsn and runs migrations.
+//
+// intent decides what happens when the containing directory is absent:
+// IntentCreate makes it, IntentRead refuses with ErrDirMissing. Only the
+// directory is at issue — SQLite creates the file itself either way.
+//
+// Use ":memory:" for tests; intent is not consulted for an in-memory DSN.
+func Open(dsn string, migrations []Migration, intent Intent) (DB, error) {
 	if dsn != ":memory:" && !strings.HasPrefix(dsn, "file::memory:") {
 		dir := filepath.Dir(dsn)
-		if err := os.MkdirAll(dir, 0750); err != nil {
-			return nil, fmt.Errorf("creating directory for sqlite: %w", err)
+		if intent == IntentCreate {
+			if err := os.MkdirAll(dir, 0750); err != nil {
+				return nil, fmt.Errorf("creating directory for sqlite: %w", err)
+			}
+		} else if _, err := os.Stat(dir); err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("%w: %s", ErrDirMissing, dir)
+			}
+			return nil, fmt.Errorf("checking directory for sqlite: %w", err)
 		}
 	}
 

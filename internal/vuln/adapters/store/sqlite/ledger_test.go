@@ -174,7 +174,7 @@ func TestMigration14_CarriesExistingRowsInAsTheFirstGeneration(t *testing.T) {
 			upTo13 = append(upTo13, m)
 		}
 	}
-	db, err := sqlitestore.Open(dsn, upTo13)
+	db, err := sqlitestore.Open(dsn, upTo13, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening store at migration 13: %v", err)
 	}
@@ -200,7 +200,7 @@ INSERT INTO vulnerability_records (
 		t.Fatalf("closing at migration 13: %v", err)
 	}
 
-	migrated, err := sqlitestore.Open(dsn, all)
+	migrated, err := sqlitestore.Open(dsn, all, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("applying migration 14: %v", err)
 	}

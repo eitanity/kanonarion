@@ -258,7 +258,7 @@ func buildFixtureStore(t *testing.T) string {
 	migrations = append(migrations, licsqlite.Migrations()...)
 	migrations = append(migrations, stalesqlite.Migrations()...)
 
-	db, err := sqlitestore.Open(dbPath, migrations)
+	db, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening fixture store: %v", err)
 	}

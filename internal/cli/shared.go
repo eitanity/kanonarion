@@ -30,6 +30,7 @@ import (
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licenceports "github.com/eitanity/kanonarion/internal/license/ports"
+	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
@@ -594,6 +595,9 @@ func resetInvocationState() {
 	// The built-in defaults, which is what a store with no config file loads —
 	// never the previous store's policy.
 	activeConfig, activeConfigErr = domain.DefaultConfig(), nil
+	// The safe default, so an invocation that never reaches PersistentPreRunE
+	// cannot inherit the last one's permission to create a store.
+	storeIntent = StoreIntentRead
 }
 
 // storeRoot is the effective store directory for the current invocation.
@@ -648,6 +652,113 @@ func usableWithRejectedConfig(cmd *cobra.Command) bool {
 	}
 	_, ok := cmd.Annotations[annotationUsableWithRejectedConfig]
 	return ok
+}
+
+// annotationStoreIntent is what a command says about the store root: whether
+// running it may bring that directory into existence.
+//
+// It is declared per command, next to the command, for the same reason the
+// rejected-config exemption is: the decision belongs where a reader of the
+// command can see it, and adding a command must not mean editing a list in a
+// second file.
+//
+// The default — no annotation, or one this build does not recognise — is
+// StoreIntentRead, which refuses. A command added without a decision then
+// fails safe instead of silently minting a store under whatever path the
+// caller typed.
+const annotationStoreIntent = "kanonarion/store-intent"
+
+// The values annotationStoreIntent takes. A command declares exactly one.
+const (
+	// StoreIntentRead answers from records some other run wrote. It must not
+	// create the store root: a root created by a read answers "nothing
+	// recorded here", which is true of the empty store it just made and false
+	// about the store the caller meant.
+	//
+	// A command that writes but cannot be the first command against a store —
+	// `store clean` has nothing to clean, and every extract needs a walk —
+	// declares read as well. What the value governs is creation, not writing.
+	StoreIntentRead = "read"
+	// StoreIntentCreate writes records, so it creates the root when it is
+	// absent. A first fetch, walk, extract or inspect on a clean machine must
+	// not need a preparatory step.
+	StoreIntentCreate = "create"
+	// StoreIntentNone touches no store at all, so neither answer applies:
+	// refusing it for a store root it never opens would be a refusal with no
+	// subject. Only the commands that genuinely open nothing qualify.
+	StoreIntentNone = "none"
+)
+
+// storeIntentOf returns the intent cmd declared, or StoreIntentRead when it
+// declared nothing or declared a value this build does not know.
+func storeIntentOf(cmd *cobra.Command) string {
+	if cmd == nil {
+		return StoreIntentRead
+	}
+	switch v := cmd.Annotations[annotationStoreIntent]; v {
+	case StoreIntentCreate, StoreIntentNone:
+		return v
+	default:
+		return StoreIntentRead
+	}
+}
+
+// storeIntent is the intent the command running in this invocation declared,
+// resolved in root's PersistentPreRunE once and read by every store-opening
+// seam below it. It lives alongside storeRoot and activeConfig because it is
+// the same kind of fact: one property of this invocation, resolved from the
+// command line before any command body runs.
+//
+// It is derived from the annotation rather than passed at each NewContainer
+// call so there is one declaration per command and no second place for it to
+// disagree with itself.
+var storeIntent = StoreIntentRead
+
+// storeOpenIntent maps this invocation's declared intent onto what the sqlite
+// layer is allowed to do about a missing directory.
+func storeOpenIntent() sqlitestore.Intent {
+	if storeIntent == StoreIntentCreate {
+		return sqlitestore.IntentCreate
+	}
+	return sqlitestore.IntentRead
+}
+
+// missingStoreError is a read aimed at a store root that is not there. It names
+// the path it looked at — the whole failure mode is a path the caller did not
+// mean — and the command that would create a store there.
+type missingStoreError struct {
+	root string
+}
+
+func (e *missingStoreError) Error() string {
+	return fmt.Sprintf("no store at %s\n"+
+		"  this command reads recorded evidence; it does not create a store, so nothing was written there\n"+
+		"  to create one and record the module set: kanonarion inspect --store-root %s",
+		e.root, e.root)
+}
+
+// requireStoreRoot refuses an invocation whose store root does not exist, for
+// every command that did not declare it creates one.
+//
+// It runs before anything opens the store, so the refusal costs no directory:
+// the defect it closes is a read that answers from a store it made a
+// millisecond earlier, and a check that fires after the open would still leave
+// the directory behind.
+func requireStoreRoot(root string) error {
+	if storeIntent == StoreIntentCreate || storeIntent == StoreIntentNone {
+		return nil
+	}
+	info, err := os.Stat(root)
+	if err == nil {
+		if !info.IsDir() {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf("store root %s is not a directory", root)}
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("checking store root %s: %v", root, err)}
+	}
+	return &exitError{code: ExitConfig, msg: (&missingStoreError{root: root}).Error()}
 }
 
 // rejectedConfigError is a config file that exists but cannot be turned into a

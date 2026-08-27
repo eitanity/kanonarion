@@ -13,7 +13,7 @@ import (
 
 func openTestStore(t *testing.T) *godebugstore.Store {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", godebugstore.Migrations())
+	db, err := sqlitestore.Open(":memory:", godebugstore.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
