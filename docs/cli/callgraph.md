@@ -46,6 +46,41 @@ verdict: UNRESOLVED — callers of pkg.(*T).Do cannot be confirmed absent:
   test-scope-unmeasured at pkg.(*T).Do (_test.go declarations were not analysed for this module)
 ```
 
+## What one run costs
+
+One `callgraph` run loads the module's **full transitive dependency closure**
+into SSA in a single process. That closure is what the run costs, not the
+module's own source size: a small module that pulls a large one in costs what
+the large one costs.
+
+The figures below come from one developer machine — 32 cores, 61 GiB of RAM —
+over this project's own dependency set, each module fetched first and then
+analysed with `--force` so nothing was served from the store.
+
+| module | peak RSS |
+|---|---|
+| `modernc.org/sqlite@v1.56.0` | 1.22 GB |
+| `modernc.org/sqlite@v1.53.0` | 1.21 GB |
+| `modernc.org/libc@v1.75.3` | 0.99 GB |
+| `modernc.org/libc@v1.73.5` | 0.99 GB |
+| `github.com/klauspost/compress@v1.19.2` | 0.64 GB |
+| `github.com/rogpeppe/go-internal@v1.16.0` | 0.41 GB |
+| `github.com/oklog/ulid/v2@v2.1.2` | 0.23 GB |
+
+`modernc.org/sqlite` is the heaviest module in this set — it pulls
+`modernc.org/libc` into its closure — and the run measured **5.96 s and 1.22 GB**
+for 8,045 nodes and 186,649 edges. `github.com/oklog/ulid/v2`, whose closure is
+small, peaks at about a fifth of that. One module is a gigabyte-scale,
+seconds-scale operation; treat these as orders of magnitude rather than as
+constants, because a different toolchain or a changed closure moves them.
+
+The whole-walk figure is a different question with a different answer.
+[`extract --stages callgraph`](extract.md#callgraph-subprocess-isolation) runs
+this analysis in `--workers` concurrent subprocesses, so its peak is roughly
+`--workers` times the largest module's peak, and that is where the
+out-of-memory risk lives. `--workers` is the control: lowering it lowers the
+peak proportionally.
+
 ## Calls and references
 
 Two things can connect a caller to a function, and they are not the same fact.

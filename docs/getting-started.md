@@ -188,10 +188,12 @@ Cost grows with the number of dependencies, and it grows fast. One large project
 (velociraptor, 594 modules) took about 45 minutes for its first full run. Plan
 for your own dependency count, not for the numbers above.
 
-**Memory.** The first run needs a lot of memory. On this project the peak was
-about 2.5 GB. The vulnerability scan uses the most, because `govulncheck`
-type-checks every module. Budget 3-4 GB for a project this size. The 594-module
-project peaked at about 13 GB. If the machine runs out of memory, kanonarion
+**Memory.** kanonarion needs a lot of memory. On this project, a warm re-run
+peaked at 3,679 MB. A first run does more work than that, so treat 3,679 MB as a
+floor and not as a budget. The vulnerability scan uses the most, because
+`govulncheck` type-checks every module. The figure also depends on the machine:
+kanonarion analyses one module per core at once, and this one has 32 cores.
+Fewer cores means less memory. If the machine runs out of memory, kanonarion
 marks that module `Unscannable` and carries on. It never reports it as clean.
 
 **Progress.** During the walk and extract stages, `inspect` prints one progress
@@ -531,13 +533,15 @@ directory that contains go.mod.
 Pass `--json` and parse the output, with one exception noted below.
 
 One-time population. This is network-bound and memory-hungry. It measured
-~16 minutes and ~2.5 GB peak on a 20-module project. Both numbers grow fast
-with dependency count: a 594-module project measured ~45 minutes and ~13 GB
-peak. Set your timeout and memory limit from THIS project's dependency count,
-generously, for example 30+ minutes, and do NOT kill the run. It prints a
-progress line to stderr about every 20 seconds during the walk and extract
-stages, such as `walk progress: 142 modules fetched (3m20s elapsed)`. A gap
-between those lines is normal, not a hang. Read stdout for the result. Use
+~16 minutes on a 20-module project, whose warm re-run peaked at 3,679 MB on a
+32-core machine; a first run does more. Both numbers grow fast with dependency
+count: a 594-module project measured ~45 minutes. Memory also grows with core
+count, because kanonarion analyses one module per core at once. Set your timeout
+and memory limit from THIS project's dependency count, generously, for example
+30+ minutes, and do NOT kill the run. It prints a progress line to stderr about
+every 20 seconds during the walk and extract stages, such as
+`walk progress: 142 modules fetched (3m20s elapsed)`. A gap between those lines
+is normal, not a hang. Read stdout for the result. Use
 `--no-progress` to silence the heartbeat, or `--log-level info` for per-module
 detail. A re-run on a warm store takes seconds.
 

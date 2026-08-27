@@ -59,8 +59,9 @@ Exit codes:
   0  SBOM generated, every component carrying a licence identity
   1  SBOM generated, but one or more components carry no licence identity —
      no licence record was found, or the record found identified no SPDX
-     licence. The document IS written and names them; a licence-less SBOM
-     must never pass as complete
+     licence. The document IS written, names them, and names the command
+     that supplies each missing record; a licence-less SBOM must never pass
+     as complete
   4  the walk or package scope named does not exist
   20 bad invocation (missing walk id and --package, unparseable coordinate,
      unparseable --generated-at, ...)`,
@@ -297,8 +298,13 @@ func parseGeneratedAt(v string) (time.Time, error) {
 }
 
 // undeterminedLicenceSummary names the components of a generated document that
-// carry no licence identity, so the operator learns which they are without
+// carry no licence identity and the command that produces the record each one
+// lacks, so the operator learns which they are, and what to run next, without
 // opening the artefact.
+//
+// The remedy differs by component — the walk root's own licence and a
+// dependency's come from different commands — so it is composed per coordinate
+// from the shared diagnostic rather than stated as one fixed sentence here.
 //
 // It reads the document rather than the record because the document is the thing
 // being judged and is present on every path, cached included. A document this
@@ -327,26 +333,38 @@ func undeterminedLicenceSummary(content []byte) string {
 	// module carries that module as both, and counting it twice would put the
 	// message at odds with the count the document itself states.
 	var names []string
+	var missing []coordinate.ModuleCoordinate
 	seen := make(map[string]struct{}, len(doc.Components))
-	add := func(coord, suffix string) {
+	add := func(path, version, suffix string) {
+		coord := path + "@" + version
 		if _, dup := seen[coord]; dup {
 			return
 		}
 		seen[coord] = struct{}{}
 		names = append(names, coord+suffix)
+		// A component the coordinate rules refuse is still named above: it is
+		// in the document either way, and the remedy is the one thing that
+		// cannot be stated for a coordinate nothing can be run against.
+		if c, cerr := coordinate.NewModuleCoordinate(path, version); cerr == nil {
+			missing = append(missing, c)
+		}
 	}
 	if m := doc.Metadata.Component; m.Name != "" && len(m.Licenses) == 0 {
-		add(m.Name+"@"+m.Version, " (the document's subject)")
+		add(m.Name, m.Version, " (the document's subject)")
 	}
 	for _, c := range doc.Components {
 		if len(c.Licenses) == 0 {
-			add(c.Name+"@"+c.Version, "")
+			add(c.Name, c.Version, "")
 		}
 	}
 	if len(names) == 0 {
 		return "one or more components carry no licence identity"
 	}
-	return fmt.Sprintf("%d component(s) with no licence identity: %s", len(names), strings.Join(names, ", "))
+	summary := fmt.Sprintf("%d component(s) with no licence identity: %s", len(names), strings.Join(names, ", "))
+	if remedy := missingLicenceRecordRemedies(missing); remedy != "" {
+		summary += " — " + remedy
+	}
+	return summary
 }
 
 func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout, stderr io.Writer) error {

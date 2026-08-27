@@ -159,13 +159,10 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 		// say what is missing and which command produces it.
 		switch {
 		case errors.Is(err, licapp.ErrRootLicenceNotAnalysed):
-			hint := fmt.Sprintf("run 'kanonarion license %s' first, or pass --target", coord)
-			if coord.IsLocal() {
-				hint = "run 'kanonarion walk --gomod ./go.mod --analyse-root' then 'kanonarion extract <walk-id>' to analyse the project's own licence, or pass --target"
-			}
 			return &exitError{
 				code: ExitNotFound,
-				msg:  fmt.Sprintf("no licence record for root %s — %s", coord, hint),
+				msg: fmt.Sprintf("no licence record for root %s — %s, or pass --target",
+					coord, missingLicenceRecordRemedy(coord)),
 			}
 		case errors.Is(err, licapp.ErrRootLicenceNoSPDX):
 			return &exitError{

@@ -28,6 +28,13 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "callgraph <module>@<version>",
 		Short: "Extract and summarise the call graph of a Go module",
+		Long: `Extract and summarise the call graph of a Go module.
+
+Cost: one run loads the module's full transitive dependency closure into SSA in
+a single process. Across this project's own dependency set that measured
+0.23-1.22 GB per module on a 32-core, 61 GiB machine, the heaviest of them
+taking 5.96 s and 1.22 GB. Running the same analysis over a whole walk is a
+different budget: see 'kanonarion extract --help'.`,
 		Example: `  kanonarion callgraph github.com/spf13/cobra@v1.8.1
   kanonarion callgraph github.com/spf13/cobra@v1.8.1 --json
   kanonarion callgraph github.com/spf13/cobra@v1.8.1 --force

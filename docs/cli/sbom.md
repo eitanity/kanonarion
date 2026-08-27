@@ -387,8 +387,25 @@ stderr:
 
 ```
 sbom generated with undetermined licences: 2 component(s) with no licence
-identity: github.com/dgryski/dgoogauth@v0.0.0-20190221195224-5a805980a5f3, ...
+identity: github.com/dgryski/dgoogauth@v0.0.0-20190221195224-5a805980a5f3, ... —
+run 'kanonarion license github.com/dgryski/dgoogauth@v0.0.0-20190221195224-5a805980a5f3',
+and the same for the other 1 component(s) named
 ```
+
+The message ends with the command that produces each missing record, and the
+command depends on the component. A **dependency** is analysed by coordinate,
+as above. The document's **subject** — the walk root's own licence — is not
+fetchable, so it is analysed by re-walking the project:
+
+```
+sbom generated with undetermined licences: 1 component(s) with no licence
+identity: github.com/eitanity/kanonarion@local (the document's subject) — run
+'kanonarion walk --gomod ./go.mod --analyse-root' then
+'kanonarion extract <walk-id>' to analyse the project's own licence
+```
+
+Both are the same sentence `license-compat` prints for the same missing record.
+When a document is missing both kinds, both remedies are stated.
 
 The components are named from the document that was written, so the message is
 the same whether the document was generated now or served from the cache.
