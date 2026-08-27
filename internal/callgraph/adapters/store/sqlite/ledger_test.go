@@ -29,6 +29,11 @@ type ledgerSpec struct {
 	// different satellite rows.
 	callee string
 	status domain2.CallGraphStatus
+	// nodeCount and edgeCount override the counts the generation STATES about
+	// itself, which is a column and need not agree with the node and edge
+	// collections above. Zero means the default of one each.
+	nodeCount int
+	edgeCount int
 }
 
 func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
@@ -49,6 +54,13 @@ func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
 	if status == domain2.CallGraphStatusUnknown {
 		status = domain2.CallGraphStatusExtracted
 	}
+	nodeCount, edgeCount := spec.nodeCount, spec.edgeCount
+	if nodeCount == 0 {
+		nodeCount = 1
+	}
+	if edgeCount == 0 {
+		edgeCount = 1
+	}
 	r := domain2.CallGraphRecord{
 		SchemaVersion:  domain2.CallGraphSchemaVersion,
 		Ecosystem:      fetchdomain.EcosystemGo,
@@ -68,8 +80,8 @@ func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
 			},
 		},
 		OverallStatus:      status,
-		NodeCount:          1,
-		EdgeCount:          1,
+		NodeCount:          nodeCount,
+		EdgeCount:          edgeCount,
 		ExtractedAt:        at,
 		PipelineVersion:    testPipeline,
 		ArtefactIdentity:   spec.artefact,

@@ -525,10 +525,12 @@ completeness**, offered the **same build list**, that disagree about the graph
 (the narrow case that indicates non-determinism in the analyser). The toolchain
 check runs first and across build lists, because the two axes are independent —
 generations offered different build lists are never compared with each other, so
-a toolchain difference between them would otherwise go unreported. A disputed module is reported on its
-own row in `callgraph-list` rather than failing the whole listing. Every such
-refusal prints the commands that address it — a refusal the append-only ledger
-makes permanent and that names no route out is a dead end.
+a toolchain difference between them would otherwise go unreported. A conflict is
+raised by a **read** of the coordinate, so `callgraph-list` neither reports one
+nor fails over one: it does not compose, and states only whether the
+coordinate's generations agree with each other on what they say about
+themselves. Every such refusal prints the commands that address it — a refusal the
+append-only ledger makes permanent and that names no route out is a dead end.
 
 The graph comparison is over the **graph** and nothing else: the node, edge,
 interface and implementation collections and the counts stated with them. Where
@@ -569,6 +571,52 @@ the graphs agree and only the inputs differ, it says so.
 List modules with extracted call graph records, newest first. The optional
 `<module>` argument filters to one module path, matched for **exact equality** —
 `github.com/spf13/cobra` matches, `github.com/spf13` does not.
+
+**One line per coordinate**, not per stored record: a module re-analysed
+sixty-five times occupies one row. The listing reports what the ledger holds and
+does not compose it, so where a coordinate holds more than one generation the
+row says how many and names the generation its counts were read off — the most
+recently extracted one:
+
+```
+$ kanonarion callgraph-list
+golang.org/x/text@v0.17.0        0.5.0  Extracted  5916 nodes 48874 edges
+golang.org/x/net@v0.33.0         0.5.0  Extracted  4820 nodes 40116 edges  [2 generations; counts from 2026-08-23T23:56:37Z]
+golang.org/x/tools@v0.49.0       0.5.0  2 generations state different counts, status or completeness; run: kanonarion callgraph-show golang.org/x/tools@v0.49.0 --history
+```
+
+Those counts belong to the generation the row names, which is **not**
+necessarily the one a read of that coordinate serves: `callgraph-show`,
+`callers`, `callees` and `implementers` compose, and composition ranks by
+completeness before recency, so it can serve an older generation — or refuse,
+where two generations conflict. Use
+[`callgraph-show <module>@<version>`](#callgraph-show) for the served answer and
+`--history` for each generation in full, with its toolchain, its origin and a
+`*` on the one being served.
+
+Where the generations of a coordinate do **not** all state the same node count,
+edge count, status and completeness, the row prints no counts at all and says
+so. Any it printed would be one generation's, and which generation a read serves
+is composition's decision — one this listing does not make. Note what the line
+does and does not claim: it is read from the record table's columns, so it
+proves the generations disagree with **one another**, and says nothing about
+whether the coordinate composes. Generations stating different counts can still
+compose to a served answer, and generations stating identical counts can still
+conflict on their contents. `callgraph-show` is what settles that.
+
+In JSON, a coordinate with one generation carries `module`, `version`,
+`pipeline_version`, `status`, `node_count`, `edge_count` and
+`generations_differ`. One with several carries those plus `counts_from` — the
+timestamp of the generation the top-level counts came from — and a `generations`
+array of `extracted_at`, `status`, `node_count`, `edge_count` and
+`content_hash`, newest first. Where the generations differ,
+`generations_differ` is `true` and `status`, `node_count` and `edge_count` are
+`null` rather than absent — no generation's counts are the coordinate's, and a
+missing key would read as a build that does not derive them — while
+`counts_from` is not carried, since no generation's counts were reported. The
+`generations` array is carried on the parsed surface whatever the terminal rows
+show, because rebuilding it costs one invocation per coordinate and a page of
+terminal is the only thing it costs here.
 
 | Flag | Default | Description |
 |------|---------|-------------|
