@@ -177,7 +177,7 @@ absent record. The two are told apart wherever a record can go missing:
 ```
 $ kanonarion interface-show github.com/golang-jwt/jwt/v4@v4.5.1
 error: the interface record for github.com/golang-jwt/jwt/v4@v4.5.1 was produced by
-superseded extraction logic: this build serves pipeline 0.5.0 and the store holds this
+superseded extraction logic: this build serves pipeline 0.6.0 and the store holds this
 coordinate at pipeline 0.3.0. A superseded record is not served, so this answer is empty
 for want of a measurement of this module, not because the coordinate is wrong.
 Re-extract it:
@@ -216,7 +216,7 @@ $ kanonarion interface-list
 github.com/spf13/cobra@v1.8.1               Extracted    1 package(s)
 github.com/spf13/pflag@v1.0.5               Extracted    1 package(s)  [superseded pipeline 0.3.0]
 1 of 2 listed record(s) were produced by superseded extraction logic; this build serves
-pipeline 0.5.0 and answers no query from them. Re-extract one:
+pipeline 0.6.0 and answers no query from them. Re-extract one:
   kanonarion interface <module>@<version>
 ```
 

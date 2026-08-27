@@ -14,6 +14,7 @@ import (
 	"go/token"
 	"io/fs"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -202,7 +203,8 @@ func oneLine(s string) string {
 }
 
 // collectPackageDirs walks sourceTree and returns every directory that
-// contains at least one non-test.go file, excluding vendor/ subtrees.
+// contains at least one non-test.go file, excluding vendor/ and testdata/
+// subtrees.
 func collectPackageDirs(fsys fs.FS) ([]string, error) {
 	seen := map[string]bool{}
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
@@ -211,6 +213,12 @@ func collectPackageDirs(fsys fs.FS) ([]string, error) {
 		}
 		// Skip vendor directories entirely.
 		if d.IsDir() && (d.Name() == "vendor" || strings.Contains("/"+p+"/", "/vendor/")) {
+			return fs.SkipDir
+		}
+		// Skip testdata directories entirely. The go tool ignores them, so what
+		// they hold is not a package of this module and not part of its API;
+		// diff excludes them from every comparison for the same reason.
+		if d.IsDir() && (d.Name() == "testdata" || strings.Contains("/"+p+"/", "/testdata/")) {
 			return fs.SkipDir
 		}
 		if !d.IsDir() && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") {
@@ -227,6 +235,87 @@ func collectPackageDirs(fsys fs.FS) ([]string, error) {
 		dirs = append(dirs, d)
 	}
 	return sortedDirs(dirs), nil
+}
+
+// errDuplicateDecl is returned when the files of one directory declare the same
+// identifier more than once, so no single public API can be read from them.
+var errDuplicateDecl = errors.New("directory declares an identifier more than once")
+
+// duplicateDecls names every package-level identifier the files declare more
+// than once, each with the files declaring it. Both lists are sorted, so one
+// directory always yields one reason and the record it lands in is stable.
+func duplicateDecls(fset *token.FileSet, files []*ast.File) []string {
+	where := map[string][]string{}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			for _, name := range declaredIdents(d) {
+				where[name] = append(where[name], fset.Position(d.Pos()).Filename)
+			}
+		}
+	}
+	names := make([]string, 0, len(where))
+	for name, decls := range where {
+		if len(decls) > 1 {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		decls := slices.Clone(where[name])
+		slices.Sort(decls)
+		out = append(out, fmt.Sprintf("%s (%s)", name, strings.Join(decls, ", ")))
+	}
+	return out
+}
+
+// declaredIdents returns the package-level identifiers one declaration binds: a
+// type, const or var name, a function name, or a method as "Receiver.Name".
+// init and _ are omitted, since Go lets a package declare each of them repeatedly.
+func declaredIdents(d ast.Decl) []string {
+	var out []string
+	switch decl := d.(type) {
+	case *ast.FuncDecl:
+		name := decl.Name.Name
+		switch {
+		case name == "_":
+		case decl.Recv != nil && len(decl.Recv.List) > 0:
+			out = append(out, receiverTypeName(decl.Recv.List[0].Type)+"."+name)
+		case name == "init":
+		default:
+			out = append(out, name)
+		}
+	case *ast.GenDecl:
+		for _, spec := range decl.Specs {
+			switch s := spec.(type) {
+			case *ast.TypeSpec:
+				if s.Name.Name != "_" {
+					out = append(out, s.Name.Name)
+				}
+			case *ast.ValueSpec:
+				for _, ident := range s.Names {
+					if ident.Name != "_" {
+						out = append(out, ident.Name)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// receiverTypeName reduces a method receiver to the type name it binds to, so
+// two declarations of one method collide whatever type parameters they spell.
+func receiverTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.StarExpr:
+		return receiverTypeName(t.X)
+	case *ast.IndexExpr:
+		return receiverTypeName(t.X)
+	case *ast.IndexListExpr:
+		return receiverTypeName(t.X)
+	}
+	return typeExprString(expr)
 }
 
 // packageImportPath returns the full Go import path for a directory within a
@@ -319,6 +408,14 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 			}, nil
 		}
 		return domain.PackageInterface{}, fmt.Errorf("no parseable Go files in %s", dir)
+	}
+
+	// A directory that declares one identifier twice is not a package Go would
+	// build, and go/doc keeps one declaration per name and drops the rest in map
+	// iteration order. Recording the survivor states an API this build never had,
+	// and states a different one on the next run, so the failure is the fact.
+	if dups := duplicateDecls(fset, parsed); len(dups) > 0 {
+		return domain.PackageInterface{}, fmt.Errorf("%w in %s: %s", errDuplicateDecl, importPath, strings.Join(dups, "; "))
 	}
 
 	// Use go/doc to build a structured view of the package's exported API.

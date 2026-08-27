@@ -875,3 +875,237 @@ type local struct{}
 		t.Error("unexported embedded type recorded as an exported field")
 	}
 }
+
+// TestExtractor_TestdataDirSkipped pins that a testdata subtree yields no
+// package. The go tool ignores testdata, so what it holds is not a package of
+// the module and not part of its API — and its files are fixtures that
+// routinely declare one name several times.
+func TestExtractor_TestdataDirSkipped(t *testing.T) {
+	fsys := fstest.MapFS{
+		"client.go": &fstest.MapFile{Data: []byte("package mypkg\n\ntype Client struct{}\n")},
+		"testdata/src/a/a.go": &fstest.MapFile{
+			Data: []byte("package a\n\nfunc Bar(ii I) (I, I) { return ii, ii }\n\ntype I int\n"),
+		},
+		"internal/cldrtree/testdata/test1/gen.go": &fstest.MapFile{
+			Data: []byte("package test1\n\nfunc Fixture() error { return nil }\n"),
+		},
+		"internal/cldrtree/tree.go": &fstest.MapFile{Data: []byte("package cldrtree\n\ntype Tree struct{}\n")},
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pkg := range r.Packages {
+		if strings.Contains("/"+pkg.ImportPath+"/", "/testdata/") {
+			t.Errorf("testdata package should be excluded: %s", pkg.ImportPath)
+		}
+	}
+	want := map[string]bool{"example.com/m": false, "example.com/m/internal/cldrtree": false}
+	for _, pkg := range r.Packages {
+		if _, ok := want[pkg.ImportPath]; ok {
+			want[pkg.ImportPath] = true
+		}
+	}
+	for p, seen := range want {
+		if !seen {
+			t.Errorf("ordinary package dropped with the testdata subtree: %s", p)
+		}
+	}
+	if r.OverallStatus != domain2.InterfaceStatusExtracted {
+		t.Errorf("OverallStatus = %s, want Extracted", r.OverallStatus)
+	}
+}
+
+// TestExtractor_DuplicateDeclarationIsALoadFailure pins that a directory
+// declaring one identifier twice is recorded as a failure naming the identifier
+// and both files, rather than as a package holding whichever declaration go/doc
+// happened to keep.
+func TestExtractor_DuplicateDeclarationIsALoadFailure(t *testing.T) {
+	fsys := fstest.MapFS{
+		"dup/a.go": &fstest.MapFile{Data: []byte(`package dup
+
+import "fmt"
+
+// Bar takes an int.
+func Bar(i int) int { return i }
+
+var _ = fmt.Sprint
+`)},
+		"dup/b.go": &fstest.MapFile{Data: []byte("package dup\n\n// Bar takes nothing.\nfunc Bar() {}\n")},
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.OverallStatus != domain2.InterfaceStatusPartial {
+		t.Fatalf("OverallStatus = %s, want Partial", r.OverallStatus)
+	}
+	var found *domain2.PackageInterface
+	for i := range r.Packages {
+		if r.Packages[i].ImportPath == "example.com/m/dup" {
+			found = &r.Packages[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the directory is absent from the record entirely: %v", r.Packages)
+	}
+	if len(found.Funcs) != 0 || len(found.Types) != 0 {
+		t.Errorf("record claims an API it could not read: %+v", found)
+	}
+	if len(found.ParseFailures) != 1 || found.ParseFailures[0].File != "dup" {
+		t.Fatalf("directory failure not recorded on the package: %+v", found.ParseFailures)
+	}
+	detail := found.ParseFailures[0].Error
+	for _, want := range []string{"Bar", "dup/a.go", "dup/b.go"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("recorded failure does not name %q: %q", want, detail)
+		}
+	}
+	if !strings.Contains(r.FailureDetail, "example.com/m/dup") {
+		t.Errorf("FailureDetail does not name the package: %q", r.FailureDetail)
+	}
+}
+
+// TestExtractor_DuplicateReasonIsSortedAndStable pins the reason a duplicate
+// directory records: every repeated identifier, sorted, each with its files
+// sorted, and the same string on a second extraction. The reason reaches the
+// record's canonical hash, so one that varied with map order would make two
+// identical extractions two records.
+func TestExtractor_DuplicateReasonIsSortedAndStable(t *testing.T) {
+	fsys := fstest.MapFS{
+		"dup/z.go": &fstest.MapFile{Data: []byte(`package dup
+
+type Zeta struct{}
+
+const Alpha = 1
+`)},
+		"dup/a.go": &fstest.MapFile{Data: []byte(`package dup
+
+type Zeta int
+
+var Alpha = 2
+`)},
+	}
+
+	detail := func() string {
+		t.Helper()
+		r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pkg := range r.Packages {
+			if pkg.ImportPath == "example.com/m/dup" && len(pkg.ParseFailures) == 1 {
+				return pkg.ParseFailures[0].Error
+			}
+		}
+		t.Fatalf("no failure recorded for the duplicate directory: %v", r.Packages)
+		return ""
+	}
+
+	got := detail()
+	want := "directory declares an identifier more than once in example.com/m/dup: " +
+		"Alpha (dup/a.go, dup/z.go); Zeta (dup/a.go, dup/z.go)"
+	if got != want {
+		t.Errorf("reason =\n  %q\nwant\n  %q", got, want)
+	}
+	if second := detail(); second != got {
+		t.Errorf("reason differs between extractions:\n  %q\n  %q", got, second)
+	}
+}
+
+// TestExtractor_DuplicateMethodOnGenericReceiver pins that a method collides
+// with itself whatever type parameters the two receivers spell — the names of
+// type parameters are the method's author's choice, not part of its identity.
+func TestExtractor_DuplicateMethodOnGenericReceiver(t *testing.T) {
+	fsys := fstest.MapFS{
+		"g/a.go": &fstest.MapFile{Data: []byte(`package g
+
+type Stack[T any] struct{}
+
+func (s *Stack[T]) Push(v T) {}
+
+type Pair[K any, V any] struct{}
+
+func (p *Pair[K, V]) Get() {}
+`)},
+		"g/b.go": &fstest.MapFile{Data: []byte(`package g
+
+func (s Stack[U]) Push(v U) {}
+
+func (p Pair[A, B]) Get() {}
+`)},
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail string
+	for _, pkg := range r.Packages {
+		if pkg.ImportPath == "example.com/m/g" && len(pkg.ParseFailures) == 1 {
+			detail = pkg.ParseFailures[0].Error
+		}
+	}
+	if detail == "" {
+		t.Fatalf("duplicate generic methods not reported: %v", r.Packages)
+	}
+	for _, want := range []string{"Pair.Get", "Stack.Push"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("recorded failure does not name %q: %q", want, detail)
+		}
+	}
+}
+
+// TestExtractor_RepeatedInitAndBlankAreNotDuplicates pins the two identifiers
+// Go itself lets a package declare repeatedly. Reporting them would turn every
+// ordinary package with two init functions into a load failure.
+func TestExtractor_RepeatedInitAndBlankAreNotDuplicates(t *testing.T) {
+	fsys := fstest.MapFS{
+		"ok/a.go": &fstest.MapFile{Data: []byte(`package ok
+
+func init() {}
+
+func _() {}
+
+var _ = 1
+
+const _ = 2
+
+type _ struct{}
+
+// Foo is the package's only declared name.
+type Foo struct{}
+`)},
+		"ok/b.go": &fstest.MapFile{Data: []byte(`package ok
+
+func init() {}
+
+func _() {}
+
+var _ = 3
+
+type _ struct{}
+`)},
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.OverallStatus != domain2.InterfaceStatusExtracted {
+		t.Fatalf("OverallStatus = %s, want Extracted (detail %q)", r.OverallStatus, r.FailureDetail)
+	}
+	for _, pkg := range r.Packages {
+		if pkg.ImportPath != "example.com/m/ok" {
+			continue
+		}
+		if len(pkg.ParseFailures) != 0 {
+			t.Fatalf("legal repeats reported as duplicates: %+v", pkg.ParseFailures)
+		}
+		if len(pkg.Types) != 1 || pkg.Types[0].Name != "Foo" {
+			t.Errorf("Types = %+v, want just Foo", pkg.Types)
+		}
+	}
+}

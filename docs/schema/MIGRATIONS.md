@@ -63,6 +63,49 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Interface record: pipeline `0.5.0` → `0.6.0`
+
+**Record shape change; no store migration. This bump is also a repair** — a
+coordinate whose `0.5.0` generations disagree about the API is not served, and
+re-extracting at `0.5.0` only appends another disagreeing generation.
+
+Extraction walked `testdata` subtrees and treated each as a package, and it
+handed `go/doc` every in-frame file of a directory even when two of them declared
+the same identifier. `go/doc` keeps one declaration per name and drops the rest
+in map iteration order, so such a directory produced a different public API on
+each run. `golang.org/x/tools@v0.49.0` is held nine times at `0.5.0` with nine
+distinct APIs — same zip, same frame, same toolchain — differing only inside
+`go/callgraph/vta/testdata/src`, where the fixture files declare `Bar` and `Baz`
+several times each. The coordinate answers nothing, and every `inspect` appended
+another generation.
+
+Two things change:
+
+- **`testdata` subtrees are no longer packages.** The go tool ignores them, so
+  what they hold is not part of any module's API — `interface-diff` already
+  excluded them from every comparison for that reason. `golang.org/x/tools`
+  drops from 471 packages to 214, and all 257 dropped are under a `testdata`
+  directory; no package is added or changed.
+- **A directory that declares one identifier twice is recorded as a load
+  failure**, naming each repeated identifier and the files that declare it,
+  instead of a package holding whichever declaration survived. `init` and `_` are
+  exempt: Go lets a package declare each of them repeatedly. Across the 249
+  coordinates in the reference store whose zips are held locally — 4041 non-vendor
+  package directories — 23 directories declare an identifier twice, 22 of them
+  under `testdata`. The one that remains is `github.com/fogleman/gg@v1.3.0`'s
+  `examples`, 31 standalone programs in one directory, each declaring `main`; the
+  go tool refuses to build it too.
+
+A module with no `testdata` directory and no duplicate declarations extracts
+byte-identical bytes to its `0.5.0` record: `github.com/golang-jwt/jwt/v4@v4.5.2`
+re-extracts to the same canonical record apart from the pipeline version.
+
+The cost is one re-extraction per module on its next `interface` run — 580 stored
+records at the bump, 200 of them at `0.5.0` across 173 coordinates, the remaining
+380 already stranded at `0.4.0`. Until re-extracted each answers as a not-found
+naming the pipeline versions held and the command that produces a servable
+record, exactly as the `0.4.0` and `0.5.0` bumps arranged.
+
 ## Interface record: pipeline `0.4.0` → `0.5.0`
 
 **Record shape change; no store migration. This bump is also a repair** — the
