@@ -385,7 +385,13 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 
 	// Which lookup answers the staleness column, and why, is decided in one
 	// place so the offline and online wirings cannot drift apart.
-	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger, f.gomodPath, coords, stderr)
+	//
+	// The probe gets the same progress reporter the walk beneath this run gets,
+	// built the same way, so --no-progress, the config preference and the log
+	// level govern both. A probe that waits out a transient proxy failure is the
+	// longest silence in an otherwise second-long command.
+	stalenessProgress := newStalenessProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
+	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger, f.gomodPath, coords, stalenessProgress, stderr)
 	if serr != nil {
 		return serr
 	}
@@ -883,7 +889,7 @@ const (
 // has to fetch module bytes it has not got still fails — with its own error,
 // naming that obstacle, which is the one the operator can act on.
 func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog.Logger,
-	gomodPath string, coords []string, stderr io.Writer) (stalenessLookup, error) {
+	gomodPath string, coords []string, progress staleports.ProgressReporter, stderr io.Writer) (stalenessLookup, error) {
 	offline := newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	if modcacheMode {
 		return offline, nil
@@ -904,7 +910,7 @@ func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog
 	// serially, for a fact the go command answers for the whole set in one call.
 	// The two commands share the defect as they share the ledger, so they are
 	// fixed together rather than leaving `audit` on the sweep `latest` left.
-	return newReportOnceLookup(newGomodStalenessResolver(newProxyLatestResolver(proxy, logger), ledger,
+	return newReportOnceLookup(newGomodStalenessResolver(newProxyLatestResolver(proxy, logger, progress), ledger,
 		activeConfig.Staleness.TTL, false, gomodPath, goproxy, pinnedModulesOf(coords)), stderr), nil
 }
 

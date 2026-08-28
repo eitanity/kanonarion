@@ -369,7 +369,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		// asked.
 		lookup = newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	} else {
-		lookup = newStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr)),
+		lookup = newStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr), nil),
 			ledger, activeConfig.Staleness.TTL, f.fresh)
 	}
 
@@ -394,7 +394,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 			if offline {
 				return lookup
 			}
-			return newGomodStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr)),
+			return newGomodStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr), nil),
 				ledger, activeConfig.Staleness.TTL, f.fresh, gomodPath, f.goproxy, pinnedModulesOf(coords))
 		}, stdout, stderr)
 	}

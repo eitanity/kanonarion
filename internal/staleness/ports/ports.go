@@ -128,3 +128,30 @@ type Ledger interface {
 type Clock interface {
 	Now() time.Time
 }
+
+// ProgressReporter receives staleness lookup progress so a long, otherwise
+// silent probe can show proof of life. A probe that has to wait out a transient
+// proxy failure spends most of a minute on one module, and a command documented
+// as taking about a second cannot leave that unsaid: a user has no way to tell a
+// slow probe from a hang.
+//
+// It deliberately does NOT report a running count the way the walk and extract
+// reporters do. A retry is not "N of M done" — the reader's question is which
+// module is being waited on, how many chances it has had and how many it gets —
+// so the method carries those three and no denominator over the module set,
+// which the resolver does not know here anyway.
+//
+// Implementations decide whether and how to surface the signal (e.g. a line on
+// stderr); a nil reporter disables reporting entirely, which is what every
+// caller that narrates nothing passes.
+//
+// RetryingLookup may be called concurrently: the newer-major probe asks in
+// bounded parallel rounds, so implementations must be safe for that.
+type ProgressReporter interface {
+	// RetryingLookup reports that path's latest lookup failed transiently and
+	// will be tried again. attempt is the attempt about to be made, counting the
+	// first one, and maxAttempts is the budget it is bounded by — so the last
+	// line a give-up emits reads as the last attempt of the budget rather than
+	// stopping mid-count.
+	RetryingLookup(path string, attempt, maxAttempts int)
+}

@@ -257,7 +257,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 
 	// Check staleness for pinned versions. The proxy call is fast relative to
 	// the fetch itself and the result is informative for both humans and agents.
-	stale := fetchStalenessFor(ctx, newProxyLatestResolver(proxyAdapter, logger), coord, version, stderr)
+	stale := fetchStalenessFor(ctx, newProxyLatestResolver(proxyAdapter, logger, nil), coord, version, stderr)
 
 	if jsonOut {
 		type fetchOutput struct {

@@ -72,8 +72,14 @@ func pinnedModulesOf(coords []string) []staleports.PinnedModule {
 // covers every question this context asks, and the fetch and walk paths — which
 // have their own retry policies already — are untouched by it. An absent major
 // path is not a transient condition and is not retried; see the decorator.
-func newProxyLatestResolver(proxy *proxyadapter.Proxy, logger *slog.Logger) staleports.LatestResolver {
-	return staleretry.New(staleproxy.New(proxy), logger)
+//
+// progress is where the decorator narrates a retry, and it is a parameter rather
+// than something built here because whether this run narrates at all is the
+// CALLER's decision: only a command that already accepts --no-progress can honour
+// an instruction to be quiet, so `latest` and `fetch` — which register no such
+// flag — pass nil and are unchanged.
+func newProxyLatestResolver(proxy *proxyadapter.Proxy, logger *slog.Logger, progress staleports.ProgressReporter) staleports.LatestResolver {
+	return staleretry.New(staleproxy.New(proxy), logger, staleretry.WithProgress(progress))
 }
 
 // newAuditStalenessResolver builds the resolver behind an audit's latest column.

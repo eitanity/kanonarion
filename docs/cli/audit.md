@@ -326,6 +326,21 @@ sweep once between them rather than once each. The table states the lookup time
 it used (`latest as of ...`, dated by its oldest row) so a served answer is
 never mistaken for a live one, and a **failed** lookup is never recorded.
 
+A lookup that fails transiently (a loaded proxy answering an empty body, a
+timeout, a 5xx) is retried, and each retry is narrated on stderr:
+
+```text
+staleness progress: retrying example.com/mod/v2 (attempt 2 of 4)
+```
+
+One line per retry, naming the module, the attempt and the budget - so a probe
+that spends most of a minute waiting is distinguishable from a hang. A run where
+nothing retries prints none of these lines. `--no-progress` silences them, as
+does `preferences.progress: false` in the config; at `--log-level info` or
+`debug` they are omitted because the log already streams each retry. A
+definitive answer, including the 404 that says a major does not exist, is never
+retried and never narrated.
+
 The column reports separate facts per module, never merged. `is_latest` is about
 the module **path**. `newer_major_module` names the newest major-suffixed path
 above the pinned major - a dependency pinned a whole major line behind is at the
