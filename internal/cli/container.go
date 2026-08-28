@@ -36,10 +36,12 @@ import (
 
 	gdgosrc "github.com/eitanity/kanonarion/internal/godebug/adapters/scanner/gosrc"
 	gdsqlite "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
+	gdvendortree "github.com/eitanity/kanonarion/internal/godebug/adapters/vendortree"
 	gdapp "github.com/eitanity/kanonarion/internal/godebug/application"
 
 	fipsgosrc "github.com/eitanity/kanonarion/internal/fips/adapters/scanner/gosrc"
 	fipssqlite "github.com/eitanity/kanonarion/internal/fips/adapters/store/sqlite"
+	fipsvendortree "github.com/eitanity/kanonarion/internal/fips/adapters/vendortree"
 	fipsapp "github.com/eitanity/kanonarion/internal/fips/application"
 
 	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
@@ -636,7 +638,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// ---- godebug use cases ----
 	gdStore := gdsqlite.New(dbHandle)
 	extractGoDebugUC := gdapp.NewExtractGoDebugUseCase(gdapp.Config{
-		Scanner: gdgosrc.New(), Store: gdStore, Audit: factStore,
+		// A vendored directive names the module vendor/modules.txt says owns
+		// the file, read by the vendor context's scanner through the godebug
+		// port — composed here, exactly as the fips scanner below is.
+		Scanner: gdgosrc.New(gdvendortree.New(venlocalfs.New(nil))),
+		Store:   gdStore, Audit: factStore,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryGoDebugUC := gdapp.NewQueryGoDebugUseCase(gdStore)
@@ -652,7 +658,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// ---- fips use cases ----
 	fipsStore := fipssqlite.New(dbHandle)
 	extractFIPSUC := fipsapp.NewExtractFIPSUseCase(fipsapp.Config{
-		Scanner: fipsgosrc.New(), Store: fipsStore, Audit: factStore,
+		// A vendored finding names the module vendor/modules.txt says owns the
+		// file, read by the vendor context's scanner through the fips port —
+		// the composition lives here so neither context reaches into the other.
+		Scanner: fipsgosrc.New(fipsvendortree.New(venlocalfs.New(nil))),
+		Store:   fipsStore, Audit: factStore,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryFIPSUC := fipsapp.NewQueryFIPSUseCase(fipsStore)

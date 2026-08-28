@@ -72,6 +72,16 @@ output format.
 Text mode prints a `Project / Toolchain / Assessment / Caveat` header followed
 by a finding table (`KIND PACKAGE MODULE SOURCE:LINE CATEGORY POLICY`).
 
+`MODULE` is the module the finding's file belongs to, and it is the column to
+act on: it names what you would upgrade, pin or exempt. For the project's own
+code it is the module `go.mod` declares. For a file under `vendor/` it is the
+module `vendor/modules.txt` lists for that directory, matched by longest
+prefix - so `github.com/minio/minio-go/v7` reports itself rather than the
+`github.com/minio/minio-go` whose directory it sits inside. A vendored path no
+listed module owns reports `(unresolved)`: nothing in the path itself says which
+module published the file, and an invented answer is plausible enough to be
+acted on.
+
 `--json` emits the deterministic top-level `fips` section: `schema_version`,
 `ecosystem` (always `"go"` - it declares the schema's scope, not a polyglot
 mode), `pipeline_version`, `catalogue_version`, `project`,

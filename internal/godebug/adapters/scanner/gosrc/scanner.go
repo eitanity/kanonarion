@@ -14,6 +14,7 @@ package gosrc
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -22,14 +23,23 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/godebug/domain"
+	"github.com/eitanity/kanonarion/internal/godebug/ports"
+	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	"golang.org/x/mod/modfile"
 )
 
 // Scanner implements ports.GoDebugScanner.
-type Scanner struct{}
+type Scanner struct {
+	vendored ports.VendoredModuleLister
+}
 
-// New returns a new Scanner.
-func New() *Scanner { return &Scanner{} }
+// New returns a Scanner that attributes vendored files to their module through
+// vendored. A nil lister is legitimate but lossy: nothing then states which
+// module owns a directory under vendor/, so every vendored directive reports
+// vendordomain.ModuleUnresolved rather than a path prefix dressed up as a
+// module. The applied flag does not depend on it — a directive under vendor/
+// does not affect the current build whether or not its module can be named.
+func New(vendored ports.VendoredModuleLister) *Scanner { return &Scanner{vendored: vendored} }
 
 // goDebugLine matches a `//go:debug` compiler directive. The directive may
 // carry a comma-separated list of settings: `//go:debug name=v,name2=v2`.
@@ -40,8 +50,9 @@ var packageClause = regexp.MustCompile(`^package\s+(\w+)`)
 
 // ScanProject reads goModPath for the module path then walks its directory
 // tree collecting `//go:debug` settings from every `package main` source
-// file (`.go` and the corpus's `.go.txt` test sources alike).
-func (s *Scanner) ScanProject(goModPath string) (domain.ParseResult, error) {
+// file (`.go` and the corpus's `.go.txt` test sources alike). A directive under
+// vendor/ is attributed to the module vendor/modules.txt says owns it.
+func (s *Scanner) ScanProject(ctx context.Context, goModPath string) (domain.ParseResult, error) {
 	data, err := os.ReadFile(filepath.Clean(goModPath))
 	if err != nil {
 		return domain.ParseResult{}, fmt.Errorf("reading go.mod %q: %w", goModPath, err)
@@ -49,6 +60,20 @@ func (s *Scanner) ScanProject(goModPath string) (domain.ParseResult, error) {
 	modPath := modfile.ModulePath(data)
 
 	root := filepath.Dir(goModPath)
+
+	// modules.txt is the authoritative mapping from a directory under vendor/
+	// to a module path, and it is read by the vendor context's one parser of
+	// that file rather than by a second one here.
+	var vendoredPaths []string
+	if s.vendored != nil {
+		var lerr error
+		vendoredPaths, lerr = s.vendored.VendoredModulePaths(ctx, goModPath)
+		if lerr != nil {
+			return domain.ParseResult{}, fmt.Errorf("listing vendored modules for %q: %w", goModPath, lerr)
+		}
+	}
+	index := vendordomain.NewVendoredModuleIndex(vendoredPaths)
+
 	var settings []domain.Setting
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -78,7 +103,7 @@ func (s *Scanner) ScanProject(goModPath string) (domain.ParseResult, error) {
 			return nil
 		}
 
-		vendored, depMod := vendorModule(rel)
+		vendored, depMod := index.Vendored(rel)
 		mod := modPath
 		applied := !vendored
 		if vendored {
@@ -133,29 +158,6 @@ func skipDir(path, name string) bool {
 // the extension does not matter — see test/fixtures/supplychain/README.md.
 func isGoSource(name string) bool {
 	return strings.HasSuffix(name, ".go") || strings.HasSuffix(name, ".go.txt")
-}
-
-// vendorModule reports whether a slash-path is under a `vendor/` segment and,
-// if so, the best-effort module path (the first two path elements after
-// vendor/, mirroring Go's domain/owner module layout). A directive under
-// vendor/ does not affect the current build.
-func vendorModule(rel string) (bool, string) {
-	parts := strings.Split(rel, "/")
-	for i, p := range parts {
-		if p != "vendor" {
-			continue
-		}
-		rest := parts[i+1:]
-		switch {
-		case len(rest) >= 2:
-			return true, strings.Join(rest[:2], "/")
-		case len(rest) == 1:
-			return true, rest[0]
-		default:
-			return true, ""
-		}
-	}
-	return false, ""
 }
 
 type foundSetting struct {

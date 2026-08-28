@@ -1148,6 +1148,55 @@ bump makes them unreachable through the cache; it does not correct copies alread
 shipped. A document already handed to a consumer states an anchor its own
 verification detail denies, and re-issuing it is the only fix for that copy.
 
+## FIPS record: pipeline `0.2.0` → `0.3.0`
+
+**Finding-set change; no store migration.** FIPS records are keyed
+`(project_module_path, pipeline_fingerprint)`, so the bump is the migration:
+`0.2.0` rows stay where they are and are never served for a `0.3.0` request.
+
+The `module` of a finding read from a file under `vendor/` is now the module
+`vendor/modules.txt` lists for that directory, resolved by longest-prefix match
+so a nested major-version module (`github.com/minio/minio-go/v7` beneath
+`github.com/minio/minio-go`) reports itself rather than its parent. `0.2.0` took
+the first two segments of the vendored path, which is a module path for almost
+no module: a `0.2.0` record on a vendored project names `github.com/IBM`,
+`golang.org/x` and `cloud.google.com/go`, none of which is a module anyone can
+upgrade, pin or exempt. A vendored path no listed module owns now reports
+`(unresolved)` instead of a plausible-looking invention.
+
+Only `module` moves. The finding kinds, packages, source paths and lines are
+unchanged, and the content hash covers `module`, so an unchanged tree hashes
+differently from its `0.2.0` record.
+
+**The stored `0.2.0` findings misname their module.** The bump makes them
+unreachable through the cache; it does not correct a report already pasted
+somewhere from one.
+
+## GODEBUG record: pipeline `0.1.0` → `0.2.0`
+
+**Finding-set change; no store migration.** GODEBUG records are keyed
+`(project_module_path, pipeline_fingerprint)`, so the bump is the migration:
+`0.1.0` rows stay where they are and are never served for a `0.2.0` request.
+
+The same change the FIPS record took, in the context that carried the same
+heuristic. The `module` of a `//go:debug` directive found under `vendor/` is now
+the module `vendor/modules.txt` lists for that directory, resolved by
+longest-prefix match so a nested major-version module
+(`github.com/minio/minio-go/v7` beneath `github.com/minio/minio-go`) reports
+itself rather than its parent. `0.1.0` took the first two segments of the
+vendored path. A vendored path no listed module owns now reports `(unresolved)`.
+
+The `applied` flag is unchanged in meaning and in value: it comes from whether
+the path lies under `vendor/` at all, which the old split also answered
+correctly, and a directive under a directory nothing claims is still
+`applied: false`. Only `module` moves, and the content hash covers it.
+
+Both contexts now read that mapping through one rule
+(`vendortree/domain.VendoredModuleIndex`) and one parser of `modules.txt`. Two
+implementations of "which listed module owns this path" were free to disagree
+about one file, which is how a fixed two-segment split survived in two scanners
+at once.
+
 ## Purging a table other rows point at
 
 A migration that deletes rows must state what happens to the rows that reference

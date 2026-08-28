@@ -212,14 +212,23 @@ directives by risk class (`adapters/parser/xmod`), with scan history, show, and
 diff.
 
 **godebug** - detects and classifies `//go:debug` settings against a versioned
-taxonomy (`adapters/scanner/gosrc`).
+taxonomy (`adapters/scanner/gosrc`). A directive under `vendor/` names the
+module `vendor/modules.txt` lists for that directory, read through godebug's own
+`VendoredModuleLister` port (`adapters/vendortree`).
 
 **vendortree** - reconciles a vendored closure and detects `vendor/` drift and
 `modules.txt` inconsistency (`adapters/scanner/localfs`). The directory is
 named `vendortree`, not `vendor`, because Go reserves `vendor/`.
 
 **fips** - assesses FIPS toolchain eligibility and detects non-FIPS algorithms
-and cgo-crypto usage (`adapters/scanner/gosrc`).
+and cgo-crypto usage (`adapters/scanner/gosrc`). A finding read from a file
+under `vendor/` names the module `vendor/modules.txt` lists for that directory,
+read through the vendor context's scanner behind fips's own
+`VendoredModuleLister` port (`adapters/vendortree`), the same shape godebug
+uses - there is one parser of `modules.txt` in the tree and one rule for which
+listed module owns a path (`vendortree/domain.VendoredModuleIndex`), so no
+analysis learns how `modules.txt` is read and no two of them can disagree about
+one file.
 
 ### Local
 

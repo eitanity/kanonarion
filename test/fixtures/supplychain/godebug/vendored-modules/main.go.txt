@@ -1,0 +1,8 @@
+// Package main is the project's own main package. Its directive DOES take
+// effect in this build, so the scan records it Applied=true against the module
+// go.mod declares — the path that was already correct and must not move.
+//
+//go:debug asynctimerchan=1
+package main
+
+func main() {}

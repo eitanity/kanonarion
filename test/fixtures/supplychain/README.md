@@ -23,6 +23,10 @@ supplychain/
     clean/          no //go:debug                → expect: clean
     red-main/       //go:debug tlsrsakex=1 in main → expect: red violation
     dep-not-applied/ //go:debug in vendored dep   → expect: recorded not-applied
+    vendored-modules/ directives across a listed vendor tree → expect: each names
+                      its full module path (2, 3 and 4 segments), the nested
+                      /v7 module beats its parent, an unlisted directory is
+                      (unresolved), and the project's own directive is applied
   vendor/        vendored-tree analysis & drift
     matching/       vendor/ + go.sum match       → expect: clean
     drift/          one vendored file altered    → expect: drift detected
@@ -30,6 +34,10 @@ supplychain/
   fips/          FIPS toolchain detection
     stock/          stock Go build marker        → expect: not FIPS-capable
     boringcrypto/   BoringCrypto build marker    → expect: FIPS-capable
+    clean-bc/       crypto/rand + sha256 only    → expect: no deviation, rand surfaced
+    md5-in-dep/     vendored dep imports md5     → expect: deviation, module=example.com/dep
+    cgo-crypto/     vendored cgo openssl binding → expect: cgo-crypto finding (unknown)
+    unlisted-in-vendor/ vendor dir modules.txt omits → expect: module=(unresolved)
 ```
 
 ## Contract for gap tickets

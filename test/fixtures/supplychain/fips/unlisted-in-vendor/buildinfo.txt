@@ -1,0 +1,6 @@
+GoVersion: go1.23.4 X:boringcrypto
+Path: example.com/supplychain/fips/unlisted-in-vendor
+# A vendored directory vendor/modules.txt does not list. The fixture expects:
+# the crypto/md5 finding under vendor/example.com/listed/ names that module,
+# and the one under vendor/example.com/stray/ names (unresolved) — a vendored
+# path no listed module owns is an admitted gap, never a guessed module path.

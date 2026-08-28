@@ -54,7 +54,7 @@ func (uc *ExtractGoDebugUseCase) Extract(
 ) (domain.Record, error) {
 	lap := uc.stopwatch.Start()
 
-	res, err := uc.scanner.ScanProject(goModPath)
+	res, err := uc.scanner.ScanProject(ctx, goModPath)
 	if err != nil {
 		return domain.Record{}, fmt.Errorf("scanning project godebug settings: %w", err)
 	}

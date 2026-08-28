@@ -19,7 +19,20 @@ type FIPSScanner interface {
 	// finding set, the project module path, and the raw toolchain string
 	// (from the go.mod toolchain directive). An empty toolchain string is
 	// recorded as such — never substituted with a guess.
-	ScanProject(goModPath string) (domain.ParseResult, error)
+	ScanProject(ctx context.Context, goModPath string) (domain.ParseResult, error)
+}
+
+// VendoredModuleLister answers which modules a project's vendor/modules.txt
+// names. It is what lets a finding read from a vendored file be attributed to
+// the module that published that file: modules.txt is the authoritative
+// mapping from a directory under vendor/ to a module path, and nothing about
+// the path itself carries that answer.
+type VendoredModuleLister interface {
+	// VendoredModulePaths returns the module paths vendor/modules.txt lists
+	// for the project whose go.mod is at goModPath. A project with no
+	// vendored tree yields (nil, nil): not vendored is an answer, not a
+	// failure — such a project simply has no vendored file to attribute.
+	VendoredModulePaths(ctx context.Context, goModPath string) ([]string, error)
 }
 
 // FIPSStore persists and retrieves project FIPS records.
