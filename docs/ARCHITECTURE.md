@@ -288,6 +288,10 @@ tree moves.
   (the toolchain fact a record carries, shared so three ledgers render "not
   recorded" the same way). Both are imported from domain layers, which must not
   reach an adapter, so `internal/adapters/` is the one place they cannot go.
+  `TestNoAdapterImportsInDomain` enforces that half: a package under
+  `internal/<ctx>/domain` imports neither `internal/adapters/**` nor another
+  context's `adapters` layer. `application` is out of scope - the shared
+  adapters exist for it to call.
 - **Composition layer** - `cli`, `composition` and `driver`, described under
   *Cross-context Composition* below. They sit above the contexts and are exempt
   from this rule for the same reason they are exempt from the cross-context

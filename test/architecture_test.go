@@ -149,7 +149,7 @@ func layerOf(rel string) (ctx, layer string) {
 func loadInternalPackages(t *testing.T) []*packages.Package {
 	t.Helper()
 	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedImports,
+		Mode: packages.NeedName | packages.NeedImports | packages.NeedFiles,
 		Dir:  "..",
 	}
 	pkgs, err := packages.Load(cfg, "./internal/...")
@@ -312,6 +312,186 @@ func TestNoCrossContextApplicationImports(t *testing.T) {
 				t.Errorf("%s imports %s: application must not depend on another context's %s layer — use %s/ports and compose in adapters",
 					rel(pkg.PkgPath), rel(impPath), impLayer, impCtx)
 			}
+		}
+	}
+}
+
+// sharedAdaptersPrefix is the repo-relative package prefix of the shared-kernel
+// adapters. layerOf reports no context for one, so it is matched by prefix
+// where a context's own adapters layer is matched by layer.
+const sharedAdaptersPrefix = "internal/adapters/"
+
+// adapterImportReason returns why a package in layer may not import impRel, or
+// "" when it may. It is the whole of the rule, so the guard below and the two
+// controls that pin its scope read the same function rather than three copies
+// that could drift apart.
+//
+// Only "domain" is restricted. application is deliberately out of scope: the
+// shared adapters exist for it to call, ziparchive's own package doc names the
+// contexts that consume parsed entries through it, and docs/ARCHITECTURE.md
+// lists it among the shared adapters. TestApplicationMayImportSharedAdapters
+// holds that decision by assertion.
+func adapterImportReason(layer, impRel string) string {
+	if layer != "domain" {
+		return ""
+	}
+	if strings.HasPrefix(impRel, sharedAdaptersPrefix) {
+		return "a shared-kernel adapter is infrastructure"
+	}
+	if impCtx, impLayer := layerOf(impRel); impCtx != "" && impLayer == "adapters" {
+		return "another context's adapters layer is infrastructure"
+	}
+	return ""
+}
+
+// TestNoAdapterImportsInDomain enforces that a domain layer never imports an
+// adapters package — neither the shared kernel under internal/adapters/ nor a
+// context's own internal/<ctx>/adapters. docs/ARCHITECTURE.md says a domain
+// layer is pure Go with no I/O, and says outright that the shared value types
+// are imported from domain layers that must not reach an adapter. Nothing
+// checked it: TestNoInfraImportsInApplicationOrDomain checks six stdlib imports
+// and TestNoCrossContextApplicationImports skips every layer but application,
+// so a domain file importing an adapter fell between them.
+//
+// There is no exemption list because there is nothing to exempt: no domain
+// package imports an adapters package. A violation is a real one, to be fixed
+// by depending on a port the context owns and wiring the adapter above.
+//
+// It names the file, not just the package, by parsing the package's files —
+// but only once a violation is found, so a green run parses nothing. The files
+// are the ones loadInternalPackages compiles, which is the scope every guard in
+// this file reads.
+func TestNoAdapterImportsInDomain(t *testing.T) {
+	for _, pkg := range loadInternalPackages(t) {
+		relPath := rel(pkg.PkgPath)
+		ctx, layer := layerOf(relPath)
+		if ctx == "" || layer != "domain" {
+			continue
+		}
+		forbidden := map[string]string{}
+		for impPath := range pkg.Imports {
+			impRel := rel(impPath)
+			if reason := adapterImportReason(layer, impRel); reason != "" {
+				forbidden[impRel] = reason
+			}
+		}
+		if len(forbidden) == 0 {
+			continue
+		}
+		named := 0
+		for _, file := range pkg.GoFiles {
+			parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
+			if err != nil {
+				t.Fatalf("parsing %s: %v", file, err)
+			}
+			for _, spec := range parsed.Imports {
+				impRel := rel(strings.Trim(spec.Path.Value, `"`))
+				reason, bad := forbidden[impRel]
+				if !bad {
+					continue
+				}
+				named++
+				t.Errorf("%s imports %s: %s — a domain layer is pure Go with no I/O "+
+					"(docs/ARCHITECTURE.md, \"Layers\"); depend on a port the context owns and wire the adapter "+
+					"in the application or adapters layer",
+					repoRelFile(file), impRel, reason)
+			}
+		}
+		if named == 0 {
+			// The package imports an adapter and no file of it does, so the
+			// attribution missed the file rather than the tree being clean.
+			for impRel, reason := range forbidden {
+				t.Errorf("%s imports %s: %s — a domain layer is pure Go with no I/O; the importing file was not "+
+					"found among the package's %d compiled files, so report the package",
+					relPath, impRel, reason, len(pkg.GoFiles))
+			}
+		}
+	}
+}
+
+// repoRelFile makes an absolute file path from packages.Load repo-relative, so
+// a failure names the path a reader can open.
+func repoRelFile(path string) string {
+	slashed := filepath.ToSlash(path)
+	if i := strings.LastIndex(slashed, "/internal/"); i >= 0 {
+		return slashed[i+1:]
+	}
+	return slashed
+}
+
+// pinnedApplicationAdapterImport is one of the application imports of a shared
+// adapter that TestNoAdapterImportsInDomain must not forbid. Nine such imports
+// exist across seven files, six of them of ziparchive; this is one of them,
+// asserted so the scope decision is held by a test rather than by the absence
+// of one.
+var pinnedApplicationAdapterImport = struct{ pkg, imported string }{
+	pkg:      "internal/fetch/application",
+	imported: "internal/adapters/ziparchive",
+}
+
+// TestApplicationMayImportSharedAdapters pins application out of scope. It
+// fails if the rule started forbidding the import, and it fails if the import
+// stopped existing — a pin nothing exercises would let the rule widen unnoticed.
+func TestApplicationMayImportSharedAdapters(t *testing.T) {
+	pin := pinnedApplicationAdapterImport
+	if reason := adapterImportReason("application", pin.imported); reason != "" {
+		t.Errorf("%s imports %s and the rule now forbids it (%s) — application is deliberately in scope for no "+
+			"adapter ban: the shared adapters exist for it to call", pin.pkg, pin.imported, reason)
+	}
+	found := false
+	for _, pkg := range loadInternalPackages(t) {
+		if rel(pkg.PkgPath) != pin.pkg {
+			continue
+		}
+		for impPath := range pkg.Imports {
+			if rel(impPath) == pin.imported {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("%s no longer imports %s — the pin exercises nothing, so pick another of the application imports "+
+			"of internal/adapters/ and name it here", pin.pkg, pin.imported)
+	}
+}
+
+// sharedValueTypesImportableFromDomain are the packages docs/ARCHITECTURE.md
+// classifies as shared value types: names several contexts agree on rather than
+// services one of them calls. They live outside internal/adapters/ precisely
+// because a domain layer imports them, which is the reason their exemption in
+// sharedInternalExemptions states.
+var sharedValueTypesImportableFromDomain = []string{
+	"internal/coordinate",
+	"internal/gotoolchain",
+}
+
+// TestDomainMayImportSharedValueTypes is the control on the other side of the
+// rule: the guard must forbid adapters and nothing else. It fails if the rule
+// grew to cover a shared value type, and if a domain layer stopped importing
+// one — at which point the placement reason recorded for it would have gone
+// stale.
+func TestDomainMayImportSharedValueTypes(t *testing.T) {
+	pkgs := loadInternalPackages(t)
+	for _, shared := range sharedValueTypesImportableFromDomain {
+		if reason := adapterImportReason("domain", shared); reason != "" {
+			t.Errorf("the rule forbids a domain layer from importing %s (%s) — it is a shared value type, "+
+				"not an adapter", shared, reason)
+		}
+		importers := 0
+		for _, pkg := range pkgs {
+			if ctx, layer := layerOf(rel(pkg.PkgPath)); ctx == "" || layer != "domain" {
+				continue
+			}
+			for impPath := range pkg.Imports {
+				if rel(impPath) == shared {
+					importers++
+				}
+			}
+		}
+		if importers == 0 {
+			t.Errorf("no domain package imports %s — sharedInternalExemptions says it stays outside "+
+				"internal/adapters/ because a domain layer imports it, and that reason has gone stale",
+				shared)
 		}
 	}
 }
