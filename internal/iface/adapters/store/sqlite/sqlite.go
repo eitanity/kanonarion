@@ -17,9 +17,9 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // Store is the SQLite-backed interface store.

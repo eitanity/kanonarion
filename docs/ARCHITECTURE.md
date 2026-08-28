@@ -264,6 +264,40 @@ rather than being re-declared per context:
 - `clock` - `System` (production) and `Fixed` (tests)
 - `blobcodec`, `ziparchive`, `modcache` - blob (de)serialisation, zip handling,
   and Go module-cache materialisation for `use`
+- `sqlitestore` - the SQLite handle, store-root layout and per-module migration
+  runner every context's `store/sqlite` adapter opens through
+- `goenv` - Go environment resolution the way the go command resolves it, and
+  the network posture every egress asks before it opens a socket
+
+`TestSharedInternalPackagesLiveUnderAdapters` enforces this: a directory
+directly under `internal/` that more than one bounded context imports - from
+production or test code - lives under `internal/adapters/`, or names in
+`sharedInternalExemptions` the reason it is not infrastructure. The context set
+is derived from the tree, not listed.
+
+### Not infrastructure
+
+Five categories sit under `internal/` at top level and stay there. Each is a
+reason a package shared across contexts is still not infrastructure, and every
+exemption states which one it is; `TestSharedInternalExemptionsAreLive` fails on
+an entry that no longer names a non-context directory, so the list drains as the
+tree moves.
+
+- **Shared value type** - a name several contexts agree on rather than a service
+  one of them calls. `coordinate` (the module coordinate) and `gotoolchain`
+  (the toolchain fact a record carries, shared so three ledgers render "not
+  recorded" the same way). Both are imported from domain layers, which must not
+  reach an adapter, so `internal/adapters/` is the one place they cannot go.
+- **Composition layer** - `cli`, `composition` and `driver`, described under
+  *Cross-context Composition* below. They sit above the contexts and are exempt
+  from this rule for the same reason they are exempt from the cross-context
+  import ban.
+- **Its own documented section** - `audit`, the context-neutral audit-event
+  vocabulary described under *Audit Log*. It is pure, and the JSONL adapter that
+  persists it is already under `internal/adapters/`.
+- **Test infrastructure** - `canonicalshape` and `wireshape`. Neither has a
+  production importer, so no context depends on either at run time.
+- **The destination itself** - `adapters`.
 
 ---
 

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -314,6 +314,187 @@ func TestNoCrossContextApplicationImports(t *testing.T) {
 			}
 		}
 	}
+}
+
+// sharedInternalExemptions classifies every directory directly under internal/
+// that is not a bounded context, naming the reason it is not infrastructure and
+// so may stay out of internal/adapters/ however many contexts import it.
+//
+// docs/ARCHITECTURE.md ("Shared Adapters") says infrastructure used by more
+// than one context lives under internal/adapters/ rather than being re-declared
+// per context. Nothing checked that, so the rule held only where somebody
+// remembered it. TestSharedInternalPackagesLiveUnderAdapters checks it, and
+// this map is the whole of the escape hatch: an entry is a claim that the
+// directory is not infrastructure, not that its placement is inconvenient to
+// fix.
+//
+// Five reasons appear, and each is a category the architecture already has:
+//
+//   - a shared value type is a name three contexts agree on, not a service one
+//     of them calls, and it is imported from domain layers — where an adapters
+//     package must never be reached from;
+//   - the composition layer sits above the contexts and is exempt from the
+//     cross-context import ban for the same reason it is exempt from this one;
+//   - a context-shaped concern with its own documented section is placed by
+//     that section, not by importer count;
+//   - test infrastructure is not used by any context at run time;
+//   - and internal/adapters is the destination, so it satisfies the rule by
+//     being it.
+//
+// The map covers directories no context imports today (the composition layer),
+// because the classification is what the entry records: leaving them out would
+// mean discovering the category the first time an import crossed a second
+// context, under a failing test. TestSharedInternalExemptionsAreLive fails on
+// an entry that no longer names a non-context directory, so the list drains as
+// the tree moves.
+var sharedInternalExemptions = map[string]string{
+	"adapters": "the destination itself",
+	"coordinate": "shared value type: the module coordinate every context names, " +
+		"imported from domain layers that must not reach an adapter",
+	"gotoolchain": "shared value type: names a fact about a record, shared so that three " +
+		"ledgers render \"not recorded\" the same way; imported from the vuln, iface and " +
+		"callgraph domains, which must not reach an adapter",
+	"audit": "its own documented section: the context-neutral audit-event vocabulary, pure and " +
+		"placed by docs/ARCHITECTURE.md (\"Audit Log\"); the JSONL adapter that persists it is " +
+		"already under internal/adapters",
+	"cli":         "composition layer: the cobra command surface, above the contexts",
+	"composition": "composition layer: the neutral composition root shared by the CLI and the facade",
+	"driver":      "composition layer: cross-context use cases that sit above the contexts",
+	"canonicalshape": "test infrastructure: no production importer, so no context depends on it " +
+		"at run time",
+	"wireshape": "test infrastructure: no production importer, so no context depends on it " +
+		"at run time",
+}
+
+// TestSharedInternalPackagesLiveUnderAdapters enforces the placement rule
+// docs/ARCHITECTURE.md states and nothing checked: a package under internal/
+// that more than one bounded context imports is infrastructure, and lives under
+// internal/adapters/ unless sharedInternalExemptions says why it is not.
+//
+// It counts test importers as well as production ones. A helper shared by seven
+// contexts' tests is shared code by the same argument, and counting it is what
+// makes the "test infrastructure" exemptions load-bearing rather than decorative
+// — an entry that gained a production importer would be caught by the reason it
+// states no longer being true, not by an importer count quietly crossing two.
+//
+// The contexts are derived from the tree by boundedContexts, not listed here.
+func TestSharedInternalPackagesLiveUnderAdapters(t *testing.T) {
+	importers := internalDirImporters(t)
+	dirs := make([]string, 0, len(importers))
+	for dir := range importers {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	for _, dir := range dirs {
+		if boundedContexts()[dir] {
+			continue
+		}
+		if _, exempt := sharedInternalExemptions[dir]; exempt {
+			continue
+		}
+		ctxs := keysOf(importers[dir])
+		if len(ctxs) < 2 {
+			continue
+		}
+		sort.Strings(ctxs)
+		t.Errorf("internal/%s is imported by %d bounded contexts (%s) and does not live under internal/adapters/ — "+
+			"infrastructure used by more than one context lives under internal/adapters/ rather than at internal/ top level "+
+			"(docs/ARCHITECTURE.md, \"Shared Adapters\"); move it there, or add it to sharedInternalExemptions with the "+
+			"reason it is not infrastructure",
+			dir, len(ctxs), strings.Join(ctxs, ", "))
+	}
+}
+
+// TestSharedInternalExemptionsAreLive fails on an entry in
+// sharedInternalExemptions that no longer names a directory directly under
+// internal/, or that names one the tree now derives as a bounded context. Either
+// way the entry exempts nothing from a rule that never reaches it, while reading
+// as a live decision — which is how the hand-written context list this file
+// replaced came to describe a tree that had moved on.
+func TestSharedInternalExemptionsAreLive(t *testing.T) {
+	for dir, reason := range sharedInternalExemptions {
+		info, err := os.Stat(filepath.Join("../internal", dir))
+		if err != nil || !info.IsDir() {
+			t.Errorf("sharedInternalExemptions names internal/%s (%s), which is not a directory under internal/ — remove the entry",
+				dir, reason)
+			continue
+		}
+		if boundedContexts()[dir] {
+			t.Errorf("sharedInternalExemptions exempts internal/%s (%s), which the tree derives as a bounded context — "+
+				"the placement rule already skips a context, so remove the entry", dir, reason)
+		}
+	}
+}
+
+// internalDirImporters maps each directory directly under internal/ to the set
+// of bounded contexts that import a package under it, from production or test
+// code. A context importing its own directory is not an importer of it.
+//
+// It reads imports from the files rather than from packages.Load so that
+// _test.go files count: a package every context's tests reach is shared across
+// contexts whether or not a binary links it.
+func internalDirImporters(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	const internalDir = "../internal"
+	const internalPrefix = modulePath + "/internal/"
+	out := map[string]map[string]bool{}
+	files := 0
+	err := filepath.Walk(internalDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("walk %s: %w", path, err)
+		}
+		if info.IsDir() {
+			if info.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		ctx := topLevelInternalDir(filepath.Dir(path), internalDir)
+		if ctx == "" || !boundedContexts()[ctx] {
+			return nil
+		}
+		parsed, perr := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if perr != nil {
+			return fmt.Errorf("parsing %s: %w", path, perr)
+		}
+		files++
+		for _, spec := range parsed.Imports {
+			imported := strings.Trim(spec.Path.Value, `"`)
+			if !strings.HasPrefix(imported, internalPrefix) {
+				continue
+			}
+			dir, _, _ := strings.Cut(strings.TrimPrefix(imported, internalPrefix), "/")
+			if dir == "" || dir == ctx {
+				continue
+			}
+			if out[dir] == nil {
+				out[dir] = map[string]bool{}
+			}
+			out[dir][ctx] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", internalDir, err)
+	}
+	if files == 0 {
+		t.Fatalf("no Go files read under %s: the walk is reading the wrong place, and a guard reading nothing passes by finding nothing", internalDir)
+	}
+	return out
+}
+
+// topLevelInternalDir returns the directory directly under internal/ that holds
+// dir, or "" when dir is internal/ itself or outside it.
+func topLevelInternalDir(dir, internalDir string) string {
+	inner, err := filepath.Rel(internalDir, dir)
+	if err != nil || inner == "." || strings.HasPrefix(inner, "..") {
+		return ""
+	}
+	top, _, _ := strings.Cut(filepath.ToSlash(inner), "/")
+	return top
 }
 
 // TestNoWallClockInApplicationOrDomain is the enforced equivalent of the

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // seedStoreWithUnknownMigration brings a temp store fully up to date and then

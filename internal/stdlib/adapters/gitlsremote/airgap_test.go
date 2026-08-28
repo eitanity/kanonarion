@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
 )

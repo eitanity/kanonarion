@@ -13,6 +13,7 @@ import (
 	mcblobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	mcproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/modcache"
@@ -21,7 +22,6 @@ import (
 	gosumfile "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosumfile"
 	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
-	"github.com/eitanity/kanonarion/internal/goenv"
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
@@ -80,7 +80,7 @@ import (
 	sbomvendortree "github.com/eitanity/kanonarion/internal/sbom/adapters/vendortree"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"

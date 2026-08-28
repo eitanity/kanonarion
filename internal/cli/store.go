@@ -13,9 +13,9 @@ import (
 	"github.com/spf13/cobra"
 
 	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // allMigrations returns every migration the binary knows about.

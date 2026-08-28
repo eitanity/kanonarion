@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 
 	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // blobAdoptionMarker is the file whose presence means the one-time re-addressing

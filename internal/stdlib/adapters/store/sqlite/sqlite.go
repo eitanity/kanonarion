@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
 )

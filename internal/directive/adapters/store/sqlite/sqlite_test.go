@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	directivesqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/directive/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 func openTestStore(t *testing.T) (*directivesqlite.Store, sqlitestore.DB) {

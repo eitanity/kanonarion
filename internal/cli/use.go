@@ -16,9 +16,9 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	factstoresqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/goenv"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"

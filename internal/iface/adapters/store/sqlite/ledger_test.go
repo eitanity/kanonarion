@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	ifacesqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )

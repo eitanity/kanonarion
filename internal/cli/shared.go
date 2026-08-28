@@ -25,12 +25,12 @@ import (
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licenceports "github.com/eitanity/kanonarion/internal/license/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"

@@ -18,7 +18,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
 
 // syntheticLocalVersion is the module version `kanonarion local` used to write

@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/staleness/ports"
 )
 

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 type Store struct {

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // seedStoreWithUnknownMigration builds a real store in a temp dir, brings it fully
