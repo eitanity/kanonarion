@@ -280,7 +280,8 @@ func sbomGenerateWith(
 	if record.LicensesIncomplete {
 		return &exitError{
 			code: ExitPartial,
-			msg:  "sbom generated with undetermined licences: " + undeterminedLicenceSummary(record.Content),
+			msg: "sbom generated with undetermined licences: " + undeterminedLicenceSummary(
+				record.Content, licenceRemedyBuildForWalk(ctx, ctr, record.WalkID)),
 		}
 	}
 	return nil
@@ -305,16 +306,19 @@ func parseGeneratedAt(v string) (time.Time, error) {
 // lacks, so the operator learns which they are, and what to run next, without
 // opening the artefact.
 //
-// The remedy differs by component — the walk root's own licence and a
-// dependency's come from different commands — so it is composed per coordinate
-// from the shared diagnostic rather than stated as one fixed sentence here.
+// The remedy differs by component — the walk root's own licence, a
+// local-replace target's and a published dependency's come from different
+// commands — so it is composed per coordinate from the shared diagnostic
+// rather than stated as one fixed sentence here. build carries the one fact
+// the document does not hold: which of its components this build resolves from
+// a local path, and therefore cannot fetch.
 //
 // It reads the document rather than the record because the document is the thing
 // being judged and is present on every path, cached included. A document this
 // process cannot re-read is reported as such: the exit code has already been
 // decided by the record, and a parse failure here must not turn a stated gap
 // into a silent one.
-func undeterminedLicenceSummary(content []byte) string {
+func undeterminedLicenceSummary(content []byte, build licenceRemedyBuild) string {
 	var doc struct {
 		Components []struct {
 			Name     string            `json:"name"`
@@ -364,7 +368,7 @@ func undeterminedLicenceSummary(content []byte) string {
 		return "one or more components carry no licence identity"
 	}
 	summary := fmt.Sprintf("%d component(s) with no licence identity: %s", len(names), strings.Join(names, ", "))
-	if remedy := missingLicenceRecordRemedies(missing); remedy != "" {
+	if remedy := missingLicenceRecordRemedies(missing, build); remedy != "" {
 		summary += " — " + remedy
 	}
 	return summary

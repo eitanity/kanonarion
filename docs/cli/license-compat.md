@@ -22,7 +22,7 @@ of data is never presented as an answer):
 
 | Condition | Outcome |
 |-----------|---------|
-| No licence record for the root | Exit 4 (not found) with a diagnostic naming the command that produces it (`walk --gomod ./go.mod --analyse-root` + `extract` for a local root, `license <mod@ver>` otherwise) |
+| No licence record for the root | Exit 4 (not found) with a diagnostic naming the command that produces it (`walk --gomod ./go.mod --analyse-root` + `extract` for a local root, `walk --gomod <path> --analyse-local` + `extract` for a module the build replaces with a local path, `license <mod@ver>` otherwise) |
 | Record exists but no SPDX identity (proprietary / `Unclassified` root) | Exit 2: the record is a valid outcome but cannot serve as an implicit SPDX target - pass `--target` explicitly |
 
 ## The answering walk

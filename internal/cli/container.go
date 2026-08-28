@@ -33,6 +33,7 @@ import (
 	dirxmod "github.com/eitanity/kanonarion/internal/directive/adapters/parser/xmod"
 	dirsqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
 	dirapp "github.com/eitanity/kanonarion/internal/directive/application"
+	dirports "github.com/eitanity/kanonarion/internal/directive/ports"
 
 	gdgosrc "github.com/eitanity/kanonarion/internal/godebug/adapters/scanner/gosrc"
 	gdsqlite "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
@@ -183,6 +184,12 @@ type Container struct {
 	ExtractDirectives *dirapp.ExtractDirectivesUseCase
 	QueryDirectives   QueryDirectivesUseCase
 	DiffDirectives    DiffDirectivesUseCase
+	// DirectiveParser reads a project's replace/exclude directives without
+	// recording a scan. A diagnostic needs the local-replace fact to name a
+	// remedy that can work, and reading it here keeps that answer coming from
+	// the directive context instead of a second go.mod parser. Nil means the
+	// question cannot be asked, which is not the same as answering "no".
+	DirectiveParser dirports.DirectiveParser
 
 	// godebug
 	ExtractGoDebug *gdapp.ExtractGoDebugUseCase
@@ -628,8 +635,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 	// ---- directive use cases ----
 	dirStore := dirsqlite.New(dbHandle)
+	directiveParser := dirxmod.New()
 	extractDirectivesUC := dirapp.NewExtractDirectivesUseCase(dirapp.Config{
-		Parser: dirxmod.New(), Store: dirStore, Audit: factStore,
+		Parser: directiveParser, Store: dirStore, Audit: factStore,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryDirectivesUC := dirapp.NewQueryDirectivesUseCase(dirStore)
@@ -715,6 +723,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		ExtractDirectives: extractDirectivesUC,
 		QueryDirectives:   queryDirectivesUC,
 		DiffDirectives:    diffDirectivesUC,
+		DirectiveParser:   directiveParser,
 
 		ExtractGoDebug: extractGoDebugUC,
 		QueryGoDebug:   queryGoDebugUC,

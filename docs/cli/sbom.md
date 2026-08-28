@@ -404,8 +404,24 @@ identity: github.com/eitanity/kanonarion@local (the document's subject) — run
 'kanonarion extract <walk-id>' to analyse the project's own licence
 ```
 
-Both are the same sentence `license-compat` prints for the same missing record.
-When a document is missing both kinds, both remedies are stated.
+A component the build **replaces with a local path** (`replace example.com/mod
+=> ./sub`) has no published source, so `kanonarion license` cannot reach it
+either. It is ingested from the directory that replaces it:
+
+```
+sbom generated with undetermined licences: 1 component(s) with no licence
+identity: example.com/mod@v0.0.0-00010101000000-000000000000 — run
+'kanonarion walk --gomod /path/to/go.mod --analyse-local' then
+'kanonarion extract <walk-id>' to analyse example.com/mod from the local path
+this build replaces it with
+```
+
+The local-replace targets are read from the `go.mod` of the walk the document
+was generated from, so a walk of a published coordinate — or one whose working
+tree has moved — states the dependency remedy instead of guessing.
+
+All are the same sentence `license-compat` prints for the same missing record.
+When a document is missing more than one kind, each remedy is stated once.
 
 The components are named from the document that was written, so the message is
 the same whether the document was generated now or served from the cache.

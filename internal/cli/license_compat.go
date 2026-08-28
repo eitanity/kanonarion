@@ -163,7 +163,7 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 			return &exitError{
 				code: ExitNotFound,
 				msg: fmt.Sprintf("no licence record for root %s — %s, or pass --target",
-					coord, missingLicenceRecordRemedy(coord)),
+					coord, missingLicenceRecordRemedy(coord, licenceRemedyBuildForWalk(ctx, ctr, walkID))),
 			}
 		case errors.Is(err, licapp.ErrRootLicenceNoSPDX):
 			return &exitError{
