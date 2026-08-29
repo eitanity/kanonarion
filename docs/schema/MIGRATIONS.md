@@ -1197,6 +1197,174 @@ implementations of "which listed module owns this path" were free to disagree
 about one file, which is how a fixed two-segment split survived in two scanners
 at once.
 
+## Native component record: new store module `native`, migration 1
+
+**Additive; a new table and a new record type. No existing record shape changes,
+so no pipeline version is bumped anywhere.** The whole store's migration count
+goes `v81` -> `v82`.
+
+`native_records` holds what a module's own artefact compiles into a binary as
+native code: the presence answer, the identified components with the declaration
+that established each, and every native source file the build compiles, with its
+size and digest. It exists because nothing modelled it. Measured on the
+maintainer's store, `github.com/mattn/go-sqlite3@v1.14.12` carries
+`sqlite3-binding.c` at 8,469,484 bytes, that file declares
+`#define SQLITE_VERSION "3.38.0"`, its licence record says MIT — the Go
+wrapper's licence — and no table named the library at all.
+
+It owns a **new module series** rather than joining `license` or `fetch`. The
+subject is different: a licence record describes a grant, a fetch record
+describes custody of an artefact, and this describes a distinct piece of software
+that ships inside one. A separate series also keeps the version numbers
+independent, so adding a recipe never forces a migration in a context that has
+nothing to do with it.
+
+The **artefact identity is a key column**, alongside the coordinate and the
+pipeline fingerprint. A native-component record is a claim about specific bytes,
+and two records naming different artefacts for one pinned version is a
+contradiction the store must be able to see; keying on the coordinate alone would
+have the second measurement silently replace the first. `GetNativeRecord` refuses
+to pick between two such rows rather than serving one and hiding the other.
+
+The generation key is a **pipeline fingerprint**, not the bare pipeline version:
+the detection logic version folded with the recipe catalogue version
+(`0.1.0+recipes.1` at the time the table was created). Adding a recipe must re-measure a module recorded as
+`present_unidentified` rather than serve the answer taken before the recipe
+existed — that transition is the whole point of recording the unidentified case.
+The two versions are separate because they change for different reasons, which is
+the same split `fips` makes between its pipeline and its catalogue.
+
+**Presence is three-valued**, and the third value is why the record exists:
+
+| `presence` | meaning |
+|---|---|
+| `absent` | the artefact carries no native source the build compiles |
+| `present_identified` | native source is compiled in and a recipe named the library |
+| `present_unidentified` | native source is compiled in and no recipe names it |
+
+`present_unidentified` is a coverage gap a reader can act on, not an absence, and
+it is spelled differently from `absent` so no consumer can collapse the two. The
+record carries the full file list in both present cases, so what is unaccounted
+for is legible without re-reading the artefact.
+
+(A fourth value and a fourth collection arrive at pipeline version 0.2.0; see
+the next entry.)
+
+Migration for existing stores: **none required.** The table is created empty and
+fills as modules are examined. A coordinate with no row reads as *not examined*,
+never as *no native component*.
+
+## Native record shape change: pipeline version 0.1.0 -> 0.2.0, no migration
+
+**A record shape change with NO migration and NO DDL. The whole store's
+migration count is unchanged.** This entry exists precisely because a shape
+changed without a migration running, and a shape change that leaves no trace in
+this file is one nobody can account for later.
+
+`native` records gain a `linked_libraries` collection and a fourth `presence`
+value, `linked_not_shipped`.
+
+**Why no DDL.** `presence` is an unconstrained `TEXT` column with no CHECK and no
+enum, so a new value needs no schema change. The collection lives inside the
+serialised record blob, which is opaque to SQLite. The table created by
+`native` migration 1 holds the new shape unaltered.
+
+**Why the pipeline version moves anyway.** The measurement changed: a
+re-measurement of an unchanged artefact now produces a different record. The
+generation key is the pipeline fingerprint, which folds the pipeline version in,
+so rows written at `0.1.0+recipes.1` are simply never read at
+`0.2.0+recipes.1`. They are not migrated, not rewritten and not deleted - they
+stay as the historical record of what was measured then, and no read can mistake
+one for a measurement taken now. Measured on the maintainer's store before the
+change: 7 rows at `0.1.0+recipes.1`, 0 at `0.2.0+recipes.1`.
+
+**What the value fixes.** A module that declares cgo, compiles no native source
+of its own, and links an external native library used to answer `absent` - the
+word reserved for nothing being there. `golang.org/x/text` names `-licui18n`;
+`github.com/googleapis/enterprise-certificate-proxy` names `-framework
+CoreFoundation`; `github.com/yfedoseev/pdf_oxide/go` names a
+`libpdf_oxide.a` operand. In every case something native reaches the binary and
+the artefact does not carry it. Not measuring a host-provided library stays
+correct - `-licui18n` cannot be resolved from an artefact and no version may be
+invented for it - but scoping the measurement out is not the same as calling it
+absent.
+
+`linked_not_shipped` deliberately does **not** take the `present_` prefix: it is
+not a statement about what the artefact contains.
+
+**What earns it.** No compiled sources AND at least one linked library of kind
+`external`. The C runtime a cgo binary links by construction - `m`, `c`, `dl`,
+`pthread`, `rt`, `util`, `resolv`, `nsl`, `crypt`, `anl`, `stdc++`, `gcc`,
+`gcc_s`, `objc`, `System` - is `system` and never earns it; flagging libc and
+libdl would make the value meaningless. Everything else is `external`,
+frameworks included, because a framework names a component from outside the
+module a reader may want to see. Measured over the maintainer's store (1229
+artefacts), 20 answers move from `absent` to `linked_not_shipped`; over the
+module cache (1201 zips), 24 move, and 2 modules that name only the C runtime
+stay `absent`. No `present_identified` or `present_unidentified` answer moves.
+
+`linked_libraries` is populated **regardless of presence**, so a module that
+ships its own sources and also links something else states both. Each entry
+carries the library name as the directive spells it, the kind, the verbatim
+`#cgo` line and the file it sits in. It joins the content hash in canonical
+sorted order, under a comparator keyed on all four fields.
+
+Migration for existing stores: **none required, and none is run.**
+
+## Native pkg-config operand: pipeline version 0.2.0 -> 0.3.0, no migration
+
+**A measurement change with NO shape change, NO DDL and NO migration. The whole
+store's migration count is unchanged.** The record shape, the field set and the
+content-hash formula are all exactly as 0.2.0 left them.
+
+`#cgo pkg-config:` is read as a fourth operand form alongside `-l<name>`,
+`-framework <name>` and `.a` archive paths. It was missing, and its absence was
+the same defect the 0.2.0 entry describes: `github.com/terminalstatic/go-xsd-validate@v0.1.6`
+carries `#cgo pkg-config: libxml-2.0`, links libxml2, ships none of it, and
+answered `absent`.
+
+**Why the pipeline version moves with no shape change.** The version's contract
+is a re-measurement one, not a shape one: it moves when re-measuring an
+unchanged artefact would differ from a stored record. It would. Measured on the
+maintainer's store, which already held rows at `0.2.0+recipes.1` from a
+verification run:
+
+| coordinate | row held at 0.2.0 | re-measurement |
+|---|---|---|
+| `github.com/terminalstatic/go-xsd-validate@v0.1.6` | `absent` | `linked_not_shipped`, naming `libxml-2.0` |
+| `go.mongodb.org/mongo-driver/v2@v2.6.0` | `present_unidentified`, no `libmongocrypt` | `present_unidentified`, with `libmongocrypt` |
+
+Without the bump the first row is served as a cache hit and the module keeps
+answering `absent` forever - the defect surviving its own fix. As before the
+rows are not migrated, rewritten or deleted; the fingerprint moves and they stop
+being read.
+
+**pkg-config names are a separate namespace and are recorded verbatim.**
+`libxml-2.0` is stored as `libxml-2.0`: the `lib` prefix is not stripped and it
+is not translated to the `xml2` a linker would call it, because that translation
+lives in a `.pc` file on the building machine and not in the artefact. The kind
+is always `external` - pkg-config is never how the C runtime is linked, so
+classifying these against the runtime list would only create a way for a real
+dependency to be dismissed as one. **No field was added.** The verbatim
+directive already distinguishes the two namespaces, so the hash shape is
+unchanged; `go.mongodb.org/mongo-driver/v2@v2.6.0` names `libmongocrypt` by
+pkg-config and `mongocrypt` by `-lmongocrypt`, and they stay two entries.
+
+Only the cgo preamble - the comment attached to `import "C"` - is read, so a
+`#cgo pkg-config:` line quoted in documentation or held in a Go string literal
+is not read as a directive. Measured on `golang.org/toolchain`: 13 Go files
+mention `pkg-config`, including `src/cmd/cgo/doc.go` documenting the directive by
+example; 0 reach a preamble and 0 produce an entry.
+
+Effect, measured: over the maintainer's store (1229 artefacts) `linked_not_shipped`
+goes 20 -> 22 and `absent` 1192 -> 1190, the two moves being
+`go-xsd-validate@v0.1.6` and `github.com/moby/moby/v2@v2.0.0-beta.21` (which
+links `libnftables` and `libsystemd` and ships neither); four further modules
+gain a pkg-config entry without changing presence. Over the module cache (1201
+zips) `linked_not_shipped` goes 24 -> 25. No `present_identified` answer moves.
+
+Migration for existing stores: **none required, and none is run.**
+
 ## Purging a table other rows point at
 
 A migration that deletes rows must state what happens to the rows that reference

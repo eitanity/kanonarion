@@ -148,6 +148,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newGoDebugCmd(stdout, stderr),
 		newVendorCmd(stdout, stderr),
 		newFIPSCmd(stdout, stderr),
+		newNativeCmd(stdout, stderr),
 		newLatestCmd(stdout, stderr),
 		newProvenanceCmd(stdout, stderr),
 		newUseCmd(stdout, stderr),

@@ -44,6 +44,9 @@ import (
 	fipssqlite "github.com/eitanity/kanonarion/internal/fips/adapters/store/sqlite"
 	fipsvendortree "github.com/eitanity/kanonarion/internal/fips/adapters/vendortree"
 	fipsapp "github.com/eitanity/kanonarion/internal/fips/application"
+	nativegosource "github.com/eitanity/kanonarion/internal/native/adapters/gosource"
+	nativesqlite "github.com/eitanity/kanonarion/internal/native/adapters/store/sqlite"
+	nativeapp "github.com/eitanity/kanonarion/internal/native/application"
 
 	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
 	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
@@ -202,6 +205,11 @@ type Container struct {
 	// fips
 	ExtractFIPS ExtractFIPSUseCase
 	QueryFIPS   QueryFIPSUseCase
+
+	// native — the third-party C/C++ library a cgo module compiles into the
+	// binary from source it ships in its own zip.
+	ExtractNative *nativeapp.ExtractNativeUseCase
+	QueryNative   *nativeapp.QueryNativeUseCase
 
 	// staleness. The ledger of latest-version lookups, read and written by
 	// every command that reports how far behind a dependency is.
@@ -675,6 +683,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	})
 	queryFIPSUC := fipsapp.NewQueryFIPSUseCase(fipsStore)
 
+	// ---- native use cases ----
+	nativeStore := nativesqlite.New(dbHandle)
+	extractNativeUC := nativeapp.NewExtractNativeUseCase(nativeapp.Config{
+		Facts: factStore, Blobs: blobs, Native: nativeStore,
+		Source: nativegosource.New(),
+		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
+	})
+	queryNativeUC := nativeapp.NewQueryNativeUseCase(nativeStore)
+
 	ctr := &Container{
 		Config:      cfg,
 		FetchModule: queryFetchUC,
@@ -733,6 +750,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		ExtractFIPS: extractFIPSUC,
 		QueryFIPS:   queryFIPSUC,
+
+		ExtractNative: extractNativeUC,
+		QueryNative:   queryNativeUC,
 
 		StalenessLedger: stalesqlite.New(dbHandle),
 	}

@@ -16,7 +16,7 @@ stderr 'walk record not found'
 
 # store info now reports the schema state.
 kanonarion store info
-stdout 'binary expects: v81'
+stdout 'binary expects: v82'
 stdout 'status:'
 
 # JSON output contains the required fields.

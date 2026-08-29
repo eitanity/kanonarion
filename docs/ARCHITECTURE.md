@@ -83,6 +83,7 @@ in a use case.
 | Risk | sbom | `internal/sbom` | Generate a CycloneDX SBOM |
 | Risk | capability | `internal/capability` | Report which sensitive capabilities a module's reachable code can exercise |
 | Risk | staleness | `internal/staleness` | Resolve how far behind upstream a pinned dependency is |
+| Risk | native | `internal/native` | Record the third-party native library a cgo module ships and compiles into the binary, and the ones it links but does not ship |
 | Governance | directive | `internal/directive` | Classify go.mod/go.work replace & exclude directives |
 | Governance | godebug | `internal/godebug` | Classify `//go:debug` settings |
 | Governance | vendortree | `internal/vendortree` | Analyse a vendored tree for drift & inconsistency |
@@ -200,6 +201,49 @@ module several majors behind resolves to its own path's newest version and would
 otherwise be reported as current. Proxy answers are cached with a TTL and an
 absent path is a cacheable negative, distinct from a lookup that could not be
 made. *Adapters:* `proxy` (with `retrying`), `golist`, `store/sqlite`.
+
+**native** - records the third-party C, C++, Objective-C or Fortran library a
+module ships inside its own published zip and compiles into the binary through
+cgo. `github.com/mattn/go-sqlite3` carries the whole SQLite amalgamation as an
+8.4 MB `sqlite3-binding.c`; its licence record describes the Go wrapper and its
+vulnerability verdict is keyed on the Go coordinate, so nothing downstream knew
+the library was there.
+
+Scope is decided by what the build compiles, not by what the zip contains: a
+native source counts only when its package directory declares cgo with
+`import "C"`, because that is the only thing that makes the go tool hand a
+directory's C sources to a C compiler. This is what keeps a pure-Go
+transpilation out of the results - `modernc.org/sqlite` links no C and its `.c`
+files sit under `testdata/`.
+
+Identification is a per-library recipe against a named declaration
+(`#define SQLITE_VERSION "…"`), never a C parser and never an inference from a
+file name. Presence with no matching recipe is a distinct value carrying the
+file evidence, so a library the catalogue cannot name is a coverage gap a reader
+can act on rather than silence.
+
+A module that compiles nothing of its own can still link a library it never
+carries. Its `#cgo LDFLAGS` and `#cgo pkg-config` directives are read - `-l<name>`,
+`-framework <name>`, `.a` path operands, and pkg-config package names - and
+every name is recorded whatever the presence, with the verbatim directive and
+the file it sits in. A pkg-config name is a separate namespace and is kept
+verbatim rather than translated towards a linker name, which only a `.pc` file
+on the building machine could do. Nothing is
+resolved: no path is opened, `${SRCDIR}` is not expanded, build constraints are
+not evaluated, and no version is invented for a library the artefact does not
+hold. Such a module answers `linked_not_shipped`, which does not take the
+`present_` prefix because it is not a statement about what the artefact
+contains. The C runtime every cgo binary links by construction is classified
+`system` and never earns that value; a framework is `external`, because it names
+a component from outside the module a reader may want to see. Scoping the
+measurement of a host library out is not the same as calling it absent - that
+substitution is exactly what the four-valued presence exists to prevent.
+
+*Adapters:* `gosource` (the GoSourceReader port over `go/parser`, answering both
+what a file imports and the C preamble it attaches to `import "C"`),
+`store/sqlite`. The artefact is read through the shared `adapters/ziparchive`,
+so the record inherits the verified zip's status and needs no trust story of its
+own.
 
 ### Governance
 

@@ -143,6 +143,7 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"license-diff":          {},
 	"license-list":          {},
 	"local":                 {skip: "ingests the working tree's call graph; the guard runs in an empty directory, so this would measure the harness rather than the command"},
+	"native":                {},
 	"notice":                {},
 	"policy":                {skip: "command group: cobra prints its help text; it renders no answer of its own"},
 	"policy show":           {},

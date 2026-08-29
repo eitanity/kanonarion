@@ -31,6 +31,7 @@ import (
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licenceports "github.com/eitanity/kanonarion/internal/license/ports"
+	nativeports "github.com/eitanity/kanonarion/internal/native/ports"
 	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
@@ -1173,6 +1174,7 @@ var evidenceInDoubt = []error{
 	extractports.ErrExtractionRunIntegrity,
 	vulnports.ErrVulnIntegrity, vulnports.ErrSnapshotIntegrity,
 	stdlibports.ErrFactsIntegrity, stdlibports.ErrFactsConflict,
+	nativeports.ErrNativeConflict,
 }
 
 // ExitCodeForError maps a Run error onto the process exit code. It honours an
