@@ -98,6 +98,16 @@ func resolveLicenceBasis(
 	summaries []licports.LicenseSummary,
 	listErr error,
 ) (licenceBasis, bool, string) {
+	// The standard library holds no licence record and never will: it ships with
+	// the toolchain rather than through the module proxy, so no extraction runs
+	// over it. The tier says what it could not read and names where the licence
+	// identity IS reported, rather than a remedy that would leave this answer
+	// exactly where it is on the next run.
+	if isStdlibPath(path) {
+		return licenceBasis{}, false, "the standard library holds no licence record — " +
+			"its licence identity comes from the recorded chain of custody, reported by: " +
+			"kanonarion license " + path + "@<version>"
+	}
 	if version != "" {
 		coord, cerr := coordinate.NewModuleCoordinate(path, version)
 		if cerr != nil {

@@ -243,3 +243,34 @@ func TestEveryLadderRungMarshals(t *testing.T) {
 		}
 	}
 }
+
+// TestReachabilitySoundnessStatement_EveryRungArrivesWithItsOwnWords is the
+// guard that keeps a tallying surface derived.
+//
+// A renderer walks ReachabilitySoundnessLevels and prints each rung with its own
+// statement, so a rung added to the ladder appears in that rendering with no
+// edit to the renderer. What it cannot do is invent words: a rung added here and
+// left out of Statement would be rendered under a bare name, which is a tally
+// with nothing behind it, and a rung that borrowed a neighbour's sentence would
+// be worse. This fails on both.
+func TestReachabilitySoundnessStatement_EveryRungArrivesWithItsOwnWords(t *testing.T) {
+	seen := map[string]domain.ReachabilitySoundness{}
+	for _, rung := range domain.ReachabilitySoundnessLevels() {
+		statement := rung.Statement()
+		if statement == "" {
+			t.Errorf("rung %q states nothing: a surface tallying it would print a name with no meaning behind it", rung.String())
+			continue
+		}
+		if other, dup := seen[statement]; dup {
+			t.Errorf("rungs %q and %q share a statement, so a reader cannot tell the two tallies apart",
+				other.String(), rung.String())
+		}
+		seen[statement] = rung
+	}
+
+	// A value this type does not define states nothing rather than borrowing the
+	// nearest rung's words.
+	if got := domain.ReachabilitySoundness("invented").Statement(); got != "" {
+		t.Errorf("an undefined rung stated %q, want \"\"", got)
+	}
+}

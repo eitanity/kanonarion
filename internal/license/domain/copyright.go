@@ -2,7 +2,6 @@ package domain
 
 import (
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -154,9 +153,7 @@ func ExtractCopyright(source string, content []byte) []CopyrightStatement {
 		}
 		stmts = append(stmts, stmt)
 	}
-	sort.Slice(stmts, func(i, j int) bool {
-		return stmts[i].Verbatim < stmts[j].Verbatim
-	})
+	sortSlice(stmts, CopyrightStatementLess)
 	return stmts
 }
 

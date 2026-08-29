@@ -125,7 +125,7 @@ func TestPrintLicenseRecursive_NoWalks(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 	queryUC := testfakes.NewFakeQueryLicense()
 
-	err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &bytes.Buffer{}, io.Discard)
+	err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, nil, licenseFlags{}, &bytes.Buffer{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "no walk record") {
 		t.Fatalf("expected no-walk error, got: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestPrintLicenseRecursive_ListWalksError(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 	queryUC := testfakes.NewFakeQueryLicense()
 
-	err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &bytes.Buffer{}, io.Discard)
+	err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, nil, licenseFlags{}, &bytes.Buffer{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "listing walks") {
 		t.Fatalf("expected listing-walks error, got: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestPrintLicenseRecursive_AllSameLicense(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf, io.Discard); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, nil, licenseFlags{}, &buf, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "All") {
@@ -192,7 +192,7 @@ func TestPrintLicenseRecursive_DifferentLicenses(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf, io.Discard); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, nil, licenseFlags{}, &buf, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "Apache-2.0") {
@@ -216,7 +216,7 @@ func TestPrintLicenseRecursive_AllFlag(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{all: true}, &buf, io.Discard); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, nil, licenseFlags{all: true}, &buf, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "example.com/dep") {
@@ -240,7 +240,7 @@ func TestPrintLicenseRecursive_AllFlagWithError(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{all: true}, &buf, io.Discard); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, nil, licenseFlags{all: true}, &buf, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "Error:") {
@@ -261,7 +261,7 @@ func TestPrintLicenseRecursive_EmptyDepResults(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf, io.Discard); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, nil, licenseFlags{}, &buf, io.Discard); err != nil {
 		t.Fatalf("expected nil for empty deps, got: %v", err)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -62,6 +64,29 @@ type jsonStdoutCase struct {
 	// sentence, not a flag: a command excluded without a reason is a hole in
 	// the guard that nobody can see.
 	skip string
+	// argsFn builds arguments that only exist at run time, such as a fixture
+	// directory. It replaces args when set, and a case that sets it must
+	// produce a document: the point of giving a command a real argument is
+	// that it stops passing on the empty stdout of an early failure.
+	argsFn func(t *testing.T) []string
+}
+
+// policyValidateFixtureArgs names a directory of valid policy files.
+//
+// Without it `policy validate` runs bare in the guard's empty working
+// directory, fails on the missing <path> before writing anything, and the
+// case passes on empty stdout having exercised nothing. A temp directory is
+// used rather than the repository's own docs/examples/policies because the
+// guard chdirs away from the package directory first, so a repository-relative
+// path would resolve to nothing and re-open the same hole.
+func policyValidateFixtureArgs(t *testing.T) []string {
+	t.Helper()
+	dir := t.TempDir()
+	const policy = "version: \"1\"\nstages:\n  fetch:\n    max_depth: 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte(policy), 0o600); err != nil {
+		t.Fatalf("writing policy fixture: %v", err)
+	}
+	return []string{dir}
 }
 
 // jsonStdoutCases enumerates EVERY command in the cobra tree, because --json is
@@ -121,7 +146,7 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"notice":                {},
 	"policy":                {skip: "command group: cobra prints its help text; it renders no answer of its own"},
 	"policy show":           {},
-	"policy validate":       {},
+	"policy validate":       {argsFn: policyValidateFixtureArgs},
 	"provenance":            {},
 	"reachability":          {},
 	"sbom":                  {},
@@ -214,7 +239,11 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 			continue
 		}
 		t.Run(name, func(t *testing.T) {
-			args := append(strings.Fields(name), tc.args...)
+			extra := tc.args
+			if tc.argsFn != nil {
+				extra = tc.argsFn(t)
+			}
+			args := append(strings.Fields(name), extra...)
 			args = append(args, "--json", "--store-root", store)
 			var stdout, stderr bytes.Buffer
 			// The error is deliberately ignored: a command that refuses is a
@@ -222,6 +251,10 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 			_ = Run(args, &stdout, &stderr)
 			ran++
 			if strings.TrimSpace(stdout.String()) == "" {
+				if tc.argsFn != nil {
+					t.Fatalf("%s was given a real argument so that it would answer, and wrote nothing: "+
+						"the case proves nothing in this state", name)
+				}
 				return
 			}
 			documents++

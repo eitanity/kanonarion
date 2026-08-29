@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // seedStoreWithUnknownMigration brings a temp store fully up to date and then
@@ -18,7 +18,7 @@ func seedStoreWithUnknownMigration(t *testing.T) string {
 	t.Helper()
 	storeRoot := t.TempDir()
 
-	handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), composition.Migrations())
+	handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), composition.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("seeding store: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestNewDriver_DoesNotRefuseAStoreThisBuildKnows(t *testing.T) {
 
 	// And it really migrated, so "did not refuse" is not being read as "did not
 	// apply anything either".
-	handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), nil)
+	handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), nil, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("reopening store: %v", err)
 	}

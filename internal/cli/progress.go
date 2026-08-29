@@ -11,6 +11,7 @@ import (
 
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -92,6 +93,52 @@ func newExtractProgressReporter(stderr io.Writer, noProgress bool, cfg configdom
 		return nil
 	}
 	return newStderrProgressReporter(stderr, progressInterval, time.Now, "extract progress: %d modules processed (%s elapsed)\n")
+}
+
+// newStalenessProgressReporter mirrors the two above for the staleness probe,
+// which is silent for as long as it waits: one module whose proxy lookup keeps
+// failing transiently spends the better part of a minute inside a command the
+// guide describes as taking about a second.
+//
+// It is gated identically — --no-progress, the config preference, and a log
+// level that already streams the decorator's own retry lines — so the same
+// instruction silences the same class of output everywhere, with no new flag.
+func newStalenessProgressReporter(stderr io.Writer, noProgress bool, cfg configdomain.Config, level string) staleports.ProgressReporter {
+	if noProgress || !cfg.Preferences.Progress {
+		return nil
+	}
+	switch strings.ToLower(level) {
+	case "info", "debug":
+		return nil
+	}
+	return newStderrRetryReporter(stderr)
+}
+
+// stderrRetryReporter writes one line per retry to an output stream (stderr in
+// production). It is safe for concurrent use: the newer-major probe resolves in
+// bounded parallel rounds.
+//
+// It is deliberately NOT throttled like the heartbeat above. The heartbeat
+// throttles a per-module firehose down to proof of life; a retry is the
+// opposite — rare, at most three per module, and each one explains a wait the
+// user is already sitting through. At the 20s heartbeat interval the whole
+// 14-second retry schedule would elapse without printing anything, which is the
+// silence this exists to end.
+type stderrRetryReporter struct {
+	w io.Writer
+
+	mu sync.Mutex
+}
+
+func newStderrRetryReporter(w io.Writer) *stderrRetryReporter {
+	return &stderrRetryReporter{w: w}
+}
+
+// RetryingLookup names the module, the attempt about to be made and the budget.
+func (p *stderrRetryReporter) RetryingLookup(path string, attempt, maxAttempts int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, _ = fmt.Fprintf(p.w, "staleness progress: retrying %s (attempt %d of %d)\n", path, attempt, maxAttempts)
 }
 
 // stderrProgressReporter writes a single throttled progress line to an output

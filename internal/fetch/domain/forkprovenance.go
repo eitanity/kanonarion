@@ -98,6 +98,16 @@ func InferForkProvenance(path string) ForkProvenance {
 	return inferForkProvenance(path, forkCanonicalCatalogue)
 }
 
+// ForkIndicatorLess is the canonical ordering for ForkIndicator slices. The
+// canonical path leads; the statement follows, so a catalogue that names one
+// canonical twice still produces one order.
+func ForkIndicatorLess(a, b ForkIndicator) bool {
+	if a.Canonical != b.Canonical {
+		return a.Canonical < b.Canonical
+	}
+	return a.Statement < b.Statement
+}
+
 // inferForkProvenance is the catalogue-parameterised core, split out so tests
 // can exercise matching and ordering against a controlled catalogue.
 func inferForkProvenance(path string, catalogue []string) ForkProvenance {
@@ -124,7 +134,7 @@ func inferForkProvenance(path string, catalogue []string) ForkProvenance {
 	if len(indicators) == 0 {
 		return ForkProvenance{Status: ForkProvenanceNone, CatalogueVersion: ForkCatalogueVersion}
 	}
-	sort.Slice(indicators, func(i, j int) bool { return indicators[i].Canonical < indicators[j].Canonical })
+	sort.Slice(indicators, func(i, j int) bool { return ForkIndicatorLess(indicators[i], indicators[j]) })
 	return ForkProvenance{
 		Status:           ForkProvenancePathMatch,
 		CatalogueVersion: ForkCatalogueVersion,
@@ -341,7 +351,15 @@ func dedupeRelated(related []RelatedModule) []RelatedModule {
 	for path, rel := range strongest {
 		out = append(out, RelatedModule{Path: path, Relation: rel})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	// Path is a map key here, so no two entries share one and the relation is a
+	// tiebreak that can never be reached; it is keyed anyway so the comparator
+	// reads as a total order without a reader having to trace the map back.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Relation < out[j].Relation
+	})
 	return out
 }
 

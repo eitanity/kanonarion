@@ -13,6 +13,7 @@ package gosrc
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -23,19 +24,27 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/fips/domain"
+	"github.com/eitanity/kanonarion/internal/fips/ports"
+	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	"golang.org/x/mod/modfile"
 )
 
 // Scanner implements ports.FIPSScanner.
-type Scanner struct{}
+type Scanner struct {
+	vendored ports.VendoredModuleLister
+}
 
-// New returns a new Scanner.
-func New() *Scanner { return &Scanner{} }
+// New returns a Scanner that attributes vendored files to their module through
+// vendored. A nil lister is legitimate but lossy: nothing then states which
+// module owns a directory under vendor/, so every vendored finding reports
+// vendordomain.ModuleUnresolved rather than a path prefix dressed up as a module.
+func New(vendored ports.VendoredModuleLister) *Scanner { return &Scanner{vendored: vendored} }
 
 // ScanProject reads goModPath for the project module path and toolchain
 // directive, then walks the directory tree collecting FIPS-relevant import
-// findings from every `.go` / `.go.txt` source file.
-func (s *Scanner) ScanProject(goModPath string) (domain.ParseResult, error) {
+// findings from every `.go` / `.go.txt` source file. A file under vendor/ is
+// attributed to the module vendor/modules.txt says owns it.
+func (s *Scanner) ScanProject(ctx context.Context, goModPath string) (domain.ParseResult, error) {
 	data, err := os.ReadFile(filepath.Clean(goModPath))
 	if err != nil {
 		return domain.ParseResult{}, fmt.Errorf("reading go.mod %q: %w", goModPath, err)
@@ -88,6 +97,18 @@ func (s *Scanner) ScanProject(goModPath string) (domain.ParseResult, error) {
 		}
 	}
 
+	// modules.txt is the authoritative mapping from a directory under vendor/
+	// to a module path, and it is read by the vendor context's one parser of
+	// that file rather than by a second one here.
+	var vendoredPaths []string
+	if s.vendored != nil {
+		vendoredPaths, err = s.vendored.VendoredModulePaths(ctx, goModPath)
+		if err != nil {
+			return domain.ParseResult{}, fmt.Errorf("listing vendored modules for %q: %w", goModPath, err)
+		}
+	}
+	index := vendordomain.NewVendoredModuleIndex(vendoredPaths)
+
 	var findings []domain.Finding
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -109,7 +130,7 @@ func (s *Scanner) ScanProject(goModPath string) (domain.ParseResult, error) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		fileFindings, ferr := scanFile(path, rel, modPath)
+		fileFindings, ferr := scanFile(path, rel, modPath, index)
 		if ferr != nil {
 			return ferr
 		}
@@ -179,35 +200,13 @@ func isGoSource(name string) bool {
 	return strings.HasSuffix(name, ".go") || strings.HasSuffix(name, ".go.txt")
 }
 
-// vendorModule maps a vendored path under vendor/ to its module path
-// (first two segments, matching Go's domain/owner layout). Returns the
-// project module path for non-vendored files.
-func vendorModule(rel, projectModule string) string {
-	parts := strings.Split(rel, "/")
-	for i, p := range parts {
-		if p != "vendor" {
-			continue
-		}
-		rest := parts[i+1:]
-		switch {
-		case len(rest) >= 2:
-			return strings.Join(rest[:2], "/")
-		case len(rest) == 1:
-			return rest[0]
-		default:
-			return ""
-		}
-	}
-	return projectModule
-}
-
 // scanFile parses imports from a single Go source file, emitting findings
 // for non-FIPS algorithm imports, direct crypto/rand imports, and a single
 // cgo-crypto finding when the file imports `"C"` from under a dependency
 // that also imports a non-FIPS algorithm (heuristic: cgo + crypto-shaped
 // dep). The `.go.txt` fixture extension is handled by deferring to a
 // permissive parser pass — go/parser accepts any byte source.
-func scanFile(path, rel, projectModule string) ([]domain.Finding, error) {
+func scanFile(path, rel, projectModule string, index vendordomain.VendoredModuleIndex) ([]domain.Finding, error) {
 	fset := token.NewFileSet()
 	// Parse imports only — keep parser cost down on large vendor trees.
 	src, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // walked from a known root
@@ -219,10 +218,10 @@ func scanFile(path, rel, projectModule string) ([]domain.Finding, error) {
 		// A `.go.txt` fixture may not be a valid compilation unit. Fall
 		// back to a line scanner; this never crashes on un-parseable
 		// fixture-style content.
-		return scanImportsViaLine(path, rel, projectModule, src)
+		return scanImportsViaLine(path, rel, projectModule, src, index)
 	}
 
-	mod := vendorModule(rel, projectModule)
+	mod := index.Module(rel, projectModule)
 	var findings []domain.Finding
 	var hasCgo bool
 	var hasCryptoShapedImport bool
@@ -251,8 +250,8 @@ func scanFile(path, rel, projectModule string) ([]domain.Finding, error) {
 // scanImportsViaLine handles `.go.txt` fixtures that go/parser would
 // reject. It is a bufio.Scanner over `import "…"` and `_ "…"` lines —
 // sufficient because we only ever read import paths.
-func scanImportsViaLine(_, rel, projectModule string, src []byte) ([]domain.Finding, error) {
-	mod := vendorModule(rel, projectModule)
+func scanImportsViaLine(_, rel, projectModule string, src []byte, index vendordomain.VendoredModuleIndex) ([]domain.Finding, error) {
+	mod := index.Module(rel, projectModule)
 	var findings []domain.Finding
 	var hasCgo, hasCryptoShape bool
 	sc := bufio.NewScanner(strings.NewReader(string(src)))

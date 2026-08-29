@@ -119,13 +119,16 @@ func diffRecords(a, b domain.WalkRecord) WalkDiff {
 		}
 	}
 
-	// Sort all slices for deterministic output.
-	sort.Slice(added, func(i, j int) bool { return added[i].String() < added[j].String() })
-	sort.Slice(removed, func(i, j int) bool { return removed[i].String() < removed[j].String() })
-	sort.Slice(versionChanged, func(i, j int) bool { return versionChanged[i].Path < versionChanged[j].Path })
-	sort.Slice(statusChanged, func(i, j int) bool {
-		return statusChanged[i].Coordinate.String() < statusChanged[j].Coordinate.String()
-	})
+	// Sort all slices for deterministic output. Each comparator is keyed on
+	// every field its element carries: the coordinate lists are built from map
+	// keys and so hold no duplicate, but the version changes are keyed on the
+	// COMPILED path while their identity is the require path, so a replace can
+	// put two entries under one path — and a comparator stopping there would
+	// hand their order to map iteration.
+	sort.Slice(added, func(i, j int) bool { return coordinateLess(added[i], added[j]) })
+	sort.Slice(removed, func(i, j int) bool { return coordinateLess(removed[i], removed[j]) })
+	sort.Slice(versionChanged, func(i, j int) bool { return versionChangeLess(versionChanged[i], versionChanged[j]) })
+	sort.Slice(statusChanged, func(i, j int) bool { return statusChangeLess(statusChanged[i], statusChanged[j]) })
 
 	return WalkDiff{
 		WalkA:                a.ID,
@@ -195,4 +198,39 @@ func nodesByPath(nodes []domain.GraphNode) map[string]domain.GraphNode {
 		m[key] = n
 	}
 	return m
+}
+
+// coordinateLess orders two module coordinates by path, then version.
+func coordinateLess(a, b coordinate.ModuleCoordinate) bool {
+	if a.Path() != b.Path() {
+		return a.Path() < b.Path()
+	}
+	return a.Version() < b.Version()
+}
+
+// versionChangeLess orders two version changes by the compiled path, then by
+// the two versions, which is the rest of what the change says.
+func versionChangeLess(a, b VersionChange) bool {
+	if a.Path != b.Path {
+		return a.Path < b.Path
+	}
+	if a.VersionA != b.VersionA {
+		return a.VersionA < b.VersionA
+	}
+	return a.VersionB < b.VersionB
+}
+
+// statusChangeLess orders two status changes by coordinate, then by the two
+// statuses.
+func statusChangeLess(a, b StatusChange) bool {
+	if a.Coordinate.Path() != b.Coordinate.Path() {
+		return a.Coordinate.Path() < b.Coordinate.Path()
+	}
+	if a.Coordinate.Version() != b.Coordinate.Version() {
+		return a.Coordinate.Version() < b.Coordinate.Version()
+	}
+	if a.StatusA != b.StatusA {
+		return a.StatusA < b.StatusA
+	}
+	return a.StatusB < b.StatusB
 }

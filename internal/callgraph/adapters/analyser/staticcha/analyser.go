@@ -11,11 +11,11 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/goenv"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )

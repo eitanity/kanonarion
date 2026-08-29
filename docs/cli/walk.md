@@ -91,7 +91,7 @@ a miss on either exits `4` and the message names how many walk records were
 searched and the invocation that lists them.
 
 | `--walk-id` | _(none)_ | Fetch a single walk summary by ID |
-| `--latest` | `false` | Return only the latest unique `(target, scope, toolchain)` combination. Two walks of one project resolved by two Go toolchains are two candidates, not one winner by clock: they record different standard libraries |
+| `--latest` | `false` | Return only the latest unique `(target, scope, platform, toolchain)` combination. Two walks of one project that differ on any of those axes are two candidates, not one winner by clock: another platform selects other files, and another toolchain records a different standard library |
 | `--latest-success` | `false` | Return only the single most recent succeeded walk (as a JSON object, not an array) |
 | `--json` | `false` | Emit the list as JSON |
 
@@ -102,6 +102,25 @@ Print a single stored walk record by ID.
 ```
 kanonarion walk-show <walk-id> [--json]
 ```
+
+The text output states the build the walk was resolved in — its platform and the
+Go toolchain that compiled it — under a `build:` heading:
+
+```
+build:
+  linux/amd64 under go1.26.6
+```
+
+A walk that recorded no toolchain says so and never reports the reader's own; a
+walk rooted at a published coordinate is `not-platform-scoped`. Where the project
+the walk was taken from is still present and `go env GOVERSION` there no longer
+resolves the recorded toolchain, a second line names both versions. The
+comparison is against that project's directory, never the directory the reader
+happens to be standing in.
+
+`--json` is unchanged: it already carries the same fact at
+`.graph.build_env.{goos,goarch,go_version}`, and stdout there is the walk
+record's own sealed bytes.
 
 When the walk's target, or any module in its graph, resolved under pre-modules
 semantics, the output carries a caveat naming those coordinates — see
@@ -174,13 +193,68 @@ so the same question returns the same module set regardless of command.
 
 | Scope | Flag | Set | Question it answers |
 |-------|------|-----|---------------------|
-| **code** | _(default)_ | `go list -deps -test ./...` → modules | "what does *my* code build/run" - the vulnerability / licence / copyright / symbol triage set, including test code |
-| **tool** | `--tool` | import closure of the `go.mod` `tool` directives → modules | "what is in my tooling supply chain" (linters, generators, `go tool` binaries) |
+| **code** | _(default)_ | `go list -deps -test ./...` → modules | "what does *my* code build/run" - the vulnerability / licence / copyright / symbol triage set, including this project's own test dependencies |
+| **tool** | `--tool` | import closure of the `go.mod` `tool` directives → modules | "what is in my tooling supply chain" (linters, generators, `go tool` binaries) - what those binaries link, not what their authors test with |
 | **complete** | `--project` | `go list -m all` (the full Go build list) | "code **and** tooling" - nothing vulnerable anywhere near the project |
 
 `--tool` and `--project` are mutually exclusive; absent both, the scope is
 `code`. The walk record is tagged with the scope (`code` / `tool` / `complete`),
 so `walk-list --scope` and downstream stages select the right record.
+
+### Test scope (`--exclude-tests`)
+
+Each scope also takes a decision about **test-scope dependencies**, and it moves
+the count by about as much as the platform does. On kanonarion's own repo the
+`code` scope resolves 20 modules with test imports and 18 without, while linux
+and windows differ by two. The platform was already named on every answer as
+`frame linux/amd64`; the test scope now is too.
+
+| Scope | Default | Why |
+|-------|---------|-----|
+| **code** | test-**inclusive** | `-test` here adds *this project's own* test infrastructure. We compile it and we execute it, so a vulnerability in it runs on our machines and belongs in the answer. `--exclude-tests` asks for the production-only subset |
+| **tool** | test-**exclusive** | The scope IS the import closure of the tool binaries, which never reaches the tool authors' test packages. `-test` here would add the frameworks golangci-lint's authors use to test golangci-lint - nothing we run links them, and a CVE there is a fact about golangci-lint's development, not about our tooling supply chain |
+| **complete** | no axis | `go list -m all` reports one build list and partitions it by nothing |
+
+The two `-deps` defaults are not an inconsistency to reconcile. `-test` means
+"include the test dependencies **of the root set**", and the two scopes have
+different root sets, so the right default differs and one flag cannot govern
+both. What was missing was that neither answer said which question it had
+answered.
+
+**Every go.mod-scoped answer now states its scope and its axis**, in text and,
+where the answer is a document or a row, as a `dependency_scope` field:
+
+```
+notice: code scope resolved 20 module(s); test-scope dependencies included (narrow with --exclude-tests)
+notice: code scope resolved 18 module(s); test-scope dependencies excluded (--exclude-tests was given)
+notice: tool scope resolved 244 module(s); test-scope dependencies excluded by the scope itself — the tool closure is the tool binaries' imports, which never reach their authors' test packages
+notice: complete scope resolved 472 module(s); no test axis: `go list -m all` reports one build list with no test partition
+```
+
+```json
+{ "dependency_scope": { "scope": "code", "test_scope": "included" } }
+```
+
+`test_scope` is `included`, `excluded` or `unavailable`. It carries what the
+answer *is*, never what the request was: a set excluded by the tool scope and one
+excluded by `--exclude-tests` describe the same thing, and two answers must not
+appear to differ because of how they were asked for.
+
+**`--exclude-tests` on `--tool` is accepted and reports the same 244 modules**,
+saying that the exclusion is the scope's own and that the flag narrowed nothing.
+The caller's question - answer over production code only - is already answered by
+the set they get, so refusing would be friction; crediting the flag with the
+exclusion would be a false attribution. Against `--project` the flag is
+**refused** instead, because there the question cannot be answered at all: the
+build list holds the test dependencies of everything and cannot be partitioned.
+
+**Where the flag is accepted.** `--exclude-tests` narrows the go.mod scopes on
+the commands that only READ: `context --gomod` and `latest --gomod`. It is
+**refused by name** on `walk`, `fetch`, `audit`, `inspect` and `vuln-scan`,
+because each of those records a walk and `scope` is inside the walk identity
+hash while the record names no test axis - a narrowed walk would be stored as
+indistinguishable from a full one. Recording the axis is a separate walk pipeline
+bump and migration.
 
 The set is derived by delegating to the Go toolchain in the project directory;
 every listed module is still fetched and sumdb/VCS-verified by kanonarion (the

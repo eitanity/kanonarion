@@ -723,7 +723,7 @@ func TestRunScanShow_TextOutput(t *testing.T) {
 	ucVuln.AddRecord(app, vulnRec)
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -739,7 +739,7 @@ func TestRunScanShow_NotFound(t *testing.T) {
 	ucVuln := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	err := runScanShow(context.Background(), "DOESNOTEXIST", false, ucRuns, ucVuln, nil, &buf, io.Discard)
+	err := runScanShow(context.Background(), "DOESNOTEXIST", false, ucRuns, ucVuln, nil, nil, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -761,7 +761,7 @@ func TestRunScanShow_ReadErrorReported(t *testing.T) {
 	ucVuln.Err = errors.New("store unavailable")
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -794,7 +794,7 @@ func TestRunScanShow_MissingRecordReported(t *testing.T) {
 	ucVuln := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard)
+	err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, nil, &buf, io.Discard)
 	if err == nil {
 		t.Fatalf("runScanShow() = nil, want exit %d for a module the run counted and no record backs", ExitNotFound)
 	}
@@ -831,7 +831,7 @@ func TestRunScanShow_ScanFailedReported(t *testing.T) {
 	ucVuln.AddRecord(app, rec)
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()

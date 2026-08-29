@@ -39,14 +39,18 @@ type inspectFlags struct {
 	noProgress      bool
 	stdlibFromGoMod bool
 	policyPath      string
+	// excludeTests is parsed only so the refusal can name it. inspect drives a
+	// project walk; see refuseTestScopeOnRecordingCommand.
+	excludeTests bool
 }
 
 func newInspectCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f inspectFlags
 
 	cmd := &cobra.Command{
-		Use:   "inspect [<module>@<version>]",
-		Short: "Run the full pipeline (walk → extract → vuln-scan → context); no args: code deps of ./go.mod",
+		Use:         "inspect [<module>@<version>]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Run the full pipeline (walk → extract → vuln-scan → context); no args: code deps of ./go.mod",
 		Long: `Run the full pipeline (walk → extract → vuln-scan → context) for a module.
 
 With no arguments, inspect defaults to --gomod ./go.mod and runs the pipeline
@@ -109,6 +113,7 @@ that is tight on memory.`,
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
+	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
 	return cmd
 }
@@ -125,6 +130,11 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	refused = append(refused, inspectGoModOnlyFlags(f)...)
 	if err := refuseInapplicableFlags("inspect <module>@<version>", refused); err != nil {
 		return err
+	}
+	// A coordinate inspect walks the module named on the command line, so there
+	// is no dependency scope to narrow — and it records that walk either way.
+	if rerr := refuseTestScopeOnRecordingCommand("inspect <module>@<version>", f.excludeTests); rerr != nil {
+		return rerr
 	}
 
 	wf := commonWalkFlags{
@@ -251,11 +261,16 @@ type inspectSummary struct {
 	// a module-rooted walk (no platform applies), or "unrecorded" (the platform
 	// is not known). Both are always present: a reader cannot tell an unstated
 	// frame from a missing one.
-	WalkFrame      string             `json:"walk_frame"`
-	WalkFrameBasis string             `json:"walk_frame_basis"`
-	Directives     *directivesSection `json:"directives,omitempty"`
-	GoDebug        *godebugSection    `json:"godebug,omitempty"`
-	Vendor         *vendorSection     `json:"vendor,omitempty"`
+	WalkFrame      string `json:"walk_frame"`
+	WalkFrameBasis string `json:"walk_frame_basis"`
+	// DependencyScope names the go.mod dependency scope the pipeline ran over and
+	// the test axis that scope applied. Always present, for the reason WalkFrame
+	// is: both are axes that move the module count, and a summary that states one
+	// and not the other invites the reader to treat the silent one as fixed.
+	DependencyScope *scopeJSON         `json:"dependency_scope"`
+	Directives      *directivesSection `json:"directives,omitempty"`
+	GoDebug         *godebugSection    `json:"godebug,omitempty"`
+	Vendor          *vendorSection     `json:"vendor,omitempty"`
 	// Build states whether the project compiles from a vendored tree, so a
 	// consumer of this document can see which of two things every other section
 	// describes: the modules the manifest resolves, or the bytes that ship. It
@@ -358,6 +373,7 @@ func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) 
 			ExtractFailures: []extractStageFailure{},
 			OverallStatus:   inspectSummaryStatus(0, 0, 0, ""),
 			WalkIDs:         []string{},
+			DependencyScope: newScopeJSON(newScopeResolution(scope, false)),
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}
@@ -367,26 +383,37 @@ func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) 
 	return nil
 }
 
+// refuseInspectGoModFlags refuses the flags a go.mod inspect cannot act on.
+//
+// --full shapes a context document's rendering, and a --gomod inspect prints a
+// pipeline summary instead. --exclude-tests narrows a dependency scope, which a
+// command that records a walk cannot take: see
+// refuseTestScopeOnRecordingCommand.
+func refuseInspectGoModFlags(f inspectFlags) error {
+	var refused []inapplicableFlag
+	if f.full {
+		refused = append(refused, inapplicableFlag{flag: "--full", where: "inspect <module>@<version>"})
+	}
+	if err := refuseInapplicableFlags("inspect --gomod", refused); err != nil {
+		return err
+	}
+	return refuseTestScopeOnRecordingCommand("inspect --gomod", f.excludeTests)
+}
+
 // runInspectGoMod runs the full pipeline for the local project using a single
 // project-rooted walk. The walk resolves Go's pruned module graph (the same
 // validated build inputs every other go.mod command uses), then extract and
 // vuln-scan operate on that one walk record.
 func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout, stderr io.Writer) error {
-	// A --gomod inspect prints a pipeline summary, never a context document, so
-	// there is no rendering for --full to act on. Refuse it by name rather than
-	// parse and drop it.
-	if f.full {
-		if err := refuseInapplicableFlags("inspect --gomod",
-			[]inapplicableFlag{{flag: "--full", where: "inspect <module>@<version>"}}); err != nil {
-			return err
-		}
+	if err := refuseInspectGoModFlags(f); err != nil {
+		return err
 	}
 
 	// For code and tool scopes, check whether the scope is empty before
 	// spinning up the project walk. An empty import closure is valid but
 	// produces no dependency analysis; surface it early and clearly.
 	if scope != scopeComplete {
-		coords, cerr := resolveScopeModules(f.gomodPath, scope)
+		coords, _, cerr := resolveScopeModules(f.gomodPath, scope, false)
 		if cerr == nil && len(coords) == 0 {
 			if f.sizeOnly {
 				// A size question about an empty scope gets the zero-module size
@@ -539,6 +566,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			WalkIDs:         walkIDs,
 			WalkFrame:       projectWalk.Frame().Text,
 			WalkFrameBasis:  string(projectWalk.Frame().Basis),
+			DependencyScope: newScopeJSON(newScopeResolution(scope, false)),
 			Directives:      directives,
 			GoDebug:         godebug,
 			Vendor:          vendor,
@@ -550,6 +578,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Status:   %s\n", overallStatus)
+	// Beside the module count, never below it: the count is the figure the scope
+	// decided, and the two axes that move it are the frame (already stated on the
+	// walk line) and this one.
+	_, _ = fmt.Fprintf(stdout, "Scope:    %s — %s\n", scope, newScopeResolution(scope, false).statement())
 	_, _ = fmt.Fprintf(stdout, "Modules:  %d (%d failed)\n", moduleCount, nodeFails)
 	_, _ = fmt.Fprintf(stdout, "Affected: %d\n", affectedCount)
 	if extractFails > 0 {

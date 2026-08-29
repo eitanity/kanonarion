@@ -1,11 +1,16 @@
-# populated: which modules in a stored walk depend on this one, read off the graph edges.
-$ kanonarion dependents example.com/shallow@v1.0.0 --json
+# populated: which modules in a stored walk depend on this one, read off the graph edges. --any-build is the store-wide search; it is what this case has always recorded, and it is now the flag that reaches it.
+$ kanonarion dependents example.com/shallow@v1.0.0 --any-build --json
 exit 0
 --- stdout ---
 {
   "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
   "walk_frame": "not-platform-scoped",
   "walk_frame_basis": "not_platform_scoped",
+  "walk_selection": {
+    "rule": "consumer-rooted",
+    "root": "example.com/app@v1.0.0",
+    "self_rooted_passed_over": 0
+  },
   "target": "example.com/shallow@v1.0.0",
   "dependents": [
     {

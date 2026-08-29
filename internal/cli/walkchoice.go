@@ -69,6 +69,12 @@ type walkChoice struct {
 	// many of them were compared against a manifest.
 	candidates int
 	probed     int
+	// candidateSet names the set candidates counts, for a caller that narrowed
+	// the listing before choosing — "in the code scope on linux/amd64". Empty
+	// means every walk of the target was a candidate. Without it a filtered
+	// count reads as a count of all of them, and a reader who has walked the
+	// project in three scopes is told the store holds one.
+	candidateSet string
 	// manifestPath is the go.mod the comparison was made against, empty when none
 	// could be read.
 	manifestPath string
@@ -85,6 +91,12 @@ type walkChoice struct {
 	// which standard library the target links, and the choice between them
 	// decides which toolchain advisories the answer is about.
 	toolchains []string
+	// resolvedToolchain is what `go env GOVERSION` answers in the project's own
+	// directory now, for a selector that narrowed on it. Empty when nothing was
+	// probed. The divergence is derived by comparing it with the chosen walk
+	// rather than flagged by the selector, so a selector that widens and one that
+	// found a match cannot disagree about whether to say so.
+	resolvedToolchain string
 }
 
 // chooseWalk picks the walk a read answers from out of a store-ordered
@@ -205,6 +217,61 @@ func (c walkChoice) toolchainNote() string {
 		strings.Join(c.toolchains, " and "), c.summary.Toolchain())
 }
 
+// candidateSetClause renders candidateSet as a clause the count sentences append,
+// and is empty when the candidates were every walk of the target.
+func (c walkChoice) candidateSetClause() string {
+	if c.candidateSet == "" {
+		return ""
+	}
+	return " " + c.candidateSet
+}
+
+// toolchainDivergenceClause says that the walk this read answered from was
+// resolved by a toolchain the project no longer resolves. Empty when they agree,
+// and when the selector probed nothing to compare against.
+//
+// It is separate from toolchainNote, which reports a choice made BETWEEN
+// candidates and is silent when they all agree. This one fires precisely when
+// they agree and are all wrong for the reader — the case a note about
+// disagreement cannot reach, and the case where the answer names a standard
+// library the reader does not link.
+func (c walkChoice) toolchainDivergenceClause() string {
+	line := toolchainDivergenceLine(c.summary.GoVersion, c.resolvedToolchain)
+	if line == "" {
+		return ""
+	}
+	return "; " + line
+}
+
+// basisNotes is everything a read owes about the walk it selected for a caller
+// who named none: what it proved about the manifest, whether that walk's
+// toolchain is still the one its project resolves, and that a choice was made at
+// all.
+//
+// One method rather than a composition at each surface, because four of them
+// print this and a fact added to three is a fact the fourth goes on omitting.
+func (c walkChoice) basisNotes() string {
+	return c.stalenessNote() + c.toolchainDivergenceClause() + c.statementClause()
+}
+
+// walkScopeLabel names the dependency scope a walk covered, for the notices that
+// disclose which build answered.
+//
+// A restriction that is not named is not disclosed: the notices already name the
+// walk, the platform, the module count and the toolchain, so a caller whose
+// --tool was ignored read ordinary provenance and had nothing to notice. Scopes
+// select different module sets — measured, 22 versions against 246 for one
+// project — so the scope belongs on the same footing as the platform.
+//
+// A walk written before scopes were recorded says so rather than being shown as
+// the default; "code" is a measurement, not a value to assume.
+func walkScopeLabel(scope walkdomain.WalkScope) string {
+	if scope == "" {
+		return "unrecorded scope"
+	}
+	return string(scope) + " scope"
+}
+
 // noteUncheckable keeps the FIRST reason a comparison could not be made. The
 // notice states one reason, and the first is the one belonging to the walk
 // nearest the front of the candidate list — the one the answer came from.
@@ -237,7 +304,7 @@ func (c walkChoice) statement() string {
 	if c.candidates <= 1 {
 		return ""
 	}
-	head := fmt.Sprintf("no walk was named and the store holds %d for this target, so one was chosen", c.candidates)
+	head := fmt.Sprintf("no walk was named and the store holds %d for this target%s, so one was chosen", c.candidates, c.candidateSetClause())
 	pin := fmt.Sprintf("pin one with --walk-id (kanonarion walk-list --target %s lists them)", c.summary.Target)
 	// The toolchain note rides in front of the pin so it lands in every branch:
 	// the choice it describes was made whichever rule made it.
@@ -298,8 +365,8 @@ func (c walkChoice) statementClause() string {
 	if toolchain != "" {
 		toolchain = "; " + toolchain
 	}
-	return fmt.Sprintf("; the store holds %d walks of this target and none was named, so this one was chosen%s — name one with --walk-id to choose it yourself",
-		c.candidates, toolchain)
+	return fmt.Sprintf("; the store holds %d walks of this target%s and none was named, so this one was chosen%s — name one with --walk-id to choose it yourself",
+		c.candidates, c.candidateSetClause(), toolchain)
 }
 
 // selectionJSON is the machine-readable form of the same statement, for the
@@ -312,11 +379,18 @@ type selectionJSON struct {
 	// Rule is "pinned", "sole", "manifest-match", "recency-no-match" or
 	// "recency-unchecked".
 	Rule string `json:"rule"`
-	// Candidates is how many walks of this target the store holds. It is a
-	// pointer emitted always, and null is the answer for a caller-pinned walk:
-	// nothing was enumerated, and 0 would state a count that is never true of a
-	// document carrying a walk id — the store holds at least the walk it names.
+	// Candidates is how many walks the store held that could have answered — of
+	// this target, and, where CandidateSet says so, of one scope and platform
+	// only. It is a pointer emitted always, and null is the answer for a
+	// caller-pinned walk: nothing was enumerated, and 0 would state a count that
+	// is never true of a document carrying a walk id — the store holds at least
+	// the walk it names.
 	Candidates *int `json:"candidates"`
+	// CandidateSet names what Candidates counted when the listing was narrowed
+	// before choosing, e.g. "in the code scope on linux/amd64". Absent when every
+	// walk of the target was a candidate. Without it a consumer reads a filtered
+	// count as a count of all of them.
+	CandidateSet string `json:"candidate_set,omitempty"`
 	// ManifestPath is the go.mod the recorded resolutions were compared against.
 	ManifestPath string `json:"manifest_path,omitempty"`
 	// Disagreements are the versions the chosen walk and the manifest differ on,
@@ -326,12 +400,23 @@ type selectionJSON struct {
 	// Reason says why no comparison could be made, present only for
 	// "recency-unchecked".
 	Reason string `json:"reason,omitempty"`
+	// ToolchainDivergence says that no candidate was resolved by the toolchain
+	// the project resolves today, and names both. Absent when they agree and when
+	// nothing was probed. A consumer reading the walk id gets the same statement
+	// the text surface prints, because a JSON reader is exactly the one that
+	// would otherwise take another standard library's answer for its own.
+	ToolchainDivergence string `json:"toolchain_divergence,omitempty"`
 }
 
 // selection renders the choice for a JSON document.
 func (c walkChoice) selection() selectionJSON {
 	candidates := c.candidates
-	out := selectionJSON{Candidates: &candidates, ManifestPath: c.manifestPath}
+	out := selectionJSON{
+		Candidates:          &candidates,
+		CandidateSet:        c.candidateSet,
+		ManifestPath:        c.manifestPath,
+		ToolchainDivergence: toolchainDivergenceLine(c.summary.GoVersion, c.resolvedToolchain),
+	}
 	switch c.rule {
 	case walkChosenSole:
 		out.Rule = "sole"

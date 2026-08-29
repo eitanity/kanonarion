@@ -47,7 +47,7 @@ func toolchainSnapshotZip(t *testing.T) []byte {
 // snapshot's own ID records, and both are read from there — over a nil HTTP
 // client, so a read that reached the network could not have completed at all.
 func TestSnapshotToolchainAdvisories_ReadsRangesAndRetractionsFromTheStoredBody(t *testing.T) {
-	db := osv.New(nil, &fakeVulnStore{content: string(toolchainSnapshotZip(t))})
+	db := osv.New(nil, &fakeVulnStore{content: string(toolchainSnapshotZip(t))}, testClock)
 
 	set, err := db.SnapshotToolchainAdvisories(t.Context(), vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z"))
 	if err != nil {
@@ -96,7 +96,7 @@ func TestSnapshotToolchainAdvisories_IgnoresBlocksNamingAnotherPackage(t *testin
 				{"introduced":"0"},{"fixed":"1.99.0"}]}]}]
 		}`)},
 	})
-	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)})
+	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)}, testClock)
 
 	set, err := db.SnapshotToolchainAdvisories(t.Context(), vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z"))
 	if err != nil {
@@ -120,7 +120,7 @@ func TestSnapshotToolchainAdvisories_ASnapshotWithoutTheKeyIsNotAnError(t *testi
 		{name: "index/db.json", content: []byte(`{"modified":"2026-07-27T20:14:16Z"}`)},
 		{name: "index/modules.json", content: []byte(`[{"path":"example.com/mod","vulns":[{"id":"GO-2026-0001"}]}]`)},
 	})
-	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)})
+	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)}, testClock)
 
 	set, err := db.SnapshotToolchainAdvisories(t.Context(), vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z"))
 	if err != nil {
@@ -140,7 +140,7 @@ func TestSnapshotToolchainAdvisories_RefusesAListedAdvisoryWithNoRecord(t *testi
 		{name: "index/db.json", content: []byte(`{"modified":"2026-07-27T20:14:16Z"}`)},
 		{name: "index/modules.json", content: []byte(`[{"path":"toolchain","vulns":[{"id":"GO-2026-4984"}]}]`)},
 	})
-	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)})
+	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)}, testClock)
 
 	_, err := db.SnapshotToolchainAdvisories(t.Context(), vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z"))
 	if err == nil {

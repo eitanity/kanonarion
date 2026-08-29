@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -55,7 +56,7 @@ func selectionWalk(t *testing.T, id, modulePath, dir, jwtVersion string) walkdom
 				{Coordinate: coordinatetest.MustNew("github.com/golang-jwt/jwt/v4", jwtVersion), ResolutionSource: walkdomain.ResolutionMVS},
 				{Coordinate: coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1"), ResolutionSource: walkdomain.ResolutionMVS},
 			},
-			BuildEnv: walkdomain.BuildEnv{GOOS: "linux", GOARCH: "amd64", GoVersion: "go1.26.4"},
+			BuildEnv: walkdomain.BuildEnv{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, GoVersion: "go1.26.4"},
 		},
 	}
 }
@@ -74,6 +75,10 @@ func selectionStore(recs ...walkdomain.WalkRecord) *testfakes.FakeQueryWalks {
 			OverallStatus: rec.OverallStatus,
 			GOOS:          rec.Graph.BuildEnv.GOOS,
 			GOARCH:        rec.Graph.BuildEnv.GOARCH,
+			// The toolchain rides on the summary because the adapter projects it into
+			// a column of its own and the selector now filters on it: a fixture that
+			// left it blank could not tell a toolchain match from a widened miss.
+			GoVersion: rec.Graph.BuildEnv.GoVersion,
 		})
 	}
 	qw.SetSummaries(summaries)
@@ -238,7 +243,7 @@ func TestLatestWalkForGoMod_PrefersTheManifestMatchingWalk(t *testing.T) {
 	matching := selectionWalk(t, "W-matching", modulePath, dir, "v4.5.1")
 	walks := selectionStore(rehearsal, matching)
 
-	choice, err := latestWalkForGoMod(context.Background(), walks, filepath.Join(dir, "go.mod"))
+	choice, err := latestWalkForGoMod(context.Background(), walks, filepath.Join(dir, "go.mod"), scopeCode)
 	if err != nil {
 		t.Fatalf("latestWalkForGoMod: %v", err)
 	}
@@ -595,7 +600,7 @@ func TestBuildDependencies_AnswersFromTheManifestMatchingWalk(t *testing.T) {
 	}
 	walks := selectionStore(rehearsal, matching)
 
-	got := buildDependencies(context.Background(), matching.Target, walks)
+	got := buildDependencies(context.Background(), matching.Target, walks, basisWalk{})
 	if got.WalkID != matching.ID {
 		t.Errorf("dependency section answered from walk %q, want the manifest-matching %q", got.WalkID, matching.ID)
 	}

@@ -76,8 +76,9 @@ func toDirectivesSection(rec dirdomain.Record) directivesSection {
 func newDirectivesCmd(stdout, stderr io.Writer) *cobra.Command {
 	var gomodPath string
 	cmd := &cobra.Command{
-		Use:   "directives",
-		Short: "Detect, classify and policy-check go.mod/go.work replace & exclude directives",
+		Use:         "directives",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Detect, classify and policy-check go.mod/go.work replace & exclude directives",
 		Long: `directives enumerates every replace and exclude directive in the
 project's go.mod (and adjacent go.work), classifies each by security risk,
 evaluates it against the directive_policy governance block, and records an

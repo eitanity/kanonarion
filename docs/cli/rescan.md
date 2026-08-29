@@ -33,6 +33,26 @@ kanonarion vuln-scan-rescan <walk-id> [flags]
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 | `--log-level` | `warn` | Log level: `debug\|info\|warn\|error` |
 
+**The build a re-scan re-evaluates**
+
+Before the run starts, `vuln-scan-rescan` states on **stderr** the build the
+named walk was resolved in, and that the run is re-evaluating that recorded
+build:
+
+```
+build:
+  linux/amd64 under go1.26.6
+  a re-scan re-evaluates that recorded build against fresh advisories; it does not re-resolve the toolchain, so this run answers for the build above and not for the one a walk taken now would record
+```
+
+Where the project the walk was taken from is still present and `go env
+GOVERSION` there no longer resolves the recorded toolchain, a line names both
+versions. A re-scan is what an operator reaches for when they want a *dated*
+statement, and the date is the only thing it refreshes — the standard library
+the answer is about is the walk's, not the host's. To answer for the toolchain
+standing here now, take a fresh walk (`kanonarion walk --gomod ./go.mod`) and
+scan that instead.
+
 **Examples**
 
 ```bash

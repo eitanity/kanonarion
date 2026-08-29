@@ -20,7 +20,7 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
 
 // Store is the SQLite-backed example store.
@@ -181,7 +181,7 @@ DELETE FROM example_index`},
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 // Use ":memory:" for tests.
 func Open(dsn string) (*Store, error) {
-	db, err := sqlitestore.Open(dsn, Migrations())
+	db, err := sqlitestore.Open(dsn, Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening example store: %w", err)
 	}

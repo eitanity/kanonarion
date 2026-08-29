@@ -387,8 +387,41 @@ stderr:
 
 ```
 sbom generated with undetermined licences: 2 component(s) with no licence
-identity: github.com/dgryski/dgoogauth@v0.0.0-20190221195224-5a805980a5f3, ...
+identity: github.com/dgryski/dgoogauth@v0.0.0-20190221195224-5a805980a5f3, ... —
+run 'kanonarion license github.com/dgryski/dgoogauth@v0.0.0-20190221195224-5a805980a5f3',
+and the same for the other 1 component(s) named
 ```
+
+The message ends with the command that produces each missing record, and the
+command depends on the component. A **dependency** is analysed by coordinate,
+as above. The document's **subject** — the walk root's own licence — is not
+fetchable, so it is analysed by re-walking the project:
+
+```
+sbom generated with undetermined licences: 1 component(s) with no licence
+identity: github.com/eitanity/kanonarion@local (the document's subject) — run
+'kanonarion walk --gomod ./go.mod --analyse-root' then
+'kanonarion extract <walk-id>' to analyse the project's own licence
+```
+
+A component the build **replaces with a local path** (`replace example.com/mod
+=> ./sub`) has no published source, so `kanonarion license` cannot reach it
+either. It is ingested from the directory that replaces it:
+
+```
+sbom generated with undetermined licences: 1 component(s) with no licence
+identity: example.com/mod@v0.0.0-00010101000000-000000000000 — run
+'kanonarion walk --gomod /path/to/go.mod --analyse-local' then
+'kanonarion extract <walk-id>' to analyse example.com/mod from the local path
+this build replaces it with
+```
+
+The local-replace targets are read from the `go.mod` of the walk the document
+was generated from, so a walk of a published coordinate — or one whose working
+tree has moved — states the dependency remedy instead of guessing.
+
+All are the same sentence `license-compat` prints for the same missing record.
+When a document is missing more than one kind, each remedy is stated once.
 
 The components are named from the document that was written, so the message is
 the same whether the document was generated now or served from the cache.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -208,18 +209,26 @@ func usedByContainer(t *testing.T, edges []cgports.CallEdgeRef) (*Container, str
 		t.Fatal(err)
 	}
 	walks := testfakes.NewFakeQueryWalks()
+	// The scope and platform are set because --used-by now selects on both: a
+	// project walk in the store carries them (NewWalkRecord defaults an unset
+	// scope to code, and the resolver records the platform it probed), so a
+	// fixture without them describes a walk the store does not hold.
 	walks.SetSummaries([]walkports.WalkSummary{{
-		ID: "walk-1", Target: consumer, OverallStatus: walkdomain.WalkSucceeded,
+		ID: "walk-1", Target: consumer, Scope: walkdomain.WalkScopeCode,
+		OverallStatus: walkdomain.WalkSucceeded,
+		GOOS:          runtime.GOOS, GOARCH: runtime.GOARCH,
 	}})
 	walks.AddWalk(walkdomain.WalkRecord{
 		ID:     "walk-1",
 		Target: consumer,
+		Scope:  walkdomain.WalkScopeCode,
 		Graph: walkdomain.Graph{
 			Target: consumer,
 			Nodes: []walkdomain.GraphNode{
 				{Coordinate: consumer},
 				{Coordinate: coordinatetest.MustNew("example.com/mod", "v1.0.0")},
 			},
+			BuildEnv: walkdomain.BuildEnv{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
 		},
 	})
 

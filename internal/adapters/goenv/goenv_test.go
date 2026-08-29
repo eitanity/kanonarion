@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 )
 
 // writeEnvFile writes a Go env file at a path unique to this subtest and points

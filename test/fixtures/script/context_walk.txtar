@@ -56,7 +56,9 @@ stdout 'example.com/dep@v1.0.0'
 # --modules: emit only modules listed in file
 kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --modules=modules.txt --store-root=$WORK/stores --json
 stdout 'example.com/dep'
-! stdout 'example.com/app'
+# the walk root is named as the frame every section answered in, so the filter is
+# asserted on the document subject rather than on any mention of the root
+! stdout '"path".*"example.com/app"'
 ! stdout 'example.com/new'
 
 # unknown walk ID returns a clear error

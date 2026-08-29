@@ -44,7 +44,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
@@ -166,7 +166,7 @@ func (a *auditFixture) newStore(t *testing.T) string {
 	migrations = append(migrations, licsqlite.Migrations()...)
 	migrations = append(migrations, stalesqlite.Migrations()...)
 
-	db, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), migrations)
+	db, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), migrations, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening audit fixture store: %v", err)
 	}

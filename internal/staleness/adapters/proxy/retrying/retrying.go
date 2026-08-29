@@ -67,6 +67,7 @@ const (
 type Resolver struct {
 	inner     ports.LatestResolver
 	logger    *slog.Logger
+	progress  ports.ProgressReporter
 	attempts  int
 	baseDelay time.Duration
 
@@ -87,6 +88,16 @@ func WithAttempts(n int) Option {
 		if n >= 1 {
 			r.attempts = n
 		}
+	}
+}
+
+// WithProgress sets the reporter told about each retry (nil disables it, which
+// is the default). It is separate from the logger because the two serve
+// different readers: the logger answers afterwards, from a log, and the reporter
+// answers now, on the stream the operator is watching.
+func WithProgress(p ports.ProgressReporter) Option {
+	return func(r *Resolver) {
+		r.progress = p
 	}
 }
 
@@ -126,6 +137,13 @@ func New(inner ports.LatestResolver, logger *slog.Logger, opts ...Option) *Resol
 // sweep that took longer than its module count suggests — and an exhausted
 // budget at WARN, so a genuinely unanswerable probe is distinguishable from one
 // that was never asked twice.
+//
+// A retry is ALSO announced to the progress reporter, which reaches the stream
+// the operator is watching rather than a log they will read later. It says the
+// same thing to a different reader: the wait this decorator is about to spend is
+// the one thing the command cannot leave unstated, because a minute of silence
+// is indistinguishable from a hang. Nothing is reported on a lookup that does
+// not retry.
 func (r *Resolver) LatestInfo(ctx context.Context, path string) (ports.LatestInfo, error) {
 	var (
 		info         ports.LatestInfo
@@ -164,6 +182,12 @@ func (r *Resolver) LatestInfo(ctx context.Context, path string) (ports.LatestInf
 			return info, err //nolint:wrapcheck // deliberate pass-through of the wrapped resolver's error
 		}
 		delay := r.jitter(r.backoffFor(attempt))
+		if r.progress != nil {
+			// The attempt NAMED is the one about to be made, and it is reported
+			// before the backoff rather than after it, so the line arrives at the
+			// start of the wait it explains.
+			r.progress.RetryingLookup(path, attempt+1, r.attempts)
+		}
 		r.logger.DebugContext(ctx, "staleness.latest.retry",
 			slog.String("module.path", path),
 			slog.Int("attempt", attempt),

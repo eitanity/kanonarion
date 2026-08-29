@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"sort"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -261,32 +260,9 @@ type InterfaceRecord struct {
 }
 
 // Sort puts all collections in the record into a canonical, deterministic
-// order. Must be called before hashing.
+// order. Must be called before hashing. The comparators live in ordering.go;
+// each is a total order, so the result is a function of the record's contents
+// and not of the order the extractor emitted them in.
 func (r *InterfaceRecord) Sort() {
-	sort.Slice(r.Packages, func(i, j int) bool {
-		return r.Packages[i].ImportPath < r.Packages[j].ImportPath
-	})
-	for i := range r.Packages {
-		sortPackage(&r.Packages[i])
-	}
-}
-
-func sortPackage(p *PackageInterface) {
-	sort.Slice(p.Types, func(i, j int) bool { return p.Types[i].Name < p.Types[j].Name })
-	sort.Slice(p.Funcs, func(i, j int) bool { return p.Funcs[i].Name < p.Funcs[j].Name })
-	sort.Slice(p.Consts, func(i, j int) bool { return p.Consts[i].Name < p.Consts[j].Name })
-	sort.Slice(p.Vars, func(i, j int) bool { return p.Vars[i].Name < p.Vars[j].Name })
-	sort.Slice(p.ParseFailures, func(i, j int) bool { return p.ParseFailures[i].File < p.ParseFailures[j].File })
-	for i := range p.Types {
-		t := &p.Types[i]
-		sort.Slice(t.Fields, func(a, b int) bool { return t.Fields[a].Name < t.Fields[b].Name })
-		sort.Slice(t.Methods, func(a, b int) bool { return t.Methods[a].Name < t.Methods[b].Name })
-		sort.Strings(t.EmbeddedTypes)
-		sort.Slice(t.TypeParams, func(a, b int) bool { return t.TypeParams[a].Name < t.TypeParams[b].Name })
-	}
-	for i := range p.Funcs {
-		sort.Slice(p.Funcs[i].TypeParams, func(a, b int) bool {
-			return p.Funcs[i].TypeParams[a].Name < p.Funcs[i].TypeParams[b].Name
-		})
-	}
+	sortPackages(r.Packages)
 }

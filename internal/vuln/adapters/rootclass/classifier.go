@@ -323,7 +323,7 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 					weakest:   callgraphdomain.WeakestConfidence(st.weakest, p.confidence),
 					reference: st.reference || p.reference,
 				}
-				if prev, ok := next[p.from]; ok && !stronger(cand, prev) {
+				if prev, ok := next[p.from]; ok && !strongerPath(cand, prev) {
 					continue
 				}
 				next[p.from] = cand
@@ -336,7 +336,7 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 			if _, ok := g.entryReason[id]; !ok {
 				continue
 			}
-			if bestID == "" || stronger(st, best) {
+			if bestID == "" || betterEntryPoint(id, st, bestID, best) {
 				bestID, best = id, st
 			}
 		}
@@ -349,6 +349,8 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 			out.ViaReference = best.reference
 			return out
 		}
+		// A set union: every key is inserted, none is chosen, so the iteration
+		// order cannot reach an answer.
 		for id := range next {
 			seen[id] = true
 		}
@@ -373,6 +375,37 @@ func stronger(a, b pathState) bool {
 		return !a.reference
 	}
 	return callgraphdomain.ConfidenceRank(a.weakest) > callgraphdomain.ConfidenceRank(b.weakest)
+}
+
+// betterEntryPoint orders two entry points found the same distance away: the
+// stronger path first, and the lower node id where the two are equally strong.
+// Equally strong is the ordinary case — several handlers of one kind reach the
+// same symbol at the same hop — and the winner's id is published as the witness,
+// so leaving the choice to the map made one stored run render a different
+// document on each read. The id decides reproducibility, not merit.
+func betterEntryPoint(aID string, a pathState, bID string, b pathState) bool {
+	if stronger(a, b) {
+		return true
+	}
+	if stronger(b, a) {
+		return false
+	}
+	return aID < bID
+}
+
+// strongerPath is stronger with equal-ranked paths separated by the confidence
+// itself, so the state a level keeps for a node does not depend on which parent
+// reached it first. Two confidences rank equally without being equal whenever
+// one is a value this build does not recognise, since ConfidenceRank puts those
+// with Unknown — and the weakest hop is published.
+func strongerPath(a, b pathState) bool {
+	if stronger(a, b) {
+		return true
+	}
+	if stronger(b, a) {
+		return false
+	}
+	return a.weakest < b.weakest
 }
 
 // rootedAtModule returns the module path the analysis was rooted at, or empty

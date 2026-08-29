@@ -290,7 +290,7 @@ func TestGOPROXYOff_AuditKeepsTheLedgerLookup(t *testing.T) {
 			if tc.modcache {
 				offlineMode(t)
 			}
-			lookup, err := auditStalenessLookup(tc.goproxy, offlineLedger(t), discardLogger(), "go.mod", nil, io.Discard)
+			lookup, err := auditStalenessLookup(tc.goproxy, offlineLedger(t), discardLogger(), "go.mod", nil, nil, io.Discard)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected a refusal, got %T", lookup)

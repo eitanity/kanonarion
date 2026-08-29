@@ -56,16 +56,23 @@ A stored verdict is a verdict about one build. Name the build:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
   records that walk covered.
-- `--gomod <path>` does the same for the succeeded project walk of that `go.mod`
-  that the [default-frame rule](conventions.md#the-default-walk) picks — the
-  most recent one whose recorded resolution still agrees with the manifest,
-  else the most recent. The path is required and may be written either way round
+- `--gomod <path>` does the same for the succeeded **code-scope** project walk of
+  that `go.mod`, resolved for **this platform**, that the
+  [default-frame rule](conventions.md#the-default-walk) picks — the most recent
+  one whose recorded resolution still agrees with the manifest, else the most
+  recent. The path is required and may be written either way round
   (`--gomod ./go.mod` or `--gomod=./go.mod`). Mutually exclusive with
   `--walk-id`, and rejected alongside `--local`, which measures the tree it is
   given.
 
-Either flag prints a `notice:` line naming the walk and its frame above the
-answer, and the verdict names its rooting as it always has.
+  `reachability` has no scope flag, so it asks for the code scope. A project
+  walked only in the `tool` or `complete` scope gets a refusal naming the scopes
+  the store holds and the `walk` command that produces the missing one — never an
+  answer read out of another build. The toolchain is not part of the selection;
+  among the walks of one scope and platform, recency still decides.
+
+Either flag prints a `notice:` line naming the walk, its scope and its frame
+above the answer, and the verdict names its rooting as it always has.
 
 With neither flag, and the coordinate present in more than one consumer's build,
 the query **refuses** (exit 20) and names the frames it found plus the flags
@@ -288,7 +295,7 @@ nearest entry point:
 |---|---|
 | `found` | Whether an entry-point ancestor was reached. `false` is a **measurement**: nothing in the analysed graph enters this code. The whole object is absent when no search ran — an unresolved root, or no graph — so "not measured" and "measured, none" never look alike. |
 | `hops` | Edges from the nearest entry-point ancestor down to the root. `0` with `found` means the root **is** the entry point. A method value costs one hop more than the source reads, because the path goes through the synthetic wrapper (see [callgraph](callgraph.md#the-wrapper-hop)). |
-| `entry_point_id` / `entry_point_reason` | Which ancestor, and what made it one — the same reason string the `ingress` kind carries, so a package initialiser is never mistaken for a request handler. |
+| `entry_point_id` / `entry_point_reason` | Which ancestor, and what made it one — the same reason string the `ingress` kind carries, so a package initialiser is never mistaken for a request handler. Several ancestors can sit the same distance away on paths of the same strength; the one named is then the lowest node id, so one stored answer reads back identically every time. The others are not listed. |
 | `weakest_confidence` | The weakest edge on that path. It is what stops a distance being read as a certainty: four hops of CHA over-approximation are not four hops of resolved calls. |
 | `via_reference` | At least one hop is a **registration rather than a call** (see [callgraph](callgraph.md#calls-and-references)). Carried apart from the confidence because a reference resolves exactly and would otherwise report `Direct`. Always present: `false` says every hop on this path is a call, which is the caveat's absence and not its non-derivation. |
 | `search_bound` | The hop limit used. `0` is unbounded, which is what the search uses, so `found: false` means "nothing enters this code" and not "not within N hops". |
@@ -501,7 +508,7 @@ command is safe to run from the root of a repository with fixture modules under
 |---|---|---|
 | `--vuln` | *(empty)* | Vulnerability ID to query (stored-module mode); requires a `<module>@<version>` argument |
 | `--walk-id` | *(empty)* | Answer the stored query in the frame of this walk's scans |
-| `--gomod <path>` | *(empty)* | Answer the stored query in the frame of the latest project walk for this go.mod. Takes a path, e.g. `--gomod ./go.mod` |
+| `--gomod <path>` | *(empty)* | Answer the stored query in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform |
 | `--local` | *(empty)* | Path to the local Go workspace to probe (live local mode) |
 | `--json` | false | Emit output as JSON (global flag) |
 

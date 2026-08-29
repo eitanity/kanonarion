@@ -5,6 +5,11 @@ exit 0
 {
   "id": "01JSCANRUN0GOLDEN00000002",
   "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "build": {
+    "goos": "",
+    "goarch": "",
+    "go_version": ""
+  },
   "snapshot": {
     "source": "govulndb",
     "version": "v2026-02-14T00-00-00",

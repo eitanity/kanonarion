@@ -34,8 +34,9 @@ func contextWalkRecord(ctx context.Context, uc QueryWalksUseCase, walkID string,
 }
 
 func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Writer) error {
-	if err := refuseInapplicableFlags("context --walk-id",
-		append(contextLocalOnlyFlags(f), contextGoModOnlyFlags(f)...)); err != nil {
+	refused := append(contextLocalOnlyFlags(f), contextGoModOnlyFlags(f)...)
+	refused = append(refused, contextTestScopeFlag(f)...)
+	if err := refuseInapplicableFlags("context --walk-id", refused); err != nil {
 		return err
 	}
 
@@ -62,8 +63,10 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 		return fmt.Errorf("loading vuln batch context: %w", err)
 	}
 	// The report is about this walk, so every module's verdict is read in this
-	// walk's frame and from this walk's runs.
+	// walk's frame and from this walk's runs, and its dependency section is
+	// resolved out of this walk's graph.
 	vulnBatch.anchorTo(ctx, f.walkID)
+	basis := walkAsBasis(rec)
 
 	compact := f.compact && !f.full
 
@@ -75,7 +78,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 
 	// --size-only with --walk-id: accumulate per-module JSON sizes.
 	if f.sizeOnly {
-		return runContextWalkSizeOnly(ctx, f, nodes, compact, ctr.QueryVuln, vulnBatch, ctr.QueryFetch, ctr.QueryLicense, ctr.QueryInterface, ctr.QueryCallGraph, ctr.QueryExamples, ctr.QueryWalks, stdout)
+		return runContextWalkSizeOnly(ctx, f, nodes, compact, ctr.QueryVuln, vulnBatch, ctr.QueryFetch, ctr.QueryLicense, ctr.StdlibCustody, ctr.QueryInterface, ctr.QueryCallGraph, ctr.QueryExamples, ctr.QueryWalks, basis, stdout)
 	}
 
 	if !jsonOut && !f.stream {
@@ -93,8 +96,8 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 				Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 				Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 				Provenance:      buildProvenance(coord),
-				Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
-				License:         buildLicense(ctx, coord, ctr.QueryLicense),
+				Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
+				License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 				Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 				CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 				Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
@@ -126,8 +129,8 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
-			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
-			License:         buildLicense(ctx, coord, ctr.QueryLicense),
+			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
+			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
@@ -275,10 +278,12 @@ func runContextWalkSizeOnly(
 	vulnBatch *vulnBatchCtx,
 	fetchUC QueryFetchUseCase,
 	licUC QueryLicenseUseCase,
+	stdlibCustody StdlibCustodyReader,
 	ifaceUC QueryInterfaceUseCase,
 	cgUC QueryCallGraphUseCase,
 	exUC QueryExamplesUseCase,
 	walkUC QueryWalksUseCase,
+	basis basisWalk,
 	stdout io.Writer,
 ) error {
 	var report contextSizeReport
@@ -297,8 +302,8 @@ func runContextWalkSizeOnly(
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, fetchUC),
 			Provenance:      buildProvenance(coord),
-			Dependencies:    buildDependencies(ctx, coord, walkUC),
-			License:         buildLicense(ctx, coord, licUC),
+			Dependencies:    buildDependencies(ctx, coord, walkUC, basis),
+			License:         buildLicense(ctx, coord, licUC, stdlibCustody),
 			Interface:       buildInterface(ctx, coord, ifaceUC, compact, f.packageFilter),
 			CallGraph:       buildCallGraph(ctx, coord, cgUC, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, exUC, compact, f.packageFilter),

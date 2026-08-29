@@ -938,7 +938,15 @@ func reportedAsWholeDigests(c *CallGraphConflict, records []CallGraphRecord) *Ca
 		}
 		pairs = append(pairs, pair{value: value, hash: hash})
 	}
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].value < pairs[j].value })
+	// The hash is the tiebreak: two records restating one graph digest differ
+	// here and nowhere else, and leaving them to the sort would let the conflict
+	// name them in whichever order the record list arrived in.
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].value != pairs[j].value {
+			return pairs[i].value < pairs[j].value
+		}
+		return pairs[i].hash < pairs[j].hash
+	})
 	for i, p := range pairs {
 		c.Values[i], c.ContentHashes[i] = p.value, p.hash
 	}

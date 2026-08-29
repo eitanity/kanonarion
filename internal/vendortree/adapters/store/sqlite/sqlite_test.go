@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	vendorstore "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vendortree/domain"
 )
 
 func openTestStore(t *testing.T) *vendorstore.Store {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", vendorstore.Migrations())
+	db, err := sqlitestore.Open(":memory:", vendorstore.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

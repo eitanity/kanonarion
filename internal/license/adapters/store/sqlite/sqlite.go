@@ -17,9 +17,9 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // Store is the SQLite-backed license store.
@@ -172,7 +172,7 @@ func Migrations() []sqlitestore.Migration {
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 // Use ":memory:" for tests.
 func Open(dsn string) (*Store, error) {
-	db, err := sqlitestore.Open(dsn, Migrations())
+	db, err := sqlitestore.Open(dsn, Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening license store: %w", err)
 	}

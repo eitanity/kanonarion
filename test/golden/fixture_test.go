@@ -50,6 +50,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -60,7 +61,6 @@ import (
 	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
@@ -258,7 +258,7 @@ func buildFixtureStore(t *testing.T) string {
 	migrations = append(migrations, licsqlite.Migrations()...)
 	migrations = append(migrations, stalesqlite.Migrations()...)
 
-	db, err := sqlitestore.Open(dbPath, migrations)
+	db, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening fixture store: %v", err)
 	}

@@ -12,9 +12,9 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // fetchedAtFormat is how a measurement's time is PERSISTED: RFC3339 in UTC with
@@ -194,7 +194,7 @@ func New(db sqlitestore.DB) *Store {
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 // Use ":memory:" for tests.
 func Open(dsn string) (*Store, error) {
-	db, err := sqlitestore.Open(dsn, Migrations())
+	db, err := sqlitestore.Open(dsn, Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening fact store: %w", err)
 	}

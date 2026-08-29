@@ -110,7 +110,9 @@ func Aggregate(in ParseResult) ([]VendoredModule, []Finding, VendorScope) {
 		mods = append(mods, m)
 	}
 
-	// Files vendored for a module modules.txt never lists.
+	// Files vendored for a module modules.txt never lists. The map order does not
+	// survive: the module is the map key, so SortFindings — which every caller
+	// runs before hashing or serialising — totally orders what this appends.
 	for path := range in.PresentDirs {
 		if !listed[path] {
 			findings = append(findings, Finding{
@@ -120,7 +122,8 @@ func Aggregate(in ParseResult) ([]VendoredModule, []Finding, VendorScope) {
 		}
 	}
 
-	// go.mod requires that the vendored tree omits entirely.
+	// go.mod requires that the vendored tree omits entirely. Ordered by
+	// SortFindings on the module, as above.
 	for path, v := range in.GoModRequires {
 		if !listed[path] {
 			findings = append(findings, Finding{

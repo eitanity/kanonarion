@@ -25,6 +25,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
@@ -266,11 +267,42 @@ const goListModuleFmt = `{{if .Module}}{{if and (not .Standard) .Module.Version}
 //
 // This is the single definition of each scope, shared by every go.mod-walking
 // command so they answer the same question with the same set.
-func resolveScopeModules(gomodPath string, scope depScope) ([]string, error) {
-	dir := filepath.Dir(gomodPath)
+//
+// It returns the test axis it applied alongside the set, so a caller cannot
+// state one axis and resolve another: the disclosure and the resolution come out
+// of the same call. The two -deps scopes default differently on that axis, and
+// correctly so — see testScopeFor, which is the only place the axis is decided.
+func resolveScopeModules(gomodPath string, scope depScope, excludeTests bool) ([]string, scopeResolution, error) {
+	res := newScopeResolution(scope, excludeTests)
+	args, err := scopeGoListArgs(gomodPath, scope, res.Tests)
+	if err != nil {
+		return nil, res, err
+	}
+	if args == nil {
+		// The tool scope with no tool directives: an empty set, resolved without
+		// asking the toolchain a question about no packages.
+		return nil, res, nil
+	}
+	coords, err := runGoListCoords(filepath.Dir(gomodPath), args)
+	return coords, res, err
+}
+
+// scopeGoListArgs is the `go list` invocation a scope and a test axis resolve to,
+// or nil args for a tool scope with no tool directives to close over.
+//
+// It is separated from running it because this IS the scope: which invocation a
+// scope produces is the whole of what distinguishes the three, and it is the half
+// the two -deps scopes silently disagreed on — code passed -test and tool did
+// not, so --tool moved the closure and the test axis at once. Separated, that
+// decision can be exercised without a toolchain, a module cache or a network.
+func scopeGoListArgs(gomodPath string, scope depScope, ts testScope) ([]string, error) {
 	switch scope {
 	case scopeComplete:
-		return goListBuildList(dir)
+		return []string{
+			"list", "-m", "-mod=readonly",
+			"-f", `{{if and (not .Main) .Version}}{{.Path}}@{{.Version}}{{end}}`,
+			"all",
+		}, nil
 	case scopeTool:
 		toolPkgs, err := readGoModToolPackages(gomodPath)
 		if err != nil {
@@ -279,36 +311,24 @@ func resolveScopeModules(gomodPath string, scope depScope) ([]string, error) {
 		if len(toolPkgs) == 0 {
 			return nil, nil
 		}
-		return goListDeps(dir, toolPkgs, false)
+		return goListDepsArgs(toolPkgs, ts), nil
 	case scopeCode:
-		return goListDeps(dir, []string{"./..."}, true)
+		return goListDepsArgs([]string{"./..."}, ts), nil
 	default:
 		return nil, fmt.Errorf("unknown dependency scope %q", scope)
 	}
 }
 
-// goListDeps runs `go list -deps [-test] -f <module> <patterns>` in dir and
-// returns the de-duplicated, sorted module coordinates of every non-standard,
-// non-main package reachable from the patterns. withTest includes test imports.
-func goListDeps(dir string, patterns []string, withTest bool) ([]string, error) {
+// goListDepsArgs builds `go list -deps [-test] -f <module> <patterns>`. The -test
+// flag comes from the axis and from nothing else, so the decision lives in
+// testScopeFor rather than being spelled again at each resolution.
+func goListDepsArgs(patterns []string, ts testScope) []string {
 	args := []string{"list", "-deps"}
-	if withTest {
+	if ts.withTests() {
 		args = append(args, "-test")
 	}
 	args = append(args, "-f", goListModuleFmt)
-	args = append(args, patterns...)
-	return runGoListCoords(dir, args)
-}
-
-// goListBuildList runs `go list -m all` in dir and returns the de-duplicated,
-// sorted coordinates of every module in the build list except the main module
-// and local-replace targets (no version).
-func goListBuildList(dir string) ([]string, error) {
-	return runGoListCoords(dir, []string{
-		"list", "-m", "-mod=readonly",
-		"-f", `{{if and (not .Main) .Version}}{{.Path}}@{{.Version}}{{end}}`,
-		"all",
-	})
+	return append(args, patterns...)
 }
 
 // runGoList executes `go <args>` in dir and returns its raw stdout. The absence
@@ -542,6 +562,9 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 	}
 	best := ""
 	bestVer := ""
+	// Map order cannot reach the answer: two distinct keys of the same length
+	// cannot both be a prefix of one path, so the longest match is unique and
+	// `len > len(best)` never ties.
 	for mp, ver := range reqVersions {
 		if strings.HasPrefix(toolPath, mp+"/") && len(mp) > len(best) {
 			best = mp
@@ -572,6 +595,9 @@ func resetInvocationState() {
 	// The built-in defaults, which is what a store with no config file loads —
 	// never the previous store's policy.
 	activeConfig, activeConfigErr = domain.DefaultConfig(), nil
+	// The safe default, so an invocation that never reaches PersistentPreRunE
+	// cannot inherit the last one's permission to create a store.
+	storeIntent = StoreIntentRead
 }
 
 // storeRoot is the effective store directory for the current invocation.
@@ -626,6 +652,113 @@ func usableWithRejectedConfig(cmd *cobra.Command) bool {
 	}
 	_, ok := cmd.Annotations[annotationUsableWithRejectedConfig]
 	return ok
+}
+
+// annotationStoreIntent is what a command says about the store root: whether
+// running it may bring that directory into existence.
+//
+// It is declared per command, next to the command, for the same reason the
+// rejected-config exemption is: the decision belongs where a reader of the
+// command can see it, and adding a command must not mean editing a list in a
+// second file.
+//
+// The default — no annotation, or one this build does not recognise — is
+// StoreIntentRead, which refuses. A command added without a decision then
+// fails safe instead of silently minting a store under whatever path the
+// caller typed.
+const annotationStoreIntent = "kanonarion/store-intent"
+
+// The values annotationStoreIntent takes. A command declares exactly one.
+const (
+	// StoreIntentRead answers from records some other run wrote. It must not
+	// create the store root: a root created by a read answers "nothing
+	// recorded here", which is true of the empty store it just made and false
+	// about the store the caller meant.
+	//
+	// A command that writes but cannot be the first command against a store —
+	// `store clean` has nothing to clean, and every extract needs a walk —
+	// declares read as well. What the value governs is creation, not writing.
+	StoreIntentRead = "read"
+	// StoreIntentCreate writes records, so it creates the root when it is
+	// absent. A first fetch, walk, extract or inspect on a clean machine must
+	// not need a preparatory step.
+	StoreIntentCreate = "create"
+	// StoreIntentNone touches no store at all, so neither answer applies:
+	// refusing it for a store root it never opens would be a refusal with no
+	// subject. Only the commands that genuinely open nothing qualify.
+	StoreIntentNone = "none"
+)
+
+// storeIntentOf returns the intent cmd declared, or StoreIntentRead when it
+// declared nothing or declared a value this build does not know.
+func storeIntentOf(cmd *cobra.Command) string {
+	if cmd == nil {
+		return StoreIntentRead
+	}
+	switch v := cmd.Annotations[annotationStoreIntent]; v {
+	case StoreIntentCreate, StoreIntentNone:
+		return v
+	default:
+		return StoreIntentRead
+	}
+}
+
+// storeIntent is the intent the command running in this invocation declared,
+// resolved in root's PersistentPreRunE once and read by every store-opening
+// seam below it. It lives alongside storeRoot and activeConfig because it is
+// the same kind of fact: one property of this invocation, resolved from the
+// command line before any command body runs.
+//
+// It is derived from the annotation rather than passed at each NewContainer
+// call so there is one declaration per command and no second place for it to
+// disagree with itself.
+var storeIntent = StoreIntentRead
+
+// storeOpenIntent maps this invocation's declared intent onto what the sqlite
+// layer is allowed to do about a missing directory.
+func storeOpenIntent() sqlitestore.Intent {
+	if storeIntent == StoreIntentCreate {
+		return sqlitestore.IntentCreate
+	}
+	return sqlitestore.IntentRead
+}
+
+// missingStoreError is a read aimed at a store root that is not there. It names
+// the path it looked at — the whole failure mode is a path the caller did not
+// mean — and the command that would create a store there.
+type missingStoreError struct {
+	root string
+}
+
+func (e *missingStoreError) Error() string {
+	return fmt.Sprintf("no store at %s\n"+
+		"  this command reads recorded evidence; it does not create a store, so nothing was written there\n"+
+		"  to create one and record the module set: kanonarion inspect --store-root %s",
+		e.root, e.root)
+}
+
+// requireStoreRoot refuses an invocation whose store root does not exist, for
+// every command that did not declare it creates one.
+//
+// It runs before anything opens the store, so the refusal costs no directory:
+// the defect it closes is a read that answers from a store it made a
+// millisecond earlier, and a check that fires after the open would still leave
+// the directory behind.
+func requireStoreRoot(root string) error {
+	if storeIntent == StoreIntentCreate || storeIntent == StoreIntentNone {
+		return nil
+	}
+	info, err := os.Stat(root)
+	if err == nil {
+		if !info.IsDir() {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf("store root %s is not a directory", root)}
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("checking store root %s: %v", root, err)}
+	}
+	return &exitError{code: ExitConfig, msg: (&missingStoreError{root: root}).Error()}
 }
 
 // rejectedConfigError is a config file that exists but cannot be turned into a

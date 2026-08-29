@@ -72,8 +72,9 @@ func toGoDebugSection(rec gddomain.Record) godebugSection {
 func newGoDebugCmd(stdout, stderr io.Writer) *cobra.Command {
 	var gomodPath string
 	cmd := &cobra.Command{
-		Use:   "godebug",
-		Short: "Detect, classify and policy-check GODEBUG / //go:debug settings",
+		Use:         "godebug",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Detect, classify and policy-check GODEBUG / //go:debug settings",
 		Long: `godebug enumerates every //go:debug setting baked into the project's
 main package (and any vendored dependency main packages), classifies each
 against a versioned risk taxonomy (red / amber / green), evaluates it against

@@ -110,7 +110,15 @@ func goModRequires(coord coordinate.ModuleCoordinate, imports []string, buildLis
 	for path := range selected {
 		reqs = append(reqs, coordByPath[path])
 	}
-	sort.Slice(reqs, func(i, j int) bool { return reqs[i].Path() < reqs[j].Path() })
+	// Path is a map key here, so no two requires share one; the version is keyed
+	// anyway so the comparator reads as a total order without a reader having to
+	// trace the map back.
+	sort.Slice(reqs, func(i, j int) bool {
+		if reqs[i].Path() != reqs[j].Path() {
+			return reqs[i].Path() < reqs[j].Path()
+		}
+		return reqs[i].Version() < reqs[j].Version()
+	})
 	return reqs
 }
 
@@ -123,6 +131,9 @@ func goModRequires(coord coordinate.ModuleCoordinate, imports []string, buildLis
 // elements so "example.com/mod-extra" is never taken for "example.com/mod".
 func providingModule(importPath string, candidates map[string]string) (string, bool) {
 	best := ""
+	// Map order cannot reach the answer: two distinct keys of the same length
+	// cannot both be a prefix of one path, so the longest match is unique and
+	// `len > len(best)` never ties.
 	for path := range candidates {
 		if importPath != path && !strings.HasPrefix(importPath, path+"/") {
 			continue

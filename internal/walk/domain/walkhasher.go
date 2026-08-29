@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -289,12 +288,7 @@ func canonicalIdentityNodeResults(results map[coordinate.ModuleCoordinate]NodeRe
 	for k := range results {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Path() != keys[j].Path() {
-			return keys[i].Path() < keys[j].Path()
-		}
-		return keys[i].Version() < keys[j].Version()
-	})
+	sortSlice(keys, CoordinateLess)
 
 	out := make([]canonicalIdentityNodeResult, 0, len(keys))
 	for _, k := range keys {
@@ -478,13 +472,7 @@ func toCanonicalBuildEnv(e BuildEnv) *canonicalBuildEnv {
 func canonicalWalkNodes(nodes []GraphNode) []canonicalWalkNode {
 	sorted := make([]GraphNode, len(nodes))
 	copy(sorted, nodes)
-	sort.Slice(sorted, func(i, j int) bool {
-		a, b := sorted[i].Coordinate, sorted[j].Coordinate
-		if a.Path() != b.Path() {
-			return a.Path() < b.Path()
-		}
-		return a.Version() < b.Version()
-	})
+	sortSlice(sorted, GraphNodeLess)
 
 	out := make([]canonicalWalkNode, len(sorted))
 	for i, n := range sorted {
@@ -548,19 +536,7 @@ func fromCanonicalStdlibFacts(c *canonicalStdlibFacts) *StdlibFacts {
 func canonicalWalkEdges(edges []GraphEdge) []canonicalWalkEdge {
 	sorted := make([]GraphEdge, len(edges))
 	copy(sorted, edges)
-	sort.Slice(sorted, func(i, j int) bool {
-		a, b := sorted[i], sorted[j]
-		if a.From.Path() != b.From.Path() {
-			return a.From.Path() < b.From.Path()
-		}
-		if a.From.Version() != b.From.Version() {
-			return a.From.Version() < b.From.Version()
-		}
-		if a.To.Path() != b.To.Path() {
-			return a.To.Path() < b.To.Path()
-		}
-		return a.To.Version() < b.To.Version()
-	})
+	sortSlice(sorted, GraphEdgeLess)
 
 	out := make([]canonicalWalkEdge, len(sorted))
 	for i, e := range sorted {
@@ -580,12 +556,7 @@ func canonicalNodeResults(results map[coordinate.ModuleCoordinate]NodeResult) ([
 	for k := range results {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Path() != keys[j].Path() {
-			return keys[i].Path() < keys[j].Path()
-		}
-		return keys[i].Version() < keys[j].Version()
-	})
+	sortSlice(keys, CoordinateLess)
 
 	out := make([]canonicalNodeEntry, 0, len(keys))
 	for _, k := range keys {

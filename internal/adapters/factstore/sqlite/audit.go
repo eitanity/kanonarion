@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // auditTimeFormat matches the fact store's persisted measurement time.

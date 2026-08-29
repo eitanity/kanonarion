@@ -15,8 +15,9 @@ import (
 func newWalkDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
-		Use:   "walk-diff <id-a> <id-b>",
-		Short: "Print the diff between two walk records",
+		Use:         "walk-diff <id-a> <id-b>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Print the diff between two walk records",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
 				return usageErr(cmd)

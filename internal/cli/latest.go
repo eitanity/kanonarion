@@ -17,19 +17,21 @@ import (
 )
 
 type latestFlags struct {
-	gomodPath string
-	goproxy   string
-	tool      bool
-	project   bool
-	fresh     bool
+	gomodPath    string
+	goproxy      string
+	tool         bool
+	project      bool
+	fresh        bool
+	excludeTests bool
 }
 
 func newLatestCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f latestFlags
 
 	cmd := &cobra.Command{
-		Use:   "latest [<module>...]",
-		Short: "Resolve the latest published version of one or more modules",
+		Use:         "latest [<module>...]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Resolve the latest published version of one or more modules",
 		Long: `latest queries the Go module proxy for the latest published version of one or
 more modules.
 
@@ -59,6 +61,7 @@ arguments; with multiple modules, --json emits an array.`,
   kanonarion latest --gomod ./go.mod
   kanonarion latest --gomod ./go.mod --json
   kanonarion latest --gomod ./go.mod --tool
+  kanonarion latest --gomod ./go.mod --exclude-tests
   kanonarion latest --gomod ./go.mod --fresh`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if f.gomodPath != "" && len(args) > 0 {
@@ -66,6 +69,13 @@ arguments; with multiple modules, --json emits an array.`,
 			}
 			if (f.tool || f.project) && len(args) > 0 {
 				return fmt.Errorf("--tool and --project apply to a go.mod scan, not a positional module path")
+			}
+			// A positional module names itself; there is no scope to resolve and so
+			// no test axis to narrow. Refused by name rather than parsed and
+			// dropped, which would leave the output byte-identical.
+			if f.excludeTests && len(args) > 0 {
+				return refuseInapplicableFlags("latest <module>...",
+					[]inapplicableFlag{{flag: "--" + testScopeFlagName, where: "latest --gomod"}})
 			}
 			return runLatest(cmd.Context(), args, f, stdout, stderr)
 		},
@@ -76,6 +86,7 @@ arguments; with multiple modules, --json emits an array.`,
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "re-query the proxy instead of serving recorded lookups from the store")
+	cmd.Flags().BoolVar(&f.excludeTests, testScopeFlagName, false, "with --gomod: resolve the dependency scope without test imports")
 
 	return cmd
 }
@@ -207,6 +218,16 @@ type latestResult struct {
 	// kanonarion never INFERS a successor. If a module is superseded and says so
 	// nowhere machine-readable, this is empty and nothing is reported.
 	Deprecated *string `json:"deprecated"`
+
+	// DependencyScope names the go.mod dependency scope this row was selected by
+	// and the test axis that scope applied.
+	//
+	// On the row rather than on an envelope because there is none: --json emits a
+	// bare array, and a row copied out of it otherwise carries no record of which
+	// set it belonged to — 20 rows with test imports and 18 without decode
+	// identically. Absent on the positional path, where the caller named the
+	// modules and no scope was projected.
+	DependencyScope *scopeJSON `json:"dependency_scope,omitempty"`
 
 	// LookedUpAt is when the proxy was asked for this answer. A served answer
 	// carries the original lookup time, not the time of this run.
@@ -348,7 +369,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		// asked.
 		lookup = newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	} else {
-		lookup = newStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr)),
+		lookup = newStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr), nil),
 			ledger, activeConfig.Staleness.TTL, f.fresh)
 	}
 
@@ -361,16 +382,19 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		if serr != nil {
 			return serr
 		}
+		if f.excludeTests && scope == scopeComplete {
+			return refuseTestScopeOnCompleteScope("latest --gomod")
+		}
 		// The go.mod path is the one place the latest question is asked about a
 		// SET, and the go command answers a set in one call. The offline lookup
 		// keeps the ledger it already had: `go list -m -u` under a declared air
 		// gap reports every module as having no update, which is not an answer,
 		// so the batch refuses there rather than manufacturing one.
-		return runLatestGomod(ctx, gomodPath, scope, func(coords []string) stalenessLookup {
+		return runLatestGomod(ctx, gomodPath, scope, f.excludeTests, func(coords []string) stalenessLookup {
 			if offline {
 				return lookup
 			}
-			return newGomodStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr)),
+			return newGomodStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr), nil),
 				ledger, activeConfig.Staleness.TTL, f.fresh, gomodPath, f.goproxy, pinnedModulesOf(coords))
 		}, stdout, stderr)
 	}
@@ -599,7 +623,7 @@ func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned stri
 // source has to be told which modules it is answering for, and that set is this
 // function's own result. Building the lookup before the scope is resolved would
 // have meant either a batch over the wrong set or a second scope resolution.
-func runLatestGomod(ctx context.Context, gomodPath string, scope depScope,
+func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, excludeTests bool,
 	newLookup func(coords []string) stalenessLookup, stdout, stderr io.Writer) error {
 	type pinnedDep struct {
 		path    string
@@ -607,10 +631,17 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope,
 	}
 	var deps []pinnedDep
 
-	coords, err := resolveScopeModules(gomodPath, scope)
+	coords, res, err := resolveScopeModules(gomodPath, scope, excludeTests)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
+	// Which set these rows are the whole of, stated before them and on the same
+	// channel as every other statement about the run. The empty case states it
+	// too: a table with no rows is answered by naming the set that was empty.
+	if nerr := writeDepScopeNotice(stderr, res, len(coords), true); nerr != nil {
+		return nerr
+	}
+	scopeField := newScopeJSON(res)
 	if len(coords) == 0 {
 		// JSON array output: the empty answer is [], keeping the empty and
 		// populated results the same type. Prose stays on the text path only.
@@ -637,6 +668,7 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope,
 			return fmt.Errorf("context cancelled: %w", cerr)
 		}
 		row, rerr := latestRowFor(ctx, lookup, dep.path, dep.version, stderr)
+		row.DependencyScope = scopeField
 		if errors.Is(rerr, staleapp.ErrBatchUnavailable) {
 			// The batched call answers for every module at once, so this is not
 			// one dependency's failure and must not be rendered as one: printing

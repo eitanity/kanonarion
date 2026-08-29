@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -78,7 +78,7 @@ func TestPutWalkScanRun_RefusesUnsealedRun(t *testing.T) {
 // evidence of it.
 func TestReadPaths_RefuseTamperedRecord(t *testing.T) {
 	ctx := t.Context()
-	db, err := sqlitestore.Open(":memory:", sqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening in-memory db: %v", err)
 	}
@@ -156,7 +156,7 @@ func assertTamperReported(t *testing.T, err error, returned bool) {
 
 func TestGetWalkScanRun_RefusesTamperedRun(t *testing.T) {
 	ctx := t.Context()
-	db, err := sqlitestore.Open(":memory:", sqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening in-memory db: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestMigration_PurgesEmptyHashRows(t *testing.T) {
 		}
 	}
 	path := t.TempDir() + "/mirror.db"
-	db, err := sqlitestore.Open(path, pre)
+	db, err := sqlitestore.Open(path, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening db at version 8: %v", err)
 	}
@@ -283,7 +283,7 @@ INSERT INTO vulnerability_findings_index (
 	}
 
 	// Re-open with the full migration set, which applies version 9.
-	migrated, err := sqlitestore.Open(path, sqlite.Migrations())
+	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("applying migration 9: %v", err)
 	}

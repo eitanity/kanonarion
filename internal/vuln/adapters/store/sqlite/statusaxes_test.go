@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
@@ -187,7 +187,7 @@ func TestMigration_BackfillsRecordStatusAxes(t *testing.T) {
 		}
 	}
 	path := t.TempDir() + "/mirror.db"
-	db, err := sqlitestore.Open(path, pre)
+	db, err := sqlitestore.Open(path, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening db at version 10: %v", err)
 	}
@@ -209,7 +209,7 @@ INSERT INTO vulnerability_records (
 		t.Fatalf("closing db: %v", err)
 	}
 
-	migrated, err := sqlitestore.Open(path, sqlite.Migrations())
+	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("applying migration 11: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestMigration_LeavesPreHashSnapshotsUnsealed(t *testing.T) {
 		}
 	}
 	path := t.TempDir() + "/mirror.db"
-	db, err := sqlitestore.Open(path, pre)
+	db, err := sqlitestore.Open(path, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening db at version 9: %v", err)
 	}
@@ -266,7 +266,7 @@ VALUES ('govulndb', 'v2024-01-01', '2024-01-01T00:00:00Z', '', ?)`, []byte(body)
 		t.Fatalf("closing db: %v", err)
 	}
 
-	migrated, err := sqlitestore.Open(path, sqlite.Migrations())
+	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("applying the full migration set: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestMigration_UnsealsSnapshotsTheWithdrawnMigrationSealed(t *testing.T) {
 		}
 	}
 	path := t.TempDir() + "/mirror.db"
-	db, err := sqlitestore.Open(path, pre)
+	db, err := sqlitestore.Open(path, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening db at version 11: %v", err)
 	}
@@ -333,7 +333,7 @@ INSERT INTO vulnerability_snapshots (source, version, retrieved_at, content_hash
 		t.Fatalf("closing db: %v", err)
 	}
 
-	migrated, err := sqlitestore.Open(path, sqlite.Migrations())
+	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("applying migration 12: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestMigration13_CorrectsCoverageBackFilledFromTheCollapsedWord(t *testing.T
 			upTo12 = append(upTo12, m)
 		}
 	}
-	db, err := sqlitestore.Open(dsn, upTo12)
+	db, err := sqlitestore.Open(dsn, upTo12, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at migration 12: %v", err)
 	}
@@ -422,7 +422,7 @@ VALUES ('github.com/foo/bar', ?, 'v14', 'govulndb', 'v2024-01-01', ?, ?, ?, 0,
 	}
 
 	// Re-open with the full set, which applies 13 to the rows above.
-	db2, err := sqlitestore.Open(dsn, sqlite.Migrations())
+	db2, err := sqlitestore.Open(dsn, sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("applying migration 13: %v", err)
 	}

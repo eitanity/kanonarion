@@ -3,6 +3,7 @@ package ports_test
 import (
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -83,5 +84,75 @@ func TestCallEdgeRefLess_IsTotal(t *testing.T) {
 	kindB.Kind = domain.EdgeKindReference
 	if ports.CallEdgeRefLess(kindA, kindB) == ports.CallEdgeRefLess(kindB, kindA) {
 		t.Error("refs differing only in Kind are not ordered")
+	}
+}
+
+// TestCallGraphGeneration_StatesTheSame_EachFieldAlone pins what a generation
+// STATES, field by field. Varying all four at once would only prove the
+// comparison noticed one of them.
+func TestCallGraphGeneration_StatesTheSame_EachFieldAlone(t *testing.T) {
+	base := ports.CallGraphGeneration{
+		ExtractedAt:    time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		Algorithm:      domain.AlgorithmCHA,
+		OverallStatus:  domain.CallGraphStatusExtracted,
+		Completeness:   domain.CompletenessBuiltWithBodies,
+		AnalysisSource: domain.AnalysisSourceModuleZip,
+		NodeCount:      10,
+		EdgeCount:      11,
+		ContentHash:    "sha256:base",
+	}
+	if !base.StatesTheSame(base) {
+		t.Fatal("a generation does not state the same thing as itself")
+	}
+	for _, tc := range []struct {
+		name string
+		vary func(g *ports.CallGraphGeneration)
+	}{
+		{"node count", func(g *ports.CallGraphGeneration) { g.NodeCount = 11 }},
+		{"edge count", func(g *ports.CallGraphGeneration) { g.EdgeCount = 12 }},
+		{"overall status", func(g *ports.CallGraphGeneration) { g.OverallStatus = domain.CallGraphStatusPartial }},
+		{"completeness", func(g *ports.CallGraphGeneration) { g.Completeness = domain.CompletenessMetadataOnly }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			other := base
+			tc.vary(&other)
+			if base.StatesTheSame(other) || other.StatesTheSame(base) {
+				t.Errorf("generations differing on %s alone state the same thing", tc.name)
+			}
+		})
+	}
+}
+
+// TestCallGraphGeneration_StatesTheSame_IgnoresPerGenerationIdentity is the
+// control. Every generation has its own timestamp, seal and provenance, so a
+// comparison that read them would find every re-analysed coordinate in
+// disagreement and the answer would carry no information.
+func TestCallGraphGeneration_StatesTheSame_IgnoresPerGenerationIdentity(t *testing.T) {
+	base := ports.CallGraphGeneration{
+		ExtractedAt:    time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		Algorithm:      domain.AlgorithmCHA,
+		OverallStatus:  domain.CallGraphStatusExtracted,
+		Completeness:   domain.CompletenessBuiltWithBodies,
+		AnalysisSource: domain.AnalysisSourceModuleZip,
+		NodeCount:      10,
+		EdgeCount:      11,
+		ContentHash:    "sha256:base",
+	}
+	for _, tc := range []struct {
+		name string
+		vary func(g *ports.CallGraphGeneration)
+	}{
+		{"extracted at", func(g *ports.CallGraphGeneration) { g.ExtractedAt = g.ExtractedAt.Add(time.Hour) }},
+		{"content hash", func(g *ports.CallGraphGeneration) { g.ContentHash = "sha256:other" }},
+		{"analysis source", func(g *ports.CallGraphGeneration) { g.AnalysisSource = domain.AnalysisSourceWorktree }},
+		{"algorithm", func(g *ports.CallGraphGeneration) { g.Algorithm = domain.AlgorithmRTA }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			other := base
+			tc.vary(&other)
+			if !base.StatesTheSame(other) {
+				t.Errorf("a difference in %s alone was read as the generations stating different things", tc.name)
+			}
+		})
 	}
 }

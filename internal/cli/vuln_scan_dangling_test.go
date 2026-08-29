@@ -110,7 +110,7 @@ func TestRunScanShow_StatesUnresolvableInputsOnTheWalkLine(t *testing.T) {
 	fake.MarkWalkAbsent("walk-purged")
 
 	var out bytes.Buffer
-	if err := runScanShow(t.Context(), "vscan-dangling", false, fake, testfakes.NewFakeQueryVuln(), nil, &out, io.Discard); err != nil {
+	if err := runScanShow(t.Context(), "vscan-dangling", false, fake, testfakes.NewFakeQueryVuln(), nil, nil, &out, io.Discard); err != nil {
 		t.Fatalf("runScanShow() = %v, want nil", err)
 	}
 	got := out.String()
@@ -134,7 +134,7 @@ func TestRunScanShow_HealthyRunIsUnchanged(t *testing.T) {
 	fake.AddRun(run)
 
 	var out bytes.Buffer
-	if err := runScanShow(t.Context(), "vscan-healthy", false, fake, testfakes.NewFakeQueryVuln(), nil, &out, io.Discard); err != nil {
+	if err := runScanShow(t.Context(), "vscan-healthy", false, fake, testfakes.NewFakeQueryVuln(), nil, nil, &out, io.Discard); err != nil {
 		t.Fatalf("runScanShow() = %v, want nil", err)
 	}
 	got := out.String()

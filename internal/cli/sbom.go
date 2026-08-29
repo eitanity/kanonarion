@@ -45,8 +45,9 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f sbomFlags
 
 	cmd := &cobra.Command{
-		Use:   "sbom [<walk-id>]",
-		Short: "Generate a Software Bill of Materials for a walk",
+		Use:         "sbom [<walk-id>]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Generate a Software Bill of Materials for a walk",
 		Long: `Generate a Software Bill of Materials (CycloneDX) for a walk.
 
 The document is an inventory: components, their identity, hashes, licences and
@@ -59,8 +60,9 @@ Exit codes:
   0  SBOM generated, every component carrying a licence identity
   1  SBOM generated, but one or more components carry no licence identity —
      no licence record was found, or the record found identified no SPDX
-     licence. The document IS written and names them; a licence-less SBOM
-     must never pass as complete
+     licence. The document IS written, names them, and names the command
+     that supplies each missing record; a licence-less SBOM must never pass
+     as complete
   4  the walk or package scope named does not exist
   20 bad invocation (missing walk id and --package, unparseable coordinate,
      unparseable --generated-at, ...)`,
@@ -104,10 +106,11 @@ Exit codes:
 
 func newSBOMShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "sbom-show <sbom-id>",
-		Short:   "Print a stored SBOM record",
-		Example: `  kanonarion sbom-show sbom-abc123`,
-		Args:    cobra.ExactArgs(1),
+		Use:         "sbom-show <sbom-id>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Print a stored SBOM record",
+		Example:     `  kanonarion sbom-show sbom-abc123`,
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSBOMShow(cmd.Context(), args[0], storeRoot, jsonOut, stdout, stderr)
 		},
@@ -120,10 +123,11 @@ func newSBOMListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 
 	cmd := &cobra.Command{
-		Use:     "sbom-list",
-		Short:   "List SBOM records in the store",
-		Example: `  kanonarion sbom-list --walk 01KQDBVW092ER1HNXZ60X27CMD`,
-		Args:    cobra.NoArgs,
+		Use:         "sbom-list",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "List SBOM records in the store",
+		Example:     `  kanonarion sbom-list --walk 01KQDBVW092ER1HNXZ60X27CMD`,
+		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSBOMList(cmd.Context(), storeRoot, walkID, jsonOut, stdout, stderr)
 		},
@@ -276,7 +280,8 @@ func sbomGenerateWith(
 	if record.LicensesIncomplete {
 		return &exitError{
 			code: ExitPartial,
-			msg:  "sbom generated with undetermined licences: " + undeterminedLicenceSummary(record.Content),
+			msg: "sbom generated with undetermined licences: " + undeterminedLicenceSummary(
+				record.Content, licenceRemedyBuildForWalk(ctx, ctr, record.WalkID)),
 		}
 	}
 	return nil
@@ -297,15 +302,23 @@ func parseGeneratedAt(v string) (time.Time, error) {
 }
 
 // undeterminedLicenceSummary names the components of a generated document that
-// carry no licence identity, so the operator learns which they are without
+// carry no licence identity and the command that produces the record each one
+// lacks, so the operator learns which they are, and what to run next, without
 // opening the artefact.
+//
+// The remedy differs by component — the walk root's own licence, a
+// local-replace target's and a published dependency's come from different
+// commands — so it is composed per coordinate from the shared diagnostic
+// rather than stated as one fixed sentence here. build carries the one fact
+// the document does not hold: which of its components this build resolves from
+// a local path, and therefore cannot fetch.
 //
 // It reads the document rather than the record because the document is the thing
 // being judged and is present on every path, cached included. A document this
 // process cannot re-read is reported as such: the exit code has already been
 // decided by the record, and a parse failure here must not turn a stated gap
 // into a silent one.
-func undeterminedLicenceSummary(content []byte) string {
+func undeterminedLicenceSummary(content []byte, build licenceRemedyBuild) string {
 	var doc struct {
 		Components []struct {
 			Name     string            `json:"name"`
@@ -327,26 +340,38 @@ func undeterminedLicenceSummary(content []byte) string {
 	// module carries that module as both, and counting it twice would put the
 	// message at odds with the count the document itself states.
 	var names []string
+	var missing []coordinate.ModuleCoordinate
 	seen := make(map[string]struct{}, len(doc.Components))
-	add := func(coord, suffix string) {
+	add := func(path, version, suffix string) {
+		coord := path + "@" + version
 		if _, dup := seen[coord]; dup {
 			return
 		}
 		seen[coord] = struct{}{}
 		names = append(names, coord+suffix)
+		// A component the coordinate rules refuse is still named above: it is
+		// in the document either way, and the remedy is the one thing that
+		// cannot be stated for a coordinate nothing can be run against.
+		if c, cerr := coordinate.NewModuleCoordinate(path, version); cerr == nil {
+			missing = append(missing, c)
+		}
 	}
 	if m := doc.Metadata.Component; m.Name != "" && len(m.Licenses) == 0 {
-		add(m.Name+"@"+m.Version, " (the document's subject)")
+		add(m.Name, m.Version, " (the document's subject)")
 	}
 	for _, c := range doc.Components {
 		if len(c.Licenses) == 0 {
-			add(c.Name+"@"+c.Version, "")
+			add(c.Name, c.Version, "")
 		}
 	}
 	if len(names) == 0 {
 		return "one or more components carry no licence identity"
 	}
-	return fmt.Sprintf("%d component(s) with no licence identity: %s", len(names), strings.Join(names, ", "))
+	summary := fmt.Sprintf("%d component(s) with no licence identity: %s", len(names), strings.Join(names, ", "))
+	if remedy := missingLicenceRecordRemedies(missing, build); remedy != "" {
+		summary += " — " + remedy
+	}
+	return summary
 }
 
 func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout, stderr io.Writer) error {

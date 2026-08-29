@@ -1,0 +1,5 @@
+package listed
+
+import "crypto/md5"
+
+func Sum(b []byte) [16]byte { return md5.Sum(b) }

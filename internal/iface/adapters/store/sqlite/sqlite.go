@@ -17,9 +17,9 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // Store is the SQLite-backed interface store.
@@ -182,7 +182,7 @@ DELETE FROM interface_symbols`},
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 // Use ":memory:" for tests.
 func Open(dsn string) (*Store, error) {
-	db, err := sqlitestore.Open(dsn, Migrations())
+	db, err := sqlitestore.Open(dsn, Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening iface store: %w", err)
 	}

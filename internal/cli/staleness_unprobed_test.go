@@ -210,7 +210,7 @@ func TestFetchStaleness_SurvivesATransientEmptyProxyAnswer(t *testing.T) {
 
 	var stderr strings.Builder
 	stale := fetchStalenessFor(context.Background(),
-		newProxyLatestResolver(proxy, discardLogger()), coord, "v1.0.0", &stderr)
+		newProxyLatestResolver(proxy, discardLogger(), nil), coord, "v1.0.0", &stderr)
 	if stale.IsLatest == nil {
 		t.Fatalf("the column went unmeasured over a transient answer: %+v (stderr %q)", stale, stderr.String())
 	}
@@ -248,7 +248,7 @@ func TestFetchStaleness_AbsentPathIsNotRetriedAndRendersAsBefore(t *testing.T) {
 
 	var stderr strings.Builder
 	stale := fetchStalenessFor(context.Background(),
-		newProxyLatestResolver(proxy, discardLogger()), coord, "v1.0.0", &stderr)
+		newProxyLatestResolver(proxy, discardLogger(), nil), coord, "v1.0.0", &stderr)
 	if got := calls.Load(); got != 1 {
 		t.Errorf("proxy asked %d times for a definitive answer, want exactly 1", got)
 	}

@@ -124,6 +124,34 @@ func (s ReachabilitySoundness) MarshalJSON() ([]byte, error) {
 	return b, nil
 }
 
+// Statement is what this rung means, in one line, for a surface that tallies
+// rungs and has to say what each tally is.
+//
+// It lives on the type for the same reason ReachabilitySoundnessLevels does: a
+// renderer that restates the ladder is a restatement that drifts, and a rung
+// added here must arrive with its own words rather than inheriting a
+// neighbour's. The empty string is the answer for a value this type does not
+// define, so a renderer prints the rung's name alone rather than a sentence
+// about some other rung.
+func (s ReachabilitySoundness) Statement() string {
+	switch s {
+	case SoundnessConfirmed:
+		return "a search ran at a fidelity that can support a negative and found no route"
+	case SoundnessInferred:
+		return "no search ran; the negative reads a source-fidelity analysis's silence"
+	case SoundnessUnconfirmed:
+		return "an analysis ran that could not have found a route even if one existed"
+	case SoundnessUnsearchable:
+		return "the advisory names no symbol for this module path, so no search was ever possible"
+	case SoundnessDisputed:
+		return "a search found a path the recorded negative denies: contradicted, not weak, and the one rung no negative may be read off"
+	case SoundnessNotStated:
+		return "no reachability answer was recorded for these"
+	default:
+		return ""
+	}
+}
+
 // Rank orders the ladder, higher being more sound. The zero value ranks below
 // every stated rung: an answer that states no soundness must never displace one
 // that does.

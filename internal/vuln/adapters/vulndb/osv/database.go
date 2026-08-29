@@ -16,8 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/goenv"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -85,6 +86,7 @@ type snapshotDatabase struct {
 type Database struct {
 	client    *http.Client
 	vulnStore ports.VulnerabilityStore
+	clock     fetchports.Clock
 	logger    *slog.Logger
 
 	mu        sync.RWMutex
@@ -92,16 +94,23 @@ type Database struct {
 }
 
 // New returns a new Database.
-func New(client *http.Client, vulnStore ports.VulnerabilityStore) *Database {
+//
+// The clock is a parameter rather than a default because the instant it reads
+// is sealed: Snapshot stamps it as the snapshot's retrieval time, the snapshot
+// is a named field on VulnerabilityRecord and WalkScanRun, and both hash their
+// own JSON. A default would put a wall-clock reading inside a content hash by
+// omission, which is the one way a record's identity can move without anyone
+// choosing it.
+func New(client *http.Client, vulnStore ports.VulnerabilityStore, clk fetchports.Clock) *Database {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Database{client: client, vulnStore: vulnStore, logger: slog.Default()}
+	return &Database{client: client, vulnStore: vulnStore, clock: clk, logger: slog.Default()}
 }
 
 // WithLogger returns a copy of the Database using the given logger.
 func (d *Database) WithLogger(logger *slog.Logger) *Database {
-	copy := New(d.client, d.vulnStore)
+	copy := New(d.client, d.vulnStore, d.clock)
 	copy.logger = logger
 	return copy
 }
@@ -128,7 +137,7 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 	// establish what "this snapshot" means; every later reader checks the blob it
 	// holds against this hash rather than trusting the version string, which is
 	// metadata the blob itself asserts.
-	snapshot, err := domain.NewDatabaseSnapshot("vuln.go.dev", version, time.Now(), domain.HashSnapshotContent(zipData))
+	snapshot, err := domain.NewDatabaseSnapshot("vuln.go.dev", version, d.clock.Now(), domain.HashSnapshotContent(zipData))
 	if err != nil {
 		return domain.DatabaseSnapshot{}, nil, fmt.Errorf("pinning vulndb.zip snapshot: %w", err)
 	}

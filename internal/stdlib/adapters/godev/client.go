@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
 )

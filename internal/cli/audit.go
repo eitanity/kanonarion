@@ -43,14 +43,19 @@ type auditFlags struct {
 	fromModcache    string
 	policyPath      string
 	noProgress      bool
+	// excludeTests is parsed only so the refusal can name it. audit records a
+	// walk, and a walk record cannot name the test axis; see
+	// refuseTestScopeOnRecordingCommand.
+	excludeTests bool
 }
 
 func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f auditFlags
 
 	cmd := &cobra.Command{
-		Use:   "audit",
-		Short: "Audit every dependency in a go.mod's scope",
+		Use:         "audit",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Audit every dependency in a go.mod's scope",
 		Long: `Audit fetches, scans, and reports on every dependency in a go.mod's scope.
 
 For each module, audit shows:
@@ -104,6 +109,7 @@ Exit codes:
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
 	return cmd
 }
@@ -296,6 +302,18 @@ type auditModuleResult struct {
 	policyScope      string
 	policyRuleScopes []string
 
+	// DependencyScope names the go.mod dependency scope that selected this row
+	// and the test axis that scope applied.
+	//
+	// It is a row field, unlike the coverage aggregate above, and the difference
+	// is what the fact is about: coverage is a figure about the whole graph, which
+	// a row cannot carry a copy of without claiming to be its own measurement,
+	// while the scope is the criterion by which THIS row exists. A row lifted out
+	// of the array otherwise cannot be placed — 20 rows resolved with test imports
+	// and 18 without decode identically — and --json emits a bare array with no
+	// envelope to state it once.
+	DependencyScope *scopeJSON `json:"dependency_scope,omitempty"`
+
 	// coverage is this module's contribution to the run's verification-coverage
 	// aggregate, captured from the same record read that filled Verification.
 	// Taking it from the same read is what makes the aggregate equal the rows by
@@ -325,9 +343,21 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
-	coords, err := resolveScopeModules(f.gomodPath, scope)
+	// audit drives a project walk, so it is one of the commands whose stored
+	// record would have to name the axis before it could be narrowed.
+	if rerr := refuseTestScopeOnRecordingCommand("audit", f.excludeTests); rerr != nil {
+		return rerr
+	}
+	coords, res, err := resolveScopeModules(f.gomodPath, scope, false)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
+	}
+	// The set the table is the whole of, stated before it and on the channel the
+	// derivation, frame and coverage lines already use. It is written before the
+	// empty-scope return so a run that audited nothing still says which set was
+	// empty.
+	if nerr := writeDepScopeNotice(stderr, res, len(coords), false); nerr != nil {
+		return nerr
 	}
 	// An empty scope is a valid answer, not an error, and it is answered on
 	// the caller's own channel: an empty array under --json, prose only on the
@@ -355,7 +385,13 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 
 	// Which lookup answers the staleness column, and why, is decided in one
 	// place so the offline and online wirings cannot drift apart.
-	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger, f.gomodPath, coords, stderr)
+	//
+	// The probe gets the same progress reporter the walk beneath this run gets,
+	// built the same way, so --no-progress, the config preference and the log
+	// level govern both. A probe that waits out a transient proxy failure is the
+	// longest silence in an otherwise second-long command.
+	stalenessProgress := newStalenessProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
+	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger, logger, f.gomodPath, coords, stalenessProgress, stderr)
 	if serr != nil {
 		return serr
 	}
@@ -363,6 +399,12 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
 	if err != nil {
 		return err
+	}
+	// Stamped on every row from the same resolution that produced the coords, so
+	// the field and the set cannot come apart.
+	scopeField := newScopeJSON(res)
+	for i := range results {
+		results[i].DependencyScope = scopeField
 	}
 
 	// What the answer is ABOUT, before where it came from. A vendored project
@@ -579,14 +621,15 @@ func auditScope(
 	//
 	// The lookup it replaces asked the store for the latest walk of this target
 	// and scope, which is not the same question. Two walks of one target differ
-	// on more than target and scope — the build environment among them, and
-	// WalkFilter carries no axis for it — so a cross-compiled audit of one
-	// platform would extract, scan and report against another platform's walk
-	// whenever that one happened to be newer, while the derivation line named the
-	// walk this run actually resolved. One audit, two walks, and the report said
-	// nothing about the disagreement. This was invisible while every audit minted
-	// a fresh walk, because then the latest walk always was this run's; walk reuse
-	// is what let the two come apart.
+	// on more than target and scope — the build environment among them, which
+	// that lookup did not pin (WalkFilter carries a BuildEnv axis; it simply went
+	// unpassed) — so a cross-compiled audit of one platform would extract, scan
+	// and report against another platform's walk whenever that one happened to be
+	// newer, while the derivation line named the walk this run actually resolved.
+	// One audit, two walks, and the report said nothing about the disagreement.
+	// This was invisible while every audit minted a fresh walk, because then the
+	// latest walk always was this run's; walk reuse is what let the two come
+	// apart.
 	if walkResult.Record.ID == "" {
 		return nil, derivation, fmt.Errorf("project walk produced no record for %s", localCoord)
 	}
@@ -846,7 +889,7 @@ const (
 // has to fetch module bytes it has not got still fails — with its own error,
 // naming that obstacle, which is the one the operator can act on.
 func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog.Logger,
-	gomodPath string, coords []string, stderr io.Writer) (stalenessLookup, error) {
+	gomodPath string, coords []string, progress staleports.ProgressReporter, stderr io.Writer) (stalenessLookup, error) {
 	offline := newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	if modcacheMode {
 		return offline, nil
@@ -867,7 +910,7 @@ func auditStalenessLookup(goproxy string, ledger staleports.Ledger, logger *slog
 	// serially, for a fact the go command answers for the whole set in one call.
 	// The two commands share the defect as they share the ledger, so they are
 	// fixed together rather than leaving `audit` on the sweep `latest` left.
-	return newReportOnceLookup(newGomodStalenessResolver(newProxyLatestResolver(proxy, logger), ledger,
+	return newReportOnceLookup(newGomodStalenessResolver(newProxyLatestResolver(proxy, logger, progress), ledger,
 		activeConfig.Staleness.TTL, false, gomodPath, goproxy, pinnedModulesOf(coords)), stderr), nil
 }
 

@@ -213,6 +213,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `license_policy.rules` | sequence (read-only) | - |
 | `license_policy.rules[].unknown_license` | string (read-only, edit the file) | `allow` / `notify` / `warn` / `block` - see below |
 | `license_overrides.<module>` | string | `MIT` |
+| `copyright_declarations.<module>` | mapping (read-only, edit the file) | see below |
 | `callgraph.exclude` | sequence | `[github.com/foo/bar]` |
 | `staleness.ttl` | duration | `1h` |
 | `staleness.probe_concurrency` | int | `16` - newer-major probe requests in flight at once. Wider is not simply faster: past the default the proxy answers `200` with an empty body, which is a lost answer rather than an error. `0` is serial. |
@@ -224,6 +225,44 @@ The unified governance blocks (`directive_policy`, `godebug_policy`,
 ([`directives`](directives.md), [`godebug`](godebug.md),
 [`vendor`](vendor.md), [`fips`](fips.md)). All of them appear in the effective
 configuration block of `config show`.
+
+### `copyright_declarations` - copyright a human read upstream
+
+Some modules ship no copyright statement anywhere `licence` extraction can
+reach it: not in a licence file, not in a `NOTICE`, not in source headers.
+`notice` refuses to publish an attribution document for them, correctly - a
+NOTICE that silently omits an attribution the licence requires is worse than
+none. `copyright_declarations` is where the operator records what they read in
+the upstream repository so the document can be published.
+
+```yaml
+copyright_declarations:
+  github.com/example/mod:
+    copyright: "Copyright 2019 Example Authors"
+    declared_by: "you@example.com"
+    declared_on: "2026-01-31"
+    basis: "LICENSE header at github.com/example/mod v1.2.3, read 2026-01-31"
+```
+
+The key is a module path, optionally pinned to a version
+(`github.com/example/mod@v1.2.3`); a pinned entry wins over a module-level one,
+the same precedence `license_overrides` uses.
+
+**All four fields are required.** An entry missing any of them is refused when
+the config file loads, naming the coordinate and the field. An SPDX identifier
+is self-evidencing - a reviewer checks it against the licence text - but a
+copyright line is an assertion about what a person read somewhere, and without
+an author, a date and a cited basis nobody reading the document can check it.
+`declared_on` must be an ISO 8601 date (`YYYY-MM-DD`).
+
+**An extracted notice always wins.** Where `licence` extraction found a
+copyright, that is what the document attributes; a declaration recorded beside
+it is kept and printed as corroboration, never as a replacement. See
+[`notice`](notice.md#recording-a-copyright-a-human-read).
+
+Declarations are edited in the file rather than through `config set`, which
+writes scalar values. `config get copyright_declarations` and
+`config show` report what is in force.
 
 ### `license_policy.rules[].unknown_license` - the unknown-licence gate
 
@@ -290,6 +329,7 @@ kanonarion config show
 # Read a single value
 kanonarion config get preferences.json
 kanonarion config get license_policy.categories.permissive
+kanonarion config get copyright_declarations
 
 # Write values
 kanonarion config set preferences.json true

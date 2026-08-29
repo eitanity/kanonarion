@@ -122,7 +122,10 @@ counts as a stage that ran — rather than the exit status. Only an exit saying 
 graph was produced makes the stage failed.
 
 The `--workers` flag controls how many callgraph subprocesses run concurrently.
-On memory-constrained hosts, lower this to 1 or 2:
+Each one holds its own module's SSA closure, so the run's peak is roughly
+`--workers` times the largest module's peak — see
+[what one run costs](callgraph.md#what-one-run-costs) for the per-module figure
+this multiplies. On memory-constrained hosts, lower this to 1 or 2:
 
 ```bash
 kanonarion extract 01J1Z... --stages callgraph --workers 1

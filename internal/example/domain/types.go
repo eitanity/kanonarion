@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -109,22 +108,13 @@ type ExampleRecord struct {
 	SourceContentHash string
 }
 
-// SortExamples sorts r.Examples by (Package, AssociatedSymbol, Name) for determinism.
-// Sort ParseFailures by File as well.
+// SortExamples sorts r.Examples by (Package, AssociatedSymbol, Name) and
+// r.ParseFailures by File. The comparators live in ordering.go; each is a total
+// order, so the result is a function of the record's contents and not of the
+// order the directory walk produced them in.
 func (r *ExampleRecord) SortExamples() {
-	sort.Slice(r.Examples, func(i, j int) bool {
-		a, b := r.Examples[i], r.Examples[j]
-		if a.Package != b.Package {
-			return a.Package < b.Package
-		}
-		if a.AssociatedSymbol != b.AssociatedSymbol {
-			return a.AssociatedSymbol < b.AssociatedSymbol
-		}
-		return a.Name < b.Name
-	})
-	sort.Slice(r.ParseFailures, func(i, j int) bool {
-		return r.ParseFailures[i].File < r.ParseFailures[j].File
-	})
+	sortExamples(r.Examples)
+	sortSlice(r.ParseFailures, ParseFailureLess)
 }
 
 // DeriveAssociatedSymbol parses a Go example function name to produce the

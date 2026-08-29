@@ -37,7 +37,13 @@ var ErrUnsupportedEcosystem = errors.New("unsupported ecosystem: kanonarion reco
 // classification changes such that a re-scan of unchanged inputs would
 // differ from a cached record. The embedded catalogue version is folded in
 // by PipelineFingerprint so a catalogue update alone re-scans.
-const PipelineVersion = "0.2.0"
+//
+// 0.3.0 attributes a finding in a vendored file to the module
+// vendor/modules.txt says owns the file. 0.2.0 read the first two segments of
+// the path instead, which is a module path for almost no module — a 0.2.0
+// record names github.com/IBM and golang.org/x, neither of which is a module
+// anyone can upgrade, pin or exempt.
+const PipelineVersion = "0.3.0"
 
 // EligibilityCaveat is the verbatim statement included in every Record
 // summarising the eligibility-vs-validation distinction. It is part of the
@@ -92,9 +98,11 @@ type Finding struct {
 	// and direct-random findings). Empty for toolchain findings.
 	Package string
 
-	// Module is the module path the source file belongs to. For an
-	// applied finding this is the project module; for a dependency it is
-	// that dependency's module path (best-effort).
+	// Module is the module path the source file belongs to: the project
+	// module for the project's own code, and for a file under vendor/ the
+	// module vendor/modules.txt says owns that directory, or the vendor
+	// context's ModuleUnresolved when no listed module does — an admitted
+	// gap, never a guess.
 	Module string
 
 	// Source is the file the finding was read from, relative to the scan

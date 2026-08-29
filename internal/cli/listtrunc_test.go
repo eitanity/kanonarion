@@ -170,7 +170,10 @@ func callGraphSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "callgraph-list", population: truncPopulation, subject: "call graph records",
-		listCalls: func() int { return uc.ListCalls },
+		// Both listings, summed. The property is how many times the command reads
+		// the store, and counting only one of the two reads would be satisfied by
+		// a listing that switched to the other.
+		listCalls: func() int { return uc.ListCalls + uc.CoordinateListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)

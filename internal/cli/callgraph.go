@@ -26,8 +26,16 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 	var localShim bool
 
 	cmd := &cobra.Command{
-		Use:   "callgraph <module>@<version>",
-		Short: "Extract and summarise the call graph of a Go module",
+		Use:         "callgraph <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Extract and summarise the call graph of a Go module",
+		Long: `Extract and summarise the call graph of a Go module.
+
+Cost: one run loads the module's full transitive dependency closure into SSA in
+a single process. Across this project's own dependency set that measured
+0.23-1.22 GB per module on a 32-core, 61 GiB machine, the heaviest of them
+taking 5.96 s and 1.22 GB. Running the same analysis over a whole walk is a
+different budget: see 'kanonarion extract --help'.`,
 		Example: `  kanonarion callgraph github.com/spf13/cobra@v1.8.1
   kanonarion callgraph github.com/spf13/cobra@v1.8.1 --json
   kanonarion callgraph github.com/spf13/cobra@v1.8.1 --force
@@ -274,10 +282,20 @@ func discoveredBuildList(
 	coord coordinate.ModuleCoordinate,
 	stderr io.Writer,
 ) cgdomain.AnalysisInputs {
-	walkID, err := findWalkContaining(ctx, walks, coord)
+	found, err := findWalkContaining(ctx, walks, coord,
+		fmt.Sprintf("kanonarion callgraph %s --from-walk <walk of that build>", coord))
 	if err != nil {
+		// A search that finds nothing still says nothing. An AMBIGUOUS one does:
+		// the store holds the build list this analysis needs, in more than one
+		// build, and the analysis is about to run without it. Degrading silently
+		// there would record an empty graph while naming neither the builds that
+		// could have filled it nor the flag that picks one.
+		if amb, ok := errors.AsType[*ambiguousBuildRefusal](err); ok {
+			_, _ = fmt.Fprintf(stderr, "no build list was named; %s\n", amb)
+		}
 		return cgdomain.AnalysisInputs{}
 	}
+	walkID := found.walkID
 	inputs, err := analysisInputsForWalk(ctx, walks, walkID)
 	if err != nil || !inputs.HasBuildList() {
 		return cgdomain.AnalysisInputs{}

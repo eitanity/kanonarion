@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/config/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // seedStoreWithUnknownMigration builds a real store in a temp dir, brings it fully
@@ -28,7 +28,7 @@ func seedStoreWithUnknownMigration(t *testing.T, unknownModule string, unknownVe
 	storeRoot := t.TempDir()
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 
-	handle, err := sqlitestore.Open(dbPath, allMigrations())
+	handle, err := sqlitestore.Open(dbPath, allMigrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("seeding store: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestStoreSchemaGate_DoesNotRefuseAStoreThisBinaryKnows(t *testing.T) {
 			seed: func(t *testing.T) string {
 				t.Helper()
 				storeRoot := t.TempDir()
-				handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), allMigrations())
+				handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), allMigrations(), sqlitestore.IntentCreate)
 				if err != nil {
 					t.Fatalf("seeding store: %v", err)
 				}
@@ -162,7 +162,7 @@ func TestStoreSchemaGate_DoesNotRefuseAStoreThisBinaryKnows(t *testing.T) {
 			seed: func(t *testing.T) string {
 				t.Helper()
 				storeRoot := t.TempDir()
-				handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), nil)
+				handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), nil, sqlitestore.IntentCreate)
 				if err != nil {
 					t.Fatalf("seeding store: %v", err)
 				}
@@ -185,7 +185,7 @@ func TestStoreSchemaGate_DoesNotRefuseAStoreThisBinaryKnows(t *testing.T) {
 
 			// And it really was brought up to date, so "did not refuse" is not being
 			// confused with "did not migrate either".
-			handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), nil)
+			handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), nil, sqlitestore.IntentCreate)
 			if err != nil {
 				t.Fatalf("reopening store: %v", err)
 			}

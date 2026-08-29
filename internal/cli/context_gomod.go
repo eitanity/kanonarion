@@ -28,14 +28,27 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
 		return err
 	}
+	// The complete scope has no test partition to narrow, so the flag is refused
+	// against it rather than parsed and dropped: accepting it would emit
+	// byte-identical output and report the narrowing as honoured.
+	if f.excludeTests && scope == scopeComplete {
+		return refuseTestScopeOnCompleteScope("context --gomod")
+	}
 	ndjson := jsonOut || f.stream
 
 	logger := buildLogger(logLevel, stderr)
 
-	coords, err := resolveScopeModules(f.gomodPath, scope)
+	coords, res, err := resolveScopeModules(f.gomodPath, scope, f.excludeTests)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
+	// The scope the document set was selected by, stated before the documents,
+	// on the channel the vulnerability frame is stated on. An empty scope states
+	// it too: which set came back empty is the whole answer there.
+	if nerr := writeDepScopeNotice(stderr, res, len(coords), true); nerr != nil {
+		return nerr
+	}
+	scopeField := newScopeJSON(res)
 	if len(coords) == 0 {
 		if f.sizeOnly {
 			// --size-only asks a size question, so an empty scope answers it with a
@@ -68,10 +81,18 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	if err != nil {
 		return fmt.Errorf("loading vuln batch context: %w", err)
 	}
-	// The go.mod names the build, so its own latest project walk is the frame
-	// these verdicts are read in. A project with no walk yet is left unanchored
-	// rather than refused: context is a survey, and every section it prints
-	// states its own basis.
+	// The go.mod and the scope together name the build, so the latest project
+	// walk OF THAT SCOPE is the frame these verdicts are read in. The scope is
+	// passed rather than left to recency because --tool and --project already
+	// chose the module set printed below: anchoring their verdicts to whichever
+	// scope was walked last reports one build's dependencies against another
+	// build's scan.
+	//
+	// A project with no walk of that scope is left unanchored rather than
+	// refused: context is a survey, and every section it prints states its own
+	// basis. But the miss is stated, because an unanchored survey and an anchored
+	// one differ only in a line that is now absent, and a reader who asked for
+	// --tool needs to be told which walk to take.
 	//
 	// The anchor is stated on stderr, and it states its own limit: the walk was
 	// found by the module path this manifest declares, and a survey does not
@@ -80,10 +101,19 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// the build it pinned to — so without this line the pin is invisible, and an
 	// invisible pin to a walk taken before the last go.mod edit reads as a
 	// statement about the tree in front of the reader.
-	if choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
+	var basis basisWalk
+	choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath, scope)
+	switch {
+	case werr != nil:
+		_, _ = fmt.Fprintf(stderr, "notice: no walk anchors these vulnerability verdicts: %v\n", werr)
+	default:
 		vulnBatch.anchorTo(ctx, choice.summary.ID)
-		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (frame %s)%s%s\n",
-			choice.summary.ID, choice.summary.BuildFrame(), choice.stalenessNote(), choice.statementClause())
+		// The same walk the verdicts are read in answers the dependency section,
+		// so every document in the stream reports one build.
+		basis = resolveBasisWalk(ctx, ctr.QueryWalks, choice.summary.ID)
+		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (%s, frame %s)%s\n",
+			choice.summary.ID, walkScopeLabel(choice.summary.Scope), choice.summary.BuildFrame(),
+			choice.basisNotes())
 	}
 
 	compact := f.compact && !f.full
@@ -120,11 +150,12 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 
 		out := contextOutput{
 			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
+			DependencyScope: scopeField,
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 			Provenance:      buildProvenance(coord),
-			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
-			License:         buildLicense(ctx, coord, ctr.QueryLicense),
+			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
+			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
 			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
 			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),

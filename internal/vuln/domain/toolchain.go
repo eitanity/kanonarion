@@ -204,8 +204,37 @@ func JudgeToolchain(version string, snapshot DatabaseSnapshot, set ToolchainAdvi
 	return j
 }
 
+// ToolchainAdvisoryLess is the canonical ordering for ToolchainAdvisory slices.
+// The identifier leads; the summary, the withdrawal timestamp and the affected
+// intervals follow, so two advisories reaching this list under one identifier —
+// one database serving a revised entry beside the original — still have a
+// defined order.
+func ToolchainAdvisoryLess(a, b ToolchainAdvisory) bool {
+	if a.ID != b.ID {
+		return a.ID < b.ID
+	}
+	if a.Summary != b.Summary {
+		return a.Summary < b.Summary
+	}
+	if !a.WithdrawnAt.Equal(b.WithdrawnAt) {
+		return a.WithdrawnAt.Before(b.WithdrawnAt)
+	}
+	if len(a.Ranges) != len(b.Ranges) {
+		return len(a.Ranges) < len(b.Ranges)
+	}
+	for i := range a.Ranges {
+		if a.Ranges[i].Introduced != b.Ranges[i].Introduced {
+			return a.Ranges[i].Introduced < b.Ranges[i].Introduced
+		}
+		if a.Ranges[i].Fixed != b.Ranges[i].Fixed {
+			return a.Ranges[i].Fixed < b.Ranges[i].Fixed
+		}
+	}
+	return false
+}
+
 func sortToolchainAdvisories(advs []ToolchainAdvisory) {
-	sort.Slice(advs, func(i, j int) bool { return advs[i].ID < advs[j].ID })
+	sort.Slice(advs, func(i, j int) bool { return ToolchainAdvisoryLess(advs[i], advs[j]) })
 }
 
 // toolchainCovered walks the advisory's intervals and reports whether v — a

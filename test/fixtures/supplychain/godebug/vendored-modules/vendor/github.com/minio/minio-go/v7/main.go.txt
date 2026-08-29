@@ -1,0 +1,7 @@
+// Package main is a vendored dependency carrying a //go:debug directive.
+// Four segments, nested inside minio-go's directory: longest prefix is load-bearing.
+//
+//go:debug tls3des=1
+package main
+
+func main() {}

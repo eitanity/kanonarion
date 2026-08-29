@@ -106,3 +106,33 @@ func TestTallyModuleResults_ACoordinateMatchIsNotCountedAsAnalysed(t *testing.T)
 		t.Errorf("clean=%d, want 0: an all-clear is analysed AND reporting nothing", counts.clean)
 	}
 }
+
+// TestModuleResultLess_OrdersByCoordinate pins the ordering the scan pool puts
+// its results into. The pool hands them back in COMPLETION order, which is a
+// fact about how the machine was loaded rather than about the walk; ordering
+// them by coordinate keeps that arrangement out of everything downstream.
+func TestModuleResultLess_OrdersByCoordinate(t *testing.T) {
+	t.Parallel()
+
+	must := func(path, version string) coordinate.ModuleCoordinate {
+		t.Helper()
+		c, err := coordinate.NewModuleCoordinate(path, version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	a := moduleResult{coord: must("example.com/a", "v1.0.0")}
+	b := moduleResult{coord: must("example.com/b", "v1.0.0")}
+	a2 := moduleResult{coord: must("example.com/a", "v2.0.0")}
+
+	if !moduleResultLess(a, b) || moduleResultLess(b, a) {
+		t.Error("the path does not order two results")
+	}
+	if !moduleResultLess(a, a2) || moduleResultLess(a2, a) {
+		t.Error("the version does not order two results on one path")
+	}
+	if moduleResultLess(a, a) {
+		t.Error("a result compares less than itself")
+	}
+}

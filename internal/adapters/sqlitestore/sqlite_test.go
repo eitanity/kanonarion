@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
 
 func TestOpen(t *testing.T) {
 	t.Run("memory", func(t *testing.T) {
-		db, err := sqlitestore.Open(":memory:", nil)
+		db, err := sqlitestore.Open(":memory:", nil, sqlitestore.IntentCreate)
 		if err != nil {
 			t.Fatalf("failed to open memory db: %v", err)
 		}
@@ -32,7 +32,7 @@ func TestOpen(t *testing.T) {
 	t.Run("file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "test.db")
-		db, err := sqlitestore.Open(dbPath, nil)
+		db, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentCreate)
 		if err != nil {
 			t.Fatalf("failed to open file db: %v", err)
 		}
@@ -46,10 +46,54 @@ func TestOpen(t *testing.T) {
 	t.Run("invalid path", func(t *testing.T) {
 		// This might not fail on Open because sql.Open is lazy,
 		// but our sqlite.Open runs migrations which should trigger it.
-		_, err := sqlitestore.Open("/non/existent/path/db.sqlite", nil)
+		_, err := sqlitestore.Open("/non/existent/path/db.sqlite", nil, sqlitestore.IntentCreate)
 		if err == nil {
 			t.Fatal("expected error for invalid path")
 		}
+	})
+
+	// A read intent must leave the disk exactly as it found it. The whole
+	// reason the parameter exists is that a directory made to answer a read is
+	// a store the caller never asked for, answering truthfully about itself
+	// and falsely about the one they meant.
+	t.Run("read intent refuses a missing directory", func(t *testing.T) {
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "typo-store")
+
+		_, err := sqlitestore.Open(filepath.Join(dir, "mirror.db"), nil, sqlitestore.IntentRead)
+		if err == nil {
+			t.Fatal("opening a database in a directory that does not exist succeeded")
+		}
+		if !errors.Is(err, sqlitestore.ErrDirMissing) {
+			t.Errorf("error = %v, want one wrapping ErrDirMissing so a caller can route on it", err)
+		}
+		if !strings.Contains(err.Error(), dir) {
+			t.Errorf("the refusal does not name the directory it looked at: %v", err)
+		}
+
+		if entries, rerr := os.ReadDir(parent); rerr != nil {
+			t.Fatalf("reading %s: %v", parent, rerr)
+		} else if len(entries) != 0 {
+			t.Errorf("the refused open created %d entry/entries under %s", len(entries), parent)
+		}
+	})
+
+	// The zero value is the refusing one, so a caller that says nothing about
+	// its intent cannot create a store by omission.
+	t.Run("the zero intent is the refusing one", func(t *testing.T) {
+		var zero sqlitestore.Intent
+		if zero != sqlitestore.IntentRead {
+			t.Errorf("the zero Intent is %v, want IntentRead: a caller that says nothing must not create", zero)
+		}
+	})
+
+	t.Run("read intent opens an existing directory", func(t *testing.T) {
+		dir := t.TempDir()
+		db, err := sqlitestore.Open(filepath.Join(dir, "mirror.db"), nil, sqlitestore.IntentRead)
+		if err != nil {
+			t.Fatalf("a read against an existing directory was refused: %v", err)
+		}
+		_ = db.Close()
 	})
 }
 
@@ -60,7 +104,7 @@ func TestMigrate(t *testing.T) {
 	}
 
 	t.Run("fresh start", func(t *testing.T) {
-		db, err := sqlitestore.Open(":memory:", migrations)
+		db, err := sqlitestore.Open(":memory:", migrations, sqlitestore.IntentCreate)
 		if err != nil {
 			t.Fatalf("failed to open and migrate: %v", err)
 		}
@@ -92,14 +136,14 @@ func TestMigrate(t *testing.T) {
 		dbPath := filepath.Join(tmpDir, "test.db")
 
 		// First migration
-		db1, err := sqlitestore.Open(dbPath, migrations[:1])
+		db1, err := sqlitestore.Open(dbPath, migrations[:1], sqlitestore.IntentCreate)
 		if err != nil {
 			t.Fatalf("first migration failed: %v", err)
 		}
 		_ = db1.Close()
 
 		// Second migration
-		db2, err := sqlitestore.Open(dbPath, migrations)
+		db2, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
 		if err != nil {
 			t.Fatalf("second migration failed: %v", err)
 		}
@@ -122,7 +166,7 @@ func TestMigrate(t *testing.T) {
 			{Version: 1, SQL: "CREATE TABLE good (id INTEGER PRIMARY KEY)"},
 			{Version: 2, SQL: "INVALID SQL"},
 		}
-		_, err := sqlitestore.Open(":memory:", badMigrations)
+		_, err := sqlitestore.Open(":memory:", badMigrations, sqlitestore.IntentCreate)
 		if err == nil {
 			t.Fatal("expected error for bad migration")
 		}
@@ -138,7 +182,7 @@ func TestMigrate_StoreMetaTracking(t *testing.T) {
 		{Module: "m", Version: 2, SQL: "CREATE TABLE t2 (id INTEGER PRIMARY KEY)"},
 	}
 
-	db, err := sqlitestore.Open(":memory:", migrations)
+	db, err := sqlitestore.Open(":memory:", migrations, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -161,7 +205,7 @@ func TestMigrate_StoreMetaUpdatesOnNewMigration(t *testing.T) {
 	first := []sqlitestore.Migration{
 		{Module: "m", Version: 1, SQL: "CREATE TABLE t1 (id INTEGER PRIMARY KEY)"},
 	}
-	db1, err := sqlitestore.Open(dbPath, first)
+	db1, err := sqlitestore.Open(dbPath, first, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
@@ -175,7 +219,7 @@ func TestMigrate_StoreMetaUpdatesOnNewMigration(t *testing.T) {
 		{Module: "m", Version: 1, SQL: "CREATE TABLE t1 (id INTEGER PRIMARY KEY)"},
 		{Module: "m", Version: 2, SQL: "CREATE TABLE t2 (id INTEGER PRIMARY KEY)"},
 	}
-	db2, err := sqlitestore.Open(dbPath, second)
+	db2, err := sqlitestore.Open(dbPath, second, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}
@@ -239,7 +283,7 @@ func TestMigration_GoStepRunsInsideTheSameTransaction(t *testing.T) {
 				}
 				return nil
 			}},
-	})
+	}, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -269,7 +313,7 @@ func TestMigration_GoStepFailureRollsBackTheWholeMigration(t *testing.T) {
 		{Module: "m", Version: 1, SQL: `CREATE TABLE t (v TEXT NOT NULL DEFAULT '')`},
 		{Module: "m", Version: 2, SQL: `INSERT INTO t (v) VALUES ('x')`,
 			Fn: func(*sql.Tx) error { return errors.New("back-fill failed") }},
-	})
+	}, sqlitestore.IntentCreate)
 	if err == nil {
 		t.Fatal("a failing go step did not fail the open")
 	}
@@ -281,7 +325,7 @@ func TestMigration_GoStepFailureRollsBackTheWholeMigration(t *testing.T) {
 	// its SQL must not have taken effect.
 	db, err := sqlitestore.Open(dsn, []sqlitestore.Migration{
 		{Module: "m", Version: 1, SQL: `CREATE TABLE IF NOT EXISTS t (v TEXT NOT NULL DEFAULT '')`},
-	})
+	}, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("re-open: %v", err)
 	}

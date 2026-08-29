@@ -13,6 +13,7 @@ import (
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // GenerateNoticeUseCase assembles a THIRD-PARTY-LICENSES attribution document
@@ -47,6 +48,11 @@ func NewGenerateNoticeUseCase(
 // NoticeRequest is the input to Generate.
 type NoticeRequest struct {
 	Coordinates []coordinate.ModuleCoordinate
+	// Declarations carries the operator's recorded copyrights. It is an input
+	// rather than a use-case dependency because it is a property of the
+	// invocation's configuration, not of the store the use case reads. The zero
+	// value never matches, so a caller that has none passes nothing.
+	Declarations licensedomain.CopyrightDeclarationSet
 }
 
 // NoticeResult is the output of Generate.
@@ -62,7 +68,7 @@ type NoticeResult struct {
 func (uc *GenerateNoticeUseCase) Generate(ctx context.Context, req NoticeRequest) (NoticeResult, error) {
 	var result NoticeResult
 	for _, coord := range req.Coordinates {
-		entry, review, err := uc.processModule(ctx, coord)
+		entry, review, err := uc.processModule(ctx, coord, req.Declarations)
 		if err != nil {
 			return NoticeResult{}, fmt.Errorf("processing %s: %w", coord, err)
 		}
@@ -79,12 +85,27 @@ func (uc *GenerateNoticeUseCase) Generate(ctx context.Context, req NoticeRequest
 func (uc *GenerateNoticeUseCase) processModule(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
+	declarations licensedomain.CopyrightDeclarationSet,
 ) (*licensedomain.NoticeEntry, *licensedomain.ReviewItem, error) {
 	rec, found, err := uc.licenses.GetLicenseRecord(ctx, coord, uc.pipelineVersion)
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting license record: %w", err)
 	}
 	if !found {
+		// The standard library is never fetched or extracted, so no run of
+		// `kanonarion license` will ever produce a record for it — its licence
+		// identity comes off the chain of custody instead. The review item still
+		// stands, because a NOTICE needs the licence TEXT and no stage extracts
+		// the toolchain's, but it no longer names a remedy that cannot be
+		// followed to an answer.
+		if coord.Path() == walkdomain.StdlibModulePath {
+			return nil, &licensedomain.ReviewItem{
+				Coordinate: coord,
+				Reason: "the standard library holds no licence record — it ships with the toolchain, " +
+					"and its licence identity comes from the recorded chain of custody " +
+					"(kanonarion license " + coord.String() + "); its attribution text is not extracted",
+			}, nil
+		}
 		return nil, &licensedomain.ReviewItem{
 			Coordinate: coord,
 			Reason:     "no license record: run 'kanonarion license' first",
@@ -111,11 +132,17 @@ func (uc *GenerateNoticeUseCase) processModule(
 		}, nil
 	}
 
-	// Copyright must be present.
-	if rec.CopyrightStatus != licensedomain.CopyrightStatusFound {
+	// Copyright must be present. Where extraction found none, an operator may
+	// have read the upstream repository and recorded what they found; that
+	// clears the gate, and the document says whose assertion it is. Where
+	// extraction DID find one, the declaration is not consulted here at all —
+	// it is attached below as corroboration and never displaces the measurement.
+	declaration, declared := declarations.Resolve(coord)
+	if rec.CopyrightStatus != licensedomain.CopyrightStatusFound && !declared {
 		return nil, &licensedomain.ReviewItem{
-			Coordinate: coord,
-			Reason:     "copyright not found (status: " + rec.CopyrightStatus.String() + ")",
+			Coordinate:       coord,
+			Reason:           "copyright not found (status: " + rec.CopyrightStatus.String() + ")",
+			MissingCopyright: true,
 		}, nil
 	}
 
@@ -142,14 +169,18 @@ func (uc *GenerateNoticeUseCase) processModule(
 	}
 	sort.Strings(copyrights)
 
-	return &licensedomain.NoticeEntry{
+	entry := &licensedomain.NoticeEntry{
 		Coordinate:         coord,
 		SPDX:               rec.PrimarySPDX,
 		Expression:         rec.Expression,
 		LicenseTexts:       licenseTexts,
 		Copyrights:         copyrights,
 		EmbeddedComponents: embeddedComps,
-	}, nil, nil
+	}
+	if declared {
+		entry.Declaration = &declaration
+	}
+	return entry, nil, nil
 }
 
 func (uc *GenerateNoticeUseCase) readLicenseTexts(

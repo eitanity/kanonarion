@@ -13,6 +13,7 @@ import (
 	mcblobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	mcproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/modcache"
@@ -21,7 +22,6 @@ import (
 	gosumfile "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosumfile"
 	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
-	"github.com/eitanity/kanonarion/internal/goenv"
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
@@ -33,13 +33,16 @@ import (
 	dirxmod "github.com/eitanity/kanonarion/internal/directive/adapters/parser/xmod"
 	dirsqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
 	dirapp "github.com/eitanity/kanonarion/internal/directive/application"
+	dirports "github.com/eitanity/kanonarion/internal/directive/ports"
 
 	gdgosrc "github.com/eitanity/kanonarion/internal/godebug/adapters/scanner/gosrc"
 	gdsqlite "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
+	gdvendortree "github.com/eitanity/kanonarion/internal/godebug/adapters/vendortree"
 	gdapp "github.com/eitanity/kanonarion/internal/godebug/application"
 
 	fipsgosrc "github.com/eitanity/kanonarion/internal/fips/adapters/scanner/gosrc"
 	fipssqlite "github.com/eitanity/kanonarion/internal/fips/adapters/store/sqlite"
+	fipsvendortree "github.com/eitanity/kanonarion/internal/fips/adapters/vendortree"
 	fipsapp "github.com/eitanity/kanonarion/internal/fips/application"
 
 	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
@@ -78,10 +81,12 @@ import (
 	sbomvendortree "github.com/eitanity/kanonarion/internal/sbom/adapters/vendortree"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+
+	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
 
 	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
 	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
@@ -137,6 +142,12 @@ type Container struct {
 	CheckCompatibility CheckCompatibilityUseCase
 	LicenseOverrides   licports.LicenseOverrideStore
 
+	// StdlibCustody is the recorded chain of custody for the standard library,
+	// which carries its licence on the acquisition rather than in a licence
+	// record. Every command asked about the stdlib coordinate reads it here, so
+	// the answer is the one audit and the SBOM already give.
+	StdlibCustody StdlibCustodyReader
+
 	// iface
 	ExtractInterface ExtractInterfaceUseCase
 	QueryInterface   QueryInterfaceUseCase
@@ -173,6 +184,12 @@ type Container struct {
 	ExtractDirectives *dirapp.ExtractDirectivesUseCase
 	QueryDirectives   QueryDirectivesUseCase
 	DiffDirectives    DiffDirectivesUseCase
+	// DirectiveParser reads a project's replace/exclude directives without
+	// recording a scan. A diagnostic needs the local-replace fact to name a
+	// remedy that can work, and reading it here keeps that answer coming from
+	// the directive context instead of a second go.mod parser. Nil means the
+	// question cannot be asked, which is not the same as answering "no".
+	DirectiveParser dirports.DirectiveParser
 
 	// godebug
 	ExtractGoDebug *gdapp.ExtractGoDebugUseCase
@@ -213,8 +230,8 @@ type Container struct {
 // `store info` deliberately does not come through here — it opens with nil
 // migrations and never applies any — so the command that names the remedy stays
 // available after this refuses.
-func openMigratedStore(dbPath string) (sqlitestore.DB, error) {
-	dbHandle, err := sqlitestore.Open(dbPath, nil)
+func openMigratedStore(dbPath string, intent sqlitestore.Intent) (sqlitestore.DB, error) {
+	dbHandle, err := sqlitestore.Open(dbPath, nil, intent)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -245,12 +262,19 @@ func offlineStdlibAnchor(modcacheMode bool) bool {
 }
 
 func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg domain.Config, logger *slog.Logger) (*Container, func() error, error) {
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
+	// The store root is created only for a command that declared it writes
+	// records. Every other command gets a container over a store that already
+	// exists, which is why a mistyped --store-root now reaches the caller as a
+	// refusal instead of as an empty store with a truthful-sounding answer.
+	intent := storeOpenIntent()
+	if intent == sqlitestore.IntentCreate {
+		if err := os.MkdirAll(storeRoot, 0o750); err != nil {
+			return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
+		}
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	dbHandle, err := openMigratedStore(dbPath)
+	dbHandle, err := openMigratedStore(dbPath, intent)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -453,6 +477,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
 		Stopwatch:  stopwatch,
 		Exclusions: cfg.Callgraph.Exclude,
+		Toolchain:  runToolchainNamer,
 	}).WithAudit(factStore)
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
@@ -479,7 +504,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		cgModcacheDir = modcacheDir
 	}
 	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
-	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC)
+	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
+		WithLogger(logger)
 	pipelineVersions := map[string]string{
 		"license":   "0.1.0",
 		"interface": "0.1.0",
@@ -499,6 +525,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	queryExtractUC := extractapp.NewQueryExtractionUseCase(extStore)
 
 	// ---- license query / notice / compatibility / diff use cases ----
+	stdlibCustody := stdlibsqlite.New(dbHandle)
 	queryLicenseUC := licapp.NewQueryLicenseUseCaseWithWalks(licStore, walkStore)
 	diffLicenseUC := licapp.NewDiffLicenseUseCase(licStore)
 	checkCompatUC := licapp.NewCheckCompatibilityUseCase(licStore, walkStore)
@@ -519,7 +546,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 	// ---- vuln use cases ----
 	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger)
-	database := osvdb.New(nil, vulnStore).WithLogger(logger)
+	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger)
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
 
@@ -608,8 +635,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 	// ---- directive use cases ----
 	dirStore := dirsqlite.New(dbHandle)
+	directiveParser := dirxmod.New()
 	extractDirectivesUC := dirapp.NewExtractDirectivesUseCase(dirapp.Config{
-		Parser: dirxmod.New(), Store: dirStore, Audit: factStore,
+		Parser: directiveParser, Store: dirStore, Audit: factStore,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryDirectivesUC := dirapp.NewQueryDirectivesUseCase(dirStore)
@@ -618,7 +646,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// ---- godebug use cases ----
 	gdStore := gdsqlite.New(dbHandle)
 	extractGoDebugUC := gdapp.NewExtractGoDebugUseCase(gdapp.Config{
-		Scanner: gdgosrc.New(), Store: gdStore, Audit: factStore,
+		// A vendored directive names the module vendor/modules.txt says owns
+		// the file, read by the vendor context's scanner through the godebug
+		// port — composed here, exactly as the fips scanner below is.
+		Scanner: gdgosrc.New(gdvendortree.New(venlocalfs.New(nil))),
+		Store:   gdStore, Audit: factStore,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryGoDebugUC := gdapp.NewQueryGoDebugUseCase(gdStore)
@@ -634,7 +666,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// ---- fips use cases ----
 	fipsStore := fipssqlite.New(dbHandle)
 	extractFIPSUC := fipsapp.NewExtractFIPSUseCase(fipsapp.Config{
-		Scanner: fipsgosrc.New(), Store: fipsStore, Audit: factStore,
+		// A vendored finding names the module vendor/modules.txt says owns the
+		// file, read by the vendor context's scanner through the fips port —
+		// the composition lives here so neither context reaches into the other.
+		Scanner: fipsgosrc.New(fipsvendortree.New(venlocalfs.New(nil))),
+		Store:   fipsStore, Audit: factStore,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryFIPSUC := fipsapp.NewQueryFIPSUseCase(fipsStore)
@@ -654,6 +690,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		ExtractLicense:     licExtractUC,
 		QueryLicense:       queryLicenseUC,
+		StdlibCustody:      stdlibCustody,
 		DiffLicense:        diffLicenseUC,
 		GenerateNotice:     generateNoticeUC,
 		CheckCompatibility: checkCompatUC,
@@ -686,6 +723,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		ExtractDirectives: extractDirectivesUC,
 		QueryDirectives:   queryDirectivesUC,
 		DiffDirectives:    diffDirectivesUC,
+		DirectiveParser:   directiveParser,
 
 		ExtractGoDebug: extractGoDebugUC,
 		QueryGoDebug:   queryGoDebugUC,

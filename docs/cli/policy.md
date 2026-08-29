@@ -21,6 +21,27 @@ Exits non-zero if the path does not exist or any file fails schema
 validation, so it is suitable for use in CI as a pre-merge check on policy
 changes.
 
+`--json` changes only the rendering, never the verdict: the exit code is the
+same with and without it. The document is one array with one object per file
+validated - a directory with no policy files is `[]`, not prose:
+
+```
+kanonarion policy validate ./policies --json
+[
+  {
+    "file": "policies/default.yaml",
+    "schema": "depth-policy",
+    "passed": true
+  },
+  {
+    "file": "policies/broken.yaml",
+    "schema": "depth-policy",
+    "passed": false,
+    "error": "invalid policy (depth-policy schema): ..."
+  }
+]
+```
+
 ### `kanonarion policy show`
 
 Print the effective depth policy for the current invocation - the policy that

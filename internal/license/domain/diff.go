@@ -1,9 +1,5 @@
 package domain
 
-import (
-	"slices"
-)
-
 // LicenseDiff is the deterministic delta between two LicenseRecords.
 // It is produced by DiffRecords — a pure function with no I/O.
 type LicenseDiff struct {
@@ -106,24 +102,8 @@ func diffFiles(filesA, filesB []LicenseFileEntry) (added, removed []LicenseFileE
 		}
 	}
 
-	slices.SortFunc(added, func(x, y LicenseFileEntry) int {
-		if x.Path < y.Path {
-			return -1
-		}
-		if x.Path > y.Path {
-			return 1
-		}
-		return 0
-	})
-	slices.SortFunc(removed, func(x, y LicenseFileEntry) int {
-		if x.Path < y.Path {
-			return -1
-		}
-		if x.Path > y.Path {
-			return 1
-		}
-		return 0
-	})
+	sortSlice(added, LicenseFileEntryLess)
+	sortSlice(removed, LicenseFileEntryLess)
 	return added, removed
 }
 
@@ -144,24 +124,8 @@ func diffCopyright(filesA, filesB []LicenseFileEntry) (added, removed []Copyrigh
 		}
 	}
 
-	slices.SortFunc(added, func(x, y CopyrightStatement) int {
-		if x.Verbatim < y.Verbatim {
-			return -1
-		}
-		if x.Verbatim > y.Verbatim {
-			return 1
-		}
-		return 0
-	})
-	slices.SortFunc(removed, func(x, y CopyrightStatement) int {
-		if x.Verbatim < y.Verbatim {
-			return -1
-		}
-		if x.Verbatim > y.Verbatim {
-			return 1
-		}
-		return 0
-	})
+	sortSlice(added, CopyrightStatementLess)
+	sortSlice(removed, CopyrightStatementLess)
 	return added, removed
 }
 

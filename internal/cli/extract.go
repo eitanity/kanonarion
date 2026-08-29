@@ -26,18 +26,19 @@ type extractFlags struct {
 func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f extractFlags
 	cmd := &cobra.Command{
-		Use:   "extract [walk-id]",
-		Short: "Run extraction stages for all modules in a walk",
-		Args:  cobra.ExactArgs(1),
+		Use:         "extract [walk-id]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Run extraction stages for all modules in a walk",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExtract(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
-	cmd.Flags().StringSliceVar(&f.stages, "stages", []string{"license", "interface", "example"}, "Comma-separated list of stages to run (callgraph is excluded by default: it loads each module's full transitive dependency closure into SSA and OOMs on large walks; pass explicitly when needed)")
+	cmd.Flags().StringSliceVar(&f.stages, "stages", []string{"license", "interface", "example"}, "Comma-separated list of stages to run (callgraph is excluded by default: it loads each module's full transitive dependency closure into SSA, and running that over a whole walk in --workers concurrent subprocesses is what exhausts memory — one module on its own is a bounded cost, see 'kanonarion callgraph --help'; pass explicitly when needed)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
-	cmd.Flags().IntVar(&f.workers, "workers", 0, "parallel module extraction workers (0 = number of CPUs; reduce to limit memory use)")
+	cmd.Flags().IntVar(&f.workers, "workers", 0, "parallel module extraction workers (0 = number of CPUs; each concurrent callgraph subprocess holds its own module's SSA closure, so the run's peak is roughly this many times the largest module's peak — reduce to limit memory use)")
 	registerNoProgressFlag(cmd, &f.noProgress)
 
 	cmd.AddCommand(newExtractShowCmd(stdout, stderr))
@@ -175,9 +176,10 @@ func printExtractionFailures(w io.Writer, run domain.ExtractionRun) {
 
 func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "show [run-id]",
-		Short: "Show details of an extraction run",
-		Args:  cobra.ExactArgs(1),
+		Use:         "show [run-id]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Show details of an extraction run",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -219,8 +221,9 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List extraction runs",
+		Use:         "list",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "List extraction runs",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)

@@ -21,6 +21,13 @@ exit 0
     "never": 0,
     "not_measured": 3
   },
+  "build": {
+    "vendoring_known": false,
+    "vendored": false,
+    "goos": "",
+    "goarch": "",
+    "go_version": ""
+  },
   "modules": [
     {
       "coordinate": "example.com/app@v1.0.0",

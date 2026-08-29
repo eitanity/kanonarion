@@ -2,7 +2,6 @@ package domain
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -325,28 +324,13 @@ type GraphEdge struct {
 }
 
 // Sort sorts Nodes and Edges in place, establishing the deterministic ordering
-// required for canonical serialisation. Must be called after graph construction.
+// required for canonical serialisation. Must be called after graph
+// construction. The comparators live in ordering.go; each is a total order, so
+// the result is a function of the graph's contents and not of the order
+// resolution emitted them in.
 func (g *Graph) Sort() {
-	sort.Slice(g.Nodes, func(i, j int) bool {
-		a, b := g.Nodes[i].Coordinate, g.Nodes[j].Coordinate
-		if a.Path() != b.Path() {
-			return a.Path() < b.Path()
-		}
-		return a.Version() < b.Version()
-	})
-	sort.Slice(g.Edges, func(i, j int) bool {
-		a, b := g.Edges[i], g.Edges[j]
-		if a.From.Path() != b.From.Path() {
-			return a.From.Path() < b.From.Path()
-		}
-		if a.From.Version() != b.From.Version() {
-			return a.From.Version() < b.From.Version()
-		}
-		if a.To.Path() != b.To.Path() {
-			return a.To.Path() < b.To.Path()
-		}
-		return a.To.Version() < b.To.Version()
-	})
+	sortSlice(g.Nodes, GraphNodeLess)
+	sortSlice(g.Edges, GraphEdgeLess)
 }
 
 // SupersededRequirements returns the intermediate module versions named by a
@@ -418,12 +402,7 @@ func (g Graph) supersededRequirements(from map[coordinate.ModuleCoordinate]struc
 	for c := range seen {
 		out = append(out, c)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Path() != out[j].Path() {
-			return out[i].Path() < out[j].Path()
-		}
-		return out[i].Version() < out[j].Version()
-	})
+	sortSlice(out, CoordinateLess)
 	return out
 }
 
@@ -509,4 +488,54 @@ func (g Graph) ReachableFrom(origin coordinate.ModuleCoordinate) map[coordinate.
 		stack = append(stack, adj[cur]...)
 	}
 	return reached
+}
+
+// DirectDependenciesOf returns the modules m depends on directly in this graph,
+// and whether the graph holds m at all. The order is the graph's own: sorted by
+// (Path, Version) after Sort.
+//
+// For any module other than the root the answer is m's outgoing edges.
+// GraphNode.DirectDependency is a fact about the ROOT's manifest, so reading it
+// for a dependency reports the root's direct dependencies as that dependency's —
+// 76 against the queried module's 4, measured on a project walk.
+//
+// For the root itself the flag is what answers, and the edges are not: a main
+// module's go.mod requires its whole build list, so the root's outgoing edges
+// are that list (127 of 128 nodes on the same walk) while the flag records the
+// half the manifest did not mark indirect.
+func (g Graph) DirectDependenciesOf(m coordinate.ModuleCoordinate) ([]coordinate.ModuleCoordinate, bool) {
+	// The root is in its own closure whether or not a node row was materialised
+	// for it, so containment is never decided by the node list for the root.
+	if m == g.Target {
+		var out []coordinate.ModuleCoordinate
+		for _, n := range g.Nodes {
+			if n.DirectDependency {
+				out = append(out, n.Coordinate)
+			}
+		}
+		return out, true
+	}
+	held := false
+	for _, n := range g.Nodes {
+		if n.Coordinate == m {
+			held = true
+			break
+		}
+	}
+	if !held {
+		return nil, false
+	}
+	var out []coordinate.ModuleCoordinate
+	seen := make(map[coordinate.ModuleCoordinate]struct{})
+	for _, e := range g.Edges {
+		if e.From != m {
+			continue
+		}
+		if _, dup := seen[e.To]; dup {
+			continue
+		}
+		seen[e.To] = struct{}{}
+		out = append(out, e.To)
+	}
+	return out, true
 }

@@ -185,7 +185,7 @@ func latestResolverFor(t *testing.T, srv *httptest.Server) *staleapp.Resolver {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return newStalenessResolver(newProxyLatestResolver(proxy, discardLogger()), nil, time.Hour, false)
+	return newStalenessResolver(newProxyLatestResolver(proxy, discardLogger(), nil), nil, time.Hour, false)
 }
 
 // runLatestGomod now resolves its scope via the Go toolchain (go list), so the

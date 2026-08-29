@@ -126,7 +126,8 @@ func TestDependentsStatesThePreModulesLimitation(t *testing.T) {
 func TestDependentsJSONCarriesThePreModulesCaveat(t *testing.T) {
 	rec := preModulesWalk(t, "01WALKPREMODULES")
 	var stdout bytes.Buffer
-	if err := writeDependentsJSON(&stdout, rec.ID, linuxAmd64Frame, "example.com/other@v1.0.0", nil,
+	if err := writeDependentsJSON(&stdout, rec.ID, linuxAmd64Frame, pinnedContainment(rec).selection(),
+		"example.com/other@v1.0.0", nil,
 		preModulesCaveatFor(preModulesNodesIn(rec.Graph)...)); err != nil {
 		t.Fatalf("writeDependentsJSON: %v", err)
 	}
@@ -157,7 +158,8 @@ func TestDependentsJSONCarriesThePreModulesCaveat(t *testing.T) {
 // exactly as it did before this field existed.
 func TestDependentsJSONOmitsTheCaveatForAnOrdinaryWalk(t *testing.T) {
 	var stdout bytes.Buffer
-	if err := writeDependentsJSON(&stdout, "01WALK", linuxAmd64Frame, "example.com/other@v1.0.0", nil, nil); err != nil {
+	if err := writeDependentsJSON(&stdout, "01WALK", linuxAmd64Frame, walkSelectionJSON{Rule: string(walkHeldPinned)},
+		"example.com/other@v1.0.0", nil, nil); err != nil {
 		t.Fatalf("writeDependentsJSON: %v", err)
 	}
 	if strings.Contains(stdout.String(), "pre_modules_caveat") {

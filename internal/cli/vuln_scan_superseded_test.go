@@ -55,7 +55,7 @@ func supersededRunFixture(t *testing.T, runPipeline string, held []vulnports.Vul
 func showRun(t *testing.T, ucRuns *testfakes.FakeQueryScanRuns, ucVuln *testfakes.FakeQueryVuln, jsonOut bool) (string, error) {
 	t.Helper()
 	var buf bytes.Buffer
-	err := runScanShow(context.Background(), fixtureScanID, jsonOut, ucRuns, ucVuln, nil, &buf, io.Discard)
+	err := runScanShow(context.Background(), fixtureScanID, jsonOut, ucRuns, ucVuln, nil, nil, &buf, io.Discard)
 	return buf.String(), err
 }
 

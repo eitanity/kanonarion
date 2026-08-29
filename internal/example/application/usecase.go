@@ -131,7 +131,16 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 	// fresh every time.
 	if !req.Force && !req.Coordinate.IsLocal() {
 		existing, found, cerr := uc.examples.GetExampleRecord(ctx, req.Coordinate, uc.pipelineVersion)
-		if cerr != nil && !errors.Is(cerr, ports.ErrExampleIntegrity) {
+		// A composition refusal says no single stored generation answers this
+		// coordinate. Refusing to SERVE that is right; refusing to MEASURE a new
+		// answer is not, so it is a cache miss here. Extraction appends, and the
+		// ladder decides which generation answers afterwards.
+		switch {
+		case errors.Is(cerr, ports.ErrExampleConflict):
+			log.InfoContext(ctx, "example_cache_conflict_remeasuring",
+				slog.String("conflict", cerr.Error()),
+			)
+		case cerr != nil && !errors.Is(cerr, ports.ErrExampleIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking example store: %w", cerr)
 		}
 		if found {

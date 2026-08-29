@@ -53,6 +53,12 @@ license_policy:
       unknown_license: warn
 license_overrides:
   # golang.org/x/mod: MIT
+copyright_declarations:
+  # example.com/mod:
+  #   copyright: "Copyright 2019 Example Authors"
+  #   declared_by: "you@example.com"
+  #   declared_on: "2026-01-31"
+  #   basis: "LICENSE header at example.com/mod v1.2.3, read 2026-01-31"
 callgraph:
   exclude: []
 ```
@@ -149,7 +155,9 @@ notice: no walk was named and the store holds 2 for this target, so one was chos
 Where every walk of the target was resolved by one toolchain there is nothing to
 have chosen and nothing is said. `walk-list --json` carries the toolchain as
 `go_version`, and `walk-list --latest` returns one walk per
-`(target, scope, toolchain)` rather than one per `(target, scope)`.
+`(target, scope, platform, toolchain)`: each of those four names a different
+build, so collapsing any of them by clock makes one build's answer stand for
+another's.
 
 ---
 
@@ -164,10 +172,49 @@ is chosen, by this rule:
    walk itself recorded;
 2. failing that, the most recent walk.
 
+Under `--gomod` the rule ranks **within one build**, never across builds. The
+candidates are the succeeded walks of that project in the **scope** the command
+asked for — the caller's `--tool` / `--project` where the command has them,
+otherwise `code` — resolved for **this platform**. One project walked in three
+scopes is three different module sets (measured on this repo: 22, 246 and 474
+modules), so ranking them together by recency answers whichever was walked last.
+
+Where no walk matches, the command **refuses and names the remedy**, and the
+refusal distinguishes "no walk of that scope" from "no walk at all":
+
+```
+error: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
+```
+
+The **toolchain ranks above recency, and then relaxes**. Two walks under two
+toolchains link different standard libraries, so a candidate resolved by the
+toolchain the project resolves today beats a newer one that was not — recency
+deciding that axis is how one project was reported both affected and clean by
+two commands minutes apart. Where no candidate was resolved by it, the read
+still answers from the newest and states which standard library that answer is
+about:
+
+```
+notice: results restricted to the 22 module versions resolved by walk "01M0RE94X8VJ8C0PT9Z3VJJQ0S" (code scope, frame linux/amd64); ...; that project resolves go1.26.6 today: this answer describes go1.26.5's standard library, not the one a build taken there now would use
+```
+
+That is the same sentence `walk-show` and `vuln-show` print in their `build:`
+block, and it appears under `--json` as `walk_selection.toolchain_divergence`.
+The read does not refuse: unlike `vuln-scan`, which measures and can take the
+walk it needs, a query has an answer to give and the reader needs to be told
+what it is about rather than denied it. Where the `go env` probe cannot answer,
+nothing is pinned and nothing is claimed. Where the toolchain did narrow the
+candidates, the count says so — `in the code scope on linux/amd64 under
+go1.26.6`.
+
 The choice is always stated when there was one to make: a store holding one walk
 of the target says nothing, and a store holding several says which walk answered
-and which of the two rules picked it. Under `--json` the same fact is a
-`walk_selection` object rather than a line.
+and which of the two rules picked it. The statement names the scope and platform
+the candidates were counted in, because a count of "1 walk of this target" would
+otherwise be read as a count of every walk of it. Under `--json` the same facts
+are a `walk_selection` object — `candidates` beside `candidate_set` — rather
+than a line, and every `notice:` line that names a walk names its scope beside
+its frame.
 
 Rule 1 exists because recency alone answers from the wrong build after any
 rehearsal. A walk taken while a manifest was temporarily edited stays the newest
@@ -435,6 +482,30 @@ All state lives under `--store-root` (default `~/.kanonarion`):
   blobs/          # fetched module ZIP content
 ```
 
+### A store root that does not exist
+
+Commands that write records - `fetch`, `walk`, `extract`, `inspect`, `audit`,
+`callgraph`, `local`, `license`, `interface`, `examples`, `directives`,
+`godebug`, `vendor`, `fips`, `sbom`, `latest`, `vuln-scan`, `vuln-scan-rescan`,
+`config init`, `config set` - create the store root if it is not there. A first
+run on a clean machine needs no preparatory step.
+
+Every other command reads, and a read does not create the store it reads from.
+Point one at a root that does not exist and it refuses with exit code **20**,
+naming the path it looked at:
+
+```
+no store at ./typo-store
+  this command reads recorded evidence; it does not create a store, so nothing was written there
+  to create one and record the module set: kanonarion inspect --store-root ./typo-store
+```
+
+This is what a mistyped `--store-root` looks like. Without it the read would
+build an empty store at the typo and answer truthfully about *that* store -
+"the store holds no scan run at all" - which is the wrong answer to the question
+asked. Note that `--store-root` takes the next token as its value, so
+`--store-root --help` makes `--help` the store root and earns the same refusal.
+
 ---
 
 ## Exit codes
@@ -452,7 +523,7 @@ and repeated in that command's `--help`.
 | 4 | NotFound | A record requested by ID or coordinate does not exist. The message names the command that produces it |
 | 5 | Policy | A governance or publication gate fired on real findings. The scan succeeded and the finding is genuine |
 | 10 | Integrity | Recorded evidence is in doubt: a record failed its content-hash check, or two records for one coordinate diverge. Every domain that stores records raises it — walk, fetch, extraction run, call graph, interface, licence, example, vulnerability, advisory snapshot, stdlib facts — and the code does not depend on which one did |
-| 20 | Config | The command never got as far as an answer: malformed argument, unparseable coordinate, missing toolchain, absent policy *file*, a `config.yaml` the loader rejected, or a store whose schema is newer than this binary |
+| 20 | Config | The command never got as far as an answer: malformed argument, unparseable coordinate, missing toolchain, absent policy *file*, a store root that does not exist under a command that only reads, a `config.yaml` the loader rejected, or a store whose schema is newer than this binary |
 
 The distinction that matters to an automation caller is **4 vs 5 vs 20**. A 4
 means the request was well-formed and the named remedy command fixes it. A 5

@@ -97,6 +97,24 @@ A replaced module is keyed on the coordinate the build resolved - the
 replacement, which is what its bytes are - and carries `original_coordinate` so
 it is findable under the name the manifest used.
 
+## The build the figures describe
+
+The report opens with the build the walk was resolved in — its platform and the
+Go toolchain that compiled it:
+
+```
+walk 01KQDBVW092ER1HNXZ60X27CMD
+build:
+  linux/amd64 under go1.26.6
+```
+
+Build constraints select which files compile, and therefore which modules are
+counted; the toolchain pins the `stdlib` node among them. A walk that recorded no
+toolchain says so and never reports the reader's own. Where the project the walk
+was taken from is still present and `go env GOVERSION` there no longer resolves
+the recorded toolchain, a second line names both versions — the comparison is
+against that project's directory, never the reader's own.
+
 ## Vendored builds
 
 Where the walk records a project directory that is still present, the report
@@ -112,8 +130,9 @@ Coverage describes the modules the manifest resolved. A vendored project
 compiles `vendor/`, and `kanonarion vendor` is what measures those bytes. An
 unvendored project states nothing - there is no ambiguity to resolve. A walk of
 a published coordinate, or one whose project directory has since moved, also
-states nothing, and the JSON omits `build` entirely: an unanswered question must
-not decode the same as a negative answer.
+states nothing on the text path, and the JSON `build` object reports
+`vendoring_known: false`: an unanswered question must not decode the same as a
+negative answer.
 
 ## VCS evidence
 
@@ -155,6 +174,14 @@ kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD --json
     "inherited": 0,
     "never": 400,
     "not_measured": 0
+  },
+  "build": {
+    "vendoring_known": true,
+    "vendored": true,
+    "vendor_modules_txt": "/src/app/vendor/modules.txt",
+    "goos": "linux",
+    "goarch": "amd64",
+    "go_version": "go1.26.6"
   }
 }
 ```
@@ -162,6 +189,15 @@ kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD --json
 Every count is emitted even when zero: a gate asserting `cross_verified == 0`
 must be able to distinguish a graph with no cross-verification from a document
 where the field was omitted.
+
+`build` follows the same rule and is emitted on every document. Its platform and
+toolchain fields are empty strings where the walk recorded none, and
+`vendoring_known` is `false` where there was no project directory to look in.
+The key names match `walk-show --json`'s `.graph.build_env` and the `goos` /
+`goarch` / `go_version` properties the CycloneDX SBOM emits, so one fact keeps
+one spelling. It is deliberately not called `toolchain`: that key is taken on the
+vulnerability record surface, where it names the toolchain that produced the
+record.
 
 ## Flags
 

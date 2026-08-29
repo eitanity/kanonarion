@@ -82,8 +82,9 @@ func newInterfaceDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f interfaceDiffFlags
 
 	cmd := &cobra.Command{
-		Use:   "interface-diff <moduleA>@<versionA> <moduleB>@<versionB>",
-		Short: "Report exported API changes between two versions of a module",
+		Use:         "interface-diff <moduleA>@<versionA> <moduleB>@<versionB>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Report exported API changes between two versions of a module",
 		Long: `interface-diff compares two stored interface records and reports the exported
 declarations added, removed and changed between them.
 
@@ -245,6 +246,11 @@ type usedByResult struct {
 	// platform IS resolved, GOOS gates which files build, so the scope this
 	// answer is filtered against is that one platform's build list.
 	WalkFrame walkdomain.WalkFrame
+	// WalkScope is the dependency scope the answering walk covered. --used-by
+	// asks what the consumer's own code calls, so it selects a code-scope walk;
+	// the scope is carried so the answer names the build it came from rather
+	// than leaving the reader to assume it.
+	WalkScope walkdomain.WalkScope
 	Consumer  coordinate.ModuleCoordinate
 	// ScopeSize is how many module versions the walk pins.
 	ScopeSize int
@@ -298,16 +304,21 @@ func (r *usedByResult) TouchedReach() (decls, sites int) {
 	return decls, sites
 }
 
-// joinUsedBy resolves a go.mod to the latest succeeded project walk for the
-// module it declares — the same resolution `callers --gomod` performs — and asks
-// the stored call graph which of the breaking deltas that project's own code
-// calls.
+// joinUsedBy resolves a go.mod to the latest succeeded code-scope project walk
+// for the module it declares — the same resolution `callers --gomod` performs —
+// and asks the stored call graph which of the breaking deltas that project's own
+// code calls.
+//
+// The code scope is the question: this asks what the consumer's OWN code calls,
+// so the build it is answered in is the one that code compiles into. There is no
+// flag to widen it, and a tool- or project-scope walk that happened to be walked
+// more recently is not allowed to stand in for one.
 //
 // It never parses the consumer's source. The answer is a read of what was
 // already measured and recorded, so it is reproducible and it cannot disagree
 // with what `callers` would say about the same symbol.
 func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string, toolchain gotoolchain.Version) (*usedByResult, error) {
-	choice, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
+	choice, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod, scopeCode)
 	if err != nil {
 		return nil, err
 	}
@@ -322,6 +333,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		GoMod:     choice.manifestPath,
 		choice:    choice,
 		WalkID:    walkID,
+		WalkScope: rec.Scope,
 		WalkFrame: rec.Graph.Frame(),
 		Consumer:  rec.Target,
 		ScopeSize: scope.Len(),
@@ -825,8 +837,8 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 		return nil
 	}
 	if _, err := fmt.Fprintf(stdout,
-		"\nUsed by %s (walk %q, frame %s, %d module versions in scope):\n",
-		used.Consumer.Path(), used.WalkID, used.WalkFrame, used.ScopeSize); err != nil {
+		"\nUsed by %s (walk %q, %s, frame %s, %d module versions in scope):\n",
+		used.Consumer.Path(), used.WalkID, walkScopeLabel(used.WalkScope), used.WalkFrame, used.ScopeSize); err != nil {
 		return fmt.Errorf("writing used-by header: %w", err)
 	}
 	// The walk was found by the module path the manifest declares, so the scope
@@ -834,7 +846,7 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 	// resolves to now. Stated here because "your code does not call the removed
 	// symbol" is exactly the answer an out-of-date scope gets wrong quietly.
 	if used.GoMod != "" {
-		basis := used.choice.stalenessNote() + used.choice.statementClause()
+		basis := used.choice.basisNotes()
 		if _, err := fmt.Fprintf(stdout, "  %s\n", strings.TrimPrefix(basis, "; ")); err != nil {
 			return fmt.Errorf("writing used-by staleness: %w", err)
 		}
@@ -976,6 +988,11 @@ type usedByJSON struct {
 	// platform applies), or "unrecorded" (the platform is not known).
 	WalkFrame      string `json:"walk_frame"`
 	WalkFrameBasis string `json:"walk_frame_basis"`
+	// WalkScope is the dependency scope the answering walk covered ("code",
+	// "tool", "complete", or empty for a walk written before scopes were
+	// recorded). It is beside the frame because both narrow which modules were
+	// searched, and a count read without them is a count of an unnamed build.
+	WalkScope string `json:"walk_scope"`
 	// WalkSelection says how walk_id was arrived at. --used-by names a manifest,
 	// never a walk, so the walk is always chosen for the caller: a consumer
 	// reading walk_id has to be able to tell which rule picked it.
@@ -1124,6 +1141,7 @@ func toUsedByJSON(used *usedByResult) *usedByJSON {
 		WalkID:              used.WalkID,
 		WalkFrame:           used.WalkFrame.Text,
 		WalkFrameBasis:      string(used.WalkFrame.Basis),
+		WalkScope:           string(used.WalkScope),
 		WalkSelection:       used.choice.selection(),
 		Consumer:            used.Consumer.Path() + "@" + used.Consumer.Version(),
 		ScopeSize:           used.ScopeSize,

@@ -220,10 +220,7 @@ func marshalCanonical(r InterfaceRecord) ([]byte, error) {
 	// Sort for determinism regardless of whether caller called Sort.
 	pkgs := make([]PackageInterface, len(r.Packages))
 	copy(pkgs, r.Packages)
-	for i := range pkgs {
-		sortPackage(&pkgs[i])
-	}
-	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].ImportPath < pkgs[j].ImportPath })
+	sortPackages(pkgs)
 
 	cPkgs := make([]canonicalPkg, len(pkgs))
 	for i, p := range pkgs {

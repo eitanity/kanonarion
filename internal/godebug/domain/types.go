@@ -35,7 +35,13 @@ var ErrUnsupportedEcosystem = errors.New("unsupported ecosystem: kanonarion reco
 // classification changes such that a re-scan of unchanged inputs would differ
 // from a cached record. The embedded taxonomy version is folded in by
 // PipelineFingerprint so a taxonomy update alone re-scans.
-const PipelineVersion = "0.1.0"
+//
+// 0.2.0 attributes a directive found in a vendored file to the module
+// vendor/modules.txt says owns the file. 0.1.0 read the first two segments of
+// the path instead, which is a module path for almost no module — a 0.1.0
+// record names golang.org/x or github.com/IBM, neither of which is a module
+// anyone can upgrade, pin or exempt.
+const PipelineVersion = "0.2.0"
 
 // Tier is the security risk tier the versioned taxonomy assigns a setting.
 // Ordered most→least severe so callers can compare; String is the stable
@@ -83,9 +89,11 @@ type Setting struct {
 	Source string
 	Line   int
 
-	// Module is the module the source file belongs to. For an applied
-	// setting this is the project module; for a dependency it is that
-	// dependency's path (best-effort, from the vendor tree layout).
+	// Module is the module the source file belongs to: the project module
+	// for an applied setting, and for a file under vendor/ the module
+	// vendor/modules.txt says owns that directory, or the vendor context's
+	// ModuleUnresolved when no listed module does — an admitted gap, never
+	// a guess.
 	Module string
 
 	// Applied is false when the setting does not affect the current build:

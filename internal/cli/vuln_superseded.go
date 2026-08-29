@@ -277,11 +277,14 @@ func wrapContinued(text string, width int, indent string) string {
 	for _, w := range words[1:] {
 		n := utf8.RuneCountInString(w)
 		if line+1+n > width {
-			b.WriteString("\n" + indent + w)
+			b.WriteString("\n")
+			b.WriteString(indent)
+			b.WriteString(w)
 			line = utf8.RuneCountInString(indent) + n
 			continue
 		}
-		b.WriteString(" " + w)
+		b.WriteString(" ")
+		b.WriteString(w)
 		line += 1 + n
 	}
 	return b.String()

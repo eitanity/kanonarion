@@ -83,3 +83,29 @@ VALUES (?,?,?,?,?,?,?,?,?,0,0)`,
 	}
 	return nil
 }
+
+// CorruptSerialisedBlobsForTest replaces every record's serialised blob with
+// bytes no decoder accepts.
+//
+// It is a fault seam, not a fixture: a read that decodes the blob fails loudly
+// afterwards, so "this listing decodes nothing" becomes something a test can
+// establish rather than time. Timing cannot settle it — on a small store the
+// decode is free, and on a fast machine the defect passes.
+func (s *Store) CorruptSerialisedBlobsForTest(ctx context.Context) error {
+	if _, err := s.db.DB().ExecContext(ctx,
+		`UPDATE callgraph_records SET serialised = ?`, []byte("not a record")); err != nil {
+		return fmt.Errorf("corrupting serialised blobs: %w", err)
+	}
+	return nil
+}
+
+// HideEdgeTableForTest renames callgraph_edges out of the way, so any read that
+// touches an edge row fails with "no such table" instead of quietly costing the
+// reconstruction this store exists to avoid paying for a listing.
+func (s *Store) HideEdgeTableForTest(ctx context.Context) error {
+	if _, err := s.db.DB().ExecContext(ctx,
+		`ALTER TABLE callgraph_edges RENAME TO callgraph_edges_hidden`); err != nil {
+		return fmt.Errorf("hiding the edge table: %w", err)
+	}
+	return nil
+}

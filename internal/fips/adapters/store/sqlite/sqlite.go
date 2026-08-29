@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/fips/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // Store is the SQLite-backed FIPS store.

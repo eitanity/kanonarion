@@ -15,6 +15,22 @@ type ModuleRef struct {
 
 func (m ModuleRef) sortKey() string { return m.Path + "@" + m.Version }
 
+// ComponentCompare is the canonical ordering for Component slices: the module
+// coordinate leads, because that is what a reader scans a component list by,
+// then the licence clause and the copyright. The coordinate is not an identity
+// here — a graph can present one coordinate twice, once as itself and once as
+// the target of a replace, and the two carry different licence facts — so a
+// comparator stopping at it would hand their order to the graph walk.
+func ComponentCompare(a, b Component) int {
+	if c := strings.Compare(a.Module.sortKey(), b.Module.sortKey()); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.License, b.License); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Copyright, b.Copyright)
+}
+
 // LicenseClause applies the license-attachment policy: a license is only
 // recorded when license data is present. Returns the SPDX expression (or id)
 // to attach, or "" for no license clause. Expression takes precedence over
@@ -69,9 +85,7 @@ func AssembleComponents(nodes []ComponentInput) (components []Component, undeter
 			Copyright: n.Copyright,
 		})
 	}
-	slices.SortFunc(components, func(a, b Component) int {
-		return strings.Compare(a.Module.sortKey(), b.Module.sortKey())
-	})
+	slices.SortFunc(components, ComponentCompare)
 	for _, c := range components {
 		if c.License == "" {
 			undetermined = append(undetermined, c.Module)

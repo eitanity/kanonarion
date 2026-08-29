@@ -38,14 +38,19 @@ type fetchFlags struct {
 	// depth policy before any fetch runs. The zero value enforces the built-in
 	// default set.
 	vcsHosts domain.VCSHostAllowlist
+	// excludeTests is parsed only so the refusal can name it. A scope fetch
+	// populates the store for a walk of that scope; see
+	// refuseTestScopeOnRecordingCommand.
+	excludeTests bool
 }
 
 func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f fetchFlags
 
 	cmd := &cobra.Command{
-		Use:   "fetch <module>[@<version>]",
-		Short: "Fetch, verify, and persist a Go module fact record",
+		Use:         "fetch <module>[@<version>]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Short:       "Fetch, verify, and persist a Go module fact record",
 		Example: `  kanonarion fetch github.com/spf13/cobra@v1.8.1
   kanonarion fetch github.com/spf13/cobra@latest
   kanonarion fetch github.com/spf13/cobra --list-versions
@@ -102,6 +107,7 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.project, "project", false, "fetch the complete set: the project's code AND tooling")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "", "path to a go.mod file to fetch a dependency scope from (default: ./go.mod)")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
+	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
 	return cmd
 }
@@ -127,9 +133,18 @@ func resolveFetchVCSHosts(ctx context.Context, policyPath string, stderr io.Writ
 // runFetchScope fetches every module in a go.mod's dependency scope (default
 // code, or --tool / --project), continuing on per-module errors.
 func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetchFlags, stdout, stderr io.Writer) error {
-	coords, err := resolveScopeModules(gomodPath, scope)
+	if rerr := refuseTestScopeOnRecordingCommand("fetch --gomod", f.excludeTests); rerr != nil {
+		return rerr
+	}
+	coords, res, err := resolveScopeModules(gomodPath, scope, false)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
+	}
+	// Which set is about to be fetched, on the same channel as the progress line
+	// below it and before the empty-scope return, so a fetch that pulled nothing
+	// still says which set was empty.
+	if nerr := writeDepScopeNotice(stderr, res, len(coords), false); nerr != nil {
+		return nerr
 	}
 	if len(coords) == 0 {
 		// Diagnostic, not data: keep stdout clean so a --json caller reading
@@ -156,7 +171,8 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 // name rather than parsing and dropping them; the scope loop calls fetchOne
 // directly, where they have already been acted on.
 func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.Writer) error {
-	if err := refuseInapplicableFlags("fetch <module>[@<version>]", fetchGoModOnlyFlags(f)); err != nil {
+	if err := refuseInapplicableFlags("fetch <module>[@<version>]",
+		append(fetchGoModOnlyFlags(f), testScopeNoScopeFlag(f.excludeTests)...)); err != nil {
 		return err
 	}
 	return fetchOne(ctx, arg, f, stdout, stderr)
@@ -241,7 +257,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 
 	// Check staleness for pinned versions. The proxy call is fast relative to
 	// the fetch itself and the result is informative for both humans and agents.
-	stale := fetchStalenessFor(ctx, newProxyLatestResolver(proxyAdapter, logger), coord, version, stderr)
+	stale := fetchStalenessFor(ctx, newProxyLatestResolver(proxyAdapter, logger, nil), coord, version, stderr)
 
 	if jsonOut {
 		type fetchOutput struct {

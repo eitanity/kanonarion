@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -176,4 +177,167 @@ func pluralHas(n int) string {
 		return "has"
 	}
 	return "have"
+}
+
+// ---- the build a stored walk was resolved in ----
+
+// walkBuildJSON is the build a walk was resolved in, on the machine surface.
+//
+// The field names are the ones the walk record already publishes at
+// .graph.build_env and the ones the SBOM generator already emits as CycloneDX
+// properties, so one fact keeps one spelling across every surface. The object is
+// deliberately not called "toolchain": that key is taken on the vulnerability
+// record surface, where it names the toolchain that produced the RECORD, and one
+// key must not carry two meanings.
+//
+// Every field is emitted, empty included. An empty value is the statement that
+// the walk recorded no build environment, and it is a different statement from
+// the key being absent, which would say this producer does not publish the fact
+// at all.
+type walkBuildJSON struct {
+	GOOS      string `json:"goos"`
+	GOARCH    string `json:"goarch"`
+	GoVersion string `json:"go_version"`
+}
+
+// walkBuildOf projects a walk's recorded build environment.
+//
+// It reads rec.Graph.BuildEnv and nothing else, for the reason
+// toolchainVersionOf records: the synthetic stdlib node's version is the go.mod
+// directive whenever --stdlib-from-gomod was passed, and a second reader taking
+// the value from there would disagree with the judgment vuln-scan and audit
+// already render.
+func walkBuildOf(rec walkdomain.WalkRecord) walkBuildJSON {
+	env := rec.Graph.BuildEnv
+	return walkBuildJSON{GOOS: env.GOOS, GOARCH: env.GOARCH, GoVersion: env.GoVersion}
+}
+
+// walkBuildToolchainUnrecorded is what a walk that recorded no toolchain says.
+// It never degrades to the reader's own: a walk rooted at a published
+// coordinate resolves no toolchain and never will, and answering with this
+// host's would attribute a standard library to a build that never named one.
+const walkBuildToolchainUnrecorded = "a toolchain that is not recorded"
+
+// readerWalkToolchain is the toolchain `go env GOVERSION` resolves to today in
+// the directory the walk was taken from, or "" when there is nothing to ask.
+//
+// The comparison this feeds is walk-recorded against THAT PROJECT's toolchain
+// now — never against the reader's working directory. GOTOOLCHAIN honours each
+// project's own go.mod, so keying on the reader's directory would tell an
+// operator standing in a different project that their walk had diverged when
+// nothing about it had changed.
+//
+// A walk with no recorded toolchain is not probed at all: there is nothing to
+// compare it with, and the probe is a subprocess.
+func readerWalkToolchain(ctx context.Context, rec walkdomain.WalkRecord) string {
+	if toolchainVersionOf(rec) == "" || rec.ProjectDir == "" {
+		return ""
+	}
+	if _, err := os.Stat(rec.ProjectDir); err != nil {
+		return ""
+	}
+	return currentWalkBuildEnv(ctx, "", rec.ProjectDir, nil).toolchain
+}
+
+// storedWalkFor loads the walk a report is about to describe, best-effort.
+//
+// Best-effort is the contract, not a shortcut. This is the build disclosure
+// beside an answer the store has already produced, and a walk that has been
+// deleted, or a reader assembled without a walk store, must not cost the report
+// the answer it came for. The second return says whether there is a walk to
+// describe at all, so a caller states "not recorded" rather than rendering the
+// zero record as though it were a walk that recorded nothing.
+func storedWalkFor(ctx context.Context, walks QueryWalksUseCase, walkID string, present bool) (walkdomain.WalkRecord, bool) {
+	if walks == nil || walkID == "" || !present {
+		return walkdomain.WalkRecord{}, false
+	}
+	rec, err := walks.GetWalk(ctx, walkID)
+	if err != nil {
+		return walkdomain.WalkRecord{}, false
+	}
+	return rec, true
+}
+
+// walkBuildLines states the build a walk was resolved in, and — where the
+// project it was resolved in no longer resolves that toolchain — says so.
+//
+// The platform half comes from the walk's own frame, so this line cannot
+// disagree with the frame every other surface renders: a module-rooted walk
+// reads "not-platform-scoped" rather than being reported as a project walk that
+// lost its platform.
+func walkBuildLines(rec walkdomain.WalkRecord, readerToolchain string) []string {
+	frame := rec.Graph.Frame().String()
+	version := toolchainVersionOf(rec)
+	if version == "" {
+		return []string{frame + " under " + walkBuildToolchainUnrecorded}
+	}
+	lines := []string{frame + " under " + version}
+	if readerToolchain == "" {
+		return append(lines, "the project it was resolved in is not present here, so "+version+
+			" could not be compared with what that project resolves today")
+	}
+	if divergence := toolchainDivergenceLine(version, readerToolchain); divergence != "" {
+		lines = append(lines, divergence)
+	}
+	return lines
+}
+
+// toolchainDivergenceLine states that the walk an answer came from was resolved
+// by a toolchain its project no longer resolves, naming both. Empty when there
+// is nothing to compare or the two agree.
+//
+// One wording, one place, because two surfaces state this now: the build block a
+// named walk prints, and the basis a --gomod read appends to the walk it
+// selected for the caller. A walk that recorded no toolchain gets its own
+// sentence rather than the recorded one with an empty version in it, which would
+// read as a claim about a standard library called "".
+func toolchainDivergenceLine(recorded, resolvedNow string) string {
+	if resolvedNow == "" || recorded == resolvedNow {
+		return ""
+	}
+	if recorded == "" {
+		return "that project resolves " + resolvedNow + " today: this answer comes from a walk under " +
+			walkBuildToolchainUnrecorded + ", so which standard library it describes is not stated"
+	}
+	return "that project resolves " + resolvedNow + " today: this answer describes " + recorded +
+		"'s standard library, not the one a build taken there now would use"
+}
+
+// writeWalkBuild states the build block for a walk a command was asked for by
+// name, plus any notes the caller owes beside it.
+//
+// It is one block on one channel for the same reason writeToolchainJudgment is:
+// a fact rendered twice is a fact two surfaces come to disagree about, and a
+// reader who learns the wording from one command has to recognise it from the
+// next.
+func writeWalkBuild(w io.Writer, rec walkdomain.WalkRecord, readerToolchain string, notes ...string) error {
+	lines := append(walkBuildLines(rec, readerToolchain), notes...)
+	if _, err := fmt.Fprintf(w, "build:\n  %s\n", strings.Join(lines, "\n  ")); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
+}
+
+// rescanRecordedBuildNote is the statement a re-scan owes ahead of the run.
+//
+// Re-evaluating a recorded build against fresh advisories is exactly what a
+// re-scan is for, and re-resolving the toolchain would change the subject rather
+// than refresh the answer. The trap is that a re-scan is what an operator
+// reaches for when they want a DATED statement, and nothing in the output said
+// which standard library the dated statement was about.
+const rescanRecordedBuildNote = "a re-scan re-evaluates that recorded build against fresh advisories; " +
+	"it does not re-resolve the toolchain, so this run answers for the build above and not for the one a walk taken now would record"
+
+// writeRescanBuildPreflight states the build a re-scan is about to re-evaluate,
+// before the most expensive run the CLI offers starts.
+//
+// A walk the store cannot produce writes nothing: the re-scan is about to fail
+// on the same id and say so in its own words, and a second complaint ahead of it
+// buys the reader nothing.
+func writeRescanBuildPreflight(ctx context.Context, w io.Writer, walks QueryWalksUseCase, walkID string) error {
+	rec, ok := storedWalkFor(ctx, walks, walkID, true)
+	if !ok {
+		return nil
+	}
+	return writeWalkBuild(w, rec, readerWalkToolchain(ctx, rec), rescanRecordedBuildNote)
 }

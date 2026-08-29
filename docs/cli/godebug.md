@@ -69,6 +69,17 @@ Each entry carries `classification`,
 `applied`, `module` and `policy_outcome`. The same section appears in
 `kanonarion inspect --gomod … --json` as the aggregate surface.
 
+`module` is the module the directive's file belongs to, and it is the column to
+act on: it names what you would upgrade, pin or exempt. For the project's own
+code it is the module `go.mod` declares. For a file under `vendor/` it is the
+module `vendor/modules.txt` lists for that directory, matched by longest
+prefix - so `github.com/minio/minio-go/v7` reports itself rather than the
+`github.com/minio/minio-go` whose directory it sits inside. A vendored path no
+listed module owns reports `(unresolved)`: nothing in the path itself says which
+module published the file, and an invented answer is plausible enough to be
+acted on. `applied` is unaffected - a vendored directive does not take effect
+whether or not its module can be named.
+
 ## Audit
 
 Every detected setting is appended to `audit.jsonl` as a

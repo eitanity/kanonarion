@@ -115,11 +115,50 @@ type LocalContext struct {
 	TestsExcluded bool
 }
 
-// SortModules sorts mods in place by Path for deterministic output.
+// stringsLess orders two string slices, shorter-first, then element by element,
+// reporting whether it decided anything so a caller can fall through to its
+// next key.
+func stringsLess(a, b []string) (result, decided bool) {
+	if len(a) != len(b) {
+		return len(a) < len(b), true
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i], true
+		}
+	}
+	return false, false
+}
+
+// ImportedModuleLess is the canonical ordering for ImportedModule slices: the
+// coordinate first, then the package and symbol lists the entry carries. Path
+// alone is not an identity — a workspace can import two versions of one module
+// path — and a comparator that stops at a tie hands the rendered order to the
+// sort, which reads it off map iteration.
+func ImportedModuleLess(a, b ImportedModule) bool {
+	if a.Path != b.Path {
+		return a.Path < b.Path
+	}
+	if a.Version != b.Version {
+		return a.Version < b.Version
+	}
+	if result, decided := stringsLess(a.ImportedPackages, b.ImportedPackages); decided {
+		return result
+	}
+	if result, decided := stringsLess(a.UsedSymbols, b.UsedSymbols); decided {
+		return result
+	}
+	if result, decided := stringsLess(a.TestOnlyPackages, b.TestOnlyPackages); decided {
+		return result
+	}
+	result, _ := stringsLess(a.TestOnlySymbols, b.TestOnlySymbols)
+	return result
+}
+
+// SortModules sorts mods in place by ImportedModuleLess, a total order, so the
+// output is a function of the set and not of map iteration.
 func SortModules(mods []ImportedModule) {
-	sort.Slice(mods, func(i, j int) bool {
-		return mods[i].Path < mods[j].Path
-	})
+	sort.Slice(mods, func(i, j int) bool { return ImportedModuleLess(mods[i], mods[j]) })
 }
 
 // SnapshotModulePath extracts the Go module path declared in a Snapshot's

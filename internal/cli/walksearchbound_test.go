@@ -59,7 +59,7 @@ func TestFindWalkContaining_BoundedSearchNamesItsBoundAndTheStoreSize(t *testing
 	const population = 60
 	uc := walkSearchFixture(t, population, population-1, target)
 
-	_, err := findWalkContaining(context.Background(), uc, target)
+	_, err := findWalkContaining(context.Background(), uc, target, "kanonarion dependents X --walk-id <id>")
 	if err == nil {
 		t.Fatal("expected the bounded search to fail on a target outside its window")
 	}
@@ -84,7 +84,7 @@ func TestFindWalkContaining_ExhaustedSearchStatesAPlainAbsence(t *testing.T) {
 	const population = 5
 	uc := walkSearchFixture(t, population, -1, target)
 
-	_, err := findWalkContaining(context.Background(), uc, target)
+	_, err := findWalkContaining(context.Background(), uc, target, "kanonarion dependents X --walk-id <id>")
 	if err == nil {
 		t.Fatal("expected a negative for a coordinate no walk contains")
 	}
@@ -105,12 +105,12 @@ func TestFindWalkContaining_FindsTheNewestWalkInsideTheBound(t *testing.T) {
 	target := mustCoord(t, "example.com/dep", "v1.2.3")
 	uc := walkSearchFixture(t, 60, 3, target)
 
-	id, err := findWalkContaining(context.Background(), uc, target)
+	found, err := findWalkContaining(context.Background(), uc, target, "kanonarion dependents X --walk-id <id>")
 	if err != nil {
 		t.Fatalf("findWalkContaining: %v", err)
 	}
-	if id != "walk-003" {
-		t.Errorf("found walk %q, want walk-003", id)
+	if found.walkID != "walk-003" {
+		t.Errorf("found walk %q, want walk-003", found.walkID)
 	}
 }
 

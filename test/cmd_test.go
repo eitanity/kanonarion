@@ -17,6 +17,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -35,7 +36,6 @@ import (
 	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -115,7 +115,7 @@ func cmdSeedWalk(args []string) {
 	}
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	migrations := append(fetchsqlite.Migrations(), sqlite.Migrations()...)
-	db, err := sqlitestore.Open(dbPath, migrations)
+	db, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -355,7 +355,7 @@ func cmdSeedCallGraph(args []string) {
 	}
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	migrations := append(fetchsqlite.Migrations(), cgsqlite.Migrations()...)
-	db, err := sqlitestore.Open(dbPath, migrations)
+	db, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -455,7 +455,7 @@ func cmdSeedLicense(args []string) {
 		os.Exit(1)
 	}
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	db, err := sqlitestore.Open(dbPath, licsqlite.Migrations())
+	db, err := sqlitestore.Open(dbPath, licsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -496,7 +496,7 @@ func cmdSeedIface(args []string) {
 		os.Exit(1)
 	}
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	db, err := sqlitestore.Open(dbPath, ifsqlite.Migrations())
+	db, err := sqlitestore.Open(dbPath, ifsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -544,7 +544,7 @@ func cmdSeedExamples(args []string) {
 	}
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	migrations := append(fetchsqlite.Migrations(), exsqlite.Migrations()...)
-	db, err := sqlitestore.Open(dbPath, migrations)
+	db, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -606,7 +606,7 @@ func cmdSeedVuln(args []string) {
 		os.Exit(1)
 	}
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	db, err := sqlitestore.Open(dbPath, vulnsqlite.Migrations())
+	db, err := sqlitestore.Open(dbPath, vulnsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -702,7 +702,7 @@ func cmdSeedVulnPartial(args []string) {
 		os.Exit(1)
 	}
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	db, err := sqlitestore.Open(dbPath, vulnsqlite.Migrations())
+	db, err := sqlitestore.Open(dbPath, vulnsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -791,7 +791,7 @@ func cmdSeedVulnForWalk(args []string) {
 	}
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	allMigs := append(append(fetchsqlite.Migrations(), sqlite.Migrations()...), vulnsqlite.Migrations()...)
-	db, err := sqlitestore.Open(dbPath, allMigs)
+	db, err := sqlitestore.Open(dbPath, allMigs, sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)
 	}

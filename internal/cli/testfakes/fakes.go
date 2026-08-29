@@ -6,6 +6,7 @@ package testfakes
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
@@ -460,9 +461,14 @@ func (f *FakeDiffInterface) Diff(_ context.Context, _, _ coordinate.ModuleCoordi
 type FakeGenerateNotice struct {
 	Result licapp.NoticeResult
 	Err    error
+	// LastRequest records what the caller asked for, so a test can assert on
+	// inputs the fake result cannot reflect — the operator's recorded copyright
+	// declarations among them.
+	LastRequest licapp.NoticeRequest
 }
 
-func (f *FakeGenerateNotice) Generate(_ context.Context, _ licapp.NoticeRequest) (licapp.NoticeResult, error) {
+func (f *FakeGenerateNotice) Generate(_ context.Context, req licapp.NoticeRequest) (licapp.NoticeResult, error) {
+	f.LastRequest = req
 	return f.Result, f.Err
 }
 
@@ -823,7 +829,7 @@ func (f *FakeQueryCallGraph) filteredSummaries(filter cgports.CallGraphFilter) [
 // ListCallGraphCoordinates projects the same filtered listing onto the ledger's
 // keys.
 //
-// The two flags are read off the RECORDS the fake holds, not off the summaries.
+// The flags are read off the RECORDS the fake holds, not off the summaries.
 // A real store reads them from denormalised columns that a write puts there from
 // the record itself, so the two can never disagree; in the fake they are set
 // independently, and deriving the flags from the summary would let a test whose
@@ -856,7 +862,21 @@ func (f *FakeQueryCallGraph) ListCallGraphCoordinates(_ context.Context, filter 
 			if rec, ok := f.records[key]; ok {
 				gens = append(gens, rec)
 			}
-			for _, rec := range gens {
+			// Newest first, as the store's own ordering returns them.
+			for _, rec := range slices.Backward(gens) {
+				c.Generations = append(c.Generations, cgports.CallGraphGeneration{
+					ExtractedAt:    rec.ExtractedAt.UTC(),
+					Algorithm:      rec.Algorithm,
+					OverallStatus:  rec.OverallStatus,
+					Completeness:   rec.Completeness,
+					AnalysisSource: rec.AnalysisSource,
+					NodeCount:      rec.NodeCount,
+					EdgeCount:      rec.EdgeCount,
+					ContentHash:    rec.ContentHash,
+				})
+				if !c.Generations[len(c.Generations)-1].StatesTheSame(c.Generations[0]) {
+					c.GenerationsDiffer = true
+				}
 				if rec.OverallStatus == cgdomain.CallGraphStatusPartial {
 					c.AnyPartial = true
 				}
@@ -864,6 +884,21 @@ func (f *FakeQueryCallGraph) ListCallGraphCoordinates(_ context.Context, filter 
 					c.AnyBelowFull = true
 				}
 			}
+		}
+		if len(c.Generations) == 0 {
+			// A summary staged with no record behind it IS one generation: the fake
+			// composes nothing, so its list is rows, and a coordinate that reported
+			// none of its own generations would be a store that lost them.
+			c.Generations = []cgports.CallGraphGeneration{{
+				ExtractedAt:    s.ExtractedAt.UTC(),
+				Algorithm:      s.Algorithm,
+				OverallStatus:  s.OverallStatus,
+				Completeness:   s.Completeness,
+				AnalysisSource: s.AnalysisSource,
+				NodeCount:      s.NodeCount,
+				EdgeCount:      s.EdgeCount,
+				ContentHash:    s.ContentHash,
+			}}
 		}
 		out = append(out, c)
 	}

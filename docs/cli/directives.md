@@ -89,7 +89,14 @@ against the project module path of all 7 directive scan(s) in the store
 Every read is keyed on a project, so there is no invocation that lists the store
 unfiltered; the remedy names the `--project` slot instead.
 
-`directives show <scan-id>` answers a scan id it does not hold the same way, on
+One scan is read by id, and two are compared by id:
+
+```
+kanonarion directives show <scan-id>
+kanonarion directives diff <scan-id-a> <scan-id-b>
+```
+
+`directives show` answers a scan id it does not hold the same way `list` does, on
 one line, exiting `4`.
 
 ## Scope notes

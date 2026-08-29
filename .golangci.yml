@@ -57,11 +57,13 @@ settings:
 issues:
   exclude-rules:
     # forbidigo (time.Now/time.Since ban) applies ONLY to the application and
-    # domain layers. Wall-clock reads are legitimate in adapters, the CLI,
-    # cmd, the sqlitestore, and in tests. Path segments are exact, so
-    # internal/<ctx>/application and internal/<ctx>/domain are never excluded
-    # while every adapters/cli/cmd/sqlitestore path is.
+    # domain layers. Wall-clock reads are legitimate in adapters, the CLI, cmd,
+    # and in tests. Path segments are exact, so internal/<ctx>/application and
+    # internal/<ctx>/domain are never excluded while every adapters/cli/cmd
+    # path is. The SQLite store needed a segment of its own while it sat at
+    # internal/ top level; it is under internal/adapters/ now, so the adapters
+    # segment covers it.
     - linters: [forbidigo]
-      path: '(^|/)(adapters|cli|cmd|sqlitestore)(/|$)'
+      path: '(^|/)(adapters|cli|cmd)(/|$)'
     - linters: [forbidigo]
       path: '_test\.go$'

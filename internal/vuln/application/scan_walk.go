@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -988,7 +989,24 @@ func (uc *ScanWalkUseCase) runScanPool(
 	for r := range out {
 		results = append(results, r)
 	}
+	// The channel hands results back in COMPLETION order, which is a fact about
+	// how the machine was loaded and not about the walk. Today's callers fold
+	// them into a coordinate-keyed map, so nothing sealed depends on it; the
+	// binary pre-pass builds its re-scan list straight off this slice, and a
+	// caller added later would inherit the same hazard. Ordering it here keeps
+	// the run's own arrangement out of everything downstream.
+	sort.Slice(results, func(i, j int) bool { return moduleResultLess(results[i], results[j]) })
 	return results
+}
+
+// moduleResultLess orders scan results by coordinate. Each coordinate is
+// dispatched once per pool, so the coordinate is an identity here and this is a
+// total order over the elements that reach it.
+func moduleResultLess(a, b moduleResult) bool {
+	if a.coord.Path() != b.coord.Path() {
+		return a.coord.Path() < b.coord.Path()
+	}
+	return a.coord.Version() < b.coord.Version()
 }
 
 // prefetchMissing fetches any coordinates that are absent from the fact store.

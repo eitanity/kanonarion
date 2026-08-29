@@ -541,6 +541,8 @@ func buildDependencies(components []cdx.Component, root *cdx.Component, graph wa
 	for _, c := range components {
 		add(c.BOMRef, c.BOMRef)
 	}
+	// Ref cannot tie: the `seen` set above admits one entry per ref, so this is a
+	// total order over the elements that reach it.
 	sort.Slice(deps, func(i, j int) bool { return deps[i].Ref < deps[j].Ref })
 	return deps
 }
@@ -833,6 +835,9 @@ func timestampBasisProperties(derived bool, licenceExtraction time.Time) []cdx.P
 // this document was built from, zero when there are none.
 func licenceExtractionTime(licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord) time.Time {
 	var t time.Time
+	// A maximum, so the map order cannot reach the answer: the kept value is the
+	// same instant whichever record is seen first, and no record's identity is
+	// published beside it.
 	for _, lic := range licenses {
 		if lic.ExtractedAt.After(t) {
 			t = lic.ExtractedAt

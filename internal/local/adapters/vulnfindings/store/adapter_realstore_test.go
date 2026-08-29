@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/local/adapters/vulnfindings/store"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
@@ -25,7 +25,7 @@ import (
 // row would leave the filter nothing to choose from and the defect intact.
 func TestLoadFindings_TwoConsumersInOneLedger(t *testing.T) {
 	ctx := t.Context()
-	db, err := sqlitestore.Open(":memory:", vulnsqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", vulnsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening in-memory db: %v", err)
 	}

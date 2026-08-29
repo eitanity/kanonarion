@@ -160,6 +160,16 @@ func InterfaceImplementationLess(a, b InterfaceImplementation) bool {
 	return false
 }
 
+// SynthesisedRequireLess is the canonical ordering for the require directives
+// a synthesised go.mod pins. Path leads; Version follows, which is the rest of
+// the directive, so two requires on one path still have a defined order.
+func SynthesisedRequireLess(a, b SynthesisedRequire) bool {
+	if a.Path != b.Path {
+		return a.Path < b.Path
+	}
+	return a.Version < b.Version
+}
+
 // stringsLess orders two string slices lexicographically, shorter-first on a
 // shared prefix.
 func stringsLess(a, b []string) bool {

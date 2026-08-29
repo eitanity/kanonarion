@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/config/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/oklog/ulid/v2"
@@ -37,8 +38,9 @@ func newNoticeCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f noticeFlags
 
 	cmd := &cobra.Command{
-		Use:   "notice [<walk-id>]",
-		Short: "Generate a THIRD-PARTY-LICENSES attribution document",
+		Use:         "notice [<walk-id>]",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Generate a THIRD-PARTY-LICENSES attribution document",
 		Long: `Generate a deterministic THIRD-PARTY-LICENSES file from stored license records.
 
 The document includes per-module: module coordinate, SPDX identifier, verbatim
@@ -219,7 +221,10 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 
 	coords, replaced, localReviews := partitionNoticeModules(mods)
 
-	result, err := ctr.GenerateNotice.Generate(ctx, licapp.NoticeRequest{Coordinates: coords})
+	result, err := ctr.GenerateNotice.Generate(ctx, licapp.NoticeRequest{
+		Coordinates:  coords,
+		Declarations: noticeDeclarations(ctr.Config),
+	})
 	if err != nil {
 		return fmt.Errorf("generating notice: %w", err)
 	}
@@ -242,6 +247,9 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 				return fmt.Errorf("writing review item: %w", werr)
 			}
 		}
+		if werr := writeCopyrightRemedy(reviews, stderr); werr != nil {
+			return werr
+		}
 		return &exitError{code: ExitPolicy, msg: fmt.Sprintf("%d module(s) require review", len(reviews))}
 	}
 
@@ -262,6 +270,62 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 	// document redirects stdout, and notice already reports scope and the review
 	// list on stderr, so the two streams stay one document and one commentary.
 	return writeArtefactFile("NOTICE", output, doc.Bytes(), stderr)
+}
+
+// noticeDeclarations builds the operator's recorded copyrights from the loaded
+// configuration. The config context keeps its values primitive, so the mapping
+// to the licence domain's set happens here, at the one place both are in scope.
+func noticeDeclarations(cfg domain.Config) licensedomain.CopyrightDeclarationSet {
+	if len(cfg.CopyrightDeclarations) == 0 {
+		return licensedomain.CopyrightDeclarationSet{}
+	}
+	entries := make(map[string]licensedomain.CopyrightDeclaration, len(cfg.CopyrightDeclarations))
+	for key, d := range cfg.CopyrightDeclarations {
+		entries[key] = licensedomain.CopyrightDeclaration{
+			Copyright:  d.Copyright,
+			DeclaredBy: d.DeclaredBy,
+			DeclaredOn: d.DeclaredOn,
+			Basis:      d.Basis,
+		}
+	}
+	return licensedomain.NewCopyrightDeclarationSet(entries)
+}
+
+// writeCopyrightRemedy names the way out of a missing-copyright refusal, so the
+// operator is not left with a correct refusal and no next step. It is printed
+// only when a missing copyright is among the reasons: it is no remedy for an
+// ambiguous licence or a local-path replace, and offering it there would send an
+// operator to record an attribution that changes nothing.
+func writeCopyrightRemedy(reviews []licensedomain.ReviewItem, stderr io.Writer) error {
+	first := ""
+	for _, item := range reviews {
+		if item.MissingCopyright {
+			first = item.Coordinate.Path()
+			break
+		}
+	}
+	if first == "" {
+		return nil
+	}
+	const remedy = `
+notice: where the module genuinely carries no copyright, read the upstream
+notice: repository and record what you found in <store-root>/config.yaml:
+notice:
+notice:   copyright_declarations:
+notice:     %s:
+notice:       copyright: "Copyright <year> <holder>"
+notice:       declared_by: "you@example.com"
+notice:       declared_on: "YYYY-MM-DD"
+notice:       basis: "the upstream file or page you read, and when"
+notice:
+notice: The key may be pinned to a version ("path@version"). An extracted notice
+notice: always wins: a declaration beside one is kept as corroboration, never as
+notice: a replacement.
+`
+	if _, err := fmt.Fprintf(stderr, remedy, first); err != nil {
+		return fmt.Errorf("writing review remedy: %w", err)
+	}
+	return nil
 }
 
 // partitionNoticeModules splits the resolved scope into the coordinates the
@@ -501,6 +565,29 @@ func writeNoticeLicenseFile(ew *errWriter, prefix string, lf licensedomain.Notic
 	}
 }
 
+// writeNoticeDeclaration renders the operator's recorded copyright, saying which
+// of the two things it is: the attribution itself, where extraction found
+// nothing, or corroboration standing beside a measured notice.
+//
+// It is never merged into the "Copyright notices:" list. A reader building an
+// obligations list must be able to tell a line taken from the module archive
+// from a line a person asserted, and the provenance is what makes the second
+// kind checkable at all.
+func writeNoticeDeclaration(ew *errWriter, e licensedomain.NoticeEntry) {
+	if e.Declaration == nil {
+		return
+	}
+	d := e.Declaration
+	if e.DeclarationAttributes() {
+		ew.printf("\nCopyright notices (human-supplied; none found in the module):\n")
+	} else {
+		ew.printf("\nHuman-supplied copyright (corroboration; the extracted notice above is authoritative):\n")
+	}
+	ew.printf("  %s\n", d.Copyright)
+	ew.printf("    declared by %s on %s\n", d.DeclaredBy, d.DeclaredOn)
+	ew.printf("    basis: %s\n", d.Basis)
+}
+
 const noticeDiv = "================================================================================"
 
 func writeNoticeDocument(
@@ -548,6 +635,7 @@ func writeNoticeDocument(
 				ew.printf("  %s\n", c)
 			}
 		}
+		writeNoticeDeclaration(ew, e)
 		for _, lf := range e.LicenseTexts {
 			writeNoticeLicenseFile(ew, "", lf)
 		}

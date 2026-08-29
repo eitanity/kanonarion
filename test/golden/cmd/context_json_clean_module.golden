@@ -28,7 +28,11 @@ exit 0
     }
   },
   "dependencies": {
-    "status": "not_run",
+    "status": "succeeded",
+    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "frame": "not-platform-scoped",
+    "frame_basis": "not_platform_scoped",
+    "rooting": "target-rooted:example.com/app@v1.0.0",
     "count": 0,
     "partial": false
   },

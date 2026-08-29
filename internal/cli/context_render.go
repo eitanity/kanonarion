@@ -186,12 +186,21 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	case sectionStatusNotRun:
 		w.printf("  Dependencies:    (not run — run: %s)\n",
 			walkInvocationForRendered(out.Module.Path+"@"+out.Module.Version))
+	case sectionStatusNotInWalk:
+		w.printf("  Dependencies:    (not measured in this build — %s does not hold %s@%s)\n",
+			dependencyBasisPhrase(out.Dependencies), out.Module.Path, out.Module.Version)
 	case sectionStatusReadError:
 		w.printf("  Dependencies:    (failed: %s)\n", out.Dependencies.Error)
 	default:
 		line := fmt.Sprintf("%d direct (%s)", out.Dependencies.Count, out.Dependencies.Status)
 		if out.Dependencies.Partial {
 			line += " [partial]"
+		}
+		// The count is a fact about one build — a module's dependency set differs
+		// between frames by scope and by resolved version — so the build is named
+		// beside it, in the words the Walk basis line below uses.
+		if basis := dependencyBasisPhrase(out.Dependencies); basis != "" {
+			line += " [" + basis + "]"
 		}
 		w.printf("  Dependencies:    %s\n", line)
 		printPreModulesCaveat(w, out.Dependencies.PreModulesCaveat)
@@ -215,6 +224,9 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			line += " (" + statusWithReason(out.License.Status, out.License.Error) + ")"
 		}
 		w.printf("  License:         %s\n", line)
+		if c := out.License.Custody; c != nil {
+			w.printf("    basis:         %s\n", c.Statement)
+		}
 	}
 
 	switch out.Interface.Status {
@@ -294,6 +306,7 @@ func printVulnerabilitiesSummary(w *errWriter, out contextOutput) {
 		}
 		w.printf("  Vulnerabilities: %s\n", line)
 		printWalkBasis(w, "  Walk basis:      %s\n", out.Vulnerabilities)
+		printRunContextNote(w, "  Run context:     %s\n", out.Vulnerabilities)
 		printScanProvenance(w, out.Vulnerabilities)
 	}
 }
@@ -326,12 +339,6 @@ func printScanProvenance(w *errWriter, v contextVulnerabilities) {
 // in words, because a missing frame is a gap in what is known about the answer,
 // not a property of the answer.
 func printWalkBasis(w *errWriter, format string, v contextVulnerabilities) {
-	if v.WalkWindowNote != "" {
-		// Printed even without a basis id: the note is precisely the case where
-		// the run context is missing, and a reader has to be able to tell a
-		// bounded read from a scan that found nothing to say.
-		w.printf(format, v.WalkWindowNote)
-	}
 	if v.WalkBasisID == "" {
 		return
 	}
@@ -340,6 +347,21 @@ func printWalkBasis(w *errWriter, format string, v contextVulnerabilities) {
 		return
 	}
 	w.printf(format, fmt.Sprintf("%s (frame %s)", v.WalkBasisID, v.WalkBasisFrame))
+}
+
+// printRunContextNote says why a section carries no run context. It has its own
+// label because the fact is about the report's read, not about the walk the
+// answer came from, and sharing the basis label made one record show two
+// "Walk basis" lines saying different kinds of thing.
+//
+// Printed even without a basis id: the note is precisely the case where the run
+// context is missing, and a reader has to be able to tell a bounded read from a
+// scan that found nothing to say.
+func printRunContextNote(w *errWriter, format string, v contextVulnerabilities) {
+	if v.WalkWindowNote == "" {
+		return
+	}
+	w.printf(format, v.WalkWindowNote)
 }
 
 // walkAnnotation renders the inline walk-level note appended to a module's
@@ -406,4 +428,17 @@ func walkAnnotation(v contextVulnerabilities) string {
 		parts = append(parts, "[walk: affected-peer status unavailable]")
 	}
 	return strings.Join(parts, " ")
+}
+
+// dependencyBasisPhrase names the walk the dependency section answered in, and
+// the frame that walk was rooted at. Empty when no walk answered, so a section
+// with nothing to name prints nothing rather than an empty bracket.
+func dependencyBasisPhrase(d contextDependencies) string {
+	if d.WalkID == "" {
+		return ""
+	}
+	if d.Rooting == "" {
+		return "walk " + d.WalkID
+	}
+	return fmt.Sprintf("walk %s, frame %s", d.WalkID, d.Rooting)
 }

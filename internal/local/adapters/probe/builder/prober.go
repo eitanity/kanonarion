@@ -27,7 +27,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )

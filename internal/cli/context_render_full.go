@@ -67,6 +67,9 @@ func printFullDependencies(w *errWriter, d contextDependencies, mod string) {
 	switch d.Status {
 	case sectionStatusNotRun:
 		w.printf("(not run — run: %s)\n", walkInvocationForRendered(mod))
+	case sectionStatusNotInWalk:
+		w.printf("(not measured in this build — %s does not hold %s)\n",
+			dependencyBasisPhrase(d), mod)
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", d.Error)
 	default:
@@ -74,6 +77,9 @@ func printFullDependencies(w *errWriter, d contextDependencies, mod string) {
 		if d.WalkID != "" {
 			w.printf("Walk ID: %s\n", d.WalkID)
 			w.printf("Frame:   %s\n", d.Frame)
+			if d.Rooting != "" {
+				w.printf("Rooting: %s\n", d.Rooting)
+			}
 		}
 		if d.Partial {
 			w.printf("Partial: true (some transitive deps could not be resolved)\n")
@@ -289,6 +295,7 @@ func printFullVulnerabilities(w *errWriter, v contextVulnerabilities, cmd contex
 			w.printf("Walk ID:      %s\n", v.WalkID)
 		}
 		printWalkBasis(w, "Walk Basis:   %s\n", v)
+		printRunContextNote(w, "Run Context:  %s\n", v)
 		if v.SnapshotVersion != "" {
 			w.printf("Snapshot:     %s\n", v.SnapshotVersion)
 		}

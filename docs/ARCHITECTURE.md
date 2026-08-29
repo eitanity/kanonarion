@@ -38,18 +38,27 @@ cmd/kanonarion            (binary entry point)
 - **adapters** - one package per backend (a parser, a store, an external tool).
 - **cmd/kanonarion** - the cobra CLI, wired through the composition root.
 
-Two rules keep this honest and are enforced mechanically (by `forbidigo` lint
-and the architecture tests under `test/`):
+Two rules keep this honest. Both are enforced by the architecture tests under
+`test/`, over a bounded-context set derived from the tree rather than listed, so
+a context added later is covered without editing a test:
 
 - **No cross-context imports** except through another context's `ports`
   interfaces (or a shared coordinate type). A context never imports another
-  context's `application` or `adapters`.
+  context's `application` or `adapters`. Enforced by
+  `TestNoCrossContextApplicationImports`. A third guard,
+  `TestNoInfraImportsInApplicationOrDomain`, keeps source/format parsing and raw
+  SQL out of those layers on the same terms.
 - **No wall-clock access** (`time.Now`/`time.Since`) in `application` or
   `domain`. A `Clock` is injected for record timestamps and a `Stopwatch` for
-  latency metrics.
+  latency metrics. Enforced by `TestNoWallClockInApplicationOrDomain`.
+
+The tests are what gates this, not only the `forbidigo` lint rule that states
+the second one: `make lint` does not run `golangci-lint`, so a lint-only rule
+would be advisory.
 
 All JSON and graph output is deterministic: sorted keys, lexicographically
-sorted edges, fixed field ordering.
+sorted edges, fixed field ordering. *Determinism* below states each of those
+properties with the test that enforces it.
 
 ---
 
@@ -72,6 +81,8 @@ in a use case.
 | Risk | license | `internal/license` | Detect and classify licences |
 | Risk | vuln | `internal/vuln` | Scan for known vulnerabilities |
 | Risk | sbom | `internal/sbom` | Generate a CycloneDX SBOM |
+| Risk | capability | `internal/capability` | Report which sensitive capabilities a module's reachable code can exercise |
+| Risk | staleness | `internal/staleness` | Resolve how far behind upstream a pinned dependency is |
 | Governance | directive | `internal/directive` | Classify go.mod/go.work replace & exclude directives |
 | Governance | godebug | `internal/godebug` | Classify `//go:debug` settings |
 | Governance | vendortree | `internal/vendortree` | Analyse a vendored tree for drift & inconsistency |
@@ -172,6 +183,24 @@ reach. Scan runs are append-only, and each record carries an immutable
 **sbom** - generates a deterministic CycloneDX software bill of materials
 (`SBOMRecord`) from any walk. *Adapter:* `generator/cyclonedx`.
 
+**capability** - reports which sensitive capabilities (`NETWORK`, `FILES`,
+`EXEC`, `REFLECT`, `UNSAFE_POINTER`, …) a module's reachable code can exercise,
+over kanonarion's own call graph rather than a second analyser. The taxonomy is
+adopted from `google/capslock` so reports are comparable. Every finding carries
+the weakest edge confidence along its witnessing path, so a capability reached
+only through interface over-approximation is not conflated with one reached by a
+resolved direct call, and a report computed over a `Partial` graph is flagged
+`Partial` rather than presented as a clean set. The context is pure domain over
+callgraph value objects: no I/O, no toolchain, no clock.
+
+**staleness** - resolves how far behind upstream a pinned dependency is, as two
+facts that are never collapsed into one: the newest version of the module's own
+path, and whether a newer major line exists at a different path entirely. A
+module several majors behind resolves to its own path's newest version and would
+otherwise be reported as current. Proxy answers are cached with a TTL and an
+absent path is a cacheable negative, distinct from a lookup that could not be
+made. *Adapters:* `proxy` (with `retrying`), `golist`, `store/sqlite`.
+
 ### Governance
 
 These contexts detect a supply-chain signal, classify it against a versioned
@@ -183,14 +212,23 @@ directives by risk class (`adapters/parser/xmod`), with scan history, show, and
 diff.
 
 **godebug** - detects and classifies `//go:debug` settings against a versioned
-taxonomy (`adapters/scanner/gosrc`).
+taxonomy (`adapters/scanner/gosrc`). A directive under `vendor/` names the
+module `vendor/modules.txt` lists for that directory, read through godebug's own
+`VendoredModuleLister` port (`adapters/vendortree`).
 
 **vendortree** - reconciles a vendored closure and detects `vendor/` drift and
 `modules.txt` inconsistency (`adapters/scanner/localfs`). The directory is
 named `vendortree`, not `vendor`, because Go reserves `vendor/`.
 
 **fips** - assesses FIPS toolchain eligibility and detects non-FIPS algorithms
-and cgo-crypto usage (`adapters/scanner/gosrc`).
+and cgo-crypto usage (`adapters/scanner/gosrc`). A finding read from a file
+under `vendor/` names the module `vendor/modules.txt` lists for that directory,
+read through the vendor context's scanner behind fips's own
+`VendoredModuleLister` port (`adapters/vendortree`), the same shape godebug
+uses - there is one parser of `modules.txt` in the tree and one rule for which
+listed module owns a path (`vendortree/domain.VendoredModuleIndex`), so no
+analysis learns how `modules.txt` is read and no two of them can disagree about
+one file.
 
 ### Local
 
@@ -226,6 +264,44 @@ rather than being re-declared per context:
 - `clock` - `System` (production) and `Fixed` (tests)
 - `blobcodec`, `ziparchive`, `modcache` - blob (de)serialisation, zip handling,
   and Go module-cache materialisation for `use`
+- `sqlitestore` - the SQLite handle, store-root layout and per-module migration
+  runner every context's `store/sqlite` adapter opens through
+- `goenv` - Go environment resolution the way the go command resolves it, and
+  the network posture every egress asks before it opens a socket
+
+`TestSharedInternalPackagesLiveUnderAdapters` enforces this: a directory
+directly under `internal/` that more than one bounded context imports - from
+production or test code - lives under `internal/adapters/`, or names in
+`sharedInternalExemptions` the reason it is not infrastructure. The context set
+is derived from the tree, not listed.
+
+### Not infrastructure
+
+Five categories sit under `internal/` at top level and stay there. Each is a
+reason a package shared across contexts is still not infrastructure, and every
+exemption states which one it is; `TestSharedInternalExemptionsAreLive` fails on
+an entry that no longer names a non-context directory, so the list drains as the
+tree moves.
+
+- **Shared value type** - a name several contexts agree on rather than a service
+  one of them calls. `coordinate` (the module coordinate) and `gotoolchain`
+  (the toolchain fact a record carries, shared so three ledgers render "not
+  recorded" the same way). Both are imported from domain layers, which must not
+  reach an adapter, so `internal/adapters/` is the one place they cannot go.
+  `TestNoAdapterImportsInDomain` enforces that half: a package under
+  `internal/<ctx>/domain` imports neither `internal/adapters/**` nor another
+  context's `adapters` layer. `application` is out of scope - the shared
+  adapters exist for it to call.
+- **Composition layer** - `cli`, `composition` and `driver`, described under
+  *Cross-context Composition* below. They sit above the contexts and are exempt
+  from this rule for the same reason they are exempt from the cross-context
+  import ban.
+- **Its own documented section** - `audit`, the context-neutral audit-event
+  vocabulary described under *Audit Log*. It is pure, and the JSONL adapter that
+  persists it is already under `internal/adapters/`.
+- **Test infrastructure** - `canonicalshape` and `wireshape`. Neither has a
+  production importer, so no context depends on either at run time.
+- **The destination itself** - `adapters`.
 
 ---
 
@@ -257,18 +333,50 @@ only by adding a new optional interface, never by widening an existing one.
 
 ## Determinism
 
-- All timestamps come from an injected `Clock`, never `time.Now()` directly.
-- Canonical serialisation uses sorted JSON keys, RFC3339 UTC timestamps, and
-  fixed field ordering. Maps that must serialise (e.g. per-node results) are
-  emitted as sorted arrays of `(key, value)` pairs, since maps have no
-  canonical JSON order.
-- `ContentHash` is computed over the canonical form with the hash field zeroed.
-- Module zips are stored verbatim; re-zipping is never performed.
-- `PipelineVersion` is a code constant per extraction stage, bumped
-  deliberately when logic changes such that cached records would differ from
-  re-extraction.
-- Graph nodes and edges are sorted lexicographically by module path and
-  version. Iteration order never depends on map enumeration.
+Each invariant below names the test that enforces it. An invariant with no
+enforcing test does not belong in this section.
+
+- **`application` and `domain` never read the wall clock.** Every timestamp
+  those layers put on a record comes from an injected `Clock`, and every
+  latency they report comes from an injected `Stopwatch`. An `adapters` package
+  may read the clock to stamp when it observed something, and no such stamp
+  survives into a sealed record: the use case restamps it from the injected
+  clock before the record is sealed. Enforced by
+  `TestNoWallClockInApplicationOrDomain`, which parses every non-test file in
+  every bounded context's `application` and `domain` layer and rejects
+  `time.Now` and `time.Since`. The context set it walks is derived from the
+  tree, so a context added later is covered without editing the test.
+- **Canonical serialisation** uses sorted JSON keys, RFC3339 UTC timestamps,
+  and fixed field ordering. Maps that must serialise (e.g. per-node results)
+  are emitted as sorted arrays of `(key, value)` pairs, since maps have no
+  canonical JSON order. Enforced by `TestCanonicalShape_IsPinned`, which every
+  record domain runs against a golden file of the exact bytes it seals, so a
+  field added, reordered or retyped fails before it can invalidate the records
+  already in a store.
+- **`ContentHash` is computed over the canonical form with the hash field
+  zeroed.** A domain that excludes a further field declares it through
+  `SealExcludes`, so a verifier working from stored bytes alone can reproduce
+  the seal. Enforced by `TestEveryDomainHasher_IsAcceptedBySelfConsistent` and
+  `TestEveryDomainHasher_IsAcceptedByVerifyBlob`, which seal a fully populated
+  record from every domain and verify it through the shared verifier.
+- **Module zips are stored verbatim.** A zip fetched from a proxy or the module
+  cache is stored byte for byte as it arrived and is never recompressed: its
+  hash is what the checksum database attests and what every later reader
+  recomputes, so re-zipping it would replace the artefact the trust anchor
+  covers. A local module has no upstream zip - it is packaged from its working
+  tree, and that synthetic zip may be rewritten to carry the local coordinate's
+  entry prefix, since `modzip` requires a canonical semver the local version is
+  not. Enforced by `TestNoZipRewritingOutsideNamedPackages`, which rejects an
+  `archive/zip` writer in any non-test package outside a named list, each entry
+  stating why no fetched artefact reaches it.
+- **Iteration order never depends on map enumeration.** Graph nodes and edges
+  are sorted lexicographically by module path and version, and every collection
+  a record seals is ordered by a total order rather than by the walk or map that
+  produced it. Enforced by `TestOrderingComparatorsAreTotal`, which rejects a
+  comparator in a domain layer keyed on too few fields to break every tie, and
+  by `TestEveryHashedTypeHasADeterminismGuard`, which derives from the code that
+  every content-hashed type has a per-type guard shuffling its collections and
+  asserting one digest.
 
 ---
 
@@ -278,6 +386,20 @@ Every `PutFetchRecord` call appends a JSONL entry to
 `{store-root}/audit.jsonl` via `AuditingStore`. Fields: timestamp, module
 coordinate, pipeline version, verification status, content hash. This is the
 `fact_record_written` event - what was *written*.
+
+A write that would have replaced a stronger verification anchor with a weaker
+one is recorded on whichever side it landed:
+
+- `fact_record_write_refused` - the re-measurement was refused and the existing
+  record kept, which is the fetch result the caller gets back.
+- `fact_record_downgraded` - the operator explicitly permitted the weaker
+  measurement to replace the stronger one. This is the only path by which an
+  anchor can weaken.
+
+Both carry the same payload - module, version, pipeline version, both
+verification statuses, both acquisition modes, both content hashes, and whether
+the run was forced - so the pair reads as one series and a demotion attempt is
+reconstructable from the log alone.
 
 The read/serve verification path records what was *read*, using the generic
 `{event_type, timestamp, payload}` envelope (no new on-disk schema):
@@ -309,6 +431,34 @@ The vulnerability scan records what was *found*, using the same envelope:
   vulnerability id, and the module's overall status. One event per finding
   makes "when did we first learn module X was affected by CVE-Y" answerable
   from the append-only log, not only from the mutable vuln DB.
+- `vuln_scan_served` - a stored scan run handed to a caller instead of being
+  measured again. Payload: the run served (scan id, walk id, pipeline version),
+  the advisory database it was judged against, and the surface that asked
+  (`vuln-scan`, `audit`, `inspect`). It is named for the asking, because nothing
+  was scanned: without it an unchanged store answers from existing rows
+  indefinitely and "when did we last check" becomes unanswerable while "when did
+  we first learn" stays answerable from the derivation events. It restates none
+  of the run's conclusions - the scan id reaches them.
+
+The governance contexts record what was *classified*, one event per detected
+signal so that an add, a removal or a change between two scans is readable off
+the log without a bespoke diff schema. Each of those payloads names the project,
+where the signal was found, its classification, and the policy outcome it
+evaluated to:
+
+- `replace_directive_observed` and `exclude_directive_observed` - one per
+  `replace` or `exclude` directive, with the old and new path/version, whether
+  the directive applied, and its risk class.
+- `godebug_setting_observed` - one per `//go:debug` or `GODEBUG` setting, with
+  its name, value, and taxonomy tier.
+- `fips_assessment` - one per FIPS finding, with the finding kind and category,
+  the package and module it sits in, and whether the toolchain is FIPS-capable.
+- `vendor_tree_generated` - one per vendored-closure scan rather than per
+  finding, and the one governance event carrying no policy outcome. It records
+  the reconciled posture (project, vendor directory, whether the build is
+  vendor-only, module and finding counts, overall status, content hash);
+  finding-level detail is in the persisted record, and it is the sequence of
+  scans that makes a tree's drift history first-class.
 
 Licence extraction records what was *classified* (`license_extracted`: module,
 version, resolved primary SPDX, overall status, identity source), and the walk

@@ -18,7 +18,11 @@ import (
 // PipelineVersion identifies this release of the interface extraction pipeline.
 // Bump whenever extraction logic changes to ensure old records are not confused
 // with new ones.
-const PipelineVersion = "0.5.0"
+//
+// Bumped to "0.6.0" when extraction stopped walking testdata subtrees and
+// stopped reading a public API out of a directory that declares one identifier
+// twice: every record's package set and contents can change.
+const PipelineVersion = "0.6.0"
 
 // ExtractInterfaceUseCase extracts the public API of a module and persists an
 // InterfaceRecord.
@@ -132,7 +136,16 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 	// fresh every time.
 	if !req.Force && !req.Coordinate.IsLocal() {
 		existing, found, cerr := uc.store.GetInterfaceRecord(ctx, req.Coordinate, uc.pipelineVersion)
-		if cerr != nil && !errors.Is(cerr, ports.ErrInterfaceIntegrity) {
+		// A composition refusal says no single stored generation answers this
+		// coordinate. Refusing to SERVE that is right; refusing to MEASURE a new
+		// answer is not, so it is a cache miss here. Extraction appends, and the
+		// ladder decides which generation answers afterwards.
+		switch {
+		case errors.Is(cerr, ports.ErrInterfaceConflict):
+			log.InfoContext(ctx, "interface_cache_conflict_remeasuring",
+				slog.String("conflict", cerr.Error()),
+			)
+		case cerr != nil && !errors.Is(cerr, ports.ErrInterfaceIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking interface store: %w", cerr)
 		}
 		if found {

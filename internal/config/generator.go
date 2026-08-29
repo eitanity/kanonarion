@@ -18,7 +18,8 @@ import (
 // (see the configYAML wire struct): a schema section absent here is undiscoverable
 // via `config init` and is never appended to an existing file on upgrade.
 var knownSections = []string{
-	"preferences", "license_policy", "license_overrides", "callgraph",
+	"preferences", "license_policy", "license_overrides",
+	"copyright_declarations", "callgraph",
 	"staleness",
 	"directive_policy", "godebug_policy", "vendor_policy", "fips_policy",
 	"fetch_policy",
@@ -73,6 +74,19 @@ license_policy:
 license_overrides:
   # Correct scanner gaps: map module path (optionally @version) to an SPDX ID.
   # golang.org/x/mod: MIT
+`,
+	"copyright_declarations": `
+copyright_declarations:
+  # Copyright lines a human read upstream, for modules whose archive carries
+  # none, so 'notice' can publish an attribution document instead of refusing.
+  # Every field is required: without an author, a date and a cited basis the
+  # line cannot be checked by anyone reading the document. An extracted notice
+  # always wins — a declaration beside one is kept as corroboration.
+  # example.com/mod:
+  #   copyright: "Copyright 2019 Example Authors"
+  #   declared_by: "you@example.com"
+  #   declared_on: "2026-01-31"
+  #   basis: "LICENSE header at example.com/mod v1.2.3, read 2026-01-31"
 `,
 	"callgraph": `
 callgraph:

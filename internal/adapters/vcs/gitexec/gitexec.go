@@ -27,9 +27,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/goenv"
 )
 
 const (

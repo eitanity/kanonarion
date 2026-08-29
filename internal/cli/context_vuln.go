@@ -379,7 +379,7 @@ func (b *vulnBatchCtx) nameWindowBound(result *contextVulnerabilities, walkID st
 		return
 	}
 	result.WalkWindowNote = fmt.Sprintf(
-		"no run context: this record was measured in a walk outside the %d most recent this report loaded runs for",
+		"this record was measured in a walk outside the %d most recent walks this report loaded, so there is no run context to show",
 		vulnContextWalkWindow)
 }
 

@@ -233,7 +233,9 @@ func canonicalRequires(reqs []SynthesisedRequire) []canonicalRequire {
 		// hash over. Same rule as canonicalImplementation's methods above.
 		out = append(out, canonicalRequire(r))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	sort.Slice(out, func(i, j int) bool {
+		return SynthesisedRequireLess(SynthesisedRequire(out[i]), SynthesisedRequire(out[j]))
+	})
 	return out
 }
 

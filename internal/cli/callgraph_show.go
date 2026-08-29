@@ -32,8 +32,9 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f callGraphShowFlags
 
 	cmd := &cobra.Command{
-		Use:   "callgraph-show <module>@<version>",
-		Short: "Show the full call graph record for a module",
+		Use:         "callgraph-show <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Show the full call graph record for a module",
 		Example: `  kanonarion callgraph-show github.com/spf13/cobra@v1.8.1
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --json
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node Execute
@@ -877,8 +878,14 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 // holds none. It is the difference between "this was never analysed" and "this
 // was analysed by logic that has since been superseded", which are different
 // facts with different remedies.
+//
+// Which pipeline versions a coordinate exists under is a question about the
+// ledger's KEYS, so it is asked of the coordinates. Asked of the composing
+// listing it spent eight seconds reconstructing fifteen generations of one
+// module's edge set to read a version string off each — to say that a version
+// nobody analysed was not analysed.
 func supersededGenerationsNote(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase) (string, error) {
-	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})
+	sums, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})
 	if err != nil {
 		return "", fmt.Errorf("listing stored generations for %s: %w", coord, err)
 	}

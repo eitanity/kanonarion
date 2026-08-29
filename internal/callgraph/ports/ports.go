@@ -305,6 +305,67 @@ type CallGraphCoordinate struct {
 	// needs to know composes.
 	AnyPartial   bool
 	AnyBelowFull bool
+	// GenerationsDiffer reports whether the generations at this coordinate state
+	// different things about themselves: node count, edge count, overall status or
+	// completeness is not identical across all of them.
+	//
+	// One-way like its neighbours and in the same direction. False PROVES every
+	// generation states the same counts, status and completeness, so whichever one
+	// a read serves, any generation's numbers are that generation's numbers too.
+	// True says only that they do not all agree.
+	//
+	// It is NOT composition's verdict on the coordinate. That verdict is decided
+	// over decoded records, and this listing decodes nothing — the cost it exists
+	// not to pay. Generations that state different counts can still compose to a
+	// served answer, and generations that state identical counts can still fail
+	// that comparison. The flag says the generations do not agree with each other,
+	// and a caller that needs the served answer reads the coordinate.
+	GenerationsDiffer bool
+	// Generations is what each generation at this coordinate says about itself,
+	// newest first, read from its own row's columns. Empty when the store cannot
+	// enumerate them without composing.
+	//
+	// It is a list rather than a winner because picking one is composition's job,
+	// and a listing that printed the winner's counts without saying so would be a
+	// derived verdict wearing a row's clothes. A caller that needs the served
+	// answer reads the coordinate.
+	Generations []CallGraphGeneration
+}
+
+// CallGraphGeneration is one row of the callgraph ledger as its own columns
+// state it — never what composition would serve for the coordinate it sits at.
+//
+// Every field is a column, so a whole coordinate's history costs one scan of
+// the record table and no blob decode, no edge row and no seal verification.
+type CallGraphGeneration struct {
+	ExtractedAt    time.Time
+	Algorithm      domain.CallGraphAlgorithm
+	OverallStatus  domain.CallGraphStatus
+	Completeness   domain.CompletenessLevel
+	AnalysisSource domain.AnalysisSource
+	NodeCount      int
+	EdgeCount      int
+	// ContentHash is the seal this row carries, used here to NAME the generation
+	// so a reader can find it in callgraph-show --history. It is not verified by
+	// a listing and nothing may treat it as verified because a listing returned
+	// it.
+	ContentHash string
+}
+
+// StatesTheSame reports whether two generations say the same thing about
+// themselves: the same counts, the same overall status and the same
+// completeness.
+//
+// It is the one statement of what CallGraphCoordinate.GenerationsDiffer
+// compares, so a store and a fake cannot drift into disagreeing about which
+// difference counts. ExtractedAt, the content hash and the analysis source are
+// deliberately excluded: every generation has its own, so including them would
+// make every re-analysed coordinate differ and the flag would say nothing.
+func (g CallGraphGeneration) StatesTheSame(other CallGraphGeneration) bool {
+	return g.NodeCount == other.NodeCount &&
+		g.EdgeCount == other.EdgeCount &&
+		g.OverallStatus == other.OverallStatus &&
+		g.Completeness == other.Completeness
 }
 
 // CallGraphCoordinateLister is the optional column-only listing: which
@@ -322,9 +383,25 @@ type CallGraphCoordinate struct {
 type CallGraphCoordinateLister interface {
 	// ListCallGraphCoordinates returns one entry per (module, version, pipeline
 	// version) the ledger holds, in the same order ListCallGraphRecords returns
-	// its summaries, with the same filter applied.
+	// its summaries, with the same filter applied. Each entry carries what every
+	// generation at that coordinate says about itself, so a listing can report a
+	// re-analysed module without composing it.
 	ListCallGraphCoordinates(ctx context.Context, filter CallGraphFilter) ([]CallGraphCoordinate, error)
 }
+
+// ToolchainNamer names the Go toolchain this process's analyses run under, or
+// the zero value when the environment cannot say.
+//
+// It is a function rather than a value because asking costs a subprocess, and
+// most runs never need the answer: only a cache lookup that has already met a
+// disagreement asks, and a process that extracts nothing never asks at all. The
+// caller memoises, so the cost is paid at most once.
+//
+// It names the toolchain the RUN would analyse under, which is the only thing a
+// cache lookup can compare a stored generation against. Nothing here reads a
+// record: a record states its own toolchain, and attributing this host's to one
+// that named none is the fabrication the toolchain axis exists to stop.
+type ToolchainNamer func(ctx context.Context) gotoolchain.Version
 
 // CallGraphSourceReader is the optional dimension-scoped read: the same question
 // GetCallGraphRecord answers, restricted to the values of one or more dimensions.

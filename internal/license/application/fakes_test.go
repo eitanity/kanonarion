@@ -134,6 +134,10 @@ func (s *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdent
 // fakeLicenceStore holds license records.
 type fakeLicenseStore struct {
 	records map[licenseKey]domain.LicenseRecord
+	// getErr makes the read leg fail, which is the only way to reach a caller's
+	// store-failure branch: a fake that can only be empty proves absence
+	// handling and nothing else.
+	getErr error
 }
 
 type licenseKey struct{ path, version, pipeline string }
@@ -147,6 +151,9 @@ func (s *fakeLicenseStore) PutLicenseRecord(_ context.Context, r domain.LicenseR
 }
 
 func (s *fakeLicenseStore) GetLicenseRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.LicenseRecord, bool, error) {
+	if s.getErr != nil {
+		return domain.LicenseRecord{}, false, s.getErr
+	}
 	if s.records == nil {
 		return domain.LicenseRecord{}, false, nil
 	}

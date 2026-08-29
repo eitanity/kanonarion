@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/goenv"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -69,7 +69,7 @@ func countingServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 func TestLatestVersion_ControlReachesTheNetwork(t *testing.T) {
 	permitted(t)
 	srv, hits := countingServer(t)
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 
 	version, err := db.LatestVersion(context.Background())
 	if err != nil {
@@ -89,7 +89,7 @@ func TestLatestVersion_ControlReachesTheNetwork(t *testing.T) {
 func TestAdvisoryDownloads_RefusedUnderAirGap(t *testing.T) {
 	airGapped(t)
 	srv, hits := countingServer(t)
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 	ctx := context.Background()
 
 	for _, tc := range []struct {
@@ -121,7 +121,7 @@ func TestAdvisoryDownloads_RefusedUnderAirGap(t *testing.T) {
 func TestRefusal_NamesTheRemedy(t *testing.T) {
 	airGapped(t)
 	srv, _ := countingServer(t)
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{}, testClock)
 
 	_, _, err := db.Snapshot(context.Background())
 	if err == nil {
@@ -139,7 +139,7 @@ func TestRefusal_NamesTheRemedy(t *testing.T) {
 // already held is read, parsed and answered from with the contract in force.
 func TestStoredSnapshot_StillAnswersUnderAirGap(t *testing.T) {
 	airGapped(t)
-	db := osv.New(nil, &fakeVulnStore{content: string(defaultVulnDBZip(t))})
+	db := osv.New(nil, &fakeVulnStore{content: string(defaultVulnDBZip(t))}, testClock)
 
 	identity, err := domain.NewDatabaseSnapshot("vuln.go.dev", "2024-01-01T00:00:00Z", time.Now(), domain.HashSnapshotContent(defaultVulnDBZip(t)))
 	if err != nil {

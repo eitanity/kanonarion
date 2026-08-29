@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -170,6 +170,60 @@ func TestListWalks_LatestOnlyKeepsOneWalkPerToolchain(t *testing.T) {
 	}
 }
 
+// walkRecordOnPlatform builds a walk of one target resolved FOR one platform
+// under one toolchain, which is what a cross-compiled store holds two of.
+func walkRecordOnPlatform(t testing.TB, id, goos, goarch, goVersion string, startedAt time.Time) domain.WalkRecord {
+	t.Helper()
+	rec := walkRecordUnderToolchain(t, id, goVersion, startedAt)
+	rec.Graph.BuildEnv.GOOS, rec.Graph.BuildEnv.GOARCH = goos, goarch
+	var h domain.WalkRecordHasher
+	rec, err := h.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	return rec
+}
+
+// TestListWalks_LatestOnlyKeepsOneWalkPerPlatform: a walk resolved for another
+// GOOS selected other files, so it is another build for the same reason another
+// toolchain is. The filter has always matched on the platform and the partition
+// did not, so one SQL statement disagreed with itself and a cross-compiled store
+// collapsed its platforms by clock.
+func TestListWalks_LatestOnlyKeepsOneWalkPerPlatform(t *testing.T) {
+	s := openMemStore(t)
+	ctx := context.Background()
+
+	base := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	linux := walkRecordOnPlatform(t, "01PLATFORM00000LATEST0LIN", "linux", "amd64", "go1.26.6", base)
+	darwin := walkRecordOnPlatform(t, "01PLATFORM00000LATEST0DAR", "darwin", "arm64", "go1.26.6", base.Add(time.Hour))
+	// A second linux walk, later than the darwin one: the partition must keep one
+	// per platform, not one per walk.
+	linuxAgain := walkRecordOnPlatform(t, "01PLATFORM00000LATEST0LI2", "linux", "amd64", "go1.26.6", base.Add(2*time.Hour))
+	for _, rec := range []domain.WalkRecord{linux, darwin, linuxAgain} {
+		if err := s.PutWalk(ctx, rec); err != nil {
+			t.Fatalf("PutWalk %s: %v", rec.ID, err)
+		}
+	}
+
+	got, err := s.ListWalks(ctx, walkports.WalkFilter{LatestOnly: true})
+	if err != nil {
+		t.Fatalf("ListWalks: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("latest-for-target returned %d candidates, want one per platform (2): %+v", len(got), got)
+	}
+	seen := map[string]string{}
+	for _, sum := range got {
+		seen[sum.GOOS+"/"+sum.GOARCH] = sum.ID
+	}
+	if seen["darwin/arm64"] != darwin.ID {
+		t.Errorf("the darwin/arm64 candidate is %q, want %s — the later linux walk stood for it", seen["darwin/arm64"], darwin.ID)
+	}
+	if seen["linux/amd64"] != linuxAgain.ID {
+		t.Errorf("the linux/amd64 candidate is %q, want the later of the two %s", seen["linux/amd64"], linuxAgain.ID)
+	}
+}
+
 // TestMigration9_BackfillsTheToolchainFromTheSealedRecord proves the column is a
 // projection of data already in the store rather than a field only new walks
 // get. Leaving it empty would make every stored walk permanently invisible to a
@@ -184,7 +238,7 @@ func TestMigration9_BackfillsTheToolchainFromTheSealedRecord(t *testing.T) {
 	pre := walkMigrationsBefore(t, 9)
 
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	handle, err := sqlitestore.Open(dsn, pre)
+	handle, err := sqlitestore.Open(dsn, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at the pre-migration schema: %v", err)
 	}
@@ -274,7 +328,7 @@ func TestMigration9_DoesNotDeleteWalks(t *testing.T) {
 	pre := walkMigrationsBefore(t, 9)
 
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	handle, err := sqlitestore.Open(dsn, pre)
+	handle, err := sqlitestore.Open(dsn, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at the pre-migration schema: %v", err)
 	}
@@ -329,7 +383,7 @@ func TestMigration9_UndecodableRowKeepsAnUnrecordedToolchain(t *testing.T) {
 	all := walksqlite.Migrations()
 	pre := walkMigrationsBefore(t, 9)
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	handle, err := sqlitestore.Open(dsn, pre)
+	handle, err := sqlitestore.Open(dsn, pre, sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at the pre-migration schema: %v", err)
 	}

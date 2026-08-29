@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -229,5 +230,261 @@ func TestWorktreeRouting_SingleCheckoutReadsNoRecord(t *testing.T) {
 	}
 	if r.ServedRoot != "/src/a/mod" || !r.Matched {
 		t.Errorf("routing report = %+v, want the served generation read and matched at /src/a/mod", r)
+	}
+}
+
+// TestCoordinates_ReadNeitherBlobNorEdgeRow is the cost property, asserted
+// structurally.
+//
+// A listing answers "what does the ledger hold", which every column already
+// says. The summary listing answers "what does the SERVED generation say", and
+// for a coordinate holding more than one generation that means composing them:
+// decode each generation's blob, reconstruct its entire edge set, then read
+// eight scalars off the winner. On a real ledger that was a minute of work per
+// listing and none of it reached the output.
+//
+// Timing cannot pin this — on a store this size the composition is free, so a
+// timed test passes with the defect intact. The two faults below are what pins
+// it: with the blob unreadable and the edge table renamed away, the composing
+// listing fails and this one still answers. Each fault is injected on its own,
+// because a single test failing under both proves only that it touched one.
+func TestCoordinates_ReadNeitherBlobNorEdgeRow(t *testing.T) {
+	faults := []struct {
+		name   string
+		inject func(*testing.T, *sqlite.Store, context.Context)
+	}{
+		{"corrupt serialised blob", func(t *testing.T, s *sqlite.Store, ctx context.Context) {
+			t.Helper()
+			if err := s.CorruptSerialisedBlobsForTest(ctx); err != nil {
+				t.Fatalf("CorruptSerialisedBlobsForTest: %v", err)
+			}
+		}},
+		{"edge table renamed away", func(t *testing.T, s *sqlite.Store, ctx context.Context) {
+			t.Helper()
+			if err := s.HideEdgeTableForTest(ctx); err != nil {
+				t.Fatalf("HideEdgeTableForTest: %v", err)
+			}
+		}},
+	}
+	for _, f := range faults {
+		t.Run(f.name, func(t *testing.T) {
+			s := openTestStore(t)
+			ctx := context.Background()
+			for i, at := range []time.Time{testTime, testTime.Add(time.Hour), testTime.Add(2 * time.Hour)} {
+				rec := ledgerRecord(t, ledgerSpec{
+					source:       domain2.AnalysisSourceModuleZip,
+					completeness: domain2.CompletenessBuiltWithBodies,
+					artefact:     "zip:h1:gen",
+					at:           at,
+					callee:       "example.com/mod.Callee" + string(rune('A'+i)),
+				})
+				if err := s.PutCallGraphRecord(ctx, rec); err != nil {
+					t.Fatalf("PutCallGraphRecord: %v", err)
+				}
+			}
+			// The control: before the fault, both listings answer. Without this the
+			// test could pass against a store that never held anything.
+			if _, err := s.ListCallGraphRecords(ctx, ports.CallGraphFilter{}); err != nil {
+				t.Fatalf("the composing listing failed before the fault was injected: %v", err)
+			}
+
+			f.inject(t, s, ctx)
+
+			if _, err := s.ListCallGraphRecords(ctx, ports.CallGraphFilter{}); err == nil {
+				t.Errorf("the composing listing answered with %s; the fault proves nothing about a listing that survives it", f.name)
+			}
+			coords, err := s.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{})
+			if err != nil {
+				t.Fatalf("ListCallGraphCoordinates: %v", err)
+			}
+			got := coordinateOf(t, coords, testCoord.Path())
+			if len(got.Generations) != 3 {
+				t.Fatalf("generations = %d, want 3", len(got.Generations))
+			}
+			// Newest first, and each generation's counts are its own row's columns.
+			for i, want := range []time.Time{testTime.Add(2 * time.Hour), testTime.Add(time.Hour), testTime} {
+				if !got.Generations[i].ExtractedAt.Equal(want) {
+					t.Errorf("generation %d extracted at %s, want %s", i, got.Generations[i].ExtractedAt, want)
+				}
+				if got.Generations[i].NodeCount != 1 || got.Generations[i].EdgeCount != 1 {
+					t.Errorf("generation %d counts = %d nodes / %d edges, want 1 / 1",
+						i, got.Generations[i].NodeCount, got.Generations[i].EdgeCount)
+				}
+				if got.Generations[i].ContentHash == "" {
+					t.Errorf("generation %d names no record; a reader cannot look it up", i)
+				}
+			}
+		})
+	}
+}
+
+// TestCoordinates_SingleGenerationCoordinateStatesItsOwnRow is the control the
+// listing's compatibility rests on: one generation, and the coordinate carries
+// exactly that row's columns.
+func TestCoordinates_SingleGenerationCoordinateStatesItsOwnRow(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	rec := ledgerRecord(t, ledgerSpec{
+		source:       domain2.AnalysisSourceModuleZip,
+		completeness: domain2.CompletenessBuiltWithBodies,
+		artefact:     "zip:h1:only",
+		at:           testTime,
+		status:       domain2.CallGraphStatusPartial,
+	})
+	if err := s.PutCallGraphRecord(ctx, rec); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+	coords, err := s.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		t.Fatalf("ListCallGraphCoordinates: %v", err)
+	}
+	got := coordinateOf(t, coords, testCoord.Path())
+	if len(got.Generations) != 1 {
+		t.Fatalf("generations = %d, want 1", len(got.Generations))
+	}
+	g := got.Generations[0]
+	if g.OverallStatus != domain2.CallGraphStatusPartial {
+		t.Errorf("status = %s, want %s", g.OverallStatus, domain2.CallGraphStatusPartial)
+	}
+	if g.NodeCount != rec.NodeCount || g.EdgeCount != rec.EdgeCount {
+		t.Errorf("counts = %d / %d, want %d / %d", g.NodeCount, g.EdgeCount, rec.NodeCount, rec.EdgeCount)
+	}
+	if g.ContentHash != rec.ContentHash {
+		t.Errorf("content hash = %q, want %q", g.ContentHash, rec.ContentHash)
+	}
+	if g.Completeness != rec.Completeness || g.AnalysisSource != rec.AnalysisSource || g.Algorithm != rec.Algorithm {
+		t.Errorf("generation = %s/%s/%s, want %s/%s/%s",
+			g.Completeness, g.AnalysisSource, g.Algorithm,
+			rec.Completeness, rec.AnalysisSource, rec.Algorithm)
+	}
+}
+
+// TestCoordinates_GenerationsDifferOnEachStatedFieldAlone pins the third flag,
+// one field at a time.
+//
+// The flag says the generations at a coordinate do not state the same thing
+// about themselves. Four columns say it — node count, edge count, overall
+// status, completeness — and a test that varied all four together would only
+// prove the flag noticed one of them.
+func TestCoordinates_GenerationsDifferOnEachStatedFieldAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		second ledgerSpec
+	}{
+		{"node count", ledgerSpec{nodeCount: 2}},
+		{"edge count", ledgerSpec{edgeCount: 2}},
+		{"overall status", ledgerSpec{status: domain2.CallGraphStatusPartial}},
+		{"completeness", ledgerSpec{completeness: domain2.CompletenessMetadataOnly}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTestStore(t)
+			ctx := context.Background()
+
+			first := ledgerSpec{
+				source:       domain2.AnalysisSourceModuleZip,
+				completeness: domain2.CompletenessBuiltWithBodies,
+				artefact:     "zip:h1:gen", at: testTime,
+			}
+			second := tc.second
+			second.source = domain2.AnalysisSourceModuleZip
+			second.artefact = "zip:h1:gen"
+			second.at = testTime.Add(time.Hour)
+			if second.completeness == "" {
+				second.completeness = domain2.CompletenessBuiltWithBodies
+			}
+			for _, spec := range []ledgerSpec{first, second} {
+				if err := s.PutCallGraphRecord(ctx, ledgerRecord(t, spec)); err != nil {
+					t.Fatalf("PutCallGraphRecord: %v", err)
+				}
+			}
+
+			coords, err := s.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{})
+			if err != nil {
+				t.Fatalf("ListCallGraphCoordinates: %v", err)
+			}
+			got := coordinateOf(t, coords, testCoord.Path())
+			if !got.GenerationsDiffer {
+				t.Errorf("GenerationsDiffer = false for generations differing on %s alone, want true", tc.name)
+			}
+			if len(got.Generations) != 2 {
+				t.Errorf("generations = %d, want 2", len(got.Generations))
+			}
+		})
+	}
+}
+
+// TestCoordinates_GenerationsAgreeingIsNotComposition is the control, and it is
+// the reason the flag is worded the way it is.
+//
+// Two generations that state the same counts, status and completeness raise
+// nothing, even though they hold DIFFERENT edges and different seals. What a
+// read of the coordinate would make of them is composition's answer, decided
+// over decoded records; this listing decodes nothing and claims nothing about
+// it.
+func TestCoordinates_GenerationsAgreeingIsNotComposition(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for i, at := range []time.Time{testTime, testTime.Add(time.Hour)} {
+		rec := ledgerRecord(t, ledgerSpec{
+			source:       domain2.AnalysisSourceModuleZip,
+			completeness: domain2.CompletenessBuiltWithBodies,
+			artefact:     "zip:h1:gen", at: at,
+			callee: "example.com/mod.Callee" + string(rune('A'+i)),
+		})
+		if err := s.PutCallGraphRecord(ctx, rec); err != nil {
+			t.Fatalf("PutCallGraphRecord: %v", err)
+		}
+	}
+
+	coords, err := s.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		t.Fatalf("ListCallGraphCoordinates: %v", err)
+	}
+	got := coordinateOf(t, coords, testCoord.Path())
+	if got.GenerationsDiffer {
+		t.Error("GenerationsDiffer = true for two generations stating identical counts, " +
+			"status and completeness; the flag would then mean \"has history\"")
+	}
+	if len(got.Generations) != 2 {
+		t.Fatalf("generations = %d, want 2", len(got.Generations))
+	}
+	if got.Generations[0].ContentHash == got.Generations[1].ContentHash {
+		t.Error("the two generations carry one seal; they were meant to hold different edges")
+	}
+}
+
+// TestCoordinates_GenerationsDifferIsPerCoordinate keeps one coordinate's
+// disagreement out of its neighbour's row.
+func TestCoordinates_GenerationsDifferIsPerCoordinate(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	quiet, err := coordinate.NewModuleCoordinate("example.com/quiet", "v1.0.0")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	specs := []ledgerSpec{
+		{artefact: "zip:h1:noisy", at: testTime},
+		{artefact: "zip:h1:noisy", at: testTime.Add(time.Hour), nodeCount: 7},
+		{coord: quiet, artefact: "zip:h1:quiet", at: testTime},
+	}
+	for _, spec := range specs {
+		spec.source = domain2.AnalysisSourceModuleZip
+		spec.completeness = domain2.CompletenessBuiltWithBodies
+		if err := s.PutCallGraphRecord(ctx, ledgerRecord(t, spec)); err != nil {
+			t.Fatalf("PutCallGraphRecord: %v", err)
+		}
+	}
+
+	coords, err := s.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		t.Fatalf("ListCallGraphCoordinates: %v", err)
+	}
+	if !coordinateOf(t, coords, testCoord.Path()).GenerationsDiffer {
+		t.Error("GenerationsDiffer = false for the coordinate whose generations state different node counts")
+	}
+	if coordinateOf(t, coords, "example.com/quiet").GenerationsDiffer {
+		t.Error("GenerationsDiffer = true for a coordinate holding one generation")
 	}
 }

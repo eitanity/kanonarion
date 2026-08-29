@@ -16,9 +16,9 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	factstoresqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
-	"github.com/eitanity/kanonarion/internal/goenv"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -35,8 +35,9 @@ type useFlags struct {
 func newUseCmd(stdout, stderr io.Writer) *cobra.Command {
 	f := useFlags{}
 	cmd := &cobra.Command{
-		Use:   "use <module@version>",
-		Short: "Copy walked modules from kanonarion's store to your local Go module cache",
+		Use:         "use <module@version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Copy walked modules from kanonarion's store to your local Go module cache",
 		Long: `Copies the version set of one walk of <module>@<version> out of the store
 and into a Go module cache a later go build can compile against.
 
@@ -132,7 +133,9 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	dbHandle, err := sqlitestore.Open(dbPath, nil)
+	// `use` rewrites the caller's go.mod from a stored walk; it records nothing,
+	// so it reads the store and does not bring one into existence.
+	dbHandle, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentRead)
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
 	}

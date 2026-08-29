@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	fipssqlite "github.com/eitanity/kanonarion/internal/fips/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/fips/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 func openTestStore(t *testing.T) *fipssqlite.Store {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", fipssqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", fipssqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

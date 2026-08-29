@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"sort"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -197,20 +196,11 @@ type LicenseRecord struct {
 	SourceContentHash string
 }
 
-// SortFiles sorts LicenseFiles lexicographically by Path; within each entry,
-// sorts AltMatches by Confidence descending and CopyrightStatements by
-// Verbatim. Call after construction, before hashing.
+// SortFiles sorts LicenseFiles by Path; within each entry, AltMatches by
+// Confidence descending and CopyrightStatements by Verbatim. Call after
+// construction, before hashing. The comparators live in ordering.go; each is a
+// total order, so the result is a function of the record's contents and not of
+// the order the archive walk produced them in.
 func (r *LicenseRecord) SortFiles() {
-	sort.Slice(r.LicenseFiles, func(i, j int) bool {
-		return r.LicenseFiles[i].Path < r.LicenseFiles[j].Path
-	})
-	for i := range r.LicenseFiles {
-		f := &r.LicenseFiles[i]
-		sort.Slice(f.AltMatches, func(a, b int) bool {
-			return f.AltMatches[a].Confidence > f.AltMatches[b].Confidence
-		})
-		sort.Slice(f.CopyrightStatements, func(a, b int) bool {
-			return f.CopyrightStatements[a].Verbatim < f.CopyrightStatements[b].Verbatim
-		})
-	}
+	sortLicenseFiles(r.LicenseFiles)
 }

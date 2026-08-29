@@ -110,3 +110,56 @@ func TestNewExtractProgressReporter_Enablement(t *testing.T) {
 		})
 	}
 }
+
+// newStalenessProgressReporter shares the same enablement rules as the two
+// above, which is the point of building it the same way: --no-progress silences
+// the retry line exactly as it silences the heartbeat, with no flag of its own.
+func TestNewStalenessProgressReporter_Enablement(t *testing.T) {
+	on := configdomain.Config{Preferences: configdomain.Preferences{Progress: true}}
+	off := configdomain.Config{Preferences: configdomain.Preferences{Progress: false}}
+
+	tests := []struct {
+		name       string
+		noProgress bool
+		cfg        configdomain.Config
+		level      string
+		wantNil    bool
+	}{
+		{"default on", false, on, "warn", false},
+		{"error level still on", false, on, "error", false},
+		{"no-progress flag", true, on, "warn", true},
+		{"preference disabled", false, off, "warn", true},
+		{"info streams already", false, on, "info", true},
+		{"debug streams already", false, on, "debug", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			got := newStalenessProgressReporter(&buf, tt.noProgress, tt.cfg, tt.level)
+			if (got == nil) != tt.wantNil {
+				t.Errorf("newStalenessProgressReporter nil=%v, want nil=%v", got == nil, tt.wantNil)
+			}
+			if tt.wantNil {
+				return
+			}
+			got.RetryingLookup("example.com/mod/v2", 2, 4)
+			if buf.String() != "staleness progress: retrying example.com/mod/v2 (attempt 2 of 4)\n" {
+				t.Errorf("retry line = %q", buf.String())
+			}
+		})
+	}
+}
+
+// The retry line is NOT throttled the way the heartbeat is. The whole retry
+// schedule is 14s — shorter than the 20s heartbeat interval — so a throttled
+// reporter would print nothing at all for the wait it exists to explain.
+func TestStalenessProgressReporter_EveryRetryIsReported(t *testing.T) {
+	var buf bytes.Buffer
+	r := newStderrRetryReporter(&buf)
+	for attempt := 2; attempt <= 4; attempt++ {
+		r.RetryingLookup("example.com/mod/v2", attempt, 4)
+	}
+	if got := strings.Count(buf.String(), "\n"); got != 3 {
+		t.Errorf("lines = %d, want one per retry (3): %q", got, buf.String())
+	}
+}

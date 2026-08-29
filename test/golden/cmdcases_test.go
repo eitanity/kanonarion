@@ -38,7 +38,8 @@ package golden_test
 //	                      that must state which walk it chose, an absent target.
 //	vuln-by-id            --json; an advisory, a RETRACTED advisory, an absent one.
 //	verification-coverage --json.
-//	dependents            --json.
+//	dependents            --json under --any-build, and the refusal a question that
+//	                      names no build gets.
 //
 // NOT COVERED, and named rather than implied:
 //
@@ -563,8 +564,16 @@ func composedReadCases(emptyStore string) []cmdCase {
 		},
 		{
 			name: "dependents_json_populated",
-			args: []string{"dependents", "example.com/shallow@v1.0.0", "--json"},
-			why:  "populated: which modules in a stored walk depend on this one, read off the graph edges.",
+			args: []string{"dependents", "example.com/shallow@v1.0.0", "--any-build", "--json"},
+			why: "populated: which modules in a stored walk depend on this one, read off the graph edges. " +
+				"--any-build is the store-wide search; it is what this case has always recorded, and it " +
+				"is now the flag that reaches it.",
+		},
+		{
+			name: "dependents_text_unrooted",
+			args: []string{"dependents", "example.com/shallow@v1.0.0"},
+			why: "error-shaped: no walk id, no manifest and no go.mod here, so there is no build for the " +
+				"question to be about. The refusal names all three ways to give one instead of searching.",
 		},
 	}
 }

@@ -79,6 +79,10 @@ stdout '"byte_count"'
 # go.mod here) and routes into the go.mod scan — it must not fail with a usage
 # error. This working dir has no Go packages, so the code scope is empty;
 # reporting that (exit 0) confirms it reached runContextGoMod.
+#
+# The default store root has to exist first: `context` reads, and a read no
+# longer creates the store it reads from.
+mkdir $WORK/.kanonarion
 kanonarion context
 ! stdout 'panic'
 ! stderr 'invalid arguments'

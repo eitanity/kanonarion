@@ -109,6 +109,11 @@ func (uc *QueryCallGraphUseCase) ListCallGraphRecords(ctx context.Context, filte
 // listing, which answers the same question at a cost; the fallback is here
 // rather than at each call site so no caller has to know which kind of store it
 // is wired to.
+//
+// The fallback leaves Generations empty. A composed summary describes the
+// generation the ladder picked, and reporting it as "the generations this
+// coordinate holds" would state a composed answer as a row's own — exactly the
+// claim this read exists to avoid. Empty says the store did not enumerate them.
 func (uc *QueryCallGraphUseCase) ListCallGraphCoordinates(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphCoordinate, error) {
 	if lister, ok := uc.store.(cgports.CallGraphCoordinateLister); ok {
 		coords, lerr := lister.ListCallGraphCoordinates(ctx, filter)

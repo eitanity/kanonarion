@@ -130,6 +130,13 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 		add("license_overrides."+mod, cfg.LicenseOverrides[mod], true)
 	}
 
+	for _, mod := range sortedKeys(cfg.CopyrightDeclarations) {
+		d := cfg.CopyrightDeclarations[mod]
+		add("copyright_declarations."+mod,
+			d.Copyright+" (declared by "+d.DeclaredBy+" on "+d.DeclaredOn+"; basis: "+d.Basis+")",
+			true)
+	}
+
 	add("callgraph.exclude", "["+strings.Join(cfg.Callgraph.Exclude, ", ")+"]", raw.isSet("callgraph", "exclude"))
 	add("staleness.ttl", cfg.Staleness.TTL.String(), raw.isSet("staleness", "ttl"))
 	add("staleness.probe_concurrency", strconv.Itoa(cfg.Staleness.ProbeConcurrency),

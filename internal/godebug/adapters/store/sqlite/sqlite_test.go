@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	godebugstore "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/godebug/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 func openTestStore(t *testing.T) *godebugstore.Store {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", godebugstore.Migrations())
+	db, err := sqlitestore.Open(":memory:", godebugstore.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

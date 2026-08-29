@@ -15,6 +15,7 @@ import (
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
+	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,8 @@ func newLicenseCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f licenseFlags
 
 	cmd := &cobra.Command{
-		Use: "license <module>@<version>",
+		Use:         "license <module>@<version>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
 		// The docs and the store speak British English; accept both spellings so
 		// neither the documented form nor the SPDX-conventional one is wrong.
 		Aliases: []string{"licence"},
@@ -80,6 +82,14 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 	}
 	defer func() { _ = cleanup() }()
 
+	// The standard library never arrives through the module proxy, so extraction
+	// has nothing to open and the refusal it produced named `kanonarion fetch` —
+	// a command that rejects the coordinate outright. Its licence is on the
+	// chain of custody instead, which is where every other surface reads it.
+	if isStdlibCoordinate(coord) {
+		return runStdlibLicense(ctx, coord, f, ctr.StdlibCustody, stdout)
+	}
+
 	if f.history {
 		return runLicenseHistory(ctx, coord, ctr.QueryLicense, stdout)
 	}
@@ -98,11 +108,197 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 	}
 
 	if (f.recursive || f.all) && !jsonOut {
-		if err := printLicenseRecursive(ctx, coord, ctr.QueryWalks, ctr.ExtractLicense, ctr.QueryLicense, f, stdout, stderr); err != nil {
+		if err := printLicenseRecursive(ctx, coord, ctr.QueryWalks, ctr.ExtractLicense, ctr.QueryLicense, ctr.StdlibCustody, f, stdout, stderr); err != nil {
 			return fmt.Errorf("recursive license report: %w", err)
 		}
 	}
 
+	return nil
+}
+
+// runStdlibLicense answers `license stdlib@<version>` from the recorded chain
+// of custody.
+//
+// It reports the same identity and the same basis audit and the SBOM report
+// for the same node, and where nothing has been recorded it says so and names
+// the command that would record it. It never names `kanonarion fetch`: the
+// standard library has no fetchable module path, so that remedy could not be
+// followed even in principle.
+func runStdlibLicense(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	f licenseFlags,
+	custody StdlibCustodyReader,
+	stdout io.Writer,
+) error {
+	if f.history {
+		return runStdlibLicenceHistory(ctx, coord, custody, stdout)
+	}
+
+	answer, err := resolveStdlibLicence(ctx, coord, custody)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printStdlibLicenceJSON(answer, stdout)
+	}
+	return printStdlibLicenceText(answer, stdout)
+}
+
+// stdlibLicenceJSON is the machine-readable shape of the standard library's
+// licence answer. It is deliberately not the licence-record shape: there is no
+// record, and emitting one would put an extraction's field names around an
+// answer no extraction produced.
+type stdlibLicenceJSON struct {
+	Module  string `json:"module"`
+	Version string `json:"version"`
+	SPDX    string `json:"primary_spdx"`
+	Status  string `json:"status"`
+	Custody struct {
+		Established  bool   `json:"established"`
+		Basis        string `json:"basis"`
+		Verification string `json:"verification,omitempty"`
+		Detail       string `json:"detail,omitempty"`
+		Route        string `json:"route,omitempty"`
+		SourceURL    string `json:"source_url,omitempty"`
+		VCSURL       string `json:"vcs_url,omitempty"`
+		VCSRef       string `json:"vcs_ref,omitempty"`
+		VCSCommit    string `json:"vcs_commit,omitempty"`
+		SHA256       string `json:"sha256,omitempty"`
+		AcquiredAt   string `json:"acquired_at,omitempty"`
+		Statement    string `json:"statement"`
+		Remedy       string `json:"remedy,omitempty"`
+	} `json:"custody"`
+	Obligations domain.Obligations `json:"obligations"`
+}
+
+func printStdlibLicenceJSON(a stdlibLicence, stdout io.Writer) error {
+	out := stdlibLicenceJSON{
+		Module:      a.Coordinate.Path(),
+		Version:     a.Coordinate.Version(),
+		SPDX:        a.SPDX,
+		Status:      stdlibLicenceStatus(a),
+		Obligations: domain.LookupObligations(a.SPDX),
+	}
+	out.Custody.Established = a.Established()
+	out.Custody.Basis = a.Basis
+	out.Custody.Verification = a.Verification
+	out.Custody.Detail = a.Detail
+	out.Custody.Route = a.Route
+	out.Custody.SourceURL = a.SourceURL
+	out.Custody.VCSURL = a.VCSURL
+	out.Custody.VCSRef = a.VCSRef
+	out.Custody.VCSCommit = a.VCSCommit
+	out.Custody.SHA256 = a.SHA256
+	if !a.AcquiredAt.IsZero() {
+		out.Custody.AcquiredAt = a.AcquiredAt.UTC().Format(time.RFC3339)
+	}
+	out.Custody.Statement = a.basisStatement()
+	if !a.Established() {
+		out.Custody.Remedy = stdlibCustodyRemedy
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		return fmt.Errorf("encoding JSON: %w", err)
+	}
+	return nil
+}
+
+// stdlibLicenceStatus is the status word audit prints for the same node:
+// Detected relays extracted evidence, Known relays published knowledge.
+func stdlibLicenceStatus(a stdlibLicence) string {
+	if a.Basis == stdlibLicenceBasisTarball {
+		return domain.LicenseStatusDetected.String()
+	}
+	return "Known"
+}
+
+func printStdlibLicenceText(a stdlibLicence, stdout io.Writer) error {
+	if _, err := fmt.Fprintf(stdout, "%s: %s — %s\n",
+		a.Coordinate, stdlibLicenceStatus(a), a.SPDX); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "  basis: %s\n", a.basisStatement()); err != nil {
+		return fmt.Errorf("writing basis: %w", err)
+	}
+	if a.Established() {
+		rows := [][2]string{
+			{"acquired via", a.Route},
+			{"source", a.SourceURL},
+			{"sha256", a.SHA256},
+			{"vcs", strings.TrimSpace(a.VCSURL + " " + a.VCSRef)},
+			{"commit", a.VCSCommit},
+			{"detail", a.Detail},
+		}
+		for _, row := range rows {
+			if row[1] == "" {
+				continue
+			}
+			if _, err := fmt.Fprintf(stdout, "  %-13s %s\n", row[0]+":", row[1]); err != nil {
+				return fmt.Errorf("writing custody detail: %w", err)
+			}
+		}
+		if !a.AcquiredAt.IsZero() {
+			if _, err := fmt.Fprintf(stdout, "  %-13s %s\n", "acquired at:",
+				a.AcquiredAt.UTC().Format(time.RFC3339)); err != nil {
+				return fmt.Errorf("writing custody detail: %w", err)
+			}
+		}
+	}
+	if _, err := fmt.Fprintln(stdout,
+		"  note: the standard library ships with the toolchain and holds no licence record;"); err != nil {
+		return fmt.Errorf("writing note: %w", err)
+	}
+	if _, err := fmt.Fprintln(stdout,
+		"        this identity is the chain of custody the walk stage records for it"); err != nil {
+		return fmt.Errorf("writing note: %w", err)
+	}
+	return printObligationsSection(a.SPDX, stdout)
+}
+
+// runStdlibLicenceHistory prints every custody measurement the ledger holds for
+// the toolchain version, oldest first. It is the standard library's answer to
+// the question --history asks of every other module: what was believed before,
+// and on the strength of which bytes.
+func runStdlibLicenceHistory(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	custody StdlibCustodyReader,
+	stdout io.Writer,
+) error {
+	goVersion := stdlibdomain.CanonicalGoVersion(coord.Version())
+	lister, ok := custody.(StdlibCustodyLister)
+	if !ok {
+		return fmt.Errorf("this store keeps no standard-library custody history")
+	}
+	measurements, err := lister.ListFactsFor(ctx, goVersion)
+	if err != nil {
+		return fmt.Errorf("listing standard-library custody measurements for %s: %w", goVersion, err)
+	}
+	if len(measurements) == 0 {
+		if _, werr := fmt.Fprintf(stdout,
+			"no chain of custody recorded for %s (%s); establish one with: %s\n",
+			coord, goVersion, stdlibCustodyRemedy); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+		return nil
+	}
+	if _, werr := fmt.Fprintf(stdout, "%d custody measurement(s) for %s (%s):\n",
+		len(measurements), coord, goVersion); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
+	for _, m := range measurements {
+		spdx := m.LicenseSPDX
+		if spdx == "" {
+			spdx = "-"
+		}
+		if _, werr := fmt.Fprintf(stdout, "  %s  %-20s %-26s via %s\n    artefact: sha256:%s\n",
+			m.AcquiredAt.UTC().Format(time.RFC3339), spdx,
+			string(m.VerificationStatus), m.AcquisitionRoute.String(), m.Digests.SHA256); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+	}
 	return nil
 }
 
@@ -166,12 +362,42 @@ func runLicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, u
 	return nil
 }
 
+// closureLicenceReader returns the per-module read the closure listing drives.
+//
+// A project walk carries the standard library as a node, and extraction can
+// only ever miss on it: it is toolchain-provided, never fetched. The listing
+// used to show that miss as `run 'kanonarion fetch' first` against a coordinate
+// fetch rejects. Its licence comes off the chain of custody, carried here in
+// the shape the caller reads — the identifier — and never persisted, because no
+// extraction produced it.
+func closureLicenceReader(
+	extractUC ExtractLicenseUseCase,
+	custody StdlibCustodyReader,
+	force bool,
+) func(context.Context, coordinate.ModuleCoordinate) (domain.LicenseRecord, error) {
+	return func(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.LicenseRecord, error) {
+		if isStdlibCoordinate(coord) {
+			answer, cerr := resolveStdlibLicence(ctx, coord, custody)
+			if cerr != nil {
+				return domain.LicenseRecord{}, cerr
+			}
+			return domain.LicenseRecord{Coordinate: coord, PrimarySPDX: answer.SPDX}, nil
+		}
+		res, err := extractUC.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: force})
+		if err != nil {
+			return domain.LicenseRecord{}, fmt.Errorf("extracting license for %s: %w", coord, err)
+		}
+		return res.Record, nil
+	}
+}
+
 func printLicenseRecursive(
 	ctx context.Context,
 	target coordinate.ModuleCoordinate,
 	walksUC QueryWalksUseCase,
 	extractUC ExtractLicenseUseCase,
 	queryUC QueryLicenseUseCase,
+	custody StdlibCustodyReader,
 	f licenseFlags,
 	stdout, stderr io.Writer,
 ) error {
@@ -197,13 +423,7 @@ func printLicenseRecursive(
 		choice = chooseWalk(ctx, walksUC, summaries, "")
 	}
 
-	extractFn := func(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.LicenseRecord, error) {
-		res, err := extractUC.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: f.force})
-		if err != nil {
-			return domain.LicenseRecord{}, fmt.Errorf("extracting license for %s: %w", coord, err)
-		}
-		return res.Record, nil
-	}
+	extractFn := closureLicenceReader(extractUC, custody, f.force)
 
 	depResults, err := queryUC.ResolveForWalk(ctx, choice.summary.ID, target, extractFn)
 	if err != nil {
@@ -604,9 +824,10 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 
 	cmd := &cobra.Command{
-		Use:     "license-list",
-		Aliases: []string{"licence-list"},
-		Short:   "List extracted license records",
+		Use:         "license-list",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Aliases:     []string{"licence-list"},
+		Short:       "List extracted license records",
 		// The command filters by flag only. Without this a stray positional was
 		// accepted and silently ignored, so `license-list <module>` printed the
 		// whole store and read as "this module holds every one of these".

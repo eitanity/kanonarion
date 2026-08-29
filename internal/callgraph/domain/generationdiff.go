@@ -267,8 +267,25 @@ func diffMembers[T any](field, kind string, left, right []T,
 
 	sort.Strings(d.OnlyLeft)
 	sort.Strings(d.OnlyRight)
-	sort.Slice(d.Changed, func(i, j int) bool { return d.Changed[i].ID < d.Changed[j].ID })
+	sort.Slice(d.Changed, func(i, j int) bool { return MemberChangeLess(d.Changed[i], d.Changed[j]) })
 	return d, nil
+}
+
+// MemberChangeLess is the canonical ordering for MemberChange slices. One
+// member can change in more than one field between two generations, so the id
+// alone does not identify a change, and the two values are what a reader
+// distinguishes two changes on the same field by.
+func MemberChangeLess(a, b MemberChange) bool {
+	if a.ID != b.ID {
+		return a.ID < b.ID
+	}
+	if a.Field != b.Field {
+		return a.Field < b.Field
+	}
+	if a.Left != b.Left {
+		return a.Left < b.Left
+	}
+	return a.Right < b.Right
 }
 
 // runEnd returns the index one past the members sharing s[i]'s identity.

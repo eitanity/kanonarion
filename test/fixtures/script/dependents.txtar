@@ -42,17 +42,47 @@ stdout 'example.com/app@v1.0.0.*\[root\]'
 stderr 'no walk record matched walk id "NOSUCHID"'
 stderr 'to list every walk record: kanonarion walk-list --limit 0'
 
-# Without --walk-id, auto-resolves to the most recent walk containing the module
-kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores --include-root
+# The working directory's go.mod names the build. This sandbox symlinks the
+# repo's own manifest, and the fixture store holds no walk of that project, so
+# the read refuses and names the walk to take rather than searching for a build
+# that happens to hold the coordinate.
+! kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores
+stderr 'no succeeded project walk for github.com/eitanity/kanonarion'
+stderr 'kanonarion walk --gomod'
+! stderr 'walk\(s\) searched'
+
+# With no walk id, no --gomod and no go.mod in the working directory there is no
+# build for the question to be about. The refusal names all three ways to give
+# one, and does NOT search.
+mkdir $WORK/nomanifest
+cd $WORK/nomanifest
+! kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores
+stderr 'property of one build'
+stderr '--gomod'
+stderr '--walk-id'
+stderr '--any-build'
+! stderr 'walk\(s\) searched'
+cd $WORK
+
+# --any-build is the store-wide search, and reaches the walk of a build that
+# consumes the module exactly as the default used to.
+kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores --any-build --include-root
 stdout 'example.com/app@v1.0.0'
 
-# Without --walk-id, module not in any walk returns a clear error. This store
-# holds fewer walks than the search bound, so the search exhausted it and the
-# negative is a plain absence with no hedge attached.
-! kanonarion dependents example.com/notpresent@v9.9.9 --store-root=$WORK/stores
+# --any-build, module not in any walk returns a clear error. This store holds
+# fewer walks than the search bound, so the search exhausted it and the negative
+# is a plain absence with no hedge attached.
+! kanonarion dependents example.com/notpresent@v9.9.9 --store-root=$WORK/stores --any-build
 stderr 'no walk in this store contains example.com/notpresent@v9.9.9'
 stderr 'walk\(s\) searched'
 ! stderr 'most recent walks searched'
+
+# A scope flag names a projection of a manifest, so the search and a pinned walk
+# both refuse it rather than accepting and discarding it.
+! kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores --any-build --tool
+stderr 'does not act on --tool'
+! kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --gomod ./go.mod
+stderr 'does not act on --gomod'
 
 # Invalid coordinate errors
 ! kanonarion dependents nodot --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores

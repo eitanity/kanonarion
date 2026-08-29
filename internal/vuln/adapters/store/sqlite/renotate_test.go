@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -40,7 +40,7 @@ func migrationsBeforeNotation() []sqlitestore.Migration {
 // a test can seed the rows the migration will find.
 func preNotationStore(t *testing.T) sqlitestore.DB {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", migrationsBeforeNotation())
+	db, err := sqlitestore.Open(":memory:", migrationsBeforeNotation(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening the pre-notation store: %v", err)
 	}

@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // Store is the SQLite-backed SBOM store.
@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS sbom_records_cache_idx
 
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 func Open(dsn string) (*Store, error) {
-	db, err := sqlitestore.Open(dsn, Migrations())
+	db, err := sqlitestore.Open(dsn, Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening sbom store: %w", err)
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +15,8 @@ import (
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -83,24 +86,72 @@ func buildProvenance(coord coordinate.ModuleCoordinate) contextProvenance {
 	return contextProvenance{ForkHeuristic: out}
 }
 
-// buildDependencies lists the module's direct dependencies as one walk resolved
-// them.
+// basisWalk is the walk a context document is based on: the build every section
+// of that document answers in. It is resolved once per document and handed to
+// the sections, never re-selected by one of them.
 //
-// Which walk is a choice wherever the store holds more than one of this target,
-// and the different walks carry different sets: two scopes of one project select
-// different modules, and two platforms select different files and so different
-// modules again. The choice therefore runs the same rule every other defaulting
-// read runs — prefer a walk whose recorded resolution still agrees with the
-// manifest it was taken from, fall back to recency — rather than taking whatever
-// is newest.
+// A section that ran its own selection could return a different walk from the
+// one the document names, which is the same document reporting two builds. The
+// dependency section did exactly that — it looked only at walks rooted at the
+// queried module, so a module a project walk holds had its dependencies reported
+// as unmeasured one line above the walk that resolved them.
+type basisWalk struct {
+	rec *walkdomain.WalkRecord
+	// err is the store fault that stopped a NAMED basis walk being read. A
+	// section may not answer in another build because this one was unreadable, so
+	// it reports the fault instead.
+	err error
+}
+
+// held reports whether a basis walk was named and read.
+func (b basisWalk) held() bool { return b.rec != nil }
+
+// resolveBasisWalk reads the walk a document is based on. A caller that names no
+// walk gets the zero value, which is not an error: the document then has no
+// basis, and the sections say what they can from their own reads.
+func resolveBasisWalk(ctx context.Context, walkUC QueryWalksUseCase, walkID string) basisWalk {
+	if walkID == "" {
+		return basisWalk{}
+	}
+	rec, err := walkUC.GetWalk(ctx, walkID)
+	if err != nil {
+		return basisWalk{err: fmt.Errorf("reading the walk this report is based on (%s): %w", walkID, err)}
+	}
+	return basisWalk{rec: &rec}
+}
+
+// walkAsBasis wraps a walk record the caller already holds — `context --walk-id`
+// and the size-only path both load the walk before anything else, and the report
+// is about that walk.
+func walkAsBasis(rec walkdomain.WalkRecord) basisWalk { return basisWalk{rec: &rec} }
+
+// buildDependencies lists the module's direct dependencies as the walk this
+// document is based on resolved them.
 //
-// The rule is applied but not narrated here. This section is a JSON field of a
-// document with no prose channel, and the pin the notice would advertise does
-// not exist for this command: `context --walk-id` means "emit a document per
-// module of that walk", not "answer this module in that walk". What the document
-// does carry is WalkID and Frame, so the walk that answered is always nameable
-// from the answer.
-func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, walkUC QueryWalksUseCase) contextDependencies {
+// The basis walk answers wherever it holds the module, and the section names it.
+// One document therefore reports one build, and the count is that build's: a
+// module's dependency set differs between frames by scope and by resolved
+// version — measured, 15 in a module's own walk against 10 in a consumer's,
+// where the consumer build drops three test-only dependencies and MVS raises a
+// fourth from v1.7.0 to v1.10.0.
+//
+// With no basis walk — a document whose other sections named no build — the
+// section falls back to the walks rooted at the queried module and runs the same
+// rule every other defaulting read runs: prefer a walk whose recorded resolution
+// still agrees with the manifest it was taken from, fall back to recency. There
+// is no basis line for that choice to contradict.
+//
+// Either way the answering walk is named rather than left to be inferred:
+// WalkID, Frame and Rooting travel on the section, and the summary line prints
+// the walk and its frame beside the count.
+func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, walkUC QueryWalksUseCase, basis basisWalk) contextDependencies {
+	if basis.err != nil {
+		return contextDependencies{Status: sectionStatusReadError, Error: basis.err.Error()}
+	}
+	if basis.held() {
+		return dependenciesInWalk(coord, *basis.rec)
+	}
+
 	walks, err := walkUC.ListWalks(ctx, walkports.WalkFilter{Target: &coord})
 	if err != nil {
 		return contextDependencies{Status: sectionStatusReadError, Error: err.Error()}
@@ -113,36 +164,63 @@ func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, w
 	if err != nil {
 		return contextDependencies{Status: sectionStatusReadError, Error: err.Error()}
 	}
+	return dependenciesInWalk(coord, rec)
+}
 
-	var deps []contextDependency
-	for _, node := range rec.Graph.Nodes {
-		if !node.DirectDependency {
-			continue
-		}
-		deps = append(deps, contextDependency{
-			Path:    node.Coordinate.Path(),
-			Version: node.Coordinate.Version(),
-		})
+// dependenciesInWalk answers the section out of one walk's graph, and names that
+// walk.
+//
+// A walk that does not hold the module is reported as exactly that. It is not
+// not_run: the module has not been left unmeasured, it was not part of the build
+// this document is about, and the remedy for the two is different.
+func dependenciesInWalk(coord coordinate.ModuleCoordinate, rec walkdomain.WalkRecord) contextDependencies {
+	out := contextDependencies{
+		WalkID:     rec.ID,
+		Frame:      rec.Graph.Frame().Text,
+		FrameBasis: string(rec.Graph.Frame().Basis),
 	}
-	// Graph.Nodes is sorted lexicographically by (Path, Version) after Sort.
+	if !rec.Target.IsZero() {
+		out.Rooting = string(vuldomain.TargetRootedAt(rec.Target))
+	}
+
+	direct, held := rec.Graph.DirectDependenciesOf(coord)
+	if !held {
+		out.Status = sectionStatusNotInWalk
+		return out
+	}
+
+	deps := make([]contextDependency, 0, len(direct))
+	for _, d := range direct {
+		deps = append(deps, contextDependency{Path: d.Path(), Version: d.Version()})
+	}
 
 	// "(no direct dependencies)" under a +incompatible coordinate is the exact
 	// sentence this caveat exists to qualify: the module system never resolved
 	// any, so the list is empty for a reason that has nothing to do with the
 	// module's real dependency set.
-	return contextDependencies{
-		Status:           rec.OverallStatus.String(),
-		WalkID:           rec.ID,
-		Frame:            rec.Graph.Frame().Text,
-		FrameBasis:       string(rec.Graph.Frame().Basis),
-		Count:            len(deps),
-		Partial:          rec.Graph.Partial,
-		Dependencies:     deps,
-		PreModulesCaveat: preModulesCaveatFor(append(preModulesNodesIn(rec.Graph), coord)...),
+	out.Status = rec.OverallStatus.String()
+	out.Count = len(deps)
+	out.Partial = rec.Graph.Partial
+	out.PreModulesCaveat = preModulesCaveatFor(append(preModulesNodesIn(rec.Graph), coord)...)
+	if len(deps) > 0 {
+		out.Dependencies = deps
 	}
+	return out
 }
 
-func buildLicense(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryLicenseUseCase) contextLicense {
+func buildLicense(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	uc QueryLicenseUseCase,
+	custody StdlibCustodyReader,
+) contextLicense {
+	// The standard library is never fetched or extracted, so it holds no licence
+	// record and an absent one here said not_run — "nothing looked" — about a
+	// licence the same store serves to audit and the SBOM. Its identity comes
+	// off the chain of custody instead.
+	if isStdlibCoordinate(coord) {
+		return buildStdlibLicense(ctx, coord, custody)
+	}
 	rec, found, err := uc.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
 	if err != nil {
 		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
@@ -205,6 +283,57 @@ func buildLicense(ctx context.Context, coord coordinate.ModuleCoordinate, uc Que
 			ExplicitPatentGrant: ob.ExplicitPatentGrant,
 			CatalogueVersion:    licdomain.ObligationCatalogueVersion,
 		}
+	}
+	return l
+}
+
+// buildStdlibLicense answers the licence section for the standard-library
+// coordinate from its recorded chain of custody.
+//
+// The status word is the one audit prints for the same node: Detected when the
+// identifier was extracted from the acquired source, Known when it is the
+// published BSD-3-Clause and no measurement carried one. Neither is not_run,
+// which is reserved for a section nothing has looked at.
+func buildStdlibLicense(ctx context.Context, coord coordinate.ModuleCoordinate, custody StdlibCustodyReader) contextLicense {
+	answer, err := resolveStdlibLicence(ctx, coord, custody)
+	if err != nil {
+		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
+	}
+
+	status := "Known"
+	if answer.Basis == stdlibLicenceBasisTarball {
+		status = licdomain.LicenseStatusDetected.String()
+	}
+	l := contextLicense{
+		ExtractedAt: isoTime(answer.AcquiredAt),
+		SPDX:        answer.SPDX,
+		Status:      status,
+		Custody: &contextLicenseCustody{
+			Basis:        answer.Basis,
+			Verification: answer.Verification,
+			Detail:       answer.Detail,
+			Route:        answer.Route,
+			SourceURL:    answer.SourceURL,
+			VCSURL:       answer.VCSURL,
+			VCSRef:       answer.VCSRef,
+			VCSCommit:    answer.VCSCommit,
+			SHA256:       answer.SHA256,
+			AcquiredAt:   isoTime(answer.AcquiredAt),
+			Statement:    answer.basisStatement(),
+		},
+	}
+	ob := licdomain.LookupObligations(answer.SPDX)
+	l.Obligations = &contextLicenseObligations{
+		Status:              ob.Status.String(),
+		IncludeNotice:       ob.IncludeNotice,
+		IncludeLicenseText:  ob.IncludeLicenseText,
+		StateChanges:        ob.StateChanges,
+		DiscloseSource:      ob.DiscloseSource,
+		SameLicense:         ob.SameLicense.String(),
+		NetworkUseTrigger:   ob.NetworkUseTrigger,
+		NoTrademarkUse:      ob.NoTrademarkUse,
+		ExplicitPatentGrant: ob.ExplicitPatentGrant,
+		CatalogueVersion:    licdomain.ObligationCatalogueVersion,
 	}
 	return l
 }

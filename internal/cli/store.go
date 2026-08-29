@@ -13,8 +13,9 @@ import (
 	"github.com/spf13/cobra"
 
 	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/composition"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/config/domain"
 )
 
 // allMigrations returns every migration the binary knows about.
@@ -51,8 +52,9 @@ var tempPrefixes = []string{
 
 func newStoreCleanCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
-		Use:   "clean",
-		Short: "Remove orphaned temp files left by interrupted operations",
+		Use:         "clean",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Remove orphaned temp files left by interrupted operations",
 		Long: `Remove orphaned temporary files left by interrupted kanonarion operations.
 
 Cleans two categories:
@@ -136,12 +138,17 @@ type configShowResult struct {
 	// reading only the values cannot tell that from an operator who wrote them.
 	ConfigFile configFileResult `json:"config_file"`
 
-	Version          string                `json:"version"`
-	Preferences      configPrefsResult     `json:"preferences"`
-	LicensePolicy    configPolicyResult    `json:"license_policy"`
-	LicenseOverrides map[string]string     `json:"license_overrides"`
-	Callgraph        configCGResult        `json:"callgraph"`
-	Staleness        configStalenessResult `json:"staleness"`
+	Version          string             `json:"version"`
+	Preferences      configPrefsResult  `json:"preferences"`
+	LicensePolicy    configPolicyResult `json:"license_policy"`
+	LicenseOverrides map[string]string  `json:"license_overrides"`
+	// CopyrightDeclarations is the operator's recorded copyright lines, keyed by
+	// module path (optionally @version). Surfaced here because an attribution
+	// document built with one is only auditable if the assertion behind it is
+	// readable from the effective configuration.
+	CopyrightDeclarations map[string]configCopyrightResult `json:"copyright_declarations"`
+	Callgraph             configCGResult                   `json:"callgraph"`
+	Staleness             configStalenessResult            `json:"staleness"`
 
 	// Unified supply-chain governance blocks (schema v2). Surfaced
 	// in the effective-config view so the schema bump and the resolved
@@ -152,6 +159,35 @@ type configShowResult struct {
 	VendorPolicy    configVendorResult    `json:"vendor_policy"`
 	FIPSPolicy      configFIPSResult      `json:"fips_policy"`
 	FetchPolicy     configFetchResult     `json:"fetch_policy"`
+}
+
+// configCopyrightResult is one operator-recorded copyright in the effective
+// configuration view. It names the whole assertion, not just the line: a
+// copyright a person supplied is checkable only through who supplied it, when,
+// and what they read.
+type configCopyrightResult struct {
+	Copyright  string `json:"copyright"`
+	DeclaredBy string `json:"declared_by"`
+	DeclaredOn string `json:"declared_on"`
+	Basis      string `json:"basis"`
+}
+
+// copyrightDeclarationsResult maps the loaded declarations to the view. A nil
+// map stays nil so the JSON reports absence rather than an empty object.
+func copyrightDeclarationsResult(in map[string]domain.CopyrightDeclaration) map[string]configCopyrightResult {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]configCopyrightResult, len(in))
+	for k, d := range in {
+		out[k] = configCopyrightResult{
+			Copyright:  d.Copyright,
+			DeclaredBy: d.DeclaredBy,
+			DeclaredOn: d.DeclaredOn,
+			Basis:      d.Basis,
+		}
+	}
+	return out
 }
 
 // configFetchResult reports the resolved cross-verification posture.
@@ -253,8 +289,11 @@ func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 		// Exempt from the rejected-config refusal for the same reason as
 		// `config show`, which it is an alias for: it is the command that
 		// answers what is in force, and it states the rejection itself.
-		Annotations: map[string]string{annotationUsableWithRejectedConfig: "reports the file and what is actually in force"},
-		Args:        cobra.NoArgs,
+		Annotations: map[string]string{
+			annotationUsableWithRejectedConfig: "reports the file and what is actually in force",
+			annotationStoreIntent:              StoreIntentRead,
+		},
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runStoreConfigShow(storeRoot, jsonOut, stdout)
 		},
@@ -303,8 +342,9 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				Categories: cfg.LicensePolicy.Categories,
 				Rules:      rules,
 			},
-			LicenseOverrides: cfg.LicenseOverrides,
-			Callgraph:        configCGResult{Exclude: cfg.Callgraph.Exclude},
+			LicenseOverrides:      cfg.LicenseOverrides,
+			CopyrightDeclarations: copyrightDeclarationsResult(cfg.CopyrightDeclarations),
+			Callgraph:             configCGResult{Exclude: cfg.Callgraph.Exclude},
 			Staleness: configStalenessResult{
 				TTL:              cfg.Staleness.TTL.String(),
 				ProbeConcurrency: cfg.Staleness.ProbeConcurrency,
@@ -451,8 +491,9 @@ type storeInfoResult struct {
 
 func newStoreInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "info",
-		Short: "Report the store schema version and migration status",
+		Use:         "info",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Report the store schema version and migration status",
 		Example: `  kanonarion store info --store-root ~/kanonarion/.mirror
   kanonarion store info --store-root ~/kanonarion/.mirror --json`,
 		Args: cobra.NoArgs,
@@ -550,7 +591,7 @@ func runStoreInfo(storeRoot string, jsonOut bool, stdout, _ io.Writer) error {
 	// is what lets it still answer for a store this binary refuses to operate on:
 	// the command an operator reaches for to diagnose the refusal must not be
 	// subject to it.
-	dbHandle, err := sqlitestore.Open(dbPath, nil)
+	dbHandle, err := sqlitestore.Open(dbPath, nil, sqlitestore.IntentRead)
 	if err != nil {
 		return fmt.Errorf("opening store at %s: %w", dbPath, err)
 	}

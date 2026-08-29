@@ -18,7 +18,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
 
 // syntheticLocalVersion is the module version `kanonarion local` used to write
@@ -562,7 +562,7 @@ func backfillCompleteness(tx *sql.Tx) error {
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 // Use ":memory:" for tests.
 func Open(dsn string) (*Store, error) {
-	db, err := sqlitestore.Open(dsn, Migrations())
+	db, err := sqlitestore.Open(dsn, Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening callgraph store: %w", err)
 	}
@@ -1537,10 +1537,15 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 // per listing, and a caller/callee query performs the listing two to four times
 // before it looks at a single edge.
 //
-// The two flags are the only content facts the columns can prove. They are
-// deliberately one-way: see ports.CallGraphCoordinate.
+// AnyPartial and AnyBelowFull are the only content facts the columns can prove
+// ABOUT THE SERVED GENERATION. They are deliberately one-way: see
+// ports.CallGraphCoordinate. Every generation's own counts and status are
+// carried alongside them, per row, unattributed to any winner —
+// GenerationsDiffer says whether those rows agree with one another, which is a
+// fact about the coordinate's history and about no single generation.
 func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallGraphFilter) ([]ports.CallGraphCoordinate, error) {
-	q := `SELECT module_path, module_version, pipeline_version, overall_status, completeness
+	q := `SELECT module_path, module_version, pipeline_version, overall_status, completeness,
+	             algorithm, analysis_source, node_count, edge_count, extracted_at, content_hash
 	      FROM callgraph_records`
 	var args []any
 	var where []string
@@ -1575,11 +1580,24 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 	for rows.Next() {
 		var k generationKey
 		var status int
-		var completeness string
-		if serr := rows.Scan(&k.path, &k.version, &k.pipeline, &status, &completeness); serr != nil {
+		var completeness, algo, source, extractedAt string
+		var gen ports.CallGraphGeneration
+		if serr := rows.Scan(&k.path, &k.version, &k.pipeline, &status, &completeness,
+			&algo, &source, &gen.NodeCount, &gen.EdgeCount, &extractedAt, &gen.ContentHash); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return nil, fmt.Errorf("scanning callgraph coordinate: %w", serr)
 		}
+		t, perr := time.Parse(time.RFC3339, extractedAt)
+		if perr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the parse error
+			return nil, fmt.Errorf("parsing extracted_at %q: %w", extractedAt, perr)
+		}
+		gen.ExtractedAt = t.UTC()
+		gen.Algorithm = domain2.CallGraphAlgorithm(algo)
+		gen.OverallStatus = domain2.CallGraphStatus(status)
+		gen.Completeness = domain2.CompletenessLevel(completeness)
+		gen.AnalysisSource = domain2.AnalysisSource(source)
+
 		idx, known := seen[k]
 		if !known {
 			idx = len(out)
@@ -1588,13 +1606,20 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 				ModulePath: k.path, ModuleVersion: k.version, PipelineVersion: k.pipeline,
 			})
 		}
-		if domain2.CallGraphStatus(status) == domain2.CallGraphStatusPartial {
+		out[idx].Generations = append(out[idx].Generations, gen)
+		// Compared against the coordinate's first-seen generation, so one pass over
+		// the rows settles it: a generation that agrees with the first agrees with
+		// every generation the first agreed with.
+		if !gen.StatesTheSame(out[idx].Generations[0]) {
+			out[idx].GenerationsDiffer = true
+		}
+		if gen.OverallStatus == domain2.CallGraphStatusPartial {
 			out[idx].AnyPartial = true
 		}
 		// Read through the domain's own predicate rather than compared to a literal
 		// in SQL: the ladder is one rule, and a second statement of it in the query
 		// text would drift from it.
-		if level := domain2.CompletenessLevel(completeness); level != domain2.CompletenessUnknown && !level.IsBuiltWithBodies() {
+		if gen.Completeness != domain2.CompletenessUnknown && !gen.Completeness.IsBuiltWithBodies() {
 			out[idx].AnyBelowFull = true
 		}
 	}

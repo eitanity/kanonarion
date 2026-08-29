@@ -358,6 +358,9 @@ go.mod command - default `code`, `--tool` the tooling supply chain, `--project`
 the complete set; see [`walk` Scopes](walk.md#scopes-code-tool-complete). With no
 walk-id and no `--module`, `--gomod` defaults to `./go.mod`. A scope scan is
 mutually exclusive with a positional walk-id and with `--module`.
+`--exclude-tests` is **refused by name**: a scope scan re-walks when the manifest
+has drifted, and a walk record names its scope but not its test axis. See
+[Test scope](walk.md#test-scope---exclude-tests).
 
 **The walk must match this platform.** Selection filters on the current
 environment's `go env GOOS`/`GOARCH`, because build constraints select which
@@ -688,7 +691,53 @@ Completed:   2024-01-15T10:30:02Z
 Snapshot:    vuln.go.dev@20240115000000
 Advisories:  6027 in the snapshot scanned against
 Modules:     3
+build:
+  linux/amd64 under go1.26.6
+Reachability of 61 finding(s):
+  reachable        28
+  not reachable     0 — a search ran at a fidelity that can support a negative and found no route
+  undecided        33 — a recorded negative no search stands behind; none of these is a clean negative
+    inferred       31 — no search ran; the negative reads a source-fidelity analysis's silence
+    unsearchable    2 — the advisory names no symbol for this module path, so no search was ever possible
 ```
+
+#### The build the run's verdicts are about
+
+`build:` names the platform and Go toolchain the walk this run scanned was
+resolved under — the toolchain that pins the `stdlib` node the run reported on.
+A walk that recorded none says so and never reports the reader's own. Where the
+project the walk was taken from is still present and `go env GOVERSION` there no
+longer resolves the recorded toolchain, a second line names both versions.
+`--json` carries the same fact as a `build` object of `goos`, `goarch` and
+`go_version`.
+
+#### The reachability split
+
+`Reachability of N finding(s)` is the run's findings in the three buckets a
+release decision turns on. It covers the findings in the affected modules;
+withdrawn advisories are excluded wherever they sit, matching the
+"not counted as findings" heading below.
+
+| Bucket | Meaning |
+|---|---|
+| `reachable` | A route exists. The route itself is in `--json` and in `vuln-show`. |
+| `not reachable` | A negative on the `confirmed` rung, and nothing else. This is the only clean negative. |
+| `undecided` | Every remaining negative, broken down by the rung it earned. |
+
+The undecided breakdown lists each rung the run holds, with what that rung means
+— see [soundness](reachability.md). `disputed` always gets its own line: it is a
+*contradicted* negative, where a search found the path the record denies, and it
+is never tallied beside `inferred`.
+
+The split is not derivable from `is_reachable` alone. A negative may be recorded
+with no search behind it, and counting negatives would report those as clean.
+A run with no findings prints no block at all. A complete scan whose findings are
+all undecided is not a pass: coverage and reachability are separate axes.
+
+Deriving the split costs the text path nothing — every field it reads is already
+on the findings — and it does not trigger the route-root classification the text
+path deliberately skips. Per-finding routes and roots stay in `--json` and in
+`vuln-show`.
 
 When the walk this run analysed is no longer in the store, the reference says so
 on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field:
@@ -790,10 +839,25 @@ answer depends on which build you mean:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
   records that walk covered. A `notice:` line names the walk and its frame.
-- `--gomod <path>` does the same for the newest succeeded project walk of that
-  `go.mod`. The path is required and may be written either way round
-  (`--gomod ./go.mod` or `--gomod=./go.mod`). Mutually exclusive with
-  `--walk-id`.
+- `--gomod <path>` does the same for the newest succeeded **code-scope** project
+  walk of that `go.mod`, resolved for **this platform**. The path is required and
+  may be written either way round (`--gomod ./go.mod` or `--gomod=./go.mod`).
+  Mutually exclusive with `--walk-id`.
+
+  `vuln-show` has no scope flag, so the code scope is the question it can ask:
+  the modules the project's own code builds against. A module that is only in the
+  tooling closure is **not** answered from a `--tool` walk that happens to be in
+  the store — the read refuses and names the walk that would answer it:
+
+  ```
+  error: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
+  ```
+
+  Where the project has no walk at all the refusal says that instead, so the two
+  are not confused. The toolchain is **not** part of this selection: two walks
+  under two toolchains link different standard libraries, and among the walks of
+  one scope and platform recency still decides which answers. The notice names
+  the toolchain it landed on whenever the candidates disagreed.
 - With neither, the record that answers a **consumer's** question about the
   module is returned: one produced by an analysis rooted at a project that
   consumes it, if the store holds one.
@@ -921,7 +985,7 @@ counts them: those rows are history, not the answer a scan would give today. In
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
-| `--gomod <path>` | _(none)_ | Answer in the frame of the latest project walk for this go.mod. Takes a path, e.g. `--gomod ./go.mod`. The notice states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
+| `--gomod <path>` | _(none)_ | Answer in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The notice names the walk's scope and frame, and states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
 | `--history` | `false` | List all scan records across walks, snapshots and pipeline generations, marking superseded rows |
 | `--json` | `false` | Emit record as JSON |
 
@@ -1387,7 +1451,7 @@ kanonarion walk github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
 kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2 --store-root ~/.kanonarion
 
 # 3. Inspect the scan run
-kanonarion vuln-scan-list --walk-id <walk-id> --store-root ~/.kanonarion
+kanonarion vuln-scan-list --store-root ~/.kanonarion
 kanonarion vuln-scan-show <run-id> --store-root ~/.kanonarion
 
 # 4. Drill into a specific module (walk-id optional; defaults to most recent scan)

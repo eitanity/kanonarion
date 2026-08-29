@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 func openTestStore(t *testing.T) *sbomstore.Store {
@@ -225,7 +225,7 @@ func TestPutSBOMRecordLicensesIncompleteRoundTrip(t *testing.T) {
 
 // New wires a raw database handle into a usable store.
 func TestNewWrapsRawHandle(t *testing.T) {
-	db, err := sqlitestore.Open(":memory:", sbomstore.Migrations())
+	db, err := sqlitestore.Open(":memory:", sbomstore.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("sqlitestore.Open: %v", err)
 	}

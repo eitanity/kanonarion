@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -47,7 +50,7 @@ func registerBuildScopeFlags(cmd *cobra.Command, f *buildScopeFlags) {
 	cmd.Flags().StringVar(&f.walkID, "walk-id", "",
 		"restrict results to the resolved version set of this walk")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "",
-		"restrict results to the latest project walk for this go.mod; takes a path, e.g. --gomod "+defaultGoModPath)
+		"restrict results to the latest code-scope project walk for this go.mod on this platform; takes a path, e.g. --gomod "+defaultGoModPath)
 	// Registered here rather than per command so that every read which resolves a
 	// stored call graph by scope can act on a toolchain refusal. A refusal that
 	// names a flag the command does not have is a dead end: the reader is told to
@@ -72,8 +75,9 @@ func (f buildScopeFlags) requested() bool {
 // rather than reporting a bare empty result.
 type buildScope struct {
 	modules coordinate.ModuleSet
-	// source names the build for diagnostics, e.g. `walk "abc123" (frame
-	// linux/amd64)`. Empty when no build was named and modules is unrestricted.
+	// source names the build for diagnostics, e.g. `walk "abc123" (code scope,
+	// frame linux/amd64)`. Empty when no build was named and modules is
+	// unrestricted.
 	source string
 	// toolchain restricts the read to graphs built by one Go toolchain. The zero
 	// value names none and composition groups on its own. It rides on the scope
@@ -104,24 +108,31 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 	walkID := f.walkID
 	var staleness string
 	if f.gomodSet {
-		choice, err := latestWalkForGoMod(ctx, walks, f.gomod)
+		// These commands register no --tool/--project, so the scope they mean is
+		// the one their help text names: the latest project walk for this go.mod,
+		// which is what `walk --gomod` produces without a scope flag. Passing it
+		// explicitly is what stops a tool- or project-scope walk that happens to be
+		// newer from answering a question about the project's own code.
+		choice, err := latestWalkForGoMod(ctx, walks, f.gomod, scopeCode)
 		if err != nil {
 			return buildScope{}, err
 		}
 		walkID = choice.summary.ID
-		staleness = choice.stalenessNote() + choice.statementClause()
+		staleness = choice.basisNotes()
 	}
 
 	rec, err := walks.GetWalk(ctx, walkID)
 	if err != nil {
 		return buildScope{}, fmt.Errorf("loading walk %q: %w", walkID, err)
 	}
-	// The frame comes off the record, not the summary, so a scope named by
-	// --walk-id states it too: both routes end at the same walk, and the notice
-	// must not say more for one than the other.
+	// The scope and frame come off the record, not the summary, so a build named
+	// by --walk-id states them too: both routes end at the same walk, and the
+	// notice must not say more for one than the other. The scope is named because
+	// a --gomod read now selects on it, and a selection the notice does not
+	// mention is one the reader cannot check.
 	return buildScope{
 		modules:   walkModuleSet(rec),
-		source:    fmt.Sprintf("walk %q (frame %s)", walkID, rec.Graph.Frame()),
+		source:    fmt.Sprintf("walk %q (%s, frame %s)", walkID, walkScopeLabel(rec.Scope), rec.Graph.Frame()),
 		staleness: staleness,
 		toolchain: gotoolchain.Version(f.toolchain),
 	}, nil
@@ -146,14 +157,33 @@ func writeScopeNotice(stdout io.Writer, sc buildScope) error {
 	return nil
 }
 
-// latestWalkForGoMod returns the succeeded project walk a read defaults to for
-// the module declared in gomod (or ./go.mod when gomod is empty), together with
-// the manifest path it resolved and the rule that picked the walk.
+// latestWalkForGoMod returns the succeeded project walk of the requested scope a
+// read defaults to for the module declared in gomod (or ./go.mod when gomod is
+// empty), together with the manifest path it resolved and the rule that picked
+// the walk.
+//
+// The scope is part of the question, not a preference. One project is walked in
+// several scopes — code, tool, complete — and they are different builds holding
+// different modules, so recency across all of them answers whichever was walked
+// last. That is how a 22-node code walk came to answer a question about a
+// 246-node tool closure, 235 of whose modules the code walk does not contain.
+// The platform is pinned for the same reason, in the same terms the walk
+// recorded it: a build for another GOOS/GOARCH selects other files.
+//
+// The toolchain is pinned on the same terms, and then relaxed rather than
+// refused. Two walks under two toolchains link different standard libraries, so
+// a candidate resolved by the toolchain this project resolves NOW beats a newer
+// one that was not — recency deciding that axis is how a project came to be
+// reported both affected and clean by two commands minutes apart. Where no
+// candidate was resolved by it the read still answers from the newest and states
+// the divergence (walkChoice.toolchainDivergenceClause), because the failure was
+// a silent choice and not an answer: refusing here would cost every read on this
+// selector an answer it can give, and give the reader nothing the sentence does
+// not.
 //
 // The whole choice is returned rather than the ID alone because a scope derived
-// from this walk has to be able to say which platform's build it pins — the
-// lookup has no build-environment axis — and, where the store held more than
-// one candidate, which of them answered and why.
+// from this walk has to be able to say which platform's build it pins, and,
+// where the store held more than one candidate, which of them answered and why.
 //
 // The lookup keys on the module path, so it finds walks by the go.mod's NAME.
 // Among those it prefers one whose recorded resolution still agrees with the
@@ -164,7 +194,7 @@ func writeScopeNotice(stdout io.Writer, sc buildScope) error {
 // toolchain, so it is bounded and the caller still states what it did not check;
 // `vuln-scan --gomod`, which measures rather than reads, pays the full
 // re-resolution instead.
-func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod string) (walkChoice, error) {
+func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod string, scope depScope) (walkChoice, error) {
 	gomodPath, err := resolveGoModPath(gomod)
 	if err != nil {
 		return walkChoice{}, err
@@ -177,18 +207,122 @@ func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod stri
 	if err != nil {
 		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("building project coordinate for %s: %w", modulePath, err)
 	}
+	// One `go env` probe, in the project's own directory, answering both axes at
+	// once — the same probe the walk resolver runs, so the read asks in the terms
+	// the walk answered in, including any GOOS/GOARCH override and any go.mod
+	// toolchain directive. A failed platform probe falls back to the host, which
+	// is the resolver's own fallback; a failed toolchain probe pins nothing,
+	// because a guessed toolchain excludes the walks it was meant to find.
+	env := currentWalkBuildEnv(ctx, "", filepath.Dir(gomodPath), nil)
+	return selectProjectWalkToRead(ctx, walks, coord, scope, env, gomodPath)
+}
+
+// selectProjectWalkToRead is latestWalkForGoMod's selection, over a build the
+// caller states rather than one probed here, so the rule can be exercised
+// against a build this host does not have.
+func selectProjectWalkToRead(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	coord coordinate.ModuleCoordinate,
+	scope depScope,
+	env walkBuildEnv,
+	gomodPath string,
+) (walkChoice, error) {
 	succeeded := walkdomain.WalkSucceeded
-	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{
+	walkScope := walkScopeFor(scope)
+	platform := env.platform
+	filter := walkports.WalkFilter{
 		Target:        &coord,
+		Scope:         &walkScope,
 		OverallStatus: &succeeded,
-	})
+		BuildEnv:      &platform,
+		Toolchain:     env.toolchainFilter(),
+	}
+	summaries, err := walks.ListWalks(ctx, filter)
 	if err != nil {
-		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing project walks for %s: %w", modulePath, err)
+		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
+	}
+	pinnedToolchain := filter.Toolchain != nil
+	if len(summaries) == 0 && pinnedToolchain {
+		// Nothing this project's toolchain resolved. The read widens rather than
+		// refusing, and the choice states the divergence: a reader whose toolchain
+		// moved since their last walk still gets the answer, and is told which
+		// standard library it is about.
+		pinnedToolchain = false
+		filter.Toolchain = nil
+		if summaries, err = walks.ListWalks(ctx, filter); err != nil {
+			return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
+		}
 	}
 	if len(summaries) == 0 {
-		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("no succeeded project walk for %s — run: kanonarion walk --gomod %s", modulePath, gomodPath)
+		return walkChoice{manifestPath: gomodPath}, noProjectWalkOfScope(ctx, walks, coord, scope, platform, gomodPath)
 	}
-	return chooseWalk(ctx, walks, summaries, gomodPath), nil
+	choice := chooseWalk(ctx, walks, summaries, gomodPath)
+	choice.resolvedToolchain = env.toolchain
+	choice.candidateSet = fmt.Sprintf("in the %s scope on %s", scope, platform)
+	if pinnedToolchain {
+		// The count is of the walks under this toolchain only, so the set it counted
+		// has to name the toolchain too, or a reader with four walks of the project
+		// is told the store holds two and cannot see which axis removed the others.
+		choice.candidateSet += " under " + env.toolchain
+	}
+	return choice, nil
+}
+
+// noProjectWalkOfScope is the refusal for a read that found no walk of the scope
+// and platform it asked for, and it distinguishes the two ways that happens.
+//
+// A project nobody has walked yet and a project walked in another scope are
+// different situations with the same symptom, and the reader can act on only one
+// of them. So the miss costs a second, unfiltered listing to say which it was —
+// paid on the refusal path only, never on the path that answers. The other
+// scopes are named rather than served: a walk of another scope describes another
+// build, and serving it is the defect this refusal exists to stop.
+func noProjectWalkOfScope(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	coord coordinate.ModuleCoordinate,
+	scope depScope,
+	platform walkports.BuildEnvFilter,
+	gomodPath string,
+) error {
+	remedy := fmt.Sprintf("run: kanonarion walk --gomod %s%s", gomodPath, scopeWalkFlagHint(scope))
+	succeeded := walkdomain.WalkSucceeded
+	// Every axis but the target is deliberately unpinned, Toolchain included: this
+	// listing exists to say what the store DOES hold when the narrowed one held
+	// nothing, and a refusal that filtered on the same axes it is explaining would
+	// report the project as never walked.
+	others, err := walks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, OverallStatus: &succeeded, Toolchain: nil})
+	if err != nil || len(others) == 0 {
+		return fmt.Errorf("no succeeded project walk for %s — %s", coord.Path(), remedy)
+	}
+	return fmt.Errorf("no succeeded %s project walk for %s on %s, though the store holds %d succeeded walk(s) of it (%s); a walk of another scope or platform is a different build, so it does not answer here — %s",
+		scope, coord.Path(), platform, len(others), describeWalkBuilds(others), remedy)
+}
+
+// describeWalkBuilds names the distinct builds a candidate list covers, as
+// "<scope> on <platform>", sorted and deduplicated. It is what a refusal shows
+// instead of the walk ids: the reader is deciding which walk to take, not which
+// record to open.
+func describeWalkBuilds(summaries []walkports.WalkSummary) string {
+	seen := make(map[string]struct{}, len(summaries))
+	out := make([]string, 0, len(summaries))
+	for _, s := range summaries {
+		scope := string(s.Scope)
+		if scope == "" {
+			// A walk written before scopes were recorded is listed as such rather
+			// than as a blank, which would read as a walk of no scope at all.
+			scope = "unrecorded scope"
+		}
+		build := fmt.Sprintf("%s on %s", scope, walkports.BuildEnvFilter{GOOS: s.GOOS, GOARCH: s.GOARCH})
+		if _, ok := seen[build]; ok {
+			continue
+		}
+		seen[build] = struct{}{}
+		out = append(out, build)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
 
 // walkModuleSet is the version set of the build a walk recorded: every module in

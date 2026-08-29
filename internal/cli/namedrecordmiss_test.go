@@ -171,15 +171,15 @@ func missSurfaces() []missSurface {
 			miss: func(t *testing.T) (string, error) {
 				ctr := &Container{QueryWalks: walksWithRecords(t)}
 				var stdout, stderr bytes.Buffer
-				err := dependentsWith(context.Background(), ctr, missTargetCoord(t), missingWalkID,
-					false, false, false, &stdout, &stderr)
+				err := dependentsWith(context.Background(), ctr, missTargetCoord(t),
+					dependentsFlags{walkID: missingWalkID}, false, &stdout, &stderr)
 				return stderr.String(), err
 			},
 			found: func(t *testing.T) (string, int, error) {
 				uc := walksWithRecords(t)
 				var stdout, stderr bytes.Buffer
 				err := dependentsWith(context.Background(), &Container{QueryWalks: uc},
-					mustCoord(t, "example.com/dep", "v2.0.0"), "walk-0", false, false, false, &stdout, &stderr)
+					mustCoord(t, "example.com/dep", "v2.0.0"), dependentsFlags{walkID: "walk-0"}, false, &stdout, &stderr)
 				return stderr.String(), uc.ListCalls, err
 			},
 			wantFragments: walkStatement,
@@ -226,14 +226,14 @@ func missSurfaces() []missSurface {
 			miss: func(t *testing.T) (string, error) {
 				var stdout, stderr bytes.Buffer
 				err := runScanShow(context.Background(), "vscan-NOPE", jsonOut, scanRunsFixture(),
-					testfakes.NewFakeQueryVuln(), nil, &stdout, &stderr)
+					testfakes.NewFakeQueryVuln(), nil, nil, &stdout, &stderr)
 				return stderr.String(), err
 			},
 			found: func(t *testing.T) (string, int, error) {
 				uc := scanRunsFixture()
 				var stdout, stderr bytes.Buffer
 				err := runScanShow(context.Background(), "vscan-real", jsonOut, uc,
-					testfakes.NewFakeQueryVuln(), nil, &stdout, &stderr)
+					testfakes.NewFakeQueryVuln(), nil, nil, &stdout, &stderr)
 				return stderr.String(), uc.ListCalls, err
 			},
 			wantFragments: []string{
@@ -304,7 +304,7 @@ func missSurfaces() []missSurface {
 				var stdout, stderr bytes.Buffer
 				err := printLicenseRecursive(context.Background(),
 					mustCoord(t, "example.com/never-walked", "v9.9.9"), walksWithRecords(t),
-					&testfakes.FakeExtractLicense{}, testfakes.NewFakeQueryLicense(), licenseFlags{},
+					&testfakes.FakeExtractLicense{}, testfakes.NewFakeQueryLicense(), nil, licenseFlags{},
 					&stdout, &stderr)
 				return stderr.String(), err
 			},
@@ -669,7 +669,7 @@ func TestRunScanShow_MissIsMeasuredAgainstEveryRun(t *testing.T) {
 	uc.AddRun(vulndomain.WalkScanRun{ID: "vscan-other", WalkID: "walk-1"})
 	var stdout, stderr bytes.Buffer
 	err := runScanShow(context.Background(), "vscan-NOPE", false, uc,
-		testfakes.NewFakeQueryVuln(), nil, &stdout, &stderr)
+		testfakes.NewFakeQueryVuln(), nil, nil, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("a missing run returned a nil error")
 	}

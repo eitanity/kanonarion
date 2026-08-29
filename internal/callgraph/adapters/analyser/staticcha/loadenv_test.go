@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/goenv"
 )
 
 // TestIsolatedModuleEnv_DisablesWorkspaceMode is the regression guard for

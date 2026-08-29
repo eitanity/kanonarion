@@ -61,8 +61,9 @@ type provenanceOutput struct {
 
 func newProvenanceCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "provenance <module[@version]>",
-		Short: "Show fork/republication provenance facts for a module (name-path heuristic + licence copyright lines)",
+		Use:         "provenance <module[@version]>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Show fork/republication provenance facts for a module (name-path heuristic + licence copyright lines)",
 		Long: `Run two independent provenance signals over a module.
 
 Name-path heuristic: when the path shares its trailing name element with a

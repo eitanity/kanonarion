@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	directivesqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/directive/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 func openTestStore(t *testing.T) (*directivesqlite.Store, sqlitestore.DB) {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", directivesqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", directivesqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

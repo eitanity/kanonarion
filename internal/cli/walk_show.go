@@ -12,8 +12,9 @@ import (
 func newWalkShowCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
-		Use:   "walk-show <id>",
-		Short: "Print a stored walk record",
+		Use:         "walk-show <id>",
+		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
+		Short:       "Print a stored walk record",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
@@ -59,6 +60,12 @@ func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout, s
 	}
 	if _, pErr := fmt.Fprintf(stdout, "Status: %s\n", rec.OverallStatus.String()); pErr != nil {
 		return fmt.Errorf("writing output: %w", pErr)
+	}
+	// The command whose whole job is to show a walk said nothing about the build
+	// that resolved it, while the stdlib node in its graph follows that build. The
+	// JSON path already carries it at .graph.build_env and is left alone.
+	if bErr := writeWalkBuild(stdout, rec, readerWalkToolchain(ctx, rec)); bErr != nil {
+		return bErr
 	}
 	// A walk of a +incompatible module is one node and no edges, and the three
 	// lines above give a reader no way to tell that from a module that genuinely

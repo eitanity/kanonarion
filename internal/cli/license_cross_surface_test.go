@@ -184,7 +184,7 @@ func licenceFromContext(t *testing.T, coord coordinate.ModuleCoordinate, rec lic
 	t.Helper()
 	fake := testfakes.NewFakeQueryLicense()
 	fake.AddRecord(coord, licapp.PipelineVersion, rec)
-	return licenseSummaryLine(buildLicense(context.Background(), coord, fake))
+	return licenseSummaryLine(buildLicense(context.Background(), coord, fake, nil))
 }
 
 // licenceFromLicenseCompat reads the module's licence out of a compatibility

@@ -13,7 +13,9 @@ import (
 
 type fakeScanner struct{ res domain.ParseResult }
 
-func (f fakeScanner) ScanProject(string) (domain.ParseResult, error) { return f.res, nil }
+func (f fakeScanner) ScanProject(context.Context, string) (domain.ParseResult, error) {
+	return f.res, nil
+}
 
 type fakeStore struct{ put *domain.Record }
 

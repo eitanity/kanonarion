@@ -9,8 +9,8 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
@@ -18,7 +18,7 @@ import (
 
 func newTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	db, err := sqlitestore.Open(":memory:", sqlite.Migrations())
+	db, err := sqlitestore.Open(":memory:", sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening in-memory db: %v", err)
 	}

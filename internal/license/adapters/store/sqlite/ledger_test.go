@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	licensesqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 // ledgerRecord builds a sealed record with the fields composition ladders on.
@@ -362,7 +362,7 @@ func TestMigration7_CarriesExistingRowsInUnpurged(t *testing.T) {
 
 	// Open at migration 6 — after the broken generation is purged, before the
 	// ledger — and seal rows through the store as it stood then.
-	pre, err := sqlitestore.Open(dsn, all[:6])
+	pre, err := sqlitestore.Open(dsn, all[:6], sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at migration 6: %v", err)
 	}

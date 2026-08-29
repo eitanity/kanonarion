@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	examplesqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
 const ledgerPipeline = "0.3.0"
@@ -643,7 +643,7 @@ func TestMigration3_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 	// Open at migration 2: the schema as it stood before the ledger. Seeding
 	// through the store instead is impossible — its code is always at HEAD, so
 	// its append already names the ledger key migration 3 has not created yet.
-	pre, err := sqlitestore.Open(dsn, all[:2])
+	pre, err := sqlitestore.Open(dsn, all[:2], sqlitestore.IntentCreate)
 	if err != nil {
 		t.Fatalf("opening at migration 2: %v", err)
 	}

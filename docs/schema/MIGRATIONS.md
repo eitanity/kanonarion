@@ -30,6 +30,26 @@ governance posture (`DefaultConfig`), and an unset outcome resolves to an
 implicit allow. To adopt v2 explicitly, set `version: "2"` and add any blocks
 you wish to override.
 
+### Additive within v2 - `copyright_declarations`
+
+**Additive, backward-compatible, no version bump.** `config.yaml` gains an
+optional top-level `copyright_declarations` section: per module path (optionally
+`path@version`), the copyright line a human read upstream, who declared it, when,
+and the basis they cite. It exists so `notice` can publish an attribution
+document for a module whose archive carries no copyright statement.
+
+All four fields (`copyright`, `declared_by`, `declared_on`, `basis`) are
+required; an incomplete entry is refused at config load, naming the coordinate.
+`declared_on` is an ISO 8601 date.
+
+Migration for existing configs: **none required.** An absent section resolves to
+no declarations and every existing refusal and document is unchanged.
+
+`store config show --json` gains a matching `copyright_declarations` object under
+the same additive rule (consumers ignore unknown fields). No store table and no
+store migration: a human-supplied copyright is an operator assertion, not a
+measurement, so it lives in configuration rather than in the measurement ledger.
+
 ## JSON output sections
 
 The following top-level `--json` sections are introduced **additively** by the
@@ -42,6 +62,49 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `godebug`    | reserved              |
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
+
+## Interface record: pipeline `0.5.0` → `0.6.0`
+
+**Record shape change; no store migration. This bump is also a repair** — a
+coordinate whose `0.5.0` generations disagree about the API is not served, and
+re-extracting at `0.5.0` only appends another disagreeing generation.
+
+Extraction walked `testdata` subtrees and treated each as a package, and it
+handed `go/doc` every in-frame file of a directory even when two of them declared
+the same identifier. `go/doc` keeps one declaration per name and drops the rest
+in map iteration order, so such a directory produced a different public API on
+each run. `golang.org/x/tools@v0.49.0` is held nine times at `0.5.0` with nine
+distinct APIs — same zip, same frame, same toolchain — differing only inside
+`go/callgraph/vta/testdata/src`, where the fixture files declare `Bar` and `Baz`
+several times each. The coordinate answers nothing, and every `inspect` appended
+another generation.
+
+Two things change:
+
+- **`testdata` subtrees are no longer packages.** The go tool ignores them, so
+  what they hold is not part of any module's API — `interface-diff` already
+  excluded them from every comparison for that reason. `golang.org/x/tools`
+  drops from 471 packages to 214, and all 257 dropped are under a `testdata`
+  directory; no package is added or changed.
+- **A directory that declares one identifier twice is recorded as a load
+  failure**, naming each repeated identifier and the files that declare it,
+  instead of a package holding whichever declaration survived. `init` and `_` are
+  exempt: Go lets a package declare each of them repeatedly. Across the 249
+  coordinates in the reference store whose zips are held locally — 4041 non-vendor
+  package directories — 23 directories declare an identifier twice, 22 of them
+  under `testdata`. The one that remains is `github.com/fogleman/gg@v1.3.0`'s
+  `examples`, 31 standalone programs in one directory, each declaring `main`; the
+  go tool refuses to build it too.
+
+A module with no `testdata` directory and no duplicate declarations extracts
+byte-identical bytes to its `0.5.0` record: `github.com/golang-jwt/jwt/v4@v4.5.2`
+re-extracts to the same canonical record apart from the pipeline version.
+
+The cost is one re-extraction per module on its next `interface` run — 580 stored
+records at the bump, 200 of them at `0.5.0` across 173 coordinates, the remaining
+380 already stranded at `0.4.0`. Until re-extracted each answers as a not-found
+naming the pipeline versions held and the command that produces a servable
+record, exactly as the `0.4.0` and `0.5.0` bumps arranged.
 
 ## Interface record: pipeline `0.4.0` → `0.5.0`
 
@@ -792,7 +855,11 @@ is asking which standard library it links, and folding them together would force
 every platform-filtered read to pin a toolchain with no value meaning "any".
 
 `LatestOnly` now partitions on `(target, version, scope, go_version)`. Two walks
-under two toolchains are two builds, not two attempts at one.
+under two toolchains are two builds, not two attempts at one. *(Corrected later,
+with no migration: the partition also takes `goos` and `goarch`. Those columns
+arrived with migration 8 and the filter had always matched on them, so only the
+`SELECT` was short — one statement disagreeing with itself, which collapsed a
+cross-compiled store's platforms by clock.)*
 
 Measured on the real store at migration time: 17 rows, all 17 retained, 12
 back-filled (7 to `go1.26.5`, 5 to `go1.26.6`) and 5 left unrecorded — and those
@@ -1080,6 +1147,55 @@ all routes.
 bump makes them unreachable through the cache; it does not correct copies already
 shipped. A document already handed to a consumer states an anchor its own
 verification detail denies, and re-issuing it is the only fix for that copy.
+
+## FIPS record: pipeline `0.2.0` → `0.3.0`
+
+**Finding-set change; no store migration.** FIPS records are keyed
+`(project_module_path, pipeline_fingerprint)`, so the bump is the migration:
+`0.2.0` rows stay where they are and are never served for a `0.3.0` request.
+
+The `module` of a finding read from a file under `vendor/` is now the module
+`vendor/modules.txt` lists for that directory, resolved by longest-prefix match
+so a nested major-version module (`github.com/minio/minio-go/v7` beneath
+`github.com/minio/minio-go`) reports itself rather than its parent. `0.2.0` took
+the first two segments of the vendored path, which is a module path for almost
+no module: a `0.2.0` record on a vendored project names `github.com/IBM`,
+`golang.org/x` and `cloud.google.com/go`, none of which is a module anyone can
+upgrade, pin or exempt. A vendored path no listed module owns now reports
+`(unresolved)` instead of a plausible-looking invention.
+
+Only `module` moves. The finding kinds, packages, source paths and lines are
+unchanged, and the content hash covers `module`, so an unchanged tree hashes
+differently from its `0.2.0` record.
+
+**The stored `0.2.0` findings misname their module.** The bump makes them
+unreachable through the cache; it does not correct a report already pasted
+somewhere from one.
+
+## GODEBUG record: pipeline `0.1.0` → `0.2.0`
+
+**Finding-set change; no store migration.** GODEBUG records are keyed
+`(project_module_path, pipeline_fingerprint)`, so the bump is the migration:
+`0.1.0` rows stay where they are and are never served for a `0.2.0` request.
+
+The same change the FIPS record took, in the context that carried the same
+heuristic. The `module` of a `//go:debug` directive found under `vendor/` is now
+the module `vendor/modules.txt` lists for that directory, resolved by
+longest-prefix match so a nested major-version module
+(`github.com/minio/minio-go/v7` beneath `github.com/minio/minio-go`) reports
+itself rather than its parent. `0.1.0` took the first two segments of the
+vendored path. A vendored path no listed module owns now reports `(unresolved)`.
+
+The `applied` flag is unchanged in meaning and in value: it comes from whether
+the path lies under `vendor/` at all, which the old split also answered
+correctly, and a directive under a directory nothing claims is still
+`applied: false`. Only `module` moves, and the content hash covers it.
+
+Both contexts now read that mapping through one rule
+(`vendortree/domain.VendoredModuleIndex`) and one parser of `modules.txt`. Two
+implementations of "which listed module owns this path" were free to disagree
+about one file, which is how a fixed two-segment split survived in two scanners
+at once.
 
 ## Purging a table other rows point at
 

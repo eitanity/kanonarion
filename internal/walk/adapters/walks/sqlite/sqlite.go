@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -214,7 +214,7 @@ func backfillBuildEnv(tx *sql.Tx) error {
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 // Use ":memory:" for tests.
 func Open(dsn string) (*Store, error) {
-	db, err := sqlitestore.Open(dsn, Migrations())
+	db, err := sqlitestore.Open(dsn, Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		return nil, fmt.Errorf("opening walk store: %w", err)
 	}
@@ -501,6 +501,7 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	          SELECT MAX(started_at) FROM walks w2
 	          WHERE w2.target_path = w1.target_path AND w2.target_version = w1.target_version
 	          AND w2.scope = w1.scope
+	          AND w2.goos = w1.goos AND w2.goarch = w1.goarch
 	          AND w2.go_version = w1.go_version
 	      )`
 	} else {

@@ -8,23 +8,51 @@ import (
 	"strings"
 )
 
-// Sort orders settings deterministically: by source, then line, then name,
-// then value. Output must be stable before hashing/serialising (/
-// determinism rule).
-func Sort(ss []Setting) {
-	sort.SliceStable(ss, func(i, j int) bool {
-		a, b := ss[i], ss[j]
-		if a.Source != b.Source {
-			return a.Source < b.Source
-		}
-		if a.Line != b.Line {
-			return a.Line < b.Line
-		}
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
+// SettingLess is the canonical ordering for Setting slices: where the setting
+// was read from, then what it says.
+//
+// It was keyed on source, line, name and value. Those do not identify a
+// setting: the module it belongs to, whether it applies to this build and the
+// tier it was classified at were all invisible to the comparator, and two
+// settings agreeing on the first four keys were left to the sort. Every field
+// the type carries is keyed here, so two distinct settings always have a
+// defined order.
+func SettingLess(a, b Setting) bool {
+	if a.Source != b.Source {
+		return a.Source < b.Source
+	}
+	if a.Line != b.Line {
+		return a.Line < b.Line
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	if a.Value != b.Value {
 		return a.Value < b.Value
-	})
+	}
+	if a.Module != b.Module {
+		return a.Module < b.Module
+	}
+	if a.Applied != b.Applied {
+		return !a.Applied
+	}
+	if a.Tier != b.Tier {
+		return a.Tier < b.Tier
+	}
+	if a.PolicyOutcome != b.PolicyOutcome {
+		return a.PolicyOutcome < b.PolicyOutcome
+	}
+	if a.PolicyBlocking != b.PolicyBlocking {
+		return !a.PolicyBlocking
+	}
+	return false
+}
+
+// Sort orders settings by SettingLess. Output must be in a canonical order
+// before hashing or serialising, and the comparator is a total order, so the
+// result is a function of the set and not of the order the files were read in.
+func Sort(ss []Setting) {
+	sort.Slice(ss, func(i, j int) bool { return SettingLess(ss[i], ss[j]) })
 }
 
 // Hash returns a deterministic content hash of the sorted setting set. The
