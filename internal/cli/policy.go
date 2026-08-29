@@ -38,12 +38,12 @@ func newPolicyValidateCmd(stdout io.Writer) *cobra.Command {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			return runPolicyValidate(cmd.Context(), args[0], stdout)
+			return runPolicyValidate(cmd.Context(), args[0], jsonOut, stdout)
 		},
 	}
 }
 
-func runPolicyValidate(ctx context.Context, path string, stdout io.Writer) error {
+func runPolicyValidate(ctx context.Context, path string, asJSON bool, stdout io.Writer) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -52,9 +52,9 @@ func runPolicyValidate(ctx context.Context, path string, stdout io.Writer) error
 		return fmt.Errorf("stat policy path: %w", err)
 	}
 	if info.IsDir() {
-		return runPolicyValidateDir(ctx, path, stdout)
+		return runPolicyValidateDir(ctx, path, asJSON, stdout)
 	}
-	return runPolicyValidateFile(path, stdout)
+	return runPolicyValidateFile(path, asJSON, stdout)
 }
 
 // governanceMarkers are the top-level keys that identify a config-schema
@@ -67,24 +67,79 @@ var governanceMarkers = []string{
 	"copyright_declarations",
 }
 
-func runPolicyValidateFile(path string, stdout io.Writer) error {
+// policyValidation is one file's outcome. Results are collected before
+// anything is written so --json can emit exactly one array across a whole
+// directory; the error is kept as a value, not a string, because the caller
+// still returns it and the exit code is read off it.
+type policyValidation struct {
+	path   string
+	schema string
+	err    error
+}
+
+// policyValidationJSON is one row of the --json array. The schema is empty
+// only when the file could not be read, so no schema was ever chosen.
+type policyValidationJSON struct {
+	File   string `json:"file"`
+	Schema string `json:"schema"`
+	Passed bool   `json:"passed"`
+	Error  string `json:"error,omitempty"`
+}
+
+func writePolicyValidateJSON(w io.Writer, results []policyValidation) error {
+	out := make([]policyValidationJSON, 0, len(results))
+	for _, r := range results {
+		row := policyValidationJSON{File: r.path, Schema: r.schema, Passed: r.err == nil}
+		if r.err != nil {
+			row.Error = r.err.Error()
+		}
+		out = append(out, row)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		return fmt.Errorf("encoding policy validation JSON: %w", err)
+	}
+	return nil
+}
+
+func validatePolicyFile(path string) policyValidation {
+	res := policyValidation{path: path}
 	data, err := os.ReadFile(path) /* #nosec G304 -- operator-supplied path is intentional */
 	if err != nil {
-		return fmt.Errorf("reading policy file: %w", err)
+		res.err = fmt.Errorf("reading policy file: %w", err)
+		return res
 	}
 
-	schema := "depth-policy"
+	res.schema = "depth-policy"
 	var validateErr error
 	if isGovernanceSchema(data) {
-		schema = "governance"
+		res.schema = "governance"
 		_, validateErr = configyaml.Parse(data)
 	} else {
 		_, validateErr = walkadapterpolicy.Parse(data)
 	}
 	if validateErr != nil {
-		return fmt.Errorf("invalid policy (%s schema): %w", schema, validateErr)
+		res.err = fmt.Errorf("invalid policy (%s schema): %w", res.schema, validateErr)
 	}
-	if _, pErr := fmt.Fprintf(stdout, "ok: %s (%s schema)\n", path, schema); pErr != nil {
+	return res
+}
+
+func runPolicyValidateFile(path string, asJSON bool, stdout io.Writer) error {
+	res := validatePolicyFile(path)
+	if asJSON {
+		// The result is rendered before the verdict is returned: --json
+		// changes how the outcome is written, never what the outcome is, and
+		// a CI check reads the exit code either way.
+		if err := writePolicyValidateJSON(stdout, []policyValidation{res}); err != nil {
+			return err
+		}
+		return res.err
+	}
+	if res.err != nil {
+		return res.err
+	}
+	if _, pErr := fmt.Fprintf(stdout, "ok: %s (%s schema)\n", res.path, res.schema); pErr != nil {
 		return fmt.Errorf("writing output: %w", pErr)
 	}
 	return nil
@@ -105,7 +160,7 @@ func isGovernanceSchema(data []byte) bool {
 	return false
 }
 
-func runPolicyValidateDir(_ context.Context, dir string, stdout io.Writer) error {
+func runPolicyValidateDir(_ context.Context, dir string, asJSON bool, stdout io.Writer) error {
 	patterns := []string{"*.yaml", "*.yml", "*.json"}
 	var files []string
 	for _, pat := range patterns {
@@ -115,17 +170,34 @@ func runPolicyValidateDir(_ context.Context, dir string, stdout io.Writer) error
 		}
 		files = append(files, matches...)
 	}
+	results := make([]policyValidation, 0, len(files))
+	var firstErr error
+	for _, f := range files {
+		res := validatePolicyFile(f)
+		results = append(results, res)
+		if res.err != nil && firstErr == nil {
+			firstErr = res.err
+		}
+	}
+	if asJSON {
+		// A directory with no policy files is an empty array. Prose here
+		// would be a second document to a parser that asked for one.
+		if err := writePolicyValidateJSON(stdout, results); err != nil {
+			return err
+		}
+		return firstErr
+	}
 	if len(files) == 0 {
 		_, _ = fmt.Fprintf(stdout, "no policy files found in %s\n", dir)
 		return nil
 	}
-	var firstErr error
-	for _, f := range files {
-		if err := runPolicyValidateFile(f, stdout); err != nil {
-			_, _ = fmt.Fprintf(stdout, "FAIL: %s: %v\n", f, err)
-			if firstErr == nil {
-				firstErr = err
-			}
+	for _, res := range results {
+		if res.err != nil {
+			_, _ = fmt.Fprintf(stdout, "FAIL: %s: %v\n", res.path, res.err)
+			continue
+		}
+		if _, pErr := fmt.Fprintf(stdout, "ok: %s (%s schema)\n", res.path, res.schema); pErr != nil {
+			return fmt.Errorf("writing output: %w", pErr)
 		}
 	}
 	return firstErr

@@ -547,7 +547,7 @@ func TestRunSBOMShow_EmptyStore(t *testing.T) {
 
 func TestRunPolicyValidateDir_Empty(t *testing.T) {
 	var buf bytes.Buffer
-	err := runPolicyValidateDir(context.Background(), t.TempDir(), &buf)
+	err := runPolicyValidateDir(context.Background(), t.TempDir(), false, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}

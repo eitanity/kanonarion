@@ -28,7 +28,7 @@ func TestRunPolicyValidate_ValidFile(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	var buf bytes.Buffer
-	err := runPolicyValidate(context.Background(), path, &buf)
+	err := runPolicyValidate(context.Background(), path, false, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestRunPolicyValidate_InvalidFile(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	var buf bytes.Buffer
-	err := runPolicyValidate(context.Background(), path, &buf)
+	err := runPolicyValidate(context.Background(), path, false, &buf)
 	if err == nil {
 		t.Fatal("expected error for invalid policy")
 	}
@@ -70,7 +70,7 @@ godebug_policy:
 		t.Fatalf("WriteFile: %v", err)
 	}
 	var buf bytes.Buffer
-	if err := runPolicyValidate(context.Background(), good, &buf); err != nil {
+	if err := runPolicyValidate(context.Background(), good, false, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "governance schema") {
@@ -84,7 +84,7 @@ directive_policy:
 `), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	err := runPolicyValidate(context.Background(), bad, &bytes.Buffer{})
+	err := runPolicyValidate(context.Background(), bad, false, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for invalid governance outcome")
 	}
@@ -95,7 +95,7 @@ directive_policy:
 
 func TestRunPolicyValidate_NotFound(t *testing.T) {
 	var buf bytes.Buffer
-	err := runPolicyValidate(context.Background(), "non-existent.yaml", &buf)
+	err := runPolicyValidate(context.Background(), "non-existent.yaml", false, &buf)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -106,7 +106,7 @@ func TestRunPolicyValidate_NotFound(t *testing.T) {
 
 func TestRunPolicyValidate_RepoDefaultPolicy(t *testing.T) {
 	var buf bytes.Buffer
-	err := runPolicyValidate(context.Background(), "../../docs/examples/policies/default.yaml", &buf)
+	err := runPolicyValidate(context.Background(), "../../docs/examples/policies/default.yaml", false, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRunPolicyShow_ExplicitFile(t *testing.T) {
 func TestRunPolicyValidateDir_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	var buf bytes.Buffer
-	err := runPolicyValidate(context.Background(), dir, &buf)
+	err := runPolicyValidate(context.Background(), dir, false, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error for empty dir: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestRunPolicyValidateDir_WithValidFiles(t *testing.T) {
 		}
 	}
 	var buf bytes.Buffer
-	err := runPolicyValidate(context.Background(), dir, &buf)
+	err := runPolicyValidate(context.Background(), dir, false, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error for valid dir: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestRunPolicyValidateDir_WithInvalidFile(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	var buf bytes.Buffer
-	err := runPolicyValidate(context.Background(), dir, &buf)
+	err := runPolicyValidate(context.Background(), dir, false, &buf)
 	if err == nil {
 		t.Fatal("expected error for directory with invalid policy")
 	}
@@ -316,5 +316,218 @@ func TestResolveFetchVCSHosts(t *testing.T) {
 
 	if _, err := resolveFetchVCSHosts(context.Background(), filepath.Join(dir, "missing.yaml"), &errBuf); err == nil {
 		t.Error("an explicit policy path that does not exist should be an error")
+	}
+}
+
+// ---- policy validate --json -------------------------------------------------
+
+// runPolicyValidateCLI drives the command the way an operator does, so the
+// --json flag is resolved by the root exactly as it is in a shell, and returns
+// stdout with the process exit code the invocation would have produced.
+func runPolicyValidateCLI(t *testing.T, args ...string) (string, int) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	full := append([]string{"policy", "validate"}, args...)
+	full = append(full, "--store-root", t.TempDir())
+	err := Run(full, &stdout, &stderr)
+	return stdout.String(), ExitCodeForError(err)
+}
+
+func policyDir(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("WriteFile %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+// A directory renders as one array with one object per file, not as a run of
+// prose lines that no parser accepts.
+func TestPolicyValidate_JSONDirectoryIsOneArray(t *testing.T) {
+	dir := policyDir(t, map[string]string{
+		"a.yaml": validPolicyYAML,
+		"b.yml":  validPolicyYAML,
+	})
+	out, code := runPolicyValidateCLI(t, dir, "--json")
+	if code != ExitOK {
+		t.Fatalf("exit code = %d, want %d\n%s", code, ExitOK, out)
+	}
+	assertSingleJSONValue(t, "policy validate --json", []byte(out))
+
+	var got []policyValidationJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decoding: %v\n%s", err, out)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d results, want one per file\n%s", len(got), out)
+	}
+	for _, r := range got {
+		if !r.Passed || r.Error != "" {
+			t.Errorf("%s: passed=%v error=%q, want a clean pass", r.File, r.Passed, r.Error)
+		}
+		if r.Schema != "depth-policy" {
+			t.Errorf("%s: schema = %q, want depth-policy", r.File, r.Schema)
+		}
+		if filepath.Dir(r.File) != dir {
+			t.Errorf("file = %q, want a path inside %s", r.File, dir)
+		}
+	}
+}
+
+// One valid file is still an array, and still exits 0.
+func TestPolicyValidate_JSONSingleValidFile(t *testing.T) {
+	dir := policyDir(t, map[string]string{"policy.yaml": validPolicyYAML})
+	path := filepath.Join(dir, "policy.yaml")
+	out, code := runPolicyValidateCLI(t, path, "--json")
+	if code != ExitOK {
+		t.Fatalf("exit code = %d, want %d\n%s", code, ExitOK, out)
+	}
+	assertSingleJSONValue(t, "policy validate --json", []byte(out))
+
+	var got []policyValidationJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decoding: %v\n%s", err, out)
+	}
+	if len(got) != 1 || got[0].File != path || !got[0].Passed {
+		t.Fatalf("got %+v, want one passing result for %s", got, path)
+	}
+}
+
+// The flag changes rendering, never the verdict: a file that fails schema
+// validation still exits non-zero, because a CI check reads that exit code.
+func TestPolicyValidate_JSONInvalidFileKeepsItsExitCode(t *testing.T) {
+	dir := policyDir(t, map[string]string{"bad.yaml": invalidPolicyYAML})
+	path := filepath.Join(dir, "bad.yaml")
+
+	textOut, textCode := runPolicyValidateCLI(t, path)
+	jsonOutput, jsonCode := runPolicyValidateCLI(t, path, "--json")
+	if textCode != ExitConfig {
+		t.Errorf("text exit code = %d, want %d", textCode, ExitConfig)
+	}
+	if jsonCode != textCode {
+		t.Errorf("--json exit code = %d, text exit code = %d: the flag must not change the verdict", jsonCode, textCode)
+	}
+	if textOut != "" {
+		t.Errorf("text stdout = %q, want nothing", textOut)
+	}
+	assertSingleJSONValue(t, "policy validate --json", []byte(jsonOutput))
+
+	var got []policyValidationJSON
+	if err := json.Unmarshal([]byte(jsonOutput), &got); err != nil {
+		t.Fatalf("decoding: %v\n%s", err, jsonOutput)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1\n%s", len(got), jsonOutput)
+	}
+	if got[0].Passed {
+		t.Error("the failing file is reported as passed")
+	}
+	if !strings.Contains(got[0].Error, "invalid policy") {
+		t.Errorf("error = %q, want the schema diagnostic", got[0].Error)
+	}
+	if got[0].Schema != "depth-policy" {
+		t.Errorf("schema = %q, want the schema it was routed to", got[0].Schema)
+	}
+}
+
+// A mixed directory reports every file and still fails the run.
+func TestPolicyValidate_JSONMixedDirectoryReportsEveryFile(t *testing.T) {
+	dir := policyDir(t, map[string]string{
+		"a.yaml": validPolicyYAML,
+		"b.yaml": invalidPolicyYAML,
+	})
+	out, code := runPolicyValidateCLI(t, dir, "--json")
+	if code != ExitConfig {
+		t.Errorf("exit code = %d, want %d", code, ExitConfig)
+	}
+	assertSingleJSONValue(t, "policy validate --json", []byte(out))
+
+	var got []policyValidationJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decoding: %v\n%s", err, out)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d results, want one per file\n%s", len(got), out)
+	}
+	passed := 0
+	for _, r := range got {
+		if r.Passed {
+			passed++
+		}
+	}
+	if passed != 1 {
+		t.Errorf("%d files reported as passing, want 1\n%s", passed, out)
+	}
+}
+
+// An empty directory is an empty array. Prose here is the defect: a caller
+// that asked for JSON gets something no parser accepts, on the exact path
+// where there is nothing to report.
+func TestPolicyValidate_JSONEmptyDirectoryIsAnEmptyArray(t *testing.T) {
+	out, code := runPolicyValidateCLI(t, t.TempDir(), "--json")
+	if code != ExitOK {
+		t.Fatalf("exit code = %d, want %d\n%s", code, ExitOK, out)
+	}
+	if out != "[]\n" {
+		t.Fatalf("stdout = %q, want an empty array", out)
+	}
+}
+
+// Without --json the rendering is byte-for-byte what it has always been. The
+// expectations are written out rather than compared against a helper so that a
+// change to the text output has to be made here, deliberately.
+func TestPolicyValidate_TextRenderingIsUnchanged(t *testing.T) {
+	valid := policyDir(t, map[string]string{"policy.yaml": validPolicyYAML})
+	mixed := policyDir(t, map[string]string{"a.yaml": validPolicyYAML, "b.yaml": invalidPolicyYAML})
+	empty := t.TempDir()
+
+	badErr := "invalid policy (depth-policy schema): " +
+		"policy schema version \"invalid\" is newer than supported \"1\"; " +
+		"upgrade kanonarion to use this policy"
+
+	for _, tc := range []struct {
+		name string
+		arg  string
+		want string
+		code int
+	}{
+		{
+			name: "single valid file",
+			arg:  filepath.Join(valid, "policy.yaml"),
+			want: "ok: " + filepath.Join(valid, "policy.yaml") + " (depth-policy schema)\n",
+			code: ExitOK,
+		},
+		{
+			name: "directory of one",
+			arg:  valid,
+			want: "ok: " + filepath.Join(valid, "policy.yaml") + " (depth-policy schema)\n",
+			code: ExitOK,
+		},
+		{
+			name: "empty directory",
+			arg:  empty,
+			want: "no policy files found in " + empty + "\n",
+			code: ExitOK,
+		},
+		{
+			name: "mixed directory",
+			arg:  mixed,
+			want: "ok: " + filepath.Join(mixed, "a.yaml") + " (depth-policy schema)\n" +
+				"FAIL: " + filepath.Join(mixed, "b.yaml") + ": " + badErr + "\n",
+			code: ExitConfig,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, code := runPolicyValidateCLI(t, tc.arg)
+			if out != tc.want {
+				t.Errorf("stdout =\n%q\nwant\n%q", out, tc.want)
+			}
+			if code != tc.code {
+				t.Errorf("exit code = %d, want %d", code, tc.code)
+			}
+		})
 	}
 }
