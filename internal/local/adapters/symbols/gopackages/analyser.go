@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"os"
 	"sort"
 	"strings"
 
@@ -53,8 +54,10 @@ func (a *Analyser) AnalyseSymbols(ctx context.Context, root string) ([]domain.Im
 	if err != nil {
 		return nil, fmt.Errorf("loading packages: %w", err)
 	}
-	// Non-fatal: emit partial results on type-check errors.
-	packages.PrintErrors(pkgs)
+	// Non-fatal: emit partial results on type-check errors. One line per
+	// distinct problem, rather than packages.PrintErrors' three lines for one
+	// — see reportLoadErrors.
+	reportLoadErrors(os.Stderr, root, pkgs)
 
 	// Index external packages: importPath → (modulePath, moduleVersion).
 	type modRef struct{ path, version string }
