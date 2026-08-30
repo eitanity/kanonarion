@@ -57,23 +57,47 @@ func assertSingleJSONValue(t *testing.T, what string, b []byte) any {
 }
 
 // assertSeveralRecords checks that a several-record case really put more than
-// one record in the answer, and that the answer holding them is an array.
+// one record in the answer, and that the answer holding them is one document
+// with the records in an array.
 //
 // Both halves are the point. An invocation that yielded one record after all
 // leaves the case looking covered while asking the same question as the
-// single-record case above it. And a several-record answer that is not an array
-// is the defect itself: a top-level type that follows the result count, or a
-// stream of documents one per line, which no parser reads as one answer.
+// single-record case above it. And a several-record answer whose records are not
+// in an array is the defect itself: a top-level type that follows the result
+// count, or a stream of documents one per line, which no parser reads as one
+// answer.
+//
+// Two framings are accepted, because the tree holds both and the distinction is
+// not this guard's question. A listing answers with the array itself. A command
+// that also has facts about the RUN to state — which scope resolved the rows,
+// which build they were read in — answers with an envelope whose `modules` holds
+// them, because an array has nowhere to put those. What is asserted either way
+// is that the records are in one array of one document, whatever their number.
 func assertSeveralRecords(t *testing.T, what string, doc any) {
 	t.Helper()
-	arr, ok := doc.([]any)
+	arr, ok := recordsOf(doc)
 	if !ok {
-		t.Fatalf("%s: the top-level JSON type is %T, want an array: a command answering per module "+
-			"must not change shape with the number of records", what, doc)
+		t.Fatalf("%s: the top-level JSON type is %T with no modules array in it, want an array of records "+
+			"or an envelope carrying one: a command answering per module must not change shape with the "+
+			"number of records", what, doc)
 	}
 	if len(arr) < 2 {
 		t.Fatalf("%s: the answer holds %d record(s), so the several-record case asked the same question "+
 			"as the single-record one: point it at a scope with more than one module", what, len(arr))
+	}
+}
+
+// recordsOf finds the per-record array in a decoded answer: the document itself
+// when it is one, or its `modules` member when the records are enveloped.
+func recordsOf(doc any) ([]any, bool) {
+	switch t := doc.(type) {
+	case []any:
+		return t, true
+	case map[string]any:
+		arr, ok := t["modules"].([]any)
+		return arr, ok
+	default:
+		return nil, false
 	}
 }
 

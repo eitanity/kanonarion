@@ -17,9 +17,10 @@ import (
 // DB connection across the loop. The module set matches what `inspect` populates
 // for the same scope, so a bare `inspect` followed by a bare `context` composes:
 // every module enumerated here was walked, extracted, and vuln-scanned by the
-// inspect side. Output is one JSON array when --json is set; otherwise text
-// blocks separated by a blank line, each prefixed with a "==> <module>" header
-// line.
+// inspect side. Output is one JSON object when --json is set — the per-module
+// documents in its modules array, the scope that selected them and the walk
+// their verdicts were read in beside them; otherwise text blocks separated by a
+// blank line, each prefixed with a "==> <module>" header line.
 //
 // --stream selects the newline-delimited stream instead, exactly as it does on
 // the --walk-id path: both emit one document per line, and a caller that wants
@@ -36,9 +37,10 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	if f.excludeTests && scope == scopeComplete {
 		return refuseTestScopeOnCompleteScope("context --gomod")
 	}
-	// --json frames the documents as one array so the whole answer parses as a
-	// single document; --stream keeps the newline-delimited stream for a caller
-	// that reads one module at a time.
+	// --json frames the documents as the modules array of one envelope, so the
+	// whole answer parses as a single document and the run's own facts have
+	// somewhere to sit; --stream keeps the newline-delimited stream of per-module
+	// documents for a caller that reads one module at a time.
 	stream := f.stream
 	array := jsonOut && !stream
 
@@ -55,8 +57,12 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		return nerr
 	}
 	scopeField := newScopeJSON(res)
+	// The same three facts the notice above states, as the envelope's fields.
+	// Built here, from the same resolution and the same count, so the sentence
+	// and the document cannot disagree.
+	envelope := newEnvelopeScope(res, len(coords), true)
 	if len(coords) == 0 {
-		return writeEmptyContextScope(f, scope, array, stream, stdout)
+		return writeEmptyContextScope(f, scope, envelope, array, stream, stdout)
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
@@ -95,15 +101,20 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// invisible pin to a walk taken before the last go.mod edit reads as a
 	// statement about the tree in front of the reader.
 	var basis basisWalk
+	var rooting *contextRooting
 	choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath, scope)
 	switch {
 	case werr != nil:
+		rooting = contextRootingUnanchored(werr.Error(), f.gomodPath)
 		_, _ = fmt.Fprintf(stderr, "notice: no walk anchors these vulnerability verdicts: %v\n", werr)
 	default:
 		vulnBatch.anchorTo(ctx, choice.summary.ID)
 		// The same walk the verdicts are read in answers the dependency section,
 		// so every document in the stream reports one build.
 		basis = resolveBasisWalk(ctx, ctr.QueryWalks, choice.summary.ID)
+		// The same statement as fields: which walk, chosen rather than named, out
+		// of how many, against which manifest and under which toolchain.
+		rooting = contextRootingForChoice(choice, f.gomodPath)
 		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (%s, frame %s)%s\n",
 			choice.summary.ID, walkScopeLabel(choice.summary.Scope), choice.summary.BuildFrame(),
 			choice.basisNotes())
@@ -117,7 +128,8 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// so nothing but the report is written.
 	var report contextSizeReport
 
-	arr := jsonArrayWriter{out: stdout}
+	arr := jsonEnvelopeWriter{out: stdout,
+		head: contextEnvelopeHead{envelopeScope: envelope, Rooting: rooting}}
 
 	var errs []error
 	for _, coordStr := range coords {
@@ -166,10 +178,10 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		}
 	}
 
-	// The array is closed before the failures are reported, so a run that lost
+	// The envelope is closed before the failures are reported, so a run that lost
 	// modules still leaves a parseable document behind holding the ones it got.
 	// --size-only wrote no element and answers with its own report below, so
-	// there is no array to close there.
+	// there is no envelope to close there.
 	if array && !f.sizeOnly {
 		if cerr := arr.close(); cerr != nil {
 			return cerr
@@ -194,16 +206,21 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 //
 // --size-only asks a size question, so it answers with a zero-module report
 // rather than an empty answer of another shape: empty and populated size
-// answers decode into the same type. Under --json the empty answer is [], for
-// the same reason. On the stream an empty stream is how "nothing matched" is
-// spelled, so --stream writes zero bytes. The prose stays on the text path.
-func writeEmptyContextScope(f contextFlags, scope depScope, array, stream bool, stdout io.Writer) error {
+// answers decode into the same type. Under --json the empty answer is the same
+// envelope with an empty modules array, for the same reason — and it is the one
+// answer where the envelope earns its keep on its own, because which scope came
+// back empty is the whole of what the run has to say. On the stream an empty
+// stream is how "nothing matched" is spelled, so --stream writes zero bytes. The
+// prose stays on the text path.
+func writeEmptyContextScope(f contextFlags, scope depScope, envelope envelopeScope, array, stream bool, stdout io.Writer) error {
 	if f.sizeOnly {
 		var report contextSizeReport
 		return report.write(jsonOut, stdout)
 	}
 	if array {
-		empty := jsonArrayWriter{out: stdout}
+		// No walk was selected: the run stopped at the empty scope, before the
+		// build it would have read verdicts in was chosen.
+		empty := jsonEnvelopeWriter{out: stdout, head: contextEnvelopeHead{envelopeScope: envelope}}
 		return empty.close()
 	}
 	if !stream {
@@ -213,13 +230,13 @@ func writeEmptyContextScope(f contextFlags, scope depScope, array, stream bool, 
 }
 
 // emitContextDocument renders one module's document in the form the caller
-// asked for: into the size report, into the JSON array, onto the
+// asked for: into the size report, into the envelope's modules array, onto the
 // newline-delimited stream, or as a text block.
 //
 // A failure to write is wrapped in errContextOutputWrite, which the caller
 // reads as fatal; anything else is that one module's failure and is collected.
 func emitContextDocument(coordStr string, out contextOutput, sizeOnly, array, stream, compact bool,
-	arr *jsonArrayWriter, report *contextSizeReport, stdout io.Writer) error {
+	arr *jsonEnvelopeWriter, report *contextSizeReport, stdout io.Writer) error {
 	switch {
 	case sizeOnly:
 		return report.add(coordStr, out)

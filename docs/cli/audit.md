@@ -159,7 +159,7 @@ the install command.
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache---from-modcache) |
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`), honoured not rewritten. Under `off` the run proceeds, the staleness column answered from the ledger alone — a walk still needs its module bytes. `direct` refuses, exit `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
-| `--json` | `false` | Emit output as a JSON array |
+| `--json` | `false` | Emit output as one JSON object: the rows in `modules`, the run's own facts beside them |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
@@ -228,59 +228,77 @@ kanonarion audit --gomod ./go.mod --json
 ```
 
 ```json
-[
-  {
-    "coordinate": "github.com/spf13/cobra@v1.10.2",
-    "verification": "Verified",
-    "license": "Apache-2.0",
-    "license_status": "Detected",
-    "vuln_status": "Clean",
-    "vuln_findings": 0,
-    "is_latest": true,
-    "staleness_source": "proxy",
-    "major_probed": true
-  },
-  {
-    "coordinate": "golang.org/x/mod@v0.35.0",
-    "verification": "Verified",
-    "license": "BSD-3-Clause",
-    "license_status": "Detected",
-    "vuln_status": "Clean",
-    "vuln_findings": 0,
-    "is_latest": false,
-    "staleness_source": "ledger",
-    "staleness_looked_up_at": "2026-08-03T09:41:02Z",
-    "latest_version": "v0.36.0",
-    "latest_release_age_days": 6
-  },
-  {
-    "coordinate": "golang.org/x/vuln@v1.3.0",
-    "verification": "Verified",
-    "license": "BSD-3-Clause",
-    "license_status": "Detected",
-    "vuln_status": "Clean",
-    "vuln_findings": 0,
-    "is_latest": true,
-    "staleness_source": "proxy",
-    "major_probed": true
-  },
-  {
-    "coordinate": "go.etcd.io/bbolt@v1.4.3",
-    "verification": "Verified",
-    "license": "MIT",
-    "license_status": "Detected",
-    "vuln_status": "Withdrawn",
-    "vuln_findings": 1,
-    "vuln_withdrawn": 1,
-    "is_latest": false,
-    "staleness_source": "proxy",
-    "latest_version": "v1.5.0",
-    "latest_release_age_days": 54
-  }
-]
+{
+  "dependency_scope": { "scope": "code", "test_scope": "included" },
+  "module_count": 4,
+  "modules": [
+    {
+      "coordinate": "github.com/spf13/cobra@v1.10.2",
+      "verification": "Verified",
+      "license": "Apache-2.0",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "is_latest": true,
+      "staleness_source": "proxy",
+      "major_probed": true
+    },
+    {
+      "coordinate": "golang.org/x/mod@v0.35.0",
+      "verification": "Verified",
+      "license": "BSD-3-Clause",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "is_latest": false,
+      "staleness_source": "ledger",
+      "staleness_looked_up_at": "2026-08-03T09:41:02Z",
+      "latest_version": "v0.36.0",
+      "latest_release_age_days": 6
+    },
+    {
+      "coordinate": "golang.org/x/vuln@v1.3.0",
+      "verification": "Verified",
+      "license": "BSD-3-Clause",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "is_latest": true,
+      "staleness_source": "proxy",
+      "major_probed": true
+    },
+    {
+      "coordinate": "go.etcd.io/bbolt@v1.4.3",
+      "verification": "Verified",
+      "license": "MIT",
+      "license_status": "Detected",
+      "vuln_status": "Withdrawn",
+      "vuln_findings": 1,
+      "vuln_withdrawn": 1,
+      "is_latest": false,
+      "staleness_source": "proxy",
+      "latest_version": "v1.5.0",
+      "latest_release_age_days": 54
+    }
+  ]
+}
 ```
 
-The example above is abridged. Keys whose value is zero, `false` or `null` are
+`--json` emits **one JSON object** at every count, never a bare array. The
+per-module rows are its `modules` member and are unchanged; beside them the
+object states the facts about the run, which a bare array had nowhere to put:
+
+| Key | Meaning |
+| --- | --- |
+| `dependency_scope` | The go.mod dependency scope that resolved the rows (`code`, `tool` or `complete`) and the test axis it applied (`included`, `excluded` or `unavailable`). Never null on `audit`, which always resolves a scope. |
+| `module_count` | How many modules that scope resolved. It is the number the `notice:` line on stderr states. A module that failed to render is missing from `modules`, named on stderr, and the run exits non-zero. |
+| `modules` | The per-module rows. `[]` when the scope resolved nothing - the empty answer is the same object, not a different shape. |
+
+`audit` refuses `--exclude-tests` (it records a walk, and a walk record names its
+scope but not its test axis), so it offers no `narrow_with` remedy on either
+channel.
+
+The rows above are abridged. Keys whose value is zero, `false` or `null` are
 still emitted - `vuln_findings: 0`, `vuln_withdrawn: 0`, `policy_blocking:
 false`, `policy_unevaluated: false`, `pin_ahead_of_latest: false`,
 `latest_release_age_days: null`, `deprecated: null`. A key is absent only where

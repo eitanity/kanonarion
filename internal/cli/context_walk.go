@@ -115,10 +115,19 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 		return nil
 	}
 
-	// --json frames the documents as one array so the whole answer parses as a
-	// single document; --stream keeps the newline-delimited stream for a caller
-	// that reads one module at a time. Asking for both is asking for the stream.
-	arr := jsonArrayWriter{out: stdout}
+	// --json frames the documents as the modules array of one envelope, so the
+	// whole answer parses as a single document; --stream keeps the
+	// newline-delimited stream of per-module documents for a caller that reads
+	// one module at a time. Asking for both is asking for the stream.
+	//
+	// The rooting says the caller NAMED this build. That is the fact the field
+	// exists for: the same document from a --gomod read says the walk was chosen
+	// on the caller's behalf, and a consumer must be able to tell the two apart
+	// without knowing which command line produced the document.
+	arr := jsonEnvelopeWriter{out: stdout, head: contextEnvelopeHead{
+		envelopeScope: unscopedEnvelope(len(nodes)),
+		Rooting:       contextRootingForNamedWalk(pinnedWalkChoice(rec)),
+	}}
 	enc := json.NewEncoder(stdout)
 	for _, node := range nodes {
 		if err := ctx.Err(); err != nil {
@@ -154,7 +163,8 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 	if f.stream {
 		return nil
 	}
-	// An empty selection — every node filtered out — still answers with [].
+	// An empty selection — every node filtered out — still answers with the
+	// envelope and an empty modules array.
 	return arr.close()
 }
 

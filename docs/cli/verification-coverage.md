@@ -170,6 +170,16 @@ kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD --json
   "unrecorded": 0,
   "unrecognised": 0,
   "collapsed": true,
+  "shares": {
+    "cross_verified": 0,
+    "checksum_db_only": 97.1,
+    "go_sum_only": 0,
+    "unverified": 2.7,
+    "local_source": 0.2,
+    "unrecorded": 0,
+    "unrecognised": 0,
+    "cross_verified_of_applicable": 0
+  },
   "vcs": {
     "rechecked": 0,
     "inherited": 0,
@@ -190,6 +200,11 @@ kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD --json
 Every count is emitted even when zero: a gate asserting `cross_verified == 0`
 must be able to distinguish a graph with no cross-verification from a document
 where the field was omitted.
+
+`shares` is the same set of percentages the text report prints beside the
+counts, to the same one decimal place, plus `cross_verified_of_applicable` -
+the share over `cross_verifiable` rather than over `total`. A share the report
+drops because its row is zero is still emitted here.
 
 `build` follows the same rule and is emitted on every document. Its platform and
 toolchain fields are empty strings where the walk recorded none, and
@@ -232,7 +247,7 @@ a VCS anchor:
 
 ```
 kanonarion verification-coverage "$WALK_ID" --json |
-  jq -e '.cross_verified / .cross_verifiable >= 0.95'
+  jq -e '.shares.cross_verified_of_applicable >= 95'
 ```
 
 ## See also

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -426,9 +425,14 @@ func TestAuditCmd_EmptyCodeScope(t *testing.T) {
 }
 
 // TestAuditCmd_EmptyCodeScopeJSON guards that the empty-scope answer reaches
-// a --json caller as an empty array. The empty-scope branch used to return
-// above the jsonOut check, so it wrote the human sentence onto the data
-// channel and exited 0, leaving the caller a parse error as its only signal.
+// a --json caller as the same object a populated run emits, with an empty
+// modules array. The empty-scope branch used to return above the jsonOut check,
+// so it wrote the human sentence onto the data channel and exited 0, leaving the
+// caller a parse error as its only signal.
+//
+// It also pins what the empty answer now SAYS. A run that audited nothing states
+// which scope came back empty and that it resolved nought modules — the whole of
+// what such a run has to report, and none of it fitted in the array.
 func TestAuditCmd_EmptyCodeScopeJSON(t *testing.T) {
 	gomod := "module example.com/myapp\n\ngo 1.21\n"
 	dir := t.TempDir()
@@ -440,16 +444,26 @@ func TestAuditCmd_EmptyCodeScopeJSON(t *testing.T) {
 	if err := Run([]string{"audit", "--gomod", path, "--json"}, &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v (stderr=%q)", err, stderr.String())
 	}
-	out := strings.TrimSpace(stdout.String())
 	var results []auditModuleResult
-	if err := json.Unmarshal([]byte(out), &results); err != nil {
-		t.Fatalf("--json empty scope did not emit JSON: %q", out)
-	}
-	if results == nil {
-		t.Errorf("--json empty scope emitted null, not []: %q", out)
-	}
+	fields := envelopeRows(t, "audit --json on an empty scope", stdout.Bytes(), &results)
 	if len(results) != 0 {
 		t.Errorf("expected no results for an empty scope, got %d", len(results))
+	}
+	if fields["module_count"] != float64(0) {
+		t.Errorf("module_count = %v, want 0", fields["module_count"])
+	}
+	scope, ok := fields["dependency_scope"].(map[string]any)
+	if !ok {
+		t.Fatalf("dependency_scope is not an object: %v", fields["dependency_scope"])
+	}
+	if scope["scope"] != string(scopeCode) {
+		t.Errorf("dependency_scope.scope = %v, want %q", scope["scope"], scopeCode)
+	}
+	// audit refuses --exclude-tests, so it offers the narrowing on neither
+	// channel: a field naming a flag this command rejects is a remedy that
+	// fails when a consumer acts on it.
+	if got, present := fields["narrow_with"]; present {
+		t.Errorf("narrow_with = %v: audit refuses --exclude-tests and must not offer it", got)
 	}
 }
 

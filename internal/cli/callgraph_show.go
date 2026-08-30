@@ -326,8 +326,49 @@ type coordinateJSON struct {
 	Version string `json:"version"`
 }
 
+// callGraphRunJSON is what THIS RUN states about the record it printed: the
+// choice it refused to make for the caller, and where the answer came from.
+//
+// It is beside the record rather than in it. The record is a sealed artefact
+// about a module; these are facts about one invocation, which is why they are
+// absent from `callgraph-show` — that command serves a stored record and states
+// nothing about how this run got it.
+type callGraphRunJSON struct {
+	// BuildListRefusal is present only when the run needed a build list, found
+	// the coordinate in more than one build, and refused to pick one.
+	BuildListRefusal *buildListRefusalJSON `json:"build_list_refusal,omitempty"`
+	// Derivations say, one per answer, whether this run measured it or served a
+	// record it already held.
+	Derivations []derivationJSON `json:"derivations,omitempty"`
+}
+
+// derivationJSON is one answer's provenance: measured here, or served.
+//
+// The two print the same summary line above it, so without a field a consumer
+// cannot tell a fresh measurement from a stored one — and that distinction is
+// what decides whether the answer is about the code in front of the reader. It
+// is a field and not a sentence for the same reason: the sentence is on stderr,
+// which the consumer reading the document never sees.
+type derivationJSON struct {
+	// Answer names what was derived, in the words the statement uses.
+	Answer string `json:"answer"`
+	// DerivedByThisRun is the distinction itself. False means a stored record
+	// was served; the two fields below then say which record and how to refuse
+	// it.
+	DerivedByThisRun bool `json:"derived_by_this_run"`
+	// ReusedRecordExtractedAt dates the served record, so a reuse claim can be
+	// checked against the record rather than taken on trust. Absent on a fresh
+	// measurement, which has no earlier record to name.
+	ReusedRecordExtractedAt string `json:"reused_record_extracted_at,omitempty"`
+	// RemedyFlag forces the measurement to be taken again — needed by a consumer
+	// that was served a record and wants the tree read. Absent where the run
+	// measured, since there is nothing to force.
+	RemedyFlag string `json:"remedy_flag,omitempty"`
+}
+
 // callGraphRecordJSON is the curated snake_case shape of a call graph record.
 type callGraphRecordJSON struct {
+	callGraphRunJSON
 	SchemaVersion string         `json:"schema_version"`
 	Coordinate    coordinateJSON `json:"coordinate"`
 	Algorithm     string         `json:"algorithm"`

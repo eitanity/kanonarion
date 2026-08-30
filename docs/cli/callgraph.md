@@ -446,6 +446,25 @@ before the analysis, not as a retry after one failed: analysing twice would
 persist two failure generations differing only in which build list they were
 denied.
 
+Where more than one build holds the module, no build list is discovered and the
+candidates are named - on stderr as a sentence, and under `--json` as data, so a
+consumer can retry without parsing prose:
+
+```json
+"build_list_refusal": {
+  "coordinate": "example.com/mod@v1.2.0",
+  "build_count": 2,
+  "builds": [
+    { "walk_id": "01KZ3WD9JM9X4S5TWR31HF64H7", "root": "example.com/app@v1.0.0" },
+    { "walk_id": "01KZ3WD9JM9X4S5TWR31HF64H8", "root": "example.com/svc@v2.1.0" }
+  ],
+  "remedy_flag": "--from-walk"
+}
+```
+
+The key is absent when nothing was refused. The analysis still runs, without
+pins.
+
 The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
 note naming how many `require` directives were pinned, `--history` appends it to
 the artefact the generation was computed from, and `--json` carries a

@@ -2,6 +2,13 @@
 $ kanonarion audit --gomod $PROJECT/go.mod --json
 exit 0
 --- stdout ---
-[]
+{
+  "dependency_scope": {
+    "scope": "code",
+    "test_scope": "included"
+  },
+  "module_count": 0,
+  "modules": []
+}
 --- stderr ---
 notice: code scope resolved 0 module(s); test-scope dependencies included

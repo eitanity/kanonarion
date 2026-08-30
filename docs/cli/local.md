@@ -56,10 +56,26 @@ derivation:
   analysed 2026-08-12T00:48:14Z; that record was reused (--force to re-measure)
 ```
 
-stdout carries the result only: the summary line, or under `--json` the record
-document alone. To capture the answer and keep the statement, redirect them
-separately (`kanonarion local . --json > graph.json 2> derivation.txt`); to
-discard the statement, `2>/dev/null`.
+stdout carries the result: the summary line, or under `--json` the record
+document. The `--json` document carries the same distinction as fields, under
+`derivations`, so a consumer never has to read the stderr sentence:
+
+```json
+"derivations": [
+  {
+    "answer": "call graph",
+    "derived_by_this_run": false,
+    "reused_record_extracted_at": "2026-08-12T00:48:14Z",
+    "remedy_flag": "--force"
+  }
+]
+```
+
+`derived_by_this_run` is `true` where this run analysed the tree; the record
+date and the remedy flag are then absent, because there is no earlier record to
+name and nothing to force. To capture the answer and keep the statement,
+redirect them separately (`kanonarion local . --json > graph.json 2>
+derivation.txt`); to discard the statement, `2>/dev/null`.
 
 The `(cached)` marker on the summary line is on stdout with the rest of the
 result: it is a property of the answer, not a statement about it.

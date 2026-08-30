@@ -85,22 +85,33 @@ import (
 //
 // -- what counts as carried --
 //
-// Two tiers, because "carried" has two useful meanings and only one of them is
-// exactly checkable.
+// Two tiers, because "carried" has two useful meanings, and which one applies is
+// decided by the statement rather than by whoever is closing the gap.
 //
 //	tier 1, carried at all: the statement's text appears verbatim as a string
-//	value in the JSON document. This is the `notices` array — an exact
-//	comparison with no heuristic in it, and the reason a verbatim array is
-//	worth having: it makes parity total and testable before any field exists.
+//	value in the JSON document. An exact comparison with no heuristic in it.
 //
 //	tier 2, carried as data: every identifier inside the statement — the walk
 //	id, the count, the coordinate, the manifest path, the flag being offered —
 //	is readable off the document as a value. This is what upgrades a fact from
 //	prose a machine must parse to data a machine can read.
 //
+//	A statement that holds an identifier closes on tier 2 ALONE. A statement
+//	that holds none closes on tier 1, because there is nothing in it to field
+//	and verbatim is the only mechanical evidence available; refusing it would
+//	leave an entry that can never close.
+//
+// Tier 1 does not close a statement with identifiers in it, and the reason is
+// the whole point of the surface. An agent cannot read prose, and a sentence
+// sitting in a JSON string is still prose — it has moved channel, not form. If
+// tier 1 closed such a statement, an array of raw stderr lines would close every
+// entry on the ledger at once without a single fact having been fielded.
+//
 // Tier 2 is a substring test against the document's scalar values, deliberately
 // generous: a false gap would send somebody to add a field that is already
-// there, and the guard's job is to be believed.
+// there, and the guard's job is to be believed. Generous in one direction only —
+// see the prose rule at isStatementProse, which is what stops a scalar that is
+// CARRYING the sentence from also answering for every identifier inside it.
 //
 // -- the hole that is stated, not counted --
 //
@@ -435,6 +446,9 @@ type parityGap struct {
 	statement string
 	// verbatim reports whether the sentence itself is in the document.
 	verbatim bool
+	// fieldable reports whether the statement holds any identifier at all — that
+	// is, whether there was anything in it a field could carry.
+	fieldable bool
 	// missingIDs are the identifiers inside it that no value in the document
 	// carries.
 	missingIDs []string
@@ -442,12 +456,40 @@ type parityGap struct {
 	structured bool
 }
 
+// carried reports whether the document carries this statement.
+//
+// The statement decides which tier applies. One that holds an identifier is
+// carried only as DATA: every identifier in it readable as a value, which is the
+// upgrade from prose a machine must parse to data a machine can read, and the
+// thing every fix on the ledger is written to produce. The sentence copied into
+// the document as a string does not close it — that is prose on a second
+// channel, and it would close the whole ledger at once for the cost of one array.
+//
+// A statement that holds no identifier at all — `local` stating that a
+// derivation was derived by this run has neither a number, a flag nor an id in
+// it — has nothing in it a field could carry, so verbatim is the only mechanical
+// evidence there is and tier 1 is what reaches it. Refusing that case would
+// leave an entry no work could ever close.
+func (g parityGap) carried() bool {
+	if !g.fieldable {
+		return g.verbatim
+	}
+	return len(g.missingIDs) == 0
+}
+
 // class names what has to change for this gap to close, which is the only thing
 // that decides how it is fixed.
+//
+// D-verbatim-only is its own state rather than a shade of A: the sentence IS in
+// the document, so a reader has to be able to tell it from a fact that is absent
+// altogether. It is better than absent and worse than fielded, and the three
+// have to be distinguishable at a glance.
 func (g parityGap) class() string {
 	switch {
 	case g.structured:
 		return "B-channel"
+	case g.verbatim:
+		return "D-verbatim-only"
 	case len(g.missingIDs) > 0:
 		return "A-fact-absent"
 	default:
@@ -533,52 +575,17 @@ type parityGapEntry struct {
 // description of it.
 var knownParityGaps = []parityGapEntry{
 	{
-		command:   "audit",
-		statement: "code scope resolved 0 module(s); test-scope dependencies included",
-		reason: "audit's document is a bare array of findings, so there is nowhere to put a fact about the run: " +
-			"it needs a top-level object whose envelope carries the resolved scope, the module count and whether test-scope dependencies were included.",
-	},
-	{
-		command:   "callgraph",
-		statement: "in 3 builds, and this question names none",
-		reason: "the ambiguous-build refusal renders its candidates as prose on stderr; the refusal document has to carry them as data — " +
-			"one entry per candidate with the walk id and the root it is rooted at, plus the count.",
-	},
-	{
-		command:   "callgraph",
-		statement: "so name the build you mean",
-		reason: "the remedy is a command line inside a sentence; the refusal document has to name the flag (--from-walk) and the coordinate it applies to as fields, " +
-			"so a consumer can retry without parsing prose.",
-	},
-	{
-		command:   "latest",
-		statement: "code scope resolved 0 module(s); test-scope dependencies included (narrow with --exclude-tests)",
-		reason: "latest answers with a bare array of modules, so the scope it resolved, the count and the --exclude-tests remedy have no envelope to sit in; " +
-			"the same envelope audit needs closes this one.",
-	},
-	{
-		command:   "local",
-		statement: "re-read the working tree and found it identical to the tree analysed",
-		reason: "the document already names the derivation, but not that this run reused a record rather than measuring, nor the flag that forces a re-measurement; " +
-			"each derivation entry needs a reused/derived field and the --force remedy beside it.",
-	},
-	{
 		command:   "local",
 		statement: "derivation: call graph: derived by this run",
-		reason: "the counterpart of the entry above: the document carries the derivation's name but no field saying THIS run derived it, " +
-			"so a consumer cannot tell a fresh measurement from a served one.",
-	},
-	{
-		command:   "context (populated --gomod)",
-		statement: "code scope resolved 1 module(s); test-scope dependencies included (narrow with --exclude-tests)",
-		reason: "context answers with an array of per-module records and no envelope, so the scope this run resolved and the --exclude-tests remedy are stated only to a person; " +
-			"the envelope audit and latest need is the same one.",
-	},
-	{
-		command:   "context (populated --gomod)",
-		statement: "vulnerability verdicts read in walk",
-		reason: "the rooting is partly carried — the walk id is a value — but the manifest that named the build, the toolchain the count of candidate walks was taken under, " +
-			"and the --walk-id remedy are not; the rooting object has to carry the manifest path, the toolchain and the flag.",
+		reason: "nothing can close it, and the fact it names is not the reason. The fact IS fielded: each derivation now carries " +
+			"derived_by_this_run, and the served arm of this same statement — 're-read the working tree … reused' — closed on that field plus " +
+			"the --force remedy beside it. What reproduces is the measurement. The sentence holds no identifier, so only tier 1 reaches it; " +
+			"tier 1 needs the sentence in the document; and the run that SAYS it never writes the document this is checked against. Each " +
+			"command is measured twice against one store: the text run analyses the tree and states this, and the --json run then serves the " +
+			"record that first run wrote, so its document says derived_by_this_run false — true of it, and the whole point of the command. " +
+			"Measuring `local --force` as well would not help: this case would still be measured unforced, and would still reproduce. " +
+			"It closes only if the fact is fielded AND the guard measures a run that both derives and prints a document, which is one " +
+			"invocation, not two.",
 	},
 }
 
@@ -677,16 +684,19 @@ func TestRunLevelFactParity(t *testing.T) {
 				}
 				seen[body] = struct{}{}
 				res.statements++
+				ids := identifiersIn(body)
 				gap := parityGap{
 					command: label, channel: ch.name, shape: shape, statement: body,
 					verbatim: containsSentence(strs, body), structured: isStructuredStatement(body),
+					fieldable: len(ids) > 0,
 				}
-				for _, id := range identifiersIn(body) {
-					if !carriesIdentifier(scalars, id) {
+				words := statementWords(body)
+				for _, id := range ids {
+					if !carriesIdentifier(scalars, id, words) {
 						gap.missingIDs = append(gap.missingIDs, id)
 					}
 				}
-				if !gap.verbatim {
+				if !gap.carried() {
 					res.gaps = append(res.gaps, gap)
 				}
 			}
@@ -825,8 +835,9 @@ func parityReport(results, silent []parityResult, skipped []string, matches []in
 		fmt.Fprintf(&b, "    %s\n", s)
 	}
 	fmt.Fprintf(&b, "\nby class: A-fact-absent %d (an identifier is in no value of the document), "+
-		"B-channel %d (rendered as JSON, but onto stderr), C-prose-absent %d (identifiers present, sentence absent)\n",
-		byClass["A-fact-absent"], byClass["B-channel"], byClass["C-prose-absent"])
+		"B-channel %d (rendered as JSON, but onto stderr), C-prose-absent %d (no identifier to field, sentence absent), "+
+		"D-verbatim-only %d (the sentence is in the document, its facts are not)\n",
+		byClass["A-fact-absent"], byClass["B-channel"], byClass["C-prose-absent"], byClass["D-verbatim-only"])
 	fmt.Fprintf(&b, "\n--- known-open ledger (%d entry(ies)) ---\n", len(knownParityGaps))
 	for i, e := range knownParityGaps {
 		fmt.Fprintf(&b, "    [%d gap(s)] %s — %s\n        to close: %s\n", matches[i], e.command, e.statement, e.reason)
@@ -841,10 +852,13 @@ func gapRemedyLine(g parityGap) string {
 	switch g.class() {
 	case "B-channel":
 		return "already data, but on stderr: a consumer reading stdout never sees it"
+	case "D-verbatim-only":
+		return "the sentence is in the document but its facts are not — a string a machine must parse; field: " +
+			strings.Join(g.missingIDs, ", ")
 	case "A-fact-absent":
 		return "identifiers no value in the document carries: " + strings.Join(g.missingIDs, ", ")
 	default:
-		return "every identifier is in the document; the sentence stating what they mean is not"
+		return "the statement holds no identifier a field could carry, and the sentence itself is not in the document"
 	}
 }
 
@@ -910,6 +924,61 @@ func TestAdviceIsSeparatedFromRemedy(t *testing.T) {
 	}
 }
 
+// TestProseIsNotAField pins the rule the guard turns on, because getting it
+// wrong is the cheap way past the whole surface: an array of raw stderr lines
+// closes every entry on the ledger at once, since a scalar that IS the sentence
+// contains every identifier in it.
+func TestProseIsNotAField(t *testing.T) {
+	t.Parallel()
+
+	const refusal = "the store holds example.com/dep@v1.2.0 in 3 builds, and this question names none: " +
+		"walk 01JS0NGARD0000000000000WA1 rooted at example.com/root@v1.0.0"
+	words := statementWords(refusal)
+
+	t.Run("the sentence in a string answers for nothing in it", func(t *testing.T) {
+		t.Parallel()
+		for _, id := range identifiersIn(refusal) {
+			if carriesIdentifier([]string{refusal}, id, words) {
+				t.Errorf("a scalar holding the statement carried %q: prose on a second channel is still prose", id)
+			}
+		}
+	})
+
+	t.Run("fields answer for what they hold", func(t *testing.T) {
+		t.Parallel()
+		doc := []string{"01JS0NGARD0000000000000WA1", "example.com/root@v1.0.0", "example.com/dep@v1.2.0", "3", "--from-walk"}
+		for _, id := range identifiersIn(refusal) {
+			if !carriesIdentifier(doc, id, words) {
+				t.Errorf("fielded %q reads as missing: a false gap sends somebody to add a field that is already there", id)
+			}
+		}
+	})
+
+	t.Run("a short label is a field, not prose", func(t *testing.T) {
+		t.Parallel()
+		for _, label := range []string{"call graph", "no fork indicators", "not recorded", "reused-stored-record"} {
+			if isStatementProse(label, statementWords("derivation: call graph: reused-stored-record, not recorded, no fork indicators")) {
+				t.Errorf("%q read as prose: a field value names one thing and is allowed to share words with the sentence", label)
+			}
+		}
+	})
+
+	t.Run("verbatim closes a statement with nothing to field, and only that one", func(t *testing.T) {
+		t.Parallel()
+		empty := parityGap{statement: "derivation: call graph: derived by this run", verbatim: true}
+		if !empty.carried() {
+			t.Error("a statement with no identifier in it did not close on verbatim — it can never close otherwise")
+		}
+		held := parityGap{statement: refusal, verbatim: true, fieldable: true, missingIDs: []string{"--from-walk"}}
+		if held.carried() {
+			t.Error("a statement with identifiers closed on the sentence alone")
+		}
+		if got := held.class(); got != "D-verbatim-only" {
+			t.Errorf("class = %q, want D-verbatim-only: present-as-prose has to be tellable from absent", got)
+		}
+	})
+}
+
 // containsSentence reports whether the document carries the statement itself.
 // Substring rather than equality, so a document that carries the sentence
 // inside a longer one still counts as carrying it.
@@ -925,14 +994,71 @@ func containsSentence(strs []string, body string) bool {
 	return false
 }
 
-// carriesIdentifier reports whether any value in the document holds id.
-func carriesIdentifier(scalars []string, id string) bool {
+// carriesIdentifier reports whether any value in the document holds id as data.
+//
+// Scalars that are carrying the statement's own prose are not asked: see
+// isStatementProse.
+func carriesIdentifier(scalars []string, id string, stmtWords []string) bool {
 	for _, s := range scalars {
+		if isStatementProse(s, stmtWords) {
+			continue
+		}
 		if strings.Contains(s, id) {
 			return true
 		}
 	}
 	return false
+}
+
+// proseRunWords is the rule: a scalar sharing this many consecutive words with
+// the statement is carrying the statement, not a fact out of it.
+//
+// A field value names ONE thing — a walk id, a coordinate, a flag, a count, a
+// status, a short label — and the longest legitimate ones measured on this tree
+// are two and three words ("call graph", "no fork indicators", "not recorded").
+// The shortest thing that reads as prose is a clause. Four consecutive words is
+// the line between them, and it is a rule about SHAPE rather than about wording:
+// nothing here knows what any sentence says, so a line reworded tomorrow is
+// judged the same way.
+//
+// It is a run rather than a bag of words because word overlap alone would
+// convict a field: a statement about "walk 01J… rooted at example.com/root" and
+// a document naming that walk and that root share every word in the sentence
+// while holding both as data.
+const proseRunWords = 4
+
+// isStatementProse reports whether scalar is carrying stmtWords' prose.
+//
+// This is what stops the cheapest possible close. A scalar that IS the sentence
+// contains every identifier in it, so without this an array of raw stderr lines
+// would satisfy tier 2 for every statement in the tree — the sentence would be
+// answering for its own contents, and no fact would have been fielded.
+func isStatementProse(scalar string, stmtWords []string) bool {
+	w := statementWords(scalar)
+	if len(w) < proseRunWords || len(stmtWords) < proseRunWords {
+		return false
+	}
+	haystack := " " + strings.Join(stmtWords, " ") + " "
+	for i := 0; i+proseRunWords <= len(w); i++ {
+		if strings.Contains(haystack, " "+strings.Join(w[i:i+proseRunWords], " ")+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// statementWords splits text into comparable words: lower-cased, stripped of
+// the punctuation a sentence puts around them, so "reused (--force" and
+// "reused" are the same word in both places.
+func statementWords(text string) []string {
+	var out []string
+	for _, f := range strings.Fields(strings.ToLower(text)) {
+		f = strings.Trim(f, `.,;:!?"'()[]{}`)
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func truncateStatement(s string) string {

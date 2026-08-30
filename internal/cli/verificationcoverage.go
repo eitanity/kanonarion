@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -270,4 +271,13 @@ func percentOf(n, total int) float64 {
 		return 0
 	}
 	return 100 * float64(n) / float64(total)
+}
+
+// sharePercent is the share as the report RENDERS it, to one decimal place.
+//
+// The document carries the figure the reader was shown rather than a longer one
+// they were not: a share is a rendering, and the exact ratio is the two counts
+// beside it in the same document.
+func sharePercent(n, total int) float64 {
+	return math.Round(percentOf(n, total)*10) / 10
 }

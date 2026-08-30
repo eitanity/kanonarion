@@ -99,6 +99,47 @@ type ambiguousBuildRefusal struct {
 func (e *ambiguousBuildRefusal) Error() string { return e.err.Error() }
 func (e *ambiguousBuildRefusal) Unwrap() error { return e.err }
 
+// buildListRefusalJSON is the refusal as a document: the builds that hold the
+// coordinate, and what to name to pick one.
+//
+// A refusal is a document, not a sentence. When the tool cannot choose, the
+// caller has to be able to see what it was choosing between — as data, the way
+// the reads that DO choose carry their walk selection — because a consumer that
+// has to retry cannot parse a list of candidates out of prose on stderr.
+type buildListRefusalJSON struct {
+	// Coordinate is the module a build list was needed for: the argument the
+	// retry names, spelled as the caller passed it.
+	Coordinate string `json:"coordinate"`
+	// BuildCount is how many builds hold it, so a consumer can see the refusal
+	// was about a choice without walking the list.
+	BuildCount int `json:"build_count"`
+	// Builds are the candidates, each with the walk that answers for it and the
+	// build that walk is rooted at.
+	Builds []buildListCandidateJSON `json:"builds"`
+	// RemedyFlag is the flag that names one of them.
+	RemedyFlag string `json:"remedy_flag"`
+}
+
+// buildListCandidateJSON is one build that holds the coordinate.
+type buildListCandidateJSON struct {
+	WalkID string `json:"walk_id"`
+	Root   string `json:"root"`
+}
+
+// document renders the refusal for the answering command's JSON.
+func (e *ambiguousBuildRefusal) document(remedyFlag string) *buildListRefusalJSON {
+	builds := make([]buildListCandidateJSON, 0, len(e.candidates))
+	for _, c := range e.candidates {
+		builds = append(builds, buildListCandidateJSON{WalkID: c.ID, Root: c.Target.String()})
+	}
+	return &buildListRefusalJSON{
+		Coordinate: e.coord.String(),
+		BuildCount: len(e.candidates),
+		Builds:     builds,
+		RemedyFlag: remedyFlag,
+	}
+}
+
 // ambiguousBuild builds that refusal, naming every build and the walk that
 // would answer for it.
 //

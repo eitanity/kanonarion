@@ -104,7 +104,8 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 		return fmt.Errorf("extracting local call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, abs, stdout); err != nil {
+	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, abs, stdout,
+		callGraphRunJSON{Derivations: []derivationJSON{localDerivation(result)}}); err != nil {
 		return err
 	}
 	// The derivation goes to stderr, in both modes and for the same reason.
@@ -138,9 +139,38 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 // told how, in the place they learn it was not.
 func localDerivationLine(result cgapp.ExtractResult) string {
 	if !result.FromCache {
-		return "call graph: derived by this run"
+		return localDerivationAnswer + ": derived by this run"
 	}
 	return fmt.Sprintf(
-		"call graph: re-read the working tree and found it identical to the tree analysed %s; that record was reused (--force to re-measure)",
-		result.Record.ExtractedAt.UTC().Format(time.RFC3339))
+		localDerivationAnswer+": re-read the working tree and found it identical to the tree analysed %s; "+
+			"that record was reused (%s to re-measure)",
+		reusedRecordDate(result), localForceFlag)
 }
+
+// localDerivation is the same fact as fields, for the document.
+//
+// It is built here, beside the line, so the sentence a person reads and the
+// fields a consumer reads are one measurement: a reader told the record was
+// reused and a document saying it was measured is the failure this pair exists
+// to make impossible.
+func localDerivation(result cgapp.ExtractResult) derivationJSON {
+	d := derivationJSON{Answer: localDerivationAnswer, DerivedByThisRun: !result.FromCache}
+	if result.FromCache {
+		d.ReusedRecordExtractedAt = reusedRecordDate(result)
+		d.RemedyFlag = localForceFlag
+	}
+	return d
+}
+
+// reusedRecordDate is when the served record was taken, in the one spelling the
+// line and the field both use.
+func reusedRecordDate(result cgapp.ExtractResult) string {
+	return result.Record.ExtractedAt.UTC().Format(time.RFC3339)
+}
+
+const (
+	// localDerivationAnswer names what this command derives.
+	localDerivationAnswer = "call graph"
+	// localForceFlag re-measures a tree whose record would otherwise be served.
+	localForceFlag = "--force"
+)

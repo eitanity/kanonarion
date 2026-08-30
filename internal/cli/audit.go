@@ -77,6 +77,11 @@ roll-up.
 
 This collapses the walk → vuln-scan → license-list workflow into a single call.
 
+--json emits ONE JSON object at every count: the per-module rows in a "modules"
+array, and beside them the dependency scope that resolved them, the test axis it
+applied and how many modules that was. An empty scope emits the same object with
+an empty "modules".
+
 The dependency scope is consistent with every go.mod command: the default is the
 project's own build dependencies (the code your packages import, incl. tests);
 --tool audits the tooling supply chain; --project audits the complete set (code
@@ -116,6 +121,28 @@ Exit codes:
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
 	return cmd
+}
+
+// auditOutput is what `audit` answers with under --json, at every count.
+//
+// The rows the array used to be are its modules; the fields beside them are the
+// facts about the run. audit resolves a dependency scope and states, to a
+// person, which scope it was and how many modules it resolved — and until this
+// object existed there was nowhere in the document for that to go, so a --json
+// caller read a set of rows with no record of which set it was.
+type auditOutput struct {
+	envelopeScope
+	Modules []auditModuleResult `json:"modules"`
+}
+
+// newAuditOutput frames the rows, guaranteeing a non-nil modules array: an empty
+// scope must decode as the same type as a populated one, and a nil slice
+// marshals to null.
+func newAuditOutput(scope envelopeScope, rows []auditModuleResult) auditOutput {
+	if rows == nil {
+		rows = []auditModuleResult{}
+	}
+	return auditOutput{envelopeScope: scope, Modules: rows}
 }
 
 type auditModuleResult struct {
@@ -363,15 +390,20 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if nerr := writeDepScopeNotice(stderr, res, len(coords), false); nerr != nil {
 		return nerr
 	}
+	// The same facts as the notice, in the envelope the rows are framed in. audit
+	// refuses --exclude-tests — it records a walk, and a walk record names its
+	// scope but not its test axis — so no narrowing flag is offered here, on
+	// either channel.
+	envelope := newEnvelopeScope(res, len(coords), false)
 	// An empty scope is a valid answer, not an error, and it is answered on
-	// the caller's own channel: an empty array under --json, prose only on the
-	// text path. Answered here, before the store and proxy are opened, because
-	// there is nothing to audit either way.
+	// the caller's own channel: an empty modules array under --json, prose only
+	// on the text path. Answered here, before the store and proxy are opened,
+	// because there is nothing to audit either way.
 	if len(coords) == 0 {
 		if jsonOut {
 			enc := json.NewEncoder(stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode([]auditModuleResult{}); err != nil {
+			if err := enc.Encode(newAuditOutput(envelope, nil)); err != nil {
 				return fmt.Errorf("encoding results: %w", err)
 			}
 			return nil
@@ -462,7 +494,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(results); err != nil {
+		if err := enc.Encode(newAuditOutput(envelope, results)); err != nil {
 			return fmt.Errorf("encoding results: %w", err)
 		}
 		return auditBlockingErr(results)

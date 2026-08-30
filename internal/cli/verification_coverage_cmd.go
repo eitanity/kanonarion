@@ -232,6 +232,13 @@ type coverageJSON struct {
 	// left to the caller so every gate agrees on what a collapse is.
 	Collapsed bool `json:"collapsed"`
 
+	// Shares are the percentages the coverage report renders beside the counts.
+	// They are here because a figure a reader is shown has to be readable off
+	// the document too: a gate written against "cross-verification is below
+	// 90%" was otherwise reading a number off prose, or recomputing a ratio
+	// whose denominator the report chooses.
+	Shares coverageSharesJSON `json:"shares"`
+
 	VCS coverageVCSJSON `json:"vcs"`
 
 	// Build is what the coverage figures are about: the platform and toolchain
@@ -251,6 +258,27 @@ type coverageJSON struct {
 	// output, and a flag to opt into being told why is a flag to opt into an
 	// answer that can be checked.
 	Modules []moduleVerification `json:"modules"`
+}
+
+// coverageSharesJSON is each bucket as a percentage of the graph, plus the one
+// share the report states against a different denominator.
+//
+// Emitted whole, zeros included, for the reason the counts are: the report drops
+// a zero row to stay readable, and a document that dropped the field with it
+// could not tell a bucket that is empty from a bucket nobody measured.
+type coverageSharesJSON struct {
+	CrossVerified  float64 `json:"cross_verified"`
+	ChecksumDBOnly float64 `json:"checksum_db_only"`
+	GoSumOnly      float64 `json:"go_sum_only"`
+	Unverified     float64 `json:"unverified"`
+	LocalSource    float64 `json:"local_source"`
+	Unrecorded     float64 `json:"unrecorded"`
+	Unrecognised   float64 `json:"unrecognised"`
+	// CrossVerifiedOfApplicable is the share over the honest denominator: the
+	// modules that have a published artefact to anchor. It differs from
+	// CrossVerified whenever the graph holds local source or the standard
+	// library, which is every project walk.
+	CrossVerifiedOfApplicable float64 `json:"cross_verified_of_applicable"`
 }
 
 // coverageVCSJSON is what the fetch ledger says, which the status cannot: not
@@ -293,6 +321,16 @@ func verificationCoverageJSON(
 		Unrecorded:      c.Unrecorded,
 		Unrecognised:    c.Unrecognised,
 		Collapsed:       c.IsCollapsed(),
+		Shares: coverageSharesJSON{
+			CrossVerified:             sharePercent(c.CrossVerified, c.Total),
+			ChecksumDBOnly:            sharePercent(c.ChecksumDBOnly, c.Total),
+			GoSumOnly:                 sharePercent(c.GoSumOnly, c.Total),
+			Unverified:                sharePercent(c.Unverified, c.Total),
+			LocalSource:               sharePercent(c.LocalSource, c.Total),
+			Unrecorded:                sharePercent(c.Unrecorded, c.Total),
+			Unrecognised:              sharePercent(c.Unrecognised, c.Total),
+			CrossVerifiedOfApplicable: sharePercent(c.CrossVerified, c.CrossVerifiable()),
+		},
 		VCS: coverageVCSJSON{
 			Rechecked:   c.VCSRechecked,
 			Inherited:   c.VCSInherited,

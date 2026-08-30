@@ -106,8 +106,9 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	if err != nil {
 		return err
 	}
+	var run callGraphRunJSON
 	if f.fromWalk == "" {
-		inputs = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
+		inputs, run.BuildListRefusal = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
 	}
 
 	result, err := ctr.ExtractCallGraph.Execute(ctx, cgapp.ExtractRequest{
@@ -119,7 +120,7 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		return fmt.Errorf("extracting call graph: %w", err)
 	}
 
-	if err := printCallGraphSummary(result.Record, result.FromCache || result.Reused, jsonOut, "", stdout); err != nil {
+	if err := printCallGraphSummary(result.Record, result.FromCache || result.Reused, jsonOut, "", stdout, run); err != nil {
 		return err
 	}
 	if result.Reused {
@@ -169,11 +170,20 @@ func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
 // dir is the working tree a local run was pointed at, so a printed remedy names
 // the directory the reader actually ran in rather than a placeholder; it is empty
 // where the caller has none.
-func printCallGraphSummary(r cgdomain.CallGraphRecord, fromCache bool, jsonOut bool, dir string, stdout io.Writer) error {
+//
+// run is what this invocation states about the record — the build it refused to
+// pick, where the answer came from — and it reaches the document only here,
+// because stderr, where the same facts are said in words, is not a channel a
+// --json consumer reads.
+func printCallGraphSummary(
+	r cgdomain.CallGraphRecord, fromCache bool, jsonOut bool, dir string, stdout io.Writer, run callGraphRunJSON,
+) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toCallGraphJSON(r)); err != nil {
+		doc := toCallGraphJSON(r)
+		doc.callGraphRunJSON = run
+		if err := enc.Encode(doc); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		return nil
@@ -284,28 +294,38 @@ func discoveredBuildList(
 	walks QueryWalksUseCase,
 	coord coordinate.ModuleCoordinate,
 	stderr io.Writer,
-) cgdomain.AnalysisInputs {
+) (cgdomain.AnalysisInputs, *buildListRefusalJSON) {
 	found, err := findWalkContaining(ctx, walks, coord,
-		fmt.Sprintf("kanonarion callgraph %s --from-walk <walk of that build>", coord))
+		fmt.Sprintf("kanonarion callgraph %s %s <walk of that build>", coord, callGraphBuildFlag))
 	if err != nil {
 		// A search that finds nothing still says nothing. An AMBIGUOUS one does:
 		// the store holds the build list this analysis needs, in more than one
 		// build, and the analysis is about to run without it. Degrading silently
 		// there would record an empty graph while naming neither the builds that
 		// could have filled it nor the flag that picks one.
+		//
+		// It is said twice, in two forms, because the two readers are different:
+		// the sentence for the person watching stderr, the document for the
+		// consumer who has to retry with one of the builds named in it.
 		if amb, ok := errors.AsType[*ambiguousBuildRefusal](err); ok {
 			_, _ = fmt.Fprintf(stderr, "no build list was named; %s\n", amb)
+			return cgdomain.AnalysisInputs{}, amb.document(callGraphBuildFlag)
 		}
-		return cgdomain.AnalysisInputs{}
+		return cgdomain.AnalysisInputs{}, nil
 	}
 	walkID := found.walkID
 	inputs, err := analysisInputsForWalk(ctx, walks, walkID)
 	if err != nil || !inputs.HasBuildList() {
-		return cgdomain.AnalysisInputs{}
+		return cgdomain.AnalysisInputs{}, nil
 	}
 	// The choice is announced, never enforced: an unwritable stderr does not make
 	// a discovered build list the wrong input to analyse with.
 	_, _ = fmt.Fprintf(stderr, "no build list was named; a pre-modules module will be pinned to walk %s, "+
 		"which resolved %d version(s) and includes this module\n", walkID, len(inputs.BuildList))
-	return inputs
+	return inputs, nil
 }
+
+// callGraphBuildFlag names the build a coordinate question is about. Named once
+// so the remedy a reader is shown and the flag a consumer retries with cannot
+// drift apart.
+const callGraphBuildFlag = "--from-walk"

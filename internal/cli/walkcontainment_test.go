@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -290,7 +291,7 @@ func TestDiscoveredBuildList_NamesTheBuildsWhenTheChoiceIsAmbiguous(t *testing.T
 	)
 
 	var stderr bytes.Buffer
-	inputs := discoveredBuildList(context.Background(), uc, lib, &stderr)
+	inputs, refusal := discoveredBuildList(context.Background(), uc, lib, &stderr)
 	if inputs.HasBuildList() {
 		t.Error("an ambiguous search supplied a build list, so one project's build seeded another's analysis")
 	}
@@ -298,6 +299,30 @@ func TestDiscoveredBuildList_NamesTheBuildsWhenTheChoiceIsAmbiguous(t *testing.T
 	for _, want := range []string{"walk-app", "walk-svc", "--from-walk"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the note does not name %q: %s", want, msg)
+		}
+	}
+
+	// The same refusal as a document. A consumer that has to retry cannot parse
+	// the candidates out of the sentence above, and a refusal that names them
+	// only there names them only to a person.
+	if refusal == nil {
+		t.Fatal("the refusal carries no document: a --json caller sees an empty graph and no reason for it")
+	}
+	if refusal.Coordinate != lib.String() {
+		t.Errorf("coordinate = %q, want %q", refusal.Coordinate, lib)
+	}
+	if refusal.BuildCount != 2 || len(refusal.Builds) != 2 {
+		t.Errorf("build_count = %d over %d build(s), want 2 of 2", refusal.BuildCount, len(refusal.Builds))
+	}
+	if refusal.RemedyFlag != "--from-walk" {
+		t.Errorf("remedy_flag = %q: a consumer retries with the flag, not with the sentence", refusal.RemedyFlag)
+	}
+	for _, want := range []buildListCandidateJSON{
+		{WalkID: "walk-app", Root: app.String()},
+		{WalkID: "walk-svc", Root: svc.String()},
+	} {
+		if !slices.Contains(refusal.Builds, want) {
+			t.Errorf("the document does not name walk %s rooted at %s: %+v", want.WalkID, want.Root, refusal.Builds)
 		}
 	}
 }

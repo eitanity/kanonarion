@@ -59,9 +59,11 @@ the lookup time it used; pass --fresh to bypass the ledger and re-query.
 Without --gomod, one or more module paths may be passed as positional
 arguments.
 
---json emits a JSON array of per-module objects whatever the result count, one
-module or many, and [] when the scope is empty. This is a BREAKING change: a
-single module used to be emitted as a bare object.`,
+--json emits ONE JSON object whatever the form and whatever the result count:
+the per-module rows in a "modules" array, and beside them the facts about the
+run — with --gomod, the dependency scope that resolved the rows, the test axis
+it applied, how many modules that was and the flag that narrows it. An empty
+scope emits the same object with an empty "modules".`,
 		Example: `  kanonarion latest github.com/spf13/cobra
   kanonarion latest github.com/spf13/cobra github.com/stretchr/testify
   kanonarion latest github.com/spf13/cobra --json
@@ -96,6 +98,30 @@ single module used to be emitted as a bare object.`,
 	cmd.Flags().BoolVar(&f.excludeTests, testScopeFlagName, false, "with --gomod: resolve the dependency scope without test imports")
 
 	return cmd
+}
+
+// latestOutput is what `latest` answers with under --json, at every form and
+// every count.
+//
+// The rows the array used to be are its modules; the fields beside them are the
+// facts about the run. A --gomod run resolves a dependency scope and states, to
+// a person, which scope it was, how many modules it resolved and the flag that
+// narrows it — and until this object existed the document had nowhere to put any
+// of that, so a caller piping the array into jq read rows with no record of
+// which set they were the whole of.
+type latestOutput struct {
+	envelopeScope
+	Modules []latestResult `json:"modules"`
+}
+
+// newLatestOutput frames the rows, guaranteeing a non-nil modules array: an
+// empty scope must decode as the same type as a populated one, and a nil slice
+// marshals to null.
+func newLatestOutput(scope envelopeScope, rows []latestResult) latestOutput {
+	if rows == nil {
+		rows = []latestResult{}
+	}
+	return latestOutput{envelopeScope: scope, Modules: rows}
 }
 
 // latestResult is the per-module output record.
@@ -453,14 +479,18 @@ func runLatestModules(ctx context.Context, modules []string, lookup stalenessLoo
 	}
 
 	if jsonOut {
-		// One array whatever the count, matching the --gomod form. The shape used
+		// One object whatever the count, matching the --gomod form. The shape used
 		// to follow the number of results — an object for one module, an array for
 		// two — so a consumer got a different document for asking about one module
 		// than for asking about two, and `for row in json.load(...)` over the
 		// single-module object iterated its KEYS rather than failing.
+		//
+		// The scope is null: the caller named these modules, so no dependency
+		// scope was resolved and there is none to state. The count still answers
+		// how many modules came back.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(results); err != nil {
+		if err := enc.Encode(newLatestOutput(unscopedEnvelope(len(results)), results)); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		return nil
@@ -645,13 +675,18 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 		return nerr
 	}
 	scopeField := newScopeJSON(res)
+	// The same facts as the notice above, in the envelope the rows are framed in,
+	// built from the same resolution and the same count so the two cannot
+	// disagree.
+	envelope := newEnvelopeScope(res, len(coords), true)
 	if len(coords) == 0 {
-		// JSON array output: the empty answer is [], keeping the empty and
-		// populated results the same type. Prose stays on the text path only.
+		// The empty answer is the same object with an empty modules array, keeping
+		// the empty and populated results the same type. Prose stays on the text
+		// path only.
 		if jsonOut {
 			enc := json.NewEncoder(stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode([]latestResult{}); err != nil {
+			if err := enc.Encode(newLatestOutput(envelope, nil)); err != nil {
 				return fmt.Errorf("encoding JSON: %w", err)
 			}
 			return nil
@@ -686,7 +721,7 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(results); err != nil {
+		if err := enc.Encode(newLatestOutput(envelope, results)); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		return nil

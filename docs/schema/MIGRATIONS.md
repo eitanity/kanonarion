@@ -63,6 +63,49 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## `audit`, `context` and `latest` --json: the per-module envelope
+
+**Breaking output-shape change; no store migration, no record or pipeline bump.**
+Nothing stored changes. What changes is the framing of three commands' `--json`
+document.
+
+Each of the three answers with one row per module, and each wrote those rows as a
+bare JSON array (`context` wrote an object for a single coordinate). An array has
+nowhere to put a fact about the RUN, so the facts a person reads on stderr —
+which dependency scope resolved the rows, how many modules that was, the flag
+that narrows it, and for `context` which build the vulnerability verdicts were
+read in and whether that build was NAMED by the caller or CHOSEN for them —
+reached a `--json` consumer nowhere at all. That is a verdict dressed as evidence
+on the surface an agent reads.
+
+**The new shape.** One JSON object at every form and every count, with the rows
+in `modules`:
+
+```
+{ "dependency_scope": {...}|null, "module_count": N, "narrow_with": "--exclude-tests",
+  "rooting": {...}|null,          // context only
+  "modules": [ ...the rows, unchanged... ] }
+```
+
+**The rows do not change.** Not one field moves, is added or is renamed in any of
+the three; `modules` holds exactly the documents the array held. Verified element
+by element against the recorded command goldens.
+
+**Consumer impact, and it is breaking.** A consumer that read
+`audit --json | jq '.[]'`, `latest --json | jq '.[]'` or
+`context --gomod --json | jq '.[]'` must read `jq '.modules[]'`. One that read
+`context <module>@<version> --json | jq '.dependencies'` must read
+`jq '.modules[0].dependencies'`. `context --stream` is unchanged — it is
+newline-delimited per-module documents, which is not one document and carries no
+envelope — so a consumer that wants the old per-module framing can ask for it by
+name.
+
+**What is new to read.** `dependency_scope` and `module_count` on all three;
+`narrow_with` where the scope can still be narrowed; and on `context` a `rooting`
+object whose `basis` is `"named"` or `"chosen"`, beside the candidate count the
+choice was made from. The last is the point of the change: the walk id alone
+looks the same whether the caller pinned the build or the tool picked it.
+
 ## Interface record: pipeline `0.5.0` → `0.6.0`
 
 **Record shape change; no store migration. This bump is also a repair** — a
