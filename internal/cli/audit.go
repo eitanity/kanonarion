@@ -132,17 +132,18 @@ Exit codes:
 // caller read a set of rows with no record of which set it was.
 type auditOutput struct {
 	envelopeScope
+	auditRunJSON
 	Modules []auditModuleResult `json:"modules"`
 }
 
 // newAuditOutput frames the rows, guaranteeing a non-nil modules array: an empty
 // scope must decode as the same type as a populated one, and a nil slice
 // marshals to null.
-func newAuditOutput(scope envelopeScope, rows []auditModuleResult) auditOutput {
+func newAuditOutput(scope envelopeScope, run auditRunJSON, rows []auditModuleResult) auditOutput {
 	if rows == nil {
 		rows = []auditModuleResult{}
 	}
-	return auditOutput{envelopeScope: scope, Modules: rows}
+	return auditOutput{envelopeScope: scope, auditRunJSON: run, Modules: rows}
 }
 
 type auditModuleResult struct {
@@ -403,7 +404,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		if jsonOut {
 			enc := json.NewEncoder(stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(newAuditOutput(envelope, nil)); err != nil {
+			if err := enc.Encode(newAuditOutput(envelope, unauditedRunJSON(), nil)); err != nil {
 				return fmt.Errorf("encoding results: %w", err)
 			}
 			return nil
@@ -494,7 +495,8 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(newAuditOutput(envelope, results)); err != nil {
+		run := newAuditRunJSON(derivation, results, activeConfig.Staleness.TTL, cliNow())
+		if err := enc.Encode(newAuditOutput(envelope, run, results)); err != nil {
 			return fmt.Errorf("encoding results: %w", err)
 		}
 		return auditBlockingErr(results)
@@ -539,6 +541,16 @@ type auditDerivation struct {
 	// here because it shares that snapshot and is stated beside the derivation,
 	// and it is reported on its own axis: no module row and no roll-up sees it.
 	toolchain vulndomain.ToolchainJudgment
+	// scanFacts is what the scan leg said about itself: the run it wrote, the
+	// snapshot it judged against, and how many of its verdicts came from source.
+	//
+	// It is what the reuse fields above cannot supply. The reuse question is
+	// asked before the scan is driven, so a REUSED run is known here in full;
+	// a run this invocation derived is known only to the leg that derived it,
+	// and the derivation statement names it in prose without an id. Zero when
+	// the scan leg failed, which is stated on stderr and read here as a run that
+	// did not answer.
+	scanFacts vulnScanRunFacts
 }
 
 // writeAuditDerivation states the provenance of the run's two derived answers.
@@ -738,10 +750,17 @@ func auditScope(
 	// fresh=false: the refresh above already happened, and the snapshot it
 	// settled on is the stored one the scan now resolves. Passing the flag on
 	// would check the database a second time in the same invocation.
+	//
+	// The reporting form, not runVulnScan: the run this leg writes or serves is
+	// the one the document names, and it is known here only because the leg hands
+	// it back. Asking the store for it afterwards would be a second lookup that
+	// could answer with a different run.
 	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceAudit, false, f.noProgress, false, io.Discard, stderr); verr != nil {
+	scanFacts, verr := runVulnScanReporting(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceAudit, false, f.noProgress, false, true, io.Discard, stderr)
+	if verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
+	derivation.scanFacts = scanFacts
 
 	// The toolchain axis, derived once the snapshot this run is judged against is
 	// settled: the scan run names it when one was reused, and the store's latest
@@ -1695,21 +1714,15 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	}
 	// The staleness column is dated by its OLDEST lookup: a table where most
 	// rows were served from the ledger and a few re-queried is only as current
-	// as the row asked about longest ago.
-	var oldest time.Time
-	for _, r := range results {
-		if r.StalenessLookedUpAt.IsZero() {
-			continue
-		}
-		if oldest.IsZero() || r.StalenessLookedUpAt.Before(oldest) {
-			oldest = r.StalenessLookedUpAt
-		}
-	}
+	// as the row asked about longest ago. Taken from the same helper the
+	// document's staleness object uses, so the footer and the field cannot date
+	// one column differently.
+	//
 	// No --fresh here: on audit the TTL is what governs this column, and the
 	// command that re-queries a latest answer on demand is `latest --fresh`.
-	if asOf := stalenessAsOf(oldest); asOf != "" {
-		if _, err := fmt.Fprintf(stdout, "\nlatest as of %s (staleness.ttl %s; `latest --fresh` to re-query)\n",
-			asOf, activeConfig.Staleness.TTL); err != nil {
+	if asOf := stalenessAsOf(auditStalenessAsOf(results)); asOf != "" {
+		if _, err := fmt.Fprintf(stdout, "\nlatest as of %s (staleness.ttl %s; `%s` to re-query)\n",
+			asOf, activeConfig.Staleness.TTL, stalenessRefreshCommand); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}

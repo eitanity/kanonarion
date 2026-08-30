@@ -114,7 +114,7 @@ func TestPrintLicenseRecord_JSON(t *testing.T) {
 	if err := printLicenseRecord(r, false, true, &buf); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), `"PrimarySPDX"`) {
+	if !strings.Contains(buf.String(), `"primary_spdx"`) {
 		t.Errorf("expected JSON field in output, got: %q", buf.String())
 	}
 }

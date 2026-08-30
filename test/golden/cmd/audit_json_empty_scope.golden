@@ -8,6 +8,46 @@ exit 0
     "test_scope": "included"
   },
   "module_count": 0,
+  "walk": {
+    "resolved": false,
+    "id": "",
+    "reused": false,
+    "completed_at": ""
+  },
+  "scan": {
+    "answered": false,
+    "run_id": "",
+    "reused": false,
+    "snapshot": {
+      "source": "",
+      "version": ""
+    }
+  },
+  "reachability_basis": {
+    "verdicts": 0,
+    "source_read_by_this_run": false
+  },
+  "toolchain": {
+    "judged": false,
+    "status": "unjudged",
+    "version": "",
+    "snapshot": {
+      "source": "",
+      "version": ""
+    },
+    "reason": "no dependency was audited, so this run took no walk and judged no toolchain",
+    "advisories_judged": 0,
+    "covering": [],
+    "withdrawn_covering": [],
+    "statement": "toolchain:\n  (unrecorded) was not judged against the advisory database's toolchain key: no dependency was audited, so this run took no walk and judged no toolchain"
+  },
+  "staleness": {
+    "measured": false,
+    "as_of": "",
+    "age": "",
+    "ttl": "",
+    "refresh_with": ""
+  },
   "modules": []
 }
 --- stderr ---

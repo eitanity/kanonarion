@@ -353,6 +353,12 @@ type vulnScanRunFacts struct {
 	// Reused is true when a stored run answered and nothing was re-scanned.
 	Reused    bool
 	Toolchain vulnScanToolchainJSON
+	// Reachability is how much of the run's answer is a function of the project's
+	// source, and whether this invocation is what read it. It is counted here,
+	// where the records pass through, and never recounted by a caller: `audit`
+	// states the same fact in its own document, and a second count over the same
+	// run is a second thing to be wrong.
+	Reachability vulnScanReachability
 }
 
 // vulnScanSnapshotJSON names the advisory database generation an answer was
@@ -640,7 +646,8 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
-	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: false, Toolchain: toolchain},
+	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: false,
+			Toolchain: toolchain, Reachability: reach},
 		vulnScanCoverageExit(run)
 }
 
@@ -784,7 +791,8 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
-	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: true, Toolchain: toolchain},
+	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: true,
+			Toolchain: toolchain, Reachability: reach},
 		vulnScanCoverageExit(run)
 }
 

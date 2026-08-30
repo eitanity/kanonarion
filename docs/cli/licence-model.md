@@ -8,7 +8,7 @@ and [`notice`](notice.md).
 
 ## SPDX expression model
 
-Beyond the `PrimarySPDX` identifier, every record includes an `Expression` field
+Beyond the `primary_spdx` identifier, every record includes an `expression` field
 that models the module's licence as a proper SPDX expression (`OR`, `AND`, `WITH`).
 
 **Why expressions matter:** the `Multiple` status covers two distinct situations
@@ -41,14 +41,14 @@ does not choose one.
 
 ```json
 {
-  "PrimarySPDX": "MIT",
-  "Expression": "Apache-2.0 OR MIT",
+  "primary_spdx": "MIT",
+  "expression": "Apache-2.0 OR MIT",
   ...
 }
 ```
 
-`PrimarySPDX` is kept for backward compatibility; downstream consumers should
-prefer `Expression` when present.
+`primary_spdx` is kept for backward compatibility; downstream consumers should
+prefer `expression` when present.
 
 **NOTICE files are excluded** from expression derivation - they satisfy Apache
 §4(d) attribution but do not define the module's licence identity.
@@ -104,17 +104,17 @@ package foo
 ```
 
 Pass 1 (the standard scan) finds no files to classify, so the record would
-normally return `OverallStatus: None`. With `--per-file`, a second pass samples
+normally return `overall_status` `None`. With `--per-file`, a second pass samples
 up to 20 root-level `.go` files (capped at 64 KB each, 1 MB total):
 
 1. **Fast path** - scans the first 4 KB of each file for an
    `SPDX-License-Identifier:` comment. If found, the identifier is recorded
-   directly at `Confidence = 1.0`.
+   directly at `confidence` 1.0.
 2. **Slow path** - if no SPDX header is present, runs the full licence
-   detector. Files where the detector returns `Confidence ≥ 0.85` are recorded.
+   detector. Files where the detector returns `confidence` ≥ 0.85 are recorded.
 
-Entries produced by this pass have `IsPerFile = true` in `LicenseFiles`.
-`OverallStatus` is set to `PerFile` when all root-level evidence came from
+Entries produced by this pass have `is_per_file: true` in `license_files`.
+`overall_status` is set to `PerFile` when all root-level evidence came from
 source files rather than a dedicated licence file.
 
 Pass 1 always takes precedence: if any licence-named file exists, Pass 2 is

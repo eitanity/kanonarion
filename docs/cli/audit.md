@@ -231,6 +231,37 @@ kanonarion audit --gomod ./go.mod --json
 {
   "dependency_scope": { "scope": "code", "test_scope": "included" },
   "module_count": 4,
+  "walk": {
+    "resolved": true,
+    "id": "01M0ADKD8WXT7JA8219Z7XRGEC",
+    "reused": true,
+    "completed_at": "2026-08-18T12:30:07Z"
+  },
+  "scan": {
+    "answered": true,
+    "run_id": "vscan-01M0ADKD8WXT7JA8219Z7XRGEC-1787056207",
+    "reused": true,
+    "snapshot": { "source": "vuln.go.dev", "version": "2026-08-14T16:22:54Z" }
+  },
+  "reachability_basis": { "verdicts": 4, "source_read_by_this_run": false },
+  "toolchain": {
+    "judged": true,
+    "status": "clear",
+    "version": "go1.26.6",
+    "snapshot": { "source": "vuln.go.dev", "version": "2026-08-14T16:22:54Z" },
+    "reason": "",
+    "advisories_judged": 32,
+    "covering": [],
+    "withdrawn_covering": [],
+    "statement": "toolchain:\n  go1.26.6: none of the 32 toolchain advisories in vuln.go.dev@2026-08-14T16:22:54Z covers it"
+  },
+  "staleness": {
+    "measured": true,
+    "as_of": "2026-08-18T23:05:11Z",
+    "age": "12m30s",
+    "ttl": "1h0m0s",
+    "refresh_with": "latest --fresh"
+  },
   "modules": [
     {
       "coordinate": "github.com/spf13/cobra@v1.10.2",
@@ -292,7 +323,17 @@ object states the facts about the run, which a bare array had nowhere to put:
 | --- | --- |
 | `dependency_scope` | The go.mod dependency scope that resolved the rows (`code`, `tool` or `complete`) and the test axis it applied (`included`, `excluded` or `unavailable`). Never null on `audit`, which always resolves a scope. |
 | `module_count` | How many modules that scope resolved. It is the number the `notice:` line on stderr states. A module that failed to render is missing from `modules`, named on stderr, and the run exits non-zero. |
+| `walk` | Which walk fixed the dependency set: `id`, `completed_at` (the record's date, RFC 3339), and `reused` - true when this run re-resolved the go.mod, found the resolution identical to a stored walk, and served that record. `resolved` is false when no walk was taken at all. |
+| `scan` | Which vulnerability scan run filled the `vuln_status` column: `run_id`, `reused`, and the advisory `snapshot` it was judged against. `answered` is false when no run answered - an empty scope, or a scan leg that failed and said so on stderr. The run id is stated on both arms, which the stderr sentence is not: a scan derived by this run names no id there. |
+| `reachability_basis` | How much of the answer depends on the project's own source: `verdicts` counts the findings carrying a reachability answer, and `source_read_by_this_run` is false on a served run, whose verdicts came from source this invocation did not re-read. The same object `vuln-scan --json` publishes under the same key. |
+| `toolchain` | The toolchain axis, in the shape [`vuln-scan --json`](vuln-scan.md) publishes: `judged`, `status`, the `version` judged, the `snapshot` it was judged against, `reason` when nothing was judged, the `covering` advisory ids, and `statement`, the sentence stderr shows, verbatim. The toolchain is not a dependency of the artefact: it is no row and is counted in no roll-up. |
+| `staleness` | Dates the staleness column for the run as a whole - the machine-readable half of the table's `latest as of ...` footer, which the text form prints on stdout. `as_of` is the OLDEST lookup behind the column, `age` is how old it was when this run read it, `ttl` is the `staleness.ttl` in force in the same units, and `refresh_with` names the command that re-queries. `measured` is false when no row carries a lookup. |
 | `modules` | The per-module rows. `[]` when the scope resolved nothing - the empty answer is the same object, not a different shape. |
+
+Every one of those keys is emitted on every run. An axis that was not measured
+says so in a value - `"resolved": false`, `"judged": false`, `"measured": false`,
+with a `reason` where there is one - because a missing key and a `null` both read
+as "nothing to report", which is the one thing an unmeasured axis does not mean.
 
 `audit` refuses `--exclude-tests` (it records a walk, and a walk record names its
 scope but not its test axis), so it offers no `narrow_with` remedy on either
@@ -342,7 +383,8 @@ recording younger than `staleness.ttl` (default `1h`, a config key) is served
 instead of re-querying - so `latest --gomod` followed by `audit` pays the proxy
 sweep once between them rather than once each. The table states the lookup time
 it used (`latest as of ...`, dated by its oldest row) so a served answer is
-never mistaken for a live one, and a **failed** lookup is never recorded.
+never mistaken for a live one, and a **failed** lookup is never recorded. Under
+`--json` that footer is the `staleness` key, dated by the same lookup.
 
 A lookup that fails transiently (a loaded proxy answering an empty body, a
 timeout, a 5xx) is retried, and each retry is narrated on stderr:
@@ -557,6 +599,10 @@ a reuse condition below. The reachability clause therefore appears whenever the
 run answered any, and it states what those verdicts rest on rather than claiming
 your tree is unchanged — nothing re-read it.
 
+Under `--json` the same three facts are the `walk`, `scan` and
+`reachability_basis` keys of the object. The scan's run id is there on both arms,
+including the derived one the sentence names only in prose.
+
 A new walk is recorded whenever the target, scope, depth, policy, build
 environment, resolved graph (every module at every selected version, every edge,
 every artefact hash) or per-node outcome differs.
@@ -646,6 +692,10 @@ toolchain:
   go1.26.2 is covered by 3 advisories in vuln.go.dev@2026-07-27T20:14:16Z: GO-2026-4978 (fixed in 1.26.3), GO-2026-4979 (fixed in 1.26.3), GO-2026-4984 (fixed in 1.26.3)
   this is the build toolchain, not a dependency of the artefact: it is reported as its own axis and is counted in no module roll-up
 ```
+
+Under `--json` the same judgment is the `toolchain` key, in the shape
+[`vuln-scan --json`](vuln-scan.md) publishes, carrying the lines above verbatim
+in its `statement`.
 
 The advisory database keys the toolchain — `cmd/go`, the compiler, the linker —
 **separately from `stdlib`**, and the two sets are disjoint. No project imports

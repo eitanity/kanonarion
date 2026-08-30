@@ -16,8 +16,8 @@ kanonarion extract <walk-id>
 kanonarion license-compat example.com/project@local
 ```
 
-The root record must exist and carry an SPDX identity (`Expression`, falling
-back to `PrimarySPDX`). Two failure modes are distinguished (absence
+The root record must exist and carry an SPDX identity (`expression`, falling
+back to `primary_spdx`). Two failure modes are distinguished (absence
 of data is never presented as an answer):
 
 | Condition | Outcome |
@@ -158,35 +158,36 @@ but many modules **bundle third-party code** under different terms. Two common
 patterns:
 
 - **Traditional vendor directory** - `vendor/github.com/google/snappy/LICENSE`
-  (marked `IsVendored = true` in `LicenseFiles`)
+  (marked `is_vendored: true` in `license_files`)
 - **Embedded subdirectory** - `snappy/LICENSE`, `internal/lz4ref/LICENSE`,
   `zstd/internal/xxhash/LICENSE.txt` (not under `vendor/` but still non-root)
 
-Both patterns now contribute to the `EffectiveSet` field on `LicenseRecord`:
+Both patterns now contribute to the record's effective set, which
+[`license --json`](license.md) publishes as `effective_set`:
 
 ```json
-"EffectiveSet": {
-  "RootSPDXs": ["Apache-2.0"],
-  "Components": [
-    { "PathPrefix": "internal/lz4ref",           "SPDXs": ["BSD-3-Clause"] },
-    { "PathPrefix": "internal/snapref",          "SPDXs": ["BSD-3-Clause"] },
-    { "PathPrefix": "s2",                        "SPDXs": ["BSD-3-Clause"] },
-    { "PathPrefix": "s2/cmd/internal/filepathx", "SPDXs": ["MIT"] },
-    { "PathPrefix": "snappy",                    "SPDXs": ["BSD-3-Clause"] },
-    { "PathPrefix": "snappy/xerial",             "SPDXs": ["MIT"] },
-    { "PathPrefix": "zstd/internal/xxhash",      "SPDXs": ["MIT"] }
+"effective_set": {
+  "root_spdxs": ["Apache-2.0"],
+  "components": [
+    { "path_prefix": "internal/lz4ref",           "spdxs": ["BSD-3-Clause"] },
+    { "path_prefix": "internal/snapref",          "spdxs": ["BSD-3-Clause"] },
+    { "path_prefix": "s2",                        "spdxs": ["BSD-3-Clause"] },
+    { "path_prefix": "s2/cmd/internal/filepathx", "spdxs": ["MIT"] },
+    { "path_prefix": "snappy",                    "spdxs": ["BSD-3-Clause"] },
+    { "path_prefix": "snappy/xerial",             "spdxs": ["MIT"] },
+    { "path_prefix": "zstd/internal/xxhash",      "spdxs": ["MIT"] }
   ],
-  "AllSPDXs": ["Apache-2.0", "BSD-3-Clause", "MIT"]
+  "all_spdxs": ["Apache-2.0", "BSD-3-Clause", "MIT"]
 }
 ```
 
-`AllSPDXs` is the sorted, deduped union of root and embedded licences - the
+`all_spdxs` is the sorted, deduped union of root and embedded licences - the
 full set of obligations a consumer must honour. In the example above
 (`github.com/klauspost/compress@v1.18.2`), the root claims Apache-2.0 but the
 effective obligation set is **Apache-2.0 + BSD-3-Clause + MIT** because the
 module ships BSD-licensed snappy and MIT-licensed xxhash source code.
 
-**`EffectiveSet` is derived from `LicenseFiles`** on every extraction and on
+**`effective_set` is derived from `license_files`** on every extraction and on
 every deserialization. It is never stored separately and is always consistent
 with the file list; no re-extraction is needed for records produced before
 the field existed.
@@ -241,7 +242,7 @@ attribution but do not define licence obligations.
 
 ```
 $ kanonarion licence github.com/klauspost/compress@v1.18.2 --json \
-    | jq '.EffectiveSet.AllSPDXs'
+    | jq '.effective_set.all_spdxs'
 [
   "Apache-2.0",
   "BSD-3-Clause",
@@ -251,7 +252,7 @@ $ kanonarion licence github.com/klauspost/compress@v1.18.2 --json \
 
 The root `LICENSE` file is a compound Apache-2.0 attribution document, but
 `snappy/`, `internal/lz4ref/`, and other subdirectories each carry their own
-BSD-3-Clause or MIT licence files. Without `EffectiveSet`, these would be
+BSD-3-Clause or MIT licence files. Without `effective_set`, these would be
 invisible to the compatibility and notice pipelines.
 
 

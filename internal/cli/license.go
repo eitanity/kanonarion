@@ -517,28 +517,9 @@ func printLicenseRecursive(
 
 func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
-		type licenseRecordWithObligations struct {
-			domain.LicenseRecord
-			Obligations domain.Obligations `json:"obligations"`
-			// ElectiveObligations carries per-arm obligations when the
-			// expression is a disjunction (a dual licence): the obligations in
-			// force are those of the arm the consumer elects, an operator
-			// decision recorded via license_overrides — never resolved here.
-			ElectiveObligations map[string]domain.Obligations `json:"elective_obligations,omitempty"`
-		}
-		out := licenseRecordWithObligations{
-			LicenseRecord: r,
-			Obligations:   domain.LookupObligations(r.PrimarySPDX),
-		}
-		if arms := domain.DisjunctionArms(r.Expression); len(arms) >= 2 {
-			out.ElectiveObligations = make(map[string]domain.Obligations, len(arms))
-			for _, arm := range arms {
-				out.ElectiveObligations[arm] = domain.LookupObligations(arm)
-			}
-		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
+		if err := enc.Encode(newLicenseDocument(r)); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		return nil

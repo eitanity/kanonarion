@@ -649,6 +649,10 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 	// — once to prime the store and once to be recorded — so the two runs cannot
 	// drift apart into a comparison of different command lines.
 	auditArgs := []string{"audit", "--gomod", audit.gomod(), "--from-modcache=" + audit.modcache}
+	// The same command under --json. The reused JSON case names it twice for the
+	// reason the text one does: the priming run and the recorded run must be the
+	// same invocation, or the recording compares two different commands.
+	auditJSONArgs := append(append([]string{}, auditArgs...), "--json")
 
 	return []cmdCase{
 		populated("audit_json_populated",
@@ -678,6 +682,23 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 				"The date and the run identifier below are recorded literally, so a change to WHICH stored run " +
 				"answers moves this file. Its control is audit_text_populated, which must keep reading " +
 				"`derived by this run`.",
+		},
+		{
+			name: "audit_json_reused_scan",
+			args: auditJSONArgs,
+			// PRIMED exactly as audit_text_reused_scan is: the first run leaves a
+			// walk, licences and a completed scan run behind, and the recorded run
+			// is the one that serves them.
+			prime:        [][]string{auditJSONArgs},
+			env:          audit.env(),
+			storeRoot:    audit.newStore(t),
+			mintedValues: true,
+			why: "REUSED, json: the run-level facts on the machine channel when the answer was NOT measured " +
+				"by this invocation — the walk re-resolved and found identical, the scan served from a stored " +
+				"run, and its reachability verdicts resting on source this run did not read. Its control is " +
+				"audit_json_populated, which must keep reading `\"reused\": false` and " +
+				"`\"source_read_by_this_run\": true` for the same fixture. The pair is what shows the fields " +
+				"track the run rather than being constants.",
 		},
 		populated("audit_text_no_network",
 			"GOPROXY=off WITHOUT --from-modcache: the run no longer refuses at proxy construction for the "+
