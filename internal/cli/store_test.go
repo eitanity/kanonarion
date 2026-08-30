@@ -262,7 +262,7 @@ func TestRunStoreConfigShow_ChannelsAgreeOnFilePresence(t *testing.T) {
 
 func TestRunStoreClean_NothingToClean(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runStoreClean(t.TempDir(), t.TempDir(), &buf); err != nil {
+	if err := runStoreClean(t.TempDir(), t.TempDir(), false, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := buf.String(); !strings.Contains(got, "nothing to clean") {
@@ -279,7 +279,7 @@ func TestRunStoreClean_RemovesTempFiles(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runStoreClean(t.TempDir(), tmpDir, &buf); err != nil {
+	if err := runStoreClean(t.TempDir(), tmpDir, false, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestRunStoreClean_LeavesForeignEntries(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runStoreClean(t.TempDir(), tmpDir, &buf); err != nil {
+	if err := runStoreClean(t.TempDir(), tmpDir, false, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

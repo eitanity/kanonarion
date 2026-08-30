@@ -116,6 +116,24 @@ type jsonStdoutCase struct {
 	// argsFn builds arguments that only exist at run time, such as a path into
 	// the fixture. It replaces args when set.
 	argsFn func(t *testing.T, fx jsonStdoutFixture) []string
+	// setup runs before the command and puts the process in a state the case
+	// needs. It exists for the one command whose blast radius reaches outside
+	// the fixture; see isolateTempDir.
+	setup func(t *testing.T, fx jsonStdoutFixture)
+}
+
+// isolateTempDir points os.TempDir at a directory of the case's own.
+//
+// `store clean` sweeps the system temp directory by prefix without asking
+// whether an entry is in use, so a guard that let it run against the real one
+// would delete the working files of any kanonarion process scanning on the same
+// machine — which is what the command's own help warns about, and what a
+// measurement run was once lost to. The isolated directory is empty, so the
+// sweep answers zero, which is exactly the state the document has to be able to
+// state rather than leave to inference.
+func isolateTempDir(t *testing.T, _ jsonStdoutFixture) {
+	t.Helper()
+	t.Setenv("TMPDIR", t.TempDir())
 }
 
 // policyValidateFixtureArgs names a directory of valid policy files.
@@ -125,6 +143,19 @@ type jsonStdoutCase struct {
 // directory is used rather than the repository's own docs/examples/policies
 // because the guard chdirs away from the package directory first, so a
 // repository-relative path would resolve to nothing.
+// useCopyArgs points `use` at the fixture's walk and at a module cache the test
+// owns.
+//
+// The cache is not optional. Without --mod-cache the command writes into the
+// operator's own GOMODCACHE, so the guard would populate a real module cache on
+// every run. The fixture holds fetch records and no blobs, so every module fails
+// to copy — which is the case worth exercising here: it is the outcome that used
+// to appear on stderr only, leaving stdout reading like a complete copy.
+func useCopyArgs(t *testing.T, _ jsonStdoutFixture) []string {
+	t.Helper()
+	return []string{jsonDocRootCoord, "--recursive", "--walk-id", jsonDocWalkID, "--mod-cache", t.TempDir()}
+}
+
 func policyValidateFixtureArgs(t *testing.T, _ jsonStdoutFixture) []string {
 	t.Helper()
 	dir := t.TempDir()
@@ -179,10 +210,12 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"callgraph-show": {args: []string{jsonDocDepCoord}},
 	"capability":     {args: []string{jsonDocDepCoord}},
 	"config":         {skip: "command group: cobra prints its help text; it renders no answer of its own"},
-	"config get": {skip: "no JSON rendering: it prints the value in force for one key as plain text — a bare string for a scalar, a YAML fragment for a structured one — under --json as well. " +
-		"Answering here needs a document defined for a single configuration value, which is the question config init raises"},
-	"config init":     {skip: "no JSON rendering: it writes a plain-text status line even under --json, which is a different question from prose appended to a JSON document"},
-	"config set":      {skip: "no JSON rendering: it acknowledges the write with a plain-text line even under --json, the same question config init raises"},
+	"config get":     {args: []string{"preferences.json"}},
+	"config init":    {},
+	// A key set to the value it already resolves to. The guard's commands share
+	// one store, so a write that changed a preference would change what every
+	// case after this one runs under.
+	"config set":      {args: []string{"preferences.log_level", "warn"}},
 	"config show":     {},
 	"context":         {args: []string{jsonDocDepCoord}},
 	"dependents":      {args: []string{jsonDocDepCoord, "--walk-id", jsonDocWalkID}},
@@ -214,8 +247,8 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"license-list":   {},
 	"local":          {argsFn: localTreeArgs},
 	"native":         {args: []string{jsonDocDepCoord}},
-	"notice": {skip: "no JSON rendering: stdout is the THIRD-PARTY-LICENSES attribution document, which is plain text because that is the form it is published in, and --json does not change it. " +
-		"Answering here needs a decision about what an attribution document is as JSON"},
+	"notice": {skip: "renders one form by design: stdout is the THIRD-PARTY-LICENSES attribution document, the deliverable artefact itself, and --json is a documented no-op that returns the same bytes. " +
+		"There is no machine-readable projection and there will not be one; the underlying data is served by license-list --json and sbom"},
 	"policy":                {skip: "command group: cobra prints its help text; it renders no answer of its own"},
 	"policy show":           {},
 	"policy validate":       {argsFn: policyValidateFixtureArgs},
@@ -225,14 +258,14 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"sbom-list":             {},
 	"sbom-show":             {args: []string{jsonDocSBOMID}},
 	"store":                 {skip: "command group: cobra prints its help text; it renders no answer of its own"},
-	"store clean":           {skip: "no JSON rendering: it writes a plain-text status line even under --json, which is a different question from prose appended to a JSON document"},
+	"store clean":           {setup: isolateTempDir},
 	"store config":          {skip: "command group: cobra prints its help text; it renders no answer of its own"},
 	"store config show":     {},
 	"store info":            {},
 	"store ledger":          {},
 	"symbol-context":        {args: []string{jsonDocDepCoord, jsonDocSymbol}},
 	"symbol-find":           {args: []string{jsonDocSymbol}},
-	"use":                   {skip: "no JSON rendering: stdout is one plain path line per module copied into a module cache, and --json does not change it. Answering here needs a document defined for a copy"},
+	"use":                   {argsFn: useCopyArgs},
 	"vendor":                {argsFn: goModArgs},
 	"verification-coverage": {args: []string{jsonDocWalkID}},
 	"vuln":                  {args: []string{jsonDocDepCoord}},
@@ -241,16 +274,15 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"vuln-scan-diff":        {args: []string{jsonDocScanRunID, jsonDocScanRunID}},
 	"vuln-scan-history":     {args: []string{jsonDocWalkID}},
 	"vuln-scan-list":        {},
-	"vuln-scan-rescan": {skip: "no JSON rendering: it writes three plain-text lines — completion summary, run id, snapshot — even under --json. " +
-		"--snapshot-source/--snapshot-version already pin it to a stored snapshot and keep it off the network, so a document is the only thing missing"},
-	"vuln-scan-show":     {args: []string{jsonDocScanRunID}},
-	"vuln-show":          {args: []string{jsonDocDepCoord}},
-	"vuln-snapshot-list": {},
-	"vuln-snapshot-show": {args: []string{jsonDocSnapSource, jsonDocSnapshotV}},
-	"walk":               {args: []string{jsonDocRootCoord}},
-	"walk-diff":          {args: []string{jsonDocWalkID, jsonDocWalkID}},
-	"walk-list":          {},
-	"walk-show":          {args: []string{jsonDocWalkID}},
+	"vuln-scan-rescan":      {args: []string{jsonDocWalkID, "--snapshot-source", jsonDocSnapSource, "--snapshot-version", jsonDocSnapshotV}},
+	"vuln-scan-show":        {args: []string{jsonDocScanRunID}},
+	"vuln-show":             {args: []string{jsonDocDepCoord}},
+	"vuln-snapshot-list":    {},
+	"vuln-snapshot-show":    {args: []string{jsonDocSnapSource, jsonDocSnapshotV}},
+	"walk":                  {args: []string{jsonDocRootCoord}},
+	"walk-diff":             {args: []string{jsonDocWalkID, jsonDocWalkID}},
+	"walk-list":             {},
+	"walk-show":             {args: []string{jsonDocWalkID}},
 }
 
 // walkScopeArgs scopes a command to the fixture's walk, whose graph holds two
@@ -353,6 +385,9 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 	var ran, documents int
 	run := func(t *testing.T, what, name string, tc jsonStdoutCase, several bool) {
 		t.Helper()
+		if tc.setup != nil {
+			tc.setup(t, fx)
+		}
 		extra := tc.args
 		if tc.argsFn != nil {
 			extra = tc.argsFn(t, fx)

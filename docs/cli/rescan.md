@@ -31,6 +31,7 @@ kanonarion vuln-scan-rescan <walk-id> [flags]
 | `--snapshot-version` | _(fresh)_ | Pin to a specific snapshot version (requires `--snapshot-source`) |
 | `--policy` | _(search upward for `.kanonarion/policy.yaml`)_ | Path to depth policy YAML |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
+| `--json` | `false` | Emit the result as one JSON document on stdout instead of the three text lines |
 | `--log-level` | `warn` | Log level: `debug\|info\|warn\|error` |
 
 **The build a re-scan re-evaluates**
@@ -90,6 +91,31 @@ Snapshot: osv.dev/go@v2024-04-01T00-00-00               # stdout
 `--no-progress` silences the opening line and the per-module lines. Warnings,
 diagnostics and the result are unaffected, so a silenced run still says what went
 wrong.
+
+**`--json`**
+
+The same result as one document on stdout. The three text lines are its
+`completion`, `run_id` and `snapshot` fields; beside them are the two axes the
+completion sentence collapses and the counts behind it, so nothing has to be
+parsed out of the sentence.
+
+```json
+{
+  "run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1711929600",
+  "walk_id": "01KQDBVW092ER1HNXZ60X27CMD",
+  "completion": "Complete, Affected (2)",
+  "coverage_status": "Complete",
+  "findings_status": "Affected",
+  "unanalysed": 0,
+  "snapshot": { "source": "osv.dev/go", "version": "v2024-04-01T00-00-00" },
+  "counts": { "total": 3, "analysed": 3, "affected": 2, "unscannable": 0, "failed": 0 }
+}
+```
+
+`unanalysed` is `unscannable` + `failed`: the modules the run did not analyse,
+which is the number the completion sentence and the exit code are both stated
+in. The narration and the build statement stay on stderr, so stdout is the
+document alone; the exit code is the same in both modes.
 
 ---
 

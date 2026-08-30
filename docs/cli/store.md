@@ -38,8 +38,28 @@ fetch or extraction killed mid-write). Persisted records and blobs are not
 touched.
 
 ```
-kanonarion store clean [--store-root <dir>]
+kanonarion store clean [--store-root <dir>] [--json]
 ```
+
+Under `--json` the run is a document stating what went and what stayed. Every
+count is present at zero, because a sweep that removed nothing is an answer -
+this is a command whose whole purpose is to change the store:
+
+```json
+{
+  "blob_temps":   { "dir": "/home/you/.kanonarion/blobs", "removed": 1, "bytes_reclaimed": 2048 },
+  "temp_entries": { "dir": "/tmp", "removed": 1, "bytes_reclaimed": 4096, "kept": 7,
+                    "paths": ["/tmp/kanonarion-vuln-scan-1a2b"] },
+  "removed_total": 2,
+  "bytes_reclaimed": 6144,
+  "warnings": []
+}
+```
+
+`temp_entries.kept` is the blast radius as a number: entries in the system temp
+directory kanonarion does not own and the sweep passed over. `warnings` carries
+the failures the sweep reported and carried on past; in the plain-text form
+those are printed on stdout where they happen.
 
 ### `kanonarion store ledger`
 
@@ -139,7 +159,7 @@ apply to every subcommand:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--json` | `false` | Emit output as JSON (`info`, `config show`, `ledger`) |
+| `--json` | `false` | Emit output as JSON (`info`, `config show`, `ledger`, `clean`) |
 | `--log-level` | `warn` | Log level: `debug`/`info`/`warn`/`error` |
 
 ## Exit codes
@@ -155,6 +175,7 @@ apply to every subcommand:
 kanonarion store info --store-root ~/kanonarion/.mirror
 kanonarion store config show
 kanonarion store clean
+kanonarion store clean --json
 kanonarion store ledger --since 2026-07-23T00:00:00Z --until 2026-07-24T00:00:00Z
 kanonarion store ledger --event-type vuln_scan_served --json
 ```

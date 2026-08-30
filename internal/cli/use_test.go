@@ -41,7 +41,7 @@ func TestCopyToModCache_FindsARecordUnderAnyPipelineVersion(t *testing.T) {
 	// The lookup succeeds and the copy proceeds to fail at the next step (blob
 	// fetch), so any error other than "fact record not found" proves the record
 	// was found without its pipeline version being named.
-	err = copyToModCache(context.Background(), c, facts, blobs, t.TempDir(), logger)
+	_, err = copyToModCache(context.Background(), c, facts, blobs, t.TempDir(), logger)
 	if err == nil {
 		t.Fatal("expected an error after the fact lookup (no real blob)")
 	}
@@ -54,7 +54,7 @@ func TestCopyToModCache_FindsARecordUnderAnyPipelineVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = copyToModCache(context.Background(), other, facts, blobs, t.TempDir(), logger)
+	_, err = copyToModCache(context.Background(), other, facts, blobs, t.TempDir(), logger)
 	if err == nil || !strings.Contains(err.Error(), "fact record not found") {
 		t.Fatalf("an unmeasured coordinate should have returned 'fact record not found', got: %v", err)
 	}

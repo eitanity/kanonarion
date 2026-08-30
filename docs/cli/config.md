@@ -13,7 +13,7 @@ Write a commented config template to `<store-root>/config.yaml` so the
 available settings are easy to discover and edit.
 
 ```
-kanonarion config init [--store-root <dir>]
+kanonarion config init [--store-root <dir>] [--json]
 ```
 
 Every key in the template is commented out, so the file changes nothing until
@@ -24,6 +24,20 @@ are missing are appended.
 
 This is the only way to *materialise* the file proactively; no other command
 creates `config.yaml` as a side effect.
+
+Under `--json` the run is a document naming the file, whether one was already
+there, and what this run did to it. Creating a file, completing one and leaving
+one untouched are three different events:
+
+```json
+{
+  "config_file": "/home/you/.kanonarion/config.yaml",
+  "existed": true,
+  "action": "sections_appended"
+}
+```
+
+`action` is one of `created`, `sections_appended` or `unchanged`.
 
 ---
 
@@ -134,11 +148,27 @@ every entry reads `"default"`, matching the `(default)` markers in the text.
 Print the value for a single dotted key path.
 
 ```
-kanonarion config get <key>
+kanonarion config get <key> [--json]
 ```
 
 Scalar values (booleans, strings) are printed as plain text. Sequences and maps
 are printed as YAML. Exits with code 20 on unknown key.
+
+Under `--json` the value comes with its `source`, in the same vocabulary
+`config show` uses:
+
+```json
+{
+  "key": "preferences.json",
+  "value": "false",
+  "source": "default"
+}
+```
+
+`source` is `file` when the operator wrote the key and `default` when the value
+was merged in from the built-in defaults - which a bare `false` cannot say. A
+rejected `config.yaml` sets nothing, so every key reads `default` while it is
+rejected.
 
 ---
 
@@ -150,11 +180,27 @@ is changed - existing content and comments are preserved, and keys you have not
 set stay absent so they continue to resolve to the live built-in default.
 
 ```
-kanonarion config set <key> <value>
+kanonarion config set <key> <value> [--json]
 ```
 
 Exits with code 20 if the key is unknown, read-only, or the value has the
 wrong type.
+
+Under `--json` the run states what it changed, including the value it
+displaced - which the write itself destroys:
+
+```json
+{
+  "key": "preferences.log_level",
+  "previous_value": "warn",
+  "previous_source": "default",
+  "value": "debug",
+  "config_file": "/home/you/.kanonarion/config.yaml"
+}
+```
+
+`previous_source` is `file` when the file already carried the key and `default`
+when nothing had been set and the built-in default is what the write displaced.
 
 ## Defaults and precedence
 
@@ -334,7 +380,7 @@ whether it is the default.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--json` | `false` | Emit output as JSON (`show` only) |
+| `--json` | `false` | Emit output as JSON (every `config` subcommand) |
 
 ## Exit codes
 
@@ -352,8 +398,9 @@ kanonarion config init
 # Inspect the full config
 kanonarion config show
 
-# Read a single value
+# Read a single value, with where it came from
 kanonarion config get preferences.json
+kanonarion config get preferences.json --json
 kanonarion config get license_policy.categories.permissive
 kanonarion config get copyright_declarations
 

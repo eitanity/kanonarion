@@ -136,11 +136,12 @@ func TestCopySelection_ACoordinateWithNoArtefactIsNotACopyFailure(t *testing.T) 
 
 	tally, stdout, stderr := runCopySelection(t, selection, facts, blobs)
 
-	if len(tally.failed) != 0 {
-		t.Fatalf("a coordinate with no artefact must not be a failure, got %d: %v", len(tally.failed), tally.failed)
+	if failed := tally.of(useFailed); len(failed) != 0 {
+		t.Fatalf("a coordinate with no artefact must not be a failure, got %d: %v", len(failed), failed)
 	}
-	if len(tally.noArtefact) != 2 || len(tally.copied) != 1 {
-		t.Fatalf("want 1 copied and 2 with no artefact, got %d copied / %d absent", len(tally.copied), len(tally.noArtefact))
+	if len(tally.of(useNoArtefact)) != 2 || len(tally.of(useCopied)) != 1 {
+		t.Fatalf("want 1 copied and 2 with no artefact, got %d copied / %d absent",
+			len(tally.of(useCopied)), len(tally.of(useNoArtefact)))
 	}
 	if err := useCopyExit(tally); err != nil {
 		t.Fatalf("nothing failed, so the run must exit 0; got %v", err)
@@ -175,8 +176,8 @@ func TestCopySelection_AGenuineFailureIsCountedAndExitsPartial(t *testing.T) {
 
 	tally, _, stderr := runCopySelection(t, selection, facts, blobs)
 
-	if len(tally.failed) != 1 || len(tally.copied) != 1 {
-		t.Fatalf("want 1 copied and 1 failed, got %d/%d", len(tally.copied), len(tally.failed))
+	if len(tally.of(useFailed)) != 1 || len(tally.of(useCopied)) != 1 {
+		t.Fatalf("want 1 copied and 1 failed, got %d/%d", len(tally.of(useCopied)), len(tally.of(useFailed)))
 	}
 	err := useCopyExit(tally)
 	code, ok := ExitCodeFromError(err)

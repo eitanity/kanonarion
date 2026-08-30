@@ -314,10 +314,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	stopwatch := clock.Monotonic{}
 	signer := noopsigner.New()
 	localBlobs := blobstore.New(storeRoot)
-	if n, err := localBlobs.CleanOrphanedTemps(); err != nil {
+	if n, freed, err := localBlobs.CleanOrphanedTemps(); err != nil {
 		logger.Warn("failed to clean orphaned blob temp files", "error", err)
 	} else if n > 0 {
-		logger.Debug("cleaned orphaned blob temp files", "count", n)
+		logger.Debug("cleaned orphaned blob temp files", "count", n, "bytes", freed)
 	}
 	vcs := fetchvcs.New()
 

@@ -1343,14 +1343,64 @@ func rescanWith(
 		return fmt.Errorf("vuln-scan-rescan failed: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Re-scan completed: %s\n", scanCompletionSummary(run))
-	_, _ = fmt.Fprintf(stdout, "Run ID: %s\n", run.ID)
-	_, _ = fmt.Fprintf(stdout, "Snapshot: %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+	if jsonOut {
+		if err := encodeJSON(stdout, rescanDocumentOf(run)); err != nil {
+			return err
+		}
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Re-scan completed: %s\n", scanCompletionSummary(run))
+		_, _ = fmt.Fprintf(stdout, "Run ID: %s\n", run.ID)
+		_, _ = fmt.Fprintf(stdout, "Snapshot: %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+	}
 	// The re-scan reports the same two axes and owes the same exit code. A
 	// re-derivation that could not analyse part of the build list has not
 	// completed its work either, and a caller branching on the code alone must
 	// not read the two runs on different terms.
 	return vulnScanCoverageExit(run)
+}
+
+// vulnScanRescanDocument is `vuln-scan-rescan --json`: the three lines the text
+// run prints, as fields, and the counts the run holds.
+//
+// This command's text output was already the shape a consumer wants — what the
+// run concluded, which run it was, which advisory database it was measured
+// against — so the document renders it rather than redesigning it. What it adds
+// is the two axes and the counts behind the completion sentence, because a
+// consumer must not have to parse "Partial coverage (3 of 12 unanalysed),
+// Affected (2)" to learn any of it.
+type vulnScanRescanDocument struct {
+	RunID string `json:"run_id"`
+	// WalkID names what was re-scanned. A re-scan re-evaluates a recorded build
+	// against fresh advisories; the walk is that build, and a run id alone does
+	// not say which one.
+	WalkID string `json:"walk_id"`
+	// Completion is the sentence the text prints after "Re-scan completed:",
+	// which is both axes in one line. The fields below it are the same two facts
+	// as values.
+	Completion     string `json:"completion"`
+	CoverageStatus string `json:"coverage_status"`
+	FindingsStatus string `json:"findings_status"`
+	// Unanalysed is the unscannable and failed modules together: the numerator
+	// the completion sentence and the exit code are both stated in.
+	Unanalysed int `json:"unanalysed"`
+	// Snapshot is the advisory database this run measured against, in the two
+	// parts the text line joins with an @. Same shape `vuln-scan` publishes.
+	Snapshot vulnScanSnapshotJSON     `json:"snapshot"`
+	Counts   vuldomain.WalkScanCounts `json:"counts"`
+}
+
+// rescanDocumentOf renders a completed re-scan.
+func rescanDocumentOf(run vuldomain.WalkScanRun) vulnScanRescanDocument {
+	return vulnScanRescanDocument{
+		RunID:          run.ID,
+		WalkID:         run.WalkID,
+		Completion:     scanCompletionSummary(run),
+		CoverageStatus: string(run.CoverageStatus),
+		FindingsStatus: string(run.FindingsStatus),
+		Unanalysed:     run.Counts.Unscannable + run.Counts.Failed,
+		Snapshot:       vulnScanSnapshotOf(run.Snapshot),
+		Counts:         run.Counts,
+	}
 }
 
 // resolveSnapshot looks up a stored snapshot by source and version.
