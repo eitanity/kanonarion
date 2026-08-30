@@ -317,7 +317,10 @@ Edges (4201 total, showing 2):
 ```
 
 The `test scope:` line is printed on every record, including when the axis was
-not measured — silence there would read as "there was no test code".
+not measured — silence there would read as "there was no test code". Under
+`--json`, `test_scope` is always present and reads `not recorded` on a record
+that makes no claim, for the same reason: an empty string there reads as an
+absence of test code rather than an absence of a measurement.
 
 A `reference scope:` line is printed on every record for the same reason, and it
 is the axis a confident negative rests on:
@@ -333,8 +336,10 @@ A record that never looked says so, and says what that costs:
   references, so an empty callers answer over it is UNRESOLVED, not a measured absence
 ```
 
-In JSON the axis is `reference_scope` (empty when unmeasured) beside
-`reference_edge_count`, both always present.
+In JSON the axis is `reference_scope` beside `reference_edge_count`, both always
+present. An unmeasured axis reads `not recorded`, in the same words as the text,
+so a consumer never has to tell it apart from a record that searched and found
+none.
 
 A `module membership:` line appears only when the record needed it:
 
@@ -397,8 +402,10 @@ version when the stdlib came from a toolchain downloaded as a module (`go1.26.6
 (from the recorded stdlib path)`), the directory when it came from an installed
 GOROOT (`unnamed version at GOROOT /usr/local/go`, which names no version because
 a GOROOT is upgraded in place), and `not recorded` when the graph carries no
-stdlib path at all. Under `--json`, `toolchain` carries that identity and
-`toolchain_stated` is `null` unless the record itself named one.
+stdlib path at all. Under `--json`, `toolchain` carries that identity — reading
+`not recorded` where the record establishes no version, including where a plain
+GOROOT names none — and `toolchain_stated` is `null` unless the record itself
+named one.
 
 ##### Modules published before Go modules
 
@@ -781,6 +788,18 @@ on both sides. A type in a *different* module that satisfies the same interface
 is not recorded — computing satisfaction against every type in the dependency
 graph is a much larger measurement. That scope is printed on every answer, so an
 empty list is read as the answer to the question that was actually asked.
+
+Under `--json` the same limits are fields, not one English sentence, because
+`count` otherwise reads as the set of implementers when it is the set declared in
+one module:
+
+| Field | Meaning |
+|---|---|
+| `searched_module` | The module whose own declarations were searched |
+| `cross_module_types_measured` | Always `false`: types in other modules were never looked at |
+| `tests_excluded` | Whether `--exclude-tests` narrowed this answer |
+| `tests_exclude_flag` | The flag that narrows it, so a consumer can ask the other question |
+| `scope` | The sentence the text prints, kept as it was |
 
 Three failure modes are kept distinct rather than collapsed into an empty list:
 

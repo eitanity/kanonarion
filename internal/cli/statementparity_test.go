@@ -82,6 +82,10 @@ import (
 // measured", `interface-show` printing "build frame: unrecorded", `config show`
 // printing its absent-file statement as a YAML comment. Reaching those is a
 // full line-by-line text-versus-JSON audit, a larger measurement than this one.
+// The first two of those three examples are now fielded — see
+// coveragefields_test.go — which closes those instances and not the class: a
+// caveat added tomorrow with no vocabulary in front of it is still invisible
+// here.
 //
 // -- what counts as carried --
 //

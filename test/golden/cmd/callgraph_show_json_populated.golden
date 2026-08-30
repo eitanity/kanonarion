@@ -11,7 +11,7 @@ exit 0
   "algorithm": "CHA",
   "completeness": "BUILT_WITH_BODIES",
   "analysis_source": "zip",
-  "toolchain": "",
+  "toolchain": "not recorded",
   "toolchain_stated": null,
   "nodes": [
     {

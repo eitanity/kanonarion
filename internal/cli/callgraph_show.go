@@ -379,9 +379,11 @@ type callGraphRecordJSON struct {
 	// ("not recorded") and must be visible as one.
 	Completeness   string `json:"completeness"`
 	AnalysisSource string `json:"analysis_source"`
-	// Toolchain is emitted even when empty, on the same terms: a consumer that
-	// cannot see which Go built the graph cannot tell two toolchains' answers
-	// apart, and an absent value is itself the answer ("not recorded").
+	// Toolchain is the toolchain this record ESTABLISHES, on the same terms: a
+	// consumer that cannot see which Go built the graph cannot tell two
+	// toolchains' answers apart. A record that establishes none says so in the
+	// token rather than in an empty string, which reads as an absent toolchain
+	// rather than as an absent statement about one.
 	Toolchain string `json:"toolchain"`
 	// ToolchainStated is what the record ITSELF recorded, so a consumer can tell a
 	// toolchain the analysis named from one recovered out of the graph's own
@@ -418,17 +420,18 @@ type callGraphRecordJSON struct {
 	PipelineVersion string   `json:"pipeline_version"`
 	ContentHash     string   `json:"content_hash"`
 	// TestScope says whether _test.go declarations were part of the analysis.
-	// It is emitted even when empty: a consumer that cannot see the axis cannot
-	// tell an unmeasured one from a measured-and-empty one.
+	// A record that makes no claim renders the token: an empty string here is
+	// read as "no test code", which is the confusion the axis exists to remove.
 	TestScope       string `json:"test_scope"`
 	TestScopeDetail string `json:"test_scope_detail,omitempty"`
 	TestNodeCount   int    `json:"test_node_count"`
 	// ReferenceScope says whether the analysis looked for function-value
-	// references at all. Emitted even when empty, for the reason TestScope is:
-	// a record that never searched for references and one that searched and
-	// found none are different answers, and an absent field collapses them.
-	// ReferenceEdgeCount is how many it found, so the axis can be read without
-	// walking the edge list.
+	// references at all, and it is the axis a confident negative rests on: the
+	// text says in as many words that an empty callers answer over an unmeasured
+	// one is UNRESOLVED rather than a measured absence. A record that never
+	// searched renders the token, because an empty string collapses it into the
+	// record that searched and found none. ReferenceEdgeCount is how many it
+	// found, so the axis can be read without walking the edge list.
 	ReferenceScope     string `json:"reference_scope"`
 	ReferenceEdgeCount int    `json:"reference_edge_count"`
 	// InterfaceCount and ImplementationCount summarise the type-level relation
@@ -539,7 +542,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		Algorithm:          string(r.Algorithm),
 		Completeness:       string(r.Completeness),
 		AnalysisSource:     string(r.AnalysisSource),
-		Toolchain:          domain.RecordToolchain(r).Key(),
+		Toolchain:          orNotRecorded(domain.RecordToolchain(r).Key()),
 		ToolchainStated:    statedToolchain(r),
 		WorktreeDigest:     r.WorktreeDigest,
 		WorktreeScanDigest: r.WorktreeScanDigest,
@@ -560,10 +563,10 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		PipelineVersion: r.PipelineVersion,
 		ContentHash:     r.ContentHash,
 
-		TestScope:           string(r.TestScope),
+		TestScope:           orNotRecorded(string(r.TestScope)),
 		TestScopeDetail:     r.TestScopeDetail,
 		TestNodeCount:       testNodes,
-		ReferenceScope:      string(r.ReferenceScope),
+		ReferenceScope:      orNotRecorded(string(r.ReferenceScope)),
 		ReferenceEdgeCount:  referenceEdgeCount(r),
 		InterfaceCount:      len(r.Interfaces),
 		ImplementationCount: len(r.Implementations),

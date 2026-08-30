@@ -89,7 +89,7 @@ func TestWriteImplementersText_ReportsFailedWritesOnAbsent(t *testing.T) {
 
 func TestWriteImplementersJSON_ReportsFailedWrite(t *testing.T) {
 	err := writeImplementersJSON(&stallingWriter{}, implPortID, "Put", true, nil,
-		cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedAbsent}, "scope")
+		cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedAbsent}, "scope", implModule, cgports.EdgeQueryOptions{})
 	if err == nil {
 		t.Fatal("a failed JSON write was swallowed")
 	}
