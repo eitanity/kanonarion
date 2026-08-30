@@ -19,7 +19,13 @@ exit 0
       "direct": true,
       "root": false
     }
-  ]
+  ],
+  "root_scope": {
+    "root": "example.com/app@v1.0.0",
+    "excluded": true,
+    "depends_on_target": false,
+    "include_flag": "--include-root"
+  }
 }
 --- stderr ---
 (empty)

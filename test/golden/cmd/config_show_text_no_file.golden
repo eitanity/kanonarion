@@ -1,0 +1,46 @@
+# no config file: the text says so and marks every value (default). Recorded byte for byte — the per-value provenance was added to the document beneath it, and this channel must be unchanged.
+$ kanonarion config show
+exit 0
+--- stdout ---
+# no config file at $EMPTY_STORE/config.yaml — nothing is set in this store, so every value below is a built-in default
+#   to write a commented template: kanonarion config init
+
+# effective configuration (resolved; (default) = not set in this file)
+version                                           2  (default)
+preferences.json                                  false  (default)
+preferences.log_level                             warn  (default)
+preferences.progress                              true  (default)
+license_policy.categories.permissive              [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC]  (default)
+license_policy.categories.restricted              [SSPL-1.0, BSL-1.1, AGPL-3.0-only]  (default)
+license_policy.categories.strong_copyleft         [GPL-2.0-only, GPL-2.0-or-later, GPL-3.0-only, AGPL-3.0-only]  (default)
+license_policy.categories.weak_copyleft           [LGPL-2.1-only, LGPL-3.0-only, MPL-2.0]  (default)
+license_policy.rules[production].allow            [permissive]  (default)
+license_policy.rules[production].notify           [weak_copyleft]  (default)
+license_policy.rules[production].warn             [strong_copyleft, restricted]  (default)
+license_policy.rules[production].default          allow  (default)
+license_policy.rules[production].unknown_license  block  (default)
+license_policy.rules[tool].allow                  [permissive, weak_copyleft, strong_copyleft]  (default)
+license_policy.rules[tool].notify                 [restricted]  (default)
+license_policy.rules[tool].warn                   []  (default)
+license_policy.rules[tool].default                allow  (default)
+license_policy.rules[tool].unknown_license        warn  (default)
+callgraph.exclude                                 []  (default)
+staleness.ttl                                     1h0m0s  (default)
+staleness.probe_concurrency                       16  (default)
+directive_policy.local_path_replace               warn  (default)
+directive_policy.module_path_replace              warn  (default)
+directive_policy.version_replace                  notify  (default)
+directive_policy.exclude_newer                    warn  (default)
+directive_policy.exclude_older                    allow  (default)
+directive_policy.default                          notify  (default)
+godebug_policy.red                                warn  (default)
+godebug_policy.amber                              notify  (default)
+godebug_policy.green                              allow  (default)
+vendor_policy.on_drift                            warn  (default)
+vendor_policy.on_inconsistency                    warn  (default)
+vendor_policy.vendor_only                         false  (default)
+fips_policy.required                              false  (default)
+fips_policy.on_deviation                          warn  (default)
+fetch_policy.allowed_vcs_hosts                    (unset: built-in host set, advisory)  (default)
+--- stderr ---
+(empty)

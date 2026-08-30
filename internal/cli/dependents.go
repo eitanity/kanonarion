@@ -69,6 +69,12 @@ JSON output adds "root" and "direct" boolean fields to each entry. To find all
 entries that represent a first-party concern (root or direct dep), filter on
 root || direct.
 
+JSON output also carries "root_scope" on every answer: which module the walk is
+rooted at, whether it was excluded from the search, whether it depends on the
+target, and the flag that includes it. An empty "dependents" with
+root_scope.depends_on_target true is not "nothing uses this" — the walk root
+does, and it was out of scope.
+
 Flag combinations:
   (default)                    all dependents, root excluded
   --include-root               all dependents, root shown as [root]
@@ -140,7 +146,7 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 	}
 	walkID := containment.walkID
 
-	deps, rootExcluded := walkDependents(rec, coord, f.includeRoot)
+	deps, rootScope := walkDependents(rec, coord, f.includeRoot)
 	if f.directOnly {
 		filtered := deps[:0]
 		for _, d := range deps {
@@ -164,7 +170,7 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 	// as a measurement.
 	preModules := preModulesNodesIn(rec.Graph)
 	if jsonOut {
-		return writeDependentsJSON(stdout, walkID, walkFrame, containment.selection(), coord.String(), deps,
+		return writeDependentsJSON(stdout, walkID, walkFrame, containment.selection(), coord.String(), deps, rootScope,
 			preModulesCaveatFor(append(preModules, coord)...))
 	}
 	// Above the answer, not after it: it says which build the rows below describe,
@@ -174,7 +180,8 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 			return fmt.Errorf("writing walk selection notice: %w", werr)
 		}
 	}
-	if err := writeDependentsText(stdout, walkID, walkFrame, coord.String(), deps, f.directOnly, rootExcluded, f.includeRoot); err != nil {
+	if err := writeDependentsText(stdout, walkID, walkFrame, coord.String(), deps, f.directOnly,
+		rootScope.withheld(), f.includeRoot); err != nil {
 		return err
 	}
 	return writeWalkPreModulesCaveat(stdout, rec.Graph)
@@ -187,19 +194,36 @@ type dependentResult struct {
 	Root   bool // true when this module IS the walk root
 }
 
+// dependentsRootScope is what the search left out, measured whether or not it
+// mattered on this answer.
+//
+// Excluded says the root was not searched; DependsOnTarget says it would have
+// been an answer. The pair is what separates "nothing depends on this module"
+// from "nothing except the thing you are asking on behalf of", and only the two
+// together do it: Excluded alone cannot tell a scope from a withheld row, and
+// DependsOnTarget alone cannot say whether the row reached the answer.
+type dependentsRootScope struct {
+	Root            coordinate.ModuleCoordinate
+	Excluded        bool
+	DependsOnTarget bool
+}
+
+// withheld reports that a row was actually dropped: the root depends on the
+// target and was out of scope. It is the narrower fact the text rendering
+// discloses, and it is derived here rather than measured separately so the two
+// channels cannot drift apart.
+func (s dependentsRootScope) withheld() bool { return s.Excluded && s.DependsOnTarget }
+
 // walkDependents returns all modules in rec that have a direct graph edge
 // pointing to coord, sorted lexicographically by (path, version). When
 // includeRoot is true, the walk root is included if it has such an edge and
 // is annotated with Root=true. Direct is set from GraphNode.DirectDependency
 // and is never true for the walk root (the root is not a dependency of itself).
 //
-// The second return value reports that the root WAS dropped from the answer —
-// it depends on coord and includeRoot was off. That fact is only knowable here,
-// where the edge is seen and the exclusion applied, and it is exactly the fact
-// an empty answer needs in order to state its own scope. Without it a caller
-// cannot tell "nothing depends on this module" from "nothing except the thing
-// you are asking on behalf of".
-func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate, includeRoot bool) ([]dependentResult, bool) {
+// The second return value is the scope of the search itself. That fact is only
+// knowable here, where the edge is seen and the exclusion applied, and it is
+// exactly the fact an empty answer needs in order to state what it covered.
+func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate, includeRoot bool) ([]dependentResult, dependentsRootScope) {
 	directDeps := make(map[coordinate.ModuleCoordinate]bool)
 	for _, n := range rec.Graph.Nodes {
 		if n.DirectDependency {
@@ -209,7 +233,7 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 
 	seen := make(map[coordinate.ModuleCoordinate]bool)
 	var out []dependentResult
-	var rootExcluded bool
+	scope := dependentsRootScope{Root: rec.Target, Excluded: !includeRoot}
 
 	for _, edge := range rec.Graph.Edges {
 		if edge.To.Path() != coord.Path() || edge.To.Version() != coord.Version() {
@@ -220,8 +244,10 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 		}
 		seen[edge.From] = true
 		isRoot := edge.From.Path() == rec.Target.Path() && edge.From.Version() == rec.Target.Version()
+		if isRoot {
+			scope.DependsOnTarget = true
+		}
 		if isRoot && !includeRoot {
-			rootExcluded = true
 			continue
 		}
 		out = append(out, dependentResult{
@@ -241,7 +267,7 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 		}
 		return out[i].Coord.Version() < out[j].Coord.Version()
 	})
-	return out, rootExcluded
+	return out, scope
 }
 
 type dependentsJSON struct {
@@ -261,10 +287,30 @@ type dependentsJSON struct {
 	WalkSelection walkSelectionJSON    `json:"walk_selection"`
 	Target        string               `json:"target"`
 	Dependents    []dependentEntryJSON `json:"dependents"`
+	// RootScope states what the search left out. It is emitted on every answer,
+	// not only when something was withheld: a field that appears only when it
+	// would be alarming is one no consumer can rely on reading, and the reader
+	// this exists for is the one holding an empty "dependents" and deciding
+	// whether the module can be dropped.
+	RootScope dependentsRootScopeJSON `json:"root_scope"`
 	// PreModulesCaveat is present only when the answer is bounded by a module
 	// resolved under pre-modules semantics; absent means no coordinate in scope is
 	// one, so an answer that never meets the class marshals exactly as before.
 	PreModulesCaveat *preModulesCaveatJSON `json:"pre_modules_caveat,omitempty"`
+}
+
+// dependentsRootScopeJSON is the exclusion as data.
+//
+// Excluded and DependsOnTarget answer different questions and both are needed:
+// excluded true with depends_on_target true means an empty "dependents" is NOT
+// a confirmed negative — something in the build uses the target, and it is the
+// walk root. IncludeFlag names the flag that puts it back, so a consumer can act
+// on the fact without knowing the command's flag set.
+type dependentsRootScopeJSON struct {
+	Root            string `json:"root"`
+	Excluded        bool   `json:"excluded"`
+	DependsOnTarget bool   `json:"depends_on_target"`
+	IncludeFlag     string `json:"include_flag"`
 }
 
 type dependentEntryJSON struct {
@@ -281,6 +327,7 @@ func writeDependentsJSON(
 	selection walkSelectionJSON,
 	target string,
 	deps []dependentResult,
+	rootScope dependentsRootScope,
 	caveat *preModulesCaveatJSON,
 ) error {
 	entries := make([]dependentEntryJSON, len(deps))
@@ -293,12 +340,18 @@ func writeDependentsJSON(
 		}
 	}
 	result := dependentsJSON{
-		WalkID:           walkID,
-		WalkFrame:        walkFrame.Text,
-		WalkFrameBasis:   string(walkFrame.Basis),
-		WalkSelection:    selection,
-		Target:           target,
-		Dependents:       entries,
+		WalkID:         walkID,
+		WalkFrame:      walkFrame.Text,
+		WalkFrameBasis: string(walkFrame.Basis),
+		WalkSelection:  selection,
+		Target:         target,
+		Dependents:     entries,
+		RootScope: dependentsRootScopeJSON{
+			Root:            rootScope.Root.String(),
+			Excluded:        rootScope.Excluded,
+			DependsOnTarget: rootScope.DependsOnTarget,
+			IncludeFlag:     dependentsIncludeRootFlag,
+		},
 		PreModulesCaveat: caveat,
 	}
 	enc := json.NewEncoder(w)
@@ -314,9 +367,13 @@ func writeDependentsJSON(
 // and has to say so — an empty one most of all, because a reader relaying it
 // verbatim otherwise reports the module as unused.
 const (
+	// dependentsIncludeRootFlag is the flag that puts the walk root back in
+	// scope. Named once, so the text suffix and the JSON field cannot come to
+	// offer different remedies.
+	dependentsIncludeRootFlag = "--include-root"
 	// rootDependsSuffix is used when the root itself depends on the target and
 	// was dropped: the answer names the omission and the flag that reverses it.
-	rootDependsSuffix = " (the walk root does; it is excluded by default — pass --include-root)"
+	rootDependsSuffix = " (the walk root does; it is excluded by default — pass " + dependentsIncludeRootFlag + ")"
 	// rootScopeSuffix is used when the root does not depend on the target
 	// either. There is nothing being withheld, only a scope to state.
 	rootScopeSuffix = " (walk root excluded by default)"

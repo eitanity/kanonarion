@@ -101,6 +101,32 @@ document opens with `config_file`, giving the `path` looked for, whether it is
 built-in default, and they are different states: nothing was written versus
 something was written and refused.
 
+The document also carries `settings`: one entry per resolved key, holding the
+dotted `key` a `config get` or `config set` takes, the `value` in force, and its
+`source` - `"file"` when the config file names that key, `"default"` when the
+value is the shipped built-in. It is the JSON leg of the `(default)` marker in
+the text, and the answer to "did an operator choose this, or is it what
+kanonarion ships with":
+
+```json
+{
+  "settings": [
+    { "key": "preferences.json",     "value": "true",  "source": "file" },
+    { "key": "preferences.progress", "value": "true",  "source": "default" },
+    { "key": "staleness.ttl",        "value": "6h0m0s", "source": "file" }
+  ]
+}
+```
+
+The claim is per value, not per section: a `preferences` block with one key set
+and two defaulted has no single source, and the file is kept parsed as an
+untyped document beside the typed config precisely so this can be asked key by
+key. Two entries are coarser and say so here: `license_overrides.*` and
+`copyright_declarations.*` exist only when the file names them, so `"file"`
+there is the presence of the entry rather than a comparison against a default -
+there is no default for them to differ from. A rejected file sets nothing, so
+every entry reads `"default"`, matching the `(default)` markers in the text.
+
 ---
 
 ### `kanonarion config get <key>`

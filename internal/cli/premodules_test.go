@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -127,7 +128,7 @@ func TestDependentsJSONCarriesThePreModulesCaveat(t *testing.T) {
 	rec := preModulesWalk(t, "01WALKPREMODULES")
 	var stdout bytes.Buffer
 	if err := writeDependentsJSON(&stdout, rec.ID, linuxAmd64Frame, pinnedContainment(rec).selection(),
-		"example.com/other@v1.0.0", nil,
+		"example.com/other@v1.0.0", nil, dependentsRootScope{Root: rec.Target, Excluded: true},
 		preModulesCaveatFor(preModulesNodesIn(rec.Graph)...)); err != nil {
 		t.Fatalf("writeDependentsJSON: %v", err)
 	}
@@ -159,7 +160,8 @@ func TestDependentsJSONCarriesThePreModulesCaveat(t *testing.T) {
 func TestDependentsJSONOmitsTheCaveatForAnOrdinaryWalk(t *testing.T) {
 	var stdout bytes.Buffer
 	if err := writeDependentsJSON(&stdout, "01WALK", linuxAmd64Frame, walkSelectionJSON{Rule: string(walkHeldPinned)},
-		"example.com/other@v1.0.0", nil, nil); err != nil {
+		"example.com/other@v1.0.0", nil,
+		dependentsRootScope{Root: coordinatetest.MustNew("example.com/app", "v1.0.0"), Excluded: true}, nil); err != nil {
 		t.Fatalf("writeDependentsJSON: %v", err)
 	}
 	if strings.Contains(stdout.String(), "pre_modules_caveat") {

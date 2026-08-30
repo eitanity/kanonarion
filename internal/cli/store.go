@@ -164,6 +164,53 @@ type configShowResult struct {
 	VendorPolicy    configVendorResult    `json:"vendor_policy"`
 	FIPSPolicy      configFIPSResult      `json:"fips_policy"`
 	FetchPolicy     configFetchResult     `json:"fetch_policy"`
+
+	// Settings says, per key, where the value above it came from. The blocks
+	// hold what is in force; they cannot hold why, because once the defaults are
+	// merged in a value set to the default and a value never set are the same
+	// bytes. For a tool whose product is evidence about what a build was measured
+	// under, "unknown_license is block" and "unknown_license is block because
+	// nobody set it" are different answers, and only this field separates them.
+	Settings []configSettingResult `json:"settings"`
+}
+
+// Where a value in force came from. Two sources, because there are two: the
+// operator's file, and the built-in defaults the loader merges under it.
+const (
+	configSourceFile    = "file"
+	configSourceDefault = "default"
+)
+
+// configSettingResult is one resolved key: the dotted name `config get` and
+// `config set` take, the value in force, and its source.
+//
+// Per value rather than per section, because that is what the loader can
+// actually support: config show keeps the file parsed as an untyped document
+// beside the typed config for exactly this question, and asks it key by key. A
+// per-section claim would be weaker AND wrong in the common case — a
+// preferences block with one key set and two defaulted has no single source.
+//
+// The two places the claim is coarser are stated rather than hidden.
+// license_overrides and copyright_declarations exist only when the file names
+// them, so "file" there is the presence of the entry rather than a comparison
+// against a default; there is no default for them to differ from.
+type configSettingResult struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+// configSettingResults maps the resolved settings to the view.
+func configSettingResults(settings []effectiveSetting) []configSettingResult {
+	out := make([]configSettingResult, 0, len(settings))
+	for _, s := range settings {
+		source := configSourceFile
+		if s.IsDefault {
+			source = configSourceDefault
+		}
+		out = append(out, configSettingResult{Key: s.Key, Value: s.Value, Source: source})
+	}
+	return out
 }
 
 // configCopyrightResult is one operator-recorded copyright in the effective
@@ -381,6 +428,7 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				AllowedVCSHosts: cfg.FetchPolicy.AllowedVCSHosts,
 				Enforcing:       cfg.FetchPolicy.AllowedVCSHosts != nil,
 			},
+			Settings: configSettingResults(effectiveSettings(cfg, raw)),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

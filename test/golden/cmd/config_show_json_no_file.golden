@@ -1,0 +1,296 @@
+# the same store as data: config_file.present says the file is absent, and settings[] says per key whether the value in force came from the file or from a built-in default.
+$ kanonarion config show --json
+exit 0
+--- stdout ---
+{
+  "config_file": {
+    "path": "$EMPTY_STORE/config.yaml",
+    "present": false,
+    "rejected": false
+  },
+  "version": "2",
+  "preferences": {
+    "json": false,
+    "log_level": "warn",
+    "progress": true
+  },
+  "license_policy": {
+    "categories": {
+      "permissive": [
+        "MIT",
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "ISC"
+      ],
+      "restricted": [
+        "SSPL-1.0",
+        "BSL-1.1",
+        "AGPL-3.0-only"
+      ],
+      "strong_copyleft": [
+        "GPL-2.0-only",
+        "GPL-2.0-or-later",
+        "GPL-3.0-only",
+        "AGPL-3.0-only"
+      ],
+      "weak_copyleft": [
+        "LGPL-2.1-only",
+        "LGPL-3.0-only",
+        "MPL-2.0"
+      ]
+    },
+    "rules": [
+      {
+        "scope": "production",
+        "allow": [
+          "permissive"
+        ],
+        "notify": [
+          "weak_copyleft"
+        ],
+        "warn": [
+          "strong_copyleft",
+          "restricted"
+        ],
+        "default": "allow",
+        "unknown_license": "block",
+        "unknown_license_is_default": true
+      },
+      {
+        "scope": "tool",
+        "allow": [
+          "permissive",
+          "weak_copyleft",
+          "strong_copyleft"
+        ],
+        "notify": [
+          "restricted"
+        ],
+        "warn": null,
+        "default": "allow",
+        "unknown_license": "warn",
+        "unknown_license_is_default": true
+      }
+    ]
+  },
+  "license_overrides": {},
+  "copyright_declarations": null,
+  "callgraph": {
+    "exclude": []
+  },
+  "staleness": {
+    "ttl": "1h0m0s",
+    "probe_concurrency": 16
+  },
+  "directive_policy": {
+    "local_path_replace": "warn",
+    "module_path_replace": "warn",
+    "version_replace": "notify",
+    "exclude_newer": "warn",
+    "exclude_older": "allow",
+    "default": "notify"
+  },
+  "godebug_policy": {
+    "red": "warn",
+    "amber": "notify",
+    "green": "allow"
+  },
+  "vendor_policy": {
+    "on_drift": "warn",
+    "on_inconsistency": "warn",
+    "vendor_only": false
+  },
+  "fips_policy": {
+    "required": false,
+    "on_deviation": "warn"
+  },
+  "fetch_policy": {
+    "allowed_vcs_hosts": null,
+    "enforcing": false
+  },
+  "settings": [
+    {
+      "key": "version",
+      "value": "2",
+      "source": "default"
+    },
+    {
+      "key": "preferences.json",
+      "value": "false",
+      "source": "default"
+    },
+    {
+      "key": "preferences.log_level",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "preferences.progress",
+      "value": "true",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.categories.permissive",
+      "value": "[MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.categories.restricted",
+      "value": "[SSPL-1.0, BSL-1.1, AGPL-3.0-only]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.categories.strong_copyleft",
+      "value": "[GPL-2.0-only, GPL-2.0-or-later, GPL-3.0-only, AGPL-3.0-only]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.categories.weak_copyleft",
+      "value": "[LGPL-2.1-only, LGPL-3.0-only, MPL-2.0]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[production].allow",
+      "value": "[permissive]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[production].notify",
+      "value": "[weak_copyleft]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[production].warn",
+      "value": "[strong_copyleft, restricted]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[production].default",
+      "value": "allow",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[production].unknown_license",
+      "value": "block",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[tool].allow",
+      "value": "[permissive, weak_copyleft, strong_copyleft]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[tool].notify",
+      "value": "[restricted]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[tool].warn",
+      "value": "[]",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[tool].default",
+      "value": "allow",
+      "source": "default"
+    },
+    {
+      "key": "license_policy.rules[tool].unknown_license",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "callgraph.exclude",
+      "value": "[]",
+      "source": "default"
+    },
+    {
+      "key": "staleness.ttl",
+      "value": "1h0m0s",
+      "source": "default"
+    },
+    {
+      "key": "staleness.probe_concurrency",
+      "value": "16",
+      "source": "default"
+    },
+    {
+      "key": "directive_policy.local_path_replace",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "directive_policy.module_path_replace",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "directive_policy.version_replace",
+      "value": "notify",
+      "source": "default"
+    },
+    {
+      "key": "directive_policy.exclude_newer",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "directive_policy.exclude_older",
+      "value": "allow",
+      "source": "default"
+    },
+    {
+      "key": "directive_policy.default",
+      "value": "notify",
+      "source": "default"
+    },
+    {
+      "key": "godebug_policy.red",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "godebug_policy.amber",
+      "value": "notify",
+      "source": "default"
+    },
+    {
+      "key": "godebug_policy.green",
+      "value": "allow",
+      "source": "default"
+    },
+    {
+      "key": "vendor_policy.on_drift",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "vendor_policy.on_inconsistency",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "vendor_policy.vendor_only",
+      "value": "false",
+      "source": "default"
+    },
+    {
+      "key": "fips_policy.required",
+      "value": "false",
+      "source": "default"
+    },
+    {
+      "key": "fips_policy.on_deviation",
+      "value": "warn",
+      "source": "default"
+    },
+    {
+      "key": "fetch_policy.allowed_vcs_hosts",
+      "value": "(unset: built-in host set, advisory)",
+      "source": "default"
+    }
+  ]
+}
+--- stderr ---
+(empty)
