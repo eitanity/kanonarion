@@ -103,9 +103,12 @@ func toFIPSSection(rec fipsdomain.Record) fipsSection {
 func newFIPSCmd(stdout, stderr io.Writer) *cobra.Command {
 	var gomodPath string
 	cmd := &cobra.Command{
-		Use:         "fips",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Assess FIPS toolchain eligibility and non-FIPS algorithm usage",
+		Use: "fips",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Assess FIPS toolchain eligibility and non-FIPS algorithm usage",
 		Long: `fips reports the FIPS *eligibility* of the project. A toolchain is
 FIPS-capable from either of two sources: an out-of-tree distribution marker
 in buildinfo.txt / go.mod that matches the catalogue of FIPS-capable Go

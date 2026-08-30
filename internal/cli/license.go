@@ -37,8 +37,11 @@ func newLicenseCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f licenseFlags
 
 	cmd := &cobra.Command{
-		Use:         "license <module>@<version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
+		Use: "license <module>@<version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
+		},
 		// The docs and the store speak British English; accept both spellings so
 		// neither the documented form nor the SPDX-conventional one is wrong.
 		Aliases: []string{"licence"},
@@ -824,10 +827,13 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 
 	cmd := &cobra.Command{
-		Use:         "license-list",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Aliases:     []string{"licence-list"},
-		Short:       "List extracted license records",
+		Use: "license-list",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Aliases: []string{"licence-list"},
+		Short:   "List extracted license records",
 		// The command filters by flag only. Without this a stray positional was
 		// accepted and silently ignored, so `license-list <module>` printed the
 		// whole store and read as "this module holds every one of these".
@@ -935,20 +941,16 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit, offset i
 			}
 			out = append(out, entry{s.ModulePath, s.ModuleVersion, s.OverallStatus.String(), license, expr, source, ""})
 		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding JSON: %w", err)
-		}
+		var zero *listZeroScope
 		if len(out) == 0 {
 			scope, serr := licenseListZeroScope(ctx, spdx, copyright, offset, uc)
 			if serr != nil {
 				return serr
 			}
-			return writeListZeroNoticeJSON(stderr, scope)
+			zero = &scope
 		}
-		if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
-			return terr
+		if derr := writeListDocument(stdout, out, trunc, zero); derr != nil {
+			return derr
 		}
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(jsonConflicts), errors.Join(jsonConflicts...))

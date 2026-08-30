@@ -94,9 +94,7 @@ func TestRunScanList_JSONCarriesTheUnreadableRow(t *testing.T) {
 		Status string `json:"status"`
 		Reason string `json:"reason"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &entries); err != nil {
-		t.Fatalf("decoding JSON output: %v\n%s", err, out.String())
-	}
+	decodeListingRecords(t, out.String(), &entries)
 	if len(entries) != 2 {
 		t.Fatalf("entries = %+v, want the readable run and the unreadable one", entries)
 	}

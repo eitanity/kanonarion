@@ -50,9 +50,12 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f vulnScanFlags
 
 	cmd := &cobra.Command{
-		Use:         "vuln-scan [walk-id]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Scan all modules in a walk for vulnerabilities (no args: code deps of ./go.mod)",
+		Use: "vuln-scan [walk-id]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkAlways,
+		},
+		Short: "Scan all modules in a walk for vulnerabilities (no args: code deps of ./go.mod)",
 		Long: `Scan every module in a walk against the advisory database.
 
 Beside the result, on stderr, vuln-scan states the toolchain axis: the Go
@@ -338,6 +341,152 @@ func applyScanVCSHosts(ctx context.Context, scan ScanWalkUseCase, policyPath str
 	return nil
 }
 
+// ---- what a scan states about itself ----
+
+// vulnScanRunFacts is what a run says about itself, for a caller that has to
+// state it in a document of its own. `inspect` prints the context document and
+// forwards this scan's narration to stderr, so without these it can report the
+// modules it analysed and nothing about the run that analysed them.
+type vulnScanRunFacts struct {
+	RunID    string
+	Snapshot vulnScanSnapshotJSON
+	// Reused is true when a stored run answered and nothing was re-scanned.
+	Reused    bool
+	Toolchain vulnScanToolchainJSON
+}
+
+// vulnScanSnapshotJSON names the advisory database generation an answer was
+// judged against. Both fields are emitted empty rather than omitted: no snapshot
+// is a fact about the evidence, and an absent key states nothing.
+type vulnScanSnapshotJSON struct {
+	Source  string `json:"source"`
+	Version string `json:"version"`
+}
+
+func vulnScanSnapshotOf(s vuldomain.DatabaseSnapshot) vulnScanSnapshotJSON {
+	return vulnScanSnapshotJSON{Source: s.Source(), Version: s.Version()}
+}
+
+// vulnScanToolchainJSON is the toolchain axis on the machine surface: the same
+// judgment the reader is shown on stderr, as data.
+//
+// The unjudged case is the reason this exists. A judgment that could not be made
+// is the most important statement this command produces, and until now it reached
+// the person and not the document — where a missing key and a null both read as
+// "nothing to report", which is the one thing it does not mean. So every field is
+// present on every run, Judged says outright whether anything was judged, and
+// Reason says what stopped it.
+type vulnScanToolchainJSON struct {
+	// Judged is false when no judgment was made; Reason then says why.
+	Judged bool `json:"judged"`
+	// Status is the judgment's own word: clear, affected, withdrawn, or unjudged.
+	Status string `json:"status"`
+	// Version is the build toolchain the walk recorded. Empty where the walk
+	// recorded none, which is the commonest reason nothing could be judged.
+	Version string `json:"version"`
+	// Snapshot is the advisory database generation it was judged against.
+	Snapshot vulnScanSnapshotJSON `json:"snapshot"`
+	// Reason is why nothing was judged; empty on a judgment that was made.
+	Reason string `json:"reason"`
+	// AdvisoriesJudged is how many toolchain advisories the snapshot listed, so a
+	// clear says what it was measured against and not only its conclusion.
+	AdvisoriesJudged int `json:"advisories_judged"`
+	// Covering and WithdrawnCovering are the advisory ids that cover this
+	// toolchain, standing and retracted. Always arrays, never null.
+	Covering          []string `json:"covering"`
+	WithdrawnCovering []string `json:"withdrawn_covering"`
+	// Statement is the sentence the reader is shown, carried verbatim so the
+	// document and the screen say the same thing in the same words.
+	Statement string `json:"statement"`
+}
+
+// vulnScanToolchainAxis states the toolchain judgment for a run: on stderr when
+// this run narrates itself, and as the section a document carries.
+//
+// One derivation feeds both, so the sentence a person reads and the fields a
+// machine reads are the same judgment rather than two that could disagree. A
+// caller wanting neither keeps the shared reporter, which derives nothing extra.
+func vulnScanToolchainAxis(ctx context.Context, ctr *Container, run vuldomain.WalkScanRun, narrate, wantRunFacts bool, stderr io.Writer) (vulnScanToolchainJSON, error) {
+	if !wantRunFacts {
+		if !narrate {
+			return vulnScanToolchainJSON{}, nil
+		}
+		return vulnScanToolchainJSON{}, reportToolchainAxis(ctx, ctr, run, stderr)
+	}
+	j := scanRunToolchainJudgment(ctx, ctr, run)
+	if narrate {
+		if err := writeToolchainJudgment(stderr, j); err != nil {
+			return vulnScanToolchainJSON{}, err
+		}
+	}
+	return toolchainSectionOf(j), nil
+}
+
+// scanRunToolchainJudgment derives the judgment for a run the same way the
+// stderr report does: the run names the walk it judged and the snapshot it was
+// judged against, and both are read locally. A walk that cannot be loaded is an
+// unjudged toolchain naming that as the reason, never a silent absence.
+func scanRunToolchainJudgment(ctx context.Context, ctr *Container, run vuldomain.WalkScanRun) vuldomain.ToolchainJudgment {
+	rec, err := ctr.QueryWalks.GetWalk(ctx, run.WalkID)
+	if err != nil {
+		return vuldomain.ToolchainJudgment{
+			Snapshot: run.Snapshot,
+			Status:   vuldomain.ToolchainUnjudged,
+			Reason:   fmt.Sprintf("the walk it was built by could not be loaded (%v)", err),
+		}
+	}
+	return judgeWalkToolchain(ctx, ctr, rec, storedSnapshotFor(ctx, ctr, run))
+}
+
+// toolchainSectionOf projects a judgment onto the machine surface, rendering its
+// statement through the same writer the reader sees.
+func toolchainSectionOf(j vuldomain.ToolchainJudgment) vulnScanToolchainJSON {
+	var statement strings.Builder
+	if err := writeToolchainJudgment(&statement, j); err != nil {
+		// The renderer writes to a buffer that cannot fail; a failure here would
+		// still leave the fields below stating the judgment.
+		statement.Reset()
+	}
+	return vulnScanToolchainJSON{
+		Judged:            j.Status != vuldomain.ToolchainUnjudged,
+		Status:            string(j.Status),
+		Version:           j.Version,
+		Snapshot:          vulnScanSnapshotOf(j.Snapshot),
+		Reason:            j.Reason,
+		AdvisoriesJudged:  j.Judged,
+		Covering:          toolchainAdvisoryIDs(j.Covering),
+		WithdrawnCovering: toolchainAdvisoryIDs(j.WithdrawnCovering),
+		Statement:         strings.TrimRight(statement.String(), "\n"),
+	}
+}
+
+// unjudgedToolchainSection is the section for a run that never happened, so the
+// document says the toolchain was not judged and why rather than leaving the key
+// out and reading as a clear.
+func unjudgedToolchainSection(reason string) vulnScanToolchainJSON {
+	return toolchainSectionOf(vuldomain.ToolchainJudgment{Status: vuldomain.ToolchainUnjudged, Reason: reason})
+}
+
+// toolchainAdvisoryIDs lists the advisory ids, never nil: an empty array says
+// none covered it, where null says nothing.
+func toolchainAdvisoryIDs(advs []vuldomain.ToolchainAdvisory) []string {
+	ids := make([]string, 0, len(advs))
+	for _, a := range advs {
+		ids = append(ids, a.ID)
+	}
+	return ids
+}
+
+// vulnScanRunDocument is `vuln-scan --json`: the run record and its reachability
+// basis, plus the toolchain axis this run judged.
+//
+// The document below it is embedded, not nested, so every key a consumer reads
+// today keeps its place and the change is one added key.
+type vulnScanRunDocument struct {
+	vulnScanDocument
+	Toolchain vulnScanToolchainJSON `json:"toolchain"`
+}
+
 // narrateRun controls whether this run states the things it says about itself
 // as a whole — that a stored run was served, and what the toolchain axis says.
 // It is false only for `audit`, which narrates the derivation and the toolchain
@@ -349,6 +498,22 @@ func applyScanVCSHosts(ctx context.Context, scan ScanWalkUseCase, policyPath str
 // different commands, and "who asked" is the only part of a served answer that
 // is not already in the store.
 func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath, surface string, noVendor, noProgress, narrateRun bool, stdout, stderr io.Writer) error {
+	_, err := runVulnScanReporting(ctx, walkID, force, fresh, enableReachability, callGraphWorkers,
+		binaryModePrePass, jsonOut, goBinary, operator, projectDir, policyPath, surface,
+		noVendor, noProgress, narrateRun, false, stdout, stderr)
+	return err
+}
+
+// runVulnScanReporting is the scan, returning what the run states about itself.
+//
+// wantRunFacts says the caller reads those facts back as data — `inspect` does,
+// because they belong in the document it prints and it cannot read them off the
+// stderr it forwarded. --json implies it: a document that omits the toolchain
+// judgment is the defect this reports.
+func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath, surface string, noVendor, noProgress, narrateRun, wantRunFacts bool, stdout, stderr io.Writer) (vulnScanRunFacts, error) {
+	// Asked from two sides, one question: a run that writes a document needs its
+	// facts as surely as a caller that asked for them.
+	wantRunFacts = wantRunFacts || jsonOut
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -364,16 +529,16 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		currentPath := os.Getenv("PATH")
 		newPath := goDir + string(os.PathListSeparator) + currentPath
 		if err := os.Setenv("PATH", newPath); err != nil {
-			return fmt.Errorf("setting PATH: %w", err)
+			return vulnScanRunFacts{}, fmt.Errorf("setting PATH: %w", err)
 		}
 		if err := os.Unsetenv("GOROOT"); err != nil {
-			return fmt.Errorf("unsetting GOROOT: %w", err)
+			return vulnScanRunFacts{}, fmt.Errorf("unsetting GOROOT: %w", err)
 		}
 	}
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", goBinary, false, activeConfig, logger)
 	if err != nil {
-		return fmt.Errorf("initialising store: %w", err)
+		return vulnScanRunFacts{}, fmt.Errorf("initialising store: %w", err)
 	}
 	defer func() {
 		if cerr := cleanup(); cerr != nil {
@@ -386,7 +551,7 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	// breaks parsing.
 	// Before any fetch: an unusable policy must stop the run here.
 	if err := applyScanVCSHosts(ctx, ctr.ScanWalk, policyPath, stderr); err != nil {
-		return err
+		return vulnScanRunFacts{}, err
 	}
 
 	// The narration stream, which --no-progress silences. Only the per-module
@@ -402,10 +567,10 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	if fresh {
 		refresh, rerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
 		if _, werr := fmt.Fprintf(stderr, "%s\n", advisoryRefreshLine(refresh, rerr)); werr != nil {
-			return fmt.Errorf("writing output: %w", werr)
+			return vulnScanRunFacts{}, fmt.Errorf("writing output: %w", werr)
 		}
 		if rerr != nil {
-			return fmt.Errorf("refreshing the advisory database: %w", rerr)
+			return vulnScanRunFacts{}, fmt.Errorf("refreshing the advisory database: %w", rerr)
 		}
 	}
 
@@ -425,9 +590,9 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	// scanned.
 	if !force {
 		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, projectDir); rerr != nil {
-			return fmt.Errorf("checking for a reusable scan run: %w", rerr)
+			return vulnScanRunFacts{}, fmt.Errorf("checking for a reusable scan run: %w", rerr)
 		} else if ok {
-			return serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, surface, stdout, stderr)
+			return serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr)
 		}
 	}
 
@@ -461,22 +626,22 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("vuln scan failed: %w", err)
+		return vulnScanRunFacts{}, fmt.Errorf("vuln scan failed: %w", err)
 	}
 
-	// The toolchain axis goes to stderr, beside the result and never inside it:
-	// stdout is the data channel a --json caller pipes into jq, and the toolchain
-	// is not one of the modules this run scanned.
-	if narrateRun {
-		if terr := reportToolchainAxis(ctx, ctr, run, stderr); terr != nil {
-			return terr
-		}
+	// The toolchain axis goes to stderr, beside the result. It is also the
+	// document's, under --json: a judgment stated only to a person leaves the
+	// machine reader unable to tell "not judged" from "nothing to report".
+	toolchain, terr := vulnScanToolchainAxis(ctx, ctr, run, narrateRun, wantRunFacts, stderr)
+	if terr != nil {
+		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, jsonOut, stdout); perr != nil {
-		return perr
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, jsonOut, stdout); perr != nil {
+		return vulnScanRunFacts{}, perr
 	}
-	return vulnScanCoverageExit(run)
+	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: false, Toolchain: toolchain},
+		vulnScanCoverageExit(run)
 }
 
 // advisoryRefreshLine renders what a --fresh refresh established, in one line.
@@ -578,18 +743,18 @@ func (r *vulnScanRollups) add(coord coordinate.ModuleCoordinate, record vuldomai
 // The roll-ups are rebuilt from the records THAT RUN wrote, so the report is the
 // one that run produced rather than a fresh summary over whatever each module's
 // latest verdict has since become.
-func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Container, jsonOut, announce bool, surface string, stdout, stderr io.Writer) error {
+func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Container, jsonOut, announce, wantRunFacts bool, surface string, stdout, stderr io.Writer) (vulnScanRunFacts, error) {
 	// Witnessed before the answer is assembled, and never after: a serving that
 	// failed to report still happened, and the ledger's whole use here is that
 	// "when did we last check" survives a run that measured nothing. A failed
 	// append fails the serving rather than handing back an untraced answer.
 	if err := ctr.ScanWalk.ServeReusableRun(run, surface); err != nil {
-		return fmt.Errorf("witnessing the served scan run: %w", err)
+		return vulnScanRunFacts{}, fmt.Errorf("witnessing the served scan run: %w", err)
 	}
 
 	recs, err := ctr.QueryVuln.ListRecordsForRun(ctx, run.ID)
 	if err != nil {
-		return fmt.Errorf("reading the reused scan run's records: %w", err)
+		return vulnScanRunFacts{}, fmt.Errorf("reading the reused scan run's records: %w", err)
 	}
 
 	rollups := newVulnScanRollups()
@@ -604,23 +769,23 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 
 	if announce {
 		if _, werr := fmt.Fprintf(stderr, "%s\n", reusedScanLine(run, reach.Verdicts)); werr != nil {
-			return fmt.Errorf("writing output: %w", werr)
+			return vulnScanRunFacts{}, fmt.Errorf("writing output: %w", werr)
 		}
 	}
 
 	// The toolchain judgment is derived on a served report exactly as on a
 	// measured one: it is read from the stored snapshot the run names, so reuse
 	// costs it nothing and cannot silently drop it.
-	if announce {
-		if terr := reportToolchainAxis(ctx, ctr, run, stderr); terr != nil {
-			return terr
-		}
+	toolchain, terr := vulnScanToolchainAxis(ctx, ctr, run, announce, wantRunFacts, stderr)
+	if terr != nil {
+		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, jsonOut, stdout); perr != nil {
-		return perr
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, jsonOut, stdout); perr != nil {
+		return vulnScanRunFacts{}, perr
 	}
-	return vulnScanCoverageExit(run)
+	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: true, Toolchain: toolchain},
+		vulnScanCoverageExit(run)
 }
 
 // vulnScanCoverageExit maps the run's COVERAGE axis onto the process exit code.
@@ -758,14 +923,18 @@ func scanCompletionSummary(run vuldomain.WalkScanRun) string {
 // only the final result channel: JSON under --json, or a findings summary
 // followed by the status line in text mode.
 //
-// Under --json the document is the run record plus reach: the run's stored shape
-// is unchanged and one key is added beside it, so a consumer that cannot read
-// the stderr statement still learns what the reachability verdicts rest on.
-func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, jsonOut bool, stdout io.Writer) error {
+// Under --json the document is the run record plus reach and the toolchain axis:
+// the run's stored shape is unchanged and the keys are added beside it, so a
+// consumer that cannot read the stderr statements still learns what the
+// reachability verdicts rest on and what the toolchain was judged to be.
+func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, toolchain vulnScanToolchainJSON, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(vulnScanDocument{WalkScanRun: run, Reachability: reach}); err != nil {
+		if err := enc.Encode(vulnScanRunDocument{
+			vulnScanDocument: vulnScanDocument{WalkScanRun: run, Reachability: reach},
+			Toolchain:        toolchain,
+		}); err != nil {
 			return fmt.Errorf("encoding JSON output: %w", err)
 		}
 		return nil
@@ -994,10 +1163,14 @@ func newVulnScanRescanCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f vulnScanRescanFlags
 
 	cmd := &cobra.Command{
-		Use:         "vuln-scan-rescan <walk-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Aliases:     []string{"vuln-scan-regate"}, // deprecated: renamed from regate
-		Short:       "Re-scan an existing walk against a fresh vulnerability database snapshot",
+		Use: "vuln-scan-rescan <walk-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent:  StoreIntentCreate,
+			annotationNetworkUse:   NetworkAvoidable,
+			annotationOfflineFlags: "--snapshot-source,--snapshot-version",
+		},
+		Aliases: []string{"vuln-scan-regate"}, // deprecated: renamed from regate
+		Short:   "Re-scan an existing walk against a fresh vulnerability database snapshot",
 		Long: `vuln-scan-rescan re-runs the vulnerability scanner for every module in an existing
 walk against a fresh (or explicitly pinned) database snapshot. It always
 bypasses the per-module cache so the new snapshot is actually consulted.

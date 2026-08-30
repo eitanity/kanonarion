@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -27,10 +26,7 @@ import (
 // wrong rows.
 func jsonRows(t *testing.T, stdout string) []string {
 	t.Helper()
-	var rows []json.RawMessage
-	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
-		t.Fatalf("decoding listing payload: %v\npayload: %s", err, stdout)
-	}
+	rows := decodeListingDocument(t, stdout).Records
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, string(r))
@@ -143,13 +139,9 @@ func TestListings_TruncationLineOffersTheNextPage(t *testing.T) {
 			if strings.Contains(second, "showing first") {
 				t.Errorf("a page starting at offset 2 described itself as the first rows:\n%s", second)
 			}
-			_, stderr := s.run(t, 2, 2, true)
-			var marker listTruncationJSON
-			if err := json.Unmarshal([]byte(stderr), &marker); err != nil {
-				t.Fatalf("no truncation marker on stderr: %v\nstderr: %q", err, stderr)
-			}
-			if marker.Offset != 2 || marker.NextOffset != 4 {
-				t.Errorf("marker offset/next = %d/%d, want 2/4: %+v", marker.Offset, marker.NextOffset, marker)
+			doc := decodeListingDocument(t, mustStdout(t, s, 2, 2))
+			if doc.Offset != 2 || doc.NextOffset != 4 {
+				t.Errorf("document offset/next = %d/%d, want 2/4: %+v", doc.Offset, doc.NextOffset, doc.listTruncationJSON)
 			}
 		})
 	}

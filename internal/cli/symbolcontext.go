@@ -50,9 +50,12 @@ func newSymbolContextCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f symbolContextFlags
 
 	cmd := &cobra.Command{
-		Use:         "symbol-context <name> | <module>@<version> <name>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Assemble per-module symbol record with signature, godoc, and examples",
+		Use: "symbol-context <name> | <module>@<version> <name>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Assemble per-module symbol record with signature, godoc, and examples",
 		Long: `Assemble a per-module symbol record (signature, godoc, examples).
 
 The bare-name form is primary: 'symbol-context <name>' searches every stored

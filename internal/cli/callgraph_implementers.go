@@ -20,9 +20,12 @@ func newImplementersCmd(stdout, stderr io.Writer) *cobra.Command {
 	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
-		Use:         "implementers <interface-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List the concrete types satisfying an interface",
+		Use: "implementers <interface-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List the concrete types satisfying an interface",
 		Long: `List the concrete types in the analysed module whose method sets satisfy an
 interface it declares.
 

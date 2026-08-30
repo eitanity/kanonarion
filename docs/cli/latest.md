@@ -33,9 +33,9 @@ current directory. If no `go.mod` exists there, it returns an error.
 
 Without `--gomod`, one or more module paths may be passed as positional
 arguments and the result shows the latest version with its release date
-for each. With a single module, `--json` emits an object; with multiple,
-`--json` emits an array (matching the `--gomod` shape) so the output is
-trivially `jq`-pipeable. Argument order is preserved.
+for each. `--json` emits an array whatever the count - one module or many -
+matching the `--gomod` shape, so the output is trivially `jq`-pipeable.
+Argument order is preserved.
 
 ### Two facts, never merged
 
@@ -185,7 +185,7 @@ need the `--json` output for a structured pipeline.
 | `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy, honoured not rewritten. Under `off`, a lookup younger than `staleness.ttl` is served and nothing is written; without one, exit `20`. `direct` and `--fresh` refuse. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--exclude-tests` | false | With `--gomod`: resolve the `code` scope without test imports, and state the narrowing. On `--tool` it is accepted and changes nothing - the scope already excludes them - and the answer says so. Refused against `--project` (its build list carries no test partition) and against a positional module. See [Test scope](walk.md#test-scope---exclude-tests) |
 | `--fresh` | false | Re-query the proxy instead of serving recorded lookups from the store |
-| `--json` | false | Emit output as JSON (global flag) |
+| `--json` | false | Emit output as JSON (global flag). Always an array of per-module objects, whatever the result count. See [JSON output](#json-output) |
 
 ## Text output
 
@@ -216,20 +216,33 @@ the tag, and `latest: v1.0.0` would name a downgrade as the target.
 
 ## JSON output
 
+The top-level JSON type is **always an array** of per-module objects - one
+module, several, or `--gomod` - and `[]` when the scope resolves to nothing. It
+does not vary with the number of results.
+
+> **Breaking change:** a single module used to be emitted as a bare object, so
+> the top-level type followed the result count. A consumer that read
+> `latest <one-module> --json` as an object must now read `[0]` of the array.
+> The failure was silent: iterating the old single-module answer walked the
+> object's keys rather than its rows, which produces plausible nonsense instead
+> of an error.
+
 ### Single module
 
 ```json
-{
-  "module": "github.com/spf13/cobra",
-  "latest": "v1.10.2",
-  "latest_date": "2025-03-28T...",
-  "latest_release_age_days": 491,
-  "is_latest": null,
-  "staleness_unmeasured": "not_asked",
-  "major_probed": true,
-  "looked_up_at": "2026-07-31T09:14:02Z",
-  "served_from_store": false
-}
+[
+  {
+    "module": "github.com/spf13/cobra",
+    "latest": "v1.10.2",
+    "latest_date": "2025-03-28T...",
+    "latest_release_age_days": 491,
+    "is_latest": null,
+    "staleness_unmeasured": "not_asked",
+    "major_probed": true,
+    "looked_up_at": "2026-07-31T09:14:02Z",
+    "served_from_store": false
+  }
+]
 ```
 
 A bare module path names **no pin**, so there is nothing for `is_latest` to
@@ -381,7 +394,7 @@ kanonarion latest github.com/spf13/cobra
 # Latest versions of multiple modules in one call
 kanonarion latest github.com/spf13/cobra github.com/stretchr/testify
 
-# Machine-readable version info (object for single, array for multiple)
+# Machine-readable version info (an array whatever the count)
 kanonarion latest github.com/spf13/cobra --json
 kanonarion latest github.com/spf13/cobra github.com/stretchr/testify --json
 

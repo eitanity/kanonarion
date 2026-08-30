@@ -14,9 +14,12 @@ import (
 
 func newVulnSnapshotListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "vuln-snapshot-list",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List stored vulnerability database snapshots",
+		Use: "vuln-snapshot-list",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List stored vulnerability database snapshots",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -88,9 +91,12 @@ func snapshotListZeroScope(snapshots []vuldomain.DatabaseSnapshot) listZeroScope
 
 func newVulnSnapshotShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "vuln-snapshot-show <source> <version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Show metadata for a specific vulnerability database snapshot",
+		Use: "vuln-snapshot-show <source> <version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Show metadata for a specific vulnerability database snapshot",
 		Example: `  kanonarion vuln-snapshot-show govulndb v2024-01-01T00-00-00
   kanonarion vuln-snapshot-show govulndb v2024-01-01T00-00-00 --json`,
 		Args: cobra.ExactArgs(2),

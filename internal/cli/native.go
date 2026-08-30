@@ -162,9 +162,12 @@ func newNativeCmd(stdout, stderr io.Writer) *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:         "native <module>@<version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Record the third-party native component a cgo module compiles into the binary",
+		Use: "native <module>@<version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Record the third-party native component a cgo module compiles into the binary",
 		Long: `native reports the third-party C, C++, Objective-C or Fortran library a Go
 module ships in its own published zip and compiles into the binary through cgo.
 

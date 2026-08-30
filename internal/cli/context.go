@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -54,11 +55,11 @@ type contextOutput struct {
 	Module contextModuleInfo `json:"module"`
 	// DependencyScope names the go.mod dependency scope that selected this
 	// document and the test axis that scope applied. It rides on the document
-	// rather than on an envelope because the go.mod form emits NDJSON, which has
-	// none: a document lifted out of the stream must still say which set it was
-	// selected from. Absent on the three forms that project no go.mod scope — a
-	// coordinate, a pinned walk, a working tree — where the field would name a
-	// selection that never happened.
+	// rather than on an envelope because the go.mod form emits a sequence of
+	// documents with no envelope around it: one lifted out of the array or the
+	// stream must still say which set it was selected from. Absent on the three
+	// forms that project no go.mod scope — a coordinate, a pinned walk, a
+	// working tree — where the field would name a selection that never happened.
 	DependencyScope *scopeJSON             `json:"dependency_scope,omitempty"`
 	Commands        contextCommands        `json:"commands"`
 	Verification    contextVerification    `json:"verification"`
@@ -388,15 +389,65 @@ type contextVulnerabilities struct {
 	Error               string `json:"error,omitempty"`
 }
 
+// errContextOutputWrite marks a failure to WRITE the answer, as distinct from a
+// failure to render one module of it. A write failure belongs to the whole run:
+// the next module would go to the same broken stdout, so it stops the run
+// rather than joining the per-module error list.
+var errContextOutputWrite = errors.New("writing output")
+
+// jsonArrayWriter frames a sequence of documents as one JSON array.
+//
+// Each element is written exactly as encoding/json renders it alone, so an
+// element of the array is byte-identical to the line the newline-delimited
+// stream writes for the same document: only the framing differs. Nothing is
+// buffered, so an answer spanning a whole walk still streams.
+type jsonArrayWriter struct {
+	out   io.Writer
+	begun bool
+}
+
+// write appends one document to the array, opening it on the first call.
+func (a *jsonArrayWriter) write(v any) error {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("encoding: %w", err)
+	}
+	open := "["
+	if a.begun {
+		open = ","
+	}
+	if _, err := fmt.Fprintf(a.out, "%s%s", open, raw); err != nil {
+		return fmt.Errorf("%w: %w", errContextOutputWrite, err)
+	}
+	a.begun = true
+	return nil
+}
+
+// close ends the array. One that took no element is written whole here: the
+// empty answer is [], which decodes as the same type as a populated one.
+func (a *jsonArrayWriter) close() error {
+	body := "]\n"
+	if !a.begun {
+		body = "[]\n"
+	}
+	if _, err := fmt.Fprint(a.out, body); err != nil {
+		return fmt.Errorf("%w: %w", errContextOutputWrite, err)
+	}
+	return nil
+}
+
 // -- command --
 
 func newContextCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f contextFlags
 
 	cmd := &cobra.Command{
-		Use:         "context [<module>@<version> | <dir>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
+		Use: "context [<module>@<version> | <dir>]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
 		Long: `Aggregate all stored records for a module — verification, dependencies,
 license, interface, call graph, examples, vulnerabilities — into AI-ready
 context.
@@ -404,7 +455,13 @@ context.
 With no arguments, context defaults to --gomod ./go.mod and emits one context
 entry per module in the project's code-scope build list. This is the same module
 set a bare 'kanonarion inspect' walks, extracts, and vuln-scans, so the
-no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
+no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.
+
+Under --json the multi-module forms (--gomod and --walk-id) print ONE JSON
+array of per-module documents; the empty answer is []. A single module named on
+the command line, or a local directory, prints one JSON object. --stream prints
+the same documents newline-delimited, one per line, for a caller reading them
+as they arrive.`,
 		Example: `  kanonarion context golang.org/x/mod@v0.35.0
   kanonarion context --walk-id <id> --stream
   kanonarion context
@@ -455,11 +512,11 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 	cmd.Flags().BoolVar(&f.sizeOnly, "size-only", false, "print estimated token count and byte size of the JSON output, then exit")
 	cmd.Flags().BoolVar(&f.entryPointsFull, "entry-points-full", false, "include flat entry_points list in addition to entry_points_by_package")
 	cmd.Flags().StringVar(&f.packageFilter, "package", "", "restrict interface and call-graph sections to a single import path")
-	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "emit context for every module in the walk as NDJSON")
-	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; emit context for the project's code dependencies as NDJSON (default: ./go.mod)")
+	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "emit context for every module in the walk as a JSON array under --json")
+	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; emit context for the project's code dependencies as a JSON array under --json (default: ./go.mod)")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
-	cmd.Flags().BoolVar(&f.stream, "stream", false, "with --walk-id or --gomod: emit NDJSON (one document per module) without --json")
+	cmd.Flags().BoolVar(&f.stream, "stream", false, "with --walk-id or --gomod: emit NDJSON (one document per line) instead of the --json array")
 	cmd.Flags().BoolVar(&f.directOnly, "direct-only", false, "with --walk-id: emit context only for direct dependencies of the walk root")
 	cmd.Flags().BoolVar(&f.affectedOnly, "affected-only", false, "with --walk-id: emit context only for modules with vulnerability findings")
 	cmd.Flags().StringVar(&f.modulesFile, "modules", "", "with --walk-id: emit context only for module coordinates listed in this file (newline-delimited)")

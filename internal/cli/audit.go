@@ -53,9 +53,13 @@ func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f auditFlags
 
 	cmd := &cobra.Command{
-		Use:         "audit",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Audit every dependency in a go.mod's scope",
+		Use: "audit",
+		Annotations: map[string]string{
+			annotationStoreIntent:  StoreIntentCreate,
+			annotationNetworkUse:   NetworkAvoidable,
+			annotationOfflineFlags: "--from-modcache",
+		},
+		Short: "Audit every dependency in a go.mod's scope",
 		Long: `Audit fetches, scans, and reports on every dependency in a go.mod's scope.
 
 For each module, audit shows:

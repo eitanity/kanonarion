@@ -50,6 +50,9 @@ import (
 	nativesqlite "github.com/eitanity/kanonarion/internal/native/adapters/store/sqlite"
 	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
 
+	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
+	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -59,27 +62,43 @@ import (
 // than repeating literals, so a change to what is seeded cannot leave a case
 // asking for a record that is no longer there.
 const (
-	jsonDocWalkID     = "01JS0NGARD0000000000000WA1"
-	jsonDocScanRunID  = "01JS0NGARD0000000000000RN1"
-	jsonDocExtractID  = "01JS0NGARD0000000000000EX1"
-	jsonDocSBOMID     = "01JS0NGARD0000000000000SB1"
-	jsonDocDirScanID  = "01JS0NGARD0000000000000DR1"
-	jsonDocFindingID  = "GO-2026-0001"
-	jsonDocSnapSource = "govulndb"
-	jsonDocSnapshotV  = "v2026-03-01"
-	jsonDocSymbol     = "New"
-	jsonDocExample    = "ExampleNew"
-	jsonDocRootPath   = "example.com/root"
-	jsonDocRootCoord  = "example.com/root@v1.0.0"
-	jsonDocDepCoord   = "example.com/dep@v1.2.0"
-	jsonDocIfaceID    = "example.com/dep.Doer"
-	jsonDocNodeID     = "example.com/dep.New"
-	jsonDocMethodID   = "example.com/dep.(*Client).Do"
+	jsonDocWalkID = "01JS0NGARD0000000000000WA1"
+	// jsonDocWalkID2 is a SECOND walk holding the same dependency, rooted at a
+	// later version of the same project. It exists so the commands that default
+	// a walk have something to choose BETWEEN: with one walk in the store
+	// nothing is chosen, no selection statement is printed, and a guard reading
+	// that store reports the defect class it exists to find as absent.
+	jsonDocWalkID2 = "01JS0NGARD0000000000000WA2"
+	// The two PROJECT walks: rooted at the local coordinate a go.mod declares,
+	// not at a published version, which is what a `--gomod` read selects among.
+	// Two of them, resolving the dependency at different versions, so the
+	// default selection has a decision to make and a rule to state.
+	jsonDocProjWalkAgrees    = "01JS0NGARD0000000000000PJ1"
+	jsonDocProjWalkDisagrees = "01JS0NGARD0000000000000PJ2"
+	jsonDocScanRunID         = "01JS0NGARD0000000000000RN1"
+	jsonDocExtractID         = "01JS0NGARD0000000000000EX1"
+	jsonDocSBOMID            = "01JS0NGARD0000000000000SB1"
+	jsonDocDirScanID         = "01JS0NGARD0000000000000DR1"
+	jsonDocFindingID         = "GO-2026-0001"
+	jsonDocSnapSource        = "govulndb"
+	jsonDocSnapshotV         = "v2026-03-01"
+	jsonDocSymbol            = "New"
+	jsonDocExample           = "ExampleNew"
+	jsonDocRootPath          = "example.com/root"
+	jsonDocRootCoord         = "example.com/root@v1.0.0"
+	jsonDocDepCoord          = "example.com/dep@v1.2.0"
+	jsonDocIfaceID           = "example.com/dep.Doer"
+	jsonDocNodeID            = "example.com/dep.New"
+	jsonDocMethodID          = "example.com/dep.(*Client).Do"
 )
 
 var (
-	jsonDocRoot = coordinatetest.MustNew(jsonDocRootPath, "v1.0.0")
-	jsonDocDep  = coordinatetest.MustNew("example.com/dep", "v1.2.0")
+	jsonDocRoot  = coordinatetest.MustNew(jsonDocRootPath, "v1.0.0")
+	jsonDocRoot2 = coordinatetest.MustNew(jsonDocRootPath, "v1.0.1")
+	jsonDocDep   = coordinatetest.MustNew("example.com/dep", "v1.2.0")
+	// The version the older project walk resolved, which the manifest no longer
+	// requires: it is what makes one of the two candidates disagree.
+	jsonDocDepOld = coordinatetest.MustNew("example.com/dep", "v1.1.0")
 	// One instant for every record, so nothing the guard reads depends on the
 	// wall clock.
 	jsonDocAt = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
@@ -97,10 +116,27 @@ type jsonStdoutFixture struct {
 	// the commands scoped by it resolve a build list without leaving the
 	// directory — which is what keeps them off the network.
 	treeDir string
+	// populatedTreeDir declares the same module and RESOLVES a dependency, via a
+	// filesystem replace to a sibling module in the same directory. The replace
+	// is what keeps it offline: `go list` reads the sibling off disk and never
+	// asks a proxy, while the coordinate it reports is the ordinary
+	// example.com/dep@v1.2.0 the store holds records for.
+	//
+	// It exists because an empty scope short-circuits every go.mod command
+	// before the statements they owe: a scope that resolves nothing states its
+	// count and stops, so the walk it would have answered in is never selected
+	// and never disclosed. The defect the parity guard is looking for lives past
+	// that early return.
+	populatedTreeDir string
 }
 
 // goMod is the path a --gomod flag names.
 func (f jsonStdoutFixture) goMod() string { return filepath.Join(f.treeDir, "go.mod") }
+
+// populatedGoMod names the manifest whose scope resolves a module.
+func (f jsonStdoutFixture) populatedGoMod() string {
+	return filepath.Join(f.populatedTreeDir, "go.mod")
+}
 
 // newJSONStdoutFixture seeds the store and writes the working tree.
 //
@@ -109,7 +145,8 @@ func (f jsonStdoutFixture) goMod() string { return filepath.Join(f.treeDir, "go.
 // rather than being papered over with hand-rolled rows.
 func newJSONStdoutFixture(t *testing.T) jsonStdoutFixture {
 	t.Helper()
-	fx := jsonStdoutFixture{storeRoot: t.TempDir(), treeDir: t.TempDir()}
+	fx := jsonStdoutFixture{storeRoot: t.TempDir(), treeDir: t.TempDir(), populatedTreeDir: t.TempDir()}
+	writeJSONDocPopulatedTree(t, fx.populatedTreeDir)
 
 	if err := os.WriteFile(fx.goMod(), []byte("module example.com/root\n\ngo 1.24\n"), 0o600); err != nil {
 		t.Fatalf("writing the fixture go.mod: %v", err)
@@ -134,10 +171,13 @@ func newJSONStdoutFixture(t *testing.T) jsonStdoutFixture {
 
 	ctx := context.Background()
 	seedJSONDocWalk(t, ctx, db)
+	seedJSONDocSecondWalk(t, ctx, db)
+	seedJSONDocProjectWalks(t, ctx, db, fx)
 	seedJSONDocArtefactRecords(t, ctx, db)
 	seedJSONDocExtractionRun(t, ctx, db)
 	seedJSONDocVulnerabilities(t, ctx, db)
 	seedJSONDocReports(t, ctx, db)
+	seedJSONDocStalenessRows(t, ctx, db)
 	return fx
 }
 
@@ -173,6 +213,142 @@ func seedJSONDocWalk(t *testing.T, ctx context.Context, db sqlitestore.DB) {
 	}
 	if err := walksqlite.New(db).PutWalk(ctx, rec); err != nil {
 		t.Fatalf("seeding the walk: %v", err)
+	}
+}
+
+// writeJSONDocPopulatedTree writes the working tree whose scope resolves a
+// module, offline.
+//
+// The dependency is a sibling module reached by a filesystem replace. `go list`
+// resolves it off disk, so no proxy is contacted, and the coordinate it reports
+// is example.com/dep@v1.2.0 — the coordinate the store already holds a fetch
+// record, a licence, an interface, a call graph, examples and a vulnerability
+// finding for. Nothing is special-cased for it downstream.
+func writeJSONDocPopulatedTree(t *testing.T, dir string) {
+	t.Helper()
+	dep := filepath.Join(dir, "dep")
+	if err := os.MkdirAll(dep, 0o750); err != nil {
+		t.Fatalf("creating the replaced dependency directory: %v", err)
+	}
+	files := map[string]string{
+		filepath.Join(dir, "go.mod"): "module " + jsonDocRootPath + "\n\ngo 1.24\n\nrequire " +
+			jsonDocDep.Path() + " " + jsonDocDep.Version() + "\n\nreplace " + jsonDocDep.Path() + " => ./dep\n",
+		filepath.Join(dir, "root.go"): "package root\n\nimport \"" + jsonDocDep.Path() + "\"\n\n" +
+			"// Hello reaches the dependency, so the code scope resolves it.\nfunc Hello() string { return dep.Name() }\n",
+		filepath.Join(dep, "go.mod"): "module " + jsonDocDep.Path() + "\n\ngo 1.24\n",
+		filepath.Join(dep, "dep.go"): "package dep\n\n// Name is the one symbol the root calls.\nfunc Name() string { return \"dep\" }\n",
+	}
+	for path, body := range files {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+	}
+}
+
+// seedJSONDocProjectWalks writes the two walks a `--gomod` read chooses between.
+//
+// Both are rooted at the LOCAL coordinate the manifest declares, in the code
+// scope, on the platform and toolchain this host resolves — which is what the
+// selector filters on, so a walk recorded under any other build is invisible to
+// it. They differ in what they resolved the dependency to: the newer one
+// recorded a version the manifest no longer requires, the older one recorded
+// the version it does. That is the shape that makes the selector state its
+// rule, rather than silently serving the newest.
+func seedJSONDocProjectWalks(t *testing.T, ctx context.Context, db sqlitestore.DB, fx jsonStdoutFixture) {
+	t.Helper()
+	root, err := coordinate.NewLocalCoordinate(jsonDocRootPath)
+	if err != nil {
+		t.Fatalf("building the local project coordinate: %v", err)
+	}
+	env := currentWalkBuildEnv(ctx, "", fx.populatedTreeDir, nil)
+	store := walksqlite.New(db)
+
+	for _, w := range []struct {
+		id      string
+		dep     coordinate.ModuleCoordinate
+		startAt time.Time
+	}{
+		{jsonDocProjWalkAgrees, jsonDocDep, jsonDocAt},
+		{jsonDocProjWalkDisagrees, jsonDocDepOld, jsonDocAt.Add(2 * time.Hour)},
+	} {
+		graph := walkdomain.Graph{
+			Target: root,
+			Nodes: []walkdomain.GraphNode{
+				{Coordinate: root, ResolutionSource: walkdomain.ResolutionLocalMainModule},
+				{Coordinate: w.dep, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
+			},
+			Edges: []walkdomain.GraphEdge{{From: root, To: w.dep, ConstraintVersion: w.dep.Version()}},
+			BuildEnv: walkdomain.BuildEnv{
+				GOOS: env.platform.GOOS, GOARCH: env.platform.GOARCH, GoVersion: env.toolchain,
+			},
+			ResolvedAt:      w.startAt,
+			PipelineVersion: walkapp.PipelineVersion,
+		}
+		graph.Sort()
+		outcome := walkdomain.WalkOutcome{
+			Target: root,
+			Graph:  graph,
+			PerNodeResults: map[coordinate.ModuleCoordinate]walkdomain.NodeResult{
+				root:  {Coordinate: root, Status: walkdomain.NodeSucceeded},
+				w.dep: {Coordinate: w.dep, Status: walkdomain.NodeSucceeded},
+			},
+			StartedAt:     w.startAt,
+			CompletedAt:   w.startAt.Add(time.Second),
+			OverallStatus: walkdomain.WalkSucceeded,
+		}
+		rec := walkdomain.NewWalkRecord(w.id, "guard", walkapp.PipelineVersion,
+			walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, outcome, walkdomain.DefaultDepthPolicy(),
+			"")
+		rec.ProjectDir = fx.populatedTreeDir
+		rec, herr := walkdomain.WalkRecordHasher{}.SetContentHash(rec)
+		if herr != nil {
+			t.Fatalf("sealing project walk %s: %v", w.id, herr)
+		}
+		if perr := store.PutWalk(ctx, rec); perr != nil {
+			t.Fatalf("seeding project walk %s: %v", w.id, perr)
+		}
+	}
+}
+
+// seedJSONDocSecondWalk writes a second succeeded walk that also builds the
+// dependency, rooted at a later version of the same project and started later.
+//
+// It is what makes the default-walk selection observable. A read that names no
+// walk chooses one, and the sentence stating that a choice was made — how many
+// candidates there were, which rule picked one — is printed only when there is
+// more than one candidate. Seeding a single walk left every such command
+// looking as though it had nothing to disclose.
+func seedJSONDocSecondWalk(t *testing.T, ctx context.Context, db sqlitestore.DB) {
+	t.Helper()
+	graph := walkdomain.Graph{
+		Target: jsonDocRoot2,
+		Nodes: []walkdomain.GraphNode{
+			{Coordinate: jsonDocRoot2, ResolutionSource: walkdomain.ResolutionTarget},
+			{Coordinate: jsonDocDep, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
+		},
+		Edges:           []walkdomain.GraphEdge{{From: jsonDocRoot2, To: jsonDocDep, ConstraintVersion: jsonDocDep.Version()}},
+		ResolvedAt:      jsonDocAt.Add(time.Hour),
+		PipelineVersion: walkapp.PipelineVersion,
+	}
+	outcome := walkdomain.WalkOutcome{
+		Target: jsonDocRoot2,
+		Graph:  graph,
+		PerNodeResults: map[coordinate.ModuleCoordinate]walkdomain.NodeResult{
+			jsonDocRoot2: {Coordinate: jsonDocRoot2, Status: walkdomain.NodeSucceeded},
+			jsonDocDep:   {Coordinate: jsonDocDep, Status: walkdomain.NodeSucceeded},
+		},
+		StartedAt:     jsonDocAt.Add(time.Hour),
+		CompletedAt:   jsonDocAt.Add(time.Hour + time.Second),
+		OverallStatus: walkdomain.WalkSucceeded,
+	}
+	rec := walkdomain.NewWalkRecord(jsonDocWalkID2, "guard", walkapp.PipelineVersion,
+		walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, outcome, walkdomain.DefaultDepthPolicy(), "")
+	rec, err := walkdomain.WalkRecordHasher{}.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("sealing the second walk record: %v", err)
+	}
+	if err := walksqlite.New(db).PutWalk(ctx, rec); err != nil {
+		t.Fatalf("seeding the second walk: %v", err)
 	}
 }
 
@@ -314,6 +490,39 @@ func seedJSONDocArtefactRecords(t *testing.T, ctx context.Context, db sqlitestor
 		}
 		if err := exStore.PutExampleRecord(ctx, example); err != nil {
 			t.Fatalf("seeding the example record for %s: %v", coord, err)
+		}
+	}
+}
+
+// seedJSONDocStalenessRows writes the recorded proxy lookups `latest` serves
+// two named modules from, which is what keeps a multi-module `latest` off the
+// network here.
+//
+// A served row must be complete enough that nothing is left to ask: the latest
+// version, and a newer-major probe that started where this run's plan starts.
+// A row missing the probe is re-probed live, which is the network the guard
+// exists without.
+//
+// These are the only seeded records stamped from the run clock rather than the
+// fixture's fixed instant. Freshness is the one property measured against now —
+// a row older than staleness.ttl is refused rather than served — so a row
+// stamped in March 2026 could not answer any run after that hour.
+func seedJSONDocStalenessRows(t *testing.T, ctx context.Context, db sqlitestore.DB) {
+	t.Helper()
+	store := stalesqlite.New(db)
+	for _, coord := range []coordinate.ModuleCoordinate{jsonDocRoot, jsonDocDep} {
+		rec := staledomain.Record{
+			ModulePath:        coord.Path(),
+			LatestVersion:     coord.Version(),
+			LatestPublishedAt: jsonDocAt,
+			LookedUpAt:        cliNow(),
+			NewerMajor: staledomain.NewerMajor{
+				Probed:    true,
+				FromMajor: staledomain.ProbeStartMajor(coord.Path(), coord.Version()),
+			},
+		}
+		if err := store.PutStaleness(ctx, rec); err != nil {
+			t.Fatalf("seeding the staleness row for %s: %v", coord.Path(), err)
 		}
 	}
 }

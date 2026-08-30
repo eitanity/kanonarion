@@ -62,6 +62,10 @@ kanonarion extract list --limit 50
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
+
 ### `kanonarion extract show <run-id>`
 
 Displays the results of a specific extraction run, including per-module stage outcomes.

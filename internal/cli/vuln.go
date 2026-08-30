@@ -31,9 +31,12 @@ func advisoryCountLine(snapshot vuldomain.DatabaseSnapshot) string {
 
 func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "vuln <module>@<version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Show the vulnerability record for a module",
+		Use: "vuln <module>@<version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Show the vulnerability record for a module",
 		Example: `  kanonarion vuln github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln github.com/gin-gonic/gin@v1.6.2 --json`,
 		Args: cobra.ExactArgs(1),

@@ -38,9 +38,12 @@ func newNoticeCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f noticeFlags
 
 	cmd := &cobra.Command{
-		Use:         "notice [<walk-id>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Generate a THIRD-PARTY-LICENSES attribution document",
+		Use: "notice [<walk-id>]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Generate a THIRD-PARTY-LICENSES attribution document",
 		Long: `Generate a deterministic THIRD-PARTY-LICENSES file from stored license records.
 
 The document includes per-module: module coordinate, SPDX identifier, verbatim

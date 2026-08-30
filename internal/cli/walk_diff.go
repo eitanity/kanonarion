@@ -15,9 +15,12 @@ import (
 func newWalkDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
-		Use:         "walk-diff <id-a> <id-b>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Print the diff between two walk records",
+		Use: "walk-diff <id-a> <id-b>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Print the diff between two walk records",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
 				return usageErr(cmd)
@@ -48,17 +51,18 @@ func runWalkDiff(ctx context.Context, idA, idB string, uc DiffWalksUseCase, walk
 	}
 
 	if jsonOut {
-		// The statement goes to stderr and stdout keeps the diff document
-		// unchanged: the data channel must not gain a field because the answer
-		// happened to be empty, or every consumer has to branch on it.
+		// The statement is a field of the document, not a second object on
+		// stderr. An empty diff is the reading of this command a caller acts on
+		// directly, and a consumer reading the data channel could not tell it
+		// from a comparison that ran over nothing.
+		doc := toWalkDiffJSON(diff)
 		if walkDiffIsEmpty(diff) {
-			if werr := writeWalkDiffEmptyJSON(stderr, idA, idB, diff); werr != nil {
-				return werr
-			}
+			statement := walkDiffEmptyStatement(idA, idB, diff)
+			doc.NoDifference = &statement
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if encErr := enc.Encode(toWalkDiffJSON(diff)); encErr != nil {
+		if encErr := enc.Encode(doc); encErr != nil {
 			return fmt.Errorf("encoding JSON: %w", encErr)
 		}
 		return nil
@@ -139,8 +143,9 @@ func writeWalkDiffEmpty(stdout io.Writer, idA, idB string, d application.WalkDif
 	return nil
 }
 
-// walkDiffEmptyJSON is the machine-readable form of that statement. It is
-// written to stderr, beside the unchanged document on stdout.
+// walkDiffEmptyJSON is the machine-readable form of that statement. It is a
+// field of the diff document, present only when the diff is empty, and it keeps
+// the field names it had when it was written on its own.
 type walkDiffEmptyJSON struct {
 	Statement string `json:"statement"`
 	WalkA     string `json:"walk_a"`
@@ -159,12 +164,12 @@ type walkDiffEmptyJSON struct {
 	Unresolved  string `json:"unresolved,omitempty"`
 }
 
-func writeWalkDiffEmptyJSON(stderr io.Writer, idA, idB string, d application.WalkDiff) error {
+func walkDiffEmptyStatement(idA, idB string, d application.WalkDiff) walkDiffEmptyJSON {
 	statement := "no difference: the two walks name the same modules at the same versions, and no node status changed"
 	if idA == idB {
 		statement = "no difference: both arguments name the same walk, so this compared it with itself"
 	}
-	out := walkDiffEmptyJSON{
+	return walkDiffEmptyJSON{
 		Statement:   statement,
 		WalkA:       idA,
 		WalkB:       idB,
@@ -177,10 +182,6 @@ func writeWalkDiffEmptyJSON(stderr io.Writer, idA, idB string, d application.Wal
 		SameWalk:    idA == idB,
 		Unresolved:  d.CompletenessMismatch,
 	}
-	if err := json.NewEncoder(stderr).Encode(out); err != nil {
-		return fmt.Errorf("encoding the empty-diff statement: %w", err)
-	}
-	return nil
 }
 
 // walkDiffMiss answers a diff whose operands the store does not both hold.
@@ -252,6 +253,10 @@ type walkDiffJSON struct {
 	// the added/removed sets an asymmetric comparison; empty when the walks are
 	// completeness-comparable.
 	Unresolved string `json:"unresolved,omitempty"`
+	// NoDifference is present only when the four delta sets are all empty. Four
+	// empty arrays are the same bytes whether the walks agree or the comparison
+	// was asymmetric, and this is what separates them.
+	NoDifference *walkDiffEmptyJSON `json:"no_difference,omitempty"`
 }
 type upgradeEntry struct {
 	Module    string   `json:"module"`

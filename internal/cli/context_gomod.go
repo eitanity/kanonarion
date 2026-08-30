@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,13 +17,14 @@ import (
 // DB connection across the loop. The module set matches what `inspect` populates
 // for the same scope, so a bare `inspect` followed by a bare `context` composes:
 // every module enumerated here was walked, extracted, and vuln-scanned by the
-// inspect side. Output is NDJSON when --json is set; otherwise text blocks
-// separated by a blank line, each prefixed with a "==> <module>" header line.
+// inspect side. Output is one JSON array when --json is set; otherwise text
+// blocks separated by a blank line, each prefixed with a "==> <module>" header
+// line.
 //
-// --stream selects the NDJSON stream without --json, exactly as it does on the
-// --walk-id path: both emit one document per module, and a caller that wants
+// --stream selects the newline-delimited stream instead, exactly as it does on
+// the --walk-id path: both emit one document per line, and a caller that wants
 // the stream but not --json's effect on the rest of its invocation asks for it
-// the same way here.
+// the same way here. Asking for both is asking for the stream.
 func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout, stderr io.Writer) error {
 	if err := refuseInapplicableFlags("context --gomod",
 		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
@@ -34,7 +36,11 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	if f.excludeTests && scope == scopeComplete {
 		return refuseTestScopeOnCompleteScope("context --gomod")
 	}
-	ndjson := jsonOut || f.stream
+	// --json frames the documents as one array so the whole answer parses as a
+	// single document; --stream keeps the newline-delimited stream for a caller
+	// that reads one module at a time.
+	stream := f.stream
+	array := jsonOut && !stream
 
 	logger := buildLogger(logLevel, stderr)
 
@@ -50,20 +56,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	}
 	scopeField := newScopeJSON(res)
 	if len(coords) == 0 {
-		if f.sizeOnly {
-			// --size-only asks a size question, so an empty scope answers it with a
-			// zero-module report rather than the NDJSON empty stream: empty and
-			// populated size answers decode into the same type.
-			var report contextSizeReport
-			return report.write(jsonOut, stdout)
-		}
-		// NDJSON: an empty stream is how "nothing matched" is spelled, so under
-		// --json (or --stream) emit zero stdout bytes. The prose stays on the
-		// text path only.
-		if !ndjson {
-			_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
-		}
-		return nil
+		return writeEmptyContextScope(f, scope, array, stream, stdout)
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
@@ -124,6 +117,8 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// so nothing but the report is written.
 	var report contextSizeReport
 
+	arr := jsonArrayWriter{out: stdout}
+
 	var errs []error
 	for _, coordStr := range coords {
 		if err := ctx.Err(); err != nil {
@@ -162,28 +157,22 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			Vulnerabilities: vulns,
 		}
 
-		switch {
-		case f.sizeOnly:
-			if serr := report.add(coordStr, out); serr != nil {
-				errs = append(errs, serr)
-				continue
+		if eerr := emitContextDocument(coordStr, out, f.sizeOnly, array, stream, compact, &arr, &report, stdout); eerr != nil {
+			if errors.Is(eerr, errContextOutputWrite) {
+				return eerr
 			}
-		case ndjson:
-			line, merr := json.Marshal(out)
-			if merr != nil {
-				errs = append(errs, fmt.Errorf("%s: encoding: %w", coordStr, merr))
-				continue
-			}
-			if _, werr := fmt.Fprintf(stdout, "%s\n", line); werr != nil {
-				return fmt.Errorf("writing output: %w", werr)
-			}
-		default:
-			_, _ = fmt.Fprintf(stdout, "==> %s\n", coordStr)
-			if perr := printContextText(out, compact, stdout); perr != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", coordStr, perr))
-				continue
-			}
-			_, _ = fmt.Fprintln(stdout)
+			errs = append(errs, fmt.Errorf("%s: %w", coordStr, eerr))
+			continue
+		}
+	}
+
+	// The array is closed before the failures are reported, so a run that lost
+	// modules still leaves a parseable document behind holding the ones it got.
+	// --size-only wrote no element and answers with its own report below, so
+	// there is no array to close there.
+	if array && !f.sizeOnly {
+		if cerr := arr.close(); cerr != nil {
+			return cerr
 		}
 	}
 
@@ -198,4 +187,59 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		return report.write(jsonOut, stdout)
 	}
 	return nil
+}
+
+// writeEmptyContextScope answers a scope that resolved no modules, in the shape
+// the caller asked for.
+//
+// --size-only asks a size question, so it answers with a zero-module report
+// rather than an empty answer of another shape: empty and populated size
+// answers decode into the same type. Under --json the empty answer is [], for
+// the same reason. On the stream an empty stream is how "nothing matched" is
+// spelled, so --stream writes zero bytes. The prose stays on the text path.
+func writeEmptyContextScope(f contextFlags, scope depScope, array, stream bool, stdout io.Writer) error {
+	if f.sizeOnly {
+		var report contextSizeReport
+		return report.write(jsonOut, stdout)
+	}
+	if array {
+		empty := jsonArrayWriter{out: stdout}
+		return empty.close()
+	}
+	if !stream {
+		_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
+	}
+	return nil
+}
+
+// emitContextDocument renders one module's document in the form the caller
+// asked for: into the size report, into the JSON array, onto the
+// newline-delimited stream, or as a text block.
+//
+// A failure to write is wrapped in errContextOutputWrite, which the caller
+// reads as fatal; anything else is that one module's failure and is collected.
+func emitContextDocument(coordStr string, out contextOutput, sizeOnly, array, stream, compact bool,
+	arr *jsonArrayWriter, report *contextSizeReport, stdout io.Writer) error {
+	switch {
+	case sizeOnly:
+		return report.add(coordStr, out)
+	case array:
+		return arr.write(out)
+	case stream:
+		line, merr := json.Marshal(out)
+		if merr != nil {
+			return fmt.Errorf("encoding: %w", merr)
+		}
+		if _, werr := fmt.Fprintf(stdout, "%s\n", line); werr != nil {
+			return fmt.Errorf("%w: %w", errContextOutputWrite, werr)
+		}
+		return nil
+	default:
+		_, _ = fmt.Fprintf(stdout, "==> %s\n", coordStr)
+		if perr := printContextText(out, compact, stdout); perr != nil {
+			return perr
+		}
+		_, _ = fmt.Fprintln(stdout)
+		return nil
+	}
 }

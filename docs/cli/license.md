@@ -227,6 +227,10 @@ kanonarion licence-list --limit 100
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
+
 The command takes no positional argument; one is refused rather than ignored. A
 zero result names the filter it applied and what it was compared against, per
 [Zero-result listings](conventions.md#zero-result-listings).

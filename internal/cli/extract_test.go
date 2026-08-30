@@ -84,6 +84,22 @@ func TestExtractCmd_StatusPreambleGoesToStderr(t *testing.T) {
 	}
 }
 
+// TestExtractCmd_StatusPreambleIsProgress states the other half: the preamble
+// narrates that the run started, so --no-progress silences it along with the
+// heartbeat it introduces. It used to be written straight to stderr, which left
+// `extract --no-progress` narrating anyway while `vuln-scan --no-progress` —
+// whose equivalent line already routed through the progress writer — did not.
+func TestExtractCmd_StatusPreambleIsProgress(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	_ = Run([]string{"extract", "--no-progress", "--store-root", dir, "01ARZ3NDEKTSV4RRFFQ69G5FAV"}, &stdout, &stderr)
+
+	if strings.Contains(stderr.String(), "Starting extraction") {
+		t.Errorf("--no-progress left the preamble on stderr, so the flag silences the heartbeat and not the narration it opens:\nstderr=%q",
+			stderr.String())
+	}
+}
+
 func TestPrintExtractionFailures_NoFailures(t *testing.T) {
 	run := domain.ExtractionRun{
 		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{

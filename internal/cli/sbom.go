@@ -45,9 +45,13 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f sbomFlags
 
 	cmd := &cobra.Command{
-		Use:         "sbom [<walk-id>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Generate a Software Bill of Materials for a walk",
+		Use: "sbom [<walk-id>]",
+		Annotations: map[string]string{
+			annotationStoreIntent:  StoreIntentCreate,
+			annotationNetworkUse:   NetworkAvoidable,
+			annotationOfflineFlags: "--from-modcache",
+		},
+		Short: "Generate a Software Bill of Materials for a walk",
 		Long: `Generate a Software Bill of Materials (CycloneDX) for a walk.
 
 The document is an inventory: components, their identity, hashes, licences and
@@ -106,11 +110,14 @@ Exit codes:
 
 func newSBOMShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "sbom-show <sbom-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Print a stored SBOM record",
-		Example:     `  kanonarion sbom-show sbom-abc123`,
-		Args:        cobra.ExactArgs(1),
+		Use: "sbom-show <sbom-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short:   "Print a stored SBOM record",
+		Example: `  kanonarion sbom-show sbom-abc123`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSBOMShow(cmd.Context(), args[0], storeRoot, jsonOut, stdout, stderr)
 		},
@@ -123,11 +130,14 @@ func newSBOMListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 
 	cmd := &cobra.Command{
-		Use:         "sbom-list",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List SBOM records in the store",
-		Example:     `  kanonarion sbom-list --walk 01KQDBVW092ER1HNXZ60X27CMD`,
-		Args:        cobra.NoArgs,
+		Use: "sbom-list",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short:   "List SBOM records in the store",
+		Example: `  kanonarion sbom-list --walk 01KQDBVW092ER1HNXZ60X27CMD`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSBOMList(cmd.Context(), storeRoot, walkID, jsonOut, stdout, stderr)
 		},

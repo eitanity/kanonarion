@@ -153,13 +153,11 @@ type listZeroJSON struct {
 	Remedy            []string            `json:"remedy"`
 }
 
-// writeListZeroNoticeJSON states the same scope for a machine reader.
-//
-// It goes to stderr, and stdout keeps emitting the empty array unchanged: the
-// data channel's type must not depend on how many rows came back, or every
-// consumer has to branch on it. A caller who wants the distinction reads the
-// object on stderr; one who does not is entirely unaffected.
-func writeListZeroNoticeJSON(stderr io.Writer, s listZeroScope) error {
+// listZeroStatementJSON renders the same scope for a machine reader. A listing
+// carries it inside its document, where the empty records array is; the
+// selectors below, whose zero is a not-found error and not a page, write it on
+// its own.
+func listZeroStatementJSON(s listZeroScope) listZeroJSON {
 	out := listZeroJSON{
 		Subject:           s.subject,
 		RecordsConsidered: s.considered,
@@ -180,8 +178,19 @@ func writeListZeroNoticeJSON(stderr io.Writer, s listZeroScope) error {
 			Match:           s.matchKind,
 		}
 	}
+	return out
+}
+
+// writeListZeroNoticeJSON states the scope for a machine reader on stderr.
+//
+// It is for the surfaces whose zero is not a page of records: a selector that
+// named one record and missed exits non-zero with nothing on stdout, so the
+// statement has no document to travel in. A listing does NOT use this — its
+// statement is a field of the document on stdout, because a consumer reading the
+// data channel must be able to tell an empty answer from an unasked question.
+func writeListZeroNoticeJSON(stderr io.Writer, s listZeroScope) error {
 	enc := json.NewEncoder(stderr)
-	if err := enc.Encode(out); err != nil {
+	if err := enc.Encode(listZeroStatementJSON(s)); err != nil {
 		return fmt.Errorf("encoding zero-result notice: %w", err)
 	}
 	return nil

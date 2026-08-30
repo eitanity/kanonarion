@@ -23,10 +23,12 @@ func emptyToolScopeGoMod(t *testing.T) string {
 	return p
 }
 
-// TestContextGomod_EmptyScope_JSONIsCleanStream guards that context's NDJSON
-// output stays a pure JSON-object stream on an empty scope: the empty answer is
-// zero stdout bytes, not a prose sentence a caller cannot parse.
-func TestContextGomod_EmptyScope_JSONIsCleanStream(t *testing.T) {
+// TestContextGomod_EmptyScope_JSONIsEmptyArray guards that context's --json
+// output decodes as [] on an empty scope, keeping the empty and populated
+// answers the same type — and that the prose sentence a caller cannot parse
+// still stays off stdout. Zero bytes is a document only in the newline-
+// delimited form --stream selects, which its own test covers.
+func TestContextGomod_EmptyScope_JSONIsEmptyArray(t *testing.T) {
 	p := emptyToolScopeGoMod(t)
 	jsonOut = true
 	defer func() { jsonOut = false }()
@@ -35,8 +37,12 @@ func TestContextGomod_EmptyScope_JSONIsCleanStream(t *testing.T) {
 	if err := runContextGoMod(context.Background(), contextFlags{gomodPath: p}, scopeTool, &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if stdout.Len() != 0 {
-		t.Errorf("empty scope wrote to the NDJSON stream under --json: %q", stdout.String())
+	var decoded []json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
+		t.Fatalf("empty scope under --json is not a JSON array: %v\noutput: %q", err, stdout.String())
+	}
+	if len(decoded) != 0 {
+		t.Errorf("empty scope produced %d documents, want none", len(decoded))
 	}
 }
 

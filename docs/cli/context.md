@@ -18,7 +18,7 @@ an agent that needs to understand a dependency before using or modifying it.
 
 With no positional module and no `--walk-id`, `context` defaults to
 `--gomod ./go.mod` and emits one context entry per module in the project's
-dependency **scope** - NDJSON with `--json`, text blocks otherwise. The scope is
+dependency **scope** - one JSON array with `--json`, text blocks otherwise. The scope is
 consistent with every other go.mod command: the default is the project's own
 **code** dependencies (`go list -deps -test ./...`); `--tool` selects the
 tooling supply chain; `--project` the complete set (code + tooling). `--tool`
@@ -227,6 +227,33 @@ A multi-line reason is folded onto the section's single row. It is never
 truncated.
 
 ### JSON (`--json`)
+
+#### Top-level shape
+
+The top-level JSON type is decided by the form invoked, never by the number of
+modules the answer holds:
+
+| Form | Top-level type |
+|---|---|
+| `context <module>@<version> --json` | one object |
+| `context <dir> --json` | one object |
+| `context --gomod <path> --json` | one array of those objects, `[]` when the scope is empty |
+| `context --walk-id <id> --json` | one array of those objects, `[]` when every module is filtered out |
+| `context --size-only --json` | one object: the size report |
+
+`--stream` selects a different framing for the two array forms: the same
+documents newline-delimited, one compact object per line (NDJSON), and zero
+bytes when there is nothing to emit. Use it to read modules as they arrive
+instead of waiting for the whole answer.
+
+> **Changed:** the `--gomod` and `--walk-id` forms used to print NDJSON under
+> `--json` as well, so the output did not parse as one document. They now print
+> one array. The per-module objects are unchanged - only the framing moved. A
+> consumer that split the old output on newlines should parse the array instead,
+> or pass `--stream` to keep the old framing.
+
+The array elements, and the single-module forms' whole document, have this
+shape:
 
 ```json
 {
@@ -586,20 +613,20 @@ fully-clean, complete walk adds no annotation to a clean module.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--json` | false | Emit context as JSON to stdout |
+| `--json` | false | Emit context as JSON to stdout. One object for a module or a directory, one array for `--gomod` and `--walk-id`. See [Top-level shape](#top-level-shape) |
 | `--compact` | true | Strip doc comments from signatures; truncate example bodies at 500 chars (the default) |
 | `--full` | false | Include full doc comments and complete example bodies; overrides `--compact` |
 | `--size-only` | false | Print estimated token count and byte size of the full JSON context, then exit. Multi-module forms (`--gomod`, `--walk-id`) print a total plus a per-module breakdown |
 | `--entry-points-full` | false | Include flat `entry_points` list alongside `entry_points_by_package` |
 | `--package <path>` | | Restrict `interface`, `call_graph`, and `examples` sections to a single import path |
-| `--gomod <path>` | `./go.mod` when no module/`--walk-id` given | Emit context for every module in the `go.mod`'s code scope as NDJSON |
+| `--gomod <path>` | `./go.mod` when no module/`--walk-id` given | Emit context for every module in the `go.mod`'s code scope; under `--json` that is one array |
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
-| `--walk-id <id>` | | Emit context for every module in the walk as NDJSON |
+| `--walk-id <id>` | | Emit context for every module in the walk; under `--json` that is one array |
 | `--direct-only` | false | With `--walk-id`: emit context only for direct dependencies of the walk root |
 | `--affected-only` | false | With `--walk-id`: emit context only for modules the walk's most recent scan run found affected. See [Narrowing a walk](#narrowing-a-walk) |
 | `--modules <path>` | | With `--walk-id`: emit context only for the `module@version` coordinates listed in this file, one per line. See [Narrowing a walk](#narrowing-a-walk) |
-| `--stream` | false | With `--walk-id` or `--gomod`: emit NDJSON (one document per module) without `--json`. Refused on the coordinate and local-path forms, which emit one document |
+| `--stream` | false | With `--walk-id` or `--gomod`: emit NDJSON (one compact document per line) instead of the `--json` array, and without needing `--json`. Refused on the coordinate and local-path forms, which emit one document |
 | `--symbol` | false | With a local path: type-check the tree and report referenced symbols instead of imports. Local path only: refused by name on the other three forms |
 | `--reachability` | false | With a local path: build the tree's binaries and probe their symbol tables for CVE-affected symbols (~30s). Local path only: refused by name on the other three forms |
 | `--exclude-tests` | false | Narrow to production code. With `--gomod`: resolve the `code` scope without test imports, and say so; on `--tool` it is accepted and changes nothing, because the scope already excludes them, and the answer says so. With a local path: omit dependency users declared in `_test.go` files and external test packages. Refused by name on the coordinate and `--walk-id` forms, which name a module set fixed elsewhere, and against `--project`, whose build list carries no test partition. See [Working-tree form](#working-tree-form-dir) and [Test scope](walk.md#test-scope---exclude-tests) |

@@ -20,8 +20,9 @@ import (
 
 func newConfigCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Read and write configuration values (git config style)",
+		Use:         "config",
+		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
+		Short:       "Read and write configuration values (git config style)",
 	}
 	cmd.AddCommand(
 		newConfigInitCmd(stdout),
@@ -54,6 +55,7 @@ func newConfigInitCmd(stdout io.Writer) *cobra.Command {
 			annotationUsableWithRejectedConfig: "creates or completes the config file",
 			// Writes config.yaml into the store root, so it may make the root.
 			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
 		},
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -96,6 +98,7 @@ func newConfigShowCmd(stdout io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationUsableWithRejectedConfig: "reports the file and what is actually in force",
 			annotationStoreIntent:              StoreIntentRead,
+			annotationNetworkUse:               NetworkNever,
 		},
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -123,6 +126,7 @@ func newConfigGetCmd(stdout io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationUsableWithRejectedConfig: "reports one value in force",
 			annotationStoreIntent:              StoreIntentRead,
+			annotationNetworkUse:               NetworkNever,
 		},
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -227,6 +231,7 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
 			annotationUsableWithRejectedConfig: "repairs the config file",
 			// Writes config.yaml into the store root, so it may make the root.
 			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
 		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {

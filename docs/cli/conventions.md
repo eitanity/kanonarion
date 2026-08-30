@@ -295,6 +295,45 @@ and are never presented as resolved dependency edges anywhere.
 
 ---
 
+## Listing documents
+
+Under `--json` every record listing answers with **one object**, not a bare
+array:
+
+```json
+{
+  "records": [ { "id": "..." } ],
+  "truncated": true,
+  "limit": 20,
+  "subject": "walk records",
+  "remedy": "--limit 0",
+  "offset": 0,
+  "next_offset": 20
+}
+```
+
+`records` is the rows, in the same shape and order the text path prints them,
+and is an array at every row count including none. The fields beside it say what
+the request did: whether the store held more than was printed, the limit that was
+applied, the page this is and the offset that starts the next one.
+
+They are in the document because a consumer reading stdout must be able to tell a
+complete list from a truncated one. These facts were previously written to
+stderr; a caller that piped the command into a parser then read a partial list
+that looked whole. A bare array has nowhere to put a fact about the request,
+which is why the array became a field.
+
+**Nothing is written to stderr by a listing under `--json`.** The one exception
+is not a listing: a selector that names one record and misses exits `4`, and its
+statement travels on the error (see below).
+
+The listings are `licence-list`/`license-list`, `interface-list`,
+`examples-list`, `callgraph-list`, `vuln-scan-list`, `walk-list`,
+`extract list` and `directives list`. `sbom-list` and `vuln-snapshot-list` apply
+no limit, return their whole population and still answer with a bare array.
+
+---
+
 ## Zero-result listings
 
 A record listing that returns nothing says which of three things happened,
@@ -312,17 +351,32 @@ because the remedies differ:
 
 Every remedy printed is an invocation this CLI's own parser accepts.
 
-Under `--json` the data channel is unchanged — an empty array is still an empty
-array, so a consumer never has to branch on the row count to know the output's
-type. The same statement is emitted on **stderr** as a single JSON object:
+Under `--json` the same statement is a `zero_result` field of the [listing
+document](#listing-documents), beside the empty `records` array:
 
 ```json
-{"subject":"call graph record","filter":{"name":"module path","value":"no-such-module","compared_against":"module path, compared for exact equality"},"records_considered":312,"store_empty":false,"paged_past":false,"remedy":["kanonarion callgraph-list"]}
+{
+  "records": [],
+  "truncated": false,
+  "limit": 20,
+  "subject": "call graph records",
+  "remedy": "--limit 0",
+  "offset": 0,
+  "next_offset": 20,
+  "zero_result": {
+    "subject": "call graph record",
+    "filter": {"name": "module path", "value": "no-such-module", "compared_against": "module path", "match": "for exact equality"},
+    "records_considered": 312,
+    "store_empty": false,
+    "paged_past": false,
+    "remedy": ["kanonarion callgraph-list"]
+  }
+}
 ```
 
-A listing that returned rows prints no such statement, on either channel, and
-performs no extra store read to decide that: the survey that sizes the corpus is
-reached only once the page has come back empty.
+A listing that returned rows carries no `zero_result` and prints no such
+statement on the text path, and performs no extra store read to decide that: the
+survey that sizes the corpus is reached only once the page has come back empty.
 
 The same statement answers a **single-record selector** that matched nothing —
 a command given one name that is not in the store. Those exit `4` and carry the
@@ -416,17 +470,17 @@ The line appears **only when a further record exists**. A listing that happens t
 hold exactly its limit and nothing more prints nothing, so silence means "these
 are all of them".
 
-Under `--json` the array on stdout is unchanged — a consumer's payload keeps its
-shape — and the same statement is emitted on **stderr** as a single JSON object:
+Under `--json` the same statement is carried by the [listing
+document](#listing-documents) on stdout, as the fields beside `records`:
 
 ```json
-{"truncated":true,"limit":50,"subject":"license records","remedy":"--limit 0","offset":0,"next_offset":50}
+{"records": [], "truncated": true, "limit": 50, "subject": "license records", "remedy": "--limit 0", "offset": 0, "next_offset": 50}
 ```
 
-Unlike the text line, the JSON object is emitted whenever a limit was applied,
-with `truncated` true or false, so a machine reader can tell "nothing was
-withheld" from "this output does not say". `--limit 0` applies no limit and
-prints nothing on either channel.
+Unlike the text line, these fields are stated on **every** listing, with
+`truncated` true or false, so a machine reader can tell "nothing was withheld"
+from "this output does not say". `--limit 0` applies no limit, prints nothing on
+the text path, and states `truncated: false` in the document.
 
 **No total is reported.** The listing asks the store for one row more than it
 will print and reports on that row's presence; it never counts. Knowing *that*
@@ -457,7 +511,7 @@ An offset past the last record returns no rows — with the zero-result notice
 saying that paging, not the filter, emptied the page — rather than an error. The
 last partial page states no truncation, because it withheld nothing.
 
-Under `--json` the stderr object carries `offset` and `next_offset`, so a
+Under `--json` the listing document carries `offset` and `next_offset`, so a
 consumer pages by reading `next_offset` back into the next invocation.
 
 Every paged listing is ordered on a timestamp with the row's primary key as

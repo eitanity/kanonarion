@@ -36,9 +36,12 @@ func newDependentsCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f dependentsFlags
 
 	cmd := &cobra.Command{
-		Use:         "dependents <module>@<version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Find which modules in a build depend on a given module",
+		Use: "dependents <module>@<version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Find which modules in a build depend on a given module",
 		Long: `Find which modules in one build depend on the given <module>@<version>.
 
 Scans the stored walk graph for every module with a direct import edge to the

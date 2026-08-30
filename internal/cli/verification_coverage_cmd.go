@@ -13,12 +13,16 @@ import (
 // newVerificationCoverageCmd returns the command that reports a stored walk's
 // verification coverage on its own, in a form a CI gate can assert on.
 //
-// It exists as a command rather than as fields in `walk --json` or `audit
-// --json` because both of those stdout channels are already spoken for: walk's
-// is the content-hashed walk record, and audit's is a documented array of
-// per-module rows that every existing consumer indexes into. A report about a
-// run belongs in neither artefact, so the figures get a channel of their own,
-// where the field names are a contract with nothing else to preserve.
+// It exists as a command because the figures are worth reading without
+// re-walking: it reports them from a STORED walk, at any time after the run
+// that produced it, which neither `walk` nor `audit` can do.
+//
+// It is no longer the only surface. `walk --json` carries the same aggregate
+// under `verification_coverage`, embedding the contract published here so one
+// fact keeps one spelling. The earlier rationale — that walk's stdout was the
+// content-hashed record and had no room — was wrong in its conclusion: the
+// record's keys are spliced through untouched and the coverage sits beside
+// them, and nothing verifies a walk by hashing this document.
 //
 // Reporting from a stored walk rather than recomputing also means the audit path
 // is covered by the same code: an audit leaves the project walk behind, so the
@@ -26,9 +30,12 @@ import (
 func newVerificationCoverageCmd(stdout, stderr io.Writer) *cobra.Command {
 	var detail bool
 	cmd := &cobra.Command{
-		Use:         "verification-coverage <walk-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Report how a walk's modules were verified",
+		Use: "verification-coverage <walk-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Report how a walk's modules were verified",
 		Long: `Report aggregate verification coverage over a stored walk's graph.
 
 The figures say how many modules carry the strongest assurance — a checksum

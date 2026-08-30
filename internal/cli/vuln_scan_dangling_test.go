@@ -71,9 +71,7 @@ func TestRunScanList_JSONStatesUnresolvableInputs(t *testing.T) {
 	}
 
 	var entries []map[string]any
-	if err := json.Unmarshal(out.Bytes(), &entries); err != nil {
-		t.Fatalf("decoding JSON: %v\n%s", err, out.String())
-	}
+	decodeListingRecords(t, out.String(), &entries)
 	byID := make(map[string]map[string]any, len(entries))
 	for _, e := range entries {
 		id, _ := e["id"].(string)

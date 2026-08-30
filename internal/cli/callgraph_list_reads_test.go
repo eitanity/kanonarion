@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -271,9 +270,7 @@ func TestCallGraphList_JSONSingleGenerationKeepsItsShape(t *testing.T) {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	var got []map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatalf("decoding listing: %v", err)
-	}
+	decodeListingRecords(t, buf.String(), &got)
 	if len(got) != 1 {
 		t.Fatalf("entries = %d, want 1", len(got))
 	}
@@ -308,9 +305,7 @@ func TestCallGraphList_JSONDifferingGenerationsStateNoHeadlineCount(t *testing.T
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	var got []map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatalf("decoding listing: %v", err)
-	}
+	decodeListingRecords(t, buf.String(), &got)
 	if len(got) != 1 {
 		t.Fatalf("entries = %d, want 1", len(got))
 	}
@@ -361,9 +356,7 @@ func TestCallGraphList_JSONAgreeingGenerationsCarryTheirCounts(t *testing.T) {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	var got []map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatalf("decoding listing: %v", err)
-	}
+	decodeListingRecords(t, buf.String(), &got)
 	if len(got) != 1 {
 		t.Fatalf("entries = %d, want 1", len(got))
 	}

@@ -95,6 +95,37 @@ github.com/spf13/cobra@v1.8.1
 Context size: ~3562 tokens (14249 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 ```
 
+#### The `run` section
+
+`inspect` runs a walk, an extraction and a vulnerability scan before it prints
+anything, and states what each did on **stderr**. Under `--json` those facts are
+also a section of the document, `run`, beside the per-module content:
+
+```json
+{
+  "run": {
+    "walk_id": "01KQDBVW092ER1HNXZ60X27CMD",
+    "walk": "reused",
+    "scan_run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1788082354",
+    "scan": "reused",
+    "snapshot": { "source": "vuln.go.dev", "version": "2026-08-28T14:47:45Z" },
+    "toolchain": { "judged": false, "status": "unjudged", "reason": "the walk recorded no build toolchain version", "…": "…" }
+  },
+  "module": { "…": "…" }
+}
+```
+
+`walk` and `scan` say what this run did with each stage - `measured by this
+run`, `reused`, `not run`, or `attempted and failed` - so a reused answer cannot
+be read as a fresh measurement. `toolchain` is the scan's judgment, in the shape
+[`vuln-scan --json`](vuln.md) carries, including the case where nothing could be
+judged and why: a stage that did not run is a value this section states, never a
+key it leaves out.
+
+Everything else in the document is exactly what [`context`](context.md) renders,
+key for key and byte for byte. The same section is a field of the `--gomod`
+summary.
+
 ---
 
 ### `inspect --gomod <path>`
@@ -186,9 +217,21 @@ not counted as findings)` with its retraction date. See
   "overall_status": "AllClean",
   "affected_count": 0,
   "snapshot_version": "2026-05-07T19:21:40Z",
-  "walk_ids": ["01KQDBVW092ER1HNXZ60X27CMD"]
+  "walk_ids": ["01KQDBVW092ER1HNXZ60X27CMD"],
+  "run": {
+    "walk_id": "01KQDBVW092ER1HNXZ60X27CMD",
+    "walk": "measured by this run",
+    "scan_run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1788082354",
+    "scan": "measured by this run",
+    "snapshot": { "source": "vuln.go.dev", "version": "2026-05-07T19:21:40Z" },
+    "toolchain": { "judged": true, "status": "clear", "version": "go1.26.5", "…": "…" }
+  }
 }
 ```
+
+`run` is the same section the coordinate form carries - see [The `run`
+section](#the-run-section). A scope that resolved no dependencies still carries
+it, stating that nothing ran.
 
 ## When a stage does not measure a module
 
@@ -247,7 +290,7 @@ must not decode the same as a negative answer.
 
 ```bash
 kanonarion walk github.com/spf13/cobra@v1.8.1
-WALK_ID=$(kanonarion walk-list --json | jq -r '.[0].id')
+WALK_ID=$(kanonarion walk-list --json | jq -r '.records[0].id')
 kanonarion extract "$WALK_ID"
 kanonarion vuln-scan "$WALK_ID"
 kanonarion context github.com/spf13/cobra@v1.8.1

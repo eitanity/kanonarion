@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,9 +49,12 @@ func newInspectCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f inspectFlags
 
 	cmd := &cobra.Command{
-		Use:         "inspect [<module>@<version>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Run the full pipeline (walk → extract → vuln-scan → context); no args: code deps of ./go.mod",
+		Use: "inspect [<module>@<version>]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkAlways,
+		},
+		Short: "Run the full pipeline (walk → extract → vuln-scan → context); no args: code deps of ./go.mod",
 		Long: `Run the full pipeline (walk → extract → vuln-scan → context) for a module.
 
 With no arguments, inspect defaults to --gomod ./go.mod and runs the pipeline
@@ -202,8 +206,9 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	// reader with the repetitive half of the presentation and threw away the
 	// concise half. stdout stays the clean data channel because inspect always
 	// scans with jsonOut=false, so nothing machine-readable is written here.
-	if err := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, stderr, stderr); err != nil {
-		return fmt.Errorf("vuln-scan: %w", err)
+	scan, serr := runVulnScanReporting(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, true, stderr, stderr)
+	if serr != nil {
+		return fmt.Errorf("vuln-scan: %w", serr)
 	}
 
 	// Step 5: context
@@ -215,7 +220,17 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		sizeOnly: f.sizeOnly,
 		full:     f.full,
 	}
-	return runContext(ctx, coord.String(), cf, stdout, stderr)
+	// A walk or scan that failed returned above, so both stages completed: what
+	// is left to state is whether each was measured here or served from the store.
+	scanState := inspectScanState(scan, nil)
+	return runInspectContext(ctx, coord.String(), cf, inspectRunSection{
+		WalkID:    walkID,
+		Walk:      inspectWalkState(walkResult, nil),
+		ScanRunID: scan.RunID,
+		Scan:      scanState,
+		Snapshot:  scan.Snapshot,
+		Toolchain: inspectToolchain(scan, scanState),
+	}, stdout, stderr)
 }
 
 // resolveCoordForInspect parses the module arg, resolving @latest if needed.
@@ -278,6 +293,157 @@ type inspectSummary struct {
 	// unanswered question, which is not the same as a negative answer, and the
 	// two must not decode alike.
 	Build *buildVendoring `json:"build,omitempty"`
+	// Run is what this pipeline did: which walk answered, which scan, whether
+	// either was reused, and what the toolchain was judged to be. Every other
+	// field is about the modules; without this one the document reports an
+	// analysis without saying what performed it.
+	Run inspectRunSection `json:"run"`
+}
+
+// ---- what inspect states about the run it just performed ----
+
+// The states a pipeline stage can be in. "not run" and "attempted and failed"
+// are values the document states, never keys it leaves out: a stage that is
+// simply absent reads as one that ran and found nothing.
+const (
+	inspectStageMeasured = "measured by this run"
+	inspectStageReused   = "reused"
+	inspectStageNotRun   = "not run"
+	inspectStageFailed   = "attempted and failed"
+)
+
+// inspectRunSection is what inspect states about the run itself.
+//
+// The rest of the document is about a module, or about the modules a manifest
+// resolved, and has nowhere to say which walk, which scan and which advisory
+// database answered for them. inspect states all of it on stderr, where no
+// machine reader sees it.
+type inspectRunSection struct {
+	WalkID string `json:"walk_id"`
+	// Walk and Scan are the stage states above: what this run did, rather than
+	// only what it ended up with.
+	Walk      string `json:"walk"`
+	ScanRunID string `json:"scan_run_id"`
+	Scan      string `json:"scan"`
+	// Snapshot is the advisory database generation the scan was judged against.
+	Snapshot vulnScanSnapshotJSON `json:"snapshot"`
+	// Toolchain is the scan's toolchain judgment, including the case where none
+	// was made and why.
+	Toolchain vulnScanToolchainJSON `json:"toolchain"`
+}
+
+// inspectWalkState names what this run did about the walk stage.
+func inspectWalkState(result application.ExecuteWalkResult, err error) string {
+	switch {
+	case err != nil:
+		return inspectStageFailed
+	case result.Record.ID == "":
+		return inspectStageNotRun
+	case result.Reused:
+		return inspectStageReused
+	default:
+		return inspectStageMeasured
+	}
+}
+
+// inspectScanState names what this run did about the vulnerability scan.
+//
+// A scan that produced a run measured or reused one even where it exits non-zero
+// for partial coverage — that gap is the summary's own field. Only a scan that
+// produced no run at all is reported as failed.
+func inspectScanState(facts vulnScanRunFacts, err error) string {
+	switch {
+	case facts.RunID != "" && facts.Reused:
+		return inspectStageReused
+	case facts.RunID != "":
+		return inspectStageMeasured
+	case err != nil:
+		return inspectStageFailed
+	default:
+		return inspectStageNotRun
+	}
+}
+
+// inspectToolchain carries the scan's toolchain judgment, or states why there is
+// none. A run with no judgment says so and why: an absent one reads as a clear.
+func inspectToolchain(facts vulnScanRunFacts, scanState string) vulnScanToolchainJSON {
+	if facts.Toolchain.Status != "" {
+		return facts.Toolchain
+	}
+	if scanState == inspectStageFailed {
+		return unjudgedToolchainSection("the vulnerability scan did not complete, so it judged no toolchain")
+	}
+	return unjudgedToolchainSection("no vulnerability scan ran in this pipeline, so nothing judged the toolchain")
+}
+
+// inspectRunNotStarted is the run section for a pipeline that had nothing to
+// run — an empty dependency scope stops before the walk.
+func inspectRunNotStarted() inspectRunSection {
+	return inspectRunSection{
+		Walk:      inspectStageNotRun,
+		Scan:      inspectStageNotRun,
+		Toolchain: inspectToolchain(vulnScanRunFacts{}, inspectStageNotRun),
+	}
+}
+
+// runInspectContext prints the context document with the facts of the run that
+// produced it.
+//
+// Under --json the per-module content is passed through exactly as `context`
+// rendered it — the same bytes, in the same order — and the run section is
+// inserted beside it as one added key.
+func runInspectContext(ctx context.Context, arg string, f contextFlags, run inspectRunSection, stdout, stderr io.Writer) error {
+	if !jsonOut {
+		return runContext(ctx, arg, f, stdout, stderr)
+	}
+	var doc bytes.Buffer
+	if cerr := runContext(ctx, arg, f, &doc, stderr); cerr != nil {
+		// Whatever it rendered before failing is still the reader's.
+		if _, werr := stdout.Write(doc.Bytes()); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+		return cerr
+	}
+	out, serr := spliceInspectRun(doc.Bytes(), run)
+	if serr != nil {
+		return serr
+	}
+	if _, werr := stdout.Write(out); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
+	return nil
+}
+
+// spliceInspectRun inserts the run section as the document's first key, leaving
+// every byte that follows exactly as it was rendered.
+//
+// A document that is not an object is refused rather than printed without its
+// run facts: there is nowhere to put the key, and printing the answer anyway is
+// the silence this section exists to end.
+func spliceInspectRun(doc []byte, run inspectRunSection) ([]byte, error) {
+	section, err := json.MarshalIndent(run, "  ", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshalling the run section: %w", err)
+	}
+	lead := len(doc) - len(bytes.TrimLeft(doc, " \t\r\n"))
+	body := doc[lead:]
+	if len(body) == 0 || body[0] != '{' {
+		return nil, fmt.Errorf(
+			"inspect cannot state the facts of its run: the context rendering is not a JSON object")
+	}
+	rest := body[1:]
+	separator := ","
+	if bytes.HasPrefix(bytes.TrimLeft(rest, " \t\r\n"), []byte("}")) {
+		// An object with no other keys: a comma would leave trailing punctuation.
+		separator = "\n"
+	}
+	var out bytes.Buffer
+	out.Write(doc[:lead])
+	out.WriteString("{\n  \"run\": ")
+	out.Write(section)
+	out.WriteString(separator)
+	out.Write(rest)
+	return out.Bytes(), nil
 }
 
 // inspectExtractTally reports how many stages failed, and which.
@@ -374,6 +540,7 @@ func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) 
 			OverallStatus:   inspectSummaryStatus(0, 0, 0, ""),
 			WalkIDs:         []string{},
 			DependencyScope: newScopeJSON(newScopeResolution(scope, false)),
+			Run:             inspectRunNotStarted(),
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}
@@ -463,6 +630,8 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	}
 
 	var extractFails, scanFails int
+	var scanFacts vulnScanRunFacts
+	scanState := inspectStageNotRun
 	extractFailures := []extractStageFailure{}
 	if walkID != "" {
 		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: extracting walk %s (frame %s)\n", walkID, projectWalk.BuildFrame())
@@ -492,7 +661,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		// stderr, not io.Discard — see the note on the same call in runInspect:
 		// the grouped roll-up is the concise presentation and belongs to the
 		// reader, while stdout stays reserved for the context output.
-		if verr := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, stderr, stderr); verr != nil {
+		var verr error
+		scanFacts, verr = runVulnScanReporting(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, true, stderr, stderr)
+		scanState = inspectScanState(scanFacts, verr)
+		if verr != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 			scanFails = 1
 		}
@@ -571,6 +743,14 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			GoDebug:         godebug,
 			Vendor:          vendor,
 			Build:           inspectBuildSection(vendoring),
+			Run: inspectRunSection{
+				WalkID:    walkID,
+				Walk:      inspectWalkState(walkResult, werr),
+				ScanRunID: scanFacts.RunID,
+				Scan:      scanState,
+				Snapshot:  scanFacts.Snapshot,
+				Toolchain: inspectToolchain(scanFacts, scanState),
+			},
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}

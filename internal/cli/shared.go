@@ -690,6 +690,91 @@ const (
 	StoreIntentNone = "none"
 )
 
+// annotationNetworkUse is what a command says about the NETWORK: whether
+// running it can open a socket.
+//
+// It is a separate annotation from store-intent, not a widening of it, because
+// they are different properties of the same command and disagree in both
+// directions. `fips`, `godebug` and `vendor` create the store root and open no
+// socket; `use` only reads the store and would too. Reading creation as a proxy
+// for network reach withheld three commands from an offline measurement for a
+// property they do not have, and store-intent's own doc comment says why: what
+// it governs is creation, not writing.
+//
+// Declared per command, next to the command, for the reason store-intent is:
+// the decision belongs where a reader of the command can see it, and adding a
+// command must not mean editing a list in a second file. There is no default —
+// TestEveryCommandDeclaresItsNetworkUse fails on a command that declares
+// nothing, so the decision is made rather than inherited.
+const annotationNetworkUse = "kanonarion/network-use"
+
+// The values annotationNetworkUse takes. A command declares exactly one.
+const (
+	// NetworkNever opens no network under any invocation. Everything it needs
+	// is the store, the working tree, or a module cache already on disk — and
+	// where it drives the go toolchain it does so under an environment that
+	// pins GOPROXY=off, so the child cannot reach one either.
+	NetworkNever = "never"
+	// NetworkAlways reaches the network as part of answering and offers no flag
+	// that withdraws it. An invocation of one of these that happens to answer
+	// offline did so because the store already held what it would have fetched,
+	// not because the command declined to fetch — so nothing may be measured
+	// hermetically on the strength of it.
+	NetworkAlways = "always"
+	// NetworkAvoidable reaches the network by default and has named flags that
+	// make it answer offline instead. The flags are declared in
+	// annotationOfflineFlags on the same command, so a caller — or a test —
+	// applies them from the tree rather than from somebody remembering which
+	// ones they were.
+	NetworkAvoidable = "avoidable"
+)
+
+// annotationOfflineFlags names the flags that make a NetworkAvoidable command
+// answer without the network, comma-separated.
+//
+// It is required on `avoidable` and forbidden on the other two: an avoidable
+// declaration whose flags nobody wrote down is a claim no caller can act on,
+// and offline flags on a command that never reaches the network name a
+// remedy for a problem it does not have.
+const annotationOfflineFlags = "kanonarion/offline-flags"
+
+// networkUseOf returns the network use cmd declared, or "" when it declared
+// nothing or a value this build does not know.
+//
+// There is deliberately no safe default. A missing declaration is a decision
+// nobody made, and the completeness test fails on it; defaulting here would
+// answer that question quietly in whichever direction happened to be
+// convenient.
+func networkUseOf(cmd *cobra.Command) string {
+	if cmd == nil {
+		return ""
+	}
+	switch v := cmd.Annotations[annotationNetworkUse]; v {
+	case NetworkNever, NetworkAlways, NetworkAvoidable:
+		return v
+	default:
+		return ""
+	}
+}
+
+// offlineFlagsOf returns the flags a command declared make it offline.
+func offlineFlagsOf(cmd *cobra.Command) []string {
+	if cmd == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(cmd.Annotations[annotationOfflineFlags])
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, f := range strings.Split(raw, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // storeIntentOf returns the intent cmd declared, or StoreIntentRead when it
 // declared nothing or declared a value this build does not know.
 func storeIntentOf(cmd *cobra.Command) string {

@@ -26,10 +26,13 @@ type extractFlags struct {
 func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f extractFlags
 	cmd := &cobra.Command{
-		Use:         "extract [walk-id]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Run extraction stages for all modules in a walk",
-		Args:        cobra.ExactArgs(1),
+		Use: "extract [walk-id]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Run extraction stages for all modules in a walk",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExtract(cmd.Context(), args[0], f, stdout, stderr)
 		},
@@ -90,7 +93,13 @@ func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.W
 	// Status preamble must go to stderr so that stdout is a clean data
 	// channel — under --json, callers pipe stdout straight into jq and a
 	// preamble line breaks parsing.
-	_, _ = fmt.Fprintf(stderr, "Starting extraction for walk %s...\n", walkID)
+	//
+	// Through the progress writer, not raw stderr: the line narrates that the
+	// run started and states nothing the answer does not, so --no-progress has
+	// to silence it along with the heartbeat it introduces. Writing it directly
+	// left `extract --no-progress` narrating anyway, while `vuln-scan
+	// --no-progress` — whose equivalent line already routes here — did not.
+	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "Starting extraction for walk %s...\n", walkID)
 	run, err := ctr.Extract.Execute(ctx, extractapp.ExtractRequest{
 		WalkID:   walkID,
 		Stages:   f.stages,
@@ -176,10 +185,13 @@ func printExtractionFailures(w io.Writer, run domain.ExtractionRun) {
 
 func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "show [run-id]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Show details of an extraction run",
-		Args:        cobra.ExactArgs(1),
+		Use: "show [run-id]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Show details of an extraction run",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -221,9 +233,12 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 	cmd := &cobra.Command{
-		Use:         "list",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List extraction runs",
+		Use: "list",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List extraction runs",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -271,19 +286,15 @@ func runExtractList(ctx context.Context, limit, offset int, uc QueryExtractionUs
 				CompletedAt: r.CompletedAt,
 			}
 		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if encErr := enc.Encode(out); encErr != nil {
-			return fmt.Errorf("encoding JSON: %w", encErr)
-		}
+		var zero *listZeroScope
 		if len(out) == 0 {
 			scope, serr := extractListZeroScope(ctx, offset, uc)
 			if serr != nil {
 				return serr
 			}
-			return writeListZeroNoticeJSON(stderr, scope)
+			zero = &scope
 		}
-		return writeListTruncationJSON(stderr, trunc)
+		return writeListDocument(stdout, out, trunc, zero)
 	}
 
 	// The notice replaces the header rather than following it: a table with no

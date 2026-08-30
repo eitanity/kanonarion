@@ -2,14 +2,18 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchadapterproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	"github.com/eitanity/kanonarion/internal/walk/application"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
@@ -63,9 +67,12 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f walkFlags
 
 	cmd := &cobra.Command{
-		Use:         "walk <module@version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Walk the dependency graph for a module and persist the walk record",
+		Use: "walk <module@version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkAlways,
+		},
+		Short: "Walk the dependency graph for a module and persist the walk record",
 		Example: `  kanonarion walk github.com/spf13/cobra@v1.8.1
   kanonarion walk github.com/spf13/cobra@v1.8.1 --json
   kanonarion walk github.com/spf13/cobra@v1.8.1 --force --store-root /var/mirror
@@ -317,13 +324,15 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 			return result, verr
 		}
 	}
-	// The aggregate goes to stderr, never stdout: the walk record on stdout is
-	// the content-hashed artefact, and a report about the run is not part of it.
-	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {
+	// The aggregate is stated on stderr and, under --json, in the document: the
+	// record's own bytes stay the content-hashed artefact, and the coverage is a
+	// key beside them rather than inside them.
+	coverage, cerr := walkCoverageReport(ctx, rec, records, stderr)
+	if cerr != nil {
 		return result, cerr
 	}
 	if jsonOut {
-		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
+		if encErr := writeWalkRecordWithCoverageJSON(stdout, rec, coverage); encErr != nil {
 			return result, fmt.Errorf("encoding JSON: %w", encErr)
 		}
 	} else {
@@ -453,13 +462,14 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	}
 
 	rec := result.Record
-	// The aggregate goes to stderr, never stdout: the walk record on stdout is
-	// the content-hashed artefact, and a report about the run is not part of it.
-	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {
+	// Stated on stderr and, under --json, in the document: see the same report on
+	// the project path above.
+	coverage, cerr := walkCoverageReport(ctx, rec, records, stderr)
+	if cerr != nil {
 		return result, cerr
 	}
 	if jsonOut {
-		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
+		if encErr := writeWalkRecordWithCoverageJSON(stdout, rec, coverage); encErr != nil {
 			return result, fmt.Errorf("encoding JSON: %w", encErr)
 		}
 	} else {
@@ -475,6 +485,108 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	return result, walkExit(rec.OverallStatus, allowPartial,
 		"walk failed: target module could not be fetched",
 		"walk partial: some dependencies could not be fetched")
+}
+
+// ---- what a walk states about how its graph was verified ----
+
+// walkVerificationCoverageJSON is the chain of custody `walk --json` carries:
+// how each module in the walk's graph was verified, and how many were not.
+//
+// It embeds the document the verification-coverage command publishes, so one
+// fact keeps one spelling on both surfaces and a gate written against either
+// reads the other. Measured states outright whether a measurement was taken: a
+// run that took none must not read as a graph that was checked and came back
+// clean.
+type walkVerificationCoverageJSON struct {
+	coverageJSON
+	Measured bool `json:"measured"`
+	// Statement is what the reader is shown on stderr, carried verbatim so the
+	// document and the screen say the same thing in the same words.
+	Statement string `json:"statement"`
+}
+
+// walkCoverageReport states how this walk's graph was verified, and returns the
+// same measurement for the document.
+//
+// The text path keeps the shared reporter: only a document needs the figures
+// back, and measuring a second time to get them is what would let the statement
+// and the document disagree.
+func walkCoverageReport(ctx context.Context, rec domain.WalkRecord, records fetchRecordReader, stderr io.Writer) (walkVerificationCoverageJSON, error) {
+	if !jsonOut {
+		return walkVerificationCoverageJSON{}, reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr)
+	}
+	// A nil reader is a caller driving this walk as a means to another answer —
+	// audit, inspect, sbom — each of which reports coverage over its own.
+	if records == nil {
+		return unmeasuredWalkCoverage(rec,
+			"this run drove the walk for a command that reports coverage over its own answer"), nil
+	}
+	rows := graphVerificationRows(ctx, rec.Graph.Nodes, records)
+	obs := make([]fetchdomain.CoverageObservation, 0, len(rows))
+	for _, r := range rows {
+		obs = append(obs, r.observation)
+	}
+	coverage := fetchdomain.VerificationCoverageOf(obs)
+
+	var statement strings.Builder
+	if err := writeVerificationCoverage(&statement, coverage); err != nil {
+		return walkVerificationCoverageJSON{}, err
+	}
+	if _, err := io.WriteString(stderr, statement.String()); err != nil {
+		return walkVerificationCoverageJSON{}, fmt.Errorf("writing output: %w", err)
+	}
+	if coverage.Total == 0 {
+		return unmeasuredWalkCoverage(rec, "this walk's graph holds no module to verify"), nil
+	}
+	return walkVerificationCoverageJSON{
+		coverageJSON: verificationCoverageJSON(rec.ID, coverage, rows,
+			detectBuildVendoringInDir(rec.ProjectDir), walkBuildOf(rec)),
+		Measured:  true,
+		Statement: strings.TrimRight(statement.String(), "\n"),
+	}, nil
+}
+
+// unmeasuredWalkCoverage is the section for a run that measured no coverage. The
+// key is present and says so in words: an absent key reads as a graph that was
+// checked and had nothing to report, which is the opposite of what it means.
+func unmeasuredWalkCoverage(rec domain.WalkRecord, reason string) walkVerificationCoverageJSON {
+	return walkVerificationCoverageJSON{
+		coverageJSON: verificationCoverageJSON(rec.ID, fetchdomain.VerificationCoverage{}, nil,
+			detectBuildVendoringInDir(rec.ProjectDir), walkBuildOf(rec)),
+		Measured:  false,
+		Statement: "verification coverage was not measured: " + reason,
+	}
+}
+
+// writeWalkRecordWithCoverageJSON writes the walk record with this run's
+// verification coverage beside it.
+//
+// The record's own keys are spliced through as the hasher marshalled them —
+// value for value, none moved, renamed or dropped — so the sealed artefact a
+// consumer verifies is unchanged and the coverage is one added key next to it.
+func writeWalkRecordWithCoverageJSON(w io.Writer, r domain.WalkRecord, coverage walkVerificationCoverageJSON) error {
+	var h domain.WalkRecordHasher
+	b, err := h.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("marshalling walk record: %w", err)
+	}
+	doc := map[string]json.RawMessage{}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return fmt.Errorf("reading the marshalled walk record: %w", err)
+	}
+	cov, err := json.Marshal(coverage)
+	if err != nil {
+		return fmt.Errorf("marshalling verification coverage: %w", err)
+	}
+	doc["verification_coverage"] = cov
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("marshalling walk document: %w", err)
+	}
+	if _, err := fmt.Fprintf(w, "%s\n", out); err != nil {
+		return fmt.Errorf("writing walk record: %w", err)
+	}
+	return nil
 }
 
 // ---- walk-list command ----

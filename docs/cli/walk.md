@@ -59,7 +59,45 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them. Requires `--gomod`; refused by name on a positional module walk, which has no local source context |
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.mod` to read the directive from. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
-| `--json` | `false` | Emit the walk record as JSON |
+| `--json` | `false` | Emit the walk record, and this run's verification coverage, as JSON |
+
+#### What `walk --json` carries
+
+The document is the walk record's own keys - `id`, `target`, `graph`,
+`per_node_results`, `content_hash` and the rest, value for value as the record
+was sealed - plus one added key, `verification_coverage`: how each module in the
+graph was verified, and how many were not. Nothing in the record moves, is
+renamed or is dropped, so a consumer reading it today reads the same values.
+
+The section carries the figures the run also prints to stderr, under the field
+names [`verification-coverage --json`](verification-coverage.md) publishes:
+`cross_verified`, `cross_verifiable`, `collapsed`, the per-bucket counts, the
+per-module rows under `modules`, and the fetch ledger's four VCS-evidence counts
+under `vcs`. Those four are kept apart - `rechecked`, `inherited`, `never`,
+`not_measured` - because a module that was never cross-verified is a different
+fact from one whose record cannot say.
+
+Two keys state the measurement itself. `measured` is `false` when this run took
+none, and `statement` is the sentence the reader is shown, carried verbatim. A
+run that measured no coverage says so in the document rather than leaving the key
+out, where its absence would read as a graph that was checked and had nothing to
+report.
+
+```json
+{
+  "id": "01KQDBVW092ER1HNXZ60X27CMD",
+  "verification_coverage": {
+    "cross_verified": 7,
+    "cross_verifiable": 7,
+    "collapsed": false,
+    "vcs": { "rechecked": 7, "inherited": 0, "never": 0, "not_measured": 0 },
+    "measured": true,
+    "statement": "verification coverage over 7 module(s): …"
+  }
+}
+```
+
+The aggregate is still written to stderr on both paths, in the same words.
 
 ### `walk-list`
 
@@ -83,6 +121,10 @@ kanonarion walk-list [--scope code|tool|complete] [--json]
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
 A listing that comes back empty says which of its three causes emptied it, per
 [Zero-result listings](conventions.md#zero-result-listings).
 
@@ -150,8 +192,28 @@ name the same modules at the same versions, and no node status changed
 Passing the same id twice says that instead, since nothing was compared with
 anything. When the two walks were resolved at unequal completeness the empty
 result is additionally flagged as not a confident "identical". Under `--json`
-the statement is an object on **stderr**; stdout keeps the diff document
-unchanged.
+the statement is a `no_difference` object inside the diff document on stdout,
+present only when the four delta sets are all empty:
+
+```json
+{
+  "walk_a": "01KZ...A",
+  "walk_b": "01KZ...B",
+  "added": [], "removed": [], "upgraded": [],
+  "license_regressions": [], "new_reachable_cves": [],
+  "no_difference": {
+    "statement": "no difference: the two walks name the same modules at the same versions, and no node status changed",
+    "walk_a": "01KZ...A", "walk_b": "01KZ...B",
+    "frame_a": "linux/amd64", "frame_a_basis": "platform",
+    "frame_b": "linux/amd64", "frame_b_basis": "platform",
+    "nodes_a": 128, "nodes_b": 128,
+    "same_walk": false
+  }
+}
+```
+
+Four empty arrays are the same bytes whether the walks agree or the comparison
+ran over nothing, so the statement is in the document rather than on stderr.
 
 If either ID is not in the store the command exits `4` and names **which** of
 the two was missing — or both when both are — followed by how many walk records

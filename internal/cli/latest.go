@@ -29,9 +29,12 @@ func newLatestCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f latestFlags
 
 	cmd := &cobra.Command{
-		Use:         "latest [<module>...]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Resolve the latest published version of one or more modules",
+		Use: "latest [<module>...]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkAlways,
+		},
+		Short: "Resolve the latest published version of one or more modules",
 		Long: `latest queries the Go module proxy for the latest published version of one or
 more modules.
 
@@ -54,7 +57,11 @@ module with no such lookup is refused rather than answered. Every answer states
 the lookup time it used; pass --fresh to bypass the ledger and re-query.
 
 Without --gomod, one or more module paths may be passed as positional
-arguments; with multiple modules, --json emits an array.`,
+arguments.
+
+--json emits a JSON array of per-module objects whatever the result count, one
+module or many, and [] when the scope is empty. This is a BREAKING change: a
+single module used to be emitted as a bare object.`,
 		Example: `  kanonarion latest github.com/spf13/cobra
   kanonarion latest github.com/spf13/cobra github.com/stretchr/testify
   kanonarion latest github.com/spf13/cobra --json
@@ -403,10 +410,9 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 }
 
 // runLatestModules resolves one or more module coordinates from positional
-// args. Extra positional arguments used to be silently dropped; now
-// every module is queried and the output mode is determined by jsonOut and
-// arity: a single module renders as a one-line text string or a JSON object,
-// multiple modules render as one text line each or a JSON array.
+// args. Extra positional arguments used to be silently dropped; now every
+// module is queried and rendered: one text line each, or one JSON array under
+// --json whatever the count.
 func runLatestModules(ctx context.Context, modules []string, lookup stalenessLookup, stdout, stderr io.Writer) error {
 	results := make([]latestResult, 0, len(modules))
 	for _, modulePath := range modules {
@@ -447,16 +453,13 @@ func runLatestModules(ctx context.Context, modules []string, lookup stalenessLoo
 	}
 
 	if jsonOut {
+		// One array whatever the count, matching the --gomod form. The shape used
+		// to follow the number of results — an object for one module, an array for
+		// two — so a consumer got a different document for asking about one module
+		// than for asking about two, and `for row in json.load(...)` over the
+		// single-module object iterated its KEYS rather than failing.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		// Preserve the single-module object shape for backward compatibility;
-		// >1 module emits an array (matching the --gomod output shape).
-		if len(results) == 1 {
-			if err := enc.Encode(results[0]); err != nil {
-				return fmt.Errorf("encoding JSON: %w", err)
-			}
-			return nil
-		}
 		if err := enc.Encode(results); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}

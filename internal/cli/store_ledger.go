@@ -60,9 +60,12 @@ var ledgerQuestions = []string{
 func newStoreLedgerCmd(stdout io.Writer) *cobra.Command {
 	var f storeLedgerFlags
 	cmd := &cobra.Command{
-		Use:         "ledger",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List the store's append-only assurance-log events",
+		Use: "ledger",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List the store's append-only assurance-log events",
 		Long: `List the events in the store's append-only assurance log (audit.jsonl).
 
 Events are listed in chronological order. The ledger's own coverage window —

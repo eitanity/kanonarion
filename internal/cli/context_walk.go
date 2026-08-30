@@ -115,6 +115,10 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 		return nil
 	}
 
+	// --json frames the documents as one array so the whole answer parses as a
+	// single document; --stream keeps the newline-delimited stream for a caller
+	// that reads one module at a time. Asking for both is asking for the stream.
+	arr := jsonArrayWriter{out: stdout}
 	enc := json.NewEncoder(stdout)
 	for _, node := range nodes {
 		if err := ctx.Err(); err != nil {
@@ -137,11 +141,21 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 			Vulnerabilities: vulns,
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 		}
-		if err := enc.Encode(out); err != nil {
+		if f.stream {
+			if err := enc.Encode(out); err != nil {
+				return fmt.Errorf("encoding context for %s@%s: %w", coord.Path(), coord.Version(), err)
+			}
+			continue
+		}
+		if err := arr.write(out); err != nil {
 			return fmt.Errorf("encoding context for %s@%s: %w", coord.Path(), coord.Version(), err)
 		}
 	}
-	return nil
+	if f.stream {
+		return nil
+	}
+	// An empty selection — every node filtered out — still answers with [].
+	return arr.close()
 }
 
 // filterContextWalkNodes applies --direct-only, --affected-only, and --modules

@@ -232,8 +232,10 @@ provenance, direct dependencies, licence with its obligations and copyright
 lines, public interface, call graph, examples and vulnerabilities. The JSON also
 carries a `commands` section, which names the exact command for each part.
 
-The JSON is large. For all 20 modules of this project it is 1.6 MB. When you feed
-an LLM, ask for one module at a time.
+Bare `context --json` prints one JSON array holding one object per module; a
+single module named on the command line prints one object. The JSON is large.
+For all 20 modules of this project it is 1.6 MB. When you feed an LLM, ask for
+one module at a time.
 
 ### 4. One line per dependency: `audit`
 
@@ -549,11 +551,10 @@ detail. A re-run on a warm store takes seconds.
 
 Then answer questions from these. All of them read the local store.
 
-    kanonarion context --json                      # every module, ~13s. NOT one JSON
-                                                   # document: one JSON object per line
-                                                   # (NDJSON). Parse it line by line.
+    kanonarion context --json                      # every module, ~13s. One JSON array,
+                                                   # one object per module.
                                                    # 1.6 MB for a 20-module project
-    kanonarion context <module>@<version> --json   # one module, ~40ms
+    kanonarion context <module>@<version> --json   # one module, ~40ms. One JSON object
     kanonarion audit --json                        # one line per module: licence, vuln,
                                                    # staleness. ~1s warm
     kanonarion license-compat <module>@<version> --json

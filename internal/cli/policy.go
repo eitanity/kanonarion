@@ -17,8 +17,9 @@ import (
 
 func newPolicyCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "policy",
-		Short: "Inspect and validate depth-policy and governance policy files",
+		Use:         "policy",
+		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
+		Short:       "Inspect and validate depth-policy and governance policy files",
 	}
 	cmd.AddCommand(
 		newPolicyValidateCmd(stdout),
@@ -31,9 +32,12 @@ func newPolicyCmd(stdout, stderr io.Writer) *cobra.Command {
 
 func newPolicyValidateCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
-		Use:         "validate <path>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentNone},
-		Short:       "Validate a depth-policy or governance policy YAML file against its schema",
+		Use: "validate <path>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentNone,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Validate a depth-policy or governance policy YAML file against its schema",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
@@ -209,9 +213,12 @@ func newPolicyShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var policyPath string
 
 	cmd := &cobra.Command{
-		Use:         "show",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentNone},
-		Short:       "Print the effective depth policy for the current invocation",
+		Use: "show",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentNone,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Print the effective depth policy for the current invocation",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runPolicyShow(cmd.Context(), policyPath, stdout, stderr)
 		},

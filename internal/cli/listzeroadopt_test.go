@@ -114,6 +114,12 @@ type zeroCase struct {
 	wantNotice listZeroJSON
 	// wantFilter, when set, is the filter half of the structured statement.
 	wantFilter *listZeroFilterJSON
+	// statementOnStderr marks a surface that is not a paged listing and so has
+	// no listing document to carry its statement: `vuln-snapshot-list` renders
+	// one array with no --limit and no --offset, and its zero still travels on
+	// stderr. The flag is here rather than a second harness so the wording stays
+	// asserted in one place.
+	statementOnStderr bool
 }
 
 func runZeroCases(t *testing.T, cases []zeroCase) {
@@ -133,34 +139,50 @@ func runZeroCases(t *testing.T, cases []zeroCase) {
 			}
 
 			jsonStdout, jsonStderr := tc.run(t, true)
-			if got := strings.TrimSpace(jsonStdout); got != "[]" {
-				t.Errorf("the data channel must stay an empty array, got: %q", got)
+			if tc.statementOnStderr {
+				checkZeroNotice(t, decodeZeroNotice(t, jsonStderr), tc)
+				return
 			}
-			notice := decodeZeroNotice(t, jsonStderr)
-			if notice.Subject != tc.wantNotice.Subject {
-				t.Errorf("subject = %q, want %q", notice.Subject, tc.wantNotice.Subject)
+			doc := decodeListingDocument(t, jsonStdout)
+			if len(doc.Records) != 0 {
+				t.Errorf("the records array must be empty, got %d rows", len(doc.Records))
 			}
-			if notice.RecordsConsidered != tc.wantNotice.RecordsConsidered {
-				t.Errorf("records_considered = %d, want %d", notice.RecordsConsidered, tc.wantNotice.RecordsConsidered)
+			if strings.TrimSpace(jsonStderr) != "" {
+				t.Errorf("the statement belongs in the document, not on stderr: %q", jsonStderr)
 			}
-			if notice.StoreEmpty != tc.wantNotice.StoreEmpty {
-				t.Errorf("store_empty = %v, want %v", notice.StoreEmpty, tc.wantNotice.StoreEmpty)
+			if doc.ZeroResult == nil {
+				t.Fatalf("the document does not say why the page is empty:\n%s", jsonStdout)
 			}
-			if notice.PagedPast != tc.wantNotice.PagedPast {
-				t.Errorf("paged_past = %v, want %v", notice.PagedPast, tc.wantNotice.PagedPast)
-			}
-			if len(notice.Remedy) == 0 || notice.Remedy[0] != tc.wantNotice.Remedy[0] {
-				t.Errorf("remedy = %v, want %v", notice.Remedy, tc.wantNotice.Remedy)
-			}
-			switch {
-			case tc.wantFilter == nil && notice.Filter != nil:
-				t.Errorf("an unfiltered listing claimed a filter: %+v", notice.Filter)
-			case tc.wantFilter != nil && notice.Filter == nil:
-				t.Errorf("the filter that emptied the page is not named: %+v", notice)
-			case tc.wantFilter != nil && *notice.Filter != *tc.wantFilter:
-				t.Errorf("filter = %+v, want %+v", *notice.Filter, *tc.wantFilter)
-			}
+			checkZeroNotice(t, *doc.ZeroResult, tc)
 		})
+	}
+}
+
+// checkZeroNotice asserts one structured zero statement, wherever it travelled.
+func checkZeroNotice(t *testing.T, notice listZeroJSON, tc zeroCase) {
+	t.Helper()
+	if notice.Subject != tc.wantNotice.Subject {
+		t.Errorf("subject = %q, want %q", notice.Subject, tc.wantNotice.Subject)
+	}
+	if notice.RecordsConsidered != tc.wantNotice.RecordsConsidered {
+		t.Errorf("records_considered = %d, want %d", notice.RecordsConsidered, tc.wantNotice.RecordsConsidered)
+	}
+	if notice.StoreEmpty != tc.wantNotice.StoreEmpty {
+		t.Errorf("store_empty = %v, want %v", notice.StoreEmpty, tc.wantNotice.StoreEmpty)
+	}
+	if notice.PagedPast != tc.wantNotice.PagedPast {
+		t.Errorf("paged_past = %v, want %v", notice.PagedPast, tc.wantNotice.PagedPast)
+	}
+	if len(notice.Remedy) == 0 || notice.Remedy[0] != tc.wantNotice.Remedy[0] {
+		t.Errorf("remedy = %v, want %v", notice.Remedy, tc.wantNotice.Remedy)
+	}
+	switch {
+	case tc.wantFilter == nil && notice.Filter != nil:
+		t.Errorf("an unfiltered listing claimed a filter: %+v", notice.Filter)
+	case tc.wantFilter != nil && notice.Filter == nil:
+		t.Errorf("the filter that emptied the page is not named: %+v", notice)
+	case tc.wantFilter != nil && *notice.Filter != *tc.wantFilter:
+		t.Errorf("filter = %+v, want %+v", *notice.Filter, *tc.wantFilter)
 	}
 }
 
@@ -440,10 +462,17 @@ func TestListings_EveryOverPagedListingNamesItsScope(t *testing.T) {
 			}
 
 			jsonStdout, jsonStderr := s.run(t, 3, offset, true)
-			if got := strings.TrimSpace(jsonStdout); got != "[]" {
-				t.Errorf("the data channel must stay an empty array, got: %q", got)
+			doc := decodeListingDocument(t, jsonStdout)
+			if len(doc.Records) != 0 {
+				t.Errorf("a page past the population returned %d rows", len(doc.Records))
 			}
-			notice := decodeZeroNotice(t, jsonStderr)
+			if strings.TrimSpace(jsonStderr) != "" {
+				t.Errorf("the statement belongs in the document, not on stderr: %q", jsonStderr)
+			}
+			if doc.ZeroResult == nil {
+				t.Fatalf("the document does not say why the page is empty:\n%s", jsonStdout)
+			}
+			notice := *doc.ZeroResult
 			if !notice.PagedPast {
 				t.Errorf("paged_past = false on a page past the population: %+v", notice)
 			}
@@ -488,7 +517,7 @@ func TestListings_PopulatedPageCarriesNoZeroNotice(t *testing.T) {
 // an array on a populated one — the one listing whose data channel changed type
 // with the row count. The sweep pins the property for all of them at every row
 // count a caller can ask for.
-func TestListings_JSONStdoutIsAnArrayAtEveryRowCount(t *testing.T) {
+func TestListings_JSONRecordsIsAnArrayAtEveryRowCount(t *testing.T) {
 	for _, s := range listingSurfaces(t) {
 		t.Run(s.name, func(t *testing.T) {
 			for _, offset := range []int{0, s.population - 1, s.population, s.population + 5} {
@@ -496,13 +525,17 @@ func TestListings_JSONStdoutIsAnArrayAtEveryRowCount(t *testing.T) {
 				// Decoded into `any` rather than into a slice: `null` unmarshals
 				// into a []T without complaint, so a test that decoded into the
 				// row type would have passed on exactly the defect.
-				var doc any
+				var doc map[string]any
 				if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
-					t.Fatalf("stdout at --offset %d is not JSON: %v\nstdout: %q", offset, err, stdout)
+					t.Fatalf("stdout at --offset %d is not one JSON object: %v\nstdout: %q", offset, err, stdout)
 				}
-				if _, ok := doc.([]any); !ok {
-					t.Errorf("stdout at --offset %d is %T, want a JSON array at every row count\nstdout: %q",
-						offset, doc, stdout)
+				records, ok := doc["records"]
+				if !ok {
+					t.Fatalf("stdout at --offset %d carries no records field\nstdout: %q", offset, stdout)
+				}
+				if _, ok := records.([]any); !ok {
+					t.Errorf("records at --offset %d is %T, want a JSON array at every row count\nstdout: %q",
+						offset, records, stdout)
 				}
 			}
 		})
@@ -624,8 +657,15 @@ func TestListings_OffsetOverAnEmptyStoreIsNotPagedPast(t *testing.T) {
 				t.Errorf("an empty store was not offered the produce-a-record remedy:\n%s", stdout)
 			}
 
-			_, jsonStderr := s.run(t, 3, 9000, true)
-			notice := decodeZeroNotice(t, jsonStderr)
+			jsonStdout, jsonStderr := s.run(t, 3, 9000, true)
+			if strings.TrimSpace(jsonStderr) != "" {
+				t.Errorf("the statement belongs in the document, not on stderr: %q", jsonStderr)
+			}
+			doc := decodeListingDocument(t, jsonStdout)
+			if doc.ZeroResult == nil {
+				t.Fatalf("the document does not say why the page is empty:\n%s", jsonStdout)
+			}
+			notice := *doc.ZeroResult
 			if notice.PagedPast {
 				t.Errorf("paged_past = true over an empty store: %+v", notice)
 			}
@@ -764,8 +804,9 @@ func TestRunSnapshotList_ZeroNamesItsScope(t *testing.T) {
 	}
 	runZeroCases(t, []zeroCase{
 		{
-			name: "empty store",
-			run:  run(testfakes.NewFakeQueryScanRuns()),
+			name:              "empty store",
+			run:               run(testfakes.NewFakeQueryScanRuns()),
+			statementOnStderr: true,
 			wantText: []string{
 				"the store holds no vulnerability database snapshot at all",
 				"to produce one: kanonarion vuln-scan <walk-id>",

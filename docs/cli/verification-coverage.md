@@ -5,10 +5,11 @@ how many carry the strongest assurance available - a checksum-database match
 cross-verified against the content of the module's VCS commit - how many
 degraded to a weaker anchor, and how many carry none at all.
 
-`walk` and `audit` already print this aggregate to **stderr** as a side report
-at the end of a run. This command reports the same figures on their own, from a
-stored walk, and emits them under stable field names with `--json` so a CI gate
-can assert on them.
+`walk` prints this aggregate to **stderr** at the end of a run and carries it in
+`walk --json` under `verification_coverage`. `audit` prints it to stderr only.
+This command reports the same figures on their own, from a **stored** walk, so
+they can be re-read at any time without re-walking, and over the walk an `audit`
+left behind.
 
 ## Why the figures exist
 
@@ -237,7 +238,8 @@ kanonarion verification-coverage "$WALK_ID" --json |
 ## See also
 
 - [`kanonarion walk`](walk.md) - produce the walk this reports on; prints the
-  same aggregate to stderr at the end of a run
+  same aggregate to stderr and carries it in `--json` under
+  `verification_coverage`
 - [`kanonarion audit`](audit.md) - prints the same aggregate to stderr over the
   modules it audited
 - [`kanonarion fetch`](fetch.md) - where a module's verification status and its

@@ -35,9 +35,12 @@ type useFlags struct {
 func newUseCmd(stdout, stderr io.Writer) *cobra.Command {
 	f := useFlags{}
 	cmd := &cobra.Command{
-		Use:         "use <module@version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Copy walked modules from kanonarion's store to your local Go module cache",
+		Use: "use <module@version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Copy walked modules from kanonarion's store to your local Go module cache",
 		Long: `Copies the version set of one walk of <module>@<version> out of the store
 and into a Go module cache a later go build can compile against.
 

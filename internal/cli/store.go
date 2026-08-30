@@ -28,8 +28,9 @@ func allMigrations() []sqlitestore.Migration {
 
 func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "store",
-		Short: "Inspect and manage the kanonarion store",
+		Use:         "store",
+		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
+		Short:       "Inspect and manage the kanonarion store",
 	}
 	cmd.AddCommand(newStoreInfoCmd(stdout, stderr))
 	cmd.AddCommand(newStoreConfigCmd(stdout))
@@ -52,9 +53,12 @@ var tempPrefixes = []string{
 
 func newStoreCleanCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
-		Use:         "clean",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Remove orphaned temp files left by interrupted operations",
+		Use: "clean",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Remove orphaned temp files left by interrupted operations",
 		Long: `Remove orphaned temporary files left by interrupted kanonarion operations.
 
 Cleans two categories:
@@ -124,8 +128,9 @@ func runStoreClean(root, tmpDir string, stdout io.Writer) error {
 
 func newStoreConfigCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Inspect and manage the store configuration",
+		Use:         "config",
+		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
+		Short:       "Inspect and manage the store configuration",
 	}
 	cmd.AddCommand(newStoreConfigShowCmd(stdout))
 	return cmd
@@ -292,6 +297,7 @@ func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationUsableWithRejectedConfig: "reports the file and what is actually in force",
 			annotationStoreIntent:              StoreIntentRead,
+			annotationNetworkUse:               NetworkNever,
 		},
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -491,9 +497,12 @@ type storeInfoResult struct {
 
 func newStoreInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "info",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Report the store schema version and migration status",
+		Use: "info",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Report the store schema version and migration status",
 		Example: `  kanonarion store info --store-root ~/kanonarion/.mirror
   kanonarion store info --store-root ~/kanonarion/.mirror --json`,
 		Args: cobra.NoArgs,

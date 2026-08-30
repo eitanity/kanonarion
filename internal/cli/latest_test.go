@@ -271,7 +271,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		}
 	})
 
-	t.Run("json mode of single module keeps object shape", func(t *testing.T) {
+	t.Run("json mode of a single module is an array of one", func(t *testing.T) {
 		prev := jsonOut
 		jsonOut = true
 		t.Cleanup(func() { jsonOut = prev })
@@ -283,14 +283,36 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("runLatestModules: %v", err)
 		}
-		var got latestResult
+		// One module used to be emitted as a bare object, so the top-level type
+		// followed the result count and a consumer iterating the answer walked
+		// the object's keys instead of its rows.
+		var got []latestResult
 		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-			t.Fatalf("single-module JSON output is not an object: %v\noutput: %s", err, stdout.String())
+			t.Fatalf("single-module JSON output is not an array: %v\noutput: %s", err, stdout.String())
 		}
-		if got.Module != "github.com/spf13/cobra" {
-			t.Errorf("Module = %q, want github.com/spf13/cobra", got.Module)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 result in array, got %d", len(got))
+		}
+		if got[0].Module != "github.com/spf13/cobra" {
+			t.Errorf("Module = %q, want github.com/spf13/cobra", got[0].Module)
 		}
 	})
+}
+
+// singleLatestRow decodes the one row of a `latest --json` answer about one
+// module. The top-level type is an array whatever the count, so a single-module
+// answer is an array of one: a test decoding it as an object would be asserting
+// a shape the command no longer has.
+func singleLatestRow(t *testing.T, out []byte) map[string]any {
+	t.Helper()
+	var rows []map[string]any
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatalf("latest --json output is not a JSON array: %v\noutput: %s", err, out)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row in the array, got %d\noutput: %s", len(rows), out)
+	}
+	return rows[0]
 }
 
 func TestPrintLatestTable(t *testing.T) {

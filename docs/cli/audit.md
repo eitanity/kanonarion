@@ -126,7 +126,7 @@ toolchain (`go list`) in the project directory.
 ```bash
 # Old: for each direct dep
 kanonarion walk github.com/foo/bar@v1.2.3
-WALK_ID=$(kanonarion walk-list --json | jq -r '.[0].id')
+WALK_ID=$(kanonarion walk-list --json | jq -r '.records[0].id')
 kanonarion vuln-scan "$WALK_ID"
 kanonarion license-list          # global - needs manual filtering
 kanonarion context github.com/foo/bar@v1.2.3

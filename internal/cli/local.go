@@ -23,9 +23,12 @@ func newLocalCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f localFlags
 
 	cmd := &cobra.Command{
-		Use:         "local [dir]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Ingest the local working tree's call graph so callers/callees resolve internal symbols",
+		Use: "local [dir]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Ingest the local working tree's call graph so callers/callees resolve internal symbols",
 		Long: `Analyse the Go module rooted at [dir] (default ".") and persist its
 call graph into the store. Unlike 'callgraph <module@version>', which only
 sees fetched external modules, 'local' ingests the project's own internal

@@ -67,16 +67,51 @@ func withJSON(t *testing.T, on bool) {
 	t.Cleanup(func() { jsonOut = prev })
 }
 
-// countJSONRows reads the row count off a listing's stdout array. It is the same
-// read the coordinator's mis-measurement was made with, which is the point: the
-// count is right and the population it was taken for was not.
+// listingDocument is a listing's --json answer as a consumer reads it: the
+// records, and what the listing knows about the request that produced them.
+type listingDocument struct {
+	Records []json.RawMessage `json:"records"`
+	listTruncationJSON
+	ZeroResult *listZeroJSON `json:"zero_result"`
+}
+
+// decodeListingDocument reads a listing's whole answer off stdout. Reading it
+// from stdout is the assertion: the fact that the list is partial has to reach a
+// consumer that never opens stderr.
+func decodeListingDocument(t *testing.T, stdout string) listingDocument {
+	t.Helper()
+	var doc listingDocument
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("decoding listing document: %v\npayload: %s", err, stdout)
+	}
+	if doc.Records == nil {
+		t.Fatalf("the document carries no records array — an empty page is an empty array, never null:\n%s", stdout)
+	}
+	return doc
+}
+
+// decodeListingRecords unmarshals a listing's records into the caller's row
+// type, so a test that asks about the rows does not have to restate the rest of
+// the document.
+func decodeListingRecords(t *testing.T, stdout string, into any) {
+	t.Helper()
+	var doc struct {
+		Records json.RawMessage `json:"records"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("decoding listing document: %v\npayload: %s", err, stdout)
+	}
+	if err := json.Unmarshal(doc.Records, into); err != nil {
+		t.Fatalf("decoding listing records: %v\nrecords: %s", err, doc.Records)
+	}
+}
+
+// countJSONRows reads the row count off a listing's stdout document. It is the
+// same read the coordinator's mis-measurement was made with, which is the point:
+// the count is right and the population it was taken for was not.
 func countJSONRows(t *testing.T, stdout string) int {
 	t.Helper()
-	var rows []json.RawMessage
-	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
-		t.Fatalf("decoding listing payload: %v\npayload: %s", err, stdout)
-	}
-	return len(rows)
+	return len(decodeListingDocument(t, stdout).Records)
 }
 
 const truncPopulation = 5
@@ -323,30 +358,103 @@ func TestListings_TruncatedTextStatesTheLimit(t *testing.T) {
 	}
 }
 
-// The same statement on the JSON path. The array on stdout is unchanged — the
-// data channel's shape must not move under existing consumers — and the marker
-// rides on stderr, where the zero-result notice already lives.
+// The same statement on the JSON path, in the document on stdout. A consumer
+// that reads only the data channel — which is every consumer that pipes the
+// command into a parser — must be able to tell this list from a complete one.
 func TestListings_TruncatedJSONCarriesTheMarker(t *testing.T) {
 	for _, s := range listingSurfaces(t) {
 		t.Run(s.name, func(t *testing.T) {
 			const limit = 3
 			stdout, stderr := s.run(t, limit, 0, true)
-			if got := s.rows(t, stdout); got != limit {
-				t.Fatalf("payload rows = %d, want %d", got, limit)
+			doc := decodeListingDocument(t, stdout)
+			if len(doc.Records) != limit {
+				t.Fatalf("payload rows = %d, want %d", len(doc.Records), limit)
 			}
-			var marker listTruncationJSON
-			if err := json.Unmarshal([]byte(stderr), &marker); err != nil {
-				t.Fatalf("no truncation marker on stderr: %v\nstderr: %q", err, stderr)
-			}
-			if !marker.Truncated {
+			if !doc.Truncated {
 				t.Errorf("truncated = false on a listing that withheld %d of %d records",
 					s.population-limit, s.population)
 			}
-			if marker.Limit != limit {
-				t.Errorf("marker limit = %d, want %d", marker.Limit, limit)
+			if doc.Limit != limit {
+				t.Errorf("document limit = %d, want %d", doc.Limit, limit)
 			}
-			if marker.Remedy == "" {
-				t.Errorf("marker names no remedy: %+v", marker)
+			if doc.Subject != s.subject {
+				t.Errorf("document subject = %q, want %q", doc.Subject, s.subject)
+			}
+			if doc.NextOffset != limit {
+				t.Errorf("next_offset = %d, want %d — a reader told more exist must be able to ask for them",
+					doc.NextOffset, limit)
+			}
+			if doc.Remedy == "" {
+				t.Errorf("document names no remedy: %+v", doc.listTruncationJSON)
+			}
+			if strings.TrimSpace(stderr) != "" {
+				t.Errorf("the answer is on stdout; stderr carried %q", stderr)
+			}
+		})
+	}
+}
+
+// Nothing structured is left on the error stream. Two earlier fixes put these
+// facts on stderr, which served the human reading a terminal and left every
+// machine reader with a partial list that looked whole.
+func TestListings_JSONWritesNothingToStderr(t *testing.T) {
+	for _, s := range listingSurfaces(t) {
+		t.Run(s.name, func(t *testing.T) {
+			// Truncated, exactly at the limit, unlimited, a later page, and a
+			// page past the end: every shape of answer a listing can give.
+			for _, c := range []struct{ limit, offset int }{
+				{3, 0}, {s.population, 0}, {0, 0}, {3, 3}, {3, s.population + 90},
+			} {
+				_, stderr := s.run(t, c.limit, c.offset, true)
+				if strings.TrimSpace(stderr) != "" {
+					t.Errorf("--limit %d --offset %d wrote to stderr under --json: %q", c.limit, c.offset, stderr)
+				}
+			}
+		})
+	}
+}
+
+// A page past the end is empty and says why, in the same document. A consumer
+// reading an empty records array must be able to tell "the store holds nothing"
+// from "you paged past the end" without a second invocation.
+func TestListings_EmptyPageStatesItsScopeInTheDocument(t *testing.T) {
+	for _, s := range listingSurfaces(t) {
+		t.Run(s.name, func(t *testing.T) {
+			stdout, _ := s.run(t, 3, s.population+90, true)
+			doc := decodeListingDocument(t, stdout)
+			if len(doc.Records) != 0 {
+				t.Fatalf("a page past the last record returned %d rows", len(doc.Records))
+			}
+			if doc.ZeroResult == nil {
+				t.Fatal("an empty page carries no zero_result, so nothing says why it is empty")
+			}
+			if doc.ZeroResult.StoreEmpty {
+				t.Errorf("store_empty = true over a store holding %d records", s.population)
+			}
+			if !doc.ZeroResult.PagedPast {
+				t.Errorf("paged_past = false on a page that starts past the last record: %+v", doc.ZeroResult)
+			}
+			if doc.ZeroResult.RecordsConsidered != s.population {
+				t.Errorf("records_considered = %d, want the population %d",
+					doc.ZeroResult.RecordsConsidered, s.population)
+			}
+			if len(doc.ZeroResult.Remedy) == 0 {
+				t.Errorf("the zero statement names no remedy: %+v", doc.ZeroResult)
+			}
+		})
+	}
+}
+
+// The paired control: a page that returned rows makes no zero statement, so the
+// extra store read that sizes the corpus is never paid on a listing that
+// answered.
+func TestListings_PopulatedPageCarriesNoZeroStatement(t *testing.T) {
+	for _, s := range listingSurfaces(t) {
+		t.Run(s.name, func(t *testing.T) {
+			stdout, _ := s.run(t, 3, 0, true)
+			if doc := decodeListingDocument(t, stdout); doc.ZeroResult != nil {
+				t.Errorf("a page holding %d records explained why it was empty: %+v",
+					len(doc.Records), doc.ZeroResult)
 			}
 		})
 	}
@@ -364,16 +472,13 @@ func TestListings_UnderLimitDoesNotClaimTruncation(t *testing.T) {
 			if strings.Contains(stdout, "showing first") {
 				t.Errorf("a listing holding fewer records than its limit claimed truncation:\n%s", stdout)
 			}
-			stdout, stderr := s.run(t, limit, 0, true)
-			if got := s.rows(t, stdout); got != s.population {
-				t.Fatalf("payload rows = %d, want the whole population %d", got, s.population)
+			stdout, _ = s.run(t, limit, 0, true)
+			doc := decodeListingDocument(t, stdout)
+			if len(doc.Records) != s.population {
+				t.Fatalf("payload rows = %d, want the whole population %d", len(doc.Records), s.population)
 			}
-			var marker listTruncationJSON
-			if err := json.Unmarshal([]byte(stderr), &marker); err != nil {
-				t.Fatalf("no truncation marker on stderr: %v\nstderr: %q", err, stderr)
-			}
-			if marker.Truncated {
-				t.Errorf("truncated = true on a listing that returned every record: %+v", marker)
+			if doc.Truncated {
+				t.Errorf("truncated = true on a listing that returned every record: %+v", doc.listTruncationJSON)
 			}
 		})
 	}
@@ -388,13 +493,9 @@ func TestListings_ExactlyAtLimitDoesNotClaimTruncation(t *testing.T) {
 			if strings.Contains(stdout, "showing first") {
 				t.Errorf("a listing holding exactly its limit claimed truncation:\n%s", stdout)
 			}
-			_, stderr := s.run(t, s.population, 0, true)
-			var marker listTruncationJSON
-			if err := json.Unmarshal([]byte(stderr), &marker); err != nil {
-				t.Fatalf("no truncation marker on stderr: %v\nstderr: %q", err, stderr)
-			}
-			if marker.Truncated {
-				t.Errorf("truncated = true at exactly the limit: %+v", marker)
+			stdout, _ = s.run(t, s.population, 0, true)
+			if doc := decodeListingDocument(t, stdout); doc.Truncated {
+				t.Errorf("truncated = true at exactly the limit: %+v", doc.listTruncationJSON)
 			}
 		})
 	}
@@ -410,6 +511,12 @@ func TestListings_UnlimitedStatesNothingAndReturnsMore(t *testing.T) {
 			if s.rows(t, full) <= s.rows(t, capped) {
 				t.Errorf("--limit 0 returned %d rows, not more than the capped %d",
 					s.rows(t, full), s.rows(t, capped))
+			}
+			// The uncapped listing still states that it withheld nothing. The
+			// whole point of the field is that a consumer reads it every time
+			// rather than inferring completeness from the absence of a marker.
+			if doc := decodeListingDocument(t, full); doc.Truncated {
+				t.Errorf("an unlimited listing claimed truncation: %+v", doc.listTruncationJSON)
 			}
 			if strings.TrimSpace(stderr) != "" {
 				t.Errorf("an unlimited listing has no cap to state, got stderr: %q", stderr)
@@ -456,11 +563,112 @@ func TestListTruncationWriters_ReportWriteFailure(t *testing.T) {
 	if err := writeListTruncationNotice(failingWriter{}, tr); err == nil {
 		t.Error("expected a write error from the text notice")
 	}
-	if err := writeListTruncationJSON(failingWriter{}, tr); err == nil {
-		t.Error("expected a write error from the JSON notice")
+	if err := writeListDocument(failingWriter{}, []int{1}, tr, nil); err == nil {
+		t.Error("expected a write error from the listing document")
 	}
-	// Nothing to write, nothing to fail on.
-	if err := writeListTruncation(failingWriter{}, failingWriter{}, false, listTruncation{}); err != nil {
-		t.Errorf("an unlimited listing writes nothing and cannot fail: %v", err)
+}
+
+// The text path is byte-identical to what it printed before the document
+// existed. The JSON answer changed shape deliberately; the prose one did not
+// change at all, and a reader of the terminal must not be able to tell that
+// anything happened. Rows and the truncation line are pinned together, trailing
+// padding included, because a table whose columns moved is a changed answer.
+//
+// The first record's JSON is pinned beside it, in the same invocation, because
+// the records are the other half of the promise: they became the contents of an
+// array in a document and not one field of them moved, was added or was renamed.
+func TestListings_TextIsUnchangedAndRecordsKeepTheirShape(t *testing.T) {
+	want := map[string]struct{ text, firstRecord string }{
+		"license-list": {
+			text: `example.com/mod0@v1.0.0                            Detected     MIT                  scanner
+example.com/mod1@v1.0.0                            Detected     MIT                  scanner
+example.com/mod2@v1.0.0                            Detected     MIT                  scanner
+showing first 3 license records — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Detected","license":"MIT","source":"scanner"}`,
+		},
+		"interface-list": {
+			text: `example.com/mod0@v1.0.0                            Unknown      2 package(s)  [superseded pipeline ]
+example.com/mod1@v1.0.0                            Unknown      2 package(s)  [superseded pipeline ]
+example.com/mod2@v1.0.0                            Unknown      2 package(s)  [superseded pipeline ]
+3 of 3 listed record(s) were produced by superseded extraction logic; this build serves pipeline 0.6.0 and answers no query from them. Re-extract one:
+  kanonarion interface <module>@<version>
+showing first 3 interface records — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"","superseded":true,"package_count":2}`,
+		},
+		"examples-list": {
+			text: `example.com/mod0@v1.0.0                            Unknown      3 example(s)
+example.com/mod1@v1.0.0                            Unknown      3 example(s)
+example.com/mod2@v1.0.0                            Unknown      3 example(s)
+showing first 3 example records — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","example_count":3}`,
+		},
+		"callgraph-list": {
+			text: `example.com/mod0@v1.0.0                                      cg-1         Unknown     4 nodes     3 edges
+example.com/mod1@v1.0.0                                      cg-1         Unknown     4 nodes     3 edges
+example.com/mod2@v1.0.0                                      cg-1         Unknown     4 nodes     3 edges
+showing first 3 call graph records — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","pipeline_version":"cg-1","status":"Unknown","node_count":4,"edge_count":3,"generations_differ":false}`,
+		},
+		"vuln-scan-list": {
+			text: `run-0                       walk=walk-0                      status=AllClean      2026-01-01T00:00:00Z
+run-1                       walk=walk-1                      status=AllClean      2026-01-01T00:00:00Z
+run-2                       walk=walk-2                      status=AllClean      2026-01-01T00:00:00Z
+showing first 3 scan runs — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"id":"run-0","walk_id":"walk-0","status":"AllClean","completed_at":"2026-01-01T00:00:00Z"}`,
+		},
+		"walk-list": {
+			text: `walk-0  example.com/mod0@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
+walk-1  example.com/mod1@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
+walk-2  example.com/mod2@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
+showing first 3 walk records — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"id":"walk-0","target":"example.com/mod0@v1.0.0","scope":"code","depth":"full","started_at":"2026-01-01T00:00:00Z","overall_status":"succeeded","node_count":2,"failure_count":0}`,
+		},
+		"extract list": {
+			text: `RUN ID                     WALK ID                    STATUS     MODULES      STARTED
+run-0                      walk-0                     succeeded  7            2026-01-01T00:00:00Z
+run-1                      walk-1                     succeeded  7            2026-01-01T00:00:00Z
+run-2                      walk-2                     succeeded  7            2026-01-01T00:00:00Z
+showing first 3 extraction runs — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"id":"run-0","walk_id":"walk-0","status":"succeeded","module_count":7,"started_at":"2026-01-01T00:00:00Z","completed_at":"0001-01-01T00:00:00Z"}`,
+		},
+		"directives list": {
+			text: `SCAN ID  COMPLETED             DIRECTIVES  CONTENT HASH
+scan-0   2026-01-01T00:00:00Z  0           sha256:abc
+scan-1   2026-01-01T00:00:00Z  0           sha256:abc
+scan-2   2026-01-01T00:00:00Z  0           sha256:abc
+showing first 3 directive scans — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"id":"scan-0","project":"example.com/proj","completed_at":"2026-01-01T00:00:00Z","directive_count":0,"content_hash":"sha256:abc","pipeline_version":"dir-1"}`,
+		},
+	}
+	for _, s := range listingSurfaces(t) {
+		t.Run(s.name, func(t *testing.T) {
+			pinned, ok := want[s.name]
+			if !ok {
+				t.Fatalf("no pinned output for %s: a listing added here must be pinned too", s.name)
+			}
+			if got, _ := s.run(t, 3, 0, false); got != pinned.text {
+				t.Errorf("the text answer moved\n got: %q\nwant: %q", got, pinned.text)
+			}
+			stdout, _ := s.run(t, 3, 0, true)
+			records := decodeListingDocument(t, stdout).Records
+			if len(records) == 0 {
+				t.Fatal("the document carries no records")
+			}
+			var compact bytes.Buffer
+			if err := json.Compact(&compact, records[0]); err != nil {
+				t.Fatalf("compacting the first record: %v", err)
+			}
+			if compact.String() != pinned.firstRecord {
+				t.Errorf("the record object moved\n got: %s\nwant: %s", compact.String(), pinned.firstRecord)
+			}
+		})
 	}
 }

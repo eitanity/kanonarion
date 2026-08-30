@@ -39,8 +39,9 @@ func assertSingleJSONDocument(t *testing.T, what string, b []byte) map[string]an
 
 // assertSingleJSONValue is assertSingleJSONDocument for commands whose document
 // is an array rather than an object (the list commands). The trailing-bytes
-// assertion is the same; only the top-level shape differs.
-func assertSingleJSONValue(t *testing.T, what string, b []byte) {
+// assertion is the same; only the top-level shape differs. It returns the
+// decoded value so a caller can go on to ask what is in it.
+func assertSingleJSONValue(t *testing.T, what string, b []byte) any {
 	t.Helper()
 	dec := json.NewDecoder(bytes.NewReader(b))
 	var doc any
@@ -51,6 +52,28 @@ func assertSingleJSONValue(t *testing.T, what string, b []byte) {
 		rest := strings.TrimSpace(string(b[dec.InputOffset():]))
 		t.Fatalf("%s: stdout carries %d bytes after the JSON document — a parser sees this and fails:\n%s",
 			what, len(rest), rest)
+	}
+	return doc
+}
+
+// assertSeveralRecords checks that a several-record case really put more than
+// one record in the answer, and that the answer holding them is an array.
+//
+// Both halves are the point. An invocation that yielded one record after all
+// leaves the case looking covered while asking the same question as the
+// single-record case above it. And a several-record answer that is not an array
+// is the defect itself: a top-level type that follows the result count, or a
+// stream of documents one per line, which no parser reads as one answer.
+func assertSeveralRecords(t *testing.T, what string, doc any) {
+	t.Helper()
+	arr, ok := doc.([]any)
+	if !ok {
+		t.Fatalf("%s: the top-level JSON type is %T, want an array: a command answering per module "+
+			"must not change shape with the number of records", what, doc)
+	}
+	if len(arr) < 2 {
+		t.Fatalf("%s: the answer holds %d record(s), so the several-record case asked the same question "+
+			"as the single-record one: point it at a scope with more than one module", what, len(arr))
 	}
 }
 
@@ -206,6 +229,37 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"walk-show":          {args: []string{jsonDocWalkID}},
 }
 
+// walkScopeArgs scopes a command to the fixture's walk, whose graph holds two
+// modules. It is how a command that answers per module is made to answer about
+// more than one of them without leaving the fixture.
+func walkScopeArgs(_ *testing.T, _ jsonStdoutFixture) []string {
+	return []string{"--walk-id", jsonDocWalkID}
+}
+
+// latestMultiArgs names the two modules the fixture holds recorded lookups for,
+// so `latest` answers about both of them from the store rather than the proxy.
+func latestMultiArgs(_ *testing.T, _ jsonStdoutFixture) []string {
+	return []string{jsonDocRootPath, jsonDocDep.Path()}
+}
+
+// jsonStdoutMultiCases is the second invocation for the commands whose answer
+// holds one record PER MODULE, chosen to put more than one record in it.
+//
+// The single-record invocation above cannot see the defect these commands are
+// prone to: a command that frames one record as a document and a sequence of
+// them as one document per line, or as a bare object at one result and an array
+// at two, passes there and fails for every caller who asked a question with
+// more than one answer. The shape has to be exercised at the count that varies
+// it, or the guard reports a command as covered that was never asked the
+// question.
+//
+// Every key must also appear in jsonStdoutCases; the completeness test asserts
+// it, so a command cannot be exercised here and left undecided there.
+var jsonStdoutMultiCases = map[string]jsonStdoutCase{
+	"context": {argsFn: walkScopeArgs},
+	"latest":  {argsFn: latestMultiArgs},
+}
+
 // commandPaths returns every command in the tree by the path a caller types,
 // root name stripped.
 func commandPaths(root *cobra.Command) []string {
@@ -241,6 +295,12 @@ func TestJSONStdoutGuard_CoversEveryCommand(t *testing.T) {
 			t.Errorf("jsonStdoutCases names %q, which is not a command: remove it", p)
 		}
 	}
+	for p := range jsonStdoutMultiCases {
+		if _, ok := jsonStdoutCases[p]; !ok {
+			t.Errorf("jsonStdoutMultiCases names %q, which jsonStdoutCases does not: "+
+				"a command exercised at several records must be decided at one too", p)
+		}
+	}
 }
 
 // TestJSONStdoutIsExactlyOneDocument runs every enumerated command under --json
@@ -267,37 +327,62 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 	chdirWithGoMod(t, "")
 
 	var ran, documents int
+	run := func(t *testing.T, what, name string, tc jsonStdoutCase, several bool) {
+		t.Helper()
+		extra := tc.args
+		if tc.argsFn != nil {
+			extra = tc.argsFn(t, fx)
+		}
+		args := append(strings.Fields(name), extra...)
+		args = append(args, "--json", "--store-root", fx.storeRoot)
+		var stdout, stderr bytes.Buffer
+		// The error is deliberately ignored: a command that reports a
+		// non-clean finding is a valid outcome here. What it wrote to stdout
+		// is the assertion.
+		_ = Run(args, &stdout, &stderr)
+		ran++
+		if strings.TrimSpace(stdout.String()) == "" {
+			t.Fatalf("%s wrote nothing to stdout, so this case asserts nothing about its JSON rendering: "+
+				"give it what it needs to answer, or a skip saying what that would take.\nstderr:\n%s",
+				what, stderr.String())
+		}
+		documents++
+		doc := assertSingleJSONValue(t, what, stdout.Bytes())
+		if several {
+			assertSeveralRecords(t, what, doc)
+		}
+	}
+
 	for _, name := range names {
 		tc := jsonStdoutCases[name]
 		if tc.skip != "" {
 			continue
 		}
-		t.Run(name, func(t *testing.T) {
-			extra := tc.args
-			if tc.argsFn != nil {
-				extra = tc.argsFn(t, fx)
-			}
-			args := append(strings.Fields(name), extra...)
-			args = append(args, "--json", "--store-root", fx.storeRoot)
-			var stdout, stderr bytes.Buffer
-			// The error is deliberately ignored: a command that reports a
-			// non-clean finding is a valid outcome here. What it wrote to stdout
-			// is the assertion.
-			_ = Run(args, &stdout, &stderr)
-			ran++
-			if strings.TrimSpace(stdout.String()) == "" {
-				t.Fatalf("%s wrote nothing to stdout, so this case asserts nothing about its JSON rendering: "+
-					"give it what it needs to answer, or a skip saying what that would take.\nstderr:\n%s",
-					name, stderr.String())
-			}
-			documents++
-			assertSingleJSONValue(t, name, stdout.Bytes())
-		})
+		t.Run(name, func(t *testing.T) { run(t, name, name, tc, false) })
 	}
+
+	// The commands that answer per module, asked a question with more than one
+	// answer. Run after the single-record cases so a failure names which of the
+	// two counts broke.
+	multi := make([]string, 0, len(jsonStdoutMultiCases))
+	for name := range jsonStdoutMultiCases {
+		multi = append(multi, name)
+	}
+	sort.Strings(multi)
+	for _, name := range multi {
+		tc := jsonStdoutMultiCases[name]
+		if tc.skip != "" {
+			continue
+		}
+		what := name + " (several records)"
+		t.Run(name+"_multi", func(t *testing.T) { run(t, what, name, tc, true) })
+	}
+
 	// The floor, not a warning: every command that ran answered. A later change
 	// that silences one fails here rather than quietly shrinking the guard.
 	if documents != ran {
 		t.Errorf("%d of %d commands that ran produced a document; every one must", documents, ran)
 	}
-	t.Logf("enumerated %d commands, ran %d, %d produced a document", len(jsonStdoutCases), ran, documents)
+	t.Logf("enumerated %d commands and %d several-record cases, ran %d, %d produced a document",
+		len(jsonStdoutCases), len(jsonStdoutMultiCases), ran, documents)
 }

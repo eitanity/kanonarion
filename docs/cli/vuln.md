@@ -229,8 +229,35 @@ recorded toolchain version is not comparable to the database's version ranges`
 (a release-candidate or development toolchain), and `no advisory database
 snapshot is stored`.
 
-The axis never changes the exit code, never appears under `--json`, and is
-counted in no roll-up. The SBOM is untouched by it.
+Under `--json` the same judgment is a key of the document, `toolchain`, beside
+the run's own keys:
+
+```json
+{
+  "id": "vscan-…",
+  "toolchain": {
+    "judged": false,
+    "status": "unjudged",
+    "version": "",
+    "snapshot": {"source": "vuln.go.dev", "version": "2026-07-27T20:14:16Z"},
+    "reason": "the walk recorded no build toolchain version",
+    "advisories_judged": 0,
+    "covering": [],
+    "withdrawn_covering": [],
+    "statement": "toolchain:\n  (unrecorded) was not judged against …"
+  }
+}
+```
+
+`status` is the judgment's own word — `clear`, `affected`, `withdrawn` or
+`unjudged` — `covering` and `withdrawn_covering` name the advisory ids, and
+`statement` is the sentence stderr shows, carried verbatim. The key is present on
+every run, including the unjudged one: an omitted key and a `null` both read as
+"nothing to report", which is the one thing a toolchain that could not be judged
+does not mean.
+
+The axis never changes the exit code and is counted in no roll-up. The SBOM is
+untouched by it.
 
 **On-demand callgraph extraction with `--reachability`**
 
@@ -619,6 +646,10 @@ kanonarion vuln-scan-list [walk-id] [flags]
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
 
 A zero result distinguishes "that walk has no scan run" from "nothing has been
 scanned", per [Zero-result listings](conventions.md#zero-result-listings).

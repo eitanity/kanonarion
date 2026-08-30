@@ -164,10 +164,7 @@ func TestLatestModules_NoPinIsNotAsked(t *testing.T) {
 		[]string{"github.com/spf13/cobra"}, latestResolverFor(t, srv), &stdout, io.Discard); err != nil {
 		t.Fatalf("runLatestModules: %v", err)
 	}
-	var decoded map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
-		t.Fatalf("unmarshalling: %v\noutput: %s", err, stdout.String())
-	}
+	decoded := singleLatestRow(t, stdout.Bytes())
 	if got, present := decoded["is_latest"]; !present || got != nil {
 		t.Errorf("is_latest = %v (present %v), want null: no pin was named", got, present)
 	}

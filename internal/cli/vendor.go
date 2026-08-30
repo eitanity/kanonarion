@@ -189,9 +189,12 @@ func newVendorCmd(stdout, stderr io.Writer) *cobra.Command {
 	var gomodPath string
 	var vendorOnly bool
 	cmd := &cobra.Command{
-		Use:         "vendor",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Analyse a vendored project and detect vendor/ drift & inconsistency",
+		Use: "vendor",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Analyse a vendored project and detect vendor/ drift & inconsistency",
 		Long: `vendor treats a vendored project (vendor/ + vendor/modules.txt) as a
 first-class input: it resolves the closure from modules.txt instead of
 re-fetching from the proxy, checks every file under vendor/ against the same
