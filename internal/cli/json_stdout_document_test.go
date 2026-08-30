@@ -62,24 +62,23 @@ type jsonStdoutCase struct {
 	args []string
 	// skip, when non-empty, states why this command is not run here. It is a
 	// sentence, not a flag: a command excluded without a reason is a hole in
-	// the guard that nobody can see.
+	// the guard that nobody can see. It names what it would take to make the
+	// command answer, because a reason that restates the symptom — "it writes
+	// nothing", "it fails early" — is the hole with a sentence in front of it.
 	skip string
-	// argsFn builds arguments that only exist at run time, such as a fixture
-	// directory. It replaces args when set, and a case that sets it must
-	// produce a document: the point of giving a command a real argument is
-	// that it stops passing on the empty stdout of an early failure.
-	argsFn func(t *testing.T) []string
+	// argsFn builds arguments that only exist at run time, such as a path into
+	// the fixture. It replaces args when set.
+	argsFn func(t *testing.T, fx jsonStdoutFixture) []string
 }
 
 // policyValidateFixtureArgs names a directory of valid policy files.
 //
 // Without it `policy validate` runs bare in the guard's empty working
-// directory, fails on the missing <path> before writing anything, and the
-// case passes on empty stdout having exercised nothing. A temp directory is
-// used rather than the repository's own docs/examples/policies because the
-// guard chdirs away from the package directory first, so a repository-relative
-// path would resolve to nothing and re-open the same hole.
-func policyValidateFixtureArgs(t *testing.T) []string {
+// directory and fails on the missing <path> before writing anything. A temp
+// directory is used rather than the repository's own docs/examples/policies
+// because the guard chdirs away from the package directory first, so a
+// repository-relative path would resolve to nothing.
+func policyValidateFixtureArgs(t *testing.T, _ jsonStdoutFixture) []string {
 	t.Helper()
 	dir := t.TempDir()
 	const policy = "version: \"1\"\nstages:\n  fetch:\n    max_depth: 1\n"
@@ -89,96 +88,122 @@ func policyValidateFixtureArgs(t *testing.T) []string {
 	return []string{dir}
 }
 
+// localTreeArgs names the fixture's working tree for `local`, which analyses a
+// directory rather than a go.mod.
+func localTreeArgs(_ *testing.T, fx jsonStdoutFixture) []string {
+	return []string{fx.treeDir}
+}
+
+// goModArgs scopes a command to the fixture's working tree. The tree's module
+// requires nothing, so the build list resolves without leaving the directory
+// and the command reaches its rendering without a proxy.
+func goModArgs(_ *testing.T, fx jsonStdoutFixture) []string {
+	return []string{"--gomod", fx.goMod()}
+}
+
 // jsonStdoutCases enumerates EVERY command in the cobra tree, because --json is
 // a persistent flag on the root: every command accepts it, so every command is
 // a candidate for the defect. The completeness test below asserts this map and
 // the tree name the same set, so a command added later fails the build until
 // somebody decides how it behaves under --json.
 //
-// Commands are run against an empty store in an empty working directory. Most
-// therefore fail before producing output, which is a real result for this
-// guard — a command that writes nothing to stdout writes no prose to stdout
-// either. The ones that do produce a document (the list commands, config show,
-// store info) are where the assertion bites, and license-compat has its own
-// fixture-driven test that drives a full document with conflicts, coverage
-// holes and the pre-modules caveat all present at once.
+// Every case that runs must produce a document. A command is given whatever it
+// needs to reach its rendering — a coordinate, an identifier the fixture store
+// holds a record under, a path into the fixture's working tree — because a
+// refusal writes nothing to stdout, and a case that passed on silence proved
+// only that the command had failed before the code under test ran.
+//
+// The commands that record a run are here too, and stay off the network: walk
+// and callgraph serve the record the fixture already holds rather than
+// re-analysing, and extract and vuln-scan render a run over artefacts whose
+// bytes the fixture does not carry. Each renders through its real writer, which
+// is what this guard reads.
+//
+// A command that cannot be made to answer here carries a skip naming what it
+// would take. Two classes account for all of them: a command with no JSON
+// rendering at all, which is a different question from prose appended to a JSON
+// document, and a command that must leave the fixture for the network.
 var jsonStdoutCases = map[string]jsonStdoutCase{
-	"audit":                 {},
-	"callees":               {},
-	"callers":               {},
-	"callgraph":             {},
-	"callgraph-list":        {},
-	"callgraph-show":        {},
-	"capability":            {},
-	"config":                {skip: "command group: cobra prints its help text; it renders no answer of its own"},
-	"config get":            {},
-	"config init":           {skip: "no JSON rendering: it writes a plain-text status line even under --json, which is a different question from prose appended to a JSON document"},
-	"config set":            {},
-	"config show":           {},
-	"context":               {},
-	"dependents":            {},
-	"directives":            {skip: "command group: cobra prints its help text; it renders no answer of its own"},
-	"directives diff":       {},
-	"directives list":       {},
-	"directives show":       {},
-	"examples":              {},
-	"examples-find":         {},
-	"examples-list":         {},
-	"examples-show":         {},
-	"extract":               {},
-	"extract list":          {},
-	"extract show":          {},
-	"fetch":                 {},
-	"fips":                  {},
-	"godebug":               {},
-	"implementers":          {},
-	"inspect":               {},
-	"interface":             {},
-	"interface-diff":        {},
-	"interface-list":        {},
-	"interface-show":        {},
-	"latest":                {},
-	"license":               {},
-	"license-compat":        {},
-	"license-diff":          {},
-	"license-list":          {},
-	"local":                 {skip: "ingests the working tree's call graph; the guard runs in an empty directory, so this would measure the harness rather than the command"},
-	"native":                {},
-	"notice":                {},
+	"audit":          {argsFn: goModArgs},
+	"callees":        {args: []string{jsonDocNodeID}},
+	"callers":        {args: []string{jsonDocMethodID}},
+	"callgraph":      {args: []string{jsonDocDepCoord}},
+	"callgraph-list": {},
+	"callgraph-show": {args: []string{jsonDocDepCoord}},
+	"capability":     {args: []string{jsonDocDepCoord}},
+	"config":         {skip: "command group: cobra prints its help text; it renders no answer of its own"},
+	"config get": {skip: "no JSON rendering: it prints the value in force for one key as plain text — a bare string for a scalar, a YAML fragment for a structured one — under --json as well. " +
+		"Answering here needs a document defined for a single configuration value, which is the question config init raises"},
+	"config init":     {skip: "no JSON rendering: it writes a plain-text status line even under --json, which is a different question from prose appended to a JSON document"},
+	"config set":      {skip: "no JSON rendering: it acknowledges the write with a plain-text line even under --json, the same question config init raises"},
+	"config show":     {},
+	"context":         {args: []string{jsonDocDepCoord}},
+	"dependents":      {args: []string{jsonDocDepCoord, "--walk-id", jsonDocWalkID}},
+	"directives":      {skip: "command group: cobra prints its help text; it renders no answer of its own"},
+	"directives diff": {args: []string{jsonDocDirScanID, jsonDocDirScanID}},
+	"directives list": {args: []string{"--project", jsonDocRootPath}},
+	"directives show": {args: []string{jsonDocDirScanID}},
+	"examples":        {args: []string{jsonDocDepCoord}},
+	"examples-find":   {args: []string{jsonDocSymbol}},
+	"examples-list":   {},
+	"examples-show":   {args: []string{jsonDocDepCoord, jsonDocExample}},
+	"extract":         {args: []string{jsonDocWalkID}},
+	"extract list":    {},
+	"extract show":    {args: []string{jsonDocExtractID}},
+	"fetch": {skip: "acquires module bytes from a proxy: it does not serve the fixture's fetch record in their place, and --from-modcache only moves the source of the bytes off the network onto a module cache the guard does not populate. " +
+		"Answering here needs a proxy the guard stands up itself"},
+	"fips":           {argsFn: goModArgs},
+	"godebug":        {argsFn: goModArgs},
+	"implementers":   {args: []string{jsonDocIfaceID}},
+	"inspect":        {argsFn: goModArgs},
+	"interface":      {args: []string{jsonDocDepCoord}},
+	"interface-diff": {args: []string{jsonDocDepCoord, jsonDocDepCoord}},
+	"interface-list": {},
+	"interface-show": {args: []string{jsonDocDepCoord}},
+	"latest":         {argsFn: goModArgs},
+	"license":        {args: []string{jsonDocDepCoord}},
+	"license-compat": {args: []string{jsonDocRootCoord}},
+	"license-diff":   {args: []string{jsonDocDepCoord, jsonDocDepCoord}},
+	"license-list":   {},
+	"local":          {argsFn: localTreeArgs},
+	"native":         {args: []string{jsonDocDepCoord}},
+	"notice": {skip: "no JSON rendering: stdout is the THIRD-PARTY-LICENSES attribution document, which is plain text because that is the form it is published in, and --json does not change it. " +
+		"Answering here needs a decision about what an attribution document is as JSON"},
 	"policy":                {skip: "command group: cobra prints its help text; it renders no answer of its own"},
 	"policy show":           {},
 	"policy validate":       {argsFn: policyValidateFixtureArgs},
-	"provenance":            {},
-	"reachability":          {},
-	"sbom":                  {},
+	"provenance":            {args: []string{jsonDocDepCoord}},
+	"reachability":          {args: []string{jsonDocDepCoord, "--vuln", jsonDocFindingID}},
+	"sbom":                  {args: []string{jsonDocWalkID}},
 	"sbom-list":             {},
-	"sbom-show":             {},
+	"sbom-show":             {args: []string{jsonDocSBOMID}},
 	"store":                 {skip: "command group: cobra prints its help text; it renders no answer of its own"},
 	"store clean":           {skip: "no JSON rendering: it writes a plain-text status line even under --json, which is a different question from prose appended to a JSON document"},
 	"store config":          {skip: "command group: cobra prints its help text; it renders no answer of its own"},
 	"store config show":     {},
 	"store info":            {},
 	"store ledger":          {},
-	"symbol-context":        {},
-	"symbol-find":           {},
-	"use":                   {},
-	"vendor":                {},
-	"verification-coverage": {},
-	"vuln":                  {},
-	"vuln-by-id":            {},
-	"vuln-scan":             {},
-	"vuln-scan-diff":        {},
-	"vuln-scan-history":     {},
+	"symbol-context":        {args: []string{jsonDocDepCoord, jsonDocSymbol}},
+	"symbol-find":           {args: []string{jsonDocSymbol}},
+	"use":                   {skip: "no JSON rendering: stdout is one plain path line per module copied into a module cache, and --json does not change it. Answering here needs a document defined for a copy"},
+	"vendor":                {argsFn: goModArgs},
+	"verification-coverage": {args: []string{jsonDocWalkID}},
+	"vuln":                  {args: []string{jsonDocDepCoord}},
+	"vuln-by-id":            {args: []string{jsonDocFindingID}},
+	"vuln-scan":             {args: []string{jsonDocWalkID}},
+	"vuln-scan-diff":        {args: []string{jsonDocScanRunID, jsonDocScanRunID}},
+	"vuln-scan-history":     {args: []string{jsonDocWalkID}},
 	"vuln-scan-list":        {},
-	"vuln-scan-rescan":      {},
-	"vuln-scan-show":        {},
-	"vuln-show":             {},
-	"vuln-snapshot-list":    {},
-	"vuln-snapshot-show":    {},
-	"walk":                  {},
-	"walk-diff":             {},
-	"walk-list":             {},
-	"walk-show":             {},
+	"vuln-scan-rescan": {skip: "no JSON rendering: it writes three plain-text lines — completion summary, run id, snapshot — even under --json. " +
+		"--snapshot-source/--snapshot-version already pin it to a stored snapshot and keep it off the network, so a document is the only thing missing"},
+	"vuln-scan-show":     {args: []string{jsonDocScanRunID}},
+	"vuln-show":          {args: []string{jsonDocDepCoord}},
+	"vuln-snapshot-list": {},
+	"vuln-snapshot-show": {args: []string{jsonDocSnapSource, jsonDocSnapshotV}},
+	"walk":               {args: []string{jsonDocRootCoord}},
+	"walk-diff":          {args: []string{jsonDocWalkID, jsonDocWalkID}},
+	"walk-list":          {},
+	"walk-show":          {args: []string{jsonDocWalkID}},
 }
 
 // commandPaths returns every command in the tree by the path a caller types,
@@ -219,8 +244,12 @@ func TestJSONStdoutGuard_CoversEveryCommand(t *testing.T) {
 }
 
 // TestJSONStdoutIsExactlyOneDocument runs every enumerated command under --json
-// and asserts stdout is either empty or exactly one JSON document. It is the
-// regression guard for prose appended to stdout after the document.
+// and asserts stdout is exactly one JSON document. It is the regression guard
+// for prose appended to stdout after the document.
+//
+// There is no third path: a case either produces a document or carries a skip.
+// Empty stdout is a failure, because a command that wrote nothing rendered
+// nothing, and a case that accepted that asserted nothing about the rendering.
 func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 	names := make([]string, 0, len(jsonStdoutCases))
 	for name := range jsonStdoutCases {
@@ -228,10 +257,14 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 	}
 	sort.Strings(names)
 
-	// An empty working directory: the commands that default to ./go.mod fail on
-	// its absence rather than resolving a build list or reaching the network.
+	// One store and one working tree for the whole guard. The commands that
+	// record a run write into the same store the readers read, which is the
+	// state a real operator's store is in.
+	fx := newJSONStdoutFixture(t)
+	// The working directory is empty and outside any module: a command that
+	// defaults to ./go.mod is then scoped by the --gomod its case passes, not by
+	// whatever tree the test binary happens to be run from.
 	chdirWithGoMod(t, "")
-	store := t.TempDir()
 
 	var ran, documents int
 	for _, name := range names {
@@ -242,28 +275,29 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			extra := tc.args
 			if tc.argsFn != nil {
-				extra = tc.argsFn(t)
+				extra = tc.argsFn(t, fx)
 			}
 			args := append(strings.Fields(name), extra...)
-			args = append(args, "--json", "--store-root", store)
+			args = append(args, "--json", "--store-root", fx.storeRoot)
 			var stdout, stderr bytes.Buffer
-			// The error is deliberately ignored: a command that refuses is a
-			// valid outcome here. What it wrote to stdout is the assertion.
+			// The error is deliberately ignored: a command that reports a
+			// non-clean finding is a valid outcome here. What it wrote to stdout
+			// is the assertion.
 			_ = Run(args, &stdout, &stderr)
 			ran++
 			if strings.TrimSpace(stdout.String()) == "" {
-				if tc.argsFn != nil {
-					t.Fatalf("%s was given a real argument so that it would answer, and wrote nothing: "+
-						"the case proves nothing in this state", name)
-				}
-				return
+				t.Fatalf("%s wrote nothing to stdout, so this case asserts nothing about its JSON rendering: "+
+					"give it what it needs to answer, or a skip saying what that would take.\nstderr:\n%s",
+					name, stderr.String())
 			}
 			documents++
 			assertSingleJSONValue(t, name, stdout.Bytes())
 		})
 	}
-	// Reported so the guard's real reach is visible rather than assumed: the
-	// commands that produced nothing were exercised, but proved nothing.
-	t.Logf("enumerated %d commands, ran %d, %d produced a document on an empty store",
-		len(jsonStdoutCases), ran, documents)
+	// The floor, not a warning: every command that ran answered. A later change
+	// that silences one fails here rather than quietly shrinking the guard.
+	if documents != ran {
+		t.Errorf("%d of %d commands that ran produced a document; every one must", documents, ran)
+	}
+	t.Logf("enumerated %d commands, ran %d, %d produced a document", len(jsonStdoutCases), ran, documents)
 }
