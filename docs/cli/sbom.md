@@ -451,7 +451,16 @@ kanonarion sbom-show <sbom-id> [flags]
 | Flag | Default | Description |
 |---|---|---|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
-| `--json` | `false` | Output record metadata as JSON instead of SBOM content |
+| `--json` | `false` | No-op: stdout is the stored CycloneDX document, which is already JSON |
+
+The global `--json` flag is a no-op here: `sbom-show` always emits the stored
+CycloneDX document's own bytes, which are the deliverable artifact and are
+already machine-readable, so there is nothing to convert. Passing the flag and
+omitting it produce byte-identical output.
+
+The record's own fields — including `operator` and `licenses_incomplete`, the
+condition behind the [undetermined-licence exit](#licence-completeness) — are
+served for every record by `sbom-list --json`.
 
 ### Examples
 
@@ -459,7 +468,7 @@ kanonarion sbom-show <sbom-id> [flags]
 # Print the SBOM document
 kanonarion sbom-show sbom-abc123def456 --store-root ~/.kanonarion
 
-# Print record metadata as JSON
+# The same bytes: --json is a no-op here
 kanonarion sbom-show sbom-abc123def456 --json --store-root ~/.kanonarion
 ```
 
@@ -483,6 +492,18 @@ kanonarion sbom-list [flags]
 
 A zero result distinguishes "no SBOM for that walk" from "no SBOM has been
 generated", per [Zero-result listings](conventions.md#zero-result-listings).
+
+Each `--json` row carries the whole stored record apart from the document
+itself: `id`, `ecosystem`, `walk_id`, `format`, `pipeline_version`,
+`generated_at`, `content_hash`, `operator` and `licenses_incomplete`. Fetch the
+document for a row with `kanonarion sbom-show <id>`.
+
+`licenses_incomplete` is the record field behind the non-zero
+[undetermined-licence exit](#licence-completeness): `true` means at least one
+component of that document carries no licence identity. It is served here so a
+caller can tell which stored SBOMs are complete across the whole store, rather
+than one document at a time. The text listing does not print it; ask for
+`--json`.
 
 ### Examples
 
