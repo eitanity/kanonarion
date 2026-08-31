@@ -1049,6 +1049,102 @@ new question.
 **Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a metadata-only
 operation in SQLite: no row is rewritten, whatever the table holds.
 
+## Call graph store: module `callgraph`, migration 15
+
+**Additive; one new column, a back-fill, no purge, no schema-version bump and no
+pipeline bump.** `callgraph_records` gains `analyser`: the `golang.org/x/tools`
+version that type-checked the module and built the SSA the graph was computed
+over, together with how the store came to state it. The whole store's migration
+count goes `v82` -> `v83`.
+
+**Why the library, when the record already names the toolchain.** The toolchain
+compiles the code and supplies the standard library; x/tools is what READS it,
+and it decides what the graph CONTAINS. A version predating a language construct
+degrades extraction two ways. Loudly: type-checking fails, the record says
+`LoadFailed`, and a reader can see it. Silently: the SSA builds anyway and misses
+the construct, so CHA under-reports and a `callers` answer comes back short with
+nothing said. Nothing on a record could tell those two graphs apart. Bumping
+x/tools is a `go.mod` change, so `pipeline_version` does not move for it — which
+means a graph built by a library that understood the code and one built by a
+library that did not were peers on the composition ladder.
+
+**One column, carrying the provenance with the version.** The stored value is
+`observed:v0.49.0` or `inferred:v0.47.0`, never a bare version. Splitting the two
+into separate columns would let a query, an index or an export read the number
+without the strength behind it, and this is the one axis where that is the whole
+defect: a guess that reads as a measurement, on the field whose purpose is to say
+what the graph could and could not see. An empty column means the row states
+none, which is what a record written by a binary that could not read its own
+build info honestly says.
+
+**Where the value comes from.** At extraction, from the running binary's own
+build info — `debug.ReadBuildInfo`, the `dep golang.org/x/tools` entry, with a
+`replace` taken over the replaced module because the replacement is what actually
+parsed the code. Never from a `go.mod` read at read time: that describes the
+reader rather than the record. A `go test` binary carries no dependency list at
+all, so records written under the suite state no analyser, which is true of them.
+
+**The back-fill infers, and every value it writes says so.** This is walk
+migration 9's shape with walk 9's evidence removed, and the difference is the
+whole of it. Walk 9 decoded each blob to project a value the record ALREADY HELD
+and had merely left unprojected. Here there is no such source: no record ever
+captured the analyser version, anywhere. The back-fill therefore reads
+`extracted_at` — a column, not a blob — and attributes it against the pin history
+of this repository's own `go.mod`:
+
+| Pin landed | `golang.org/x/tools` | Commit |
+|---|---|---|
+| 2026-07-05 | `v0.47.0` | `3caa505`, the line first appears |
+| 2026-08-15 | `v0.49.0` | `8d5dc4f`, the only change since |
+
+That is weak evidence and is written as such. It says which library a binary
+built from this repository at that date would have linked, not which one the
+binary that actually wrote the row did — a local build of an older checkout is
+attributed wrongly by it. So every back-filled row is written `inferred:`, and no
+rendering in the tool shows an inferred value the way it shows an observed one.
+Measured on a seeded population of the size the live store holds — 811 rows, 413
+before the pin moved and 398 on or after — 811 rows in, 811 rows out, every
+`content_hash` unchanged.
+
+**Walk 9's two rules, kept.** A row whose `extracted_at` cannot be parsed is left
+at the empty value rather than failing the migration: a store that refuses to
+open because one historical timestamp is unreadable is the worse outcome, and
+"not recorded" is exactly what such a row is. A row extracted before the pin
+history begins is left empty too — there is no version to infer, and inventing
+one is the fabrication this axis exists to stop. A row already stating an
+analyser is never re-attributed: a guess must not overwrite a measurement.
+
+**No index, unlike walk 9.** Walk 9 indexed `go_version` because its reads FILTER
+on the toolchain. Nothing filters on this. The generations of one coordinate are
+already found by the primary key, and the only read is over that handful; an
+index nothing queries is a write cost and a second place to be wrong.
+
+**No purge and no bump, because the record shape does not move.** The fact is
+metadata about the PRODUCER rather than a claim about the module, so it lives
+OUTSIDE the seal: the canonical encoding is untouched, every stored record
+marshals to the bytes it was sealed over, and every `content_hash` in the table
+is left exactly as written. A bump would have stranded 811 records and their edge
+rows to state a fact about which binary wrote them. Being outside the seal is
+also a limit on what it may be used for: a value outside the seal could be edited
+without breaking the record's own integrity check, so nothing ranks, caches or
+reuses on it. It is read, printed and compared, and that is all.
+
+**What it changes for a read.** `callgraph-show` names the analyser on every
+record, beside the algorithm and the toolchain, and `--history` names it on every
+generation. Where the generations composed for one coordinate state more than one
+analyser VERSION, the composed read says so — as a statement, never a refusal. It
+does not change which generation wins: the completeness ladder decides that, and
+a fact about the producer must not become a silent tiebreak. Two rows at one
+version stated at two strengths are not a disagreement, because the same library
+parsed both. A generation that states no analyser takes no part in the
+comparison, on the rule an unnamed `GOROOT` is read under: "I could not tell" is
+not a value to disagree with. A store whose records were all written by one
+binary therefore gains no line anywhere.
+
+**Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a
+metadata-only operation in SQLite. The back-fill is one `SELECT` of two columns
+plus one `UPDATE` per row, with no decompression.
+
 ## Call graph records: the wrapper hop, no migration and no bump
 
 **No store migration, no schema-version bump, no pipeline bump.** The analyser

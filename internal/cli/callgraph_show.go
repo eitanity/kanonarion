@@ -134,6 +134,14 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisCommand(coord, ""))}
 	}
+	// Asked before --node narrows the record: the disagreement is between whole
+	// generations of this coordinate, and a filtered view of the served one says
+	// nothing about which library built the others.
+	disagreement, disagrees, err := analyserDisagreement(ctx, coord, r, uc)
+	if err != nil {
+		return err
+	}
+
 	nodeFilter, limitNodes, limitEdges := f.nodeFilter, f.limitNodes, f.limitEdges
 
 	var filter nodeFilterOutcome
@@ -146,6 +154,9 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		enc.SetIndent("", "  ")
 		j := toCallGraphJSON(r)
 		j.NodeFilter = filter.toJSON()
+		if disagrees {
+			j.AnalyserDisagreement = toAnalyserDisagreementJSON(disagreement)
+		}
 		if err := enc.Encode(j); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
@@ -155,7 +166,41 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	if err := printCallGraphRecord(r, limitNodes, limitEdges, stdout); err != nil {
 		return err
 	}
+	if disagrees {
+		if _, werr := fmt.Fprintf(stdout, "notice: %s\n", disagreement.Summary()); werr != nil {
+			return fmt.Errorf("writing analyser notice: %w", werr)
+		}
+	}
 	return writeNodeFilterNotice(stdout, coord, f.source, filter)
+}
+
+// analyserDisagreement reports whether the generations composed for a
+// coordinate were parsed by more than one x/tools, and what they were.
+//
+// It reads the history because that is where the other generations are: the
+// composed answer is ONE record, and a fact about the set it was chosen from
+// cannot be recovered from it. The cost is one extra ledger read on an
+// inspection command that has already paid for a composition.
+//
+// It states nothing where there is nothing to state — a coordinate with one
+// generation, or whose generations agree, or where only one of them names an
+// analyser at all — so a store built by a single binary gains no line anywhere.
+//
+// It never changes which generation answers. The completeness ladder decided
+// that before this was asked, and a fact about the producer must not become a
+// silent tiebreak; making the disagreement visible is the whole of the change.
+func analyserDisagreement(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	served domain.CallGraphRecord,
+	uc QueryCallGraphUseCase,
+) (domain.AnalyserDisagreement, bool, error) {
+	recs, err := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
+	if err != nil {
+		return domain.AnalyserDisagreement{}, false, fmt.Errorf("reading callgraph history: %w", err)
+	}
+	d, ok := domain.AnalyserDisagreementAmong(recs, served)
+	return d, ok, nil
 }
 
 // runCallGraphHistory prints every generation the ledger holds for a coordinate,
@@ -214,10 +259,10 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    analyser: %s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
-			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(),
+			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), r.Analyser.String(),
 			historyOrigin(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
@@ -443,6 +488,60 @@ type callGraphRecordJSON struct {
 	// the record is unfiltered, which is a different statement from a filter
 	// that matched nothing.
 	NodeFilter *nodeFilterJSON `json:"node_filter,omitempty"`
+	// Analyser names the golang.org/x/tools that parsed the module, and how the
+	// store came to state it. It is always present, including when nothing is
+	// known: an absent object would read as "no analyser", which is the reading
+	// the provenance exists to prevent.
+	Analyser analyserJSON `json:"analyser"`
+	// AnalyserDisagreement is present only when the generations composed for this
+	// coordinate were not all parsed by the same analyser. Absent means they
+	// agreed, or that only one of them said.
+	AnalyserDisagreement *analyserDisagreementJSON `json:"analyser_disagreement,omitempty"`
+}
+
+// analyserJSON is one record's analyser identity, fielded rather than rendered,
+// so a machine consumer reads the version and the strength behind it as two
+// values instead of parsing a sentence.
+//
+// Provenance is spelled out on every record, including the empty one, for the
+// reason the version is: "observed" and "inferred" are different evidence, and a
+// consumer that sees only a version number cannot tell a measurement from a
+// reconstruction made from a date.
+type analyserJSON struct {
+	// Module is the library the version names, so no consumer has to guess which
+	// of a record's three versions this is.
+	Module string `json:"module"`
+	// Version is empty when the record states none.
+	Version string `json:"version"`
+	// Provenance is "observed", "inferred", or empty when there is no version.
+	Provenance string `json:"provenance"`
+	// Inferred is the same fact as a boolean, because it is the one a consumer
+	// branches on and a string comparison is a place to be wrong.
+	Inferred bool `json:"inferred"`
+}
+
+func toAnalyserJSON(a domain.AnalyserIdentity) analyserJSON {
+	return analyserJSON{
+		Module:     domain.AnalyserModulePath,
+		Version:    string(a.Version),
+		Provenance: string(a.Provenance),
+		Inferred:   a.IsInferred(),
+	}
+}
+
+// analyserDisagreementJSON carries what the text notice states: which analysers
+// the composed generations name, and which of them the served answer came from.
+type analyserDisagreementJSON struct {
+	Analysers []analyserJSON `json:"analysers"`
+	Served    analyserJSON   `json:"served"`
+}
+
+func toAnalyserDisagreementJSON(d domain.AnalyserDisagreement) *analyserDisagreementJSON {
+	out := &analyserDisagreementJSON{Served: toAnalyserJSON(d.Served)}
+	for _, id := range d.Identities {
+		out.Analysers = append(out.Analysers, toAnalyserJSON(id))
+	}
+	return out
 }
 
 // synthesisedGoModJSON reports the go.mod kanonarion wrote into an extracted
@@ -563,6 +662,8 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		PipelineVersion: r.PipelineVersion,
 		ContentHash:     r.ContentHash,
 
+		Analyser: toAnalyserJSON(r.Analyser),
+
 		TestScope:           orNotRecorded(string(r.TestScope)),
 		TestScopeDetail:     r.TestScopeDetail,
 		TestNodeCount:       testNodes,
@@ -597,6 +698,26 @@ func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
 	}
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing fidelity: %w", err)
+	}
+	return nil
+}
+
+// writeAnalyserLine names the library that PARSED the module, beside the
+// algorithm that walked the result and the toolchain that compiled it.
+//
+// It is printed on every record, including the ones that state nothing, for the
+// reason the test-scope line is: a reader who sees no analyser line reads it as
+// "the usual one", and the whole value of the axis is that a graph built by a
+// library predating a language construct can be silently short. An inferred
+// value says so in as many words on this line — see domain.AnalyserIdentity —
+// because a bare version number here would be read as a measurement.
+func writeAnalyserLine(stdout io.Writer, r domain.CallGraphRecord) error {
+	line := "  analyser: " + r.Analyser.String()
+	if !r.Analyser.Recorded() {
+		line += " — this record does not name the library that type-checked it and built its SSA"
+	}
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing analyser: %w", err)
 	}
 	return nil
 }
@@ -858,6 +979,9 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 	}
 
 	if err := writeFidelityLine(stdout, r); err != nil {
+		return err
+	}
+	if err := writeAnalyserLine(stdout, r); err != nil {
 		return err
 	}
 	if err := writeTestScopeLine(stdout, r); err != nil {

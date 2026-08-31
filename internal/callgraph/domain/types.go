@@ -615,6 +615,27 @@ type CallGraphRecord struct {
 	// RecordToolchain, which also recovers what such a record's own stdlib
 	// positions still show.
 	Toolchain gotoolchain.Version
+	// Analyser is the golang.org/x/tools that type-checked this module and built
+	// the SSA the graph was computed over, and how the store came to state it.
+	//
+	// IT IS OUTSIDE THE SEAL, and that is the whole reason it can exist on 811
+	// records that were written before it. The canonical encoding does not carry
+	// it, so every stored record still marshals to the bytes it was sealed over
+	// and verifies against the hash it was written with; this field is filled from
+	// the row's own column on the way out, and read from it on the way in. Nothing
+	// may move it inside the seal without stranding every generation the store
+	// holds — which is exactly what a fact ABOUT the producer must not cost.
+	//
+	// Because it is outside the seal it is also not evidence a later run may act
+	// on: it ranks nothing, gates no cache and pins no reuse. It is read, printed
+	// and compared, and that is all. Facts a run DECIDES on live inside the seal,
+	// where an edit breaks the record's own integrity check.
+	//
+	// The zero identity means the row states none. Read it through the identity
+	// rather than the bare version: a value inferred from a date and one observed
+	// by the extracting binary are different strengths of claim, and the type
+	// refuses to render them alike.
+	Analyser AnalyserIdentity
 	// SynthesisedGoMod is non-zero when the analysed tree is not the published
 	// tree: the module zip shipped no go.mod and kanonarion wrote one before
 	// loading. It states which module path and which go directive that file

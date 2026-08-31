@@ -109,3 +109,89 @@ func (s *Store) HideEdgeTableForTest(ctx context.Context) error {
 	}
 	return nil
 }
+
+// BackfillAnalyserForTest runs migration 15's Go step against an already-open
+// store, so the back-fill can be exercised directly rather than only through a
+// migration that has already been applied by the time a test store opens.
+func (s *Store) BackfillAnalyserForTest(ctx context.Context) error {
+	tx, err := s.db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+	if err := backfillAnalyser(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing: %w", err)
+	}
+	return nil
+}
+
+// SetAnalyserColumnForTest writes the analyser column of the row addressed by a
+// content hash, bypassing the write leg. It is how a test seeds the population a
+// migration or a composed read meets: two generations of one coordinate built by
+// different analysers, or a row whose column no reader can parse.
+func (s *Store) SetAnalyserColumnForTest(ctx context.Context, contentHash, value string) error {
+	res, err := s.db.DB().ExecContext(ctx,
+		`UPDATE callgraph_records SET analyser = ? WHERE content_hash = ?`, value, contentHash)
+	if err != nil {
+		return fmt.Errorf("setting the analyser column: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("counting rows set: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("no record at content hash %s", contentHash)
+	}
+	return nil
+}
+
+// AnalyserColumnsForTest returns every row's content hash and analyser column,
+// so a test can assert what the store HOLDS rather than what a read projects.
+func (s *Store) AnalyserColumnsForTest(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.DB().QueryContext(ctx, `SELECT content_hash, analyser FROM callgraph_records`)
+	if err != nil {
+		return nil, fmt.Errorf("reading analyser columns: %w", err)
+	}
+	defer func() { _ = rows.Close() }() //nolint:errcheck
+	out := map[string]string{}
+	for rows.Next() {
+		var hash, analyser string
+		if serr := rows.Scan(&hash, &analyser); serr != nil {
+			return nil, fmt.Errorf("scanning analyser column: %w", serr)
+		}
+		out[hash] = analyser
+	}
+	if cerr := rows.Err(); cerr != nil {
+		return nil, fmt.Errorf("iterating analyser columns: %w", cerr)
+	}
+	return out, nil
+}
+
+// SeedDatedRowForTest inserts a minimal record row at a chosen extraction date
+// with an empty analyser column, the way every row written before migration 15
+// exists. It is how the back-fill is measured against a population rather than
+// against one row.
+func (s *Store) SeedDatedRowForTest(ctx context.Context, r domain2.CallGraphRecord) error {
+	var h domain2.CallGraphRecordHasher
+	rBlob := r
+	rBlob.Edges = nil
+	raw, err := h.Marshal(rBlob)
+	if err != nil {
+		return fmt.Errorf("marshalling: %w", err)
+	}
+	if _, err := s.db.DB().ExecContext(ctx, `
+INSERT INTO callgraph_records (module_path, module_version, pipeline_version, algorithm,
+    overall_status, completeness, analysis_source, worktree_digest, node_count, edge_count,
+    extracted_at, content_hash, serialised)
+VALUES (?,?,?,?,?,?,'','',?,?,?,?,?)`,
+		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion, string(r.Algorithm),
+		int(r.OverallStatus), string(r.Completeness), r.NodeCount, r.EdgeCount,
+		r.ExtractedAt.UTC().Format(time.RFC3339), r.ContentHash, blobcodec.Encode(raw),
+	); err != nil {
+		return fmt.Errorf("seeding dated record: %w", err)
+	}
+	return nil
+}

@@ -304,6 +304,7 @@ kanonarion callgraph-show <module>@<version> [flags]
 $ kanonarion callgraph-show golang.org/x/mod@v0.30.0 --limit-nodes 2 --limit-edges 2
 golang.org/x/mod@v0.30.0  [CHA]  Extracted
   fidelity: BUILT_WITH_BODIES   source: zip   toolchain: go1.26.6
+  analyser: golang.org/x/tools v0.49.0
   test scope: analysed — 290 of 1039 nodes are test declarations
   interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
 Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
@@ -406,6 +407,38 @@ stdlib path at all. Under `--json`, `toolchain` carries that identity — readin
 `not recorded` where the record establishes no version, including where a plain
 GOROOT names none — and `toolchain_stated` is `null` unless the record itself
 named one.
+
+The `analyser:` line names the `golang.org/x/tools` that type-checked the module
+and built the SSA the graph was computed over. It is a different fact from the
+toolchain: the toolchain compiles the code and supplies the standard library, and
+x/tools is what reads it, so a version predating a language construct can make a
+graph silently short — the SSA builds, the construct is missed, and `callers`
+comes back with fewer answers than there are. The line is printed on every
+record, including the ones that name none.
+
+It renders one of three ways, and the third is never shown as the second:
+
+```
+  analyser: golang.org/x/tools v0.49.0
+  analyser: golang.org/x/tools v0.47.0 (INFERRED from the extraction date; this record never recorded one)
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
+```
+
+The first is the extracting binary naming its own linked library. The second is a
+row written before the axis existed: nothing recorded the version, so the store
+attributes it from when the record was written against this repository's own
+`go.mod` history. That is a reconstruction, not a measurement, and it says so.
+
+Under `--json`, `analyser` is always present and carries `module`, `version`,
+`provenance` (`observed`, `inferred`, or empty) and `inferred` as a boolean.
+
+Where the generations composed for one coordinate name more than one analyser
+VERSION, the composed read adds a `notice:` saying so, and `--json` carries it as
+`analyser_disagreement` (`analysers`, `served`). It changes nothing about which
+generation answers — the completeness ladder decides that — and it appears only
+where there is a disagreement to report: two generations at one version, or
+generations that name none, produce no line. `--history` names the analyser on
+every generation whether they agree or not.
 
 ##### Modules published before Go modules
 

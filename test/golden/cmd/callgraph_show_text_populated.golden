@@ -4,6 +4,7 @@ exit 0
 --- stdout ---
 example.com/mod@v1.2.0  [CHA]  Extracted
   fidelity: BUILT_WITH_BODIES   source: zip   toolchain: not recorded
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
   test scope: analysed — 0 of 2 nodes are test declarations
   reference scope: analysed — 0 of 1 edges record a function value being taken, not called
 Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported

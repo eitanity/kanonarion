@@ -62,7 +62,14 @@ func (a *Analyser) Analyse(
 	zipPath string,
 	coord coordinate.ModuleCoordinate,
 	inputs domain.AnalysisInputs,
-) (domain.CallGraphRecord, error) {
+) (rec domain.CallGraphRecord, err error) {
+	// Which x/tools parsed this module is stamped on EVERY record this method
+	// returns, successes and failures alike, and it is stamped here rather than at
+	// each return because a return path added tomorrow would otherwise leave one
+	// silently unnamed. A LoadFailed record needs it most: the library refusing to
+	// type-check a construct it predates is precisely the loud half of the failure
+	// this axis exists to explain.
+	defer func() { rec.Analyser = observedAnalyser() }()
 	a.logMem(ctx, "start")
 	tempDir, err := os.MkdirTemp("", "kanonarion-cg-*")
 	if err != nil {
@@ -141,7 +148,7 @@ func (a *Analyser) Analyse(
 			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source, tempDir), nil
 	}
 
-	rec, err := a.analyseDir(ctx, tempDir, coord, synth, nil, false)
+	rec, err = a.analyseDir(ctx, tempDir, coord, synth, nil, false)
 	if err != nil {
 		return rec, err
 	}
@@ -224,7 +231,9 @@ func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoM
 // The digest says WHICH TREE this is; the root says WHERE it was, which is what
 // a reader standing in a checkout is actually asking when they query it. See
 // CallGraphRecord.AnalysisRoot.
-func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
+func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (rec domain.CallGraphRecord, err error) {
+	// Stamped on every return path, for the reason Analyse states.
+	defer func() { rec.Analyser = observedAnalyser() }()
 	a.logMem(ctx, "start")
 	root, err := analysisRoot(dir)
 	if err != nil {
@@ -239,7 +248,7 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	// module and already declares itself, so nothing is synthesised into it and
 	// the record carries the zero value.
 	var read []string
-	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true)
+	rec, err = a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true)
 	if err != nil {
 		return rec, err
 	}
