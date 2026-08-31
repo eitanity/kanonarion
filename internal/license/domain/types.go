@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -69,6 +71,44 @@ func (s LicenseStatus) String() string {
 	default:
 		return "Unknown"
 	}
+}
+
+// MarshalJSON implements json.Marshaler for LicenseStatus. The status travels
+// as the name every other surface states — the text view and `context --json`
+// both say "Detected" — not as its position in the constant block.
+func (s LicenseStatus) MarshalJSON() ([]byte, error) {
+	return fmt.Appendf(nil, "%q", s.String()), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for LicenseStatus.
+func (s *LicenseStatus) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return fmt.Errorf("failed to unmarshal LicenseStatus: %w", err)
+	}
+	switch str {
+	case "Unknown":
+		*s = LicenceStatusUnknown
+	case "Detected":
+		*s = LicenseStatusDetected
+	case "Ambiguous":
+		*s = LicenceStatusAmbiguous
+	case "Multiple":
+		*s = LicenseStatusMultiple
+	case "None":
+		*s = LicenseStatusNone
+	case "Unclassified":
+		*s = LicenseStatusUnclassified
+	case "ExtractionFailed":
+		*s = LicenseStatusExtractionFailed
+	case "Cancelled":
+		*s = LicenseStatusCancelled
+	case "PerFile":
+		*s = LicenseStatusPerFile
+	default:
+		return fmt.Errorf("invalid LicenseStatus: %q", str)
+	}
+	return nil
 }
 
 // AltMatch is an alternative license identification for a file, reported when

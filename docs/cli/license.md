@@ -191,6 +191,14 @@ an open item until one exists.
 | `PerFile` | No dedicated licence file found; licence identified from `SPDX-License-Identifier` headers or copyright blocks in source files (only possible with `--per-file`) |
 | `ExtractionFailed` | The module zip could not be read |
 
+Under `--json` these names are the values of `overall_status` verbatim.
+`copyright_status` (`not_analysed` / `found` / `none_found` /
+`extraction_failed`), `provenance.confidence` (`not_analysed` / `high` /
+`medium` / `low`) and each entry of `provenance.signals` (`inbound_outbound`,
+`cla_required`, `dco_required`, `authors_file`, `contributors_file`,
+`patents_file`) carry names on the same terms. Match on the name; the position
+of a value in the Go constant block is not part of the contract.
+
 When a root file is `Unclassified` but a known licence was *partially*
 recognised - coverage below the substantive floor, e.g. a truncated AGPL-3.0
 whose only matching span is the "how to apply" appendix - the `context` /

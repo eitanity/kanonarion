@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -54,6 +56,40 @@ func (s ProvenanceSignal) String() string {
 	}
 }
 
+// MarshalJSON implements json.Marshaler for ProvenanceSignal. A signal is the
+// evidence found in the zip, and the document names it as the text view does
+// rather than publishing the constant's ordinal.
+func (s ProvenanceSignal) MarshalJSON() ([]byte, error) {
+	return fmt.Appendf(nil, "%q", s.String()), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for ProvenanceSignal. "unknown" is
+// refused: String reports it for any value outside the constant block, and no
+// signal decodes back from it.
+func (s *ProvenanceSignal) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return fmt.Errorf("failed to unmarshal ProvenanceSignal: %w", err)
+	}
+	switch str {
+	case "inbound_outbound":
+		*s = ProvenanceSignalInboundOutbound
+	case "cla_required":
+		*s = ProvenanceSignalCLARequired
+	case "dco_required":
+		*s = ProvenanceSignalDCORequired
+	case "authors_file":
+		*s = ProvenanceSignalAuthorsFile
+	case "contributors_file":
+		*s = ProvenanceSignalContributorsFile
+	case "patents_file":
+		*s = ProvenanceSignalPatentsFile
+	default:
+		return fmt.Errorf("invalid ProvenanceSignal: %q", str)
+	}
+	return nil
+}
+
 // ChainOfTitleConfidence describes how well-evidenced the module's license
 // chain of title is, combining contribution-licensing signals with copyright
 // extraction results. Per, NotAnalysed and Low (unevidenced) are
@@ -90,6 +126,33 @@ func (c ChainOfTitleConfidence) String() string {
 	default:
 		return "not_analysed"
 	}
+}
+
+// MarshalJSON implements json.Marshaler for ChainOfTitleConfidence. It is an
+// evidence level, not a number, and the ordinal invites arithmetic on it.
+func (c ChainOfTitleConfidence) MarshalJSON() ([]byte, error) {
+	return fmt.Appendf(nil, "%q", c.String()), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for ChainOfTitleConfidence.
+func (c *ChainOfTitleConfidence) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return fmt.Errorf("failed to unmarshal ChainOfTitleConfidence: %w", err)
+	}
+	switch str {
+	case "not_analysed":
+		*c = ChainOfTitleNotAnalysed
+	case "high":
+		*c = ChainOfTitleHigh
+	case "medium":
+		*c = ChainOfTitleMedium
+	case "low":
+		*c = ChainOfTitleLow
+	default:
+		return fmt.Errorf("invalid ChainOfTitleConfidence: %q", str)
+	}
+	return nil
 }
 
 // ProvenanceSummary is the contribution-licensing provenance extracted from

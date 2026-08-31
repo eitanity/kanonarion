@@ -51,15 +51,28 @@ func projectionViews() []projectionView {
 	}
 }
 
-// isDomainStruct reports whether a type belongs to one of this tree's domain
+// isDomainType reports whether a type belongs to one of this tree's domain
 // packages, whichever one — the guard is about the class, not about licences.
-func isDomainStruct(rt reflect.Type) bool {
+func isDomainType(rt reflect.Type) bool {
 	pkg := rt.PkgPath()
 	return strings.HasPrefix(pkg, "github.com/eitanity/kanonarion/internal/") && path.Base(pkg) == "domain"
 }
 
+// isIntegerKind reports whether a type's underlying kind is an integer, the
+// shape a Go enum takes and the one that reaches the wire as an ordinal.
+func isIntegerKind(k reflect.Kind) bool {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	default:
+		return false
+	}
+}
+
 // TestCLIViewsAreTotalProjections refuses, in every listed view, a domain
-// struct, an anonymous field and a field with no json tag.
+// struct, an anonymous field, a field with no json tag, and a domain enum that
+// publishes its ordinal.
 func TestCLIViewsAreTotalProjections(t *testing.T) {
 	// A type that marshals itself decides its own wire form, and its Go fields
 	// never reach the document — a coordinate is a string, a timestamp is a
@@ -83,11 +96,22 @@ func TestCLIViewsAreTotalProjections(t *testing.T) {
 					}
 					rt = rt.Elem()
 				}
+				// A named integer type in a domain package is a Go enum, and an
+				// enum without a marshaller travels as its ordinal — a number the
+				// text view and `context --json` both state as a name over the same
+				// record. The name is the fact; the ordinal is an implementation
+				// detail of the constant block.
+				if isIntegerKind(rt.Kind()) && isDomainType(rt) && !selfEncoding(rt) {
+					t.Errorf("%s is the domain enum %s.%s with no MarshalJSON, so it publishes its "+
+						"ordinal where every other surface names the value",
+						at, path.Base(path.Dir(rt.PkgPath())), rt.Name())
+					return
+				}
 				if rt.Kind() != reflect.Struct || seen[rt] || view.admitted[rt] || selfEncoding(rt) {
 					return
 				}
 				seen[rt] = true
-				if isDomainStruct(rt) {
+				if isDomainType(rt) {
 					t.Errorf("%s reaches the domain type %s.%s: an embedded or named domain struct publishes "+
 						"its own field names, which is the link these views exist to cut",
 						at, path.Base(path.Dir(rt.PkgPath())), rt.Name())

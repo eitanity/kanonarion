@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -35,6 +37,34 @@ func (s CopyrightStatus) String() string {
 	default:
 		return "not_analysed"
 	}
+}
+
+// MarshalJSON implements json.Marshaler for CopyrightStatus. `context --json`
+// already publishes this fact as "none_found" over the same record, so the
+// document names it rather than emitting the constant's ordinal.
+func (s CopyrightStatus) MarshalJSON() ([]byte, error) {
+	return fmt.Appendf(nil, "%q", s.String()), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CopyrightStatus.
+func (s *CopyrightStatus) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return fmt.Errorf("failed to unmarshal CopyrightStatus: %w", err)
+	}
+	switch str {
+	case "not_analysed":
+		*s = CopyrightStatusNotAnalysed
+	case "found":
+		*s = CopyrightStatusFound
+	case "none_found":
+		*s = CopyrightStatusNoneFound
+	case "extraction_failed":
+		*s = CopyrightStatusExtractionFailed
+	default:
+		return fmt.Errorf("invalid CopyrightStatus: %q", str)
+	}
+	return nil
 }
 
 // CopyrightStatement is a single copyright notice identified in a file.

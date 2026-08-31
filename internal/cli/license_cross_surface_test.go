@@ -146,9 +146,12 @@ func licenceFromLicenseJSON(t *testing.T, rec licdomain.LicenseRecord) string {
 	if err := printLicenseRecord(rec, false, true, &buf); err != nil {
 		t.Fatalf("license json: %v", err)
 	}
+	// The keys are the document's, not the record's Go field names: `expression`
+	// matched by luck of case-folding while `PrimarySPDX` never matched
+	// `primary_spdx`, so the fallback read empty on a record with no expression.
 	var out struct {
-		PrimarySPDX string `json:"PrimarySPDX"`
-		Expression  string `json:"Expression"`
+		PrimarySPDX string `json:"primary_spdx"`
+		Expression  string `json:"expression"`
 	}
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("decoding license json: %v\n%s", err, buf.String())
