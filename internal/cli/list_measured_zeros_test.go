@@ -24,9 +24,7 @@ func interfaceListRows(t *testing.T, sums []ifaceports.InterfaceSummary) []map[s
 		t.Fatalf("printing interface list: %v", err)
 	}
 	var rows []map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil {
-		t.Fatalf("decoding interface list: %v (%s)", err, stdout.String())
-	}
+	decodeListingRecords(t, stdout.String(), &rows)
 	return rows
 }
 

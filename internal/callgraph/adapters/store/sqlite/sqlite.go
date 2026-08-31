@@ -435,7 +435,159 @@ ALTER TABLE callgraph_records ADD COLUMN analysis_root TEXT NOT NULL DEFAULT ''`
 		// composes by sequence position rather than by ladder.
 		{Module: "callgraph", Version: 14, SQL: `
 ALTER TABLE callgraph_records ADD COLUMN worktree_scan_digest TEXT NOT NULL DEFAULT ''`},
+		// Migration v15: add the analyser column, so a record names the
+		// golang.org/x/tools that parsed it and not only the toolchain that
+		// compiled it.
+		//
+		// The library decides what the graph CONTAINS. One that predates a language
+		// construct degrades extraction two ways: loudly, where type-checking fails
+		// and the record says LoadFailed, and silently, where SSA builds anyway and
+		// omits the construct, so CHA under-reports and a `callers` answer comes
+		// back short with nothing said. Nothing on the record could tell those two
+		// graphs apart, and bumping x/tools is a go.mod change — pipeline_version
+		// does not move for it — so a graph built by a library that understood the
+		// code and one built by a library that did not were peers on the ladder.
+		//
+		// ONE COLUMN, CARRYING THE PROVENANCE WITH THE VERSION. See
+		// domain.AnalyserIdentity.Column: splitting them would let a query, an index
+		// or an export read the number without the strength behind it, and this is
+		// the one axis where that is the whole defect.
+		//
+		// NO PIPELINE BUMP AND NO PURGE, because the RECORD SHAPE DOES NOT MOVE.
+		// The fact is metadata about the producer rather than a claim about the
+		// module, so it lives outside the seal: the canonical encoding is untouched,
+		// every stored record marshals to the bytes it was sealed over, and every
+		// content_hash in the table is left exactly as written. A bump would have
+		// stranded every stored generation and its edge rows to state a fact about
+		// which binary wrote them.
+		//
+		// A BACK-FILL THAT SAYS IT IS ONE. This is walk migration 9's shape with
+		// walk 9's provenance removed, and the difference is the point. Walk 9 read
+		// a value that was already inside each record and merely unprojected. Here
+		// there is no such source: no record ever captured the analyser version, so
+		// the back-fill INFERS it from extracted_at against the pin history of this
+		// repository's own go.mod. Every back-filled row is therefore written as
+		// `inferred:`, which no rendering of this type shows the way it shows
+		// `observed:` — an inferred value that reads as observed is worse than an
+		// absent one on a field whose whole job is to say what the graph could see.
+		//
+		// NO INDEX, unlike walk 9. Walk 9 indexed because its reads FILTER on the
+		// toolchain; nothing filters on this. The generations of one coordinate are
+		// already found by the primary key, and the only read is over that handful.
+		// An index nothing queries is a write cost and a second place to be wrong.
+		{Module: "callgraph", Version: 15, SQL: `
+ALTER TABLE callgraph_records ADD COLUMN analyser TEXT NOT NULL DEFAULT ''`,
+			Fn: backfillAnalyser},
 	}
+}
+
+// analyserPin is one golang.org/x/tools version this repository's go.mod pinned,
+// and the date that pin took effect.
+type analyserPin struct {
+	// from is the UTC date the pin landed, in "2006-01-02" form.
+	from string
+	// version is the x/tools version that pin selected.
+	version domain2.AnalyserVersion
+}
+
+// analyserPinHistory is every x/tools version this repository has pinned,
+// oldest first, read from the commits that changed the line in go.mod:
+//
+//	3caa505  2026-07-05  v0.47.0   (the line first appears)
+//	8d5dc4f  2026-08-15  v0.49.0   (the only change since)
+//
+// It is the ONLY evidence a pre-column row can be attributed from, and it is
+// weak evidence on purpose: it says which library a binary built from this
+// repository at that date would have linked, not which one the binary that
+// actually wrote the row did. A row written by a local build of an older
+// checkout is attributed wrongly by it. That is why nothing derived from this
+// list is ever written as observed, and why the read surface says "inferred"
+// in as many words.
+//
+// A row extracted BEFORE the first entry predates the pin entirely; it is left
+// at the empty value, because there is no version to infer.
+var analyserPinHistory = []analyserPin{
+	{from: "2026-07-05", version: "v0.47.0"},
+	{from: "2026-08-15", version: "v0.49.0"},
+}
+
+// analyserAtExtraction returns the x/tools version this repository pinned when
+// a record was extracted, and whether the pin history covers that date at all.
+func analyserAtExtraction(extractedAt time.Time) (domain2.AnalyserVersion, bool) {
+	day := extractedAt.UTC().Format(time.DateOnly)
+	found := false
+	var version domain2.AnalyserVersion
+	for _, pin := range analyserPinHistory {
+		if day < pin.from {
+			break
+		}
+		version, found = pin.version, true
+	}
+	return version, found
+}
+
+// backfillAnalyser fills migration 15's column for every row that states
+// nothing, by inferring the analyser version from the row's extraction date.
+//
+// It reads a COLUMN, not a blob, and that is the whole difference from the
+// migration it is modelled on. Walk 9 decompressed each record to project a
+// value the record already held; there is nothing to decompress here, because no
+// record ever recorded this. Every value it writes is a reconstruction and every
+// value it writes says so.
+//
+// Rows are drained fully before any UPDATE is issued. The store runs on a single
+// connection, so writing while the SELECT's result set is still open deadlocks.
+//
+// A row whose extracted_at cannot be parsed, or whose date predates the pin
+// history, is LEFT AT THE EMPTY VALUE rather than failing the migration — walk
+// 9's rule, for walk 9's reason. A store that refuses to open because one
+// historical timestamp is unreadable is a worse outcome than a row that honestly
+// states no analyser, and "not recorded" is exactly what such a row is.
+//
+// content_hash is never touched. The column is outside the seal, so a row's
+// integrity check is the same computation after this migration as before it.
+func backfillAnalyser(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT rowid, extracted_at FROM callgraph_records WHERE analyser = ''`)
+	if err != nil {
+		return fmt.Errorf("selecting rows to attribute to an analyser: %w", err)
+	}
+	type pending struct {
+		rowID       int64
+		extractedAt string
+	}
+	var todo []pending
+	for rows.Next() {
+		var p pending
+		if serr := rows.Scan(&p.rowID, &p.extractedAt); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return fmt.Errorf("scanning row to attribute to an analyser: %w", serr)
+		}
+		todo = append(todo, p)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return fmt.Errorf("iterating rows to attribute to an analyser: %w", cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return fmt.Errorf("closing analyser back-fill rows: %w", cerr)
+	}
+
+	for _, p := range todo {
+		at, perr := time.Parse(time.RFC3339, p.extractedAt)
+		if perr != nil {
+			continue
+		}
+		version, covered := analyserAtExtraction(at)
+		if !covered {
+			continue
+		}
+		identity := domain2.InferredAnalyser(version)
+		if _, uerr := tx.Exec(`UPDATE callgraph_records SET analyser = ? WHERE rowid = ?`,
+			identity.Column(), p.rowID); uerr != nil {
+			return fmt.Errorf("attributing record %d to an analyser: %w", p.rowID, uerr)
+		}
+	}
+	return nil
 }
 
 // retireSyntheticLocalRecords deletes the working-tree records stranded at the
@@ -673,19 +825,24 @@ INSERT INTO callgraph_records (
     module_path, module_version, pipeline_version,
     algorithm, overall_status, completeness, analysis_source, worktree_digest,
     analysis_root, worktree_scan_digest,
-    failure_cause,
+    failure_cause, analyser,
     node_count, edge_count,
     extracted_at, content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
+	// The analyser is written as the record states it and is never invented here.
+	// A record produced by something that could not read its own build info states
+	// none, and the honest column for it is the empty one: the back-fill's
+	// inference is for rows written before the axis existed, not for rows written
+	// now by a binary that declined to say.
 	_, err = tx.ExecContext(ctx, qRecord,
 		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		string(r.Algorithm), int(r.OverallStatus),
 		string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
 		r.AnalysisRoot, r.WorktreeScanDigest,
-		string(r.FailureCause),
+		string(r.FailureCause), r.Analyser.Column(),
 		r.NodeCount, r.EdgeCount,
 		r.ExtractedAt.UTC().Format(time.RFC3339),
 		r.ContentHash, blob,
@@ -895,7 +1052,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	if qerr != nil {
 		return domain2.CallGraphRecord{}, false, qerr
 	}
-	rec, ok, derr := s.decodeRecord(ctx, row.blob, row.hash)
+	rec, ok, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser)
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -977,6 +1134,11 @@ type generationRow struct {
 	hash       string
 	root       string
 	scanDigest string
+	// analyser is the row's analyser column, verbatim. It is carried alongside
+	// the blob because the fact is not IN the blob: it is metadata about the
+	// producer, projected onto the record on the way out. See
+	// domain.CallGraphRecord.Analyser.
+	analyser string
 	// rank is what the ladder orders on, read from columns. It carries no
 	// completeness the record does not state — it IS the record's own columns.
 	rank domain2.GenerationRank
@@ -991,7 +1153,7 @@ type generationRow struct {
 // second share it.
 func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root string) (generationRow, bool, error) {
 	q := `SELECT serialised, content_hash, analysis_root, worktree_scan_digest,
-                 overall_status, completeness, failure_cause, extracted_at
+                 overall_status, completeness, failure_cause, extracted_at, analyser
           FROM callgraph_records
           WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	args := []any{coord.Path(), coord.Version(), pipelineVersion}
@@ -1007,7 +1169,8 @@ LIMIT 1`
 	var overallStatus int
 	var completeness, failureCause, extractedAt string
 	serr := s.db.DB().QueryRowContext(ctx, q, args...).Scan(
-		&row.blob, &row.hash, &row.root, &row.scanDigest, &overallStatus, &completeness, &failureCause, &extractedAt)
+		&row.blob, &row.hash, &row.root, &row.scanDigest,
+		&overallStatus, &completeness, &failureCause, &extractedAt, &row.analyser)
 	switch {
 	case errors.Is(serr, sql.ErrNoRows):
 		return generationRow{}, false, nil
@@ -1040,7 +1203,7 @@ func (s *Store) bestGenerationOfTreeState(ctx context.Context, coord coordinate.
 	if newest.scanDigest == "" {
 		return newest, nil
 	}
-	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at
+	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_root = ? AND worktree_scan_digest = ?`
@@ -1054,7 +1217,8 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		candidate := generationRow{root: newest.root, scanDigest: newest.scanDigest}
 		var overallStatus int
 		var completeness, failureCause, extractedAt string
-		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness, &failureCause, &extractedAt); serr != nil {
+		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness,
+			&failureCause, &extractedAt, &candidate.analyser); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return generationRow{}, fmt.Errorf("scanning generation of %s: %w", coord, serr)
 		}
@@ -1113,7 +1277,7 @@ func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleC
 	if root == "" || scanDigest == "" {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at
+	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_root = ? AND worktree_scan_digest = ? AND analysis_source = ?`
@@ -1129,7 +1293,8 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		candidate := generationRow{root: root, scanDigest: scanDigest}
 		var overallStatus int
 		var completeness, failureCause, extractedAt string
-		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness, &failureCause, &extractedAt); serr != nil {
+		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness,
+			&failureCause, &extractedAt, &candidate.analyser); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return domain2.CallGraphRecord{}, false, fmt.Errorf("scanning generation of %s: %w", coord, serr)
 		}
@@ -1154,7 +1319,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	if !found {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	rec, ok, derr := s.decodeRecord(ctx, best.blob, best.hash)
+	rec, ok, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser)
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -1249,7 +1414,7 @@ func (s *Store) ListCallGraphRecordsFor(ctx context.Context, coord coordinate.Mo
 	if coord.IsZero() {
 		return nil, coordinate.ErrZeroCoordinate
 	}
-	const q = `SELECT serialised, content_hash FROM callgraph_records
+	const q = `SELECT serialised, content_hash, analyser FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 ORDER BY extracted_at ASC, rowid ASC`
 
@@ -1258,13 +1423,14 @@ ORDER BY extracted_at ASC, rowid ASC`
 		return nil, fmt.Errorf("querying callgraph records: %w", err)
 	}
 	type stored struct {
-		blob []byte
-		hash string
+		blob     []byte
+		hash     string
+		analyser string
 	}
 	var raw []stored
 	for rows.Next() {
 		var st stored
-		if serr := rows.Scan(&st.blob, &st.hash); serr != nil {
+		if serr := rows.Scan(&st.blob, &st.hash, &st.analyser); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return nil, fmt.Errorf("scanning callgraph record: %w", serr)
 		}
@@ -1283,7 +1449,7 @@ ORDER BY extracted_at ASC, rowid ASC`
 	// the first result set is still open deadlocks.
 	out := make([]domain2.CallGraphRecord, 0, len(raw))
 	for _, st := range raw {
-		rec, ok, derr := s.decodeRecord(ctx, st.blob, st.hash)
+		rec, ok, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser)
 		if derr != nil {
 			return nil, derr
 		}
@@ -1312,7 +1478,7 @@ ORDER BY extracted_at ASC, rowid ASC`
 // This gate is also why the ledger does not need a purge on every analyser shape
 // change: the stale generation stays in the table, readable as history, and
 // answers nothing.
-func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash string) (domain2.CallGraphRecord, bool, error) {
+func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string) (domain2.CallGraphRecord, bool, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("decompressing callgraph record: %w", decErr)
@@ -1341,6 +1507,21 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash string
 	if verr := h.VerifyContentHash(rec); verr != nil {
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: %w", ports.ErrCallGraphIntegrity, verr)
 	}
+	// Projected AFTER verification, and it changes nothing about it: the analyser
+	// is outside the seal, so the hash is computed over bytes that never carried
+	// it. The order is deliberate all the same — a field the seal does not cover
+	// must never be in the record while the seal is being checked, or the next
+	// reader has to work out which fields count.
+	//
+	// A column value that names no known provenance stops the read. Only the write
+	// leg and the back-fill write here, and both write a provenance; a third value
+	// is a hand-edited row, and reading one as "not recorded" would silently drop
+	// a claim the store is carrying.
+	id, aerr := domain2.ParseAnalyserColumn(analyser)
+	if aerr != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("reading the analyser of record %s: %w", storedHash, aerr)
+	}
+	rec.Analyser = id
 	return rec, true, nil
 }
 

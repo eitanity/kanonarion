@@ -27,10 +27,13 @@ func newLicenseCompatCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 
 	cmd := &cobra.Command{
-		Use:         "license-compat <module>@<version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Aliases:     []string{"licence-compat"},
-		Short:       "Report license conflicts in a module's dependency closure",
+		Use: "license-compat <module>@<version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Aliases: []string{"licence-compat"},
+		Short:   "Report license conflicts in a module's dependency closure",
 		Long: `Evaluates whether the dependency closure of <module>@<version> is
 redistributable under --target.
 

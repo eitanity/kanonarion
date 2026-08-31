@@ -43,7 +43,7 @@ func TestServeStoredScanRun_WitnessesTheServing(t *testing.T) {
 	ctr, scan, run := servedRunFixture(t)
 	var stdout, stderr bytes.Buffer
 
-	if err := serveStoredScanRun(t.Context(), run, ctr, false, false, vulnapp.ServeSurfaceVulnScan, &stdout, &stderr); err != nil {
+	if _, err := serveStoredScanRun(t.Context(), run, ctr, false, false, false, vulnapp.ServeSurfaceVulnScan, &stdout, &stderr); err != nil {
 		t.Fatalf("serveStoredScanRun: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestServeStoredScanRun_AttributesTheAskingSurface(t *testing.T) {
 		t.Run(surface, func(t *testing.T) {
 			ctr, scan, run := servedRunFixture(t)
 			var stdout, stderr bytes.Buffer
-			if err := serveStoredScanRun(t.Context(), run, ctr, false, false, surface, &stdout, &stderr); err != nil {
+			if _, err := serveStoredScanRun(t.Context(), run, ctr, false, false, false, surface, &stdout, &stderr); err != nil {
 				t.Fatalf("serveStoredScanRun: %v", err)
 			}
 			if len(scan.ServedRuns) != 1 || scan.ServedRuns[0].Surface != surface {
@@ -93,7 +93,7 @@ func TestServeStoredScanRun_FailsWhenTheServingCannotBeWitnessed(t *testing.T) {
 	scan.ServeReusableRunErr = errServedTest
 	var stdout, stderr bytes.Buffer
 
-	err := serveStoredScanRun(t.Context(), run, ctr, false, false, vulnapp.ServeSurfaceVulnScan, &stdout, &stderr)
+	_, err := serveStoredScanRun(t.Context(), run, ctr, false, false, false, vulnapp.ServeSurfaceVulnScan, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("an unwitnessable serving reported success")
 	}

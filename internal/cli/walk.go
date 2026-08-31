@@ -2,14 +2,18 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchadapterproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	"github.com/eitanity/kanonarion/internal/walk/application"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
@@ -54,6 +58,7 @@ type walkFlags struct {
 	analyseRoot     bool
 	stdlibFromGoMod bool
 	noProgress      bool
+	fromModcache    string
 	// excludeTests is parsed only so the refusal can name it. A walk record names
 	// its scope and not its test axis; see refuseTestScopeOnRecordingCommand.
 	excludeTests bool
@@ -63,9 +68,16 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f walkFlags
 
 	cmd := &cobra.Command{
-		Use:         "walk <module@version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Walk the dependency graph for a module and persist the walk record",
+		Use: "walk <module@version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			// --from-modcache is the offline walk: module bytes come from a
+			// module cache and go.sum verifies them, so the reach is avoidable
+			// rather than inherent. The declaration moved with the flag.
+			annotationNetworkUse:   NetworkAvoidable,
+			annotationOfflineFlags: "--from-modcache",
+		},
+		Short: "Walk the dependency graph for a module and persist the walk record",
 		Example: `  kanonarion walk github.com/spf13/cobra@v1.8.1
   kanonarion walk github.com/spf13/cobra@v1.8.1 --json
   kanonarion walk github.com/spf13/cobra@v1.8.1 --force --store-root /var/mirror
@@ -76,7 +88,8 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion walk --gomod ./go.mod --tool
   kanonarion walk --gomod ./go.mod --project
   kanonarion walk --gomod ./go.mod --analyse-root
-  kanonarion walk --gomod ./go.mod --analyse-local`,
+  kanonarion walk --gomod ./go.mod --analyse-local
+  kanonarion walk --gomod ./go.mod --from-modcache`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// With no positional module, default to a go.mod walk; --gomod
 			// defaults to./go.mod via resolveGoModPath.
@@ -101,24 +114,10 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 					return fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
 				}
 			}
-			isGoMod := f.gomodPath != ""
-
-			// A go.mod (project) walk has a local go.sum available: layer it on as
-			// an always-on offline integrity check.
-			if isGoMod {
-				resolveProjectGoSum(f.gomodPath)
+			if f.gomodPath != "" {
+				return runWalkGoMod(cmd.Context(), f, stdout, stderr)
 			}
-			logger := buildLogger(logLevel, stderr)
-			ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, "", f.skipVCSVerify, activeConfig, logger)
-			if err != nil {
-				return fmt.Errorf("initialising store: %w", err)
-			}
-			defer func() { _ = cleanup() }()
-			progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-			if isGoMod {
-				return runWalkCmdProject(cmd.Context(), f, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
-			}
-			return runWalkCmdModule(cmd.Context(), args[0], f, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
+			return runWalkModule(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
 
@@ -137,9 +136,74 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.analyseLocal, "analyse-local", false, "ingest local-replace targets from disk so callgraph/iface/license analyse them (requires --gomod)")
 	cmd.Flags().BoolVar(&f.analyseRoot, "analyse-root", false, "ingest the project's own working tree so all extraction stages analyse the project's own packages; re-reads the tree fresh on every run (requires a go.mod walk)")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
+	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 	return cmd
+}
+
+// walkRuntime is the store access and progress reporting one walk invocation
+// runs against, opened once the path's fetch mode is settled.
+type walkRuntime struct {
+	execute  ExecuteWalkUseCase
+	records  fetchRecordReader
+	progress walkports.ProgressReporter
+	cleanup  func() error
+}
+
+// openWalkRuntime opens the store container and progress reporter for a walk.
+//
+// It is called by the dispatch path rather than before dispatch because
+// NewContainer wires its fetch adapters from the process-wide fetch mode:
+// anything that decides where module bytes come from has to have run first, and
+// only the path knows what it decided.
+func openWalkRuntime(f walkFlags, stderr io.Writer) (walkRuntime, error) {
+	logger := buildLogger(logLevel, stderr)
+	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, "", f.skipVCSVerify, activeConfig, logger)
+	if err != nil {
+		return walkRuntime{}, fmt.Errorf("initialising store: %w", err)
+	}
+	return walkRuntime{
+		execute:  ctr.ExecuteWalk,
+		records:  ctr.QueryFetch,
+		progress: newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel),
+		cleanup:  cleanup,
+	}, nil
+}
+
+// runWalkGoMod is the go.mod path's entry point. It settles where this walk's
+// module bytes come from and what verifies them — the decision --from-modcache
+// makes — before opening the store, then runs the project walk.
+func runWalkGoMod(ctx context.Context, f walkFlags, stdout, stderr io.Writer) error {
+	// --from-modcache is the offline walk: bytes come from an existing module
+	// cache and the go.sum beside this go.mod is their sole anchor. Resolved
+	// first because resolveProjectGoSum is a no-op under it, and because the
+	// container below wires its adapters from the mode it sets.
+	if err := resolveModcacheMode(f.fromModcache, f.gomodPath); err != nil {
+		return err
+	}
+	// On the network path the project's go.sum layers on as an always-on offline
+	// integrity check.
+	resolveProjectGoSum(f.gomodPath)
+
+	rt, err := openWalkRuntime(f, stderr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rt.cleanup() }()
+	return runWalkCmdProject(ctx, f, rt.progress, rt.execute, rt.records, stdout, stderr)
+}
+
+// runWalkModule is the positional path's entry point. A published coordinate
+// carries no project go.mod, so there is no fetch mode for it to settle: the
+// flags that would have named one are refused by name in runWalkCmdModule.
+func runWalkModule(ctx context.Context, arg string, f walkFlags, stdout, stderr io.Writer) error {
+	rt, err := openWalkRuntime(f, stderr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rt.cleanup() }()
+	return runWalkCmdModule(ctx, arg, f, rt.progress, rt.execute, rt.records, stdout, stderr)
 }
 
 // runWalkCmdProject is the walk command's go.mod dispatch path. It resolves the
@@ -317,13 +381,15 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 			return result, verr
 		}
 	}
-	// The aggregate goes to stderr, never stdout: the walk record on stdout is
-	// the content-hashed artefact, and a report about the run is not part of it.
-	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {
+	// The aggregate is stated on stderr and, under --json, in the document: the
+	// record's own bytes stay the content-hashed artefact, and the coverage is a
+	// key beside them rather than inside them.
+	coverage, cerr := walkCoverageReport(ctx, rec, records, stderr)
+	if cerr != nil {
 		return result, cerr
 	}
 	if jsonOut {
-		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
+		if encErr := writeWalkRecordWithCoverageJSON(stdout, rec, coverage); encErr != nil {
 			return result, fmt.Errorf("encoding JSON: %w", encErr)
 		}
 	} else {
@@ -453,13 +519,14 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	}
 
 	rec := result.Record
-	// The aggregate goes to stderr, never stdout: the walk record on stdout is
-	// the content-hashed artefact, and a report about the run is not part of it.
-	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {
+	// Stated on stderr and, under --json, in the document: see the same report on
+	// the project path above.
+	coverage, cerr := walkCoverageReport(ctx, rec, records, stderr)
+	if cerr != nil {
 		return result, cerr
 	}
 	if jsonOut {
-		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
+		if encErr := writeWalkRecordWithCoverageJSON(stdout, rec, coverage); encErr != nil {
 			return result, fmt.Errorf("encoding JSON: %w", encErr)
 		}
 	} else {
@@ -475,6 +542,108 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	return result, walkExit(rec.OverallStatus, allowPartial,
 		"walk failed: target module could not be fetched",
 		"walk partial: some dependencies could not be fetched")
+}
+
+// ---- what a walk states about how its graph was verified ----
+
+// walkVerificationCoverageJSON is the chain of custody `walk --json` carries:
+// how each module in the walk's graph was verified, and how many were not.
+//
+// It embeds the document the verification-coverage command publishes, so one
+// fact keeps one spelling on both surfaces and a gate written against either
+// reads the other. Measured states outright whether a measurement was taken: a
+// run that took none must not read as a graph that was checked and came back
+// clean.
+type walkVerificationCoverageJSON struct {
+	coverageJSON
+	Measured bool `json:"measured"`
+	// Statement is what the reader is shown on stderr, carried verbatim so the
+	// document and the screen say the same thing in the same words.
+	Statement string `json:"statement"`
+}
+
+// walkCoverageReport states how this walk's graph was verified, and returns the
+// same measurement for the document.
+//
+// The text path keeps the shared reporter: only a document needs the figures
+// back, and measuring a second time to get them is what would let the statement
+// and the document disagree.
+func walkCoverageReport(ctx context.Context, rec domain.WalkRecord, records fetchRecordReader, stderr io.Writer) (walkVerificationCoverageJSON, error) {
+	if !jsonOut {
+		return walkVerificationCoverageJSON{}, reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr)
+	}
+	// A nil reader is a caller driving this walk as a means to another answer —
+	// audit, inspect, sbom — each of which reports coverage over its own.
+	if records == nil {
+		return unmeasuredWalkCoverage(rec,
+			"this run drove the walk for a command that reports coverage over its own answer"), nil
+	}
+	rows := graphVerificationRows(ctx, rec.Graph.Nodes, records)
+	obs := make([]fetchdomain.CoverageObservation, 0, len(rows))
+	for _, r := range rows {
+		obs = append(obs, r.observation)
+	}
+	coverage := fetchdomain.VerificationCoverageOf(obs)
+
+	var statement strings.Builder
+	if err := writeVerificationCoverage(&statement, coverage); err != nil {
+		return walkVerificationCoverageJSON{}, err
+	}
+	if _, err := io.WriteString(stderr, statement.String()); err != nil {
+		return walkVerificationCoverageJSON{}, fmt.Errorf("writing output: %w", err)
+	}
+	if coverage.Total == 0 {
+		return unmeasuredWalkCoverage(rec, "this walk's graph holds no module to verify"), nil
+	}
+	return walkVerificationCoverageJSON{
+		coverageJSON: verificationCoverageJSON(rec.ID, coverage, rows,
+			detectBuildVendoringInDir(rec.ProjectDir), walkBuildOf(rec)),
+		Measured:  true,
+		Statement: strings.TrimRight(statement.String(), "\n"),
+	}, nil
+}
+
+// unmeasuredWalkCoverage is the section for a run that measured no coverage. The
+// key is present and says so in words: an absent key reads as a graph that was
+// checked and had nothing to report, which is the opposite of what it means.
+func unmeasuredWalkCoverage(rec domain.WalkRecord, reason string) walkVerificationCoverageJSON {
+	return walkVerificationCoverageJSON{
+		coverageJSON: verificationCoverageJSON(rec.ID, fetchdomain.VerificationCoverage{}, nil,
+			detectBuildVendoringInDir(rec.ProjectDir), walkBuildOf(rec)),
+		Measured:  false,
+		Statement: "verification coverage was not measured: " + reason,
+	}
+}
+
+// writeWalkRecordWithCoverageJSON writes the walk record with this run's
+// verification coverage beside it.
+//
+// The record's own keys are spliced through as the hasher marshalled them —
+// value for value, none moved, renamed or dropped — so the sealed artefact a
+// consumer verifies is unchanged and the coverage is one added key next to it.
+func writeWalkRecordWithCoverageJSON(w io.Writer, r domain.WalkRecord, coverage walkVerificationCoverageJSON) error {
+	var h domain.WalkRecordHasher
+	b, err := h.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("marshalling walk record: %w", err)
+	}
+	doc := map[string]json.RawMessage{}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return fmt.Errorf("reading the marshalled walk record: %w", err)
+	}
+	cov, err := json.Marshal(coverage)
+	if err != nil {
+		return fmt.Errorf("marshalling verification coverage: %w", err)
+	}
+	doc["verification_coverage"] = cov
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("marshalling walk document: %w", err)
+	}
+	if _, err := fmt.Fprintf(w, "%s\n", out); err != nil {
+		return fmt.Errorf("writing walk record: %w", err)
+	}
+	return nil
 }
 
 // ---- walk-list command ----

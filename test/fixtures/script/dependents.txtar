@@ -18,6 +18,18 @@ stdout '"target": "example.com/dep@v1.0.0"'
 stdout '"module": "example.com/app"'
 stdout '"root": true'
 stdout '"direct": false'
+# ... and states that the root was in scope this time
+stdout '"excluded": false'
+stdout '"depends_on_target": true'
+
+# The empty answer is the one that misleads: "dependents": [] with nothing else
+# reads as "nothing uses this". root_scope says what the search left out.
+kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --json
+stdout '"dependents": \[\]'
+stdout '"root": "example.com/app@v1.0.0"'
+stdout '"excluded": true'
+stdout '"depends_on_target": true'
+stdout '"include_flag": "--include-root"'
 
 # --direct-only without --include-root: root excluded, no results
 kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --direct-only

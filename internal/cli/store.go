@@ -28,8 +28,9 @@ func allMigrations() []sqlitestore.Migration {
 
 func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "store",
-		Short: "Inspect and manage the kanonarion store",
+		Use:         "store",
+		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
+		Short:       "Inspect and manage the kanonarion store",
 	}
 	cmd.AddCommand(newStoreInfoCmd(stdout, stderr))
 	cmd.AddCommand(newStoreConfigCmd(stdout))
@@ -52,9 +53,12 @@ var tempPrefixes = []string{
 
 func newStoreCleanCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
-		Use:         "clean",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Remove orphaned temp files left by interrupted operations",
+		Use: "clean",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Remove orphaned temp files left by interrupted operations",
 		Long: `Remove orphaned temporary files left by interrupted kanonarion operations.
 
 Cleans two categories:
@@ -65,9 +69,78 @@ Safe to run while kanonarion is idle. Do not run while other kanonarion
 processes are actively scanning.`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runStoreClean(storeRoot, os.TempDir(), stdout)
+			return runStoreClean(storeRoot, os.TempDir(), jsonOut, stdout)
 		},
 	}
+}
+
+// storeCleanBlobTempsResult is the store-local sweep: incomplete blob writes
+// left in the blobs directory.
+//
+// A count and a directory rather than a list of names, because that is what the
+// sweep can say — the blob store removes by prefix and reports how many went,
+// which is also all the text rendering claims.
+type storeCleanBlobTempsResult struct {
+	Dir            string `json:"dir"`
+	Removed        int    `json:"removed"`
+	BytesReclaimed int64  `json:"bytes_reclaimed"`
+}
+
+// storeCleanTempEntriesResult is the machine-wide sweep: kanonarion-owned
+// entries directly under the system temp directory.
+//
+// It names what went, because the text rendering does, and it names what it
+// left: this sweep runs in a directory shared with every process on the
+// machine, and kept is the blast radius as a number a caller can read rather
+// than a bound they have to trust.
+type storeCleanTempEntriesResult struct {
+	Dir            string   `json:"dir"`
+	Removed        int      `json:"removed"`
+	BytesReclaimed int64    `json:"bytes_reclaimed"`
+	Kept           int      `json:"kept"`
+	Paths          []string `json:"paths"`
+}
+
+// storeCleanResult is what one sweep did: where it looked, what it removed,
+// what it reclaimed, and what it deliberately left alone.
+//
+// Every count is present at zero. This is a command whose whole purpose is to
+// change the store, so "it changed nothing" is a fact a caller has to be able
+// to read; an omitted count reads as success at something.
+//
+// Split by category because the two sweeps have different blast radii — one
+// touches only this store, the other a directory shared with every process on
+// the machine — and a single total cannot say which of them moved.
+type storeCleanResult struct {
+	BlobTemps   storeCleanBlobTempsResult   `json:"blob_temps"`
+	TempEntries storeCleanTempEntriesResult `json:"temp_entries"`
+
+	RemovedTotal   int   `json:"removed_total"`
+	BytesReclaimed int64 `json:"bytes_reclaimed"`
+
+	// Warnings are the failures the sweep reported and carried on past. The
+	// text rendering prints them where they happen; here they travel inside the
+	// document rather than beside it, where a parser never sees them.
+	Warnings []string `json:"warnings"`
+}
+
+// dirSize sums the bytes of the regular files under path, which is what
+// removing it reclaims. Measured before the removal, because afterwards there
+// is nothing left to measure. An entry that cannot be read contributes nothing
+// rather than failing the sweep: the removal is the command's job, and the
+// number beside it is a report of it.
+func dirSize(path string) int64 {
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil //nolint:nilerr // a file that cannot be read is not counted, not a refusal
+		}
+		if info, ierr := d.Info(); ierr == nil && info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // runStoreClean removes orphaned blob temp files under root, and kanonarion-owned
@@ -79,19 +152,36 @@ processes are actively scanning.`,
 // temp directory destroys the working files of any kanonarion process scanning on
 // the same machine — which is what the command's own help warns about. A test that
 // called os.TempDir() would do exactly that to a concurrent scan, and did.
-func runStoreClean(root, tmpDir string, stdout io.Writer) error {
-	total := 0
+func runStoreClean(root, tmpDir string, asJSON bool, stdout io.Writer) error {
+	result := storeCleanResult{
+		BlobTemps:   storeCleanBlobTempsResult{Dir: filepath.Join(root, "blobs")},
+		TempEntries: storeCleanTempEntriesResult{Dir: tmpDir, Paths: []string{}},
+		Warnings:    []string{},
+	}
+	// The text lines are written as the sweep goes, so their order and wording
+	// are unchanged; under --json they are discarded and the same facts leave
+	// through the document instead.
+	text := stdout
+	if asJSON {
+		text = io.Discard
+	}
+	warn := func(format string, args ...any) {
+		msg := fmt.Sprintf(format, args...)
+		result.Warnings = append(result.Warnings, msg)
+		_, _ = fmt.Fprintf(text, "warning: %s\n", msg)
+	}
 
 	// 1. Orphaned blob temp files.
 	blobs := blobstore.New(root)
-	n, err := blobs.CleanOrphanedTemps()
+	n, freed, err := blobs.CleanOrphanedTemps()
 	if err != nil {
-		_, _ = fmt.Fprintf(stdout, "warning: cleaning blob temps: %v\n", err)
+		warn("cleaning blob temps: %v", err)
 	}
 	if n > 0 {
-		_, _ = fmt.Fprintf(stdout, "removed %d orphaned blob temp file(s) from %s\n", n, filepath.Join(root, "blobs"))
-		total += n
+		_, _ = fmt.Fprintf(text, "removed %d orphaned blob temp file(s) from %s\n", n, result.BlobTemps.Dir)
 	}
+	result.BlobTemps.Removed = n
+	result.BlobTemps.BytesReclaimed = freed
 
 	// 2. Scan and analysis temp dirs/files in tmpDir.
 	entries, err := os.ReadDir(tmpDir)
@@ -100,32 +190,49 @@ func runStoreClean(root, tmpDir string, stdout io.Writer) error {
 	}
 	for _, e := range entries {
 		name := e.Name()
+		owned := false
 		for _, prefix := range tempPrefixes {
-			if strings.HasPrefix(name, prefix) {
-				full := filepath.Join(tmpDir, name)
-				if rerr := os.RemoveAll(full); rerr != nil {
-					_, _ = fmt.Fprintf(stdout, "warning: removing %s: %v\n", full, rerr)
-				} else {
-					_, _ = fmt.Fprintf(stdout, "removed %s\n", full)
-					total++
-				}
-				break
+			if !strings.HasPrefix(name, prefix) {
+				continue
 			}
+			owned = true
+			full := filepath.Join(tmpDir, name)
+			// Measured before the removal: afterwards there is nothing to size.
+			size := dirSize(full)
+			if rerr := os.RemoveAll(full); rerr != nil {
+				warn("removing %s: %v", full, rerr)
+			} else {
+				_, _ = fmt.Fprintf(text, "removed %s\n", full)
+				result.TempEntries.Removed++
+				result.TempEntries.BytesReclaimed += size
+				result.TempEntries.Paths = append(result.TempEntries.Paths, full)
+			}
+			break
+		}
+		if !owned {
+			result.TempEntries.Kept++
 		}
 	}
 
-	if total == 0 {
-		_, _ = fmt.Fprintln(stdout, "nothing to clean")
+	result.RemovedTotal = result.BlobTemps.Removed + result.TempEntries.Removed
+	result.BytesReclaimed = result.BlobTemps.BytesReclaimed + result.TempEntries.BytesReclaimed
+
+	if result.RemovedTotal == 0 {
+		_, _ = fmt.Fprintln(text, "nothing to clean")
 	} else {
-		_, _ = fmt.Fprintf(stdout, "cleaned %d item(s)\n", total)
+		_, _ = fmt.Fprintf(text, "cleaned %d item(s)\n", result.RemovedTotal)
+	}
+	if asJSON {
+		return encodeJSON(stdout, result)
 	}
 	return nil
 }
 
 func newStoreConfigCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Inspect and manage the store configuration",
+		Use:         "config",
+		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
+		Short:       "Inspect and manage the store configuration",
 	}
 	cmd.AddCommand(newStoreConfigShowCmd(stdout))
 	return cmd
@@ -159,6 +266,53 @@ type configShowResult struct {
 	VendorPolicy    configVendorResult    `json:"vendor_policy"`
 	FIPSPolicy      configFIPSResult      `json:"fips_policy"`
 	FetchPolicy     configFetchResult     `json:"fetch_policy"`
+
+	// Settings says, per key, where the value above it came from. The blocks
+	// hold what is in force; they cannot hold why, because once the defaults are
+	// merged in a value set to the default and a value never set are the same
+	// bytes. For a tool whose product is evidence about what a build was measured
+	// under, "unknown_license is block" and "unknown_license is block because
+	// nobody set it" are different answers, and only this field separates them.
+	Settings []configSettingResult `json:"settings"`
+}
+
+// Where a value in force came from. Two sources, because there are two: the
+// operator's file, and the built-in defaults the loader merges under it.
+const (
+	configSourceFile    = "file"
+	configSourceDefault = "default"
+)
+
+// configSettingResult is one resolved key: the dotted name `config get` and
+// `config set` take, the value in force, and its source.
+//
+// Per value rather than per section, because that is what the loader can
+// actually support: config show keeps the file parsed as an untyped document
+// beside the typed config for exactly this question, and asks it key by key. A
+// per-section claim would be weaker AND wrong in the common case — a
+// preferences block with one key set and two defaulted has no single source.
+//
+// The two places the claim is coarser are stated rather than hidden.
+// license_overrides and copyright_declarations exist only when the file names
+// them, so "file" there is the presence of the entry rather than a comparison
+// against a default; there is no default for them to differ from.
+type configSettingResult struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+// configSettingResults maps the resolved settings to the view.
+func configSettingResults(settings []effectiveSetting) []configSettingResult {
+	out := make([]configSettingResult, 0, len(settings))
+	for _, s := range settings {
+		source := configSourceFile
+		if s.IsDefault {
+			source = configSourceDefault
+		}
+		out = append(out, configSettingResult{Key: s.Key, Value: s.Value, Source: source})
+	}
+	return out
 }
 
 // configCopyrightResult is one operator-recorded copyright in the effective
@@ -292,6 +446,7 @@ func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationUsableWithRejectedConfig: "reports the file and what is actually in force",
 			annotationStoreIntent:              StoreIntentRead,
+			annotationNetworkUse:               NetworkNever,
 		},
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -375,6 +530,7 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				AllowedVCSHosts: cfg.FetchPolicy.AllowedVCSHosts,
 				Enforcing:       cfg.FetchPolicy.AllowedVCSHosts != nil,
 			},
+			Settings: configSettingResults(effectiveSettings(cfg, raw)),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -491,9 +647,12 @@ type storeInfoResult struct {
 
 func newStoreInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "info",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Report the store schema version and migration status",
+		Use: "info",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Report the store schema version and migration status",
 		Example: `  kanonarion store info --store-root ~/kanonarion/.mirror
   kanonarion store info --store-root ~/kanonarion/.mirror --json`,
 		Args: cobra.NoArgs,

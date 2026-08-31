@@ -256,7 +256,13 @@ absence.
       "direct":  false,
       "root":    false
     }
-  ]
+  ],
+  "root_scope": {
+    "root": "github.com/caddyserver/caddy/v2@v2.11.2",
+    "excluded": false,
+    "depends_on_target": true,
+    "include_flag": "--include-root"
+  }
 }
 ```
 
@@ -279,6 +285,17 @@ absence.
 | `dependents[].version` | string | MVS-selected version in this walk |
 | `dependents[].direct` | bool | True when this module is in the walk root's `go.mod` |
 | `dependents[].root` | bool | True when this module IS the walk root |
+| `root_scope.root` | string | The walk root - the module the search was run around |
+| `root_scope.excluded` | bool | True when the walk root was left out of the search (the default; `--include-root` clears it) |
+| `root_scope.depends_on_target` | bool | True when the walk root has an edge to the target, whether or not it was in scope |
+| `root_scope.include_flag` | string | The flag that puts the root in scope: `--include-root` |
+
+`root_scope` is present on every answer, including one with an empty
+`dependents`. That is the point of it: `"dependents": []` alone reads as "nothing
+depends on this module", and a consumer acting on it would drop a dependency that
+is in use. With `excluded` true and `depends_on_target` true, the empty list
+means "nothing except the build you are asking on behalf of" - re-run with
+`--include-root` to see it.
 
 `direct` and `root` are mutually exclusive: a module is either the root or a
 dependency, not both. To find all first-party-relevant entries, filter on

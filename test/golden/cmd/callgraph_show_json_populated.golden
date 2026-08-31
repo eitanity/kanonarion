@@ -11,7 +11,7 @@ exit 0
   "algorithm": "CHA",
   "completeness": "BUILT_WITH_BODIES",
   "analysis_source": "zip",
-  "toolchain": "",
+  "toolchain": "not recorded",
   "toolchain_stated": null,
   "nodes": [
     {
@@ -54,7 +54,13 @@ exit 0
   "reference_scope": "Analysed",
   "reference_edge_count": 0,
   "interface_count": 0,
-  "implementation_count": 0
+  "implementation_count": 0,
+  "analyser": {
+    "module": "golang.org/x/tools",
+    "version": "",
+    "provenance": "",
+    "inferred": false
+  }
 }
 --- stderr ---
 (empty)

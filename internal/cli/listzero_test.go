@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -105,10 +104,10 @@ func TestRunCallGraphList_PopulatedResultPrintsNoNotice(t *testing.T) {
 	}
 }
 
-// A JSON consumer cannot read the prose, and an empty array cannot carry the
-// distinction either. The statement goes to stderr as an object so stdout stays
-// the same type whether or not rows came back.
-func TestRunCallGraphList_JSONCarriesTheZeroScopeOnStderr(t *testing.T) {
+// A JSON consumer cannot read the prose, and a bare empty array cannot carry the
+// distinction either. The statement is a field of the document on stdout, where
+// the consumer already is.
+func TestRunCallGraphList_JSONCarriesTheZeroScopeInTheDocument(t *testing.T) {
 	prev := jsonOut
 	jsonOut = true
 	defer func() { jsonOut = prev }()
@@ -118,13 +117,17 @@ func TestRunCallGraphList_JSONCarriesTheZeroScopeOnStderr(t *testing.T) {
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := strings.TrimSpace(stdout.String()); got != "[]" {
-		t.Errorf("the data channel must stay an empty array, got: %q", got)
+	doc := decodeListingDocument(t, stdout.String())
+	if len(doc.Records) != 0 {
+		t.Errorf("a filter that matched nothing returned %d rows", len(doc.Records))
 	}
-	var notice listZeroJSON
-	if err := json.Unmarshal(stderr.Bytes(), &notice); err != nil {
-		t.Fatalf("stderr did not carry a JSON zero-result notice: %v (stderr=%q)", err, stderr.String())
+	if stderr.Len() != 0 {
+		t.Errorf("the statement belongs in the document, not on stderr: %q", stderr.String())
 	}
+	if doc.ZeroResult == nil {
+		t.Fatalf("the document does not say why the page is empty:\n%s", stdout.String())
+	}
+	notice := *doc.ZeroResult
 	if notice.Subject != "call graph record" {
 		t.Errorf("subject = %q", notice.Subject)
 	}
@@ -152,10 +155,11 @@ func TestRunCallGraphList_JSONEmptyStoreSaysStoreEmpty(t *testing.T) {
 		testfakes.NewFakeQueryCallGraph(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var notice listZeroJSON
-	if err := json.Unmarshal(stderr.Bytes(), &notice); err != nil {
-		t.Fatalf("decoding the notice: %v (stderr=%q)", err, stderr.String())
+	doc := decodeListingDocument(t, stdout.String())
+	if doc.ZeroResult == nil {
+		t.Fatalf("the document does not say why the page is empty:\n%s", stdout.String())
 	}
+	notice := *doc.ZeroResult
 	if !notice.StoreEmpty || notice.RecordsConsidered != 0 {
 		t.Errorf("want store_empty with zero records considered, got %+v", notice)
 	}
@@ -181,15 +185,15 @@ func TestRunCallGraphList_JSONPopulatedCarriesNoZeroNotice(t *testing.T) {
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(stderr.String(), "records_considered") || strings.Contains(stderr.String(), "store_empty") {
-		t.Errorf("a populated listing must carry no zero-result notice, got: %q", stderr.String())
+	if stderr.Len() != 0 {
+		t.Errorf("a listing under --json writes nothing to stderr, got: %q", stderr.String())
 	}
-	var marker listTruncationJSON
-	if err := json.Unmarshal(stderr.Bytes(), &marker); err != nil {
-		t.Fatalf("expected the truncation marker on stderr: %v (got %q)", err, stderr.String())
+	doc := decodeListingDocument(t, stdout.String())
+	if doc.ZeroResult != nil {
+		t.Errorf("a populated listing must carry no zero-result statement, got: %+v", doc.ZeroResult)
 	}
-	if marker.Truncated {
-		t.Errorf("two records under a limit of 20 withheld nothing, got %+v", marker)
+	if doc.Truncated {
+		t.Errorf("two records under a limit of 20 withheld nothing, got %+v", doc.listTruncationJSON)
 	}
 }
 

@@ -107,7 +107,7 @@ func TestPrintVulnScanResult_WithdrawnIsOutOfTheFindingsCountButInTheReport(t *t
 	withdrawn := []vulnScanAffected{{coord: rec.Coordinate.String(), record: rec}}
 
 	var out bytes.Buffer
-	if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, nil, withdrawn, nil, nil, vulnScanReachability{}, false, &out); err != nil {
+	if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, nil, withdrawn, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, false, &out); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 	got := out.String()

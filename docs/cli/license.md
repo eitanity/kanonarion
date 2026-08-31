@@ -48,7 +48,7 @@ kanonarion licence github.com/spf13/cobra@v1.8.1 --per-file
 | `--recursive` | false | Also report licences for the module's dependency closure |
 | `--all` | false | With `--recursive`, list every dependency instead of a summary |
 | `--walk-id` | (chosen) | With `--recursive`, read the closure from this walk |
-| `--json` | false | Emit the full `LicenceRecord` as JSON |
+| `--json` | false | Emit the licence record as a JSON object. Every key, at every depth, is snake_case; the keys are the command's own and are not the record type's Go field names |
 | `--log-level` | `warn` | Log verbosity: `debug`, `info`, `warn`, `error` |
 
 `--recursive` and `--all` read the closure from one walk of the module and print
@@ -90,6 +90,70 @@ github.com/gorhill/cronexpr@v0.0.0-…: Multiple — Apache-2.0 OR GPL-3.0
     …
 ```
 
+For a module under several licences at once (a conjunctive expression such as
+`Apache-2.0 AND MIT`), there is no election. What the output can say depends on
+what the record read, which is printed as the basis, and there are two cases.
+
+**One licence file granting several licences.** Nothing attributes a licence to
+any part of the module, so every grant governs its code and all of them bind.
+The output prints the union of the arms' obligations — a duty any arm requires
+is a duty owed, and the copyleft strength is the strictest arm's — then each
+arm's own set, so a reader can see which licence imposed which duty:
+
+```
+gopkg.in/yaml.v3@v3.0.1: Multiple — Apache-2.0 AND MIT
+  basis: split: covered by two different licenses
+  LICENSE: MIT (85%)
+  NOTICE: Apache-2.0 (100%)
+  conjunction: every arm binds at once, so the obligations below are the union
+  of all arms — there is no election to make
+  obligations (Apache-2.0 AND MIT, catalogue v1.2.0):
+    …
+  obligations required by Apache-2.0 (catalogue v1.2.0):
+    …
+  obligations required by MIT (catalogue v1.2.0):
+    …
+```
+
+Where an arm is not in the obligations catalogue the union reports
+`incomplete`: the merge saw part of what binds, and the arms it did recognise
+are still listed beneath.
+
+**One licence file per licence.** Here each file names what its arm covers —
+`LICENSE.docs` is documentation, `LICENSE.libyaml` is vendored C,
+`LICENSE.Golang` is vendored Go — so each arm is printed with the file that
+grants it. Whether you owe an arm depends on whether the artefact that file
+covers reaches your binary, which kanonarion cannot determine, so the merged
+set is printed last and labelled as an upper bound rather than as what you owe:
+
+```
+github.com/opencontainers/go-digest@v1.0.0: Multiple — Apache-2.0 AND CC-BY-SA-4.0
+  basis: split: one file per licence, none naming a choice
+  LICENSE: Apache-2.0 (100%)
+  LICENSE.docs: CC-BY-SA-4.0 (82%)
+  separate grants: each arm is granted by its own licence file, named below, and
+  that file states what the arm covers
+  obligations required by Apache-2.0, granted by LICENSE (catalogue v1.2.0):
+    …
+  obligations required by CC-BY-SA-4.0, granted by LICENSE.docs: unknown (…)
+  maximal obligations across every arm (…) — an upper bound,
+  not what you owe: which arms bind depends on which covered artefacts you ship
+    …
+```
+
+An arm the catalogue does not know is reported on its own row and does not
+degrade the rest: here the Apache-2.0 grant over the code is identified at full
+confidence, and a documentation licence with no catalogue entry says nothing
+about it.
+
+With `--json` the merged set is the `obligations` object and the per-arm sets
+are `binding_obligations`, keyed by SPDX identifier — the shape
+`elective_obligations` uses for a disjunction. For separately granted arms two
+more keys appear: `arm_grants`, mapping each identifier to the licence files
+granting it, and `obligations_reading`, which states that `obligations` is a
+maximal upper bound and not the set you owe. Both are absent when the arms came
+from one file, where `obligations` is the owed set.
+
 A module is reported as dual-licensed only when its licence file says so — an
 `SPDX-License-Identifier` line naming a choice, or wording such as "under the
 terms of either licence". Where one file carries several licence texts, the
@@ -109,7 +173,7 @@ Where the file carries several grants and says nothing about how they relate,
 every grant is reported as applying (`A AND B`) and the `basis` line reads
 `conservative:`. The same is true when the licence text could not be read.
 
-`--json` carries the same two facts as `ExpressionBasis` and `BundledSPDXs`.
+`--json` carries the same two facts as `expression_basis` and `bundled_spdxs`.
 
 To settle the election, record the chosen arm as a `license_overrides` entry
 (see [`config`](config.md)); `audit` and `license-compat` treat the module as
@@ -227,6 +291,10 @@ kanonarion licence-list --limit 100
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
+
 The command takes no positional argument; one is refused rather than ignored. A
 zero result names the filter it applied and what it was compared against, per
 [Zero-result listings](conventions.md#zero-result-listings).
@@ -254,9 +322,9 @@ nothing.
 
 ## Vendored licences
 
-Licence files under `vendor/` are recorded in `LicenseFiles` with
-`IsVendored = true` and are included in `EffectiveSet.Components` (see above).
-They do not contribute to `PrimarySPDX` or `Expression` - those fields reflect
+Licence files under `vendor/` are recorded in `license_files` with
+`is_vendored: true` and are included in `effective_set.components` (see above).
+They do not contribute to `primary_spdx` or `expression` - those fields reflect
 the module author's own licence only. Each vendored dependency is also a
 separate module in the walk graph with its own `LicenseRecord`.
 
@@ -267,41 +335,41 @@ than the module root**. A sub-package may ship its own `LICENSE` file - for
 example, a module that is Apache-2.0 overall but includes an MIT-licensed
 utility package or a BSD-3-Clause reference implementation under a subdirectory.
 
-These are surfaced in the `PackageLicenses` field on `LicenseRecord`:
+These are surfaced in the `package_licenses` key of the document:
 
 ```json
-"PackageLicenses": [
+"package_licenses": [
   {
-    "PackagePath": "gzhttp",
-    "SPDX": "Apache-2.0",
-    "Confidence": 1,
-    "SourceFile": "gzhttp/LICENSE"
+    "package_path": "gzhttp",
+    "spdx": "Apache-2.0",
+    "confidence": 1,
+    "source_file": "gzhttp/LICENSE"
   },
   {
-    "PackagePath": "internal/lz4ref",
-    "SPDX": "BSD-3-Clause",
-    "Confidence": 1,
-    "SourceFile": "internal/lz4ref/LICENSE"
+    "package_path": "internal/lz4ref",
+    "spdx": "BSD-3-Clause",
+    "confidence": 1,
+    "source_file": "internal/lz4ref/LICENSE"
   }
 ]
 ```
 
 **Key distinctions:**
 
-- **`PackageLicenses`** - first-party sub-packages of the module itself; not
+- **`package_licenses`** - first-party sub-packages of the module itself; not
   vendored. Lets a consumer ask "what licence applies to the package I actually
   import?" when they import a sub-package rather than the module root.
-- **`EffectiveSet.Components`** - all non-root, non-vendored subdirectory
+- **`effective_set.components`** - all non-root, non-vendored subdirectory
   groups, including embedded third-party code. Used by the compatibility and
   notice pipelines to compute the full obligation set.
 
-A module with a single, uniform root licence reports `PackageLicenses: null`
+A module with a single, uniform root licence reports `package_licenses: null`
 (no per-package divergence).
 
-**Derivation rule:** `PackageLicenses` is computed from `LicenseFiles` on every
+**Derivation rule:** `package_licenses` is computed from `license_files` on every
 extraction and on every deserialisation - the same derived-field contract as
-`EffectiveSet`. It is never stored separately. Vendored entries
-(`IsVendored = true`) and NOTICE files are excluded. When a directory contains
+`effective_set`. It is never stored separately. Vendored entries
+(`is_vendored: true`) and NOTICE files are excluded. When a directory contains
 multiple licence files, the highest-confidence match wins.
 
 ### Text output
@@ -328,7 +396,7 @@ github.com/klauspost/compress@v1.18.2: Multiple - Apache-2.0 (cached)
 
 ```
 $ kanonarion licence github.com/klauspost/compress@v1.18.2 --json \
-    | jq '[.PackageLicenses[] | {pkg: .PackagePath, spdx: .SPDX}]'
+    | jq '[.package_licenses[] | {pkg: .package_path, spdx: .spdx}]'
 [
   { "pkg": "gzhttp",                        "spdx": "Apache-2.0" },
   { "pkg": "internal/lz4ref",               "spdx": "BSD-3-Clause" },

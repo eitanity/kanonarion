@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -54,11 +55,11 @@ type contextOutput struct {
 	Module contextModuleInfo `json:"module"`
 	// DependencyScope names the go.mod dependency scope that selected this
 	// document and the test axis that scope applied. It rides on the document
-	// rather than on an envelope because the go.mod form emits NDJSON, which has
-	// none: a document lifted out of the stream must still say which set it was
-	// selected from. Absent on the three forms that project no go.mod scope — a
-	// coordinate, a pinned walk, a working tree — where the field would name a
-	// selection that never happened.
+	// rather than on an envelope because the go.mod form emits a sequence of
+	// documents with no envelope around it: one lifted out of the array or the
+	// stream must still say which set it was selected from. Absent on the three
+	// forms that project no go.mod scope — a coordinate, a pinned walk, a
+	// working tree — where the field would name a selection that never happened.
 	DependencyScope *scopeJSON             `json:"dependency_scope,omitempty"`
 	Commands        contextCommands        `json:"commands"`
 	Verification    contextVerification    `json:"verification"`
@@ -210,6 +211,20 @@ type contextLicense struct {
 	CopyrightStatus       string                      `json:"copyright_status,omitempty"`
 	CopyrightStatements   []contextCopyrightStatement `json:"copyright_statements,omitempty"`
 	Obligations           *contextLicenseObligations  `json:"obligations,omitempty"`
+	// BindingObligations carries per-arm obligations when the expression is a
+	// conjunction: every arm binds at once, so `obligations` above is their
+	// union and this says which arm imposed which duty. A union with no
+	// attribution states duties without naming the licence that demands them.
+	// Its KEYS are SPDX identifiers, not field names.
+	BindingObligations map[string]*contextLicenseObligations `json:"binding_obligations,omitempty"`
+	// ArmGrants names the licence file granting each arm, present only when the
+	// expression's basis says the arms were granted one file each. That file is
+	// the only statement of what its arm covers. Its KEYS are SPDX identifiers.
+	ArmGrants map[string][]string `json:"arm_grants,omitempty"`
+	// ObligationsReading qualifies `obligations` above when it must not be read
+	// as the set the consumer owes: across separately granted arms it is an
+	// upper bound. Empty — the ordinary case — it is the owed set.
+	ObligationsReading string `json:"obligations_reading,omitempty"`
 	// Custody carries the standard library's chain of custody, which is where
 	// its licence identity comes from: it is never fetched or extracted, so it
 	// has no licence record and the fields above are answered from the
@@ -388,15 +403,136 @@ type contextVulnerabilities struct {
 	Error               string `json:"error,omitempty"`
 }
 
+// errContextOutputWrite marks a failure to WRITE the answer, as distinct from a
+// failure to render one module of it. A write failure belongs to the whole run:
+// the next module would go to the same broken stdout, so it stops the run
+// rather than joining the per-module error list.
+var errContextOutputWrite = errors.New("writing output")
+
+// contextRooting is the build this run read its vulnerability verdicts in, and
+// how that build came to be the one.
+//
+// It exists because the rooting was stated to a person and to nobody else. A
+// --gomod read names no walk, so one is chosen for it out of however many the
+// store holds — and an agent reading verdicts off the document could see the
+// winner's id and nothing about the choice: not that a choice was made, not what
+// it was made from, not which manifest or toolchain bounded it, and not the flag
+// that takes the choice back.
+type contextRooting struct {
+	// Basis is who named the build: "named" when the caller pinned it with
+	// --walk-id, "chosen" when kanonarion picked one on their behalf, "none"
+	// when nothing anchored the verdicts and Reason says why.
+	//
+	// It is one field with one question in it, deliberately. WalkSelection.Rule
+	// carries the same distinction — "pinned" against the four rules that pick —
+	// but reading it that way asks a consumer to know that the other four values
+	// all mean "the tool decided". This is the fact the document most owes an
+	// agent, so it is stated rather than derivable.
+	Basis string `json:"basis"`
+	// WalkID, WalkScope and WalkFrame name the build itself: the walk the
+	// verdicts were read in, the dependency scope it covered and the platform it
+	// resolved for. A verdict is a property of one build, and these are it.
+	WalkID    string `json:"walk_id"`
+	WalkScope string `json:"walk_scope"`
+	WalkFrame string `json:"walk_frame"`
+	// Toolchain is the Go toolchain that walk was resolved by — the standard
+	// library the verdicts are about. "unrecorded" when the walk records none.
+	Toolchain string `json:"toolchain"`
+	// GoMod is the manifest that named the build: the go.mod whose module path
+	// the candidate walks were found by. Absent on a pinned read, where the
+	// caller named a record and no manifest was consulted.
+	GoMod string `json:"gomod,omitempty"`
+	// ManifestReresolved reports whether this run put the manifest back through
+	// the toolchain. It never does — context reads records, it does not resolve —
+	// so a walk taken before the last go.mod edit answers here, and the reader is
+	// told that rather than left to assume otherwise.
+	ManifestReresolved bool `json:"manifest_reresolved"`
+	// PinWith is the flag that names the build yourself, carried as data so a
+	// consumer can retry without parsing the sentence that offers it.
+	PinWith string `json:"pin_with"`
+	// WalkSelection is the selector's own account: the rule that picked the
+	// walk, how many candidates it picked from, what set those were counted
+	// over, what the manifest comparison proved and whether the toolchain has
+	// moved since. The same object every other --gomod read publishes.
+	WalkSelection selectionJSON `json:"walk_selection"`
+	// Reason says why no walk anchors the verdicts, present only when Basis is
+	// "none".
+	Reason string `json:"reason,omitempty"`
+}
+
+// contextRootingForChoice renders the rooting of a read that chose its own walk.
+func contextRootingForChoice(c walkChoice, gomod string) *contextRooting {
+	return &contextRooting{
+		Basis:         "chosen",
+		WalkID:        c.summary.ID,
+		WalkScope:     walkScopeLabel(c.summary.Scope),
+		WalkFrame:     c.summary.BuildFrame(),
+		Toolchain:     c.summary.Toolchain(),
+		GoMod:         gomod,
+		PinWith:       "--walk-id",
+		WalkSelection: c.selection(),
+	}
+}
+
+// contextRootingForNamedWalk renders the rooting of a read the caller pinned.
+func contextRootingForNamedWalk(c walkChoice) *contextRooting {
+	return &contextRooting{
+		Basis:         "named",
+		WalkID:        c.summary.ID,
+		WalkScope:     walkScopeLabel(c.summary.Scope),
+		WalkFrame:     c.summary.BuildFrame(),
+		Toolchain:     c.summary.Toolchain(),
+		PinWith:       "--walk-id",
+		WalkSelection: pinnedSelection(),
+	}
+}
+
+// contextRootingUnanchored is the rooting of a read that found no walk to anchor
+// its verdicts to. The section is emitted rather than nulled: the reader is told
+// on stderr that nothing anchors the verdicts, and a document that says nothing
+// there is the silence this envelope exists to end.
+func contextRootingUnanchored(reason, gomod string) *contextRooting {
+	return &contextRooting{
+		Basis:   "none",
+		GoMod:   gomod,
+		PinWith: "--walk-id",
+		Reason:  reason,
+	}
+}
+
+// contextEnvelopeHead is the envelope's own fields — everything about the run
+// rather than about a module.
+//
+// Split from contextEnvelope so the streaming form can write these fields before
+// the first module is resolved and emit exactly the same keys, in exactly the
+// same order, as the form that marshals the whole document at once.
+type contextEnvelopeHead struct {
+	envelopeScope
+	// Rooting is null on the forms that anchor nothing for the run: a coordinate
+	// and a working tree each state their own basis per section, and there is no
+	// run-level choice to disclose.
+	Rooting *contextRooting `json:"rooting"`
+}
+
+// contextEnvelope is what `context` answers with under --json, at every form and
+// every count.
+type contextEnvelope struct {
+	contextEnvelopeHead
+	Modules []contextOutput `json:"modules"`
+}
+
 // -- command --
 
 func newContextCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f contextFlags
 
 	cmd := &cobra.Command{
-		Use:         "context [<module>@<version> | <dir>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
+		Use: "context [<module>@<version> | <dir>]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
 		Long: `Aggregate all stored records for a module — verification, dependencies,
 license, interface, call graph, examples, vulnerabilities — into AI-ready
 context.
@@ -404,7 +540,16 @@ context.
 With no arguments, context defaults to --gomod ./go.mod and emits one context
 entry per module in the project's code-scope build list. This is the same module
 set a bare 'kanonarion inspect' walks, extracts, and vuln-scans, so the
-no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
+no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.
+
+Under --json every form prints ONE JSON object: the per-module documents in a
+"modules" array, and beside them the facts about the run — the dependency scope
+that selected them, how many modules that resolved, and, where a walk answered
+for the whole set, which walk and whether it was named with --walk-id or chosen
+here. An empty scope prints the same object with an empty "modules". --stream
+prints the per-module documents newline-delimited instead, one per line, for a
+caller reading them as they arrive. A local directory answers with the
+working-tree document, which reports a tree rather than a set of modules.`,
 		Example: `  kanonarion context golang.org/x/mod@v0.35.0
   kanonarion context --walk-id <id> --stream
   kanonarion context
@@ -455,11 +600,11 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 	cmd.Flags().BoolVar(&f.sizeOnly, "size-only", false, "print estimated token count and byte size of the JSON output, then exit")
 	cmd.Flags().BoolVar(&f.entryPointsFull, "entry-points-full", false, "include flat entry_points list in addition to entry_points_by_package")
 	cmd.Flags().StringVar(&f.packageFilter, "package", "", "restrict interface and call-graph sections to a single import path")
-	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "emit context for every module in the walk as NDJSON")
-	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; emit context for the project's code dependencies as NDJSON (default: ./go.mod)")
+	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "emit context for every module in the walk as a JSON array under --json")
+	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; emit context for the project's code dependencies as a JSON array under --json (default: ./go.mod)")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
-	cmd.Flags().BoolVar(&f.stream, "stream", false, "with --walk-id or --gomod: emit NDJSON (one document per module) without --json")
+	cmd.Flags().BoolVar(&f.stream, "stream", false, "with --walk-id or --gomod: emit NDJSON (one document per line) instead of the --json array")
 	cmd.Flags().BoolVar(&f.directOnly, "direct-only", false, "with --walk-id: emit context only for direct dependencies of the walk root")
 	cmd.Flags().BoolVar(&f.affectedOnly, "affected-only", false, "with --walk-id: emit context only for modules with vulnerability findings")
 	cmd.Flags().StringVar(&f.modulesFile, "modules", "", "with --walk-id: emit context only for module coordinates listed in this file (newline-delimited)")
@@ -543,7 +688,16 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	}
 
 	if jsonOut {
-		raw, err := json.MarshalIndent(out, "", "  ")
+		// One module, and still the envelope: the top-level type is fixed by the
+		// command, never by the number of records. A caller holding the argument
+		// in a variable cannot know whether it named a coordinate or a manifest,
+		// and a shape that follows the answer is one it cannot parse until it
+		// looks.
+		doc := contextEnvelope{
+			contextEnvelopeHead: contextEnvelopeHead{envelopeScope: unscopedEnvelope(1)},
+			Modules:             []contextOutput{out},
+		}
+		raw, err := json.MarshalIndent(doc, "", "  ")
 		if err != nil {
 			return fmt.Errorf("encoding context: %w", err)
 		}

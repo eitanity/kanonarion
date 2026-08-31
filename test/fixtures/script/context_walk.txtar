@@ -25,18 +25,24 @@ stdout '"byte_count"'
 stdout '"module_count"'
 stdout '"modules"'
 
-# --walk-id emits NDJSON: one object per graph node (no --stream required)
+# --walk-id under --json emits ONE object: one document per graph node in modules
 kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json
 stdout '"path".*example.com/app'
 stdout '"path".*example.com/dep'
 stdout '"path".*example.com/new'
 
-# each output line begins with a JSON object (compact, not pretty-printed)
+# the envelope opens the output, states that the caller NAMED this build, and
+# holds the per-module documents compact rather than pretty-printed
 kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json
-stdout '{"module"'
+stdout '^\{"dependency_scope":null'
+stdout '"basis":"named"'
+stdout '"walk_id":"01ARZ3NDEKTSV4RRFFQ69G5FBB"'
+stdout '"modules":\[\{"module"'
+stdout '\},\{"module"'
 
-# --stream is accepted alongside --walk-id (backwards compatible)
+# --stream selects the newline-delimited stream instead: no array, one line each
 kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --stream --store-root=$WORK/stores
+stdout '^\{"module"'
 stdout '"path".*example.com/app'
 
 # --compact flag is honoured in walk streaming mode

@@ -126,7 +126,7 @@ toolchain (`go list`) in the project directory.
 ```bash
 # Old: for each direct dep
 kanonarion walk github.com/foo/bar@v1.2.3
-WALK_ID=$(kanonarion walk-list --json | jq -r '.[0].id')
+WALK_ID=$(kanonarion walk-list --json | jq -r '.records[0].id')
 kanonarion vuln-scan "$WALK_ID"
 kanonarion license-list          # global - needs manual filtering
 kanonarion context github.com/foo/bar@v1.2.3
@@ -159,7 +159,7 @@ the install command.
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache---from-modcache) |
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`), honoured not rewritten. Under `off` the run proceeds, the staleness column answered from the ledger alone — a walk still needs its module bytes. `direct` refuses, exit `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
-| `--json` | `false` | Emit output as a JSON array |
+| `--json` | `false` | Emit output as one JSON object: the rows in `modules`, the run's own facts beside them |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
@@ -228,59 +228,118 @@ kanonarion audit --gomod ./go.mod --json
 ```
 
 ```json
-[
-  {
-    "coordinate": "github.com/spf13/cobra@v1.10.2",
-    "verification": "Verified",
-    "license": "Apache-2.0",
-    "license_status": "Detected",
-    "vuln_status": "Clean",
-    "vuln_findings": 0,
-    "is_latest": true,
-    "staleness_source": "proxy",
-    "major_probed": true
+{
+  "dependency_scope": { "scope": "code", "test_scope": "included" },
+  "module_count": 4,
+  "walk": {
+    "resolved": true,
+    "id": "01M0ADKD8WXT7JA8219Z7XRGEC",
+    "reused": true,
+    "completed_at": "2026-08-18T12:30:07Z"
   },
-  {
-    "coordinate": "golang.org/x/mod@v0.35.0",
-    "verification": "Verified",
-    "license": "BSD-3-Clause",
-    "license_status": "Detected",
-    "vuln_status": "Clean",
-    "vuln_findings": 0,
-    "is_latest": false,
-    "staleness_source": "ledger",
-    "staleness_looked_up_at": "2026-08-03T09:41:02Z",
-    "latest_version": "v0.36.0",
-    "latest_release_age_days": 6
+  "scan": {
+    "answered": true,
+    "run_id": "vscan-01M0ADKD8WXT7JA8219Z7XRGEC-1787056207",
+    "reused": true,
+    "snapshot": { "source": "vuln.go.dev", "version": "2026-08-14T16:22:54Z" }
   },
-  {
-    "coordinate": "golang.org/x/vuln@v1.3.0",
-    "verification": "Verified",
-    "license": "BSD-3-Clause",
-    "license_status": "Detected",
-    "vuln_status": "Clean",
-    "vuln_findings": 0,
-    "is_latest": true,
-    "staleness_source": "proxy",
-    "major_probed": true
+  "reachability_basis": { "verdicts": 4, "source_read_by_this_run": false },
+  "toolchain": {
+    "judged": true,
+    "status": "clear",
+    "version": "go1.26.6",
+    "snapshot": { "source": "vuln.go.dev", "version": "2026-08-14T16:22:54Z" },
+    "reason": "",
+    "advisories_judged": 32,
+    "covering": [],
+    "withdrawn_covering": [],
+    "statement": "toolchain:\n  go1.26.6: none of the 32 toolchain advisories in vuln.go.dev@2026-08-14T16:22:54Z covers it"
   },
-  {
-    "coordinate": "go.etcd.io/bbolt@v1.4.3",
-    "verification": "Verified",
-    "license": "MIT",
-    "license_status": "Detected",
-    "vuln_status": "Withdrawn",
-    "vuln_findings": 1,
-    "vuln_withdrawn": 1,
-    "is_latest": false,
-    "staleness_source": "proxy",
-    "latest_version": "v1.5.0",
-    "latest_release_age_days": 54
-  }
-]
+  "staleness": {
+    "measured": true,
+    "as_of": "2026-08-18T23:05:11Z",
+    "age": "12m30s",
+    "ttl": "1h0m0s",
+    "refresh_with": "latest --fresh"
+  },
+  "modules": [
+    {
+      "coordinate": "github.com/spf13/cobra@v1.10.2",
+      "verification": "Verified",
+      "license": "Apache-2.0",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "is_latest": true,
+      "staleness_source": "proxy",
+      "major_probed": true
+    },
+    {
+      "coordinate": "golang.org/x/mod@v0.35.0",
+      "verification": "Verified",
+      "license": "BSD-3-Clause",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "is_latest": false,
+      "staleness_source": "ledger",
+      "staleness_looked_up_at": "2026-08-03T09:41:02Z",
+      "latest_version": "v0.36.0",
+      "latest_release_age_days": 6
+    },
+    {
+      "coordinate": "golang.org/x/vuln@v1.3.0",
+      "verification": "Verified",
+      "license": "BSD-3-Clause",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "is_latest": true,
+      "staleness_source": "proxy",
+      "major_probed": true
+    },
+    {
+      "coordinate": "go.etcd.io/bbolt@v1.4.3",
+      "verification": "Verified",
+      "license": "MIT",
+      "license_status": "Detected",
+      "vuln_status": "Withdrawn",
+      "vuln_findings": 1,
+      "vuln_withdrawn": 1,
+      "is_latest": false,
+      "staleness_source": "proxy",
+      "latest_version": "v1.5.0",
+      "latest_release_age_days": 54
+    }
+  ]
+}
 ```
 
-The example above is abridged. Keys whose value is zero, `false` or `null` are
+`--json` emits **one JSON object** at every count, never a bare array. The
+per-module rows are its `modules` member and are unchanged; beside them the
+object states the facts about the run, which a bare array had nowhere to put:
+
+| Key | Meaning |
+| --- | --- |
+| `dependency_scope` | The go.mod dependency scope that resolved the rows (`code`, `tool` or `complete`) and the test axis it applied (`included`, `excluded` or `unavailable`). Never null on `audit`, which always resolves a scope. |
+| `module_count` | How many modules that scope resolved. It is the number the `notice:` line on stderr states. A module that failed to render is missing from `modules`, named on stderr, and the run exits non-zero. |
+| `walk` | Which walk fixed the dependency set: `id`, `completed_at` (the record's date, RFC 3339), and `reused` - true when this run re-resolved the go.mod, found the resolution identical to a stored walk, and served that record. `resolved` is false when no walk was taken at all. |
+| `scan` | Which vulnerability scan run filled the `vuln_status` column: `run_id`, `reused`, and the advisory `snapshot` it was judged against. `answered` is false when no run answered - an empty scope, or a scan leg that failed and said so on stderr. The run id is stated on both arms, which the stderr sentence is not: a scan derived by this run names no id there. |
+| `reachability_basis` | How much of the answer depends on the project's own source: `verdicts` counts the findings carrying a reachability answer, and `source_read_by_this_run` is false on a served run, whose verdicts came from source this invocation did not re-read. The same object `vuln-scan --json` publishes under the same key. |
+| `toolchain` | The toolchain axis, in the shape [`vuln-scan --json`](vuln-scan.md) publishes: `judged`, `status`, the `version` judged, the `snapshot` it was judged against, `reason` when nothing was judged, the `covering` advisory ids, and `statement`, the sentence stderr shows, verbatim. The toolchain is not a dependency of the artefact: it is no row and is counted in no roll-up. |
+| `staleness` | Dates the staleness column for the run as a whole - the machine-readable half of the table's `latest as of ...` footer, which the text form prints on stdout. `as_of` is the OLDEST lookup behind the column, `age` is how old it was when this run read it, `ttl` is the `staleness.ttl` in force in the same units, and `refresh_with` names the command that re-queries. `measured` is false when no row carries a lookup. |
+| `modules` | The per-module rows. `[]` when the scope resolved nothing - the empty answer is the same object, not a different shape. |
+
+Every one of those keys is emitted on every run. An axis that was not measured
+says so in a value - `"resolved": false`, `"judged": false`, `"measured": false`,
+with a `reason` where there is one - because a missing key and a `null` both read
+as "nothing to report", which is the one thing an unmeasured axis does not mean.
+
+`audit` refuses `--exclude-tests` (it records a walk, and a walk record names its
+scope but not its test axis), so it offers no `narrow_with` remedy on either
+channel.
+
+The rows above are abridged. Keys whose value is zero, `false` or `null` are
 still emitted - `vuln_findings: 0`, `vuln_withdrawn: 0`, `policy_blocking:
 false`, `policy_unevaluated: false`, `pin_ahead_of_latest: false`,
 `latest_release_age_days: null`, `deprecated: null`. A key is absent only where
@@ -324,7 +383,8 @@ recording younger than `staleness.ttl` (default `1h`, a config key) is served
 instead of re-querying - so `latest --gomod` followed by `audit` pays the proxy
 sweep once between them rather than once each. The table states the lookup time
 it used (`latest as of ...`, dated by its oldest row) so a served answer is
-never mistaken for a live one, and a **failed** lookup is never recorded.
+never mistaken for a live one, and a **failed** lookup is never recorded. Under
+`--json` that footer is the `staleness` key, dated by the same lookup.
 
 A lookup that fails transiently (a loaded proxy answering an empty body, a
 timeout, a 5xx) is retried, and each retry is narrated on stderr:
@@ -539,6 +599,10 @@ a reuse condition below. The reachability clause therefore appears whenever the
 run answered any, and it states what those verdicts rest on rather than claiming
 your tree is unchanged — nothing re-read it.
 
+Under `--json` the same three facts are the `walk`, `scan` and
+`reachability_basis` keys of the object. The scan's run id is there on both arms,
+including the derived one the sentence names only in prose.
+
 A new walk is recorded whenever the target, scope, depth, policy, build
 environment, resolved graph (every module at every selected version, every edge,
 every artefact hash) or per-node outcome differs.
@@ -628,6 +692,10 @@ toolchain:
   go1.26.2 is covered by 3 advisories in vuln.go.dev@2026-07-27T20:14:16Z: GO-2026-4978 (fixed in 1.26.3), GO-2026-4979 (fixed in 1.26.3), GO-2026-4984 (fixed in 1.26.3)
   this is the build toolchain, not a dependency of the artefact: it is reported as its own axis and is counted in no module roll-up
 ```
+
+Under `--json` the same judgment is the `toolchain` key, in the shape
+[`vuln-scan --json`](vuln-scan.md) publishes, carrying the lines above verbatim
+in its `statement`.
 
 The advisory database keys the toolchain — `cmd/go`, the compiler, the linker —
 **separately from `stdlib`**, and the two sets are disjoint. No project imports

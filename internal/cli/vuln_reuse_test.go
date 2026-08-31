@@ -157,7 +157,7 @@ func TestServeStoredScanRun_AnnouncesTheSharedReuseSentence(t *testing.T) {
 	ctr := &Container{ScanWalk: scan, QueryVuln: qv, QueryWalks: walks}
 
 	var stdout, stderr bytes.Buffer
-	if err := serveStoredScanRun(t.Context(), run, ctr, false, true, vulnapp.ServeSurfaceVulnScan, &stdout, &stderr); err != nil {
+	if _, err := serveStoredScanRun(t.Context(), run, ctr, false, true, false, vulnapp.ServeSurfaceVulnScan, &stdout, &stderr); err != nil {
 		t.Fatalf("serveStoredScanRun: %v", err)
 	}
 
@@ -175,7 +175,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 
 	var served bytes.Buffer
 	if err := printVulnScanResult(run, nil, nil, nil, nil,
-		vulnScanReachability{Verdicts: 3}, true, &served); err != nil {
+		vulnScanReachability{Verdicts: 3}, vulnScanToolchainJSON{}, true, &served); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 	// than inferring the fact from a key's absence.
 	var fresh bytes.Buffer
 	if err := printVulnScanResult(run, nil, nil, nil, nil,
-		vulnScanReachability{Verdicts: 3, SourceReadByThisRun: true}, true, &fresh); err != nil {
+		vulnScanReachability{Verdicts: 3, SourceReadByThisRun: true}, vulnScanToolchainJSON{}, true, &fresh); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 	if err := json.Unmarshal(fresh.Bytes(), &doc); err != nil {

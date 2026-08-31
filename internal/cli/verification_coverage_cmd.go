@@ -13,12 +13,16 @@ import (
 // newVerificationCoverageCmd returns the command that reports a stored walk's
 // verification coverage on its own, in a form a CI gate can assert on.
 //
-// It exists as a command rather than as fields in `walk --json` or `audit
-// --json` because both of those stdout channels are already spoken for: walk's
-// is the content-hashed walk record, and audit's is a documented array of
-// per-module rows that every existing consumer indexes into. A report about a
-// run belongs in neither artefact, so the figures get a channel of their own,
-// where the field names are a contract with nothing else to preserve.
+// It exists as a command because the figures are worth reading without
+// re-walking: it reports them from a STORED walk, at any time after the run
+// that produced it, which neither `walk` nor `audit` can do.
+//
+// It is no longer the only surface. `walk --json` carries the same aggregate
+// under `verification_coverage`, embedding the contract published here so one
+// fact keeps one spelling. The earlier rationale — that walk's stdout was the
+// content-hashed record and had no room — was wrong in its conclusion: the
+// record's keys are spliced through untouched and the coverage sits beside
+// them, and nothing verifies a walk by hashing this document.
 //
 // Reporting from a stored walk rather than recomputing also means the audit path
 // is covered by the same code: an audit leaves the project walk behind, so the
@@ -26,9 +30,12 @@ import (
 func newVerificationCoverageCmd(stdout, stderr io.Writer) *cobra.Command {
 	var detail bool
 	cmd := &cobra.Command{
-		Use:         "verification-coverage <walk-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Report how a walk's modules were verified",
+		Use: "verification-coverage <walk-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Report how a walk's modules were verified",
 		Long: `Report aggregate verification coverage over a stored walk's graph.
 
 The figures say how many modules carry the strongest assurance — a checksum
@@ -225,6 +232,13 @@ type coverageJSON struct {
 	// left to the caller so every gate agrees on what a collapse is.
 	Collapsed bool `json:"collapsed"`
 
+	// Shares are the percentages the coverage report renders beside the counts.
+	// They are here because a figure a reader is shown has to be readable off
+	// the document too: a gate written against "cross-verification is below
+	// 90%" was otherwise reading a number off prose, or recomputing a ratio
+	// whose denominator the report chooses.
+	Shares coverageSharesJSON `json:"shares"`
+
 	VCS coverageVCSJSON `json:"vcs"`
 
 	// Build is what the coverage figures are about: the platform and toolchain
@@ -244,6 +258,27 @@ type coverageJSON struct {
 	// output, and a flag to opt into being told why is a flag to opt into an
 	// answer that can be checked.
 	Modules []moduleVerification `json:"modules"`
+}
+
+// coverageSharesJSON is each bucket as a percentage of the graph, plus the one
+// share the report states against a different denominator.
+//
+// Emitted whole, zeros included, for the reason the counts are: the report drops
+// a zero row to stay readable, and a document that dropped the field with it
+// could not tell a bucket that is empty from a bucket nobody measured.
+type coverageSharesJSON struct {
+	CrossVerified  float64 `json:"cross_verified"`
+	ChecksumDBOnly float64 `json:"checksum_db_only"`
+	GoSumOnly      float64 `json:"go_sum_only"`
+	Unverified     float64 `json:"unverified"`
+	LocalSource    float64 `json:"local_source"`
+	Unrecorded     float64 `json:"unrecorded"`
+	Unrecognised   float64 `json:"unrecognised"`
+	// CrossVerifiedOfApplicable is the share over the honest denominator: the
+	// modules that have a published artefact to anchor. It differs from
+	// CrossVerified whenever the graph holds local source or the standard
+	// library, which is every project walk.
+	CrossVerifiedOfApplicable float64 `json:"cross_verified_of_applicable"`
 }
 
 // coverageVCSJSON is what the fetch ledger says, which the status cannot: not
@@ -286,6 +321,16 @@ func verificationCoverageJSON(
 		Unrecorded:      c.Unrecorded,
 		Unrecognised:    c.Unrecognised,
 		Collapsed:       c.IsCollapsed(),
+		Shares: coverageSharesJSON{
+			CrossVerified:             sharePercent(c.CrossVerified, c.Total),
+			ChecksumDBOnly:            sharePercent(c.ChecksumDBOnly, c.Total),
+			GoSumOnly:                 sharePercent(c.GoSumOnly, c.Total),
+			Unverified:                sharePercent(c.Unverified, c.Total),
+			LocalSource:               sharePercent(c.LocalSource, c.Total),
+			Unrecorded:                sharePercent(c.Unrecorded, c.Total),
+			Unrecognised:              sharePercent(c.Unrecognised, c.Total),
+			CrossVerifiedOfApplicable: sharePercent(c.CrossVerified, c.CrossVerifiable()),
+		},
 		VCS: coverageVCSJSON{
 			Rechecked:   c.VCSRechecked,
 			Inherited:   c.VCSInherited,

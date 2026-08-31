@@ -107,8 +107,9 @@ func binaryPrePassFlag(set bool) []inapplicableFlag {
 
 // walkGoModOnlyFlags returns the walk flags that only a go.mod walk can act on,
 // for whichever of them the caller set. --stdlib-from-gomod reads a toolchain
-// directive out of a project go.mod, and --analyse-local resolves local-replace
-// targets relative to one; a positional walk has neither.
+// directive out of a project go.mod, --analyse-local resolves local-replace
+// targets relative to one, and --from-modcache verifies the carried-in cache
+// bytes against the go.sum beside one; a positional walk has none of them.
 func walkGoModOnlyFlags(f walkFlags) []inapplicableFlag {
 	const where = "walk --gomod"
 	var out []inapplicableFlag
@@ -120,6 +121,15 @@ func walkGoModOnlyFlags(f walkFlags) []inapplicableFlag {
 	}
 	if f.stdlibFromGoMod {
 		out = append(out, inapplicableFlag{flag: "--stdlib-from-gomod", where: where})
+	}
+	if f.fromModcache != "" {
+		// Named with its reason: under --from-modcache go.sum is the sole anchor
+		// for the bytes read out of the cache, and a published coordinate walk
+		// has no project go.sum to check them against.
+		out = append(out, inapplicableFlag{
+			flag:  "--from-modcache",
+			where: "walk --gomod, which has the project go.sum the cache is verified against; a published coordinate has none",
+		})
 	}
 	return out
 }

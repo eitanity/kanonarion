@@ -26,9 +26,12 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var latestSuccess bool
 
 	cmd := &cobra.Command{
-		Use:         "walk-list",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List stored walk records",
+		Use: "walk-list",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List stored walk records",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if tool && scopeStr != "" {
 				return fmt.Errorf("cannot combine --tool and --scope")
@@ -145,25 +148,15 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 	trunc := listTruncation{limit: limit, subject: "walk records", truncated: truncated, offset: offset}
 
 	if jsonOut {
-		// A nil slice encodes as null, and this was the one listing whose stdout
-		// type therefore depended on how many rows came back. Every consumer of
-		// every listing reads an array at every row count.
-		if summaries == nil {
-			summaries = []walkports.WalkSummary{}
-		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if encErr := enc.Encode(summaries); encErr != nil {
-			return fmt.Errorf("encoding JSON: %w", encErr)
-		}
+		var zero *listZeroScope
 		if len(summaries) == 0 {
 			scope, serr := walkListZeroScope(ctx, filter, offset, uc)
 			if serr != nil {
 				return serr
 			}
-			return writeListZeroNoticeJSON(stderr, scope)
+			zero = &scope
 		}
-		return writeListTruncationJSON(stderr, trunc)
+		return writeListDocument(stdout, summaries, trunc, zero)
 	}
 
 	if len(summaries) == 0 {

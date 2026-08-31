@@ -63,6 +63,49 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## `audit`, `context` and `latest` --json: the per-module envelope
+
+**Breaking output-shape change; no store migration, no record or pipeline bump.**
+Nothing stored changes. What changes is the framing of three commands' `--json`
+document.
+
+Each of the three answers with one row per module, and each wrote those rows as a
+bare JSON array (`context` wrote an object for a single coordinate). An array has
+nowhere to put a fact about the RUN, so the facts a person reads on stderr —
+which dependency scope resolved the rows, how many modules that was, the flag
+that narrows it, and for `context` which build the vulnerability verdicts were
+read in and whether that build was NAMED by the caller or CHOSEN for them —
+reached a `--json` consumer nowhere at all. That is a verdict dressed as evidence
+on the surface an agent reads.
+
+**The new shape.** One JSON object at every form and every count, with the rows
+in `modules`:
+
+```
+{ "dependency_scope": {...}|null, "module_count": N, "narrow_with": "--exclude-tests",
+  "rooting": {...}|null,          // context only
+  "modules": [ ...the rows, unchanged... ] }
+```
+
+**The rows do not change.** Not one field moves, is added or is renamed in any of
+the three; `modules` holds exactly the documents the array held. Verified element
+by element against the recorded command goldens.
+
+**Consumer impact, and it is breaking.** A consumer that read
+`audit --json | jq '.[]'`, `latest --json | jq '.[]'` or
+`context --gomod --json | jq '.[]'` must read `jq '.modules[]'`. One that read
+`context <module>@<version> --json | jq '.dependencies'` must read
+`jq '.modules[0].dependencies'`. `context --stream` is unchanged — it is
+newline-delimited per-module documents, which is not one document and carries no
+envelope — so a consumer that wants the old per-module framing can ask for it by
+name.
+
+**What is new to read.** `dependency_scope` and `module_count` on all three;
+`narrow_with` where the scope can still be narrowed; and on `context` a `rooting`
+object whose `basis` is `"named"` or `"chosen"`, beside the candidate count the
+choice was made from. The last is the point of the change: the walk id alone
+looks the same whether the caller pinned the build or the tool picked it.
+
 ## Interface record: pipeline `0.5.0` → `0.6.0`
 
 **Record shape change; no store migration. This bump is also a repair** — a
@@ -1006,6 +1049,102 @@ new question.
 **Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a metadata-only
 operation in SQLite: no row is rewritten, whatever the table holds.
 
+## Call graph store: module `callgraph`, migration 15
+
+**Additive; one new column, a back-fill, no purge, no schema-version bump and no
+pipeline bump.** `callgraph_records` gains `analyser`: the `golang.org/x/tools`
+version that type-checked the module and built the SSA the graph was computed
+over, together with how the store came to state it. The whole store's migration
+count goes `v82` -> `v83`.
+
+**Why the library, when the record already names the toolchain.** The toolchain
+compiles the code and supplies the standard library; x/tools is what READS it,
+and it decides what the graph CONTAINS. A version predating a language construct
+degrades extraction two ways. Loudly: type-checking fails, the record says
+`LoadFailed`, and a reader can see it. Silently: the SSA builds anyway and misses
+the construct, so CHA under-reports and a `callers` answer comes back short with
+nothing said. Nothing on a record could tell those two graphs apart. Bumping
+x/tools is a `go.mod` change, so `pipeline_version` does not move for it — which
+means a graph built by a library that understood the code and one built by a
+library that did not were peers on the composition ladder.
+
+**One column, carrying the provenance with the version.** The stored value is
+`observed:v0.49.0` or `inferred:v0.47.0`, never a bare version. Splitting the two
+into separate columns would let a query, an index or an export read the number
+without the strength behind it, and this is the one axis where that is the whole
+defect: a guess that reads as a measurement, on the field whose purpose is to say
+what the graph could and could not see. An empty column means the row states
+none, which is what a record written by a binary that could not read its own
+build info honestly says.
+
+**Where the value comes from.** At extraction, from the running binary's own
+build info — `debug.ReadBuildInfo`, the `dep golang.org/x/tools` entry, with a
+`replace` taken over the replaced module because the replacement is what actually
+parsed the code. Never from a `go.mod` read at read time: that describes the
+reader rather than the record. A `go test` binary carries no dependency list at
+all, so records written under the suite state no analyser, which is true of them.
+
+**The back-fill infers, and every value it writes says so.** This is walk
+migration 9's shape with walk 9's evidence removed, and the difference is the
+whole of it. Walk 9 decoded each blob to project a value the record ALREADY HELD
+and had merely left unprojected. Here there is no such source: no record ever
+captured the analyser version, anywhere. The back-fill therefore reads
+`extracted_at` — a column, not a blob — and attributes it against the pin history
+of this repository's own `go.mod`:
+
+| Pin landed | `golang.org/x/tools` | Commit |
+|---|---|---|
+| 2026-07-05 | `v0.47.0` | `3caa505`, the line first appears |
+| 2026-08-15 | `v0.49.0` | `8d5dc4f`, the only change since |
+
+That is weak evidence and is written as such. It says which library a binary
+built from this repository at that date would have linked, not which one the
+binary that actually wrote the row did — a local build of an older checkout is
+attributed wrongly by it. So every back-filled row is written `inferred:`, and no
+rendering in the tool shows an inferred value the way it shows an observed one.
+Measured on a seeded population of the size the live store holds — 811 rows, 413
+before the pin moved and 398 on or after — 811 rows in, 811 rows out, every
+`content_hash` unchanged.
+
+**Walk 9's two rules, kept.** A row whose `extracted_at` cannot be parsed is left
+at the empty value rather than failing the migration: a store that refuses to
+open because one historical timestamp is unreadable is the worse outcome, and
+"not recorded" is exactly what such a row is. A row extracted before the pin
+history begins is left empty too — there is no version to infer, and inventing
+one is the fabrication this axis exists to stop. A row already stating an
+analyser is never re-attributed: a guess must not overwrite a measurement.
+
+**No index, unlike walk 9.** Walk 9 indexed `go_version` because its reads FILTER
+on the toolchain. Nothing filters on this. The generations of one coordinate are
+already found by the primary key, and the only read is over that handful; an
+index nothing queries is a write cost and a second place to be wrong.
+
+**No purge and no bump, because the record shape does not move.** The fact is
+metadata about the PRODUCER rather than a claim about the module, so it lives
+OUTSIDE the seal: the canonical encoding is untouched, every stored record
+marshals to the bytes it was sealed over, and every `content_hash` in the table
+is left exactly as written. A bump would have stranded 811 records and their edge
+rows to state a fact about which binary wrote them. Being outside the seal is
+also a limit on what it may be used for: a value outside the seal could be edited
+without breaking the record's own integrity check, so nothing ranks, caches or
+reuses on it. It is read, printed and compared, and that is all.
+
+**What it changes for a read.** `callgraph-show` names the analyser on every
+record, beside the algorithm and the toolchain, and `--history` names it on every
+generation. Where the generations composed for one coordinate state more than one
+analyser VERSION, the composed read says so — as a statement, never a refusal. It
+does not change which generation wins: the completeness ladder decides that, and
+a fact about the producer must not become a silent tiebreak. Two rows at one
+version stated at two strengths are not a disagreement, because the same library
+parsed both. A generation that states no analyser takes no part in the
+comparison, on the rule an unnamed `GOROOT` is read under: "I could not tell" is
+not a value to disagree with. A store whose records were all written by one
+binary therefore gains no line anywhere.
+
+**Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a
+metadata-only operation in SQLite. The back-fill is one `SELECT` of two columns
+plus one `UPDATE` per row, with no decompression.
+
 ## Call graph records: the wrapper hop, no migration and no bump
 
 **No store migration, no schema-version bump, no pipeline bump.** The analyser
@@ -1196,6 +1335,174 @@ Both contexts now read that mapping through one rule
 implementations of "which listed module owns this path" were free to disagree
 about one file, which is how a fixed two-segment split survived in two scanners
 at once.
+
+## Native component record: new store module `native`, migration 1
+
+**Additive; a new table and a new record type. No existing record shape changes,
+so no pipeline version is bumped anywhere.** The whole store's migration count
+goes `v81` -> `v82`.
+
+`native_records` holds what a module's own artefact compiles into a binary as
+native code: the presence answer, the identified components with the declaration
+that established each, and every native source file the build compiles, with its
+size and digest. It exists because nothing modelled it. Measured on the
+maintainer's store, `github.com/mattn/go-sqlite3@v1.14.12` carries
+`sqlite3-binding.c` at 8,469,484 bytes, that file declares
+`#define SQLITE_VERSION "3.38.0"`, its licence record says MIT — the Go
+wrapper's licence — and no table named the library at all.
+
+It owns a **new module series** rather than joining `license` or `fetch`. The
+subject is different: a licence record describes a grant, a fetch record
+describes custody of an artefact, and this describes a distinct piece of software
+that ships inside one. A separate series also keeps the version numbers
+independent, so adding a recipe never forces a migration in a context that has
+nothing to do with it.
+
+The **artefact identity is a key column**, alongside the coordinate and the
+pipeline fingerprint. A native-component record is a claim about specific bytes,
+and two records naming different artefacts for one pinned version is a
+contradiction the store must be able to see; keying on the coordinate alone would
+have the second measurement silently replace the first. `GetNativeRecord` refuses
+to pick between two such rows rather than serving one and hiding the other.
+
+The generation key is a **pipeline fingerprint**, not the bare pipeline version:
+the detection logic version folded with the recipe catalogue version
+(`0.1.0+recipes.1` at the time the table was created). Adding a recipe must re-measure a module recorded as
+`present_unidentified` rather than serve the answer taken before the recipe
+existed — that transition is the whole point of recording the unidentified case.
+The two versions are separate because they change for different reasons, which is
+the same split `fips` makes between its pipeline and its catalogue.
+
+**Presence is three-valued**, and the third value is why the record exists:
+
+| `presence` | meaning |
+|---|---|
+| `absent` | the artefact carries no native source the build compiles |
+| `present_identified` | native source is compiled in and a recipe named the library |
+| `present_unidentified` | native source is compiled in and no recipe names it |
+
+`present_unidentified` is a coverage gap a reader can act on, not an absence, and
+it is spelled differently from `absent` so no consumer can collapse the two. The
+record carries the full file list in both present cases, so what is unaccounted
+for is legible without re-reading the artefact.
+
+(A fourth value and a fourth collection arrive at pipeline version 0.2.0; see
+the next entry.)
+
+Migration for existing stores: **none required.** The table is created empty and
+fills as modules are examined. A coordinate with no row reads as *not examined*,
+never as *no native component*.
+
+## Native record shape change: pipeline version 0.1.0 -> 0.2.0, no migration
+
+**A record shape change with NO migration and NO DDL. The whole store's
+migration count is unchanged.** This entry exists precisely because a shape
+changed without a migration running, and a shape change that leaves no trace in
+this file is one nobody can account for later.
+
+`native` records gain a `linked_libraries` collection and a fourth `presence`
+value, `linked_not_shipped`.
+
+**Why no DDL.** `presence` is an unconstrained `TEXT` column with no CHECK and no
+enum, so a new value needs no schema change. The collection lives inside the
+serialised record blob, which is opaque to SQLite. The table created by
+`native` migration 1 holds the new shape unaltered.
+
+**Why the pipeline version moves anyway.** The measurement changed: a
+re-measurement of an unchanged artefact now produces a different record. The
+generation key is the pipeline fingerprint, which folds the pipeline version in,
+so rows written at `0.1.0+recipes.1` are simply never read at
+`0.2.0+recipes.1`. They are not migrated, not rewritten and not deleted - they
+stay as the historical record of what was measured then, and no read can mistake
+one for a measurement taken now. Measured on the maintainer's store before the
+change: 7 rows at `0.1.0+recipes.1`, 0 at `0.2.0+recipes.1`.
+
+**What the value fixes.** A module that declares cgo, compiles no native source
+of its own, and links an external native library used to answer `absent` - the
+word reserved for nothing being there. `golang.org/x/text` names `-licui18n`;
+`github.com/googleapis/enterprise-certificate-proxy` names `-framework
+CoreFoundation`; `github.com/yfedoseev/pdf_oxide/go` names a
+`libpdf_oxide.a` operand. In every case something native reaches the binary and
+the artefact does not carry it. Not measuring a host-provided library stays
+correct - `-licui18n` cannot be resolved from an artefact and no version may be
+invented for it - but scoping the measurement out is not the same as calling it
+absent.
+
+`linked_not_shipped` deliberately does **not** take the `present_` prefix: it is
+not a statement about what the artefact contains.
+
+**What earns it.** No compiled sources AND at least one linked library of kind
+`external`. The C runtime a cgo binary links by construction - `m`, `c`, `dl`,
+`pthread`, `rt`, `util`, `resolv`, `nsl`, `crypt`, `anl`, `stdc++`, `gcc`,
+`gcc_s`, `objc`, `System` - is `system` and never earns it; flagging libc and
+libdl would make the value meaningless. Everything else is `external`,
+frameworks included, because a framework names a component from outside the
+module a reader may want to see. Measured over the maintainer's store (1229
+artefacts), 20 answers move from `absent` to `linked_not_shipped`; over the
+module cache (1201 zips), 24 move, and 2 modules that name only the C runtime
+stay `absent`. No `present_identified` or `present_unidentified` answer moves.
+
+`linked_libraries` is populated **regardless of presence**, so a module that
+ships its own sources and also links something else states both. Each entry
+carries the library name as the directive spells it, the kind, the verbatim
+`#cgo` line and the file it sits in. It joins the content hash in canonical
+sorted order, under a comparator keyed on all four fields.
+
+Migration for existing stores: **none required, and none is run.**
+
+## Native pkg-config operand: pipeline version 0.2.0 -> 0.3.0, no migration
+
+**A measurement change with NO shape change, NO DDL and NO migration. The whole
+store's migration count is unchanged.** The record shape, the field set and the
+content-hash formula are all exactly as 0.2.0 left them.
+
+`#cgo pkg-config:` is read as a fourth operand form alongside `-l<name>`,
+`-framework <name>` and `.a` archive paths. It was missing, and its absence was
+the same defect the 0.2.0 entry describes: `github.com/terminalstatic/go-xsd-validate@v0.1.6`
+carries `#cgo pkg-config: libxml-2.0`, links libxml2, ships none of it, and
+answered `absent`.
+
+**Why the pipeline version moves with no shape change.** The version's contract
+is a re-measurement one, not a shape one: it moves when re-measuring an
+unchanged artefact would differ from a stored record. It would. Measured on the
+maintainer's store, which already held rows at `0.2.0+recipes.1` from a
+verification run:
+
+| coordinate | row held at 0.2.0 | re-measurement |
+|---|---|---|
+| `github.com/terminalstatic/go-xsd-validate@v0.1.6` | `absent` | `linked_not_shipped`, naming `libxml-2.0` |
+| `go.mongodb.org/mongo-driver/v2@v2.6.0` | `present_unidentified`, no `libmongocrypt` | `present_unidentified`, with `libmongocrypt` |
+
+Without the bump the first row is served as a cache hit and the module keeps
+answering `absent` forever - the defect surviving its own fix. As before the
+rows are not migrated, rewritten or deleted; the fingerprint moves and they stop
+being read.
+
+**pkg-config names are a separate namespace and are recorded verbatim.**
+`libxml-2.0` is stored as `libxml-2.0`: the `lib` prefix is not stripped and it
+is not translated to the `xml2` a linker would call it, because that translation
+lives in a `.pc` file on the building machine and not in the artefact. The kind
+is always `external` - pkg-config is never how the C runtime is linked, so
+classifying these against the runtime list would only create a way for a real
+dependency to be dismissed as one. **No field was added.** The verbatim
+directive already distinguishes the two namespaces, so the hash shape is
+unchanged; `go.mongodb.org/mongo-driver/v2@v2.6.0` names `libmongocrypt` by
+pkg-config and `mongocrypt` by `-lmongocrypt`, and they stay two entries.
+
+Only the cgo preamble - the comment attached to `import "C"` - is read, so a
+`#cgo pkg-config:` line quoted in documentation or held in a Go string literal
+is not read as a directive. Measured on `golang.org/toolchain`: 13 Go files
+mention `pkg-config`, including `src/cmd/cgo/doc.go` documenting the directive by
+example; 0 reach a preamble and 0 produce an entry.
+
+Effect, measured: over the maintainer's store (1229 artefacts) `linked_not_shipped`
+goes 20 -> 22 and `absent` 1192 -> 1190, the two moves being
+`go-xsd-validate@v0.1.6` and `github.com/moby/moby/v2@v2.0.0-beta.21` (which
+links `libnftables` and `libsystemd` and ships neither); four further modules
+gain a pkg-config entry without changing presence. Over the module cache (1201
+zips) `linked_not_shipped` goes 24 -> 25. No `present_identified` answer moves.
+
+Migration for existing stores: **none required, and none is run.**
 
 ## Purging a table other rows point at
 

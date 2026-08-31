@@ -353,10 +353,10 @@ func TestRunWalkDiff_EmptyDiffUnderMismatchIsNotIdentical(t *testing.T) {
 	}
 }
 
-// TestRunWalkDiff_EmptyDiffJSONStatesItOnStderr asserts the machine form: the
-// statement is a structured object on stderr and the document on stdout is
-// unchanged, so a consumer's parse does not depend on how empty the answer was.
-func TestRunWalkDiff_EmptyDiffJSONStatesItOnStderr(t *testing.T) {
+// TestRunWalkDiff_EmptyDiffJSONStatesItInTheDocument asserts the machine form:
+// the statement is a field of the document on stdout, so a consumer that never
+// reads stderr can tell two walks that agree from a comparison of nothing.
+func TestRunWalkDiff_EmptyDiffJSONStatesItInTheDocument(t *testing.T) {
 	jsonOut = true
 	t.Cleanup(func() { jsonOut = false })
 	uc := &testfakes.FakeDiffWalks{
@@ -376,12 +376,15 @@ func TestRunWalkDiff_EmptyDiffJSONStatesItOnStderr(t *testing.T) {
 		t.Fatalf("stdout is not the diff document: %v\n%s", uerr, stdout.String())
 	}
 	if len(doc.Added) != 0 || len(doc.Removed) != 0 {
-		t.Errorf("stdout document changed shape on an empty diff: %+v", doc)
+		t.Errorf("stdout document carries a delta on an empty diff: %+v", doc)
 	}
-	var notice walkDiffEmptyJSON
-	if uerr := json.Unmarshal(stderr.Bytes(), &notice); uerr != nil {
-		t.Fatalf("stderr carries no empty-diff statement: %v\n%s", uerr, stderr.String())
+	if stderr.Len() != 0 {
+		t.Errorf("the statement belongs in the document, not on stderr: %q", stderr.String())
 	}
+	if doc.NoDifference == nil {
+		t.Fatalf("the document does not state that the diff is empty:\n%s", stdout.String())
+	}
+	notice := *doc.NoDifference
 	if notice.NodesA != 128 || notice.NodesB != 128 {
 		t.Errorf("node counts = %d/%d, want 128/128", notice.NodesA, notice.NodesB)
 	}
@@ -736,6 +739,11 @@ func TestRunWalkDiff_JSONOutput(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in output, got:\n%s", want, out)
 		}
+	}
+	// The paired control for the empty-diff statement: a diff with a delta must
+	// not carry it, or the field says nothing.
+	if strings.Contains(out, "no_difference") {
+		t.Errorf("a diff with a delta claimed no difference:\n%s", out)
 	}
 }
 

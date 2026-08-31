@@ -3,71 +3,78 @@ $ kanonarion context example.com/shallow@v1.0.0 --json
 exit 0
 --- stdout ---
 {
-  "module": {
-    "path": "example.com/shallow",
-    "version": "v1.0.0"
-  },
-  "commands": {
-    "interface": "kanonarion interface-show example.com/shallow@v1.0.0",
-    "call_graph": "kanonarion callgraph-show example.com/shallow@v1.0.0",
-    "call_graph_nav": "kanonarion callers \u003csymbol\u003e | kanonarion callees \u003csymbol\u003e",
-    "examples": "kanonarion examples-find \u003csymbol\u003e | kanonarion examples-show example.com/shallow@v1.0.0 \u003cname\u003e",
-    "vulnerabilities": "kanonarion vuln-show example.com/shallow@v1.0.0",
-    "license": "kanonarion license example.com/shallow@v1.0.0",
-    "dependents": "kanonarion dependents example.com/shallow@v1.0.0"
-  },
-  "verification": {
-    "extracted_at": "2026-01-15T08:00:00Z",
-    "status": "Verified",
-    "retracted": false
-  },
-  "provenance": {
-    "fork_heuristic": {
-      "status": "none",
-      "catalogue_version": "1.0.0"
+  "dependency_scope": null,
+  "module_count": 1,
+  "rooting": null,
+  "modules": [
+    {
+      "module": {
+        "path": "example.com/shallow",
+        "version": "v1.0.0"
+      },
+      "commands": {
+        "interface": "kanonarion interface-show example.com/shallow@v1.0.0",
+        "call_graph": "kanonarion callgraph-show example.com/shallow@v1.0.0",
+        "call_graph_nav": "kanonarion callers \u003csymbol\u003e | kanonarion callees \u003csymbol\u003e",
+        "examples": "kanonarion examples-find \u003csymbol\u003e | kanonarion examples-show example.com/shallow@v1.0.0 \u003cname\u003e",
+        "vulnerabilities": "kanonarion vuln-show example.com/shallow@v1.0.0",
+        "license": "kanonarion license example.com/shallow@v1.0.0",
+        "dependents": "kanonarion dependents example.com/shallow@v1.0.0"
+      },
+      "verification": {
+        "extracted_at": "2026-01-15T08:00:00Z",
+        "status": "Verified",
+        "retracted": false
+      },
+      "provenance": {
+        "fork_heuristic": {
+          "status": "none",
+          "catalogue_version": "1.0.0"
+        }
+      },
+      "dependencies": {
+        "status": "succeeded",
+        "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "frame": "not-platform-scoped",
+        "frame_basis": "not_platform_scoped",
+        "rooting": "target-rooted:example.com/app@v1.0.0",
+        "count": 0,
+        "partial": false
+      },
+      "license": {
+        "status": "not_run",
+        "low_confidence_coverage": null
+      },
+      "interface": {
+        "status": "not_run"
+      },
+      "call_graph": {
+        "status": "not_run",
+        "node_count": 0,
+        "edge_count": 0,
+        "entry_point_count": null
+      },
+      "examples": {
+        "status": "not_run",
+        "count": 0
+      },
+      "vulnerabilities": {
+        "extracted_at": "2026-02-20T09:00:00Z",
+        "status": "Unscannable",
+        "walk_status": "Affected",
+        "walk_basis_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "walk_basis_frame": "target-rooted:example.com/app@v1.0.0",
+        "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "frame": "target-rooted",
+        "first_validated_at": "2026-02-20T09:00:00Z",
+        "last_validated_at": "2026-02-20T09:00:00Z",
+        "snapshot_version": "v2026-02-14T00-00-00",
+        "pipeline_version": "v24",
+        "snapshot_retrieved_at": "2026-02-14T00:00:00Z",
+        "snapshot_age_days": 6
+      }
     }
-  },
-  "dependencies": {
-    "status": "succeeded",
-    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-    "frame": "not-platform-scoped",
-    "frame_basis": "not_platform_scoped",
-    "rooting": "target-rooted:example.com/app@v1.0.0",
-    "count": 0,
-    "partial": false
-  },
-  "license": {
-    "status": "not_run",
-    "low_confidence_coverage": null
-  },
-  "interface": {
-    "status": "not_run"
-  },
-  "call_graph": {
-    "status": "not_run",
-    "node_count": 0,
-    "edge_count": 0,
-    "entry_point_count": null
-  },
-  "examples": {
-    "status": "not_run",
-    "count": 0
-  },
-  "vulnerabilities": {
-    "extracted_at": "2026-02-20T09:00:00Z",
-    "status": "Unscannable",
-    "walk_status": "Affected",
-    "walk_basis_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-    "walk_basis_frame": "target-rooted:example.com/app@v1.0.0",
-    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-    "frame": "target-rooted",
-    "first_validated_at": "2026-02-20T09:00:00Z",
-    "last_validated_at": "2026-02-20T09:00:00Z",
-    "snapshot_version": "v2026-02-14T00-00-00",
-    "pipeline_version": "v24",
-    "snapshot_retrieved_at": "2026-02-14T00:00:00Z",
-    "snapshot_age_days": 6
-  }
+  ]
 }
 --- stderr ---
 (empty)

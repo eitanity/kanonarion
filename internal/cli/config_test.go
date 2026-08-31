@@ -77,7 +77,7 @@ func TestLoadStoreConfig_UserSetLogLevelWins(t *testing.T) {
 func TestRunConfigSet_DoesNotFreezeUnsetSiblings(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	if err := runConfigSet(root, "preferences.json", "true", &buf); err != nil {
+	if err := runConfigSet(root, "preferences.json", "true", false, &buf); err != nil {
 		t.Fatalf("runConfigSet: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "config.yaml")) // #nosec G304 -- test-controlled t.TempDir() path
@@ -101,7 +101,7 @@ func TestRunConfigSet_DoesNotFreezeUnsetSiblings(t *testing.T) {
 func TestRunConfigInit_CreatesTemplate(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	if err := runConfigInit(root, &buf); err != nil {
+	if err := runConfigInit(root, false, &buf); err != nil {
 		t.Fatalf("runConfigInit: %v", err)
 	}
 	if !strings.Contains(buf.String(), "wrote") {
@@ -127,11 +127,11 @@ func TestRunConfigInit_CreatesTemplate(t *testing.T) {
 func TestRunConfigInit_Idempotent(t *testing.T) {
 	root := t.TempDir()
 	var first bytes.Buffer
-	if err := runConfigInit(root, &first); err != nil {
+	if err := runConfigInit(root, false, &first); err != nil {
 		t.Fatalf("first init: %v", err)
 	}
 	var second bytes.Buffer
-	if err := runConfigInit(root, &second); err != nil {
+	if err := runConfigInit(root, false, &second); err != nil {
 		t.Fatalf("second init: %v", err)
 	}
 	if !strings.Contains(second.String(), "already present") {
@@ -144,7 +144,7 @@ func TestRunConfigInit_Idempotent(t *testing.T) {
 func TestRunConfigSet_RoundTrip(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	if err := runConfigSet(root, "preferences.json", "true", &buf); err != nil {
+	if err := runConfigSet(root, "preferences.json", "true", false, &buf); err != nil {
 		t.Fatalf("runConfigSet: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func TestRunConfigSet_RoundTrip(t *testing.T) {
 func TestRunConfigSet_UnknownKey(t *testing.T) {
 	root := t.TempDir()
 	var buf bytes.Buffer
-	err := runConfigSet(root, "bogus.key", "x", &buf)
+	err := runConfigSet(root, "bogus.key", "x", false, &buf)
 	if err == nil {
 		t.Fatal("expected an error for an unknown config key")
 	}
@@ -248,7 +248,7 @@ func TestRunConfigGet_WritesValue(t *testing.T) {
 	cfg := configdomain.DefaultConfig()
 	cfg.Preferences.LogLevel = "warn"
 	var buf bytes.Buffer
-	if err := runConfigGet(cfg, "preferences.log_level", &buf); err != nil {
+	if err := runConfigGet(t.TempDir(), cfg, "preferences.log_level", false, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "warn") {

@@ -31,6 +31,7 @@ import (
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licenceports "github.com/eitanity/kanonarion/internal/license/ports"
+	nativeports "github.com/eitanity/kanonarion/internal/native/ports"
 	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
@@ -574,21 +575,24 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 	return best, bestVer
 }
 
-// resetInvocationState puts the process-wide state a command DERIVES back to
-// what a fresh invocation starts from. newRootCmd calls it, so it runs once
-// per Run.
+// resetInvocationState puts every process-wide variable one invocation writes
+// back to what a fresh invocation starts from. newRootCmd calls it, so it runs
+// before the command tree is built, and Run calls it again when the invocation
+// ends, so nothing is left for the next reader.
 //
-// The flag-BOUND variables (storeRoot, logLevel, jsonOut,
-// allowVerificationDowngrade) are absent because they need no help:
-// StringVar/BoolVar assign the flag's default at registration, and newRootCmd
-// registers every flag on every invocation. The ones below are written by a
-// resolve* helper or by PersistentPreRunE, and a helper that is not called
-// leaves the previous command's value in place. Three call sites reach
-// resolveModcacheMode; sixty-odd reach NewContainer, which reads modcacheMode.
+// Both call sites answer different hazards. The one at construction stops an
+// invocation that never reaches PersistentPreRunE — cobra answers --help and
+// --version before it — from inheriting the last one's resolved state. The one
+// at the end stops a reader that never runs an invocation at all: a test binary
+// calls a render function directly, and a --json Run that left jsonOut true made
+// that call answer in JSON.
 //
-// cliClock is deliberately absent for the opposite reason: it is the test seam
-// SetClockForTest pins BEFORE the invocation runs, and resetting it here would
-// unpin every golden.
+// The flag-BOUND variables are here for that second hazard. Registration
+// assigning their defaults protects the reader that goes through the tree, and
+// says nothing about the value an invocation LEAVES.
+//
+// cliClock is deliberately absent: it is the test seam SetClockForTest pins
+// BEFORE the invocation runs, and resetting it here would unpin every golden.
 func resetInvocationState() {
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""
@@ -598,6 +602,17 @@ func resetInvocationState() {
 	// The safe default, so an invocation that never reaches PersistentPreRunE
 	// cannot inherit the last one's permission to create a store.
 	storeIntent = StoreIntentRead
+	// The rendering flags, in the state a command that was passed neither is
+	// entitled to: text on stdout at the default verbosity.
+	jsonOut = false
+	logLevel = defaultLogLevel
+	allowVerificationDowngrade = false
+	// storeRoot resets to NO STORE, not to the default one: the default names the
+	// operator's own store, and a reader that opens it without being asked to is
+	// the outcome worth refusing — an empty path fails loudly where
+	// ~/.kanonarion would be read, written and migrated in silence. A real
+	// invocation never sees this value; registration assigns the default next.
+	storeRoot = ""
 }
 
 // storeRoot is the effective store directory for the current invocation.
@@ -608,6 +623,12 @@ var storeRoot string
 // logLevel is the effective log verbosity for the current invocation.
 // Bound to --log-level on the root command.
 var logLevel string
+
+// defaultLogLevel is what --log-level registers and what an invocation that
+// names no level runs at. It is a constant because the flag registration and
+// resetInvocationState have to agree on it: two literals would let the reset
+// put the package in a state no invocation starts from.
+const defaultLogLevel = "warn"
 
 // jsonOut controls whether commands emit output as JSON.
 // Bound to --json on the root command as a persistent flag.
@@ -688,6 +709,91 @@ const (
 	// subject. Only the commands that genuinely open nothing qualify.
 	StoreIntentNone = "none"
 )
+
+// annotationNetworkUse is what a command says about the NETWORK: whether
+// running it can open a socket.
+//
+// It is a separate annotation from store-intent, not a widening of it, because
+// they are different properties of the same command and disagree in both
+// directions. `fips`, `godebug` and `vendor` create the store root and open no
+// socket; `use` only reads the store and would too. Reading creation as a proxy
+// for network reach withheld three commands from an offline measurement for a
+// property they do not have, and store-intent's own doc comment says why: what
+// it governs is creation, not writing.
+//
+// Declared per command, next to the command, for the reason store-intent is:
+// the decision belongs where a reader of the command can see it, and adding a
+// command must not mean editing a list in a second file. There is no default —
+// TestEveryCommandDeclaresItsNetworkUse fails on a command that declares
+// nothing, so the decision is made rather than inherited.
+const annotationNetworkUse = "kanonarion/network-use"
+
+// The values annotationNetworkUse takes. A command declares exactly one.
+const (
+	// NetworkNever opens no network under any invocation. Everything it needs
+	// is the store, the working tree, or a module cache already on disk — and
+	// where it drives the go toolchain it does so under an environment that
+	// pins GOPROXY=off, so the child cannot reach one either.
+	NetworkNever = "never"
+	// NetworkAlways reaches the network as part of answering and offers no flag
+	// that withdraws it. An invocation of one of these that happens to answer
+	// offline did so because the store already held what it would have fetched,
+	// not because the command declined to fetch — so nothing may be measured
+	// hermetically on the strength of it.
+	NetworkAlways = "always"
+	// NetworkAvoidable reaches the network by default and has named flags that
+	// make it answer offline instead. The flags are declared in
+	// annotationOfflineFlags on the same command, so a caller — or a test —
+	// applies them from the tree rather than from somebody remembering which
+	// ones they were.
+	NetworkAvoidable = "avoidable"
+)
+
+// annotationOfflineFlags names the flags that make a NetworkAvoidable command
+// answer without the network, comma-separated.
+//
+// It is required on `avoidable` and forbidden on the other two: an avoidable
+// declaration whose flags nobody wrote down is a claim no caller can act on,
+// and offline flags on a command that never reaches the network name a
+// remedy for a problem it does not have.
+const annotationOfflineFlags = "kanonarion/offline-flags"
+
+// networkUseOf returns the network use cmd declared, or "" when it declared
+// nothing or a value this build does not know.
+//
+// There is deliberately no safe default. A missing declaration is a decision
+// nobody made, and the completeness test fails on it; defaulting here would
+// answer that question quietly in whichever direction happened to be
+// convenient.
+func networkUseOf(cmd *cobra.Command) string {
+	if cmd == nil {
+		return ""
+	}
+	switch v := cmd.Annotations[annotationNetworkUse]; v {
+	case NetworkNever, NetworkAlways, NetworkAvoidable:
+		return v
+	default:
+		return ""
+	}
+}
+
+// offlineFlagsOf returns the flags a command declared make it offline.
+func offlineFlagsOf(cmd *cobra.Command) []string {
+	if cmd == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(cmd.Annotations[annotationOfflineFlags])
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, f := range strings.Split(raw, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
 
 // storeIntentOf returns the intent cmd declared, or StoreIntentRead when it
 // declared nothing or declared a value this build does not know.
@@ -1173,6 +1279,7 @@ var evidenceInDoubt = []error{
 	extractports.ErrExtractionRunIntegrity,
 	vulnports.ErrVulnIntegrity, vulnports.ErrSnapshotIntegrity,
 	stdlibports.ErrFactsIntegrity, stdlibports.ErrFactsConflict,
+	nativeports.ErrNativeConflict,
 }
 
 // ExitCodeForError maps a Run error onto the process exit code. It honours an

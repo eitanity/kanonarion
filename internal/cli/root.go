@@ -89,7 +89,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.SetErr(stderr)
 	root.SetVersionTemplate("kanonarion {{.Version}}\n")
 	root.PersistentFlags().StringVar(&storeRoot, "store-root", defaultStoreRoot(), "root directory for blobs and SQLite")
-	root.PersistentFlags().StringVar(&logLevel, "log-level", "warn", "log level: debug|info|warn|error")
+	root.PersistentFlags().StringVar(&logLevel, "log-level", defaultLogLevel, "log level: debug|info|warn|error")
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "emit output as JSON")
 
 	root.AddCommand(
@@ -148,6 +148,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newGoDebugCmd(stdout, stderr),
 		newVendorCmd(stdout, stderr),
 		newFIPSCmd(stdout, stderr),
+		newNativeCmd(stdout, stderr),
 		newLatestCmd(stdout, stderr),
 		newProvenanceCmd(stdout, stderr),
 		newUseCmd(stdout, stderr),
@@ -206,6 +207,13 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+
+	// An invocation leaves nothing behind. The reset newRootCmd makes protects
+	// the next invocation; this one protects a reader that never makes one —
+	// the test binary that runs a command through Run and then calls a render
+	// function directly, which is how a --json run made the next direct call
+	// answer in JSON.
+	defer resetInvocationState()
 
 	root := newRootCmd(stdout, stderr)
 	installDefaultSubcommands(root)

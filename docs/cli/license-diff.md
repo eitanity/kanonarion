@@ -84,7 +84,7 @@ No license changes: both sides declare MIT at status Detected, over 1 license fi
 | `module_a` | string | First coordinate (`path@version`) |
 | `module_b` | string | Second coordinate (`path@version`) |
 | `spdx_changed` | object or null | `{from, to}` when primary SPDX differs |
-| `status_changed` | object or null | `{from, to}` when `OverallStatus` differs |
+| `status_changed` | object or null | `{from, to}` when the record's overall status differs |
 | `files_added` | array | Licence files present in B but not in A - each `{path, spdx}` |
 | `files_removed` | array | Licence files present in A but not in B - each `{path, spdx}` |
 | `copyright_added` | array of strings | Copyright statements present in B but not in A |

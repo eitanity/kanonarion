@@ -386,6 +386,98 @@ func LookupObligations(spdxID string) Obligations {
 	return Obligations{Status: ObligationStatusUnknown}
 }
 
+// UnionObligations merges the obligation sets of a conjunctive expression's
+// arms into the one set a consumer is bound by. It is the reading for arms
+// that are INSEPARABLE — one licence file granting several licences, where
+// nothing attributes coverage to anything and every grant governs the module's
+// code. Under "A AND B" read that way both licences bind at once, so a duty
+// either arm requires is a duty owed, and answering with one arm's set drops
+// the other's without saying so.
+//
+// It is NOT the reading for arms granted one file each; see
+// MaximalObligations, and ArmsAreSeparatelyGranted for which applies.
+//
+// The fields are not all of one kind, so the merge rules are stated here
+// rather than left to be read off mergeArms below:
+//
+//   - a boolean obligation is TRUE when ANY arm requires it;
+//   - SameLicense is a CopyleftStrength and takes the STRONGEST arm's value
+//     (none < weak < strong < network), because the strictest propagation is
+//     the one that governs the combined work;
+//   - Status is Known only when EVERY arm is in the catalogue. These arms are
+//     inseparable, so one uncatalogued arm means the merge saw part of what
+//     binds, and Known would publish that part as though it were the whole —
+//     the same partial-answer-that-reads-complete this function exists to end.
+//
+// No arms yields the unknown set: there is nothing to merge, and an empty
+// merge would say "no obligations". One arm yields that arm's own set.
+func UnionObligations(arms []string) Obligations {
+	if len(arms) == 0 {
+		return Obligations{Status: ObligationStatusUnknown}
+	}
+	out, allKnown, _ := mergeArms(arms)
+	if !allKnown {
+		out.Status = ObligationStatusUnknown
+	}
+	return out
+}
+
+// MaximalObligations merges the arms of a conjunction whose arms were granted
+// one licence file each. It is an UPPER BOUND — every duty any arm imposes,
+// gathered in one place — and deliberately not a statement of what the
+// consumer owes.
+//
+// The owed set cannot be computed here. Each arm's file names what that arm
+// covers (LICENSE.docs is documentation, LICENSE.Golang is vendored Go), and
+// whether a consumer owes an arm depends on whether the artefact it covers
+// reaches their binary. Nothing in a licence record answers that. Presenting
+// the merge as owed would over-report — the mirror image of reporting one
+// arm's set as all of them — so callers must publish it labelled as maximal,
+// beside each arm with the path that grants it, and never as the answer.
+//
+// The field rules are UnionObligations', with one deliberate difference:
+// Status is Known when ANY arm is in the catalogue, not only when all are. The
+// arms are separable and carry their own statuses, so an uncatalogued arm is
+// news about that arm — it must not degrade a record whose code licence was
+// identified at full confidence into one that says nothing is known.
+func MaximalObligations(arms []string) Obligations {
+	if len(arms) == 0 {
+		return Obligations{Status: ObligationStatusUnknown}
+	}
+	out, _, anyKnown := mergeArms(arms)
+	if !anyKnown {
+		out.Status = ObligationStatusUnknown
+	}
+	return out
+}
+
+// mergeArms gathers every arm's duties into one set and reports how much of
+// the catalogue answered. The two readings above differ only in what they make
+// of that, so the merge itself lives in one place.
+func mergeArms(arms []string) (merged Obligations, allKnown, anyKnown bool) {
+	allKnown = true
+	out := Obligations{Status: ObligationStatusKnown}
+	for _, arm := range arms {
+		o := LookupObligations(arm)
+		if o.Status == ObligationStatusKnown {
+			anyKnown = true
+		} else {
+			allKnown = false
+		}
+		out.IncludeNotice = out.IncludeNotice || o.IncludeNotice
+		out.IncludeLicenseText = out.IncludeLicenseText || o.IncludeLicenseText
+		out.StateChanges = out.StateChanges || o.StateChanges
+		out.DiscloseSource = out.DiscloseSource || o.DiscloseSource
+		out.NetworkUseTrigger = out.NetworkUseTrigger || o.NetworkUseTrigger
+		out.NoTrademarkUse = out.NoTrademarkUse || o.NoTrademarkUse
+		out.ExplicitPatentGrant = out.ExplicitPatentGrant || o.ExplicitPatentGrant
+		if o.SameLicense > out.SameLicense {
+			out.SameLicense = o.SameLicense
+		}
+	}
+	return out, allKnown, anyKnown
+}
+
 // MarshalJSON serialises Obligations with Status and SameLicense as strings.
 func (o Obligations) MarshalJSON() ([]byte, error) {
 	type wire struct {

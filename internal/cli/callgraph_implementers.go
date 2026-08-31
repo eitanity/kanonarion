@@ -20,9 +20,12 @@ func newImplementersCmd(stdout, stderr io.Writer) *cobra.Command {
 	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
-		Use:         "implementers <interface-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List the concrete types satisfying an interface",
+		Use: "implementers <interface-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List the concrete types satisfying an interface",
 		Long: `List the concrete types in the analysed module whose method sets satisfy an
 interface it declares.
 
@@ -90,8 +93,27 @@ type implementersResult struct {
 	Verdict      string            `json:"verdict"`
 	VerdictWhy   string            `json:"verdict_reason,omitempty"`
 	// Scope names what the measurement covered, so an empty list is read as the
-	// answer to the question that was actually asked.
+	// answer to the question that was actually asked. It is one English sentence,
+	// which is why the four fields below field the same limits: `count` reads as
+	// the set of implementers, and only this sentence said it was the set declared
+	// in one module.
 	Scope string `json:"scope"`
+	// SearchedModule is the module whose own declarations were searched. The
+	// relation is computed over one module's types, so the count answers for that
+	// module and not for the build.
+	SearchedModule string `json:"searched_module"`
+	// CrossModuleTypesMeasured is false on every answer: a type in another module
+	// that satisfies this interface was never looked at. It is stated as a field
+	// rather than left to the sentence because it is the limit a consumer is most
+	// likely to read past — an answer that is complete for a narrower question
+	// looks exactly like a complete answer to the wider one.
+	CrossModuleTypesMeasured bool `json:"cross_module_types_measured"`
+	// TestsExcluded says whether test implementations were dropped, and
+	// TestsExcludeFlag names the flag that drops them. The flag is fielded nowhere
+	// else in this document, so without it a consumer holding a count cannot tell
+	// which of the two questions it was the answer to, nor ask the other one.
+	TestsExcluded    bool   `json:"tests_excluded"`
+	TestsExcludeFlag string `json:"tests_exclude_flag"`
 }
 
 // runImplementers answers an implementers query and renders it with the same
@@ -135,7 +157,7 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 	scopeLine := implementersScopeLine(found.modulePath, opts)
 
 	if jsonOut {
-		return writeImplementersJSON(stdout, interfaceID, method, perMethod, impls, verdict, scopeLine)
+		return writeImplementersJSON(stdout, interfaceID, method, perMethod, impls, verdict, scopeLine, found.modulePath, opts)
 	}
 	// The implementer relation is read out of the served record, so the same
 	// routing question applies: which working tree's types are these.
@@ -320,7 +342,7 @@ func implementersScopeLine(modulePath string, opts ports.EdgeQueryOptions) strin
 	return line
 }
 
-func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMethod bool, impls []scopedImplementer, v domain.Verdict, scopeLine string) error {
+func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMethod bool, impls []scopedImplementer, v domain.Verdict, scopeLine, searchedModule string, opts ports.EdgeQueryOptions) error {
 	out := make([]implementerJSON, 0, len(impls))
 	for _, im := range impls {
 		entry := implementerJSON{
@@ -344,6 +366,13 @@ func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMeth
 		Verdict:      string(v.Outcome),
 		VerdictWhy:   v.Reason(),
 		Scope:        scopeLine,
+
+		SearchedModule: searchedModule,
+		// Never true, and it is a field rather than a constant in the prose so the
+		// day the measurement widens is a day this value changes.
+		CrossModuleTypesMeasured: false,
+		TestsExcluded:            opts.ExcludeTests,
+		TestsExcludeFlag:         "--" + testScopeFlagName,
 	}
 	if perMethod {
 		res.Method = method

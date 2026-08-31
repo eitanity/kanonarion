@@ -1,0 +1,81 @@
+mkdir $WORK/stores
+seednative $WORK/stores
+
+# A module that ships an amalgamated C library and compiles it through cgo
+# records the component, the version its own source declares, and the
+# declaration that established it.
+kanonarion native example.com/cgodep@v1.0.0 --store-root=$WORK/stores
+stdout 'Presence:   present_identified'
+stdout 'SQLite +3\.38\.0 +declared'
+stdout 'sqlite3-binding\.c: #define SQLITE_VERSION'
+stdout 'Native sources compiled into the binary \(2\)'
+
+# The negative control: a module whose only C sits under testdata and which
+# imports "C" nowhere links no C at all and must not be flagged.
+kanonarion native example.com/puregodep@v1.0.0 --store-root=$WORK/stores
+stdout 'Presence:   absent'
+! stdout 'mptest\.c'
+
+# Presence with nothing a recipe names is a value the store records, with its
+# file evidence, rather than a case that is skipped.
+kanonarion native example.com/unknowncdep@v1.0.0 --store-root=$WORK/stores
+stdout 'Presence:   present_unidentified'
+stdout 'no recipe names the library they belong to'
+stdout 'helpers\.c'
+stdout 'helpers\.h'
+
+# A module that compiles nothing of its own but links a library the host
+# provides is NOT absent: something native reaches the binary, and no version
+# can be read from bytes that do not carry it.
+kanonarion native example.com/linkedcdep@v1.0.0 --store-root=$WORK/stores
+stdout 'Presence:   linked_not_shipped'
+stdout '2 external native libraries it links but does not ship'
+stdout 'no version could be read'
+stdout 'Linked libraries named by cgo directives \(2\)'
+stdout 'icui18n +external +icu\.go +#cgo LDFLAGS: -licui18n -licuuc'
+! stdout 'Components'
+
+# The negative control for the system list: every cgo binary links the C
+# runtime, so -ldl alone must not earn the new value.
+kanonarion native example.com/runtimelinkdep@v1.0.0 --store-root=$WORK/stores
+stdout 'Presence:   absent'
+stdout 'dl +system'
+
+# A pkg-config link is the same defect: the library is named, never shipped,
+# and its package name is recorded verbatim rather than translated to a linker
+# name. The directive quoted in doc.go is prose, not a build directive, and must
+# not be read as one.
+kanonarion native example.com/pkgconfigdep@v1.0.0 --store-root=$WORK/stores
+stdout 'Presence:   linked_not_shipped'
+stdout '1 external native library it links but does not ship'
+stdout 'libxml-2\.0 +external +libxml2\.go +#cgo pkg-config: libxml-2\.0'
+! stdout 'not-a-real-link'
+
+# The machine-readable section carries the same four answers.
+kanonarion native example.com/cgodep@v1.0.0 --store-root=$WORK/stores --json
+stdout '"presence": "present_identified"'
+stdout '"name": "SQLite"'
+stdout '"version": "3.38.0"'
+stdout '"confidence": "declared"'
+
+kanonarion native example.com/unknowncdep@v1.0.0 --store-root=$WORK/stores --json
+stdout '"presence": "present_unidentified"'
+stdout '"components": \[\]'
+stdout '"file": "helpers.c"'
+
+kanonarion native example.com/linkedcdep@v1.0.0 --store-root=$WORK/stores --json
+stdout '"presence": "linked_not_shipped"'
+stdout '"sources": \[\]'
+stdout '"name": "icui18n"'
+stdout '"kind": "external"'
+stdout '"directive": "#cgo LDFLAGS: -licui18n -licuuc"'
+
+kanonarion native example.com/pkgconfigdep@v1.0.0 --store-root=$WORK/stores --json
+stdout '"presence": "linked_not_shipped"'
+stdout '"name": "libxml-2.0"'
+stdout '"directive": "#cgo pkg-config: libxml-2.0"'
+
+# A module nobody fetched has no verified artefact to read, and is refused
+# rather than answered as carrying nothing.
+! kanonarion native example.com/absent@v1.0.0 --store-root=$WORK/stores
+stderr 'module not fetched'

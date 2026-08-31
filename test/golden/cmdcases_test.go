@@ -157,8 +157,40 @@ func commandCases(t *testing.T, emptyStore, project string, audit *auditFixture)
 	cases = append(cases, vulnShowHistoryCases(emptyStore)...)
 	cases = append(cases, callGraphShowCases(emptyStore)...)
 	cases = append(cases, composedReadCases(emptyStore)...)
+	cases = append(cases, configShowCases(emptyStore)...)
 	cases = append(cases, auditCases(t, gomod, project, unroutable, audit)...)
 	return cases
+}
+
+// configShowCases record what is in force in a store nobody has configured.
+//
+// Both channels, because the two directions of one decision meet here. The text
+// is recorded byte for byte: it already said the file is absent and marked every
+// defaulted value, and adding the same facts to the document must not have moved
+// a byte of it. The document is recorded because it is the leg that was wrong —
+// a consumer reading `preferences.json: false` could not tell a shipped default
+// from an operator's choice.
+//
+// The store is read, never written: `config init` or `config set` here would
+// leave a config.yaml behind for every other case that shares this root.
+func configShowCases(emptyStore string) []cmdCase {
+	return []cmdCase{
+		{
+			name:      "config_show_text_no_file",
+			args:      []string{"config", "show"},
+			storeRoot: emptyStore,
+			why: "no config file: the text says so and marks every value (default). Recorded byte for " +
+				"byte — the per-value provenance was added to the document beneath it, and this channel " +
+				"must be unchanged.",
+		},
+		{
+			name:      "config_show_json_no_file",
+			args:      []string{"config", "show", "--json"},
+			storeRoot: emptyStore,
+			why: "the same store as data: config_file.present says the file is absent, and settings[] " +
+				"says per key whether the value in force came from the file or from a built-in default.",
+		},
+	}
 }
 
 // latestCases cover the surface the change this detector exists for actually
@@ -570,6 +602,21 @@ func composedReadCases(emptyStore string) []cmdCase {
 				"is now the flag that reaches it.",
 		},
 		{
+			name: "dependents_text_root_excluded",
+			args: []string{"dependents", "example.com/mod@v1.2.0", "--walk-id", fixtureWalkID},
+			why: "the defect state, on the channel that never had it wrong: the walk root is the only " +
+				"module with an edge to the target and it is out of scope by default, so the answer is " +
+				"empty and says so in the same sentence. Recorded byte-for-byte because the JSON leg was " +
+				"added underneath it and must not have moved it.",
+		},
+		{
+			name: "dependents_json_root_excluded",
+			args: []string{"dependents", "example.com/mod@v1.2.0", "--walk-id", fixtureWalkID, "--json"},
+			why: "the same state on the channel that DID have it wrong: \"dependents\": [] reads as a " +
+				"confirmed negative, so root_scope states what the search left out and the flag that " +
+				"puts it back.",
+		},
+		{
 			name: "dependents_text_unrooted",
 			args: []string{"dependents", "example.com/shallow@v1.0.0"},
 			why: "error-shaped: no walk id, no manifest and no go.mod here, so there is no build for the " +
@@ -602,6 +649,10 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 	// — once to prime the store and once to be recorded — so the two runs cannot
 	// drift apart into a comparison of different command lines.
 	auditArgs := []string{"audit", "--gomod", audit.gomod(), "--from-modcache=" + audit.modcache}
+	// The same command under --json. The reused JSON case names it twice for the
+	// reason the text one does: the priming run and the recorded run must be the
+	// same invocation, or the recording compares two different commands.
+	auditJSONArgs := append(append([]string{}, auditArgs...), "--json")
 
 	return []cmdCase{
 		populated("audit_json_populated",
@@ -631,6 +682,23 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 				"The date and the run identifier below are recorded literally, so a change to WHICH stored run " +
 				"answers moves this file. Its control is audit_text_populated, which must keep reading " +
 				"`derived by this run`.",
+		},
+		{
+			name: "audit_json_reused_scan",
+			args: auditJSONArgs,
+			// PRIMED exactly as audit_text_reused_scan is: the first run leaves a
+			// walk, licences and a completed scan run behind, and the recorded run
+			// is the one that serves them.
+			prime:        [][]string{auditJSONArgs},
+			env:          audit.env(),
+			storeRoot:    audit.newStore(t),
+			mintedValues: true,
+			why: "REUSED, json: the run-level facts on the machine channel when the answer was NOT measured " +
+				"by this invocation — the walk re-resolved and found identical, the scan served from a stored " +
+				"run, and its reachability verdicts resting on source this run did not read. Its control is " +
+				"audit_json_populated, which must keep reading `\"reused\": false` and " +
+				"`\"source_read_by_this_run\": true` for the same fixture. The pair is what shows the fields " +
+				"track the run rather than being constants.",
 		},
 		populated("audit_text_no_network",
 			"GOPROXY=off WITHOUT --from-modcache: the run no longer refuses at proxy construction for the "+

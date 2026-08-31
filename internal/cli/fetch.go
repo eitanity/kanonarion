@@ -48,9 +48,12 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f fetchFlags
 
 	cmd := &cobra.Command{
-		Use:         "fetch <module>[@<version>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Fetch, verify, and persist a Go module fact record",
+		Use: "fetch <module>[@<version>]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkAlways,
+		},
+		Short: "Fetch, verify, and persist a Go module fact record",
 		Example: `  kanonarion fetch github.com/spf13/cobra@v1.8.1
   kanonarion fetch github.com/spf13/cobra@latest
   kanonarion fetch github.com/spf13/cobra --list-versions

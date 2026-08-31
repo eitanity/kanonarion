@@ -304,6 +304,7 @@ kanonarion callgraph-show <module>@<version> [flags]
 $ kanonarion callgraph-show golang.org/x/mod@v0.30.0 --limit-nodes 2 --limit-edges 2
 golang.org/x/mod@v0.30.0  [CHA]  Extracted
   fidelity: BUILT_WITH_BODIES   source: zip   toolchain: go1.26.6
+  analyser: golang.org/x/tools v0.49.0
   test scope: analysed — 290 of 1039 nodes are test declarations
   interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
 Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
@@ -317,7 +318,10 @@ Edges (4201 total, showing 2):
 ```
 
 The `test scope:` line is printed on every record, including when the axis was
-not measured — silence there would read as "there was no test code".
+not measured — silence there would read as "there was no test code". Under
+`--json`, `test_scope` is always present and reads `not recorded` on a record
+that makes no claim, for the same reason: an empty string there reads as an
+absence of test code rather than an absence of a measurement.
 
 A `reference scope:` line is printed on every record for the same reason, and it
 is the axis a confident negative rests on:
@@ -333,8 +337,10 @@ A record that never looked says so, and says what that costs:
   references, so an empty callers answer over it is UNRESOLVED, not a measured absence
 ```
 
-In JSON the axis is `reference_scope` (empty when unmeasured) beside
-`reference_edge_count`, both always present.
+In JSON the axis is `reference_scope` beside `reference_edge_count`, both always
+present. An unmeasured axis reads `not recorded`, in the same words as the text,
+so a consumer never has to tell it apart from a record that searched and found
+none.
 
 A `module membership:` line appears only when the record needed it:
 
@@ -397,8 +403,42 @@ version when the stdlib came from a toolchain downloaded as a module (`go1.26.6
 (from the recorded stdlib path)`), the directory when it came from an installed
 GOROOT (`unnamed version at GOROOT /usr/local/go`, which names no version because
 a GOROOT is upgraded in place), and `not recorded` when the graph carries no
-stdlib path at all. Under `--json`, `toolchain` carries that identity and
-`toolchain_stated` is `null` unless the record itself named one.
+stdlib path at all. Under `--json`, `toolchain` carries that identity — reading
+`not recorded` where the record establishes no version, including where a plain
+GOROOT names none — and `toolchain_stated` is `null` unless the record itself
+named one.
+
+The `analyser:` line names the `golang.org/x/tools` that type-checked the module
+and built the SSA the graph was computed over. It is a different fact from the
+toolchain: the toolchain compiles the code and supplies the standard library, and
+x/tools is what reads it, so a version predating a language construct can make a
+graph silently short — the SSA builds, the construct is missed, and `callers`
+comes back with fewer answers than there are. The line is printed on every
+record, including the ones that name none.
+
+It renders one of three ways, and the third is never shown as the second:
+
+```
+  analyser: golang.org/x/tools v0.49.0
+  analyser: golang.org/x/tools v0.47.0 (INFERRED from the extraction date; this record never recorded one)
+  analyser: not recorded — this record does not name the library that type-checked it and built its SSA
+```
+
+The first is the extracting binary naming its own linked library. The second is a
+row written before the axis existed: nothing recorded the version, so the store
+attributes it from when the record was written against this repository's own
+`go.mod` history. That is a reconstruction, not a measurement, and it says so.
+
+Under `--json`, `analyser` is always present and carries `module`, `version`,
+`provenance` (`observed`, `inferred`, or empty) and `inferred` as a boolean.
+
+Where the generations composed for one coordinate name more than one analyser
+VERSION, the composed read adds a `notice:` saying so, and `--json` carries it as
+`analyser_disagreement` (`analysers`, `served`). It changes nothing about which
+generation answers — the completeness ladder decides that — and it appears only
+where there is a disagreement to report: two generations at one version, or
+generations that name none, produce no line. `--history` names the analyser on
+every generation whether they agree or not.
 
 ##### Modules published before Go modules
 
@@ -445,6 +485,25 @@ that walk resolved. `--from-walk` always wins where it is given. The search runs
 before the analysis, not as a retry after one failed: analysing twice would
 persist two failure generations differing only in which build list they were
 denied.
+
+Where more than one build holds the module, no build list is discovered and the
+candidates are named - on stderr as a sentence, and under `--json` as data, so a
+consumer can retry without parsing prose:
+
+```json
+"build_list_refusal": {
+  "coordinate": "example.com/mod@v1.2.0",
+  "build_count": 2,
+  "builds": [
+    { "walk_id": "01KZ3WD9JM9X4S5TWR31HF64H7", "root": "example.com/app@v1.0.0" },
+    { "walk_id": "01KZ3WD9JM9X4S5TWR31HF64H8", "root": "example.com/svc@v2.1.0" }
+  ],
+  "remedy_flag": "--from-walk"
+}
+```
+
+The key is absent when nothing was refused. The analysis still runs, without
+pins.
 
 The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
 note naming how many `require` directives were pinned, `--history` appends it to
@@ -659,6 +718,10 @@ terminal is the only thing it costs here.
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
 | `--offset` | `0` | Skip this many records before listing |
 
 A zero result names its own scope — whether the store is empty, the filter
@@ -758,6 +821,18 @@ on both sides. A type in a *different* module that satisfies the same interface
 is not recorded — computing satisfaction against every type in the dependency
 graph is a much larger measurement. That scope is printed on every answer, so an
 empty list is read as the answer to the question that was actually asked.
+
+Under `--json` the same limits are fields, not one English sentence, because
+`count` otherwise reads as the set of implementers when it is the set declared in
+one module:
+
+| Field | Meaning |
+|---|---|
+| `searched_module` | The module whose own declarations were searched |
+| `cross_module_types_measured` | Always `false`: types in other modules were never looked at |
+| `tests_excluded` | Whether `--exclude-tests` narrowed this answer |
+| `tests_exclude_flag` | The flag that narrows it, so a consumer can ask the other question |
+| `scope` | The sentence the text prints, kept as it was |
 
 Three failure modes are kept distinct rather than collapsed into an empty list:
 

@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -54,10 +53,7 @@ func TestLatestModules_OfflineServesFreshLedgerRow(t *testing.T) {
 		[]string{offlineLatestModule}, lookup, &stdout, io.Discard); err != nil {
 		t.Fatalf("runLatestModules offline with a fresh row: %v", err)
 	}
-	var decoded map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
-		t.Fatalf("unmarshalling: %v\noutput: %s", err, stdout.String())
-	}
+	decoded := singleLatestRow(t, stdout.Bytes())
 	if decoded["latest"] != "v1.4.0" {
 		t.Errorf("latest = %v, want v1.4.0 from the ledger", decoded["latest"])
 	}

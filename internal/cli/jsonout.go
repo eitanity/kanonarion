@@ -8,6 +8,30 @@ import ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 // schema across commands. Mapping through these DTOs keeps the machine-
 // readable output stable and uniform.
 
+// jsonNotRecorded is what a document prints for a field the record states no
+// value for.
+//
+// The empty string is absence-shaped: a consumer cannot tell a field the record
+// never stated from one it stated as empty, and on the coverage axes the two are
+// opposite answers — "nothing was measured" against "the measurement found
+// nothing". Naming the absence is the whole fix, so the token is spelled the way
+// the text rendering already spells it and is asserted against that rendering
+// rather than kept in step by hand.
+const jsonNotRecorded = "not recorded"
+
+// orNotRecorded renders an unstated value as the token.
+//
+// It is a RENDERING helper and nothing more. Nothing downstream of it composes,
+// ladders or compares: the token exists only in the document a reader is handed,
+// never in a record, so an unstated field can never become a third value of the
+// dimension it sits on.
+func orNotRecorded(v string) string {
+	if v == "" {
+		return jsonNotRecorded
+	}
+	return v
+}
+
 type sourcePositionJSON struct {
 	File string `json:"file,omitempty"`
 	Line int    `json:"line,omitempty"`
@@ -111,15 +135,21 @@ type interfaceRecordJSON struct {
 	// artefact, which reads as "not recorded", never as "derived from nothing".
 	ArtefactIdentity  string `json:"artefact_identity,omitempty"`
 	SourceContentHash string `json:"source_content_hash,omitempty"`
-	// BuildFrame names the configuration the public API was measured in. Absent
-	// on records written before extraction evaluated build constraints, which
-	// hold every platform's declarations at once and describe no build; absent
-	// reads as "not recorded", never as "any platform".
+	// BuildFrame names the configuration the public API was measured in, in
+	// components. Absent on records written before extraction evaluated build
+	// constraints, which hold every platform's declarations at once and describe
+	// no build.
 	BuildFrame *buildFrameJSON `json:"build_frame,omitempty"`
+	// BuildFrameStated is the same fact as ONE value present on every document,
+	// because absence is not a way to state a fact. A reader handed a record with
+	// no frame was handed a document with no frame field, and could not tell it
+	// from a frame the encoder dropped; here the record's own words for that state
+	// are the value. The text prints those words too, so there is one spelling.
+	BuildFrameStated string `json:"build_frame_stated"`
 	// Toolchain names the Go toolchain whose release tags decided which files the
-	// API was read from. Emitted even when empty: a consumer that cannot see it
-	// cannot tell two toolchains' answers apart, and an absent value is itself the
-	// answer ("not recorded").
+	// API was read from. Emitted on every document, naming the unstated state
+	// rather than spelling it as an empty string a consumer reads as an absent
+	// toolchain.
 	Toolchain string `json:"toolchain"`
 }
 
@@ -195,7 +225,8 @@ func toInterfaceRecordJSON(r ifacedomain.InterfaceRecord) interfaceRecordJSON {
 	}
 	return interfaceRecordJSON{
 		BuildFrame:        frame,
-		Toolchain:         string(r.Toolchain),
+		BuildFrameStated:  r.BuildFrame.String(),
+		Toolchain:         r.Toolchain.String(),
 		SchemaVersion:     r.SchemaVersion,
 		Coordinate:        coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
 		Packages:          pkgs,

@@ -256,11 +256,9 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 			t.Fatalf("runLatestModules: %v", err)
 		}
 		var got []latestResult
-		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-			t.Fatalf("output is not a JSON array: %v\noutput: %s", err, stdout.String())
-		}
+		envelopeRows(t, "latest <module> <module> --json", stdout.Bytes(), &got)
 		if len(got) != 2 {
-			t.Fatalf("expected 2 results in array, got %d", len(got))
+			t.Fatalf("expected 2 results in modules, got %d", len(got))
 		}
 		// Order must follow the argv order.
 		if got[0].Module != "github.com/spf13/cobra" {
@@ -271,7 +269,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		}
 	})
 
-	t.Run("json mode of single module keeps object shape", func(t *testing.T) {
+	t.Run("json mode of a single module is an array of one", func(t *testing.T) {
 		prev := jsonOut
 		jsonOut = true
 		t.Cleanup(func() { jsonOut = prev })
@@ -283,14 +281,33 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("runLatestModules: %v", err)
 		}
-		var got latestResult
-		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-			t.Fatalf("single-module JSON output is not an object: %v\noutput: %s", err, stdout.String())
+		// One module used to be emitted as a bare row object, so the top-level
+		// type followed the result count and a consumer iterating the answer
+		// walked the object's keys instead of its rows.
+		var got []latestResult
+		envelopeRows(t, "latest <module> --json", stdout.Bytes(), &got)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 result in modules, got %d", len(got))
 		}
-		if got.Module != "github.com/spf13/cobra" {
-			t.Errorf("Module = %q, want github.com/spf13/cobra", got.Module)
+		if got[0].Module != "github.com/spf13/cobra" {
+			t.Errorf("Module = %q, want github.com/spf13/cobra", got[0].Module)
 		}
 	})
+}
+
+// singleLatestRow decodes the one row of a `latest --json` answer about one
+// module. The top-level type is the envelope whatever the count, so a
+// single-module answer is an envelope whose modules array holds one row: a test
+// decoding it as a bare row would be asserting a shape the command no longer
+// has.
+func singleLatestRow(t *testing.T, out []byte) map[string]any {
+	t.Helper()
+	var rows []map[string]any
+	envelopeRows(t, "latest --json", out, &rows)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row in modules, got %d\noutput: %s", len(rows), out)
+	}
+	return rows[0]
 }
 
 func TestPrintLatestTable(t *testing.T) {

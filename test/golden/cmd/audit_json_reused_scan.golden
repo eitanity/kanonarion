@@ -1,0 +1,161 @@
+# REUSED, json: the run-level facts on the machine channel when the answer was NOT measured by this invocation — the walk re-resolved and found identical, the scan served from a stored run, and its reachability verdicts resting on source this run did not read. Its control is audit_json_populated, which must keep reading `"reused": false` and `"source_read_by_this_run": true` for the same fixture. The pair is what shows the fields track the run rather than being constants.
+$ kanonarion audit --gomod $AUDIT_PROJECT/go.mod --from-modcache=$MODCACHE --json
+exit 0
+--- stdout ---
+{
+  "dependency_scope": {
+    "scope": "code",
+    "test_scope": "included"
+  },
+  "module_count": 2,
+  "walk": {
+    "resolved": true,
+    "id": "$ULID",
+    "reused": true,
+    "completed_at": "2026-03-01T00:00:00Z"
+  },
+  "scan": {
+    "answered": true,
+    "run_id": "vscan-$ULID-1772323200",
+    "reused": true,
+    "snapshot": {
+      "source": "vuln.go.dev",
+      "version": "2026-02-14T00:00:00Z"
+    }
+  },
+  "reachability_basis": {
+    "verdicts": 1,
+    "source_read_by_this_run": false
+  },
+  "toolchain": {
+    "judged": false,
+    "status": "unjudged",
+    "version": "$GOVERSION",
+    "snapshot": {
+      "source": "vuln.go.dev",
+      "version": "2026-02-14T00:00:00Z"
+    },
+    "reason": "the snapshot's module index carries no toolchain key",
+    "advisories_judged": 0,
+    "covering": [],
+    "withdrawn_covering": [],
+    "statement": "toolchain:\n  $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key"
+  },
+  "staleness": {
+    "measured": true,
+    "as_of": "2026-02-28T23:50:00Z",
+    "age": "10m0s",
+    "ttl": "1h0m0s",
+    "refresh_with": "latest --fresh"
+  },
+  "modules": [
+    {
+      "coordinate": "example.com/clean@v1.0.0",
+      "verification": "VerifiedBySumDBOnly",
+      "license": "BSD-3-Clause",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "vuln_withdrawn": 0,
+      "license_category": "permissive",
+      "license_source": "scanner",
+      "policy_outcome": "allow",
+      "license_resolved": true,
+      "policy_blocking": false,
+      "policy_unevaluated": false,
+      "is_latest": null,
+      "pin_ahead_of_latest": null,
+      "staleness_source": "unmeasured",
+      "staleness_unmeasured": "offline_no_ledger_entry",
+      "latest_release_age_days": null,
+      "major_probed": false,
+      "republished_probed": false,
+      "deprecated": null,
+      "direct": true,
+      "dependency_scope": {
+        "scope": "code",
+        "test_scope": "included"
+      }
+    },
+    {
+      "coordinate": "example.com/mod@v1.2.0",
+      "verification": "VerifiedBySumDBOnly",
+      "license": "MIT",
+      "license_status": "Detected",
+      "vuln_status": "Affected",
+      "vuln_findings": 1,
+      "vuln_withdrawn": 0,
+      "license_category": "permissive",
+      "license_source": "scanner",
+      "policy_outcome": "allow",
+      "license_resolved": true,
+      "policy_blocking": false,
+      "policy_unevaluated": false,
+      "is_latest": false,
+      "pin_ahead_of_latest": false,
+      "staleness_source": "ledger",
+      "latest_version": "v1.3.0",
+      "latest_release_age_days": 273,
+      "major_probed": true,
+      "republished_probed": false,
+      "deprecated": null,
+      "staleness_looked_up_at": "2026-02-28T23:50:00Z",
+      "direct": true,
+      "dependency_scope": {
+        "scope": "code",
+        "test_scope": "included"
+      }
+    },
+    {
+      "coordinate": "stdlib@$GOVERSION",
+      "verification": "VerifiedLocalToolchain",
+      "license": "BSD-3-Clause",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "vuln_withdrawn": 0,
+      "license_category": "permissive",
+      "license_source": "stdlib-tarball",
+      "policy_outcome": "allow",
+      "license_resolved": true,
+      "policy_blocking": false,
+      "policy_unevaluated": false,
+      "is_latest": null,
+      "pin_ahead_of_latest": null,
+      "staleness_source": "unmeasured",
+      "staleness_unmeasured": "toolchain_pinned",
+      "latest_release_age_days": null,
+      "major_probed": false,
+      "republished_probed": false,
+      "deprecated": null,
+      "direct": true,
+      "dependency_scope": {
+        "scope": "code",
+        "test_scope": "included"
+      }
+    }
+  ]
+}
+--- stderr ---
+notice: code scope resolved 2 module(s); test-scope dependencies included
+==> audit: walking project $AUDIT_PROJECT/go.mod (2 code dependencies)
+==> audit: extracting licenses for walk $ULID
+Starting extraction for walk $ULID...
+==> audit: scanning vulnerabilities for walk $ULID
+derivation:
+  walk $ULID: re-resolved and found identical to the walk taken 2026-03-01T00:00:00Z; that record was reused
+  vulnerability scan: reused run vscan-$ULID-1772323200 of 2026-03-01T00:00:00Z against snapshot vuln.go.dev@2026-02-14T00:00:00Z; nothing was re-scanned, and its 1 reachability verdict came from the source that run read, which this run did not re-read (--force to re-measure)
+toolchain:
+  $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
+verification coverage over 3 module(s):
+  cross-verified (checksum db + VCS)     0    0.0%
+  checksum database only                 2   66.7%
+  local go.sum only                      1   33.3%
+  cross-verified 0 of 3 module(s) where it applies (0.0%)
+  VCS evidence (fetch ledger): 0 rechecked by this run, 0 inherited, 2 never established, 1 not measured
+  note: no module in this graph carries a VCS anchor — cross-verification covered none of it
+staleness coverage over 3 module(s):
+  measured                               1   33.3%
+    measured (served from ledger)        1   33.3%
+  unmeasured (offline)                   1   33.3%
+  unmeasured (toolchain-pinned)          1   33.3%

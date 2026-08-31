@@ -55,6 +55,7 @@ depth policy, store layout, and exit codes - see
 - [`godebug`](godebug.md) - detect, classify & policy-check `//go:debug` settings
 - [`vendor`](vendor.md) - analyse a vendored project; detect drift and `modules.txt` inconsistency
 - [`fips`](fips.md) - assess FIPS toolchain eligibility and non-FIPS algorithm / cgo-crypto usage
+- [`native`](native.md) - record the third-party C/C++ library a cgo module ships and compiles into the binary, and the ones it links but does not ship
 - [`policy`](policy.md) - `policy validate` and `policy show`
 - [`inspect`](inspect.md) - run the full pipeline (walk → extract → vuln-scan → context) for a module
 - [`verification-coverage`](verification-coverage.md) - report how a walk's modules were verified, and whether cross-verification collapsed

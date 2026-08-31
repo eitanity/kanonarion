@@ -89,7 +89,10 @@ func TestCallGraphShowJSON_CarriesTheReferenceAxis(t *testing.T) {
 // TestCallGraphShowJSON_UnmeasuredReferenceAxisIsStillEmitted is the
 // zero-paired control. An unmeasured axis is the value that matters most — it
 // is what makes an empty callers answer UNRESOLVED — so the field must be
-// present and empty rather than absent, and the count must not imply a search.
+// present and NAMED rather than absent or empty, and the count must not imply a
+// search. Present-and-empty was the first half of the fix and not the whole one:
+// "" is absence-shaped, so a consumer reading it cannot tell a record that never
+// looked for references from one that looked and found none.
 func TestCallGraphShowJSON_UnmeasuredReferenceAxisIsStillEmitted(t *testing.T) {
 	rec := referenceAxisRecord()
 	rec.ReferenceScope = cgdomain.ReferenceScopeUnknown
@@ -108,8 +111,8 @@ func TestCallGraphShowJSON_UnmeasuredReferenceAxisIsStillEmitted(t *testing.T) {
 	if !ok {
 		t.Fatal("reference_scope absent from an unmeasured record — the reader cannot tell it from a measured one")
 	}
-	if v != "" {
-		t.Errorf("reference_scope = %v, want the empty string", v)
+	if v != jsonNotRecorded {
+		t.Errorf("reference_scope = %v, want %q", v, jsonNotRecorded)
 	}
 	if _, ok := doc["reference_edge_count"]; !ok {
 		t.Error("reference_edge_count absent")

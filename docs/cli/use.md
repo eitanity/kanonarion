@@ -3,7 +3,7 @@
 ## Synopsis
 
 ```
-kanonarion use <module@version> [--recursive] [--mod-cache <dir>] [--walk-id <id>]
+kanonarion use <module@version> [--recursive] [--mod-cache <dir>] [--walk-id <id>] [--json]
 ```
 
 ## Description
@@ -61,6 +61,85 @@ A module that cannot be copied (missing blob, checksum mismatch) is named on
 stderr as it happens and the rest of the selection still proceeds; the summary
 then reads `copied 124 of 126`, and the exit code is non-zero.
 
+Note what the text output does **not** separate: a module this run wrote and a
+module it found already in the cache both print `Copied ... to local cache`, and
+a module that failed is on the other stream entirely. A caller reading stdout
+alone sees only what worked. `--json` is where the three are told apart.
+
+## `--json`
+
+One document on stdout naming the destination cache once, with an entry per
+selected module. The per-module lines are not printed: stdout carries the
+document and nothing else. Everything stderr says - the walk, each failure, the
+summary - it says in both modes, and the exit code is the same.
+
+```json
+{
+  "target": "example.com/mod@v1.4.0",
+  "walk_id": "01KZ42BGN0T95D932JMC1GXX3C",
+  "walk_frame": "linux/amd64",
+  "recursive": true,
+  "mod_cache": "/home/you/go/pkg/mod",
+  "modules": [
+    {
+      "module": "example.com/mod",
+      "version": "v1.4.0",
+      "coordinate": "example.com/mod@v1.4.0",
+      "outcome": "copied",
+      "already_present": false,
+      "cache_path": "cache/download/example.com/mod/@v"
+    },
+    {
+      "module": "example.com/dep",
+      "version": "v2.1.0",
+      "coordinate": "example.com/dep@v2.1.0",
+      "outcome": "already_present",
+      "already_present": true,
+      "cache_path": "cache/download/example.com/dep/@v"
+    },
+    {
+      "module": "example.com/lost",
+      "version": "v0.3.0",
+      "coordinate": "example.com/lost@v0.3.0",
+      "outcome": "failed",
+      "already_present": false,
+      "error": "copying zip: getting blob: blob not found"
+    },
+    {
+      "module": "std",
+      "version": "v1.26.6",
+      "coordinate": "std@v1.26.6",
+      "outcome": "no_artefact",
+      "already_present": false,
+      "no_artefact_reason": "Go standard library"
+    }
+  ],
+  "counts": {
+    "selected": 4,
+    "with_artefact": 3,
+    "copied": 1,
+    "already_present": 1,
+    "in_cache": 2,
+    "failed": 1,
+    "no_artefact": 1
+  }
+}
+```
+
+| Outcome | Meaning |
+|---|---|
+| `copied` | This run wrote the module into the cache |
+| `already_present` | The module was in the cache before this run; its files were left untouched and its recorded hash was re-verified |
+| `failed` | The module owed bytes and did not get them; `error` says why |
+| `no_artefact` | There is nothing to copy and never will be; `no_artefact_reason` says what the module is |
+
+`cache_path` is relative to `mod_cache`, and is present for the modules the
+cache holds. `in_cache` is `copied` + `already_present` - the numerator of the
+`copied N of M` summary line, and the number a later `go build` cares about,
+since the cache does not record which run filled it. Every count is printed,
+zero included: a run that copied nothing says `"copied": 0` rather than leaving
+the reader to tell an empty answer from an unmeasured one.
+
 ## Modules with no artefact to copy
 
 A `--recursive` run over a project walk selects modules that have no artefact
@@ -97,6 +176,7 @@ whether every selected node landed.
 | `--recursive` | false | Copy the walk's whole resolved closure, not just the target |
 | `--walk-id <id>` | _(chosen)_ | Copy this walk's version set instead of the one the default rule picks |
 | `--mod-cache <dir>` | `$GOMODCACHE`, else `$GOPATH/pkg/mod`, else `~/go/pkg/mod` | Destination module cache |
+| `--json` | false | Emit the run as one JSON document instead of the per-module lines |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 
 ## Relationship to other commands

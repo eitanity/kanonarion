@@ -74,6 +74,10 @@ inferred from `./go.mod` when omitted.
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
+
 An empty history distinguishes the project from the store. Where the project has
 scans, the count is that project's and the remaining cause is paging; where it
 has none, the count is the whole store's, so a mistyped `--project` over a

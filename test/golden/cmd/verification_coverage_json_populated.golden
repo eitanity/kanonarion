@@ -15,6 +15,16 @@ exit 0
   "unrecorded": 1,
   "unrecognised": 0,
   "collapsed": false,
+  "shares": {
+    "cross_verified": 75,
+    "checksum_db_only": 0,
+    "go_sum_only": 0,
+    "unverified": 0,
+    "local_source": 0,
+    "unrecorded": 25,
+    "unrecognised": 0,
+    "cross_verified_of_applicable": 100
+  },
   "vcs": {
     "rechecked": 0,
     "inherited": 0,

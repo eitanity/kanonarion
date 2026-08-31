@@ -269,22 +269,44 @@ func buildLicense(
 		}
 		l.CopyrightStatements = stmts
 	}
-	if rec.PrimarySPDX != "" {
-		ob := licdomain.LookupObligations(rec.PrimarySPDX)
-		l.Obligations = &contextLicenseObligations{
-			Status:              ob.Status.String(),
-			IncludeNotice:       ob.IncludeNotice,
-			IncludeLicenseText:  ob.IncludeLicenseText,
-			StateChanges:        ob.StateChanges,
-			DiscloseSource:      ob.DiscloseSource,
-			SameLicense:         ob.SameLicense.String(),
-			NetworkUseTrigger:   ob.NetworkUseTrigger,
-			NoTrademarkUse:      ob.NoTrademarkUse,
-			ExplicitPatentGrant: ob.ExplicitPatentGrant,
-			CatalogueVersion:    licdomain.ObligationCatalogueVersion,
+	// A conjunctive expression names several licences, and PrimarySPDX is a
+	// backward-compatibility shim holding one of them: deriving from it alone
+	// reported a fraction of the duties as though it were the set. What may be
+	// said instead turns on the record's own basis — see readLicenceObligations.
+	reading := readLicenceObligations(rec)
+	if rec.PrimarySPDX != "" || len(reading.Arms) > 0 {
+		l.Obligations = contextObligationsOf(reading.Set)
+	}
+	if len(reading.Arms) > 0 {
+		l.BindingObligations = make(map[string]*contextLicenseObligations, len(reading.Arms))
+		for _, arm := range reading.Arms {
+			l.BindingObligations[arm] = contextObligationsOf(licdomain.LookupObligations(arm))
+		}
+		l.ArmGrants = reading.Grants
+		if reading.Maximal {
+			l.ObligationsReading = obligationsReadingMaximal
 		}
 	}
 	return l
+}
+
+// contextObligationsOf projects an obligation set onto the context document.
+// One projection for every obligations section the document carries, so the
+// union, the per-arm sets and the standard library's cannot drift in how they
+// spell the same fact.
+func contextObligationsOf(ob licdomain.Obligations) *contextLicenseObligations {
+	return &contextLicenseObligations{
+		Status:              ob.Status.String(),
+		IncludeNotice:       ob.IncludeNotice,
+		IncludeLicenseText:  ob.IncludeLicenseText,
+		StateChanges:        ob.StateChanges,
+		DiscloseSource:      ob.DiscloseSource,
+		SameLicense:         ob.SameLicense.String(),
+		NetworkUseTrigger:   ob.NetworkUseTrigger,
+		NoTrademarkUse:      ob.NoTrademarkUse,
+		ExplicitPatentGrant: ob.ExplicitPatentGrant,
+		CatalogueVersion:    licdomain.ObligationCatalogueVersion,
+	}
 }
 
 // buildStdlibLicense answers the licence section for the standard-library
@@ -322,19 +344,9 @@ func buildStdlibLicense(ctx context.Context, coord coordinate.ModuleCoordinate, 
 			Statement:    answer.basisStatement(),
 		},
 	}
-	ob := licdomain.LookupObligations(answer.SPDX)
-	l.Obligations = &contextLicenseObligations{
-		Status:              ob.Status.String(),
-		IncludeNotice:       ob.IncludeNotice,
-		IncludeLicenseText:  ob.IncludeLicenseText,
-		StateChanges:        ob.StateChanges,
-		DiscloseSource:      ob.DiscloseSource,
-		SameLicense:         ob.SameLicense.String(),
-		NetworkUseTrigger:   ob.NetworkUseTrigger,
-		NoTrademarkUse:      ob.NoTrademarkUse,
-		ExplicitPatentGrant: ob.ExplicitPatentGrant,
-		CatalogueVersion:    licdomain.ObligationCatalogueVersion,
-	}
+	// answer.SPDX is walkdomain.StdlibLicense's resolution — one identifier,
+	// never an expression — so a single lookup is the whole answer here.
+	l.Obligations = contextObligationsOf(licdomain.LookupObligations(answer.SPDX))
 	return l
 }
 

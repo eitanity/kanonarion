@@ -37,9 +37,12 @@ A package whose files are all for other platforms is kept, empty, and marked
 `out_of_frame` (text: `not in this build frame`) — absent from the module and
 not built here are different facts.
 
-Records written before frames read as `build frame: unrecorded`. Two records
-naming different frames, or one naming a frame and one not, are reported as a
-`build_frame` conflict rather than composed; re-extract to replace them.
+Records written before frames read as `build frame: unrecorded`. Under `--json`
+`build_frame_stated` says the same on every record — the frame in words, or
+`unrecorded` — while the `build_frame` components stay absent on a record that
+names none. Two records naming different frames, or one naming a frame and one
+not, are reported as a `build_frame` conflict rather than composed; re-extract to
+replace them.
 
 The `toolchain:` line under it names the Go toolchain whose release tags
 (`go1.1 … go1.N`) selected the files. A `//go:build go1.27` file enters or leaves
@@ -50,8 +53,9 @@ different toolchains are reported as a `toolchain` conflict **when their APIs al
 differ** — the API difference is the disagreement and the toolchain is what
 explains it; two toolchains that produced the identical API produced the same
 answer and compose. A record naming no toolchain never conflicts with one that
-does. Under `--json` the field is `toolchain`, emitted on every record, empty when
-not recorded.
+does. Under `--json` the field is `toolchain`, emitted on every record and
+reading `not recorded` when the record names none — the same words the text
+prints, so a document and a screen never state one record two ways.
 
 `interface-diff --toolchain` restricts the consumer call graph `--used-by`
 resolves, on the same terms as the other query commands: see
@@ -98,6 +102,8 @@ $ kanonarion interface github.com/spf13/cobra@v1.8.1 --json
   "content_hash": "sha256:...",
   "extracted_at": "...",
   "build_frame": { "goos": "linux", "goarch": "amd64", "cgo_enabled": true },
+  "build_frame_stated": "linux/amd64 (cgo on)",
+  "toolchain": "go1.26.6",
   "artefact_identity": "zip:h1:...",
   "source_content_hash": "sha256:..."
 }
@@ -208,6 +214,10 @@ kanonarion interface-list [flags]
 
 When the limit bites, the listing says so and names the invocation that lifts
 it, per [Truncated listings](conventions.md#truncated-listings).
+
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
 
 **Example:**
 

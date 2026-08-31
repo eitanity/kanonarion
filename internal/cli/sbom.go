@@ -45,9 +45,13 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f sbomFlags
 
 	cmd := &cobra.Command{
-		Use:         "sbom [<walk-id>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Generate a Software Bill of Materials for a walk",
+		Use: "sbom [<walk-id>]",
+		Annotations: map[string]string{
+			annotationStoreIntent:  StoreIntentCreate,
+			annotationNetworkUse:   NetworkAvoidable,
+			annotationOfflineFlags: "--from-modcache",
+		},
+		Short: "Generate a Software Bill of Materials for a walk",
 		Long: `Generate a Software Bill of Materials (CycloneDX) for a walk.
 
 The document is an inventory: components, their identity, hashes, licences and
@@ -95,7 +99,7 @@ Exit codes:
 	cmd.Flags().StringVar(&f.packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes components to that binary's import closure")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	cmd.Flags().StringVar(&f.mainVersion, "main-version", "", "version to stamp on the SBOM subject instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate. It stamps both places the document describes the subject: metadata.component and the subject's own entry in the component list")
-	cmd.Flags().StringVar(&f.mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own. It reaches the subject's entry in the component list too, which is the copy the undetermined-licence exit reads")
+	cmd.Flags().StringVar(&f.mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject when the subject's own extraction reached no licence. It reaches the subject's entry in the component list too, which is the copy the undetermined-licence exit reads")
 	cmd.Flags().StringVar(&f.generatedAt, "generated-at", "", "RFC3339 time this document is being created (e.g. 2026-01-31T09:00:00Z); becomes metadata.timestamp. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
@@ -106,11 +110,14 @@ Exit codes:
 
 func newSBOMShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "sbom-show <sbom-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Print a stored SBOM record",
-		Example:     `  kanonarion sbom-show sbom-abc123`,
-		Args:        cobra.ExactArgs(1),
+		Use: "sbom-show <sbom-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short:   "Print a stored SBOM record",
+		Example: `  kanonarion sbom-show sbom-abc123`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSBOMShow(cmd.Context(), args[0], storeRoot, jsonOut, stdout, stderr)
 		},
@@ -123,11 +130,14 @@ func newSBOMListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 
 	cmd := &cobra.Command{
-		Use:         "sbom-list",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List SBOM records in the store",
-		Example:     `  kanonarion sbom-list --walk 01KQDBVW092ER1HNXZ60X27CMD`,
-		Args:        cobra.NoArgs,
+		Use: "sbom-list",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short:   "List SBOM records in the store",
+		Example: `  kanonarion sbom-list --walk 01KQDBVW092ER1HNXZ60X27CMD`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSBOMList(cmd.Context(), storeRoot, walkID, jsonOut, stdout, stderr)
 		},

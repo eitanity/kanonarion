@@ -2,93 +2,140 @@
 $ kanonarion audit --gomod $AUDIT_PROJECT/go.mod --from-modcache=$MODCACHE --json
 exit 0
 --- stdout ---
-[
-  {
-    "coordinate": "example.com/clean@v1.0.0",
-    "verification": "VerifiedBySumDBOnly",
-    "license": "BSD-3-Clause",
-    "license_status": "Detected",
-    "vuln_status": "Clean",
-    "vuln_findings": 0,
-    "vuln_withdrawn": 0,
-    "license_category": "permissive",
-    "license_source": "scanner",
-    "policy_outcome": "allow",
-    "license_resolved": true,
-    "policy_blocking": false,
-    "policy_unevaluated": false,
-    "is_latest": null,
-    "pin_ahead_of_latest": null,
-    "staleness_source": "unmeasured",
-    "staleness_unmeasured": "offline_no_ledger_entry",
-    "latest_release_age_days": null,
-    "major_probed": false,
-    "republished_probed": false,
-    "deprecated": null,
-    "direct": true,
-    "dependency_scope": {
-      "scope": "code",
-      "test_scope": "included"
+{
+  "dependency_scope": {
+    "scope": "code",
+    "test_scope": "included"
+  },
+  "module_count": 2,
+  "walk": {
+    "resolved": true,
+    "id": "$ULID",
+    "reused": false,
+    "completed_at": "2026-03-01T00:00:00Z"
+  },
+  "scan": {
+    "answered": true,
+    "run_id": "vscan-$ULID-1772323200",
+    "reused": false,
+    "snapshot": {
+      "source": "vuln.go.dev",
+      "version": "2026-02-14T00:00:00Z"
     }
   },
-  {
-    "coordinate": "example.com/mod@v1.2.0",
-    "verification": "VerifiedBySumDBOnly",
-    "license": "MIT",
-    "license_status": "Detected",
-    "vuln_status": "Affected",
-    "vuln_findings": 1,
-    "vuln_withdrawn": 0,
-    "license_category": "permissive",
-    "license_source": "scanner",
-    "policy_outcome": "allow",
-    "license_resolved": true,
-    "policy_blocking": false,
-    "policy_unevaluated": false,
-    "is_latest": false,
-    "pin_ahead_of_latest": false,
-    "staleness_source": "ledger",
-    "latest_version": "v1.3.0",
-    "latest_release_age_days": 273,
-    "major_probed": true,
-    "republished_probed": false,
-    "deprecated": null,
-    "staleness_looked_up_at": "2026-02-28T23:50:00Z",
-    "direct": true,
-    "dependency_scope": {
-      "scope": "code",
-      "test_scope": "included"
-    }
+  "reachability_basis": {
+    "verdicts": 1,
+    "source_read_by_this_run": true
   },
-  {
-    "coordinate": "stdlib@$GOVERSION",
-    "verification": "VerifiedLocalToolchain",
-    "license": "BSD-3-Clause",
-    "license_status": "Detected",
-    "vuln_status": "Clean",
-    "vuln_findings": 0,
-    "vuln_withdrawn": 0,
-    "license_category": "permissive",
-    "license_source": "stdlib-tarball",
-    "policy_outcome": "allow",
-    "license_resolved": true,
-    "policy_blocking": false,
-    "policy_unevaluated": false,
-    "is_latest": null,
-    "pin_ahead_of_latest": null,
-    "staleness_source": "unmeasured",
-    "staleness_unmeasured": "toolchain_pinned",
-    "latest_release_age_days": null,
-    "major_probed": false,
-    "republished_probed": false,
-    "deprecated": null,
-    "direct": true,
-    "dependency_scope": {
-      "scope": "code",
-      "test_scope": "included"
+  "toolchain": {
+    "judged": false,
+    "status": "unjudged",
+    "version": "$GOVERSION",
+    "snapshot": {
+      "source": "vuln.go.dev",
+      "version": "2026-02-14T00:00:00Z"
+    },
+    "reason": "the snapshot's module index carries no toolchain key",
+    "advisories_judged": 0,
+    "covering": [],
+    "withdrawn_covering": [],
+    "statement": "toolchain:\n  $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key"
+  },
+  "staleness": {
+    "measured": true,
+    "as_of": "2026-02-28T23:50:00Z",
+    "age": "10m0s",
+    "ttl": "1h0m0s",
+    "refresh_with": "latest --fresh"
+  },
+  "modules": [
+    {
+      "coordinate": "example.com/clean@v1.0.0",
+      "verification": "VerifiedBySumDBOnly",
+      "license": "BSD-3-Clause",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "vuln_withdrawn": 0,
+      "license_category": "permissive",
+      "license_source": "scanner",
+      "policy_outcome": "allow",
+      "license_resolved": true,
+      "policy_blocking": false,
+      "policy_unevaluated": false,
+      "is_latest": null,
+      "pin_ahead_of_latest": null,
+      "staleness_source": "unmeasured",
+      "staleness_unmeasured": "offline_no_ledger_entry",
+      "latest_release_age_days": null,
+      "major_probed": false,
+      "republished_probed": false,
+      "deprecated": null,
+      "direct": true,
+      "dependency_scope": {
+        "scope": "code",
+        "test_scope": "included"
+      }
+    },
+    {
+      "coordinate": "example.com/mod@v1.2.0",
+      "verification": "VerifiedBySumDBOnly",
+      "license": "MIT",
+      "license_status": "Detected",
+      "vuln_status": "Affected",
+      "vuln_findings": 1,
+      "vuln_withdrawn": 0,
+      "license_category": "permissive",
+      "license_source": "scanner",
+      "policy_outcome": "allow",
+      "license_resolved": true,
+      "policy_blocking": false,
+      "policy_unevaluated": false,
+      "is_latest": false,
+      "pin_ahead_of_latest": false,
+      "staleness_source": "ledger",
+      "latest_version": "v1.3.0",
+      "latest_release_age_days": 273,
+      "major_probed": true,
+      "republished_probed": false,
+      "deprecated": null,
+      "staleness_looked_up_at": "2026-02-28T23:50:00Z",
+      "direct": true,
+      "dependency_scope": {
+        "scope": "code",
+        "test_scope": "included"
+      }
+    },
+    {
+      "coordinate": "stdlib@$GOVERSION",
+      "verification": "VerifiedLocalToolchain",
+      "license": "BSD-3-Clause",
+      "license_status": "Detected",
+      "vuln_status": "Clean",
+      "vuln_findings": 0,
+      "vuln_withdrawn": 0,
+      "license_category": "permissive",
+      "license_source": "stdlib-tarball",
+      "policy_outcome": "allow",
+      "license_resolved": true,
+      "policy_blocking": false,
+      "policy_unevaluated": false,
+      "is_latest": null,
+      "pin_ahead_of_latest": null,
+      "staleness_source": "unmeasured",
+      "staleness_unmeasured": "toolchain_pinned",
+      "latest_release_age_days": null,
+      "major_probed": false,
+      "republished_probed": false,
+      "deprecated": null,
+      "direct": true,
+      "dependency_scope": {
+        "scope": "code",
+        "test_scope": "included"
+      }
     }
-  }
-]
+  ]
+}
 --- stderr ---
 notice: code scope resolved 2 module(s); test-scope dependencies included
 ==> audit: walking project $AUDIT_PROJECT/go.mod (2 code dependencies)

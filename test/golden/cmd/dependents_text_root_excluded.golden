@@ -1,0 +1,7 @@
+# the defect state, on the channel that never had it wrong: the walk root is the only module with an edge to the target and it is out of scope by default, so the answer is empty and says so in the same sentence. Recorded byte-for-byte because the JSON leg was added underneath it and must not have moved it.
+$ kanonarion dependents example.com/mod@v1.2.0 --walk-id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+exit 0
+--- stdout ---
+No modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV (frame not-platform-scoped) depend on example.com/mod@v1.2.0 (the walk root does; it is excluded by default — pass --include-root)
+--- stderr ---
+(empty)

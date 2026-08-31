@@ -33,9 +33,10 @@ current directory. If no `go.mod` exists there, it returns an error.
 
 Without `--gomod`, one or more module paths may be passed as positional
 arguments and the result shows the latest version with its release date
-for each. With a single module, `--json` emits an object; with multiple,
-`--json` emits an array (matching the `--gomod` shape) so the output is
-trivially `jq`-pipeable. Argument order is preserved.
+for each. `--json` emits one object whatever the count - one module or many -
+matching the `--gomod` shape, with the rows in `modules`, so the output is
+trivially `jq`-pipeable.
+Argument order is preserved.
 
 ### Two facts, never merged
 
@@ -185,7 +186,7 @@ need the `--json` output for a structured pipeline.
 | `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy, honoured not rewritten. Under `off`, a lookup younger than `staleness.ttl` is served and nothing is written; without one, exit `20`. `direct` and `--fresh` refuse. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--exclude-tests` | false | With `--gomod`: resolve the `code` scope without test imports, and state the narrowing. On `--tool` it is accepted and changes nothing - the scope already excludes them - and the answer says so. Refused against `--project` (its build list carries no test partition) and against a positional module. See [Test scope](walk.md#test-scope---exclude-tests) |
 | `--fresh` | false | Re-query the proxy instead of serving recorded lookups from the store |
-| `--json` | false | Emit output as JSON (global flag) |
+| `--json` | false | Emit output as JSON (global flag). Always one object with the per-module rows in `modules`, whatever the form and the result count. See [JSON output](#json-output) |
 
 ## Text output
 
@@ -216,92 +217,129 @@ the tag, and `latest: v1.0.0` would name a downgrade as the target.
 
 ## JSON output
 
+The top-level JSON type is **always one object** - one module, several, or
+`--gomod` - with the per-module rows in its `modules` member, which is `[]` when
+the scope resolves to nothing. It does not vary with the form invoked or with
+the number of results.
+
+Beside `modules`, the object states the facts about the run that a bare array
+had nowhere to put:
+
+| Key | Meaning |
+| --- | --- |
+| `dependency_scope` | The go.mod dependency scope that resolved the rows (`code`, `tool` or `complete`) and the test axis it applied (`included`, `excluded` or `unavailable`). **`null`** on the positional form, where you named the modules and no scope was projected. |
+| `module_count` | How many modules the answer is over. On `--gomod` it is the count the `notice:` line on stderr states. |
+| `narrow_with` | The flag that narrows this scope, as data: `"--exclude-tests"`. Absent where nothing narrows the answer. |
+| `modules` | The per-module rows, unchanged. |
+
+> **Breaking change:** the top level was a bare array, and before that a bare
+> object for a single module. A consumer that read `latest --json | jq '.[]'`
+> must now read `jq '.modules[]'`, and one that read
+> `latest <one-module> --json` as a row object must read `.modules[0]`.
+> The earlier failure was silent: iterating the old single-module answer walked
+> the object's keys rather than its rows, which produces plausible nonsense
+> instead of an error.
+
 ### Single module
 
 ```json
 {
-  "module": "github.com/spf13/cobra",
-  "latest": "v1.10.2",
-  "latest_date": "2025-03-28T...",
-  "latest_release_age_days": 491,
-  "is_latest": null,
-  "staleness_unmeasured": "not_asked",
-  "major_probed": true,
-  "looked_up_at": "2026-07-31T09:14:02Z",
-  "served_from_store": false
+  "dependency_scope": null,
+  "module_count": 1,
+  "modules": [
+    {
+      "module": "github.com/spf13/cobra",
+      "latest": "v1.10.2",
+      "latest_date": "2025-03-28T...",
+      "latest_release_age_days": 491,
+      "is_latest": null,
+      "staleness_unmeasured": "not_asked",
+      "major_probed": true,
+      "looked_up_at": "2026-07-31T09:14:02Z",
+      "served_from_store": false
+    }
+  ]
 }
 ```
+
+`dependency_scope` is `null` here: a module named on the command line is not a
+scope that was resolved, and a scope name printed beside it would be one.
 
 A bare module path names **no pin**, so there is nothing for `is_latest` to
 compare against: it is `null` with `staleness_unmeasured: not_asked`. Pass the
 version you care about through `--gomod` (or `audit`) to get the comparison
 answered.
 
-### `--gomod` array
+### `--gomod`
 
 ```json
-[
-  {
-    "module": "golang.org/x/mod",
-    "pinned": "v0.35.0",
-    "latest": "v0.36.0",
-    "latest_date": "2025-05-08T...",
-    "latest_release_age_days": 6,
-    "is_latest": false,
-    "major_probed": true,
-    "deprecated": "",
-    "looked_up_at": "2026-07-31T09:14:02Z",
-    "served_from_store": false
-  },
-  {
-    "module": "github.com/aws/aws-sdk-go",
-    "pinned": "v1.55.8",
-    "latest": "v1.55.8",
-    "is_latest": true,
-    "major_probed": true,
-    "deprecated": "aws-sdk-go is deprecated. Use aws-sdk-go-v2.\nSee https://...",
-    "looked_up_at": "2026-08-17T09:14:02Z",
-    "served_from_store": false
-  },
-  {
-    "module": "github.com/minio/minio-go/v6",
-    "pinned": "v6.0.57",
-    "latest": "v6.0.57",
-    "latest_date": "2020-12-21T...",
-    "latest_release_age_days": 2050,
-    "is_latest": true,
-    "newer_major_module": "github.com/minio/minio-go/v7",
-    "newer_major_latest": "v7.2.1",
-    "newer_major_date": "2026-01-19T...",
-    "major_probed": true,
-    "republished_probed": false,
-    "looked_up_at": "2026-07-31T09:14:02Z",
-    "served_from_store": true
-  },
-  {
-    "module": "github.com/gavv/httpexpect",
-    "pinned": "v2.0.0+incompatible",
-    "latest": "v1.1.3",
-    "is_latest": false,
-    "pin_ahead_of_latest": true,
-    "major_probed": true,
-    "republished_module": "github.com/gavv/httpexpect/v2",
-    "republished_latest": "v2.17.0",
-    "republished_date": "2025-03-04T...",
-    "republished_probed": true,
-    "looked_up_at": "2026-07-31T09:14:02Z",
-    "served_from_store": false
-  },
-  {
-    "module": "example.com/mod",
-    "pinned": "v1.0.0",
-    "latest": "(error)",
-    "is_latest": null,
-    "staleness_unmeasured": "lookup_failed",
-    "major_probed": false,
-    "served_from_store": false
-  }
-]
+{
+  "dependency_scope": { "scope": "code", "test_scope": "included" },
+  "module_count": 5,
+  "narrow_with": "--exclude-tests",
+  "modules": [
+    {
+      "module": "golang.org/x/mod",
+      "pinned": "v0.35.0",
+      "latest": "v0.36.0",
+      "latest_date": "2025-05-08T...",
+      "latest_release_age_days": 6,
+      "is_latest": false,
+      "major_probed": true,
+      "deprecated": "",
+      "looked_up_at": "2026-07-31T09:14:02Z",
+      "served_from_store": false
+    },
+    {
+      "module": "github.com/aws/aws-sdk-go",
+      "pinned": "v1.55.8",
+      "latest": "v1.55.8",
+      "is_latest": true,
+      "major_probed": true,
+      "deprecated": "aws-sdk-go is deprecated. Use aws-sdk-go-v2.\nSee https://...",
+      "looked_up_at": "2026-08-17T09:14:02Z",
+      "served_from_store": false
+    },
+    {
+      "module": "github.com/minio/minio-go/v6",
+      "pinned": "v6.0.57",
+      "latest": "v6.0.57",
+      "latest_date": "2020-12-21T...",
+      "latest_release_age_days": 2050,
+      "is_latest": true,
+      "newer_major_module": "github.com/minio/minio-go/v7",
+      "newer_major_latest": "v7.2.1",
+      "newer_major_date": "2026-01-19T...",
+      "major_probed": true,
+      "republished_probed": false,
+      "looked_up_at": "2026-07-31T09:14:02Z",
+      "served_from_store": true
+    },
+    {
+      "module": "github.com/gavv/httpexpect",
+      "pinned": "v2.0.0+incompatible",
+      "latest": "v1.1.3",
+      "is_latest": false,
+      "pin_ahead_of_latest": true,
+      "major_probed": true,
+      "republished_module": "github.com/gavv/httpexpect/v2",
+      "republished_latest": "v2.17.0",
+      "republished_date": "2025-03-04T...",
+      "republished_probed": true,
+      "looked_up_at": "2026-07-31T09:14:02Z",
+      "served_from_store": false
+    },
+    {
+      "module": "example.com/mod",
+      "pinned": "v1.0.0",
+      "latest": "(error)",
+      "is_latest": null,
+      "staleness_unmeasured": "lookup_failed",
+      "major_probed": false,
+      "served_from_store": false
+    }
+  ]
+}
 ```
 
 `deprecated` is emitted on every row, with three states: `null` — not
@@ -381,7 +419,7 @@ kanonarion latest github.com/spf13/cobra
 # Latest versions of multiple modules in one call
 kanonarion latest github.com/spf13/cobra github.com/stretchr/testify
 
-# Machine-readable version info (object for single, array for multiple)
+# Machine-readable version info (one object whatever the count)
 kanonarion latest github.com/spf13/cobra --json
 kanonarion latest github.com/spf13/cobra github.com/stretchr/testify --json
 
@@ -404,10 +442,10 @@ kanonarion latest --gomod ./go.mod --project
 kanonarion latest --gomod ./go.mod --fresh
 
 # Every dependency with a newer major line available
-kanonarion latest --gomod ./go.mod --json | jq '.[] | select(.newer_major_module != null)'
+kanonarion latest --gomod ./go.mod --json | jq '.modules[] | select(.newer_major_module != null)'
 
 # Every +incompatible pin whose own major now lives at /vN — usually the cheapest move
-kanonarion latest --gomod ./go.mod --json | jq '.[] | select(.republished_module != null)'
+kanonarion latest --gomod ./go.mod --json | jq '.modules[] | select(.republished_module != null)'
 ```
 
 ## See also

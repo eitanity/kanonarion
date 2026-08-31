@@ -59,7 +59,46 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them. Requires `--gomod`; refused by name on a positional module walk, which has no local source context |
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.mod` to read the directive from. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
-| `--json` | `false` | Emit the walk record as JSON |
+| `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the project's local `go.sum` - the offline walk. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A module missing from the cache, or whose bytes disagree with `go.sum`, fails the walk. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.sum` to verify the cache against. See [Offline and air-gapped walks](#offline-and-air-gapped-walks). |
+| `--json` | `false` | Emit the walk record, and this run's verification coverage, as JSON |
+
+#### What `walk --json` carries
+
+The document is the walk record's own keys - `id`, `target`, `graph`,
+`per_node_results`, `content_hash` and the rest, value for value as the record
+was sealed - plus one added key, `verification_coverage`: how each module in the
+graph was verified, and how many were not. Nothing in the record moves, is
+renamed or is dropped, so a consumer reading it today reads the same values.
+
+The section carries the figures the run also prints to stderr, under the field
+names [`verification-coverage --json`](verification-coverage.md) publishes:
+`cross_verified`, `cross_verifiable`, `collapsed`, the per-bucket counts, the
+per-module rows under `modules`, and the fetch ledger's four VCS-evidence counts
+under `vcs`. Those four are kept apart - `rechecked`, `inherited`, `never`,
+`not_measured` - because a module that was never cross-verified is a different
+fact from one whose record cannot say.
+
+Two keys state the measurement itself. `measured` is `false` when this run took
+none, and `statement` is the sentence the reader is shown, carried verbatim. A
+run that measured no coverage says so in the document rather than leaving the key
+out, where its absence would read as a graph that was checked and had nothing to
+report.
+
+```json
+{
+  "id": "01KQDBVW092ER1HNXZ60X27CMD",
+  "verification_coverage": {
+    "cross_verified": 7,
+    "cross_verifiable": 7,
+    "collapsed": false,
+    "vcs": { "rechecked": 7, "inherited": 0, "never": 0, "not_measured": 0 },
+    "measured": true,
+    "statement": "verification coverage over 7 module(s): …"
+  }
+}
+```
+
+The aggregate is still written to stderr on both paths, in the same words.
 
 ### `walk-list`
 
@@ -83,6 +122,10 @@ kanonarion walk-list [--scope code|tool|complete] [--json]
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+
+Under `--json` the command answers with one object carrying `records` and the
+paging state, not a bare array, and writes nothing to stderr — see [Listing
+documents](conventions.md#listing-documents).
 A listing that comes back empty says which of its three causes emptied it, per
 [Zero-result listings](conventions.md#zero-result-listings).
 
@@ -150,8 +193,28 @@ name the same modules at the same versions, and no node status changed
 Passing the same id twice says that instead, since nothing was compared with
 anything. When the two walks were resolved at unequal completeness the empty
 result is additionally flagged as not a confident "identical". Under `--json`
-the statement is an object on **stderr**; stdout keeps the diff document
-unchanged.
+the statement is a `no_difference` object inside the diff document on stdout,
+present only when the four delta sets are all empty:
+
+```json
+{
+  "walk_a": "01KZ...A",
+  "walk_b": "01KZ...B",
+  "added": [], "removed": [], "upgraded": [],
+  "license_regressions": [], "new_reachable_cves": [],
+  "no_difference": {
+    "statement": "no difference: the two walks name the same modules at the same versions, and no node status changed",
+    "walk_a": "01KZ...A", "walk_b": "01KZ...B",
+    "frame_a": "linux/amd64", "frame_a_basis": "platform",
+    "frame_b": "linux/amd64", "frame_b_basis": "platform",
+    "nodes_a": 128, "nodes_b": 128,
+    "same_walk": false
+  }
+}
+```
+
+Four empty arrays are the same bytes whether the walks agree or the comparison
+ran over nothing, so the statement is in the document rather than on stderr.
 
 If either ID is not in the store the command exits `4` and names **which** of
 the two was missing — or both when both are — followed by how many walk records
@@ -343,11 +406,41 @@ custody](sbom.md#standard-library-chain-of-custody).
 verification is against the local `go.sum`, and the standard-library anchor is
 the local toolchain. It is the mode to use inside an air gap.
 
+```
+kanonarion walk --gomod ./go.mod --from-modcache
+kanonarion walk --gomod ./go.mod --from-modcache=/path/to/gomodcache
+```
+
+It is a **project-walk** flag: `go.sum` is the *sole* anchor for bytes carried in
+on disk, and the `go.sum` it reads is the one beside the `--gomod` file. A
+positional `walk <module@version>` has no project `go.sum`, so it refuses the
+flag by name rather than walk unverified bytes:
+
+```
+$ kanonarion walk example.com/mod@v1.0.0 --from-modcache
+error: walk <module@version> does not act on --from-modcache (applies to walk
+--gomod, which has the project go.sum the cache is verified against; a published
+coordinate has none)
+```
+
+The record says what the bytes were checked against, and does not claim the
+anchor a network walk would have established. Each module fetched this way
+records `acquisition_mode: modcache`, verification status
+`VerifiedBySumDBOnly`, the detail `verified against local go.sum (modcache
+mode); VCS cross-verification skipped`, and no VCS leg on its fetch-ledger
+entry. That is a weaker anchor than a cross-verified network fetch, so a
+`--from-modcache` re-measurement of a module the store already holds a stronger
+record for is refused unless `--allow-verification-downgrade` is passed. See
+[Re-measuring with a weaker
+anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade).
+
 A walk **without** `--from-modcache` is fetch-capable, so an environment that
-declares no module fetching stops it: under `GOPROXY=off` the walk refuses
-before any network I/O and exits `20`, naming `--from-modcache` and
-[`use --recursive`](use.md) rather than falling back to `proxy.golang.org`.
-Reading walks already recorded (`walk show`, `callgraph`, `interface`,
+declares no module fetching stops it: under `GOPROXY=off` no network I/O is
+attempted, and each module that would have to be fetched fails with a reason
+naming `--from-modcache` and [`use --recursive`](use.md) rather than falling
+back to `proxy.golang.org`. The walk is then `partial` (exit `1`), or `failed`
+(exit `2`) when it is the positional walk's own target that could not be
+fetched. Reading walks already recorded (`walk show`, `callgraph`, `interface`,
 `license`, `vuln show`) is unaffected - the refusal withdraws fetching, not the
 store.
 
@@ -626,8 +719,10 @@ nothing.
 
 ## Relation to other stages
 
-- **Requires:** module proxy access; implicitly performs `kanonarion fetch`
-  for every node in the closure.
+- **Requires:** module bytes for every node in the closure - from the module
+  proxy, or from `$GOMODCACHE` under
+  [`--from-modcache`](#offline-and-air-gapped-walks); it implicitly performs
+  `kanonarion fetch` for each of them.
 - **Consumed by:** `kanonarion extract`, `vuln-scan`, and `sbom`, which all
   operate over a stored walk.
 

@@ -20,8 +20,9 @@ import (
 
 func newConfigCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Read and write configuration values (git config style)",
+		Use:         "config",
+		Annotations: map[string]string{annotationNetworkUse: NetworkNever},
+		Short:       "Read and write configuration values (git config style)",
 	}
 	cmd.AddCommand(
 		newConfigInitCmd(stdout),
@@ -54,21 +55,64 @@ func newConfigInitCmd(stdout io.Writer) *cobra.Command {
 			annotationUsableWithRejectedConfig: "creates or completes the config file",
 			// Writes config.yaml into the store root, so it may make the root.
 			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
 		},
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runConfigInit(storeRoot, stdout)
+			return runConfigInit(storeRoot, jsonOut, stdout)
 		},
 	}
 }
 
-func runConfigInit(root string, stdout io.Writer) error {
+// What `config init` did to the file it was pointed at. Creating a file,
+// completing one and leaving one alone are three different events, and a
+// caller that only learns the path cannot tell which of them happened.
+const (
+	configInitCreated   = "created"
+	configInitAppended  = "sections_appended"
+	configInitUnchanged = "unchanged"
+)
+
+// configInitResult states the file and what became of it. existed is kept
+// beside action rather than folded into it because the two answer different
+// questions: whether the operator already had a file, and whether this run
+// changed it.
+type configInitResult struct {
+	ConfigFile string `json:"config_file"`
+	Existed    bool   `json:"existed"`
+	Action     string `json:"action"`
+}
+
+func runConfigInit(root string, asJSON bool, stdout io.Writer) error {
 	configPath := filepath.Join(root, "config.yaml")
-	_, statErr := os.Stat(configPath)
-	existed := statErr == nil
+	// Read rather than stat: the bytes are what says whether the template
+	// completed an existing file or left it exactly as it was, and they are
+	// only readable before the write. A file that exists and cannot be read
+	// still refuses below, in EnsureConfig, as it did before.
+	before, readErr := os.ReadFile(configPath) // #nosec G304 -- operator-supplied store-root path
+	existed := readErr == nil
 
 	if err := config.EnsureConfig(configPath); err != nil {
 		return fmt.Errorf("writing config template: %w", err)
+	}
+
+	if asJSON {
+		action := configInitCreated
+		if existed {
+			after, err := os.ReadFile(configPath) // #nosec G304 -- same path
+			if err != nil {
+				return fmt.Errorf("reading config file: %w", err)
+			}
+			action = configInitUnchanged
+			if !bytes.Equal(before, after) {
+				action = configInitAppended
+			}
+		}
+		return encodeJSON(stdout, configInitResult{
+			ConfigFile: configPath,
+			Existed:    existed,
+			Action:     action,
+		})
 	}
 
 	msg := "wrote commented config template to %s\n"
@@ -96,6 +140,7 @@ func newConfigShowCmd(stdout io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationUsableWithRejectedConfig: "reports the file and what is actually in force",
 			annotationStoreIntent:              StoreIntentRead,
+			annotationNetworkUse:               NetworkNever,
 		},
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -123,23 +168,103 @@ func newConfigGetCmd(stdout io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationUsableWithRejectedConfig: "reports one value in force",
 			annotationStoreIntent:              StoreIntentRead,
+			annotationNetworkUse:               NetworkNever,
 		},
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runConfigGet(activeConfig, args[0], stdout)
+			return runConfigGet(storeRoot, activeConfig, args[0], jsonOut, stdout)
 		},
 	}
 }
 
-func runConfigGet(cfg domain.Config, key string, stdout io.Writer) error {
+// configGetResult is one configuration key as a document: the value in force
+// and where it came from.
+//
+// source carries the same two words `config show` uses, answered by the same
+// loader, because the value alone cannot say what a caller scripting this
+// needs to know. A bare "false" is true of a store nobody has configured and
+// of one an operator deliberately turned off, and the two are different facts.
+type configGetResult struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+func runConfigGet(root string, cfg domain.Config, key string, asJSON bool, stdout io.Writer) error {
 	val, err := configGetValue(cfg, key)
 	if err != nil {
 		return err
 	}
-	if _, err = fmt.Fprintln(stdout, val); err != nil {
-		return fmt.Errorf("writing output: %w", err)
+	if !asJSON {
+		if _, err = fmt.Fprintln(stdout, val); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+		return nil
 	}
-	return nil
+	source, err := configKeySource(root, key)
+	if err != nil {
+		return err
+	}
+	return encodeJSON(stdout, configGetResult{Key: key, Value: val, Source: source})
+}
+
+// configKeySource reports whether the value in force for key was written by the
+// operator or merged in from the built-in defaults.
+//
+// It asks the file the way `config show` does — the typed config cannot answer
+// it, because once the defaults are merged a value set to the default and a
+// value never set are the same bytes — and it discards a rejected file for the
+// same reason config show does: a rejected file set nothing.
+func configKeySource(root, key string) (string, error) {
+	_, data, _, err := readConfigFile(root)
+	if err != nil {
+		return "", err
+	}
+	raw, err := parseRawConfigDoc(data)
+	if err != nil {
+		return "", err
+	}
+	if path, ok := configKeyPath(key); ok && rawIfInForce(raw).isSet(path...) {
+		return configSourceFile, nil
+	}
+	return configSourceDefault, nil
+}
+
+// configKeyPath maps a readable config key to its path in the raw YAML
+// document, so presence in the file can be asked about it.
+//
+// It mirrors configGetValue rather than configSetPath: every key that can be
+// READ needs a source, and several of them — version, the whole-section keys,
+// the copyright declarations — are not settable.
+func configKeyPath(key string) ([]string, bool) {
+	switch {
+	case key == "version":
+		return []string{"version"}, true
+	case strings.HasPrefix(key, "preferences."):
+		return []string{"preferences", strings.TrimPrefix(key, "preferences.")}, true
+	case key == "license_policy.categories":
+		return []string{"license_policy", "categories"}, true
+	case strings.HasPrefix(key, "license_policy.categories."):
+		return []string{"license_policy", "categories", strings.TrimPrefix(key, "license_policy.categories.")}, true
+	case key == "license_policy.rules":
+		return []string{"license_policy", "rules"}, true
+	case key == "license_overrides":
+		return []string{"license_overrides"}, true
+	case strings.HasPrefix(key, "license_overrides."):
+		return []string{"license_overrides", strings.TrimPrefix(key, "license_overrides.")}, true
+	case key == "copyright_declarations":
+		return []string{"copyright_declarations"}, true
+	case strings.HasPrefix(key, "copyright_declarations."):
+		return []string{"copyright_declarations", strings.TrimPrefix(key, "copyright_declarations.")}, true
+	case key == "callgraph.exclude":
+		return []string{"callgraph", "exclude"}, true
+	case strings.HasPrefix(key, "staleness."):
+		return []string{"staleness", strings.TrimPrefix(key, "staleness.")}, true
+	case key == "fetch_policy.allowed_vcs_hosts":
+		return []string{"fetch_policy", "allowed_vcs_hosts"}, true
+	default:
+		return nil, false
+	}
 }
 
 func configGetValue(cfg domain.Config, key string) (string, error) {
@@ -227,15 +352,32 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
 			annotationUsableWithRejectedConfig: "repairs the config file",
 			// Writes config.yaml into the store root, so it may make the root.
 			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
 		},
 		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runConfigSet(storeRoot, args[0], args[1], stdout)
+			return runConfigSet(storeRoot, args[0], args[1], jsonOut, stdout)
 		},
 	}
 }
 
-func runConfigSet(root, key, value string, stdout io.Writer) error {
+// configSetResult states what the write changed.
+//
+// previous_value is the part worth having: a caller that sets a key wants to
+// know what it displaced, and the plain-text acknowledgement destroys that fact
+// the moment it is written. previous_source says whether the displaced value
+// was the operator's or the built-in default, in the same vocabulary
+// `config get` and `config show` use, because "it was warn" and "nobody had set
+// it, so it was warn" are different things to displace.
+type configSetResult struct {
+	Key            string `json:"key"`
+	PreviousValue  string `json:"previous_value"`
+	PreviousSource string `json:"previous_source"`
+	Value          string `json:"value"`
+	ConfigFile     string `json:"config_file"`
+}
+
+func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error {
 	yamlPath, err := configSetPath(key)
 	if err != nil {
 		return err
@@ -261,6 +403,12 @@ func runConfigSet(root, key, value string, stdout io.Writer) error {
 		return err
 	}
 
+	// Read before the replacement: this is the last moment the displaced value
+	// exists. Taken from the file rather than from the loaded configuration,
+	// because this command edits the file and must keep working when the loaded
+	// configuration was rejected.
+	prevValue, prevSource := previousConfigValue(&doc, yamlPath, key)
+
 	if err := setYAMLNode(&doc, yamlPath, valueNode); err != nil {
 		return err
 	}
@@ -278,10 +426,71 @@ func runConfigSet(root, key, value string, stdout io.Writer) error {
 		return fmt.Errorf("writing config %s: %w", configPath, err)
 	}
 
+	if asJSON {
+		written, err := marshalConfigYAML(valueNode)
+		if err != nil {
+			return err
+		}
+		return encodeJSON(stdout, configSetResult{
+			Key:            key,
+			PreviousValue:  prevValue,
+			PreviousSource: prevSource,
+			Value:          written,
+			ConfigFile:     configPath,
+		})
+	}
+
 	if _, err = fmt.Fprintf(stdout, "set %s\n", key); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	return nil
+}
+
+// previousConfigValue reports the value the write is about to displace and
+// where it came from.
+//
+// A key the file already carries is displaced by what the file said. A key it
+// does not carry is displaced by the built-in default, which is rendered from
+// DefaultConfig rather than from the loaded configuration so that a rejected
+// file — the case this command exists to repair — still gets a true answer. A
+// key with no default behind it at all, such as a licence override that was
+// never recorded, displaced nothing and reads as empty.
+func previousConfigValue(doc *yaml.Node, yamlPath []string, key string) (value, source string) {
+	if node, ok := lookupYAMLNode(doc, yamlPath); ok {
+		if rendered, err := marshalConfigYAML(node); err == nil {
+			return rendered, configSourceFile
+		}
+	}
+	if rendered, err := configGetValue(domain.DefaultConfig(), key); err == nil {
+		return rendered, configSourceDefault
+	}
+	return "", configSourceDefault
+}
+
+// lookupYAMLNode returns the node at yamlPath, reporting whether the document
+// carries it.
+func lookupYAMLNode(doc *yaml.Node, yamlPath []string) (*yaml.Node, bool) {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil, false
+	}
+	node := doc.Content[0]
+	for _, seg := range yamlPath {
+		if node.Kind != yaml.MappingNode {
+			return nil, false
+		}
+		found := false
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == seg {
+				node = node.Content[i+1]
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, false
+		}
+	}
+	return node, true
 }
 
 // configSetPath returns the YAML key path for a settable config key.

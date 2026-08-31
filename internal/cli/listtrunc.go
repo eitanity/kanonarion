@@ -23,8 +23,9 @@ import (
 // that is the whole question a reader needs before they trust the rows in front
 // of them.
 type listTruncation struct {
-	// limit is the cap that was applied. Zero means none was, and nothing is
-	// stated on either path: an unlimited listing has no scope to declare.
+	// limit is the cap that was applied. Zero means none was: the text path then
+	// states nothing, having no scope to declare, while the document still says
+	// so — a consumer reads the same fields at every limit.
 	limit int
 	// subject names the listing's rows in the plural — "license records", "scan
 	// runs" — so the line reads in the reader's terms rather than the port's.
@@ -131,43 +132,61 @@ type listTruncationJSON struct {
 	NextOffset int `json:"next_offset"`
 }
 
-// writeListTruncationJSON states the cap for a machine reader.
-//
-// It goes to stderr and stdout keeps emitting the bare array unchanged, for the
-// same reason the zero-result notice does: the data channel's type must not
-// depend on how many rows came back, or every existing consumer has to branch on
-// it. The listing payloads here are top-level arrays, so there is no envelope to
-// add a field to — wrapping one would break every consumer, which is the
-// opposite of what a new field was meant to avoid.
-//
-// Unlike the text line this is emitted whenever a limit was applied, with
-// truncated true or false. A consumer cannot read a line that is not there, so
-// the absence of a marker would leave it unable to distinguish "not truncated"
-// from "this build does not say". A human reading the text path can.
-func writeListTruncationJSON(stderr io.Writer, t listTruncation) error {
-	if !t.applied() {
-		return nil
-	}
-	enc := json.NewEncoder(stderr)
-	if err := enc.Encode(listTruncationJSON{
+// statement renders the cap as the machine-readable fields the listing document
+// carries. It is stated whether or not the limit bit: a consumer cannot read a
+// field that is not there, so an absent marker would leave it unable to tell
+// "not truncated" from "this build does not say".
+func (t listTruncation) statement() listTruncationJSON {
+	return listTruncationJSON{
 		Truncated:  t.truncated,
 		Limit:      t.limit,
 		Subject:    t.subject,
 		Remedy:     "--limit 0",
 		Offset:     t.offset,
 		NextOffset: t.nextOffset(),
-	}); err != nil {
-		return fmt.Errorf("encoding truncation notice: %w", err)
 	}
-	return nil
 }
 
-// writeListTruncation states the cap on whichever path the invocation selected.
-// Every listing that applies a limit calls exactly this, so the six commands the
-// defect was measured on and the two the sweep found cannot drift apart.
-func writeListTruncation(stdout, stderr io.Writer, asJSON bool, t listTruncation) error {
-	if asJSON {
-		return writeListTruncationJSON(stderr, t)
+// listDocumentJSON is what a listing emits on stdout under --json: the records
+// and what the listing knows about the request that produced them, in one
+// object.
+//
+// The records used to be the whole of stdout and these facts went to stderr. A
+// consumer reading the data channel then could not tell a complete list from one
+// that stopped at its default — it read a partial list that looked whole, which
+// is a wrong answer and not a thin one. A bare array has nowhere to put a fact
+// about the request, so the array became a field of a document that has.
+type listDocumentJSON struct {
+	// Records is the listing's rows, in the shape and order the text path prints
+	// them. It is an array at every row count, including none.
+	Records any `json:"records"`
+	// The paging state, promoted so a consumer reads document.truncated rather
+	// than a nested object, and named exactly as it was on stderr.
+	listTruncationJSON
+	// ZeroResult is present only on a page that returned nothing, where it says
+	// which of the three zeroes this is — empty store, filter miss, or a page
+	// past the end — and what invocation changes the answer.
+	ZeroResult *listZeroJSON `json:"zero_result,omitempty"`
+}
+
+// writeListDocument emits a listing's whole answer on stdout.
+//
+// A nil slice would encode as null, so the records are normalised to an empty
+// array first: the type of the field must not depend on how many rows came back,
+// or every consumer has to branch on it.
+func writeListDocument[T any](stdout io.Writer, records []T, t listTruncation, zero *listZeroScope) error {
+	if records == nil {
+		records = []T{}
 	}
-	return writeListTruncationNotice(stdout, t)
+	doc := listDocumentJSON{Records: records, listTruncationJSON: t.statement()}
+	if zero != nil {
+		statement := listZeroStatementJSON(*zero)
+		doc.ZeroResult = &statement
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return fmt.Errorf("encoding JSON: %w", err)
+	}
+	return nil
 }

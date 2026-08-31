@@ -298,13 +298,26 @@ func TestRejectedConfig_ConfigSetRepairsAndOrdinaryCommandsResume(t *testing.T) 
 	if activeConfigErr != nil {
 		t.Errorf("repaired file still recorded as rejected: %v", activeConfigErr)
 	}
-	// And the repair took effect: config set's key is now in force.
+	// And the repair took effect: config set's key is now in force. The key it
+	// wrote was preferences.json, so `config get` answers with a document even
+	// though no flag was typed — which is the preference doing its job, and the
+	// value is read out of it rather than off the line.
 	stdout.Reset()
 	stderr.Reset()
 	if err := Run([]string{"config", "get", "preferences.log_level", "--store-root", root}, &stdout, &stderr); err != nil {
 		t.Fatalf("config get: %v", err)
 	}
-	if got := strings.TrimSpace(stdout.String()); got != "debug" {
-		t.Errorf("log_level = %q, want the repaired file's debug", got)
+	var doc struct {
+		Value  string `json:"value"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("config get answered %q, which does not parse: %v", stdout.String(), err)
+	}
+	if doc.Value != "debug" {
+		t.Errorf("log_level = %q, want the repaired file's debug", doc.Value)
+	}
+	if doc.Source != configSourceFile {
+		t.Errorf("source = %q, want %q: the repaired file is in force again", doc.Source, configSourceFile)
 	}
 }

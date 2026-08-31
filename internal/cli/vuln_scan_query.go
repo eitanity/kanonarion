@@ -35,9 +35,12 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 
 	cmd := &cobra.Command{
-		Use:         "vuln-scan-list [walk-id]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List walk scan runs",
+		Use: "vuln-scan-list [walk-id]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List walk scan runs",
 		Example: `  kanonarion vuln-scan-list
   kanonarion vuln-scan-list 01KQDBVW092ER1HNXZ60X27CMD`,
 		Args: cobra.MaximumNArgs(1),
@@ -119,19 +122,15 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 		for _, u := range unreadable {
 			out = append(out, entry{ID: u.ID, Status: scanRunStatusUnreadable, Reason: u.Reason})
 		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding JSON: %w", err)
-		}
+		var zero *listZeroScope
 		if len(out) == 0 {
 			scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
 			if serr != nil {
 				return serr
 			}
-			return writeListZeroNoticeJSON(stderr, scope)
+			zero = &scope
 		}
-		return writeListTruncationJSON(stderr, trunc)
+		return writeListDocument(stdout, out, trunc, zero)
 	}
 	if len(runs) == 0 && len(unreadable) == 0 {
 		scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
@@ -225,9 +224,12 @@ func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jso
 
 func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "vuln-scan-show <run-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Show details of a walk scan run",
+		Use: "vuln-scan-show <run-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Show details of a walk scan run",
 		Example: `  kanonarion vuln-scan-show 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan-show 01KQDBVW092ER1HNXZ60X27CMD --json`,
 		Args: cobra.ExactArgs(1),
@@ -713,9 +715,12 @@ func writeMissingScanRecords(coords []string, w io.Writer) {
 // newVulnScanHistoryCmd returns the vuln-scan-history command.
 func newVulnScanHistoryCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "vuln-scan-history <walk-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List every scan run for a walk in chronological order",
+		Use: "vuln-scan-history <walk-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List every scan run for a walk in chronological order",
 		Example: `  kanonarion vuln-scan-history 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan-history 01KQDBVW092ER1HNXZ60X27CMD --json`,
 		Args: cobra.ExactArgs(1),
@@ -810,9 +815,12 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 // newVulnScanDiffCmd returns the vuln-scan-diff command.
 func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "vuln-scan-diff <run-id-a> <run-id-b>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Compare two scan runs of the same walk",
+		Use: "vuln-scan-diff <run-id-a> <run-id-b>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Compare two scan runs of the same walk",
 		Long: `vuln-scan-diff compares two WalkScanRuns of the same walk and reports:
   - findings present only in B (newly known vulnerabilities)
   - findings present only in A (resolved / no longer known)

@@ -165,28 +165,36 @@ func (s *Store) Exists(_ context.Context, identity ports.BlobIdentity) (bool, er
 // CleanOrphanedTemps removes any.tmp-* files left in the blobs directory by
 // interrupted Put operations. Safe to call at startup because a completed Put
 // always renames the temp file to its final address.
-// Returns the number of files removed.
-func (s *Store) CleanOrphanedTemps() (int, error) {
+//
+// Returns the number of files removed and the bytes they occupied. The bytes
+// are measured here rather than by the caller because they are only knowable
+// before the unlink, and a caller that stats first is racing this sweep.
+func (s *Store) CleanOrphanedTemps() (removed int, freed int64, err error) {
 	blobsDir := filepath.Join(s.root, "blobs")
 	entries, err := os.ReadDir(blobsDir)
 	if os.IsNotExist(err) {
-		return 0, nil
+		return 0, 0, nil
 	}
 	if err != nil {
-		return 0, fmt.Errorf("reading blobs dir: %w", err)
+		return 0, 0, fmt.Errorf("reading blobs dir: %w", err)
 	}
 	var errs []error
-	removed := 0
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
-			if rerr := os.Remove(filepath.Join(blobsDir, e.Name())); rerr != nil && !os.IsNotExist(rerr) {
-				errs = append(errs, rerr)
-			} else {
-				removed++
-			}
+		if !strings.HasPrefix(e.Name(), ".tmp-") {
+			continue
+		}
+		var size int64
+		if info, ierr := e.Info(); ierr == nil {
+			size = info.Size()
+		}
+		if rerr := os.Remove(filepath.Join(blobsDir, e.Name())); rerr != nil && !os.IsNotExist(rerr) {
+			errs = append(errs, rerr)
+		} else {
+			removed++
+			freed += size
 		}
 	}
-	return removed, errors.Join(errs...)
+	return removed, freed, errors.Join(errs...)
 }
 
 // LegacyPath returns the path a blob occupied under the store-chosen

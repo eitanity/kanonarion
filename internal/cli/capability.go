@@ -20,9 +20,12 @@ func newCapabilityCmd(stdout, stderr io.Writer) *cobra.Command {
 	var against string
 
 	cmd := &cobra.Command{
-		Use:         "capability <module>@<version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Report the sensitive capabilities a module's reachable code can use",
+		Use: "capability <module>@<version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Report the sensitive capabilities a module's reachable code can use",
 		Long: `capability derives, from a module's stored call graph, which sensitive
 capabilities (NETWORK, FILES, EXEC, REFLECT, UNSAFE_POINTER, …) its reachable
 code can exercise. Each capability is reported with an example witnessing path

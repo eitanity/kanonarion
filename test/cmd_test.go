@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/cli"
+	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	exsqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
@@ -78,6 +80,9 @@ func TestMain(m *testing.M) {
 		},
 		"seedvulnpartial": func() {
 			cmdSeedVulnPartial(os.Args[1:])
+		},
+		"seednative": func() {
+			cmdSeedNative(os.Args[1:])
 		},
 	})
 }
@@ -889,4 +894,171 @@ func sealVulnRun(run vuldomain.WalkScanRun) vuldomain.WalkScanRun {
 		panic("sealing seeded walk scan run: " + err.Error())
 	}
 	return sealed
+}
+
+// nativeFixtureModules are the artefacts the native fixture stores, one per
+// answer the command can give. Each is a complete module zip: a Go file
+// whose imports decide whether the package is compiled with cgo, and whatever
+// native source sits beside it.
+//
+// They are built here rather than through fixtureArtefact because the shared
+// fixture zip carries a README and nothing else, and the subject of this
+// fixture is what a zip's own contents establish.
+var nativeFixtureModules = map[string]map[string]string{
+	// Ships an amalgamated library and compiles it: identified.
+	"example.com/cgodep@v1.0.0": {
+		"driver.go":         "package cgodep\n\n/*\n#include \"sqlite3-binding.h\"\n*/\nimport \"C\"\n",
+		"sqlite3-binding.c": "#define SQLITE_VERSION        \"3.38.0\"\n#define SQLITE_VERSION_NUMBER 3038000\n",
+		"sqlite3-binding.h": "#define SQLITE_VERSION        \"3.38.0\"\n",
+	},
+	// Ships C it never builds, under a directory the go tool ignores: absent.
+	"example.com/puregodep@v1.0.0": {
+		"lib.go":            "package puregodep\n",
+		"testdata/mptest.c": "#define SQLITE_VERSION \"3.38.0\"\n",
+	},
+	// Compiles C no recipe names: present, unidentified.
+	"example.com/unknowncdep@v1.0.0": {
+		"bind.go":   "package unknowncdep\n\n/*\n#include \"helpers.h\"\n*/\nimport \"C\"\n",
+		"helpers.c": "int helper(void) { return 0; }\n",
+		"helpers.h": "int helper(void);\n",
+	},
+	// Compiles nothing of its own and links a library the host provides:
+	// linked, not shipped. Answering "absent" for this is the defect the
+	// fourth value closes.
+	"example.com/linkedcdep@v1.0.0": {
+		"icu.go": "package linkedcdep\n\n/*\n#cgo LDFLAGS: -licui18n -licuuc\n#include <unicode/ucol.h>\n*/\nimport \"C\"\n",
+	},
+	// Compiles nothing of its own and links only the C runtime every cgo
+	// binary links: still absent. The negative control for the system list.
+	"example.com/runtimelinkdep@v1.0.0": {
+		"dlopen.go": "package runtimelinkdep\n\n/*\n#cgo LDFLAGS: -ldl\n#include <dlfcn.h>\n*/\nimport \"C\"\n",
+	},
+	// Links through pkg-config and ships nothing: linked, not shipped. The
+	// doc comment quotes a directive that must NOT be read as one - only the
+	// preamble attached to `import "C"` is a build directive.
+	"example.com/pkgconfigdep@v1.0.0": {
+		"doc.go":     "// Package pkgconfigdep wraps libxml2.\n//\n// Build it with a directive such as `#cgo pkg-config: not-a-real-link`.\npackage pkgconfigdep\n",
+		"libxml2.go": "package pkgconfigdep\n\n/*\n#cgo pkg-config: libxml-2.0\n#include <libxml/parser.h>\n*/\nimport \"C\"\n",
+	},
+}
+
+// cmdSeedNative files a fetch record and stores the artefact for each of the
+// three native fixture modules.
+func cmdSeedNative(args []string) {
+	if len(args) != 1 {
+		os.Exit(1)
+	}
+	storeRoot := filepath.Clean(args[0])
+	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
+		os.Exit(1)
+	}
+	db, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), composition.Migrations(), sqlitestore.IntentCreate)
+	if err != nil {
+		os.Exit(1)
+	}
+	factStore := fetchsqlite.New(db)
+	blobStore := localfs.New(storeRoot)
+
+	// The DB is closed on every exit path rather than deferred: this is a
+	// testscript subprocess entry point, and os.Exit runs no defers.
+	fail := func() {
+		_ = db.Close()
+		os.Exit(1)
+	}
+
+	names := make([]string, 0, len(nativeFixtureModules))
+	for name := range nativeFixtureModules {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		coord, cerr := coordinate.ParseModuleCoordinate(name)
+		if cerr != nil {
+			fail()
+		}
+		content, hash, identity, aerr := nativeFixtureArtefact(coord, nativeFixtureModules[name])
+		if aerr != nil {
+			fail()
+		}
+		if err := blobStore.Put(context.Background(), identity, bytes.NewReader(content)); err != nil {
+			fail()
+		}
+		sealed, serr := fetchdomain.Seal(fetchdomain.FetchedModule{
+			Coordinate:         coord,
+			ModuleHash:         hash,
+			VerificationStatus: fetchdomain.Verified,
+			FetchedAt:          time.Now(),
+			PipelineVersion:    fetchapp.PipelineVersion,
+			ContentLocation:    identity.String(),
+			MeasurementKind:    fetchdomain.MeasurementAcquired,
+		})
+		if serr != nil {
+			fail()
+		}
+		if err := factStore.PutFetchRecord(context.Background(), sealed); err != nil {
+			fail()
+		}
+	}
+
+	_ = db.Close()
+}
+
+// nativeFixtureArtefact renders files into a module zip and returns the bytes
+// with the hash and blob identity that address them.
+func nativeFixtureArtefact(
+	coord coordinate.ModuleCoordinate,
+	files map[string]string,
+) ([]byte, fetchdomain.ModuleHash, fetchports.BlobIdentity, error) {
+	fail := func(stage string, err error) ([]byte, fetchdomain.ModuleHash, fetchports.BlobIdentity, error) {
+		return nil, fetchdomain.ModuleHash{}, fetchports.BlobIdentity{},
+			fmt.Errorf("building native fixture artefact for %s: %s: %w", coord, stage, err)
+	}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	buf := new(bytes.Buffer)
+	zw := zip.NewWriter(buf)
+	prefix := coord.Path() + "@" + coord.Version() + "/"
+	for _, name := range names {
+		w, err := zw.Create(prefix + name)
+		if err != nil {
+			return fail("creating zip entry", err)
+		}
+		if _, err := w.Write([]byte(files[name])); err != nil {
+			return fail("writing zip entry", err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return fail("closing zip", err)
+	}
+	content := buf.Bytes()
+
+	tmp, err := os.CreateTemp("", "seed-native-*.zip")
+	if err != nil {
+		return fail("creating temp zip", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(content); err != nil {
+		return fail("writing temp zip", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fail("closing temp zip", err)
+	}
+	raw, err := dirhash.HashZip(tmp.Name(), dirhash.Hash1)
+	if err != nil {
+		return fail("hashing zip", err)
+	}
+	hash, err := fetchdomain.ParseModuleHash(raw)
+	if err != nil {
+		return fail("parsing zip hash", err)
+	}
+	identity, err := fetchports.NewBlobIdentity(fetchports.BlobKindZip, hash)
+	if err != nil {
+		return fail("deriving zip identity", err)
+	}
+	return content, hash, identity, nil
 }

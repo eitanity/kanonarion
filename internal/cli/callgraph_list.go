@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -16,9 +15,12 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 
 	cmd := &cobra.Command{
-		Use:         "callgraph-list [<module>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List extracted call graph records",
+		Use: "callgraph-list [<module>]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List extracted call graph records",
 		Example: `  kanonarion callgraph-list
   kanonarion callgraph-list github.com/spf13/cobra`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -83,19 +85,15 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 		for _, c := range coords {
 			out = append(out, callGraphListJSON(c))
 		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding JSON: %w", err)
-		}
+		var zero *listZeroScope
 		if len(coords) == 0 {
 			scope, serr := callGraphListZeroScope(ctx, moduleFilter, offset, uc)
 			if serr != nil {
 				return serr
 			}
-			return writeListZeroNoticeJSON(stderr, scope)
+			zero = &scope
 		}
-		return writeListTruncationJSON(stderr, trunc)
+		return writeListDocument(stdout, out, trunc, zero)
 	}
 
 	if len(coords) == 0 {

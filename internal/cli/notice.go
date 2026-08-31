@@ -34,13 +34,24 @@ type noticeFlags struct {
 	output         string
 }
 
+// newNoticeCmd builds the attribution command.
+//
+// It renders one form and only one: the THIRD-PARTY-LICENSES text document,
+// which is the deliverable artefact rather than a rendering of something else.
+// The global --json flag is a documented no-op here and returns the same bytes,
+// by decision and not by omission — an attribution document has no separate
+// machine-readable projection, and the data behind it is already served by
+// license-list --json and by sbom. Do not add one.
 func newNoticeCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f noticeFlags
 
 	cmd := &cobra.Command{
-		Use:         "notice [<walk-id>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Generate a THIRD-PARTY-LICENSES attribution document",
+		Use: "notice [<walk-id>]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Generate a THIRD-PARTY-LICENSES attribution document",
 		Long: `Generate a deterministic THIRD-PARTY-LICENSES file from stored license records.
 
 The document includes per-module: module coordinate, SPDX identifier, verbatim

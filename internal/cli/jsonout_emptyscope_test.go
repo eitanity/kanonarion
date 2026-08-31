@@ -23,10 +23,17 @@ func emptyToolScopeGoMod(t *testing.T) string {
 	return p
 }
 
-// TestContextGomod_EmptyScope_JSONIsCleanStream guards that context's NDJSON
-// output stays a pure JSON-object stream on an empty scope: the empty answer is
-// zero stdout bytes, not a prose sentence a caller cannot parse.
-func TestContextGomod_EmptyScope_JSONIsCleanStream(t *testing.T) {
+// TestContextGomod_EmptyScope_JSONIsTheEnvelope guards that context's --json
+// output decodes as the same object on an empty scope, with an empty modules
+// array, keeping the empty and populated answers the same type — and that the
+// prose sentence a caller cannot parse still stays off stdout. Zero bytes is a
+// document only in the newline-delimited form --stream selects, which its own
+// test covers.
+//
+// The empty answer is where the envelope earns its keep on its own: which scope
+// came back empty, and that it resolved nought modules, is the whole of what the
+// run has to say, and the bare array said none of it.
+func TestContextGomod_EmptyScope_JSONIsTheEnvelope(t *testing.T) {
 	p := emptyToolScopeGoMod(t)
 	jsonOut = true
 	defer func() { jsonOut = false }()
@@ -35,8 +42,19 @@ func TestContextGomod_EmptyScope_JSONIsCleanStream(t *testing.T) {
 	if err := runContextGoMod(context.Background(), contextFlags{gomodPath: p}, scopeTool, &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if stdout.Len() != 0 {
-		t.Errorf("empty scope wrote to the NDJSON stream under --json: %q", stdout.String())
+	fields, decoded := decodeEnvelope(t, "context --gomod --json on an empty scope", stdout.Bytes())
+	if len(decoded) != 0 {
+		t.Errorf("empty scope produced %d documents, want none", len(decoded))
+	}
+	if fields["module_count"] != float64(0) {
+		t.Errorf("module_count = %v, want 0", fields["module_count"])
+	}
+	scope, ok := fields["dependency_scope"].(map[string]any)
+	if !ok {
+		t.Fatalf("dependency_scope is not an object: %v", fields["dependency_scope"])
+	}
+	if scope["scope"] != string(scopeTool) {
+		t.Errorf("dependency_scope.scope = %v, want %q: which set came back empty is the answer", scope["scope"], scopeTool)
 	}
 }
 
@@ -53,10 +71,11 @@ func TestContextGomod_EmptyScope_TextKeepsProse(t *testing.T) {
 	}
 }
 
-// TestLatestGomod_EmptyScope_JSONIsEmptyArray guards that latest's JSON array
-// output decodes as [] on an empty scope, keeping the empty and populated
-// results the same type. The proxy is unused on this path, so nil is safe.
-func TestLatestGomod_EmptyScope_JSONIsEmptyArray(t *testing.T) {
+// TestLatestGomod_EmptyScope_JSONIsTheEnvelope guards that latest's JSON output
+// decodes as the same object on an empty scope, with an empty modules array,
+// keeping the empty and populated results the same type. The proxy is unused on
+// this path, so nil is safe.
+func TestLatestGomod_EmptyScope_JSONIsTheEnvelope(t *testing.T) {
 	p := emptyToolScopeGoMod(t)
 	jsonOut = true
 	defer func() { jsonOut = false }()
@@ -65,16 +84,13 @@ func TestLatestGomod_EmptyScope_JSONIsEmptyArray(t *testing.T) {
 	if err := runLatestGomod(context.Background(), p, scopeTool, false, func([]string) stalenessLookup { return nil }, &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	out := strings.TrimSpace(stdout.String())
-	if out == "null" {
-		t.Fatalf("emitted JSON null instead of []")
-	}
 	var arr []latestResult
-	if err := json.Unmarshal([]byte(out), &arr); err != nil {
-		t.Fatalf("--json did not emit a JSON array: %v (out=%q)", err, out)
-	}
+	fields := envelopeRows(t, "latest --gomod --json on an empty scope", stdout.Bytes(), &arr)
 	if len(arr) != 0 {
-		t.Errorf("expected empty array, got %d entries", len(arr))
+		t.Errorf("expected an empty modules array, got %d entries", len(arr))
+	}
+	if fields["module_count"] != float64(0) {
+		t.Errorf("module_count = %v, want 0", fields["module_count"])
 	}
 }
 

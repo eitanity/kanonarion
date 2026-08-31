@@ -32,9 +32,12 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f callGraphShowFlags
 
 	cmd := &cobra.Command{
-		Use:         "callgraph-show <module>@<version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Show the full call graph record for a module",
+		Use: "callgraph-show <module>@<version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Show the full call graph record for a module",
 		Example: `  kanonarion callgraph-show github.com/spf13/cobra@v1.8.1
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --json
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node Execute
@@ -131,6 +134,14 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisCommand(coord, ""))}
 	}
+	// Asked before --node narrows the record: the disagreement is between whole
+	// generations of this coordinate, and a filtered view of the served one says
+	// nothing about which library built the others.
+	disagreement, disagrees, err := analyserDisagreement(ctx, coord, r, uc)
+	if err != nil {
+		return err
+	}
+
 	nodeFilter, limitNodes, limitEdges := f.nodeFilter, f.limitNodes, f.limitEdges
 
 	var filter nodeFilterOutcome
@@ -143,6 +154,9 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		enc.SetIndent("", "  ")
 		j := toCallGraphJSON(r)
 		j.NodeFilter = filter.toJSON()
+		if disagrees {
+			j.AnalyserDisagreement = toAnalyserDisagreementJSON(disagreement)
+		}
 		if err := enc.Encode(j); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
@@ -152,7 +166,41 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	if err := printCallGraphRecord(r, limitNodes, limitEdges, stdout); err != nil {
 		return err
 	}
+	if disagrees {
+		if _, werr := fmt.Fprintf(stdout, "notice: %s\n", disagreement.Summary()); werr != nil {
+			return fmt.Errorf("writing analyser notice: %w", werr)
+		}
+	}
 	return writeNodeFilterNotice(stdout, coord, f.source, filter)
+}
+
+// analyserDisagreement reports whether the generations composed for a
+// coordinate were parsed by more than one x/tools, and what they were.
+//
+// It reads the history because that is where the other generations are: the
+// composed answer is ONE record, and a fact about the set it was chosen from
+// cannot be recovered from it. The cost is one extra ledger read on an
+// inspection command that has already paid for a composition.
+//
+// It states nothing where there is nothing to state — a coordinate with one
+// generation, or whose generations agree, or where only one of them names an
+// analyser at all — so a store built by a single binary gains no line anywhere.
+//
+// It never changes which generation answers. The completeness ladder decided
+// that before this was asked, and a fact about the producer must not become a
+// silent tiebreak; making the disagreement visible is the whole of the change.
+func analyserDisagreement(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	served domain.CallGraphRecord,
+	uc QueryCallGraphUseCase,
+) (domain.AnalyserDisagreement, bool, error) {
+	recs, err := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
+	if err != nil {
+		return domain.AnalyserDisagreement{}, false, fmt.Errorf("reading callgraph history: %w", err)
+	}
+	d, ok := domain.AnalyserDisagreementAmong(recs, served)
+	return d, ok, nil
 }
 
 // runCallGraphHistory prints every generation the ledger holds for a coordinate,
@@ -211,10 +259,10 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    analyser: %s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
-			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(),
+			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), r.Analyser.String(),
 			historyOrigin(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
@@ -323,8 +371,49 @@ type coordinateJSON struct {
 	Version string `json:"version"`
 }
 
+// callGraphRunJSON is what THIS RUN states about the record it printed: the
+// choice it refused to make for the caller, and where the answer came from.
+//
+// It is beside the record rather than in it. The record is a sealed artefact
+// about a module; these are facts about one invocation, which is why they are
+// absent from `callgraph-show` — that command serves a stored record and states
+// nothing about how this run got it.
+type callGraphRunJSON struct {
+	// BuildListRefusal is present only when the run needed a build list, found
+	// the coordinate in more than one build, and refused to pick one.
+	BuildListRefusal *buildListRefusalJSON `json:"build_list_refusal,omitempty"`
+	// Derivations say, one per answer, whether this run measured it or served a
+	// record it already held.
+	Derivations []derivationJSON `json:"derivations,omitempty"`
+}
+
+// derivationJSON is one answer's provenance: measured here, or served.
+//
+// The two print the same summary line above it, so without a field a consumer
+// cannot tell a fresh measurement from a stored one — and that distinction is
+// what decides whether the answer is about the code in front of the reader. It
+// is a field and not a sentence for the same reason: the sentence is on stderr,
+// which the consumer reading the document never sees.
+type derivationJSON struct {
+	// Answer names what was derived, in the words the statement uses.
+	Answer string `json:"answer"`
+	// DerivedByThisRun is the distinction itself. False means a stored record
+	// was served; the two fields below then say which record and how to refuse
+	// it.
+	DerivedByThisRun bool `json:"derived_by_this_run"`
+	// ReusedRecordExtractedAt dates the served record, so a reuse claim can be
+	// checked against the record rather than taken on trust. Absent on a fresh
+	// measurement, which has no earlier record to name.
+	ReusedRecordExtractedAt string `json:"reused_record_extracted_at,omitempty"`
+	// RemedyFlag forces the measurement to be taken again — needed by a consumer
+	// that was served a record and wants the tree read. Absent where the run
+	// measured, since there is nothing to force.
+	RemedyFlag string `json:"remedy_flag,omitempty"`
+}
+
 // callGraphRecordJSON is the curated snake_case shape of a call graph record.
 type callGraphRecordJSON struct {
+	callGraphRunJSON
 	SchemaVersion string         `json:"schema_version"`
 	Coordinate    coordinateJSON `json:"coordinate"`
 	Algorithm     string         `json:"algorithm"`
@@ -335,9 +424,11 @@ type callGraphRecordJSON struct {
 	// ("not recorded") and must be visible as one.
 	Completeness   string `json:"completeness"`
 	AnalysisSource string `json:"analysis_source"`
-	// Toolchain is emitted even when empty, on the same terms: a consumer that
-	// cannot see which Go built the graph cannot tell two toolchains' answers
-	// apart, and an absent value is itself the answer ("not recorded").
+	// Toolchain is the toolchain this record ESTABLISHES, on the same terms: a
+	// consumer that cannot see which Go built the graph cannot tell two
+	// toolchains' answers apart. A record that establishes none says so in the
+	// token rather than in an empty string, which reads as an absent toolchain
+	// rather than as an absent statement about one.
 	Toolchain string `json:"toolchain"`
 	// ToolchainStated is what the record ITSELF recorded, so a consumer can tell a
 	// toolchain the analysis named from one recovered out of the graph's own
@@ -374,17 +465,18 @@ type callGraphRecordJSON struct {
 	PipelineVersion string   `json:"pipeline_version"`
 	ContentHash     string   `json:"content_hash"`
 	// TestScope says whether _test.go declarations were part of the analysis.
-	// It is emitted even when empty: a consumer that cannot see the axis cannot
-	// tell an unmeasured one from a measured-and-empty one.
+	// A record that makes no claim renders the token: an empty string here is
+	// read as "no test code", which is the confusion the axis exists to remove.
 	TestScope       string `json:"test_scope"`
 	TestScopeDetail string `json:"test_scope_detail,omitempty"`
 	TestNodeCount   int    `json:"test_node_count"`
 	// ReferenceScope says whether the analysis looked for function-value
-	// references at all. Emitted even when empty, for the reason TestScope is:
-	// a record that never searched for references and one that searched and
-	// found none are different answers, and an absent field collapses them.
-	// ReferenceEdgeCount is how many it found, so the axis can be read without
-	// walking the edge list.
+	// references at all, and it is the axis a confident negative rests on: the
+	// text says in as many words that an empty callers answer over an unmeasured
+	// one is UNRESOLVED rather than a measured absence. A record that never
+	// searched renders the token, because an empty string collapses it into the
+	// record that searched and found none. ReferenceEdgeCount is how many it
+	// found, so the axis can be read without walking the edge list.
 	ReferenceScope     string `json:"reference_scope"`
 	ReferenceEdgeCount int    `json:"reference_edge_count"`
 	// InterfaceCount and ImplementationCount summarise the type-level relation
@@ -396,6 +488,60 @@ type callGraphRecordJSON struct {
 	// the record is unfiltered, which is a different statement from a filter
 	// that matched nothing.
 	NodeFilter *nodeFilterJSON `json:"node_filter,omitempty"`
+	// Analyser names the golang.org/x/tools that parsed the module, and how the
+	// store came to state it. It is always present, including when nothing is
+	// known: an absent object would read as "no analyser", which is the reading
+	// the provenance exists to prevent.
+	Analyser analyserJSON `json:"analyser"`
+	// AnalyserDisagreement is present only when the generations composed for this
+	// coordinate were not all parsed by the same analyser. Absent means they
+	// agreed, or that only one of them said.
+	AnalyserDisagreement *analyserDisagreementJSON `json:"analyser_disagreement,omitempty"`
+}
+
+// analyserJSON is one record's analyser identity, fielded rather than rendered,
+// so a machine consumer reads the version and the strength behind it as two
+// values instead of parsing a sentence.
+//
+// Provenance is spelled out on every record, including the empty one, for the
+// reason the version is: "observed" and "inferred" are different evidence, and a
+// consumer that sees only a version number cannot tell a measurement from a
+// reconstruction made from a date.
+type analyserJSON struct {
+	// Module is the library the version names, so no consumer has to guess which
+	// of a record's three versions this is.
+	Module string `json:"module"`
+	// Version is empty when the record states none.
+	Version string `json:"version"`
+	// Provenance is "observed", "inferred", or empty when there is no version.
+	Provenance string `json:"provenance"`
+	// Inferred is the same fact as a boolean, because it is the one a consumer
+	// branches on and a string comparison is a place to be wrong.
+	Inferred bool `json:"inferred"`
+}
+
+func toAnalyserJSON(a domain.AnalyserIdentity) analyserJSON {
+	return analyserJSON{
+		Module:     domain.AnalyserModulePath,
+		Version:    string(a.Version),
+		Provenance: string(a.Provenance),
+		Inferred:   a.IsInferred(),
+	}
+}
+
+// analyserDisagreementJSON carries what the text notice states: which analysers
+// the composed generations name, and which of them the served answer came from.
+type analyserDisagreementJSON struct {
+	Analysers []analyserJSON `json:"analysers"`
+	Served    analyserJSON   `json:"served"`
+}
+
+func toAnalyserDisagreementJSON(d domain.AnalyserDisagreement) *analyserDisagreementJSON {
+	out := &analyserDisagreementJSON{Served: toAnalyserJSON(d.Served)}
+	for _, id := range d.Identities {
+		out.Analysers = append(out.Analysers, toAnalyserJSON(id))
+	}
+	return out
 }
 
 // synthesisedGoModJSON reports the go.mod kanonarion wrote into an extracted
@@ -495,7 +641,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		Algorithm:          string(r.Algorithm),
 		Completeness:       string(r.Completeness),
 		AnalysisSource:     string(r.AnalysisSource),
-		Toolchain:          domain.RecordToolchain(r).Key(),
+		Toolchain:          orNotRecorded(domain.RecordToolchain(r).Key()),
 		ToolchainStated:    statedToolchain(r),
 		WorktreeDigest:     r.WorktreeDigest,
 		WorktreeScanDigest: r.WorktreeScanDigest,
@@ -516,10 +662,12 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		PipelineVersion: r.PipelineVersion,
 		ContentHash:     r.ContentHash,
 
-		TestScope:           string(r.TestScope),
+		Analyser: toAnalyserJSON(r.Analyser),
+
+		TestScope:           orNotRecorded(string(r.TestScope)),
 		TestScopeDetail:     r.TestScopeDetail,
 		TestNodeCount:       testNodes,
-		ReferenceScope:      string(r.ReferenceScope),
+		ReferenceScope:      orNotRecorded(string(r.ReferenceScope)),
 		ReferenceEdgeCount:  referenceEdgeCount(r),
 		InterfaceCount:      len(r.Interfaces),
 		ImplementationCount: len(r.Implementations),
@@ -550,6 +698,26 @@ func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
 	}
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing fidelity: %w", err)
+	}
+	return nil
+}
+
+// writeAnalyserLine names the library that PARSED the module, beside the
+// algorithm that walked the result and the toolchain that compiled it.
+//
+// It is printed on every record, including the ones that state nothing, for the
+// reason the test-scope line is: a reader who sees no analyser line reads it as
+// "the usual one", and the whole value of the axis is that a graph built by a
+// library predating a language construct can be silently short. An inferred
+// value says so in as many words on this line — see domain.AnalyserIdentity —
+// because a bare version number here would be read as a measurement.
+func writeAnalyserLine(stdout io.Writer, r domain.CallGraphRecord) error {
+	line := "  analyser: " + r.Analyser.String()
+	if !r.Analyser.Recorded() {
+		line += " — this record does not name the library that type-checked it and built its SSA"
+	}
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing analyser: %w", err)
 	}
 	return nil
 }
@@ -811,6 +979,9 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 	}
 
 	if err := writeFidelityLine(stdout, r); err != nil {
+		return err
+	}
+	if err := writeAnalyserLine(stdout, r); err != nil {
 		return err
 	}
 	if err := writeTestScopeLine(stdout, r); err != nil {

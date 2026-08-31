@@ -63,9 +63,12 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
-		Use:         "callers <symbol-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Find all callers of a symbol across the call graph store",
+		Use: "callers <symbol-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Find all callers of a symbol across the call graph store",
 		Example: `  kanonarion callers 'github.com/spf13/cobra.(*Command).Execute'
   kanonarion callers 'golang.org/x/text/unicode/norm.(Form).String' --gomod ./go.mod
   kanonarion callers 'golang.org/x/text/unicode/norm.(Form).String' --walk-id abc123`,
@@ -177,9 +180,12 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
-		Use:         "callees <symbol-id>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Find all callees of a symbol across the call graph store",
+		Use: "callees <symbol-id>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Find all callees of a symbol across the call graph store",
 		Example: `  kanonarion callees 'github.com/spf13/cobra.(*Command).Execute'
   kanonarion callees 'github.com/spf13/cobra.(*Command).Execute' --gomod ./go.mod`,
 		RunE: func(cmd *cobra.Command, args []string) error {

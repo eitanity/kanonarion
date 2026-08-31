@@ -233,9 +233,9 @@ func TestContextGoMod_CompleteScopeRefusesTheFlag(t *testing.T) {
 }
 
 // TestContextGoMod_JSONCarriesTheAxis guards the machine-readable half. The
-// go.mod form emits NDJSON, which has no envelope, so the field rides on every
-// document: a document lifted out of the stream must still say which set it came
-// from.
+// go.mod form emits a sequence of documents with no envelope around it, so the
+// field rides on every document: one lifted out of the array or the stream must
+// still say which set it came from.
 func TestContextGoMod_JSONCarriesTheAxis(t *testing.T) {
 	for _, tc := range []struct {
 		scope depScope

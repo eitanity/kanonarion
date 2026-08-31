@@ -353,3 +353,100 @@ func TestInspectExit_PartialRollUpIsNotASuccess(t *testing.T) {
 		}
 	}
 }
+
+// inspect's document is a per-module context and had nowhere to say which walk,
+// which scan and which advisory database answered for it. Those facts reached
+// the reader on stderr, where no machine reader sees them.
+//
+// The section is inserted beside the per-module content, never into it: the
+// bytes `context` rendered come through unchanged, key for key and byte for
+// byte, so a consumer that indexes into the document reads what it read before.
+func TestSpliceInspectRun_AddsTheRunBesideTheUnchangedDocument(t *testing.T) {
+	doc := []byte("{\n  \"module\": {\n    \"path\": \"example.com/dep\"\n  },\n  \"license\": null\n}\n")
+	run := inspectRunSection{
+		WalkID:    "01JS0NGARD0000000000000WA1",
+		Walk:      inspectStageReused,
+		ScanRunID: "vscan-1",
+		Scan:      inspectStageMeasured,
+		Snapshot:  vulnScanSnapshotJSON{Source: "govulndb", Version: "v2026-03-01"},
+		Toolchain: unjudgedToolchainSection("the walk recorded no build toolchain version"),
+	}
+
+	out, err := spliceInspectRun(doc, run)
+	if err != nil {
+		t.Fatalf("spliceInspectRun: %v", err)
+	}
+
+	var got map[string]any
+	if uerr := json.Unmarshal(out, &got); uerr != nil {
+		t.Fatalf("the spliced document is not JSON: %v\n%s", uerr, out)
+	}
+	section, ok := got["run"].(map[string]any)
+	if !ok {
+		t.Fatalf("the document carries no run section:\n%s", out)
+	}
+	for key, want := range map[string]any{
+		"walk_id": "01JS0NGARD0000000000000WA1", "walk": inspectStageReused,
+		"scan_run_id": "vscan-1", "scan": inspectStageMeasured,
+	} {
+		if section[key] != want {
+			t.Errorf("run.%s = %v, want %v", key, section[key], want)
+		}
+	}
+
+	// The per-module half is byte-identical: strip the section back out and the
+	// original document must return exactly.
+	idx := bytes.Index(out, []byte(",\n  \"module\""))
+	if idx < 0 {
+		t.Fatalf("the run section did not precede the document's own first key:\n%s", out)
+	}
+	if stripped := append([]byte("{"), out[idx+1:]...); !bytes.Equal(stripped, doc) {
+		t.Errorf("the per-module content changed.\nwant: %q\ngot:  %q", doc, stripped)
+	}
+}
+
+// A stage that did not run is a value the document states, not a key it leaves
+// out: an absent toolchain judgment reads as a clear one, which is the reading
+// this whole section exists to prevent.
+func TestInspectRunNotStarted_StatesTheStagesItDidNotRun(t *testing.T) {
+	run := inspectRunNotStarted()
+	if run.Walk != inspectStageNotRun || run.Scan != inspectStageNotRun {
+		t.Errorf("stages = walk %q, scan %q; want both %q", run.Walk, run.Scan, inspectStageNotRun)
+	}
+	if run.Toolchain.Judged {
+		t.Error("a pipeline that ran no scan reports a judged toolchain")
+	}
+	if run.Toolchain.Status != string(vuldomain.ToolchainUnjudged) {
+		t.Errorf("toolchain status = %q, want %q", run.Toolchain.Status, vuldomain.ToolchainUnjudged)
+	}
+	if run.Toolchain.Reason == "" || run.Toolchain.Statement == "" {
+		t.Errorf("an unjudged toolchain states no reason: %+v", run.Toolchain)
+	}
+
+	// Every field is present in the encoding, so no consumer reads a missing key
+	// as "nothing to report".
+	raw, err := json.Marshal(run)
+	if err != nil {
+		t.Fatalf("marshalling the run section: %v", err)
+	}
+	var doc map[string]any
+	if uerr := json.Unmarshal(raw, &doc); uerr != nil {
+		t.Fatalf("decoding the run section: %v", uerr)
+	}
+	for _, key := range []string{"walk_id", "walk", "scan_run_id", "scan", "snapshot", "toolchain"} {
+		if _, ok := doc[key]; !ok {
+			t.Errorf("the run section omits %q: %s", key, raw)
+		}
+	}
+	if _, ok := doc["toolchain"].(map[string]any)["judged"]; !ok {
+		t.Errorf("the toolchain section omits judged: %s", raw)
+	}
+}
+
+// A document with nowhere to put the key is refused rather than printed without
+// its run facts: printing the answer anyway is the silence the section closes.
+func TestSpliceInspectRun_RefusesADocumentThatIsNotAnObject(t *testing.T) {
+	if _, err := spliceInspectRun([]byte("[]\n"), inspectRunNotStarted()); err == nil {
+		t.Error("an array document was accepted, so the run facts would be dropped")
+	}
+}

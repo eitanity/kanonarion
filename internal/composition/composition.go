@@ -47,6 +47,7 @@ import (
 	licdet "github.com/eitanity/kanonarion/internal/license/adapters/detector/licensecheck"
 	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
+	nativesqlite "github.com/eitanity/kanonarion/internal/native/adapters/store/sqlite"
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
@@ -92,6 +93,7 @@ func Migrations() []sqlitestore.Migration {
 	m = append(m, fipssqlite.Migrations()...)
 	m = append(m, stdlibsqlite.Migrations()...)
 	m = append(m, stalesqlite.Migrations()...)
+	m = append(m, nativesqlite.Migrations()...)
 	return m
 }
 

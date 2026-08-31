@@ -49,7 +49,7 @@ func makeCGRecord(t *testing.T) cgdomain.CallGraphRecord {
 func TestPrintCallGraphSummary_TextBasic(t *testing.T) {
 	r := makeCGRecord(t)
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, false, false, "", &buf); err != nil {
+	if err := printCallGraphSummary(r, false, false, "", &buf, callGraphRunJSON{}); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -67,7 +67,7 @@ func TestPrintCallGraphSummary_TextBasic(t *testing.T) {
 func TestPrintCallGraphSummary_TextCached(t *testing.T) {
 	r := makeCGRecord(t)
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, true, false, "", &buf); err != nil {
+	if err := printCallGraphSummary(r, true, false, "", &buf, callGraphRunJSON{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "(cached)") {
@@ -84,7 +84,7 @@ func TestPrintCallGraphSummary_TextFailure(t *testing.T) {
 		FailureDetail: "analysis failed",
 	}
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, false, false, "", &buf); err != nil {
+	if err := printCallGraphSummary(r, false, false, "", &buf, callGraphRunJSON{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "analysis failed") {
@@ -95,7 +95,7 @@ func TestPrintCallGraphSummary_TextFailure(t *testing.T) {
 func TestPrintCallGraphSummary_JSON(t *testing.T) {
 	r := makeCGRecord(t)
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, false, true, "", &buf); err != nil {
+	if err := printCallGraphSummary(r, false, true, "", &buf, callGraphRunJSON{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), `"coordinate"`) {
@@ -1169,7 +1169,7 @@ func TestPrintCallGraphSummary_ColdCachePartialPrintsTheRemedy(t *testing.T) {
 		FailedPackages: []string{"example.com/app/needsdep"},
 	}
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(r, false, false, "/work/tree", &buf); err != nil {
+	if err := printCallGraphSummary(r, false, false, "/work/tree", &buf, callGraphRunJSON{}); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -1188,7 +1188,7 @@ func TestPrintCallGraphSummary_ColdCachePartialPrintsTheRemedy(t *testing.T) {
 // prints one teaches its reader to distrust an answer that is sound.
 func TestPrintCallGraphSummary_CompleteGraphGetsNoRemedy(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printCallGraphSummary(makeCGRecord(t), false, false, "/work/tree", &buf); err != nil {
+	if err := printCallGraphSummary(makeCGRecord(t), false, false, "/work/tree", &buf, callGraphRunJSON{}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(buf.String(), "re-analyse") {

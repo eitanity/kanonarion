@@ -198,7 +198,7 @@ func TestPrintVulnScanResult_FailedModulesListedOnAffectedRun(t *testing.T) {
 	run := vuldomain.WalkScanRun{ID: "01JSCANRUN0000000000000009", OverallStatus: vuldomain.WalkStatusAffected}
 
 	var out strings.Builder
-	if err := printVulnScanResult(run, nil, nil, []string{"example.com/broken@v1.0.0"}, nil, vulnScanReachability{}, false, &out); err != nil {
+	if err := printVulnScanResult(run, nil, nil, []string{"example.com/broken@v1.0.0"}, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, false, &out); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 	got := out.String()

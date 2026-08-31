@@ -38,9 +38,12 @@ func newExamplesCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f exampleFlags
 
 	cmd := &cobra.Command{
-		Use:         "examples <module>@<version>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentCreate},
-		Short:       "Harvest and list Example* functions for a Go module",
+		Use: "examples <module>@<version>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentCreate,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Harvest and list Example* functions for a Go module",
 		Example: `  kanonarion examples github.com/spf13/cobra@v1.8.1
   kanonarion examples github.com/spf13/cobra@v1.8.1 --json
   kanonarion examples github.com/spf13/cobra@v1.8.1 --force`,
@@ -197,9 +200,12 @@ func printExampleRecord(r domain.ExampleRecord, fromCache bool, jsonOut bool, st
 
 func newExamplesShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:         "examples-show <module>@<version> <example-name>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Show a specific Example* function from the harvested record",
+		Use: "examples-show <module>@<version> <example-name>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Show a specific Example* function from the harvested record",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
 				return usageErr(cmd)
@@ -266,9 +272,12 @@ func newExamplesFindCmd(stdout, stderr io.Writer) *cobra.Command {
 	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
-		Use:         "examples-find <symbol>",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "Find all examples for a symbol across the store",
+		Use: "examples-find <symbol>",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "Find all examples for a symbol across the store",
 		Example: `  kanonarion examples-find Client.Do
   kanonarion examples-find Marshal
   kanonarion examples-find Marshal --json
@@ -428,9 +437,12 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
 
 	cmd := &cobra.Command{
-		Use:         "examples-list [<module>@<version>]",
-		Annotations: map[string]string{annotationStoreIntent: StoreIntentRead},
-		Short:       "List example records, or examples within a specific module",
+		Use: "examples-list [<module>@<version>]",
+		Annotations: map[string]string{
+			annotationStoreIntent: StoreIntentRead,
+			annotationNetworkUse:  NetworkNever,
+		},
+		Short: "List example records, or examples within a specific module",
 		Example: `  kanonarion examples-list
   kanonarion examples-list github.com/charmbracelet/lipgloss@v1.1.0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -540,23 +552,16 @@ func runExamplesList(ctx context.Context, limit, offset int, uc QueryExamplesUse
 			out = append(out, entry{Module: s.ModulePath, Version: s.ModuleVersion,
 				Status: s.OverallStatus.String(), ExampleCount: s.ExampleCount})
 		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding JSON: %w", err)
-		}
-		if len(out) > 0 {
-			if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
-				return terr
-			}
-		} else {
+		var zero *listZeroScope
+		if len(out) == 0 {
 			scope, serr := examplesListZeroScope(ctx, offset, uc)
 			if serr != nil {
 				return serr
 			}
-			if zerr := writeListZeroNoticeJSON(stderr, scope); zerr != nil {
-				return zerr
-			}
+			zero = &scope
+		}
+		if derr := writeListDocument(stdout, out, trunc, zero); derr != nil {
+			return derr
 		}
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting example records: %w",
