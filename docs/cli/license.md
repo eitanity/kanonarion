@@ -90,6 +90,70 @@ github.com/gorhill/cronexpr@v0.0.0-…: Multiple — Apache-2.0 OR GPL-3.0
     …
 ```
 
+For a module under several licences at once (a conjunctive expression such as
+`Apache-2.0 AND MIT`), there is no election. What the output can say depends on
+what the record read, which is printed as the basis, and there are two cases.
+
+**One licence file granting several licences.** Nothing attributes a licence to
+any part of the module, so every grant governs its code and all of them bind.
+The output prints the union of the arms' obligations — a duty any arm requires
+is a duty owed, and the copyleft strength is the strictest arm's — then each
+arm's own set, so a reader can see which licence imposed which duty:
+
+```
+gopkg.in/yaml.v3@v3.0.1: Multiple — Apache-2.0 AND MIT
+  basis: split: covered by two different licenses
+  LICENSE: MIT (85%)
+  NOTICE: Apache-2.0 (100%)
+  conjunction: every arm binds at once, so the obligations below are the union
+  of all arms — there is no election to make
+  obligations (Apache-2.0 AND MIT, catalogue v1.2.0):
+    …
+  obligations required by Apache-2.0 (catalogue v1.2.0):
+    …
+  obligations required by MIT (catalogue v1.2.0):
+    …
+```
+
+Where an arm is not in the obligations catalogue the union reports
+`incomplete`: the merge saw part of what binds, and the arms it did recognise
+are still listed beneath.
+
+**One licence file per licence.** Here each file names what its arm covers —
+`LICENSE.docs` is documentation, `LICENSE.libyaml` is vendored C,
+`LICENSE.Golang` is vendored Go — so each arm is printed with the file that
+grants it. Whether you owe an arm depends on whether the artefact that file
+covers reaches your binary, which kanonarion cannot determine, so the merged
+set is printed last and labelled as an upper bound rather than as what you owe:
+
+```
+github.com/opencontainers/go-digest@v1.0.0: Multiple — Apache-2.0 AND CC-BY-SA-4.0
+  basis: split: one file per licence, none naming a choice
+  LICENSE: Apache-2.0 (100%)
+  LICENSE.docs: CC-BY-SA-4.0 (82%)
+  separate grants: each arm is granted by its own licence file, named below, and
+  that file states what the arm covers
+  obligations required by Apache-2.0, granted by LICENSE (catalogue v1.2.0):
+    …
+  obligations required by CC-BY-SA-4.0, granted by LICENSE.docs: unknown (…)
+  maximal obligations across every arm (…) — an upper bound,
+  not what you owe: which arms bind depends on which covered artefacts you ship
+    …
+```
+
+An arm the catalogue does not know is reported on its own row and does not
+degrade the rest: here the Apache-2.0 grant over the code is identified at full
+confidence, and a documentation licence with no catalogue entry says nothing
+about it.
+
+With `--json` the merged set is the `obligations` object and the per-arm sets
+are `binding_obligations`, keyed by SPDX identifier — the shape
+`elective_obligations` uses for a disjunction. For separately granted arms two
+more keys appear: `arm_grants`, mapping each identifier to the licence files
+granting it, and `obligations_reading`, which states that `obligations` is a
+maximal upper bound and not the set you owe. Both are absent when the arms came
+from one file, where `obligations` is the owed set.
+
 A module is reported as dual-licensed only when its licence file says so — an
 `SPDX-License-Identifier` line naming a choice, or wording such as "under the
 terms of either licence". Where one file carries several licence texts, the

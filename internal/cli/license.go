@@ -176,6 +176,8 @@ type stdlibLicenceJSON struct {
 }
 
 func printStdlibLicenceJSON(a stdlibLicence, stdout io.Writer) error {
+	// a.SPDX is walkdomain.StdlibLicense's resolution — one identifier, never
+	// an expression — so a single lookup is the whole answer here.
 	out := stdlibLicenceJSON{
 		Module:      a.Coordinate.Path(),
 		Version:     a.Coordinate.Version(),
@@ -590,7 +592,79 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 	if arms := domain.DisjunctionArms(r.Expression); len(arms) >= 2 {
 		return printElectiveObligationsSection(arms, stdout)
 	}
+	// A conjunction (A AND B) is the opposite case: there is no election. What
+	// may be said about it turns on the record's own basis — arms granted one
+	// file each state their coverage and cannot be merged into an owed set;
+	// arms sharing a file cannot state coverage and all bind.
+	switch reading := readLicenceObligations(r); {
+	case reading.Maximal:
+		return printSeparateGrantsSection(r.Expression, reading.Set, reading.Arms, reading.Grants, stdout)
+	case len(reading.Arms) > 0:
+		return printBindingObligationsSection(r.Expression, reading.Set, reading.Arms, stdout)
+	}
 	return printObligationsSection(r.PrimarySPDX, stdout)
+}
+
+// obligationsReadingMaximal qualifies an obligations set merged across
+// separately granted arms. It is a statement rather than a flag because it has
+// to survive being read on its own, next to the numbers it qualifies: a
+// consumer who sees only this line must not act on the set beside it as though
+// it were owed. One spelling, shared by every surface that publishes the set.
+const obligationsReadingMaximal = "maximal: an upper bound across separately granted arms, not the set you owe"
+
+// licenceObligationsReading is what a licence record says about the
+// obligations it puts on a consumer: the set to publish, the arms that produce
+// it, and — where the arms were granted one licence file each — the path that
+// grants each arm and the warning that the set is an upper bound rather than
+// what is owed.
+type licenceObligationsReading struct {
+	// Set is the obligations to publish. It is the owed set unless Maximal
+	// says otherwise.
+	Set domain.Obligations
+	// Arms are the conjunction's arms, nil for every other expression shape.
+	Arms []string
+	// Grants maps an arm to the licence files granting it, non-nil only when
+	// the arms were separately granted. It is the coverage evidence: the file
+	// names what its arm covers.
+	Grants map[string][]string
+	// Maximal says Set is the upper bound across separately granted arms and
+	// must not be rendered as the obligations a consumer owes.
+	Maximal bool
+}
+
+// readLicenceObligations answers the obligations a licence record puts on a
+// consumer, reading the record's own basis for how its arms relate.
+//
+// A conjunction of arms granted by ONE file binds every arm at once — nothing
+// attributes coverage, so the answer is the union of them all, never
+// PrimarySPDX's, which is a backward-compatibility shim naming one arm and
+// would report MIT's silence on patents as gopkg.in/yaml.v3's answer while its
+// Apache-2.0 arm grants them expressly.
+//
+// A conjunction whose arms were granted one file EACH is a different claim.
+// The file names what its arm covers, and whether a consumer owes that arm
+// depends on whether the covered artefact reaches their binary — go-digest's
+// CC-BY-SA-4.0 covers LICENSE.docs, not the Go package. The merged set is
+// returned as maximal, and each arm comes back with the path that grants it,
+// because that path is the coverage evidence and it is already in the record.
+//
+// A disjunction is not this function's case and is handled by its callers
+// before they reach it.
+func readLicenceObligations(r domain.LicenseRecord) licenceObligationsReading {
+	arms := domain.ConjunctionArms(r.Expression)
+	switch {
+	case len(arms) < 2:
+		return licenceObligationsReading{Set: domain.LookupObligations(r.PrimarySPDX)}
+	case domain.ArmsAreSeparatelyGranted(r.ExpressionBasis):
+		return licenceObligationsReading{
+			Set:     domain.MaximalObligations(arms),
+			Arms:    arms,
+			Grants:  domain.ArmGrants(r.Expression, r.LicenseFiles),
+			Maximal: true,
+		}
+	default:
+		return licenceObligationsReading{Set: domain.UnionObligations(arms), Arms: arms}
+	}
 }
 
 // printElectiveObligationsSection renders per-arm obligations for a
@@ -620,6 +694,95 @@ func printElectiveObligationsSection(arms []string, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// printBindingObligationsSection renders a conjunction whose arms are
+// inseparable: the union every arm binds the consumer to at once, then each
+// arm's own set, so a reader can see which licence imposed which duty instead
+// of being handed a merged answer with nothing to attribute it to.
+func printBindingObligationsSection(expr string, union domain.Obligations, arms []string, stdout io.Writer) error {
+	if _, err := fmt.Fprintln(stdout, "  conjunction: every arm binds at once, so the obligations below are the union"); err != nil {
+		return fmt.Errorf("writing binding obligations header: %w", err)
+	}
+	if _, err := fmt.Fprintln(stdout, "  of all arms — there is no election to make"); err != nil {
+		return fmt.Errorf("writing binding obligations header: %w", err)
+	}
+	if union.Status == domain.ObligationStatusUnknown {
+		if _, err := fmt.Fprintf(stdout, "  obligations (%s): incomplete — an arm is not in catalogue v%s\n",
+			expr, domain.ObligationCatalogueVersion); err != nil {
+			return fmt.Errorf("writing obligations: %w", err)
+		}
+	} else {
+		if _, err := fmt.Fprintf(stdout, "  obligations (%s, catalogue v%s):\n",
+			expr, domain.ObligationCatalogueVersion); err != nil {
+			return fmt.Errorf("writing obligations header: %w", err)
+		}
+		if err := printObligationRows(union, stdout); err != nil {
+			return err
+		}
+	}
+	for _, arm := range arms {
+		if err := printArmObligations(arm, "", stdout); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printSeparateGrantsSection renders a conjunction whose arms were granted one
+// licence file each. Each arm leads, named with the file that grants it,
+// because that file is the only statement of what the arm covers. The merged
+// set comes last and says on its own line that it is an upper bound: which
+// arms a consumer actually owes turns on which artefacts reach their binary,
+// and no licence record answers that.
+func printSeparateGrantsSection(
+	expr string,
+	maximal domain.Obligations,
+	arms []string,
+	grants map[string][]string,
+	stdout io.Writer,
+) error {
+	if _, err := fmt.Fprintln(stdout, "  separate grants: each arm is granted by its own licence file, named below, and"); err != nil {
+		return fmt.Errorf("writing separate grants header: %w", err)
+	}
+	if _, err := fmt.Fprintln(stdout, "  that file states what the arm covers"); err != nil {
+		return fmt.Errorf("writing separate grants header: %w", err)
+	}
+	for _, arm := range arms {
+		if err := printArmObligations(arm, strings.Join(grants[arm], ", "), stdout); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "  maximal obligations across every arm (%s, catalogue v%s) — an upper bound,\n",
+		expr, domain.ObligationCatalogueVersion); err != nil {
+		return fmt.Errorf("writing maximal obligations header: %w", err)
+	}
+	if _, err := fmt.Fprintln(stdout, "  not what you owe: which arms bind depends on which covered artefacts you ship"); err != nil {
+		return fmt.Errorf("writing maximal obligations header: %w", err)
+	}
+	return printObligationRows(maximal, stdout)
+}
+
+// printArmObligations renders one arm's own obligation set, naming the file
+// that grants it when the record attributes one.
+func printArmObligations(arm, grantedBy string, stdout io.Writer) error {
+	where := ""
+	if grantedBy != "" {
+		where = ", granted by " + grantedBy
+	}
+	ob := domain.LookupObligations(arm)
+	if ob.Status == domain.ObligationStatusUnknown {
+		if _, err := fmt.Fprintf(stdout, "  obligations required by %s%s: unknown (%s not in catalogue v%s)\n",
+			arm, where, arm, domain.ObligationCatalogueVersion); err != nil {
+			return fmt.Errorf("writing obligations: %w", err)
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout, "  obligations required by %s%s (catalogue v%s):\n",
+		arm, where, domain.ObligationCatalogueVersion); err != nil {
+		return fmt.Errorf("writing obligations header: %w", err)
+	}
+	return printObligationRows(ob, stdout)
 }
 
 func printPackageLicensesSection(r domain.LicenseRecord, stdout io.Writer) error {

@@ -108,8 +108,72 @@ func DeriveExpressionResult(entries []LicenseFileEntry, texts map[string]string)
 	}
 	return ExpressionResult{
 		Expression: strings.Join(distinct, " AND "),
-		Basis:      "split: one file per licence, none naming a choice",
+		Basis:      BasisSeparateGrants,
 	}
+}
+
+// BasisSeparateGrants is the ExpressionBasis of a conjunction whose arms were
+// each read off their own root licence file — LICENSE beside LICENSE.docs,
+// LICENSE.libyaml, LICENSE.Golang. It is written here and read by
+// ArmsAreSeparatelyGranted so the producer and the consumer of the fact cannot
+// drift apart over a string literal.
+const BasisSeparateGrants = "split: one file per licence, none naming a choice"
+
+// ArmsAreSeparatelyGranted reports whether a conjunction's arms were granted
+// one file each, which decides what may be said about the obligations.
+//
+// It answers from the recorded basis alone, never from the file list: the
+// basis is the pipeline's statement of what it read, and re-deriving the shape
+// from the files would be a second reading free to disagree with the one the
+// record carries.
+//
+// The distinction is not cosmetic. Where each arm has its own file, the file
+// names what that arm covers — LICENSE.docs is documentation, LICENSE.libyaml
+// is vendored C — and whether a consumer owes that arm depends on whether the
+// artefact it covers reaches their binary, which nothing here can determine.
+// Merging those arms into one set would assert that the consumer owes all of
+// them. Where one file grants several licences, nothing attributes coverage to
+// anything, every grant in it governs the module's code, and the merged set is
+// the honest answer.
+func ArmsAreSeparatelyGranted(basis string) bool {
+	return basis == BasisSeparateGrants
+}
+
+// ArmGrants maps each identifier a conjunctive expression names to the root
+// licence files that grant it, so an arm can be published with the coverage
+// evidence already in the record rather than as a bare identifier.
+//
+// The candidate filter is the one DeriveExpressionResult used to build the
+// expression, so a path here is a file that actually contributed an arm — a
+// vendored file, a NOTICE, or a nested licence is no more a grant of an arm
+// now than it was then. Paths are sorted, and an arm no root file accounts for
+// is absent rather than mapped to nothing.
+func ArmGrants(expr string, entries []LicenseFileEntry) map[string][]string {
+	arms := ConjunctionArms(expr)
+	if len(arms) == 0 {
+		return nil
+	}
+	wanted := make(map[string]bool, len(arms))
+	for _, a := range arms {
+		wanted[a] = true
+	}
+	out := make(map[string][]string, len(arms))
+	for _, e := range entries {
+		if e.IsVendored || e.SPDX == "" || !exprIsRootLevel(e.Path) || exprIsNoticeName(e.Path) {
+			continue
+		}
+		if !wanted[e.SPDX] {
+			continue
+		}
+		out[e.SPDX] = append(out[e.SPDX], e.Path)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	for _, paths := range out {
+		sort.Strings(paths)
+	}
+	return out
 }
 
 // readCompoundResult turns the prose of a compound licence file into an

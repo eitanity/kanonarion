@@ -85,6 +85,30 @@ type licenseDocument struct {
 	// Its KEYS are SPDX identifiers — data, not field names — so they are the
 	// one place in this document where a capital letter is correct.
 	ElectiveObligations map[string]domain.Obligations `json:"elective_obligations,omitempty"`
+	// BindingObligations carries per-arm obligations when the expression is a
+	// conjunction: every arm binds at once, so `obligations` above is their
+	// union and this says which arm imposed which duty. Without it the union
+	// is a verdict — what a consumer must do, with no licence to attribute it
+	// to — and it is the ElectiveObligations shape deliberately, because the
+	// two answer the same question about different operators.
+	//
+	// Its KEYS are SPDX identifiers, on the same reading as the field above.
+	BindingObligations map[string]domain.Obligations `json:"binding_obligations,omitempty"`
+	// ArmGrants names the licence file granting each arm, present only when the
+	// expression's basis says the arms were granted one file each. That file is
+	// the only statement of what its arm covers — LICENSE.docs is
+	// documentation, LICENSE.libyaml is vendored C — and it is the fact a
+	// licence record never used to publish.
+	//
+	// Its KEYS are SPDX identifiers, on the same reading as the fields above.
+	ArmGrants map[string][]string `json:"arm_grants,omitempty"`
+	// ObligationsReading qualifies `obligations` above when it must not be read
+	// as the set the consumer owes: across separately granted arms it is an
+	// upper bound, because which arms bind depends on which covered artefacts
+	// reach the consumer's binary and no licence record answers that. Empty —
+	// the ordinary case — `obligations` is the owed set and needs no
+	// qualification.
+	ObligationsReading string `json:"obligations_reading,omitempty"`
 }
 
 // licenseFileJSON is one licence-named file found in the module.
@@ -157,6 +181,7 @@ type licenseProvenanceJSON struct {
 // point of the view is that adding a field to a domain type does not add a key
 // to the wire, and only an explicit assignment has that property.
 func newLicenseDocument(r domain.LicenseRecord) licenseDocument {
+	reading := readLicenceObligations(r)
 	doc := licenseDocument{
 		SchemaVersion:     r.SchemaVersion,
 		Ecosystem:         r.Ecosystem,
@@ -179,7 +204,17 @@ func newLicenseDocument(r domain.LicenseRecord) licenseDocument {
 		ContentHash:       r.ContentHash,
 		ArtefactIdentity:  r.ArtefactIdentity,
 		SourceContentHash: r.SourceContentHash,
-		Obligations:       domain.LookupObligations(r.PrimarySPDX),
+		Obligations:       reading.Set,
+	}
+	if len(reading.Arms) > 0 {
+		doc.BindingObligations = make(map[string]domain.Obligations, len(reading.Arms))
+		for _, arm := range reading.Arms {
+			doc.BindingObligations[arm] = domain.LookupObligations(arm)
+		}
+		doc.ArmGrants = reading.Grants
+		if reading.Maximal {
+			doc.ObligationsReading = obligationsReadingMaximal
+		}
 	}
 	if arms := domain.DisjunctionArms(r.Expression); len(arms) >= 2 {
 		doc.ElectiveObligations = make(map[string]domain.Obligations, len(arms))

@@ -211,6 +211,20 @@ type contextLicense struct {
 	CopyrightStatus       string                      `json:"copyright_status,omitempty"`
 	CopyrightStatements   []contextCopyrightStatement `json:"copyright_statements,omitempty"`
 	Obligations           *contextLicenseObligations  `json:"obligations,omitempty"`
+	// BindingObligations carries per-arm obligations when the expression is a
+	// conjunction: every arm binds at once, so `obligations` above is their
+	// union and this says which arm imposed which duty. A union with no
+	// attribution states duties without naming the licence that demands them.
+	// Its KEYS are SPDX identifiers, not field names.
+	BindingObligations map[string]*contextLicenseObligations `json:"binding_obligations,omitempty"`
+	// ArmGrants names the licence file granting each arm, present only when the
+	// expression's basis says the arms were granted one file each. That file is
+	// the only statement of what its arm covers. Its KEYS are SPDX identifiers.
+	ArmGrants map[string][]string `json:"arm_grants,omitempty"`
+	// ObligationsReading qualifies `obligations` above when it must not be read
+	// as the set the consumer owes: across separately granted arms it is an
+	// upper bound. Empty — the ordinary case — it is the owed set.
+	ObligationsReading string `json:"obligations_reading,omitempty"`
 	// Custody carries the standard library's chain of custody, which is where
 	// its licence identity comes from: it is never fetched or extracted, so it
 	// has no licence record and the fields above are answered from the

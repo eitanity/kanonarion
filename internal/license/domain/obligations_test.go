@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/license/domain"
@@ -327,5 +328,212 @@ func TestLookupObligations_PublicDomainNoConditions(t *testing.T) {
 		if o.SameLicense != domain.CopyleftNone {
 			t.Errorf("%s: SameLicense should be none, got %s", spdx, o.SameLicense)
 		}
+	}
+}
+
+// TestUnionObligations_AnyArmRequiringADutyMakesItOwed pins the first union
+// rule on the expression that exposed the defect: gopkg.in/yaml.v3 is
+// "Apache-2.0 AND MIT", and MIT alone answers false to three duties Apache-2.0
+// imposes. Under a conjunction both licences bind, so all three are owed.
+func TestUnionObligations_AnyArmRequiringADutyMakesItOwed(t *testing.T) {
+	// Each case names the arm that imposes the duty, and the arms are given in
+	// their sorted order, so the imposing arm is sometimes first and sometimes
+	// not: a merge that reads one arm and stops drops a named duty here.
+	for _, tc := range []struct {
+		arms     []string
+		duty     string
+		owedBy   string
+		read     func(domain.Obligations) bool
+		wantOwed bool
+	}{
+		{[]string{"Apache-2.0", "MIT"}, "StateChanges", "Apache-2.0",
+			func(o domain.Obligations) bool { return o.StateChanges }, true},
+		{[]string{"Apache-2.0", "MIT"}, "ExplicitPatentGrant", "Apache-2.0",
+			func(o domain.Obligations) bool { return o.ExplicitPatentGrant }, true},
+		{[]string{"MIT", "OFL-1.1"}, "NoTrademarkUse", "OFL-1.1",
+			func(o domain.Obligations) bool { return o.NoTrademarkUse }, true},
+		{[]string{"MIT", "GPL-3.0-only"}, "DiscloseSource", "GPL-3.0-only",
+			func(o domain.Obligations) bool { return o.DiscloseSource }, true},
+		{[]string{"MIT", "OFL-1.1"}, "ExplicitPatentGrant", "neither arm",
+			func(o domain.Obligations) bool { return o.ExplicitPatentGrant }, false},
+		{[]string{"Apache-2.0", "MIT"}, "NetworkUseTrigger", "neither arm",
+			func(o domain.Obligations) bool { return o.NetworkUseTrigger }, false},
+	} {
+		u := domain.UnionObligations(tc.arms)
+		if u.Status != domain.ObligationStatusKnown {
+			t.Fatalf("%v: Status = %s, want known: every arm is in the catalogue", tc.arms, u.Status)
+		}
+		switch got := tc.read(u); {
+		case tc.wantOwed && !got:
+			t.Errorf("%s: %s is false, but the %s arm requires it — the union dropped a duty "+
+				"the consumer owes", strings.Join(tc.arms, " AND "), tc.duty, tc.owedBy)
+		case !tc.wantOwed && got:
+			t.Errorf("%s: %s is true, but %s requires it — the union invented a duty",
+				strings.Join(tc.arms, " AND "), tc.duty, tc.owedBy)
+		}
+	}
+}
+
+// TestUnionObligations_ArmOrderDoesNotDecide is the other half of the rule: no
+// arm is privileged, so the merged set is the same whichever arm comes first.
+// Taking one arm's set as the answer — which is what PrimarySPDX did — fails
+// here as well as above.
+func TestUnionObligations_ArmOrderDoesNotDecide(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"Apache-2.0", "MIT"},
+		{"MIT", "OFL-1.1"},
+		{"Apache-2.0", "BSD-3-Clause"},
+		{"MIT", "GPL-3.0-only"},
+	} {
+		forward := domain.UnionObligations([]string{pair[0], pair[1]})
+		reverse := domain.UnionObligations([]string{pair[1], pair[0]})
+		if forward != reverse {
+			t.Errorf("%s AND %s: union depends on arm order (%+v vs %+v)",
+				pair[0], pair[1], forward, reverse)
+		}
+	}
+}
+
+// TestUnionObligations_SameLicenseTakesTheStrongestArm pins the second rule.
+// SameLicense is a strength, not a boolean, and the strictest propagation is
+// the one that governs the combined work: chroma/v2's "MIT AND OFL-1.1" is
+// OFL's weak, not MIT's none.
+func TestUnionObligations_SameLicenseTakesTheStrongestArm(t *testing.T) {
+	for _, tc := range []struct {
+		arms []string
+		want domain.CopyleftStrength
+	}{
+		{[]string{"MIT", "OFL-1.1"}, domain.CopyleftWeak},
+		{[]string{"MIT", "Apache-2.0"}, domain.CopyleftNone},
+		{[]string{"MPL-2.0", "GPL-3.0-only"}, domain.CopyleftStrong},
+		{[]string{"MIT", "AGPL-3.0-only"}, domain.CopyleftNetwork},
+	} {
+		got := domain.UnionObligations(tc.arms).SameLicense
+		if got != tc.want {
+			t.Errorf("UnionObligations(%v).SameLicense = %s, want %s — the union must take the "+
+				"strongest arm's propagation, not the weakest", tc.arms, got, tc.want)
+		}
+	}
+}
+
+// TestUnionObligations_OneUncataloguedArmMakesTheMergeUnknown pins the third
+// rule. A merge that saw only the arms it recognised has part of what binds,
+// and reporting it as known would publish that part as the whole.
+func TestUnionObligations_OneUncataloguedArmMakesTheMergeUnknown(t *testing.T) {
+	u := domain.UnionObligations([]string{"MIT", "LicenseRef-custom-proprietary"})
+	if u.Status != domain.ObligationStatusUnknown {
+		t.Errorf("Status = %s, want unknown: LicenseRef-custom-proprietary is not in the catalogue, "+
+			"so the merged set is incomplete", u.Status)
+	}
+	if !u.IncludeNotice {
+		t.Error("the MIT arm's duties must still be carried; unknown says the set is incomplete, " +
+			"not that nothing was found")
+	}
+}
+
+// TestUnionObligations_DegenerateArmCounts covers the two inputs that are not
+// conjunctions: nothing to merge is unknown, never "no obligations", and one
+// arm is that arm.
+func TestUnionObligations_DegenerateArmCounts(t *testing.T) {
+	if got := domain.UnionObligations(nil); got.Status != domain.ObligationStatusUnknown {
+		t.Errorf("UnionObligations(nil).Status = %s, want unknown", got.Status)
+	}
+	for _, id := range []string{"MIT", "Apache-2.0", "AGPL-3.0-only", "LicenseRef-nope"} {
+		if got, want := domain.UnionObligations([]string{id}), domain.LookupObligations(id); got != want {
+			t.Errorf("UnionObligations([%q]) = %+v, want the licence's own set %+v", id, got, want)
+		}
+	}
+}
+
+// TestMaximalObligations_MergesTheSameFieldsAsTheUnion pins that the two
+// readings differ only in what they make of an uncatalogued arm: the duties
+// merged are the same.
+func TestMaximalObligations_MergesTheSameFieldsAsTheUnion(t *testing.T) {
+	for _, arms := range [][]string{
+		{"Apache-2.0", "MIT"},
+		{"MIT", "OFL-1.1"},
+		{"Apache-2.0", "BSD-3-Clause"},
+		{"MIT", "AGPL-3.0-only"},
+	} {
+		u, m := domain.UnionObligations(arms), domain.MaximalObligations(arms)
+		u.Status, m.Status = 0, 0
+		if u != m {
+			t.Errorf("%v: maximal and union merged different duties (%+v vs %+v)", arms, m, u)
+		}
+	}
+}
+
+// TestMaximalObligations_OneUncataloguedArmDoesNotDegradeTheSet is the rule
+// that separates it from UnionObligations. go-digest's Apache-2.0 arm covers
+// the code and is catalogued at full confidence; CC-BY-SA-4.0 covers
+// LICENSE.docs and is not. Because those arms are separable, the uncatalogued
+// one is news about that arm, carried on that arm's own row.
+func TestMaximalObligations_OneUncataloguedArmDoesNotDegradeTheSet(t *testing.T) {
+	arms := []string{"Apache-2.0", "CC-BY-SA-4.0"}
+	if got := domain.MaximalObligations(arms).Status; got != domain.ObligationStatusKnown {
+		t.Errorf("MaximalObligations(%v).Status = %s, want known: one arm is catalogued and the "+
+			"arms are separable, so the record must not degrade", arms, got)
+	}
+	if got := domain.UnionObligations(arms).Status; got != domain.ObligationStatusUnknown {
+		t.Errorf("UnionObligations(%v).Status = %s, want unknown: read as inseparable the merge "+
+			"saw part of what binds", arms, got)
+	}
+	// Nothing catalogued at all is unknown under either reading.
+	none := []string{"LicenseRef-a", "LicenseRef-b"}
+	if got := domain.MaximalObligations(none).Status; got != domain.ObligationStatusUnknown {
+		t.Errorf("MaximalObligations(%v).Status = %s, want unknown", none, got)
+	}
+	if got := domain.MaximalObligations(nil).Status; got != domain.ObligationStatusUnknown {
+		t.Errorf("MaximalObligations(nil).Status = %s, want unknown", got)
+	}
+}
+
+// TestArmsAreSeparatelyGranted_ReadsOnlyTheRecordedBasis pins that the
+// classification comes from the basis the pipeline wrote, and from the exact
+// string it writes.
+func TestArmsAreSeparatelyGranted_ReadsOnlyTheRecordedBasis(t *testing.T) {
+	if !domain.ArmsAreSeparatelyGranted(domain.BasisSeparateGrants) {
+		t.Error("the constant the pipeline writes is not recognised by the reader")
+	}
+	for _, basis := range []string{
+		"",
+		"split: is licensed under",
+		"split: covered by two different licenses",
+		"split: the following files",
+		"conservative: no statement of how the grants relate",
+		"election: one file per licence (APLv2, LICENSE)",
+	} {
+		if domain.ArmsAreSeparatelyGranted(basis) {
+			t.Errorf("basis %q read as separately granted", basis)
+		}
+	}
+}
+
+// TestArmGrants_NamesTheFileThatGrantsEachArm pins the coverage evidence, and
+// that only files which built the expression can supply it.
+func TestArmGrants_NamesTheFileThatGrantsEachArm(t *testing.T) {
+	entries := []domain.LicenseFileEntry{
+		{Path: "LICENSE", SPDX: "Apache-2.0"},
+		{Path: "LICENSE.libyaml", SPDX: "MIT"},
+		{Path: "NOTICE", SPDX: "Apache-2.0"},
+		{Path: "contrib/other/LICENSE", SPDX: "MIT"},
+		{Path: "vendor/x/LICENSE", SPDX: "MIT", IsVendored: true},
+	}
+	got := domain.ArmGrants("Apache-2.0 AND MIT", entries)
+	want := map[string][]string{"Apache-2.0": {"LICENSE"}, "MIT": {"LICENSE.libyaml"}}
+	if len(got) != len(want) {
+		t.Fatalf("ArmGrants = %v, want %v", got, want)
+	}
+	for arm, paths := range want {
+		if len(got[arm]) != 1 || got[arm][0] != paths[0] {
+			t.Errorf("ArmGrants[%q] = %v, want %v — a NOTICE, a nested licence and a vendored "+
+				"file granted no arm and must not be published as coverage", arm, got[arm], paths)
+		}
+	}
+	if domain.ArmGrants("MIT", entries) != nil {
+		t.Error("a single identifier has no arms to attribute")
+	}
+	if domain.ArmGrants("Apache-2.0 OR MIT", entries) != nil {
+		t.Error("a disjunction is an election, not a set of separately granted arms")
 	}
 }
