@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"
 )
 
 // assertSingleJSONDocument checks that b is exactly one JSON document and
@@ -179,25 +182,68 @@ func goModArgs(_ *testing.T, fx jsonStdoutFixture) []string {
 	return []string{"--gomod", fx.goMod()}
 }
 
+// walkOfflineArgs walks a module of the case's own with --from-modcache, which
+// is the flag walk's annotation names as what takes it off the network.
+//
+// A positional coordinate walk refuses that flag — it has no project go.sum to
+// verify a cache against — so this case is the go.mod path, over a module that
+// requires nothing: the build list resolves from the directory, the cache is
+// never read because there is nothing to source from it, and the stdlib node is
+// digested from the local toolchain rather than looked up at go.dev/dl. The
+// directory is the case's own rather than the fixture's because --from-modcache
+// requires a go.sum beside the go.mod, and adding one to the shared tree would
+// change what every other --gomod case runs under.
+func walkOfflineArgs(t *testing.T, _ jsonStdoutFixture) []string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"go.mod":  "module example.com/offline\n\ngo 1.24\n",
+		"walk.go": "package offline\n\n// Hello is the one symbol this module holds.\nfunc Hello() string { return \"hi\" }\n",
+		"go.sum":  "",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("writing the offline walk fixture %s: %v", name, err)
+		}
+	}
+	// --from-modcache carries a NoOptDefVal, so pflag reads a separate argument
+	// as a positional rather than as its value: it has to be written with an =.
+	return []string{"--gomod", filepath.Join(dir, "go.mod"), "--from-modcache=" + t.TempDir()}
+}
+
 // jsonStdoutCases enumerates EVERY command in the cobra tree, because --json is
 // a persistent flag on the root: every command accepts it, so every command is
 // a candidate for the defect. The completeness test below asserts this map and
 // the tree name the same set, so a command added later fails the build until
 // somebody decides how it behaves under --json.
 //
-// Every case that runs must produce a document. A command is given whatever it
-// needs to reach its rendering — a coordinate, an identifier the fixture store
-// holds a record under, a path into the fixture's working tree — because a
-// refusal writes nothing to stdout, and a case that passed on silence proved
-// only that the command had failed before the code under test ran.
+// Every case that runs must produce a document, with two stated exceptions. A
+// command is given whatever it needs to reach its rendering — a coordinate, an
+// identifier the fixture store holds a record under, a path into the fixture's
+// working tree — because a refusal writes nothing to stdout, and a case that
+// passed on silence proved only that the command had failed before the code
+// under test ran.
 //
-// The commands that record a run are here too, and stay off the network: walk
-// and callgraph serve the record the fixture already holds rather than
-// re-analysing, and extract and vuln-scan render a run over artefacts whose
-// bytes the fixture does not carry. Each renders through its real writer, which
-// is what this guard reads.
+// The commands that record a run are here too, and stay off the network:
+// callgraph serves the record the fixture already holds rather than
+// re-analysing, walk is pinned to a module cache by the flag its annotation
+// names, and extract renders a run over artefacts whose bytes the fixture does
+// not carry. Each renders through its real writer, which is what this guard
+// reads.
 //
-// A command that cannot be made to answer here carries a skip naming what it
+// The exceptions are the two things about the MACHINE that can stop a command
+// answering at all: it declares kanonarion/network-use: always and the network
+// is not there, or it drives govulncheck and govulncheck is not installed. Both
+// are decided by unmeasurableHere from the run itself — the annotation, and the
+// refusal the command returned — not per case. Such a case is still enumerated
+// and still run, so a change to it is still exercised on any machine that can
+// answer it; what it is not is REQUIRED to answer on one that cannot. It is
+// named and counted separately instead, so the guard's reach is read from what
+// it measured rather than from a total that hid the difference. A command that
+// CAN be pinned declares avoidable and names the flags; its case passes them and
+// stays required — vuln-scan-rescan pinned to a stored snapshot, walk to a
+// module cache.
+//
+// A command that cannot be made to answer at all carries a skip naming what it
 // would take. Two classes account for all of them: a command with no JSON
 // rendering at all, which is a different question from prose appended to a JSON
 // document, and a command that must leave the fixture for the network.
@@ -279,7 +325,7 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"vuln-show":             {args: []string{jsonDocDepCoord}},
 	"vuln-snapshot-list":    {},
 	"vuln-snapshot-show":    {args: []string{jsonDocSnapSource, jsonDocSnapshotV}},
-	"walk":                  {args: []string{jsonDocRootCoord}},
+	"walk":                  {argsFn: walkOfflineArgs},
 	"walk-diff":             {args: []string{jsonDocWalkID, jsonDocWalkID}},
 	"walk-list":             {},
 	"walk-show":             {args: []string{jsonDocWalkID}},
@@ -314,6 +360,43 @@ func latestMultiArgs(_ *testing.T, _ jsonStdoutFixture) []string {
 var jsonStdoutMultiCases = map[string]jsonStdoutCase{
 	"context": {argsFn: walkScopeArgs},
 	"latest":  {argsFn: latestMultiArgs},
+}
+
+// unmeasurableHere says why this run could not make a command answer, or "" when
+// nothing excuses its silence.
+//
+// Both conditions are read off the run itself rather than written down per case,
+// because a per-case exemption is a claim nobody re-checks: one is the command's
+// own annotation, the other is the refusal the command returned.
+//
+//   - It refused because govulncheck is not installed. The vulnerability commands
+//     drive that binary and fail their own pre-flight without it, which is a
+//     property of the machine and not of the rendering under test. It is read
+//     from the error the command returned, so a command that stopped for any
+//     other reason is still a failure here.
+//   - It declares kanonarion/network-use: always. That value means it reaches the
+//     network as part of answering AND has no flag that stops it, so on a machine
+//     with egress blocked no arguments this guard passes can make it answer. A
+//     command that CAN be pinned declares avoidable and names the flags; its case
+//     passes them and stays required.
+//
+// Neither is a skip: the case stays enumerated, stays run, and is asserted in
+// full wherever the machine can answer it. What changes is that a run which
+// could not measure it says so by name instead of counting it as covered.
+func unmeasurableHere(cmd *cobra.Command, err error) string {
+	// The refusal is asked about first: it is what the command actually said,
+	// where the annotation is only what it could have said. A vulnerability
+	// command on a machine with neither the network nor the scanner is stopped by
+	// the scanner, and reporting the network for it would name a cause this run
+	// never reached.
+	if errors.Is(err, govulncheck.ErrGovulncheckNotFound) {
+		return "it failed its own pre-flight: govulncheck, the scanner it drives, is not installed on this machine"
+	}
+	if networkUseOf(cmd) == NetworkAlways {
+		return fmt.Sprintf("it declares %s: %s, so it reaches the network as part of answering and has no flag that pins it offline",
+			annotationNetworkUse, NetworkAlways)
+	}
+	return ""
 }
 
 // commandPaths returns every command in the tree by the path a caller types,
@@ -382,7 +465,13 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 	// whatever tree the test binary happens to be run from.
 	chdirWithGoMod(t, "")
 
+	// The network property is read off the assembled tree, not restated here: a
+	// command that starts reaching the network, or stops, changes one annotation
+	// and this guard follows it.
+	byPath := commandsByPath(newRootCmd(io.Discard, io.Discard))
+
 	var ran, documents int
+	var unmeasured, measuredAnyway []string
 	run := func(t *testing.T, what, name string, tc jsonStdoutCase, several bool) {
 		t.Helper()
 		if tc.setup != nil {
@@ -395,15 +484,35 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 		args := append(strings.Fields(name), extra...)
 		args = append(args, "--json", "--store-root", fx.storeRoot)
 		var stdout, stderr bytes.Buffer
-		// The error is deliberately ignored: a command that reports a
-		// non-clean finding is a valid outcome here. What it wrote to stdout
-		// is the assertion.
-		_ = Run(args, &stdout, &stderr)
+		// The error is not the assertion — a command that reports a non-clean
+		// finding is a valid outcome here, and what it wrote to stdout is what
+		// this guard reads. It is kept for the one case below where stdout is
+		// empty, because the error is where the command said why.
+		err := Run(args, &stdout, &stderr)
 		ran++
+		cannotMeasure := unmeasurableHere(byPath[name], err)
 		if strings.TrimSpace(stdout.String()) == "" {
+			if cannotMeasure != "" {
+				// Not a pass and not a failure: a measurement this machine could
+				// not make. Saying so by name is the whole point — a command
+				// silently excused would leave a guard that looks complete and is
+				// not.
+				unmeasured = append(unmeasured, what)
+				t.Logf("%s wrote nothing to stdout, and this run could not make it answer: %s. Its JSON "+
+					"rendering is UNMEASURED here rather than asserted.\nerror: %v\nstderr:\n%s",
+					what, cannotMeasure, err, stderr.String())
+				return
+			}
 			t.Fatalf("%s wrote nothing to stdout, so this case asserts nothing about its JSON rendering: "+
 				"give it what it needs to answer, or a skip saying what that would take.\nstderr:\n%s",
 				what, stderr.String())
+		}
+		if cannotMeasure != "" {
+			// It answered anyway, so it is measured like any other: the assertions
+			// below are the same ones. What is recorded is that the measurement
+			// depended on something about this machine — the network it has, the
+			// scanner it has installed — that the next machine may not have.
+			measuredAnyway = append(measuredAnyway, what)
 		}
 		documents++
 		doc := assertSingleJSONValue(t, what, stdout.Bytes())
@@ -437,11 +546,21 @@ func TestJSONStdoutIsExactlyOneDocument(t *testing.T) {
 		t.Run(name+"_multi", func(t *testing.T) { run(t, what, name, tc, true) })
 	}
 
-	// The floor, not a warning: every command that ran answered. A later change
-	// that silences one fails here rather than quietly shrinking the guard.
-	if documents != ran {
-		t.Errorf("%d of %d commands that ran produced a document; every one must", documents, ran)
+	// The floor, not a warning: every command that ran either answered or is one
+	// of the network-dependent cases named above. A later change that silences
+	// one of the rest fails here rather than quietly shrinking the guard, and the
+	// two counts have to account for every case that ran — a case that fell into
+	// neither would be one the guard stopped saying anything about at all.
+	if documents+len(unmeasured) != ran {
+		t.Errorf("%d of %d commands that ran produced a document and %d could not be measured here; "+
+			"every one must be one or the other", documents, ran, len(unmeasured))
 	}
-	t.Logf("enumerated %d commands and %d several-record cases, ran %d, %d produced a document",
-		len(jsonStdoutCases), len(jsonStdoutMultiCases), ran, documents)
+	t.Logf("enumerated %d commands and %d several-record cases, ran %d, %d produced a document, %d unmeasured here",
+		len(jsonStdoutCases), len(jsonStdoutMultiCases), ran, documents, len(unmeasured))
+	// The reach of the run just made, stated rather than left to be inferred from
+	// the totals: which cases this machine could not measure, and which it
+	// measured only because it has a network or a scanner the next machine —
+	// CI's blocked runner — may not.
+	t.Logf("environment-dependent cases — unmeasured, wrote nothing: %v; answered anyway on this machine: %v",
+		unmeasured, measuredAnyway)
 }

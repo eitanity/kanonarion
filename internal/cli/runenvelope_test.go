@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// restoreJSONFlagAfterRun puts the process-wide --json flag back after an
-// in-process Run.
-//
-// Run binds --json afresh on every invocation, so a command run under it leaves
-// jsonOut true when it returns, and the next test in this package that calls a
-// render helper directly renders JSON where it expected text. The tests that
-// already do this happen to sort late enough not to have hit it; that is
-// ordering, not safety.
-func restoreJSONFlagAfterRun(t *testing.T) {
-	t.Helper()
-	prev := jsonOut
-	t.Cleanup(func() { jsonOut = prev })
-}
-
 // decodeEnvelope decodes one enveloped answer: the object's own fields, and the
 // per-module documents in its modules array, undecoded.
 //

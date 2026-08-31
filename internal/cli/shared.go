@@ -575,21 +575,24 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 	return best, bestVer
 }
 
-// resetInvocationState puts the process-wide state a command DERIVES back to
-// what a fresh invocation starts from. newRootCmd calls it, so it runs once
-// per Run.
+// resetInvocationState puts every process-wide variable one invocation writes
+// back to what a fresh invocation starts from. newRootCmd calls it, so it runs
+// before the command tree is built, and Run calls it again when the invocation
+// ends, so nothing is left for the next reader.
 //
-// The flag-BOUND variables (storeRoot, logLevel, jsonOut,
-// allowVerificationDowngrade) are absent because they need no help:
-// StringVar/BoolVar assign the flag's default at registration, and newRootCmd
-// registers every flag on every invocation. The ones below are written by a
-// resolve* helper or by PersistentPreRunE, and a helper that is not called
-// leaves the previous command's value in place. Three call sites reach
-// resolveModcacheMode; sixty-odd reach NewContainer, which reads modcacheMode.
+// Both call sites answer different hazards. The one at construction stops an
+// invocation that never reaches PersistentPreRunE — cobra answers --help and
+// --version before it — from inheriting the last one's resolved state. The one
+// at the end stops a reader that never runs an invocation at all: a test binary
+// calls a render function directly, and a --json Run that left jsonOut true made
+// that call answer in JSON.
 //
-// cliClock is deliberately absent for the opposite reason: it is the test seam
-// SetClockForTest pins BEFORE the invocation runs, and resetting it here would
-// unpin every golden.
+// The flag-BOUND variables are here for that second hazard. Registration
+// assigning their defaults protects the reader that goes through the tree, and
+// says nothing about the value an invocation LEAVES.
+//
+// cliClock is deliberately absent: it is the test seam SetClockForTest pins
+// BEFORE the invocation runs, and resetting it here would unpin every golden.
 func resetInvocationState() {
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""
@@ -599,6 +602,17 @@ func resetInvocationState() {
 	// The safe default, so an invocation that never reaches PersistentPreRunE
 	// cannot inherit the last one's permission to create a store.
 	storeIntent = StoreIntentRead
+	// The rendering flags, in the state a command that was passed neither is
+	// entitled to: text on stdout at the default verbosity.
+	jsonOut = false
+	logLevel = defaultLogLevel
+	allowVerificationDowngrade = false
+	// storeRoot resets to NO STORE, not to the default one: the default names the
+	// operator's own store, and a reader that opens it without being asked to is
+	// the outcome worth refusing — an empty path fails loudly where
+	// ~/.kanonarion would be read, written and migrated in silence. A real
+	// invocation never sees this value; registration assigns the default next.
+	storeRoot = ""
 }
 
 // storeRoot is the effective store directory for the current invocation.
@@ -609,6 +623,12 @@ var storeRoot string
 // logLevel is the effective log verbosity for the current invocation.
 // Bound to --log-level on the root command.
 var logLevel string
+
+// defaultLogLevel is what --log-level registers and what an invocation that
+// names no level runs at. It is a constant because the flag registration and
+// resetInvocationState have to agree on it: two literals would let the reset
+// put the package in a state no invocation starts from.
+const defaultLogLevel = "warn"
 
 // jsonOut controls whether commands emit output as JSON.
 // Bound to --json on the root command as a persistent flag.

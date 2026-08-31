@@ -71,7 +71,11 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 		Use: "walk <module@version>",
 		Annotations: map[string]string{
 			annotationStoreIntent: StoreIntentCreate,
-			annotationNetworkUse:  NetworkAlways,
+			// --from-modcache is the offline walk: module bytes come from a
+			// module cache and go.sum verifies them, so the reach is avoidable
+			// rather than inherent. The declaration moved with the flag.
+			annotationNetworkUse:   NetworkAvoidable,
+			annotationOfflineFlags: "--from-modcache",
 		},
 		Short: "Walk the dependency graph for a module and persist the walk record",
 		Example: `  kanonarion walk github.com/spf13/cobra@v1.8.1

@@ -40,7 +40,6 @@ func contextRootingOf(t *testing.T, what string, args ...string) map[string]any 
 func TestContextStatesWhetherTheWalkWasNamedOrChosen(t *testing.T) {
 	fx := newJSONStdoutFixture(t)
 	chdirWithGoMod(t, "")
-	restoreJSONFlagAfterRun(t)
 
 	t.Run("no walk named: the basis is chosen, out of a stated candidate count", func(t *testing.T) {
 		rooting := contextRootingOf(t, "context --gomod",
@@ -123,7 +122,6 @@ func TestContextStatesWhetherTheWalkWasNamedOrChosen(t *testing.T) {
 func TestContextRootingIsAbsentWhereNothingRootedTheRun(t *testing.T) {
 	fx := newJSONStdoutFixture(t)
 	chdirWithGoMod(t, "")
-	restoreJSONFlagAfterRun(t)
 
 	var stdout, stderr bytes.Buffer
 	if err := Run([]string{"context", jsonDocDepCoord, "--json", "--store-root", fx.storeRoot},

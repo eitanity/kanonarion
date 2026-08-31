@@ -266,14 +266,15 @@ func TestWalkGoMod_ResolvesFromModcacheAgainstItsOwnGoSum(t *testing.T) {
 	}
 	cache := t.TempDir()
 
-	var stdout, stderr bytes.Buffer
 	// Whatever else the walk does with an empty closure, it passes through
-	// resolveModcacheMode: the state it leaves is what the containers read.
-	_ = Run([]string{"walk", "--gomod", gomod, "--from-modcache=" + cache,
-		"--store-root", t.TempDir(), "--no-progress"}, &stdout, &stderr)
+	// resolveModcacheMode: the state it leaves is what the containers read. It
+	// runs through the command tree rather than through Run, which clears that
+	// state on the way out so the next reader in this process cannot inherit it.
+	stderr := primeInvocation(t, "walk", "--gomod", gomod, "--from-modcache="+cache,
+		"--store-root", t.TempDir(), "--no-progress")
 
 	if !modcacheMode {
-		t.Fatalf("walk --gomod --from-modcache left modcacheMode false\nstderr:\n%s", stderr.String())
+		t.Fatalf("walk --gomod --from-modcache left modcacheMode false\nstderr:\n%s", stderr)
 	}
 	if modcacheDir != cache {
 		t.Errorf("modcacheDir = %q, want %q", modcacheDir, cache)
