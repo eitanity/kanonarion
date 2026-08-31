@@ -314,6 +314,12 @@ Re-running `kanonarion licence` without `--force` returns the cached record
 immediately. A new pipeline version invalidates all existing records for that
 stage (but not fetch records or walk records).
 
+A `local` coordinate is never served from cache at all: the working tree
+mutates, so it is re-read and re-extracted on every run. The run appends a
+generation only when the extraction says something the ledger does not already
+say; a re-extraction that comes back identical appends nothing and says so on
+stderr. `--force` records the measurement either way.
+
 The database schema is versioned via the shared `schema_migrations` table
 (numbered per module). The current pipeline version is `1.3.0`.
 
@@ -326,7 +332,8 @@ the identity `source` (`scanner`). Licence extraction is half of `audit`'s
 compliance verdict, so this anchors *what licence was resolved, and when* in the
 append-only assurance log - independent of the mutable licence record. A cache hit
 (no `--force`) re-serves the stored record without re-extracting, so it appends
-nothing.
+nothing. A re-extraction that appends no generation appends no event either: the log
+records generations, not runs.
 
 ## Vendored licences
 

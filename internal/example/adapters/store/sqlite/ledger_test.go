@@ -754,3 +754,195 @@ func seedPreLedgerIndex(t *testing.T, db sqlitestore.DB, r domain2.ExampleRecord
 		}
 	}
 }
+
+// TestLedger_IdenticalGenerationFindsTheMeasurementAlreadyHeld: the read a run
+// makes AFTER extracting, so a local coordinate — which may never be served from
+// cache — can still tell that its re-extraction states what the ledger states.
+func TestLedger_IdenticalGenerationFindsTheMeasurementAlreadyHeld(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	artefact := fetchtest.ZipArtefact("tree-one=").String()
+	first := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	held := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first, artefact)
+	if perr := s.PutExampleRecord(ctx, held); perr != nil {
+		t.Fatalf("PutExampleRecord: %v", perr)
+	}
+
+	// The next run over the unchanged tree: the same measurement, a later clock,
+	// and therefore a different seal.
+	fresh := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first.Add(time.Hour), artefact)
+	if fresh.ContentHash == held.ContentHash {
+		t.Fatal("the two runs sealed identically; the fixture is not exercising the case")
+	}
+	got, found, err := s.IdenticalGeneration(ctx, fresh)
+	if err != nil || !found {
+		t.Fatalf("IdenticalGeneration: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != held.ContentHash {
+		t.Fatalf("content hash = %q, want the generation already held (%q)", got.ContentHash, held.ContentHash)
+	}
+}
+
+// TestLedger_IdenticalGenerationRefusesADifferentAnalysis is the half the
+// prefilter cannot decide on its own. Both generations state one example, so
+// every column the table records agrees; only the example inside the record says
+// they found different things.
+func TestLedger_IdenticalGenerationRefusesADifferentAnalysis(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	artefact := fetchtest.ZipArtefact("tree-one=").String()
+	first := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if perr := s.PutExampleRecord(ctx,
+		ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first, artefact)); perr != nil {
+		t.Fatalf("PutExampleRecord: %v", perr)
+	}
+
+	// A different tree, an example set of the same size.
+	other := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0,
+		first.Add(time.Hour), fetchtest.ZipArtefact("tree-two=").String())
+	if _, found, gerr := s.IdenticalGeneration(ctx, other); gerr != nil || found {
+		t.Fatalf("an extraction of different bytes matched a held generation: found=%v err=%v", found, gerr)
+	}
+
+	// The same artefact, a renamed example. The example count and the status are
+	// unchanged, so a comparison over columns would call these one measurement.
+	renamed := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleB"}, 0, first.Add(2*time.Hour), artefact)
+	if _, found, gerr := s.IdenticalGeneration(ctx, renamed); gerr != nil || found {
+		t.Fatalf("a different example matched a held generation: found=%v err=%v", found, gerr)
+	}
+}
+
+// TestLedger_IdenticalGenerationMatchesNothingWhenTheAnalysisIsUnnamed: a record
+// that does not say which artefact it read is not evidence that it read what any
+// other record read, so it matches nothing — not even a generation otherwise
+// identical to it.
+//
+// The write leg refuses a record naming no artefact, so this shape can only
+// arrive from a generation written before the field existed. Those rows are still
+// served, and two of them state one example set for one coordinate with nothing
+// to show they describe the same bytes.
+func TestLedger_IdenticalGenerationMatchesNothingWhenTheAnalysisIsUnnamed(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	first := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	seedPreLedgerRow(t, s.InternalDB(),
+		ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first, ""))
+
+	unnamed := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first.Add(time.Hour), "")
+	if _, found, gerr := s.IdenticalGeneration(ctx, unnamed); gerr != nil || found {
+		t.Fatalf("a record naming no artefact matched a held generation: found=%v err=%v", found, gerr)
+	}
+}
+
+// TestLedger_IdenticalGenerationRefusesTheZeroCoordinate pins the rule every read
+// leg of this store obeys: absence is the wrong answer to a question about no
+// module.
+func TestLedger_IdenticalGenerationRefusesTheZeroCoordinate(t *testing.T) {
+	s := openTestStore(t)
+	_, _, err := s.IdenticalGeneration(context.Background(), domain2.ExampleRecord{
+		ArtefactIdentity: fetchtest.ZipArtefact("tree-one=").String(),
+	})
+	if !errors.Is(err, coordinate.ErrZeroCoordinate) {
+		t.Fatalf("err = %v, want %v", err, coordinate.ErrZeroCoordinate)
+	}
+}
+
+// TestLedger_IdenticalGenerationReportsAnUnverifiableRowRatherThanAgreement is
+// the fault seam. A row this build cannot verify says nothing about what was
+// measured, and reading it as "nothing held" quietly would make the caller
+// append with no sign that the ledger has a problem. The error travels; the
+// caller records its measurement anyway.
+func TestLedger_IdenticalGenerationReportsAnUnverifiableRowRatherThanAgreement(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	artefact := fetchtest.ZipArtefact("tree-one=").String()
+	first := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	held := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first, artefact)
+	if perr := s.PutExampleRecord(ctx, held); perr != nil {
+		t.Fatalf("PutExampleRecord: %v", perr)
+	}
+
+	var h domain2.ExampleRecordHasher
+	tampered := held
+	tampered.FailureDetail = "not what was sealed"
+	blob, merr := h.Marshal(tampered)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
+	if _, uerr := s.InternalDB().DB().Exec(
+		`UPDATE example_records SET serialised = ?`, blobcodec.Encode(blob)); uerr != nil {
+		t.Fatalf("tampering with the stored row: %v", uerr)
+	}
+
+	fresh := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first.Add(time.Hour), artefact)
+	_, found, gerr := s.IdenticalGeneration(ctx, fresh)
+	if !errors.Is(gerr, ports.ErrExampleIntegrity) {
+		t.Fatalf("err = %v, want %v", gerr, ports.ErrExampleIntegrity)
+	}
+	if found {
+		t.Error("an unverifiable row was reported as the measurement already held")
+	}
+}
+
+// TestLedger_IdenticalGenerationSeesThroughARefetchOfTheSameTree is the case the
+// road test found. The project root is re-ingested on every run, so the fetch
+// ledger appends a record each time and the extraction's SourceContentHash — the
+// name of that fetch record, not of the bytes — moves with it. The artefact
+// identity does not: it is a content address, and the tree did not change.
+func TestLedger_IdenticalGenerationSeesThroughARefetchOfTheSameTree(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	artefact := fetchtest.ZipArtefact("tree-one=").String()
+	first := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	var h domain2.ExampleRecordHasher
+
+	held := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first, artefact)
+	held.SourceContentHash = "sha256:first-ingest"
+	held, err = h.SetContentHash(held)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if perr := s.PutExampleRecord(ctx, held); perr != nil {
+		t.Fatalf("PutExampleRecord: %v", perr)
+	}
+
+	fresh := ledgerRecord(t, local, domain2.ExampleStatusFound, []string{"ExampleA"}, 0, first.Add(time.Hour), artefact)
+	fresh.SourceContentHash = "sha256:second-ingest"
+	fresh, err = h.SetContentHash(fresh)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	got, found, err := s.IdenticalGeneration(ctx, fresh)
+	if err != nil || !found {
+		t.Fatalf("IdenticalGeneration: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != held.ContentHash {
+		t.Fatalf("content hash = %q, want the generation already held (%q)", got.ContentHash, held.ContentHash)
+	}
+}

@@ -178,6 +178,36 @@ func (s *fakeCallGraphStore) WorktreeGeneration(_ context.Context, coord coordin
 	return r, true, nil
 }
 
+// IdenticalGeneration lets fakeCallGraphStore answer the after-the-fact read:
+// does the ledger already hold this measurement?
+//
+// It reads the append log rather than the records map, because the map keeps one
+// record per coordinate and the question is about every generation the ledger
+// holds. The rule is the domain's, so a test cannot go green on a laxer one than
+// the sqlite store applies. Newest first, matching the store.
+func (s *fakeCallGraphStore) IdenticalGeneration(_ context.Context, rec domain.CallGraphRecord) (domain.CallGraphRecord, bool, error) {
+	if s.getErr != nil {
+		return domain.CallGraphRecord{}, false, s.getErr
+	}
+	if !domain.NamesAnalysedContent(rec) {
+		return domain.CallGraphRecord{}, false, nil
+	}
+	for i := len(s.puts) - 1; i >= 0; i-- {
+		held := s.puts[i]
+		if held.Coordinate != rec.Coordinate || held.PipelineVersion != rec.PipelineVersion {
+			continue
+		}
+		same, err := domain.RestatesAnalysis(rec, held)
+		if err != nil {
+			return domain.CallGraphRecord{}, false, err //nolint:wrapcheck // test fake
+		}
+		if same {
+			return held, true, nil
+		}
+	}
+	return domain.CallGraphRecord{}, false, nil
+}
+
 func (s *fakeCallGraphStore) ListCallGraphRecords(_ context.Context, _ ports.CallGraphFilter) ([]ports.CallGraphSummary, error) {
 	return nil, nil
 }

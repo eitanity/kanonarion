@@ -134,6 +134,10 @@ func (s *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdent
 // fakeLicenceStore holds license records.
 type fakeLicenseStore struct {
 	records map[licenseKey]domain.LicenseRecord
+	// puts is every record written, in order. The map above keeps one record per
+	// coordinate, so it cannot say how many generations a run appended — which is
+	// the whole question when a local tree is re-read.
+	puts []domain.LicenseRecord
 	// getErr makes the read leg fail, which is the only way to reach a caller's
 	// store-failure branch: a fake that can only be empty proves absence
 	// handling and nothing else.
@@ -147,7 +151,38 @@ func (s *fakeLicenseStore) PutLicenseRecord(_ context.Context, r domain.LicenseR
 		s.records = make(map[licenseKey]domain.LicenseRecord)
 	}
 	s.records[licenseKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
+	s.puts = append(s.puts, r)
 	return nil
+}
+
+// IdenticalGeneration lets fakeLicenseStore answer the after-the-fact read: does
+// the ledger already hold this measurement?
+//
+// It reads the append log rather than the records map, because the map keeps one
+// record per coordinate and the question is about every generation the ledger
+// holds. The rule is the domain's, so a test cannot go green on a laxer one than
+// the sqlite store applies. Newest first, matching the store.
+func (s *fakeLicenseStore) IdenticalGeneration(_ context.Context, rec domain.LicenseRecord) (domain.LicenseRecord, bool, error) {
+	if s.getErr != nil {
+		return domain.LicenseRecord{}, false, s.getErr
+	}
+	if !domain.NamesAnalysedContent(rec) {
+		return domain.LicenseRecord{}, false, nil
+	}
+	for i := len(s.puts) - 1; i >= 0; i-- {
+		held := s.puts[i]
+		if held.Coordinate != rec.Coordinate || held.PipelineVersion != rec.PipelineVersion {
+			continue
+		}
+		same, err := domain.SameMeasurement(rec, held)
+		if err != nil {
+			return domain.LicenseRecord{}, false, err //nolint:wrapcheck // test fake
+		}
+		if same {
+			return held, true, nil
+		}
+	}
+	return domain.LicenseRecord{}, false, nil
 }
 
 func (s *fakeLicenseStore) GetLicenseRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.LicenseRecord, bool, error) {
@@ -169,12 +204,20 @@ func (s *fakeLicenseStore) ListLicenseRecords(_ context.Context, _ ports.License
 type fakeDetector struct {
 	match ports.LicenseMatch
 	meta  ports.DetectorMetadata
+	// calls counts detections, so a test can tell a served answer from a
+	// measured one without inspecting what was served.
+	calls int
 }
 
 func (d *fakeDetector) Detect(_ context.Context, _ []byte) (ports.LicenseMatch, error) {
+	d.calls++
 	return d.match, nil
 }
 
 func (d *fakeDetector) DetectorMetadata() ports.DetectorMetadata {
 	return d.meta
 }
+
+// Ensure the fake offers the optional capability the use case looks for; a fake
+// that silently did not would make every reuse test pass by never asking.
+var _ ports.IdenticalGenerationReader = (*fakeLicenseStore)(nil)

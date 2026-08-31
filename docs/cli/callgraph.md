@@ -280,7 +280,10 @@ artefact's own integrity was established by the fetch that stored it.
 A second run is served from the store and says so with `(cached)`; `--force`
 re-extracts. A record the environment cut short is never served from cache, so a
 repeat re-analyses; a re-analysis that comes back identical appends nothing and
-says so.
+says so. The same holds for a `local` coordinate, which is never served from
+cache at all: the tree is always re-read, and the run appends a generation only
+when the analysis says something the ledger does not already say. `--force`
+records the measurement either way.
 
 ### `callgraph-show`
 

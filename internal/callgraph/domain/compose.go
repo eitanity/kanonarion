@@ -1193,6 +1193,43 @@ func SameMeasurement(a, b CallGraphRecord) (bool, error) {
 	return bytes.Equal(ab, bb), nil
 }
 
+// RestatesAnalysis reports whether a generation the ledger already holds records
+// the SAME ANALYSIS as one a run has just performed: the same graph, of the same
+// bytes, reached the same way.
+//
+// It is SameMeasurement with two differences, and both follow from the question
+// being asked at a different moment. SameMeasurement compares two records a
+// caller is holding. This one answers "has the ledger recorded this before",
+// which a run asks about an analysis it has just performed, so that it can
+// decline to append a second copy of it.
+//
+//   - The analysed content must be NAMED, on both sides. A record that does not
+//     say which bytes it read is not evidence that it read what any other record
+//     read, including another that says nothing.
+//   - SourceContentHash is dropped. It names WHICH FETCH MEASUREMENT handed the
+//     bytes over, not which bytes: a local root is never served from the fetch
+//     cache, so every project walk that analyses the root appends a fresh fetch
+//     record sealed under its own clock, and this field moves with it while the
+//     artefact identity — a content address over the same bytes — does not.
+//     Comparing it made every walk-then-extract of an unchanged tree look like a
+//     new analysis, which is the whole population this question exists to
+//     recognise. forGraphComparison drops it as provenance for the same reason,
+//     and dropping it is only sound because the artefact identity IS compared and
+//     the naming rule above guarantees it is there to compare.
+func RestatesAnalysis(fresh, held CallGraphRecord) (bool, error) {
+	if !NamesAnalysedContent(fresh) || !NamesAnalysedContent(held) {
+		return false, nil
+	}
+	return SameMeasurement(withoutFetchProvenance(fresh), withoutFetchProvenance(held))
+}
+
+// withoutFetchProvenance blanks which fetch measurement supplied the bytes,
+// leaving the artefact identity that names them.
+func withoutFetchProvenance(r CallGraphRecord) CallGraphRecord {
+	r.SourceContentHash = ""
+	return r
+}
+
 // withoutMeasurementTime blanks when a record was measured, and the seal that
 // covers it.
 func withoutMeasurementTime(r CallGraphRecord) CallGraphRecord {

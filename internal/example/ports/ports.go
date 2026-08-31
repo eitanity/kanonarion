@@ -106,6 +106,29 @@ type ExampleRecordLister interface {
 	ListExampleRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.ExampleRecord, error)
 }
 
+// IdenticalGenerationReader is the optional after-the-fact read: the generation
+// the ledger ALREADY holds that states the measurement a run has just taken.
+//
+// It answers a question the cache lookup cannot. A cache lookup runs before the
+// extraction and asks whether a stored record may be SERVED; for a local
+// coordinate the answer is always no, because a local version pins no content
+// and the working tree mutates. Recognising afterwards that the extraction came
+// back saying what the ledger already says is a different question, and one a run
+// can only ask once it holds the answer.
+//
+// A store that does not offer it appends a generation per run, which is what
+// every store did before it existed.
+type IdenticalGenerationReader interface {
+	// IdenticalGeneration returns the generation stating the same measurement as
+	// rec — differing at most in when it was taken — or (zero, false, nil) when
+	// the ledger holds none.
+	//
+	// A record that does not name the artefact it read matches nothing, including
+	// another record that names none: absence is not a value two records can
+	// share.
+	IdenticalGeneration(ctx context.Context, rec domain.ExampleRecord) (domain.ExampleRecord, bool, error)
+}
+
 // ExampleFilter constrains ListExampleRecords results.
 type ExampleFilter struct {
 	Limit  int // 0: no limit

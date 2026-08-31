@@ -86,6 +86,10 @@ func (s *fakeFactStore) ComposeFetchRecord(_ context.Context, coord coordinate.M
 // fakeBlobStore holds blobs keyed by handle.
 type fakeBlobStore struct {
 	blobs map[string][]byte
+	// gets counts reads of the module zip, so a test can tell a served answer
+	// from a measured one: this stage's parser is the real one, so the read of
+	// the artefact is where "the tree was re-parsed" becomes observable.
+	gets int
 }
 
 func (s *fakeBlobStore) Put(_ context.Context, identity fetchports.BlobIdentity, r io.Reader) error {
@@ -101,6 +105,7 @@ func (s *fakeBlobStore) Put(_ context.Context, identity fetchports.BlobIdentity,
 }
 
 func (s *fakeBlobStore) Get(_ context.Context, identity fetchports.BlobIdentity) (io.ReadCloser, error) {
+	s.gets++
 	if s.blobs == nil {
 		return nil, errBlobNotFound
 	}
@@ -133,6 +138,10 @@ func (s *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdent
 // fakeExampleStore holds example records keyed by (path, version, pipeline_version).
 type fakeExampleStore struct {
 	records map[exampleKey]domain.ExampleRecord
+	// puts is every record written, in order. The map above keeps one record per
+	// coordinate, so it cannot say how many generations a run appended — which is
+	// the whole question when a local tree is re-read.
+	puts []domain.ExampleRecord
 	// getErr makes the read leg fail, which is the only way to reach a caller's
 	// store-failure branch: a fake that can only be empty proves absence
 	// handling and nothing else.
@@ -146,7 +155,38 @@ func (s *fakeExampleStore) PutExampleRecord(_ context.Context, r domain.ExampleR
 		s.records = make(map[exampleKey]domain.ExampleRecord)
 	}
 	s.records[exampleKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
+	s.puts = append(s.puts, r)
 	return nil
+}
+
+// IdenticalGeneration lets fakeExampleStore answer the after-the-fact read: does
+// the ledger already hold this measurement?
+//
+// It reads the append log rather than the records map, because the map keeps one
+// record per coordinate and the question is about every generation the ledger
+// holds. The rule is the domain's, so a test cannot go green on a laxer one than
+// the sqlite store applies. Newest first, matching the store.
+func (s *fakeExampleStore) IdenticalGeneration(_ context.Context, rec domain.ExampleRecord) (domain.ExampleRecord, bool, error) {
+	if s.getErr != nil {
+		return domain.ExampleRecord{}, false, s.getErr
+	}
+	if !domain.NamesAnalysedContent(rec) {
+		return domain.ExampleRecord{}, false, nil
+	}
+	for i := len(s.puts) - 1; i >= 0; i-- {
+		held := s.puts[i]
+		if held.Coordinate != rec.Coordinate || held.PipelineVersion != rec.PipelineVersion {
+			continue
+		}
+		same, err := domain.SameMeasurement(rec, held)
+		if err != nil {
+			return domain.ExampleRecord{}, false, err //nolint:wrapcheck // test fake
+		}
+		if same {
+			return held, true, nil
+		}
+	}
+	return domain.ExampleRecord{}, false, nil
 }
 
 func (s *fakeExampleStore) GetExampleRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.ExampleRecord, bool, error) {
@@ -176,3 +216,7 @@ func (s *fakeExampleStore) FindBySymbolInModule(_ context.Context, _ coordinate.
 var _ fetchports.FactStore = (*fakeFactStore)(nil)
 var _ fetchports.BlobStore = (*fakeBlobStore)(nil)
 var _ ports.ExampleStore = (*fakeExampleStore)(nil)
+
+// Ensure the fake offers the optional capability the use case looks for; a fake
+// that silently did not would make every reuse test pass by never asking.
+var _ ports.IdenticalGenerationReader = (*fakeExampleStore)(nil)

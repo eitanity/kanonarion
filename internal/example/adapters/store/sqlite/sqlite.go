@@ -413,6 +413,73 @@ func decodeRecord(blob []byte) (domain2.ExampleRecord, error) {
 	return rec, nil
 }
 
+// IdenticalGeneration returns the generation the ledger already holds that
+// states the same measurement as rec. See ports.IdenticalGenerationReader for
+// why a run asks this after extracting rather than before.
+//
+// The SQL is a PREFILTER and nothing else. The table records only the status and
+// the example count, which two different sets of examples of the same size share,
+// so the decision is domain.SameMeasurement over the decoded records: every
+// example body, every parse failure and the artefact that was read. The blob
+// carries all of it, so no index row is touched to answer this.
+//
+// Newest first, stopping at the first match, because the generation a re-read of
+// an unchanged tree matches is the one it wrote last time; the content hash
+// breaks a tie so two rows sharing a second cannot order differently between
+// runs.
+//
+// A row this build cannot verify stops the read rather than being skipped, on the
+// same terms as every other read leg of this store. The caller treats a failure
+// as "nothing held" and appends, so an unverifiable row costs a redundant
+// generation, never a suppressed measurement.
+func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.ExampleRecord) (domain2.ExampleRecord, bool, error) {
+	if rec.Coordinate.IsZero() {
+		return domain2.ExampleRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	// A record that does not say WHICH artefact it read cannot be shown to have
+	// read the same bytes as any other, including another that says nothing.
+	if !domain2.NamesAnalysedContent(rec) {
+		return domain2.ExampleRecord{}, false, nil
+	}
+
+	const q = `SELECT serialised FROM example_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND overall_status = ? AND example_count = ?
+ORDER BY extracted_at DESC, content_hash DESC`
+	rows, err := s.db.DB().QueryContext(ctx, q,
+		rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
+		int(rec.OverallStatus), len(rec.Examples),
+	)
+	if err != nil {
+		return domain2.ExampleRecord{}, false, fmt.Errorf("querying example generations of %s: %w", rec.Coordinate, err)
+	}
+	defer func() {
+		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
+	}()
+
+	for rows.Next() {
+		var blob []byte
+		if serr := rows.Scan(&blob); serr != nil {
+			return domain2.ExampleRecord{}, false, fmt.Errorf("scanning example generation of %s: %w", rec.Coordinate, serr)
+		}
+		held, derr := decodeRecord(blob)
+		if derr != nil {
+			return domain2.ExampleRecord{}, false, derr
+		}
+		same, serr := domain2.SameMeasurement(rec, held)
+		if serr != nil {
+			return domain2.ExampleRecord{}, false, fmt.Errorf("comparing example generations of %s: %w", rec.Coordinate, serr)
+		}
+		if same {
+			return held, true, nil
+		}
+	}
+	if cerr := rows.Err(); cerr != nil {
+		return domain2.ExampleRecord{}, false, fmt.Errorf("iterating example generations of %s: %w", rec.Coordinate, cerr)
+	}
+	return domain2.ExampleRecord{}, false, nil
+}
+
 // servedContentHash returns the content hash of the record composition serves
 // for one coordinate and pipeline version, and whether the ledger holds any.
 //

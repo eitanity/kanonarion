@@ -79,7 +79,19 @@ func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, 
 		return fmt.Errorf("extracting interface: %w", err)
 	}
 
-	return printInterfaceRecord(result.Record, result.FromCache, jsonOut, stdout)
+	if err := printInterfaceRecord(result.Record, result.FromCache || result.Reused, jsonOut, stdout); err != nil {
+		return err
+	}
+	if result.Reused {
+		// Said plainly, because the two are different facts and the distinction is
+		// the one a reader chasing a stale answer needs: the extraction DID run,
+		// and it came back saying what the ledger already said.
+		if _, err := fmt.Fprintln(stderr,
+			"re-extracted and found identical to the generation already recorded; no new generation was written"); err != nil {
+			return fmt.Errorf("writing re-extraction note: %w", err)
+		}
+	}
+	return nil
 }
 
 // runInterfaceHistory prints every generation the ledger holds for a coordinate,

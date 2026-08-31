@@ -26,6 +26,12 @@ Reads the module's zip from the blob store, parses every `_test.go` file for
 `Example*` functions, and persists an `ExampleRecord`. On subsequent calls the
 cached record is returned unless `--force` is given.
 
+A `local` coordinate is never served from cache at all: the working tree
+mutates, so it is re-read and re-extracted on every run. The run appends a
+generation only when the extraction says something the ledger does not already
+say; a re-extraction that comes back identical appends nothing and says so on
+stderr. `--force` records the measurement either way.
+
 ```
 kanonarion examples github.com/spf13/cobra@v1.8.1
 kanonarion examples github.com/spf13/cobra@v1.8.1 --json
@@ -128,7 +134,8 @@ version, overall status, example count, parse-failure count, the record's conten
 hash, the identity of the artefact the extraction read and the content hash of
 the fetch record that supplied it. A failed extraction carries its recorded
 reason as `failure_detail`. A cache hit re-serves the stored record without
-re-extracting, so it appends nothing; `--force` re-extracts and appends.
+re-extracting, so it appends nothing; `--force` re-extracts and appends. A re-extraction that appends no generation appends no event either: the log
+records generations, not runs.
 
 ## Limitations
 

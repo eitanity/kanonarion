@@ -376,7 +376,7 @@ kanonarion walk --gomod ./go.mod --analyse-root
 | Root licence record | Marked `role: root_declaration` - the licence the project itself declares outbound (grant + asserted copyright), not an inbound obligation. A proprietary root resolving to `Unclassified` plus copyright statements is a correct outcome, not a failure |
 | `license-compat` | Adopts the analysed root licence as the implicit `--target` when the flag is omitted |
 | `notice` / `sbom` | Carry the root's own licence and copyright (SBOM `metadata.component` gains `licenses` and `copyright`) |
-| Freshness | The working tree is re-read and re-analysed on every run; no cached record is ever served for the `local` coordinate, so an edit is always reflected in the next run |
+| Freshness | The working tree is re-read and re-analysed on every run; no cached record is ever served for the `local` coordinate, so an edit is always reflected in the next run. A re-analysis that comes back stating what the ledger already states appends no generation, so repeated runs over an unchanged tree do not grow the store |
 | Source locality | The tree is zipped into the local store only; nothing leaves the machine |
 | Ingest failure | Walk degrades to `partial` with the reason on stderr; the dependency graph is kept. `--allow-partial` exits `0` |
 

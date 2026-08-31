@@ -136,7 +136,11 @@ func (s *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdent
 // fakeInterfaceStore holds interface records keyed by (path, version, pipeline).
 type fakeInterfaceStore struct {
 	records map[ifaceKey]domain.InterfaceRecord
-	putErr  error
+	// puts is every record written, in order. The map above keeps one record per
+	// coordinate, so it cannot say how many generations a run appended — which is
+	// the whole question when a local tree is re-read.
+	puts   []domain.InterfaceRecord
+	putErr error
 	// getErr makes the read leg fail, which is the only way to reach a caller's
 	// store-failure branch: a fake that can only be empty proves absence
 	// handling and nothing else.
@@ -153,7 +157,38 @@ func (s *fakeInterfaceStore) PutInterfaceRecord(_ context.Context, r domain.Inte
 		s.records = make(map[ifaceKey]domain.InterfaceRecord)
 	}
 	s.records[ifaceKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
+	s.puts = append(s.puts, r)
 	return nil
+}
+
+// IdenticalGeneration lets fakeInterfaceStore answer the after-the-fact read:
+// does the ledger already hold this measurement?
+//
+// It reads the append log rather than the records map, because the map keeps one
+// record per coordinate and the question is about every generation the ledger
+// holds. The rule is the domain's, so a test cannot go green on a laxer one than
+// the sqlite store applies. Newest first, matching the store.
+func (s *fakeInterfaceStore) IdenticalGeneration(_ context.Context, rec domain.InterfaceRecord) (domain.InterfaceRecord, bool, error) {
+	if s.getErr != nil {
+		return domain.InterfaceRecord{}, false, s.getErr
+	}
+	if !domain.NamesAnalysedContent(rec) {
+		return domain.InterfaceRecord{}, false, nil
+	}
+	for i := len(s.puts) - 1; i >= 0; i-- {
+		held := s.puts[i]
+		if held.Coordinate != rec.Coordinate || held.PipelineVersion != rec.PipelineVersion {
+			continue
+		}
+		same, err := domain.SameMeasurement(rec, held)
+		if err != nil {
+			return domain.InterfaceRecord{}, false, err //nolint:wrapcheck // test fake
+		}
+		if same {
+			return held, true, nil
+		}
+	}
+	return domain.InterfaceRecord{}, false, nil
 }
 
 func (s *fakeInterfaceStore) GetInterfaceRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.InterfaceRecord, bool, error) {
@@ -204,4 +239,8 @@ func (f *fakeExtractor) Toolchain() gotoolchain.Version { return f.toolchain }
 var _ fetchports.FactStore = (*fakeFactStore)(nil)
 var _ fetchports.BlobStore = (*fakeBlobStore)(nil)
 var _ ports.InterfaceStore = (*fakeInterfaceStore)(nil)
+
+// Ensure the fake offers the optional capability the use case looks for; a fake
+// that silently did not would make every reuse test pass by never asking.
+var _ ports.IdenticalGenerationReader = (*fakeInterfaceStore)(nil)
 var _ ports.InterfaceExtractor = (*fakeExtractor)(nil)
