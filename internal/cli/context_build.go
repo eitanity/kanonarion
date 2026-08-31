@@ -361,7 +361,7 @@ func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 		// differs: one is still waiting to be run, the other has been run and
 		// must be run again. Reported with the reason rather than as a bare
 		// not_run, which a reader would take as "nobody has looked yet".
-		if pipelines, superseded := supersededInterfacePipelines(coord, storedInterfaceSummaries(ctx, uc)); superseded {
+		if pipelines, superseded := supersededInterfaceRecord(ctx, uc, coord); superseded {
 			return contextInterface{
 				Status: sectionStatusSuperseded,
 				Error:  supersededInterfaceLine(coord, pipelines),

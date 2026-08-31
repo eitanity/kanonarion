@@ -1353,13 +1353,39 @@ func defaultStoreRoot() string {
 	return filepath.Join(home, ".kanonarion")
 }
 
+// missingGoModError is a --gomod value that names no readable manifest. It
+// names the flag and the path because the whole failure mode is a path the
+// caller did not mean, and it refuses before any work is done: a command that
+// takes only the path's DIRECTORY never opens the file, and would otherwise
+// answer in full about whatever else is beside it.
+type missingGoModError struct {
+	path   string
+	reason string
+}
+
+func (e *missingGoModError) Error() string {
+	return fmt.Sprintf("--gomod %s: %s\n"+
+		"  the named manifest is what scopes this command; it could not be opened, so nothing was measured\n"+
+		"  pass the path of an existing go.mod, or omit --gomod to use ./go.mod in the working directory",
+		e.path, e.reason)
+}
+
 // resolveGoModPath returns the effective go.mod path to use for a command.
-// If explicit is non-empty it is returned as-is. Otherwise./go.mod is
-// stat-checked; if present that path is returned. If neither is available an
-// error is returned so callers can give a clear message without silently
-// falling through.
+//
+// An explicit path is stat-checked exactly as the ./go.mod default is: the path
+// a caller NAMES is the one that must exist. Returning it unchecked let a
+// mistyped path — or a sibling flag swallowed as the flag's value — reach the
+// commands that only need its directory, which then answered about the working
+// tree as confidently as if the file were there.
 func resolveGoModPath(explicit string) (string, error) {
 	if explicit != "" {
+		info, err := os.Stat(explicit)
+		if err != nil {
+			return "", &missingGoModError{path: explicit, reason: statReason(err)}
+		}
+		if info.IsDir() {
+			return "", &missingGoModError{path: explicit, reason: "is a directory, not a go.mod file"}
+		}
 		return explicit, nil
 	}
 	const defaultPath = "./go.mod"
@@ -1367,6 +1393,15 @@ func resolveGoModPath(explicit string) (string, error) {
 		return defaultPath, nil
 	}
 	return "", fmt.Errorf("no --gomod specified and ./go.mod not found in current directory")
+}
+
+// statReason reduces a stat failure to its cause. The *PathError text repeats
+// the path the caller is already being shown.
+func statReason(err error) string {
+	if pathErr, ok := errors.AsType[*os.PathError](err); ok {
+		return pathErr.Err.Error()
+	}
+	return err.Error()
 }
 
 // projectModulePathFromGoMod reads goModPath and returns the declared module

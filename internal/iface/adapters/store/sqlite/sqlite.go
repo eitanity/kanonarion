@@ -508,15 +508,25 @@ LIMIT 2`
 // than rows. Applying them in SQL would let a module with three generations
 // consume three places of a --limit 50, and the page an operator sees would
 // depend on how many times each module happened to be re-extracted.
+//
+// A coordinate filter is the opposite case and is applied IN SQL, before the
+// collapse: it selects which modules the answer is about rather than where the
+// page starts, and every row it excludes is a composition this read would
+// otherwise pay for and discard.
 func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.InterfaceFilter) ([]ports.InterfaceSummary, error) {
 	// No LIMIT or OFFSET here: paging happens after the collapse, on modules
 	// rather than rows.
-	const q = `SELECT module_path, module_version, pipeline_version,
+	q := `SELECT module_path, module_version, pipeline_version,
 	             overall_status, package_count, extracted_at, content_hash
-	      FROM interface_records
-	      ORDER BY extracted_at DESC, rowid DESC`
+	      FROM interface_records`
+	var args []any
+	if filter.Coordinate != nil {
+		q += ` WHERE module_path = ? AND module_version = ?`
+		args = append(args, filter.Coordinate.Path(), filter.Coordinate.Version())
+	}
+	q += ` ORDER BY extracted_at DESC, rowid DESC`
 
-	rows, err := s.db.DB().QueryContext(ctx, q)
+	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing interface records: %w", err)
 	}

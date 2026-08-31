@@ -766,3 +766,67 @@ func TestMigration4_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 		t.Errorf("FindSymbol returned %d refs after the rekey, want 1", len(refs))
 	}
 }
+
+// TestLedger_ListRestrictedToOneCoordinate pins that the coordinate filter
+// selects modules before the collapse and still serves the composed generation.
+//
+// A question about one module must be askable as one: without it a caller reads
+// the whole ledger and discards all of it but one module's rows, having already
+// paid to compose every multi-generation key it threw away.
+func TestLedger_ListRestrictedToOneCoordinate(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	artefact := fetchtest.ZipArtefact("same-bytes=").String()
+
+	wanted := mustCoord(t, "example.com/wanted", "v1.0.0")
+	otherVersion := mustCoord(t, "example.com/wanted", "v2.0.0")
+	otherModule := mustCoord(t, "example.com/other", "v1.0.0")
+	for _, r := range []domain2.InterfaceRecord{
+		ledgerRecord(t, wanted, domain2.InterfaceStatusPartial, []string{"New"},
+			time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), artefact),
+		ledgerRecord(t, wanted, domain2.InterfaceStatusExtracted, []string{"New", "Close"},
+			time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), artefact),
+		ledgerRecord(t, otherVersion, domain2.InterfaceStatusExtracted, []string{"Open"},
+			time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC), artefact),
+		ledgerRecord(t, otherModule, domain2.InterfaceStatusExtracted, []string{"Open"},
+			time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), artefact),
+	} {
+		if err := s.PutInterfaceRecord(ctx, r); err != nil {
+			t.Fatalf("PutInterfaceRecord: %v", err)
+		}
+	}
+
+	sums, err := s.ListInterfaceRecords(ctx, ports.InterfaceFilter{Coordinate: &wanted})
+	if err != nil {
+		t.Fatalf("ListInterfaceRecords: %v", err)
+	}
+	if len(sums) != 1 {
+		t.Fatalf("a coordinate-scoped listing returned %d rows, want 1: %+v", len(sums), sums)
+	}
+	if sums[0].ModulePath != wanted.Path() || sums[0].ModuleVersion != wanted.Version() {
+		t.Errorf("listed %s@%s, want %s", sums[0].ModulePath, sums[0].ModuleVersion, wanted)
+	}
+	// The version is part of the coordinate: a second version of the same path is
+	// a different module coordinate and must not be swept in.
+	if sums[0].OverallStatus != domain2.InterfaceStatusExtracted {
+		t.Errorf("scoped listing served %v, want the composed answer Extracted", sums[0].OverallStatus)
+	}
+
+	absent := mustCoord(t, "example.com/never", "v9.9.9")
+	empty, err := s.ListInterfaceRecords(ctx, ports.InterfaceFilter{Coordinate: &absent})
+	if err != nil {
+		t.Fatalf("ListInterfaceRecords for an absent coordinate: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("a coordinate the ledger never held returned %d rows", len(empty))
+	}
+
+	// Paging still counts modules after the collapse, over the restricted set.
+	paged, err := s.ListInterfaceRecords(ctx, ports.InterfaceFilter{Coordinate: &wanted, Offset: 1})
+	if err != nil {
+		t.Fatalf("ListInterfaceRecords with a coordinate and an offset: %v", err)
+	}
+	if len(paged) != 0 {
+		t.Errorf("offset 1 over a single-module result returned %d rows, want 0", len(paged))
+	}
+}

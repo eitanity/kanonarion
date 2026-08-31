@@ -101,8 +101,8 @@ func TestLatestCmd_GomodMissingFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing go.mod")
 	}
-	if !strings.Contains(err.Error(), "resolving code scope") {
-		t.Errorf("expected 'resolving code scope' in error, got: %v", err)
+	if !strings.Contains(err.Error(), "--gomod /nonexistent/go.mod") {
+		t.Errorf("expected the refusal to name the flag and the path, got: %v", err)
 	}
 }
 

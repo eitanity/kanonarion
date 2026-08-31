@@ -98,10 +98,8 @@ func runInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		// whose generations are all superseded has an empty history and a full
 		// ledger. Saying "no records" would deny records that are still here.
 		line := fmt.Sprintf("no interface records for %s", coord)
-		if all, lerr := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{}); lerr == nil {
-			if pipelines, superseded := supersededInterfacePipelines(coord, all); superseded {
-				line = supersededInterfaceLine(coord, pipelines)
-			}
+		if pipelines, superseded := supersededInterfaceRecord(ctx, uc, coord); superseded {
+			line = supersededInterfaceLine(coord, pipelines)
 		}
 		if _, werr := fmt.Fprintf(stdout, "%s\n", line); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
@@ -619,15 +617,16 @@ func interfaceListZeroScope(ctx context.Context, offset int, uc QueryInterfaceUs
 func interfaceRecordMiss(ctx context.Context, uc QueryInterfaceUseCase, coord coordinate.ModuleCoordinate,
 	jsonOut bool, stderr io.Writer,
 ) error {
+	// The coordinate question is asked of the coordinate, and first. It tells a
+	// module that was never extracted from one whose every record this build
+	// refuses to serve — the second is not a coordinate to check — and a hit
+	// returns here without the corpus survey the zero-result notice needs.
+	if pipelines, superseded := supersededInterfaceRecord(ctx, uc, coord); superseded {
+		return &exitError{code: ExitNotFound, msg: supersededInterfaceLine(coord, pipelines)}
+	}
 	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
 	if err != nil {
 		return fmt.Errorf("counting interface records for the not-found notice: %w", err)
-	}
-	// The listing is unfiltered by pipeline version, so it can tell a
-	// coordinate that was never extracted from one whose every record this
-	// build refuses to serve. The second is not a coordinate to check.
-	if pipelines, superseded := supersededInterfacePipelines(coord, all); superseded {
-		return &exitError{code: ExitNotFound, msg: supersededInterfaceLine(coord, pipelines)}
 	}
 	scope := listZeroScope{
 		subject:     "interface record",

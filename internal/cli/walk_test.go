@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,9 +64,21 @@ func TestWalkCmd_GomodFileNotFound(t *testing.T) {
 	}
 }
 
+// writeWalkGoMod writes a real manifest and returns its path. The flag rules
+// below are checked after the --gomod path is resolved, so a path that is not
+// there would refuse first and the rule under test would never run.
+func writeWalkGoMod(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "go.mod")
+	if err := os.WriteFile(path, []byte("module example.com/app\n\ngo 1.21\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // --tool and --project select mutually exclusive scopes.
 func TestWalkCmd_ToolAndProjectMutuallyExclusive(t *testing.T) {
-	gomodPath := filepath.Join(t.TempDir(), "go.mod")
+	gomodPath := writeWalkGoMod(t)
 	var stdout, stderr bytes.Buffer
 	err := Run([]string{"walk", "--gomod", gomodPath, "--tool", "--project", "--store-root", t.TempDir()}, &stdout, &stderr)
 	if err == nil {
@@ -91,7 +104,7 @@ func TestWalkCmd_ScopeFlagsRequireGoMod(t *testing.T) {
 
 // --shallow is a positional-only depth lens; it does not apply to a go.mod walk.
 func TestWalkCmd_ShallowRejectedOnGoMod(t *testing.T) {
-	gomodPath := filepath.Join(t.TempDir(), "go.mod")
+	gomodPath := writeWalkGoMod(t)
 	var stdout, stderr bytes.Buffer
 	err := Run([]string{"walk", "--gomod", gomodPath, "--shallow", "--store-root", t.TempDir()}, &stdout, &stderr)
 	if err == nil {
@@ -118,7 +131,7 @@ func TestWalkCmd_AnalyseRootRequiresGoMod(t *testing.T) {
 // --analyse-root analyses the project's own packages, which a --tool walk does
 // not cover.
 func TestWalkCmd_AnalyseRootRejectsToolScope(t *testing.T) {
-	gomodPath := filepath.Join(t.TempDir(), "go.mod")
+	gomodPath := writeWalkGoMod(t)
 	var stdout, stderr bytes.Buffer
 	err := Run([]string{"walk", "--gomod", gomodPath, "--analyse-root", "--tool", "--store-root", t.TempDir()}, &stdout, &stderr)
 	if err == nil {

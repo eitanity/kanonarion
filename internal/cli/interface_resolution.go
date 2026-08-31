@@ -22,9 +22,11 @@ import (
 // This mirrors the call graph's supersededPipelineError, deliberately: it is one
 // condition, and one binary must not describe it two ways.
 
-// storedInterfaceSummaries reads the ledger unfiltered by pipeline version,
-// which is what tells a coordinate that was never extracted from one this build
-// refuses to serve.
+// storedInterfaceSummaries reads the WHOLE ledger, unfiltered by pipeline
+// version. It answers the store-wide form of the question — "does this build
+// serve anything at all" — and nothing else: a question about one coordinate
+// goes through supersededInterfaceRecord, which asks the store for that
+// coordinate.
 //
 // A diagnostic must not become a fault of its own. A caller wired without this
 // use case — a seam built for one command — or a read that fails yields no
@@ -39,6 +41,24 @@ func storedInterfaceSummaries(ctx context.Context, uc QueryInterfaceUseCase) []i
 		return nil
 	}
 	return sums
+}
+
+// supersededInterfaceRecord answers, for ONE coordinate, whether the store holds
+// it only under extraction logic this build no longer serves.
+//
+// The read is filtered to the coordinate because that is the question. Asking it
+// with a whole-store listing made the diagnostic cost the composition of every
+// multi-generation key in the ledger, once per module, and `context --gomod` on
+// a project whose records are all superseded spent minutes discarding rows.
+func supersededInterfaceRecord(ctx context.Context, uc QueryInterfaceUseCase, coord coordinate.ModuleCoordinate) ([]string, bool) {
+	if uc == nil {
+		return nil, false
+	}
+	sums, err := uc.ListInterfaceRecords(ctx, ifaceports.InterfaceFilter{Coordinate: &coord})
+	if err != nil {
+		return nil, false
+	}
+	return supersededInterfacePipelines(coord, sums)
 }
 
 // supersededInterfacePipelines returns the pipeline versions the store holds for

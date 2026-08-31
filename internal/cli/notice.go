@@ -117,9 +117,13 @@ that appear in go.mod but are never distributed.`,
 			if flags > 1 {
 				return fmt.Errorf("--walk-id, --gomod, and --package are mutually exclusive")
 			}
-			if flags == 0 {
+			// A named --gomod goes through the resolver too, not only the
+			// default. Everything downstream takes the path's DIRECTORY to run
+			// `go list`, so an unresolved path that is not there produced a full,
+			// exit-coded notice about whatever sat beside it.
+			if flags == 0 || f.gomodPath != "" {
 				var rerr error
-				f.gomodPath, rerr = resolveGoModPath("")
+				f.gomodPath, rerr = resolveGoModPath(f.gomodPath)
 				if rerr != nil {
 					return rerr
 				}

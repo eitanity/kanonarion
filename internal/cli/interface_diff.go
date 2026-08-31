@@ -156,8 +156,7 @@ func runInterfaceDiff(ctx context.Context, argA, argB string, f interfaceDiffFla
 // those have opposite remedies. A store that cannot be read leaves the use
 // case's own message standing.
 func interfaceMissMessage(ctx context.Context, uc QueryInterfaceUseCase, notFound *ifaceapp.ErrInterfaceRecordNotFound) string {
-	all := storedInterfaceSummaries(ctx, uc)
-	if pipelines, superseded := supersededInterfacePipelines(notFound.Coordinate, all); superseded {
+	if pipelines, superseded := supersededInterfaceRecord(ctx, uc, notFound.Coordinate); superseded {
 		return supersededInterfaceLine(notFound.Coordinate, pipelines)
 	}
 	return notFound.Error()

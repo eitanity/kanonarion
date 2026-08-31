@@ -558,12 +558,17 @@ type FakeQueryInterface struct {
 	// assert that a listing which returned rows read the store exactly once and
 	// did not also pay the survey read the zero-result notice needs.
 	ListCalls int
-	mu        sync.Mutex
-	records   map[string]ifacedomain.InterfaceRecord
-	history   map[string][]ifacedomain.InterfaceRecord
-	list      []ifaceports.InterfaceSummary
-	symbols   []ifaceports.SymbolRef
-	Err       error
+	// ListFilters records every filter this fake was asked for, in order, so a
+	// test can assert WHAT was asked as well as how often. A per-coordinate
+	// question served from an unfiltered read is a defect the count alone
+	// cannot see.
+	ListFilters []ifaceports.InterfaceFilter
+	mu          sync.Mutex
+	records     map[string]ifacedomain.InterfaceRecord
+	history     map[string][]ifacedomain.InterfaceRecord
+	list        []ifaceports.InterfaceSummary
+	symbols     []ifaceports.SymbolRef
+	Err         error
 }
 
 func NewFakeQueryInterface() *FakeQueryInterface {
@@ -621,9 +626,21 @@ func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, filter ifac
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ListCalls++
+	f.ListFilters = append(f.ListFilters, filter)
 	// Paging is honoured as the adapter honours it. A fake that ignored the
 	// limit could not fail a listing that mis-states how much it withheld.
 	out := f.list
+	// The coordinate restriction is applied before paging, as the adapter
+	// applies it before the collapse.
+	if filter.Coordinate != nil {
+		kept := make([]ifaceports.InterfaceSummary, 0, len(out))
+		for _, s := range out {
+			if s.ModulePath == filter.Coordinate.Path() && s.ModuleVersion == filter.Coordinate.Version() {
+				kept = append(kept, s)
+			}
+		}
+		out = kept
+	}
 	if filter.Offset > 0 {
 		if filter.Offset >= len(out) {
 			return nil, nil

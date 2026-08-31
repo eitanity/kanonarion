@@ -107,7 +107,9 @@ type InterfaceStore interface {
 	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.InterfaceRecord, bool, error)
 
 	// ListInterfaceRecords returns summaries matching the filter, ordered by
-	// extracted_at descending.
+	// extracted_at descending. Every field of the filter is honoured; an
+	// implementation that ignored one would answer a narrower question with a
+	// wider corpus.
 	ListInterfaceRecords(ctx context.Context, filter InterfaceFilter) ([]InterfaceSummary, error)
 
 	// FindSymbol returns index entries for all packages that export a symbol
@@ -137,6 +139,16 @@ type InterfaceRecordLister interface {
 
 // InterfaceFilter constrains ListInterfaceRecords results.
 type InterfaceFilter struct {
+	// Coordinate restricts the listing to one module coordinate; nil is
+	// unrestricted, on the same terms as walk's WalkFilter.Target.
+	//
+	// It exists because a question about one coordinate must be askable as one:
+	// without it a caller answering "what does the ledger hold for this module"
+	// reads the whole corpus and discards all of it but one module's rows, and
+	// the ledger is composed generation by generation to produce what it throws
+	// away. Restriction happens before that composition.
+	Coordinate *coordinate.ModuleCoordinate
+
 	Limit  int // 0: no limit
 	Offset int
 }
