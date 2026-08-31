@@ -6,6 +6,8 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+
 	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -153,4 +155,143 @@ func licenseIDs(comp map[string]any) []string {
 		}
 	}
 	return out
+}
+
+// TestMainLicenseReachesTheSubjectWhateverItsLicenceRecord fixes the licence the
+// subject is described with in BOTH places it is described, across every shape
+// its own licence extraction can leave behind.
+//
+// The gap this closes was conditional on that shape, which is why it survived a
+// green suite: the stamp was applied only where the subject had NO licence
+// record, so a project whose extraction ran and resolved to nothing — a record
+// exists, it just names no licence — got the stamp on metadata.component and
+// not on its entry in the component list, and the undetermined count, which
+// reads the component list, named the operator's own module anyway. The two
+// unlicensed shapes below are the permutation that separates those cases; the
+// two licensed ones are the control that the stamp still never displaces a
+// licence the subject actually carries.
+func TestMainLicenseReachesTheSubjectWhateverItsLicenceRecord(t *testing.T) {
+	main := mustCoord(t, "example.com/project", coordinate.LocalVersion)
+
+	cases := []struct {
+		name   string
+		record *licensedomain.LicenseRecord
+		want   string
+	}{
+		{
+			name:   "no licence record at all",
+			record: nil,
+			want:   "Apache-2.0",
+		},
+		{
+			// The shape the stamp used to miss: extraction ran and reached no
+			// licence, so the module HAS a record and it names nothing.
+			name:   "a licence record that resolved to no licence",
+			record: &licensedomain.LicenseRecord{},
+			want:   "Apache-2.0",
+		},
+		{
+			name:   "a licence record naming a licence",
+			record: &licensedomain.LicenseRecord{PrimarySPDX: "MIT"},
+			want:   "MIT",
+		},
+		{
+			name:   "a licence record carrying an expression",
+			record: &licensedomain.LicenseRecord{Expression: "MIT OR Apache-2.0"},
+			want:   "MIT OR Apache-2.0",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			walk := makeWalk(t, []coordinate.ModuleCoordinate{main})
+			var licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord
+			if tc.record != nil {
+				licenses = map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{main: *tc.record}
+			}
+
+			req := makeGenReq()
+			req.MainComponentLicense = "Apache-2.0"
+
+			rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, licenses, req)
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			primary, byPURL := bomComponents(t, rec.Content)
+			entry, ok := byPURL[primary["purl"].(string)]
+			if !ok {
+				t.Fatalf("the subject %v has no entry in the component list", primary["purl"])
+			}
+			gotMeta, gotEntry := licenseIDs(primary), licenseIDs(entry)
+			if len(gotMeta) != 1 || gotMeta[0] != tc.want {
+				t.Errorf("metadata.component licences = %v, want [%s]", gotMeta, tc.want)
+			}
+			if len(gotEntry) != 1 || gotEntry[0] != tc.want {
+				t.Errorf("subject's component-list licences = %v, want [%s] — the same licence, in the copy the undetermined count reads", gotEntry, tc.want)
+			}
+			// LicensesIncomplete is what the command turns into a non-zero exit
+			// (see the CLI exit-code contract); the subject carries a licence, so
+			// it must not fire on the subject's account.
+			if rec.LicensesIncomplete {
+				t.Errorf("LicensesIncomplete = true; the subject carries %s in both places it is described", tc.want)
+			}
+		})
+	}
+}
+
+// TestMainLicenseIsARemedyNotASuppressor verifies the flag adds a licence and
+// removes nothing: WITHOUT it, a subject with no licence of its own is still
+// undetermined in both places and still fails the document.
+//
+// A "fix" that made the undetermined condition stop firing on the subject, rather
+// than making the stamp reach it, would satisfy the same acceptance read
+// carelessly and would be worse than the bug: an unlicensed subject would ship
+// in a clean-looking SBOM.
+func TestMainLicenseIsARemedyNotASuppressor(t *testing.T) {
+	main := mustCoord(t, "example.com/project", coordinate.LocalVersion)
+
+	cases := []struct {
+		name   string
+		record *licensedomain.LicenseRecord
+	}{
+		{name: "no licence record at all", record: nil},
+		{name: "a licence record that resolved to no licence", record: &licensedomain.LicenseRecord{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			walk := makeWalk(t, []coordinate.ModuleCoordinate{main})
+			var licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord
+			if tc.record != nil {
+				licenses = map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{main: *tc.record}
+			}
+
+			// No MainComponentLicense: nothing was supplied, so nothing is claimed.
+			rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, licenses, makeGenReq())
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			if !rec.LicensesIncomplete {
+				t.Fatalf("LicensesIncomplete = false; the subject has no licence and none was supplied")
+			}
+			primary, byPURL := bomComponents(t, rec.Content)
+			if got := licenseIDs(primary); len(got) != 0 {
+				t.Errorf("metadata.component licences = %v, want none", got)
+			}
+			entry, ok := byPURL[primary["purl"].(string)]
+			if !ok {
+				t.Fatalf("the subject %v has no entry in the component list", primary["purl"])
+			}
+			if got := licenseIDs(entry); len(got) != 0 {
+				t.Errorf("subject's component-list licences = %v, want none", got)
+			}
+			var bom map[string]any
+			if err := json.Unmarshal(rec.Content, &bom); err != nil {
+				t.Fatalf("unmarshal bom: %v", err)
+			}
+			if _, present := bom["annotations"]; !present {
+				t.Errorf("no licence-completeness annotation; the document must name the subject as undetermined")
+			}
+		})
+	}
 }

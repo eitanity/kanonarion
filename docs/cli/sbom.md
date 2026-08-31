@@ -229,7 +229,7 @@ re-run when `--force` is passed.
 | `--from-modcache[=dir]` | _(off)_ | When `sbom` builds a project walk (e.g. `--package` on a cold store), source modules from an existing Go module cache instead of the network proxy and verify each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A `go.sum` mismatch or missing entry fails the command (exit code `10`). See [`audit --from-modcache`](audit.md#sourcing-from-an-existing-module-cache---from-modcache) for the full semantics. |
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
 | `--main-version <version>` | _(none)_ | Version to stamp on the SBOM subject (`metadata.component`) in place of the synthetic `local`. Supplying it bypasses the cache, and the document is not stored. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
-| `--main-license <spdx>` | _(none)_ | SPDX id or expression to attach to the SBOM subject, which as a local main module has no fetched licence record of its own. Supplying it bypasses the cache, and the document is not stored. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
+| `--main-license <spdx>` | _(none)_ | SPDX id or expression to attach to the SBOM subject when its own extraction reached no licence — whether nothing was extracted for it at all, or a record exists that names no SPDX licence. Supplying it bypasses the cache, and the document is not stored. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
@@ -247,7 +247,11 @@ record. Both flags supply what the store cannot.
   a placeholder name.
 - `--main-license Apache-2.0` attaches an SPDX id or expression to the subject.
   Without it the subject counts as a component with no licence identity, which
-  is what sets the command's exit `1`.
+  is what sets the command's exit `1`. It applies whenever the subject's own
+  extraction reached no licence: a project analysed with `--analyse-root` that
+  resolved to no SPDX licence has a licence record, and the stamp still applies
+  to it. A subject that DOES carry a licence keeps it; the stamp never
+  displaces one.
 
 Either stamp reaches **both** places the document describes the subject:
 `metadata.component` and the subject's own entry in the `components` list, which

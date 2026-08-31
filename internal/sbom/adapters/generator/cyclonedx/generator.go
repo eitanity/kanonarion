@@ -182,12 +182,16 @@ func (g *Generator) buildBOM(
 			Expression:  lic.Expression,
 			Copyright:   copyrightString(lic),
 		}
-		// The subject's own component entry carries the licence the caller
-		// stamped on the subject. Without this the assembly policy counts the
-		// stamped module as having no licence identity, and the run exits
-		// partial naming the operator's own module — the exact gap
-		// --main-license is documented to close.
-		if subj.is(node.Coordinate) && !hasLic && subj.licenseSPDX != "" {
+		// The subject's component entry carries the clause the subject carries,
+		// which is the same clause metadata.component states — extracted, or
+		// stamped by --main-license when the extraction reached none.
+		//
+		// Keying this on the ABSENCE OF A LICENCE RECORD instead is what let the
+		// stamp miss: a subject whose extraction ran and resolved to no licence
+		// has a record, so the stamp was applied to metadata.component and
+		// withheld from the component list, and the undetermined count — which
+		// reads the component list — named the operator's own module anyway.
+		if subj.is(node.Coordinate) && subj.licenseSPDX != "" {
 			input.HasLicense = true
 			input.PrimarySPDX = subj.licenseSPDX
 			input.Expression = ""

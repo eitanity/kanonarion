@@ -59,6 +59,7 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them. Requires `--gomod`; refused by name on a positional module walk, which has no local source context |
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.mod` to read the directive from. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
+| `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the project's local `go.sum` - the offline walk. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A module missing from the cache, or whose bytes disagree with `go.sum`, fails the walk. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.sum` to verify the cache against. See [Offline and air-gapped walks](#offline-and-air-gapped-walks). |
 | `--json` | `false` | Emit the walk record, and this run's verification coverage, as JSON |
 
 #### What `walk --json` carries
@@ -405,11 +406,41 @@ custody](sbom.md#standard-library-chain-of-custody).
 verification is against the local `go.sum`, and the standard-library anchor is
 the local toolchain. It is the mode to use inside an air gap.
 
+```
+kanonarion walk --gomod ./go.mod --from-modcache
+kanonarion walk --gomod ./go.mod --from-modcache=/path/to/gomodcache
+```
+
+It is a **project-walk** flag: `go.sum` is the *sole* anchor for bytes carried in
+on disk, and the `go.sum` it reads is the one beside the `--gomod` file. A
+positional `walk <module@version>` has no project `go.sum`, so it refuses the
+flag by name rather than walk unverified bytes:
+
+```
+$ kanonarion walk example.com/mod@v1.0.0 --from-modcache
+error: walk <module@version> does not act on --from-modcache (applies to walk
+--gomod, which has the project go.sum the cache is verified against; a published
+coordinate has none)
+```
+
+The record says what the bytes were checked against, and does not claim the
+anchor a network walk would have established. Each module fetched this way
+records `acquisition_mode: modcache`, verification status
+`VerifiedBySumDBOnly`, the detail `verified against local go.sum (modcache
+mode); VCS cross-verification skipped`, and no VCS leg on its fetch-ledger
+entry. That is a weaker anchor than a cross-verified network fetch, so a
+`--from-modcache` re-measurement of a module the store already holds a stronger
+record for is refused unless `--allow-verification-downgrade` is passed. See
+[Re-measuring with a weaker
+anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade).
+
 A walk **without** `--from-modcache` is fetch-capable, so an environment that
-declares no module fetching stops it: under `GOPROXY=off` the walk refuses
-before any network I/O and exits `20`, naming `--from-modcache` and
-[`use --recursive`](use.md) rather than falling back to `proxy.golang.org`.
-Reading walks already recorded (`walk show`, `callgraph`, `interface`,
+declares no module fetching stops it: under `GOPROXY=off` no network I/O is
+attempted, and each module that would have to be fetched fails with a reason
+naming `--from-modcache` and [`use --recursive`](use.md) rather than falling
+back to `proxy.golang.org`. The walk is then `partial` (exit `1`), or `failed`
+(exit `2`) when it is the positional walk's own target that could not be
+fetched. Reading walks already recorded (`walk show`, `callgraph`, `interface`,
 `license`, `vuln show`) is unaffected - the refusal withdraws fetching, not the
 store.
 
@@ -688,8 +719,10 @@ nothing.
 
 ## Relation to other stages
 
-- **Requires:** module proxy access; implicitly performs `kanonarion fetch`
-  for every node in the closure.
+- **Requires:** module bytes for every node in the closure - from the module
+  proxy, or from `$GOMODCACHE` under
+  [`--from-modcache`](#offline-and-air-gapped-walks); it implicitly performs
+  `kanonarion fetch` for each of them.
 - **Consumed by:** `kanonarion extract`, `vuln-scan`, and `sbom`, which all
   operate over a stored walk.
 

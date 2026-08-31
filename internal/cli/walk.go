@@ -58,6 +58,7 @@ type walkFlags struct {
 	analyseRoot     bool
 	stdlibFromGoMod bool
 	noProgress      bool
+	fromModcache    string
 	// excludeTests is parsed only so the refusal can name it. A walk record names
 	// its scope and not its test axis; see refuseTestScopeOnRecordingCommand.
 	excludeTests bool
@@ -83,7 +84,8 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion walk --gomod ./go.mod --tool
   kanonarion walk --gomod ./go.mod --project
   kanonarion walk --gomod ./go.mod --analyse-root
-  kanonarion walk --gomod ./go.mod --analyse-local`,
+  kanonarion walk --gomod ./go.mod --analyse-local
+  kanonarion walk --gomod ./go.mod --from-modcache`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// With no positional module, default to a go.mod walk; --gomod
 			// defaults to./go.mod via resolveGoModPath.
@@ -108,24 +110,10 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 					return fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
 				}
 			}
-			isGoMod := f.gomodPath != ""
-
-			// A go.mod (project) walk has a local go.sum available: layer it on as
-			// an always-on offline integrity check.
-			if isGoMod {
-				resolveProjectGoSum(f.gomodPath)
+			if f.gomodPath != "" {
+				return runWalkGoMod(cmd.Context(), f, stdout, stderr)
 			}
-			logger := buildLogger(logLevel, stderr)
-			ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, "", f.skipVCSVerify, activeConfig, logger)
-			if err != nil {
-				return fmt.Errorf("initialising store: %w", err)
-			}
-			defer func() { _ = cleanup() }()
-			progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-			if isGoMod {
-				return runWalkCmdProject(cmd.Context(), f, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
-			}
-			return runWalkCmdModule(cmd.Context(), args[0], f, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
+			return runWalkModule(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
 
@@ -144,9 +132,74 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.analyseLocal, "analyse-local", false, "ingest local-replace targets from disk so callgraph/iface/license analyse them (requires --gomod)")
 	cmd.Flags().BoolVar(&f.analyseRoot, "analyse-root", false, "ingest the project's own working tree so all extraction stages analyse the project's own packages; re-reads the tree fresh on every run (requires a go.mod walk)")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
+	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 	return cmd
+}
+
+// walkRuntime is the store access and progress reporting one walk invocation
+// runs against, opened once the path's fetch mode is settled.
+type walkRuntime struct {
+	execute  ExecuteWalkUseCase
+	records  fetchRecordReader
+	progress walkports.ProgressReporter
+	cleanup  func() error
+}
+
+// openWalkRuntime opens the store container and progress reporter for a walk.
+//
+// It is called by the dispatch path rather than before dispatch because
+// NewContainer wires its fetch adapters from the process-wide fetch mode:
+// anything that decides where module bytes come from has to have run first, and
+// only the path knows what it decided.
+func openWalkRuntime(f walkFlags, stderr io.Writer) (walkRuntime, error) {
+	logger := buildLogger(logLevel, stderr)
+	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, "", f.skipVCSVerify, activeConfig, logger)
+	if err != nil {
+		return walkRuntime{}, fmt.Errorf("initialising store: %w", err)
+	}
+	return walkRuntime{
+		execute:  ctr.ExecuteWalk,
+		records:  ctr.QueryFetch,
+		progress: newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel),
+		cleanup:  cleanup,
+	}, nil
+}
+
+// runWalkGoMod is the go.mod path's entry point. It settles where this walk's
+// module bytes come from and what verifies them — the decision --from-modcache
+// makes — before opening the store, then runs the project walk.
+func runWalkGoMod(ctx context.Context, f walkFlags, stdout, stderr io.Writer) error {
+	// --from-modcache is the offline walk: bytes come from an existing module
+	// cache and the go.sum beside this go.mod is their sole anchor. Resolved
+	// first because resolveProjectGoSum is a no-op under it, and because the
+	// container below wires its adapters from the mode it sets.
+	if err := resolveModcacheMode(f.fromModcache, f.gomodPath); err != nil {
+		return err
+	}
+	// On the network path the project's go.sum layers on as an always-on offline
+	// integrity check.
+	resolveProjectGoSum(f.gomodPath)
+
+	rt, err := openWalkRuntime(f, stderr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rt.cleanup() }()
+	return runWalkCmdProject(ctx, f, rt.progress, rt.execute, rt.records, stdout, stderr)
+}
+
+// runWalkModule is the positional path's entry point. A published coordinate
+// carries no project go.mod, so there is no fetch mode for it to settle: the
+// flags that would have named one are refused by name in runWalkCmdModule.
+func runWalkModule(ctx context.Context, arg string, f walkFlags, stdout, stderr io.Writer) error {
+	rt, err := openWalkRuntime(f, stderr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rt.cleanup() }()
+	return runWalkCmdModule(ctx, arg, f, rt.progress, rt.execute, rt.records, stdout, stderr)
 }
 
 // runWalkCmdProject is the walk command's go.mod dispatch path. It resolves the
