@@ -373,6 +373,48 @@ print, has this shape:
 }
 ```
 
+## Replaced modules (`--gomod`)
+
+A `go.mod` `replace` directive routes the build to a different module. Every
+section of the document — verification, licence, dependencies, call graph,
+vulnerabilities — is a fact about the module that **compiles**, so that is the
+module the document is headed by, and the require entry the directive acted on
+is stated beside it:
+
+```
+==> github.com/cortezaproject/gval@v1.2.4
+github.com/cortezaproject/gval@v1.2.4
+  Replace:         replaces github.com/PaesslerAG/gval@v1.2.1 under a go.mod replace directive
+  Verification:    Verified (git: https://github.com/cortezaproject/gval)
+  License:         BSD-3-Clause
+```
+
+In JSON it is `module.replace`:
+
+```json
+"module": {
+  "path": "github.com/cortezaproject/gval",
+  "version": "v1.2.4",
+  "replace": {
+    "require_module": "github.com/PaesslerAG/gval",
+    "require_version": "v1.2.1"
+  }
+}
+```
+
+The key is **absent** where no directive applies, and on the coordinate and
+`--walk-id` forms, which read no manifest.
+
+Headed by the require entry instead — which is what the scope resolution used to
+report — every section of the document answered about a coordinate the store
+holds nothing under: `not_fetched`, `license: not_run`, and `the walk does not
+hold github.com/PaesslerAG/gval@v1.2.1`, for a module that build had fetched,
+licensed and scanned under its replacement.
+
+A `replace` to a **local path** has no replacement coordinate at all: the module
+is named by its require entry, and `replace.local_path` names the directory the
+build compiles instead.
+
 ## Section field reference
 
 ### `dependencies`

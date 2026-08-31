@@ -118,7 +118,10 @@ func manifestDriftAgainstWalk(
 	if err != nil {
 		return manifestDrift{}, rec, fmt.Errorf("checking whether walk %s still describes %s (resolving the %s scope): %w", walkID, gomodPath, scope, err)
 	}
-	return driftAgainstWalk(resolved, rec), rec, nil
+	// The require entries, for the reason driftAgainstWalk states: a replaced
+	// node is matched on the coordinate the manifest names, never on the one the
+	// walk fetched.
+	return driftAgainstWalk(requiredCoords(resolved), rec), rec, nil
 }
 
 // driftAgainstWalk compares a resolved "path@version" set against a walk's

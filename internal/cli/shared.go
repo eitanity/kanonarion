@@ -256,24 +256,173 @@ func scopeFromFlags(tool, project bool) (depScope, error) {
 	}
 }
 
-// goListModuleFmt is the `go list -f` template emitting "path@version" for a
-// non-standard package's module, and nothing for standard-library packages or
-// the main module (whose Version is empty).
-const goListModuleFmt = `{{if .Module}}{{if and (not .Standard) .Module.Version}}{{.Module.Path}}@{{.Module.Version}}{{end}}{{end}}`
+// goListModuleRecordFmt is the body of a `go list -f` module record, with dot
+// bound to a go list Module. It emits three tab-separated fields: the
+// coordinate that COMPILES, the require entry a replace directive acted on, and
+// the on-disk target of a local-path replace.
+//
+// `go list`'s .Path and .Version are the REQUIRE entry; where a replace applies,
+// the code that compiles is .Replace. A template that emits only the require
+// entry names a module the build never compiles.
+//
+// All three fields are conditional, and a module the toolchain reports without a
+// version emits an empty field rather than a "path@" fragment no coordinate
+// parser can read.
+const goListModuleRecordFmt = `{{if .Replace}}` +
+	`{{if .Replace.Version}}{{.Replace.Path}}@{{.Replace.Version}}{{end}}` + "\t" +
+	`{{if .Version}}{{.Path}}@{{.Version}}{{end}}` + "\t" +
+	`{{if not .Replace.Version}}{{.Replace.Path}}{{end}}` +
+	`{{else}}` +
+	`{{if .Version}}{{.Path}}@{{.Version}}{{end}}` + "\t\t" +
+	`{{end}}`
 
-// resolveScopeModules returns the "path@version" module coordinates for scope,
-// resolved by the Go toolchain in the directory containing gomodPath. The main
-// module and local-replace targets (which carry no version) are excluded.
-// Requires `go` on PATH; the error names the absence so callers can hint.
+// goListModuleFmt is the record for a PACKAGE's module (`go list -deps`).
+// Standard-library packages and the main module emit an all-empty record and are
+// dropped on parse.
+const goListModuleFmt = `{{if and .Module (not .Standard)}}{{with .Module}}` + goListModuleRecordFmt + `{{end}}{{end}}`
+
+// goListBuildListFmt is the record for a BUILD-LIST module (`go list -m`), which
+// is the module itself rather than a package's. The main module is dropped: it
+// is not a dependency of itself.
+const goListBuildListFmt = `{{if not .Main}}` + goListModuleRecordFmt + `{{end}}`
+
+// scopeModule is one module of a resolved dependency scope: what the build
+// compiles, and the require entry a replace directive routed it away from.
+//
+// The two are carried TOGETHER rather than one being chosen. Every answer about
+// the code — verification, licence, vulnerabilities, how far behind it is —
+// belongs to the coordinate that compiles, and every answer about the manifest
+// belongs to the require entry, which is what go.mod says and what a reader
+// searching for their own dependency will search for. A resolution that returned
+// one had to discard the other.
+type scopeModule struct {
+	// coord is what compiles. It is the zero value only for a local-path
+	// replace, which has no fetchable replacement coordinate.
+	coord coordinate.ModuleCoordinate
+	// original is the require entry a replace acted on; zero when the module
+	// was not replaced.
+	original coordinate.ModuleCoordinate
+	// localPath is the on-disk target of a local-path replace; empty otherwise.
+	localPath string
+}
+
+// answering is the coordinate a command's answer is ABOUT: the replacement
+// where one exists, and the require entry otherwise.
+//
+// A local-path replace has no replacement coordinate at all — the build compiles
+// a directory — so there the require entry is the only name the module has, and
+// it is returned with localPath stating what is compiled in its place.
+func (m scopeModule) answering() coordinate.ModuleCoordinate {
+	if !m.coord.IsZero() {
+		return m.coord
+	}
+	return m.original
+}
+
+// required is the "path@version" the go.mod require entry names.
+//
+// It is what the module graph, the walk's scope filter and the batched latest
+// resolution are keyed on: `go list -m` resolves paths against the build list,
+// where a replaced module appears under the path it was required at and the
+// replacement path is not a known dependency at all.
+func (m scopeModule) required() string {
+	if !m.original.IsZero() {
+		return m.original.String()
+	}
+	return m.coord.String()
+}
+
+// replaced reports whether a replace directive routed this build away from the
+// require entry.
+func (m scopeModule) replaced() bool { return !m.original.IsZero() }
+
+// moduleReplace is a go.mod replace directive as an answer states it: the
+// require entry the build was routed away from, and — for a local-path replace —
+// the directory compiled in its stead.
+//
+// ONE shape serves `context` and `latest`, because a text reader and a JSON
+// reader of either command must learn the same fact in the same words. The
+// module the answer is about is the row's own module and version; this is the
+// half that would otherwise disappear from the answer, and it is the half a
+// reader who knows only their own go.mod will search for.
+type moduleReplace struct {
+	// RequireModule and RequireVersion are the require entry the directive acted
+	// on: what go.mod says.
+	RequireModule  string `json:"require_module"`
+	RequireVersion string `json:"require_version"`
+	// LocalPath is the on-disk directory the build compiles, for a local-path
+	// replace. Empty when the replacement is a module coordinate, which is then
+	// the answer's own module and version.
+	LocalPath string `json:"local_path,omitempty"`
+}
+
+// replaceOf renders the directive that routed a resolved scope module, or nil
+// when none did.
+func replaceOf(m scopeModule) *moduleReplace {
+	if !m.replaced() {
+		return nil
+	}
+	return &moduleReplace{
+		RequireModule:  m.original.Path(),
+		RequireVersion: m.original.Version(),
+		LocalPath:      m.localPath,
+	}
+}
+
+// statement is the clause a text rendering states beside the module, phrased
+// from the point of view of the module the answer is about.
+func (r moduleReplace) statement() string {
+	if r.LocalPath != "" {
+		return fmt.Sprintf("compiled from %s under a go.mod replace directive, not from %s@%s",
+			r.LocalPath, r.RequireModule, r.RequireVersion)
+	}
+	return fmt.Sprintf("replaces %s@%s under a go.mod replace directive", r.RequireModule, r.RequireVersion)
+}
+
+// upgradeNote is the clause `latest` states, which says the same thing and adds
+// the one fact a staleness answer must carry: while the directive stands, moving
+// the require entry moves nothing. The version offered beside it belongs to the
+// module named on the row — the replacement — and is adopted by editing the
+// replace directive, not the requirement.
+func (r moduleReplace) upgradeNote() string {
+	if r.LocalPath != "" {
+		return fmt.Sprintf("compiled from %s (go.mod replace)", r.LocalPath)
+	}
+	return fmt.Sprintf("replaces %s@%s (go.mod replace: bumping that require entry cannot take effect while it stands)",
+		r.RequireModule, r.RequireVersion)
+}
+
+// requiredCoords projects the resolved scope onto the "path@version" require
+// entries, in the order they resolved.
+//
+// It is what a caller that keys on the build list takes: the walk's scope
+// filter, the module-graph drift check and the batched latest resolution all
+// address a module by the path it is required at (see required).
+func requiredCoords(mods []scopeModule) []string {
+	coords := make([]string, 0, len(mods))
+	for _, m := range mods {
+		coords = append(coords, m.required())
+	}
+	return coords
+}
+
+// resolveScopeModules returns the modules of scope, resolved by the Go toolchain
+// in the directory containing gomodPath: what the build compiles, paired with
+// the require entry a replace directive routed it away from. The main module is
+// excluded. Requires `go` on PATH; the error names the absence so callers can
+// hint.
 //
 // This is the single definition of each scope, shared by every go.mod-walking
 // command so they answer the same question with the same set.
+//
+// The set is ordered by the REQUIRE entry, which is the order every caller of
+// this function has read it in and the order the manifest itself is read in.
 //
 // It returns the test axis it applied alongside the set, so a caller cannot
 // state one axis and resolve another: the disclosure and the resolution come out
 // of the same call. The two -deps scopes default differently on that axis, and
 // correctly so — see testScopeFor, which is the only place the axis is decided.
-func resolveScopeModules(gomodPath string, scope depScope, excludeTests bool) ([]string, scopeResolution, error) {
+func resolveScopeModules(gomodPath string, scope depScope, excludeTests bool) ([]scopeModule, scopeResolution, error) {
 	res := newScopeResolution(scope, excludeTests)
 	args, err := scopeGoListArgs(gomodPath, scope, res.Tests)
 	if err != nil {
@@ -284,8 +433,16 @@ func resolveScopeModules(gomodPath string, scope depScope, excludeTests bool) ([
 		// asking the toolchain a question about no packages.
 		return nil, res, nil
 	}
-	coords, err := runGoListCoords(filepath.Dir(gomodPath), args)
-	return coords, res, err
+	out, err := runGoList(filepath.Dir(gomodPath), args)
+	if err != nil {
+		return nil, res, err
+	}
+	mods, err := parseGoListModuleRecords(out)
+	if err != nil {
+		return nil, res, err
+	}
+	sort.SliceStable(mods, func(i, j int) bool { return mods[i].required() < mods[j].required() })
+	return mods, res, nil
 }
 
 // scopeGoListArgs is the `go list` invocation a scope and a test axis resolve to,
@@ -301,7 +458,7 @@ func scopeGoListArgs(gomodPath string, scope depScope, ts testScope) ([]string, 
 	case scopeComplete:
 		return []string{
 			"list", "-m", "-mod=readonly",
-			"-f", `{{if and (not .Main) .Version}}{{.Path}}@{{.Version}}{{end}}`,
+			"-f", goListBuildListFmt,
 			"all",
 		}, nil
 	case scopeTool:
@@ -353,26 +510,50 @@ func runGoList(dir string, args []string) ([]byte, error) {
 	return out, nil
 }
 
-// runGoListCoords executes `go <args>` in dir and parses its line-oriented
-// "path@version" output into a sorted, de-duplicated slice. Blank lines (emitted
-// by the templates for skipped packages) are dropped.
-func runGoListCoords(dir string, args []string) ([]string, error) {
-	out, err := runGoList(dir, args)
-	if err != nil {
-		return nil, err
-	}
+// parseGoListModuleRecords turns raw goListModuleRecordFmt output into modules,
+// de-duplicated and sorted by the record — which orders on the coordinate that
+// compiles.
+//
+// It is split from the toolchain call so the record shapes — plain, replaced,
+// and local-path replaced — are testable without a module tree on disk. Records
+// that are entirely empty (the standard library, the main module) are dropped.
+func parseGoListModuleRecords(out []byte) ([]scopeModule, error) {
 	seen := make(map[string]bool)
-	var coords []string
+	var records []string
 	for line := range strings.SplitSeq(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasSuffix(line, "@") || seen[line] {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(strings.ReplaceAll(line, "\t", "")) == "" || seen[line] {
 			continue
 		}
 		seen[line] = true
-		coords = append(coords, line)
+		records = append(records, line)
 	}
-	sort.Strings(coords)
-	return coords, nil
+	sort.Strings(records)
+
+	mods := make([]scopeModule, 0, len(records))
+	for _, rec := range records {
+		fields := strings.Split(rec, "\t")
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("go list emitted an unreadable module record %q: expected three tab-separated fields", rec)
+		}
+		m := scopeModule{localPath: fields[2]}
+		if fields[0] != "" {
+			coord, cerr := parseCoordinate(fields[0])
+			if cerr != nil {
+				return nil, fmt.Errorf("invalid coordinate %q: %w", fields[0], cerr)
+			}
+			m.coord = coord
+		}
+		if fields[1] != "" {
+			orig, cerr := parseCoordinate(fields[1])
+			if cerr != nil {
+				return nil, fmt.Errorf("invalid coordinate %q: %w", fields[1], cerr)
+			}
+			m.original = orig
+		}
+		mods = append(mods, m)
+	}
+	return mods, nil
 }
 
 // coordsToPaths strips the @version suffix from "path@version" coordinates,

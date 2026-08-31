@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -251,6 +250,13 @@ type latestResult struct {
 	// kanonarion never INFERS a successor. If a module is superseded and says so
 	// nowhere machine-readable, this is empty and nothing is reported.
 	Deprecated *string `json:"deprecated"`
+
+	// Replace is the go.mod replace directive that routed the build to this
+	// module. Module and Pinned name what is compiled; this names the require
+	// entry that was routed away from, so a reader looking for the coordinate
+	// their own go.mod holds still finds it. Absent when no directive applies —
+	// and on the positional path, where no manifest was read.
+	Replace *moduleReplace `json:"replace,omitempty"`
 
 	// DependencyScope names the go.mod dependency scope this row was selected by
 	// and the test axis that scope applied.
@@ -661,25 +667,30 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 	type pinnedDep struct {
 		path    string
 		version string
+		// replace is the directive that routed the build to this module, nil when
+		// none did. The row states it, and a local-path replace is answered from it
+		// rather than looked up: there is no published version to compare a
+		// directory against.
+		replace *moduleReplace
 	}
 	var deps []pinnedDep
 
-	coords, res, err := resolveScopeModules(gomodPath, scope, excludeTests)
+	mods, res, err := resolveScopeModules(gomodPath, scope, excludeTests)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
 	// Which set these rows are the whole of, stated before them and on the same
 	// channel as every other statement about the run. The empty case states it
 	// too: a table with no rows is answered by naming the set that was empty.
-	if nerr := writeDepScopeNotice(stderr, res, len(coords), true); nerr != nil {
+	if nerr := writeDepScopeNotice(stderr, res, len(mods), true); nerr != nil {
 		return nerr
 	}
 	scopeField := newScopeJSON(res)
 	// The same facts as the notice above, in the envelope the rows are framed in,
 	// built from the same resolution and the same count so the two cannot
 	// disagree.
-	envelope := newEnvelopeScope(res, len(coords), true)
-	if len(coords) == 0 {
+	envelope := newEnvelopeScope(res, len(mods), true)
+	if len(mods) == 0 {
 		// The empty answer is the same object with an empty modules array, keeping
 		// the empty and populated results the same type. Prose stays on the text
 		// path only.
@@ -694,19 +705,43 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 		_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, gomodPath)
 		return nil
 	}
-	for _, coord := range coords {
-		at := strings.LastIndex(coord, "@")
-		deps = append(deps, pinnedDep{path: coord[:at], version: coord[at+1:]})
+	for _, mod := range mods {
+		coord := mod.answering()
+		deps = append(deps, pinnedDep{path: coord.Path(), version: coord.Version(), replace: replaceOf(mod)})
 	}
-	lookup := newLookup(coords)
+	// The batch is asked about the REQUIRE entries, not the modules the rows are
+	// about. `go list -m -u` resolves paths against the build list, where a
+	// replaced module is listed under the path it was required at: asked about the
+	// replacement path it answers "not a known dependency" and fails the whole
+	// batched call, for every module in the scope. A replaced module's row is
+	// therefore answered by the per-path resolver, which asks about the module the
+	// build actually compiles — the same route `audit` already takes for the same
+	// coordinates.
+	lookup := newLookup(requiredCoords(mods))
 
 	results := make([]latestResult, 0, len(deps))
 	for _, dep := range deps {
 		if cerr := ctx.Err(); cerr != nil {
 			return fmt.Errorf("context cancelled: %w", cerr)
 		}
+		if dep.replace != nil && dep.replace.LocalPath != "" {
+			// A local-path replace compiles a directory. There is no published
+			// version of it to compare the pin against, and the requirement's own
+			// latest is not an answer about this build: while the directive stands,
+			// nothing published is adopted. The row states what is compiled and
+			// names the question as unmeasured rather than answering a different one.
+			results = append(results, latestResult{
+				Module:              dep.path,
+				Pinned:              dep.version,
+				Replace:             dep.replace,
+				StalenessUnmeasured: stalenessLocalReplace,
+				DependencyScope:     scopeField,
+			})
+			continue
+		}
 		row, rerr := latestRowFor(ctx, lookup, dep.path, dep.version, stderr)
 		row.DependencyScope = scopeField
+		row.Replace = dep.replace
 		if errors.Is(rerr, staleapp.ErrBatchUnavailable) {
 			// The batched call answers for every module at once, so this is not
 			// one dependency's failure and must not be rendered as one: printing
@@ -763,6 +798,13 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 			status = fmt.Sprintf("latest: %s (released today)", r.Latest)
 		default:
 			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, *r.LatestReleaseAgeDays)
+		}
+		// The replace clause comes FIRST, before the verdict: it says which module
+		// the row is about and where a bump would have to be made, and a reader who
+		// has already read "latest: v9.18.5" has already decided it applies to the
+		// require entry in front of them.
+		if r.Replace != nil {
+			status = r.Replace.upgradeNote() + "; " + status
 		}
 		// The major-line clauses are appended, never substituted: "current" stays
 		// true of the module's own path and the other paths are stated beside it.

@@ -313,12 +313,15 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	var scopeModules []string
 	res := newScopeResolution(scope, false)
 	if scope != scopeComplete {
-		var coords []string
-		coords, res, err = resolveScopeModules(gomodPath, scope, false)
+		var mods []scopeModule
+		mods, res, err = resolveScopeModules(gomodPath, scope, false)
 		if err != nil {
 			return application.ExecuteWalkResult{}, fmt.Errorf("resolving %s scope: %w", scope, err)
 		}
-		scopeModules = coordsToPaths(coords)
+		// The require paths: the graph filter keys scope membership on them and
+		// retains a replaced node through its OriginalCoordinate, so naming the
+		// replacement here would be naming a path the build list does not hold.
+		scopeModules = coordsToPaths(requiredCoords(mods))
 	}
 	// The test axis this walk was resolved over, stated on the same channel as
 	// the build-vendoring and coverage disclosures and for the same reason: the

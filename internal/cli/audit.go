@@ -380,10 +380,16 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if rerr := refuseTestScopeOnRecordingCommand("audit", f.excludeTests); rerr != nil {
 		return rerr
 	}
-	coords, res, err := resolveScopeModules(f.gomodPath, scope, false)
+	mods, res, err := resolveScopeModules(f.gomodPath, scope, false)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
+	// The require entries, which is what an audit addresses a module by: the walk
+	// it drives filters its graph on the require path, and the batched latest
+	// resolution asks `go list -m` about the build list, where a replacement path
+	// is not a known dependency. The rows themselves come from the walk, which
+	// carries both coordinates.
+	coords := requiredCoords(mods)
 	// The set the table is the whole of, stated before it and on the channel the
 	// derivation, frame and coverage lines already use. It is written before the
 	// empty-scope return so a run that audited nothing still says which set was

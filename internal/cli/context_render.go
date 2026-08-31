@@ -152,6 +152,12 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	w := &errWriter{w: stdout}
 
 	w.printf("%s@%s\n", out.Module.Path, out.Module.Version)
+	// Stated before the sections, because every one of them is a fact about the
+	// module named above and a reader has to know which module that is: the one
+	// the build compiles, not the one the manifest requires.
+	if r := out.Module.Replace; r != nil {
+		w.printf("  Replace:         %s\n", r.statement())
+	}
 
 	switch out.Verification.Status {
 	case sectionStatusNotFetched:

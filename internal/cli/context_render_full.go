@@ -11,6 +11,12 @@ import (
 func printContextFull(out contextOutput, stdout io.Writer) error {
 	w := &errWriter{w: stdout}
 	w.printf("%s@%s\n", out.Module.Path, out.Module.Version)
+	// The same statement the summary makes, for the same reason: the sections
+	// below describe the module named above, which a replace directive can make a
+	// different module from the one go.mod requires.
+	if r := out.Module.Replace; r != nil {
+		w.printf("(%s)\n", r.statement())
+	}
 	w.printf("\n=== Verification ===\n")
 	printFullVerification(w, out.Verification)
 	w.printf("\n=== Provenance ===\n")

@@ -111,6 +111,11 @@ const (
 	// toolchain's. There is no proxy "latest" for it, so the question does not
 	// apply rather than resolving in the pin's favour.
 	stalenessToolchainPinned = "toolchain_pinned"
+	// stalenessLocalReplace: the module is compiled from a directory under a
+	// go.mod `replace` to a local path. There is no published version of what
+	// compiles, and the requirement's own latest is not an answer about this
+	// build, because no published version is adopted while the directive stands.
+	stalenessLocalReplace = "local_replace"
 	// stalenessNotAsked: the question was never put. A `fetch <module>@latest`
 	// resolves the newest version and installs it, so there is no pin to compare
 	// against; `latest <module>` with no pin is the same shape. "Current" is not
@@ -134,6 +139,8 @@ func stalenessUnmeasuredLabel(reason string) string {
 		return "unmeasured (toolchain-pinned)"
 	case stalenessNotAsked:
 		return "unmeasured (not asked)"
+	case stalenessLocalReplace:
+		return "unmeasured (local replace)"
 	}
 	return "unmeasured (" + reason + ")"
 }
