@@ -8,6 +8,7 @@ exit 0
   "added": [],
   "removed": [],
   "upgraded": [],
+  "status_changed": [],
   "license_regressions": [],
   "new_reachable_cves": [],
   "no_difference": {

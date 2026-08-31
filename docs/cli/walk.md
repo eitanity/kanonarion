@@ -173,8 +173,8 @@ own sealed bytes and nothing may be added to them.
 
 ### `walk-diff`
 
-Print the difference between two walk records (added, removed, and
-version-changed modules).
+Print the difference between two walk records (added, removed and
+version-changed modules, and nodes whose walk status changed).
 
 ```
 kanonarion walk-diff <walk-id-a> <walk-id-b> [--json]
@@ -200,7 +200,7 @@ present only when the four delta sets are all empty:
 {
   "walk_a": "01KZ...A",
   "walk_b": "01KZ...B",
-  "added": [], "removed": [], "upgraded": [],
+  "added": [], "removed": [], "upgraded": [], "status_changed": [],
   "license_regressions": [], "new_reachable_cves": [],
   "no_difference": {
     "statement": "no difference: the two walks name the same modules at the same versions, and no node status changed",
@@ -215,6 +215,23 @@ present only when the four delta sets are all empty:
 
 Four empty arrays are the same bytes whether the walks agree or the comparison
 ran over nothing, so the statement is in the document rather than on stderr.
+
+`status_changed` is the fourth delta set, and the one a module-set comparison
+cannot report: two walks can name the same modules at the same versions and
+still disagree about how a node was resolved. Each entry is
+`{coordinate, from, to}` — the node's full coordinate, the status it left and
+the status it reached — matching the `! <coord>: <from> -> <to>` line the text
+form prints:
+
+```json
+"status_changed": [
+  {
+    "coordinate": "example.com/mod/pkg@v0.0.0-20250630054201-94c0ba7b0952",
+    "from": "local_replace",
+    "to": "succeeded"
+  }
+]
+```
 
 If either ID is not in the store the command exits `4` and names **which** of
 the two was missing — or both when both are — followed by how many walk records

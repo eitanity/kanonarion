@@ -38,7 +38,7 @@ import (
 //
 // So: no domain struct may be reachable from this type. Adding a field here that
 // holds one — embedded or named — reopens the link for everything under it, and
-// TestLicenseViewIsATotalProjection refuses it. Scalars, strings, numbers, bools
+// TestCLIViewsAreTotalProjections refuses it. Scalars, strings, numbers, bools
 // and slices of those are values and travel as they are; domain.Obligations is
 // the one exception and carries its own explicit tags already.
 //

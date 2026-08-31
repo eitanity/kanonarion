@@ -236,14 +236,14 @@ func TestScanDiffLeavesTheRouteRootOff(t *testing.T) {
 	diff := vuldomain.ScanRunDiff{
 		NewFindings: []vuldomain.FindingDelta{{Coordinate: rec.Coordinate, Finding: rec.Findings[0]}},
 	}
-	raw, err := json.Marshal(toScanDiffJSON(diff))
+	raw, err := json.Marshal(newScanRunDiffDocument(diff))
 	if err != nil {
 		t.Fatalf("marshalling scan diff: %v", err)
 	}
 	var doc struct {
 		NewFindings []struct {
-			Finding map[string]any
-		}
+			Finding map[string]any `json:"finding"`
+		} `json:"new_findings"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("decoding scan diff: %v", err)

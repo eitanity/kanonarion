@@ -207,15 +207,37 @@ func printLicenseDiff(diff domain.LicenseDiff, stdout io.Writer) error {
 // -- JSON output --
 
 type licenseDiffJSON struct {
-	ModuleA          string             `json:"module_a"`
-	ModuleB          string             `json:"module_b"`
-	SPDXChanged      *spdxChangeJSON    `json:"spdx_changed,omitempty"`
-	StatusChanged    *statusChangeJSON  `json:"status_changed,omitempty"`
-	FilesAdded       []licFileDeltaJSON `json:"files_added"`
-	FilesRemoved     []licFileDeltaJSON `json:"files_removed"`
-	CopyrightAdded   []string           `json:"copyright_added"`
-	CopyrightRemoved []string           `json:"copyright_removed"`
-	Escalation       *escalationJSON    `json:"escalation,omitempty"`
+	ModuleA string `json:"module_a"`
+	ModuleB string `json:"module_b"`
+	// DeclaredA and DeclaredB are what each side states on its own, not what
+	// moved between them. Without them the document could not tell "both sides
+	// declare Apache-2.0" from "both sides are unlicensed" — both are four empty
+	// lists — and neither SPDX identifier, neither status and neither of the two
+	// counts the text prints reached the wire at all. A reader must be able to
+	// tell an unchanged licence from an absent one.
+	DeclaredA        licenseDiffSideJSON `json:"declared_a"`
+	DeclaredB        licenseDiffSideJSON `json:"declared_b"`
+	SPDXChanged      *spdxChangeJSON     `json:"spdx_changed,omitempty"`
+	StatusChanged    *statusChangeJSON   `json:"status_changed,omitempty"`
+	FilesAdded       []licFileDeltaJSON  `json:"files_added"`
+	FilesRemoved     []licFileDeltaJSON  `json:"files_removed"`
+	CopyrightAdded   []string            `json:"copyright_added"`
+	CopyrightRemoved []string            `json:"copyright_removed"`
+	Escalation       *escalationJSON     `json:"escalation,omitempty"`
+}
+
+// licenseDiffSideJSON is one side's own licence facts: what it declares, at what
+// status, and over how much evidence. The two counts are the populations the
+// text's no-change line names.
+type licenseDiffSideJSON struct {
+	// PrimarySPDX is the record's value, empty included: an empty expression is
+	// the answer for an unlicensed module, and labelling it here would make a
+	// measured absence indistinguishable from a module that declares the words
+	// this view chose.
+	PrimarySPDX         string `json:"primary_spdx"`
+	OverallStatus       string `json:"overall_status"`
+	LicenseFiles        int    `json:"license_files"`
+	CopyrightStatements int    `json:"copyright_statements"`
 }
 
 type spdxChangeJSON struct {
@@ -245,6 +267,8 @@ func toLicenseDiffJSON(diff domain.LicenseDiff) licenseDiffJSON {
 	out := licenseDiffJSON{
 		ModuleA:          a.Path() + "@" + a.Version(),
 		ModuleB:          b.Path() + "@" + b.Version(),
+		DeclaredA:        licenseDiffSideOf(diff.RecordA),
+		DeclaredB:        licenseDiffSideOf(diff.RecordB),
 		FilesAdded:       make([]licFileDeltaJSON, 0, len(diff.FilesAdded)),
 		FilesRemoved:     make([]licFileDeltaJSON, 0, len(diff.FilesRemoved)),
 		CopyrightAdded:   make([]string, 0, len(diff.CopyrightAdded)),
@@ -290,6 +314,16 @@ func licenseDiffSPDXLabel(spdx string) string {
 		return "no primary SPDX expression"
 	}
 	return spdx
+}
+
+// licenseDiffSideOf states one side's own licence facts.
+func licenseDiffSideOf(rec domain.LicenseRecord) licenseDiffSideJSON {
+	return licenseDiffSideJSON{
+		PrimarySPDX:         rec.PrimarySPDX,
+		OverallStatus:       rec.OverallStatus.String(),
+		LicenseFiles:        len(rec.LicenseFiles),
+		CopyrightStatements: licenseDiffCopyrightCount(rec),
+	}
 }
 
 // licenseDiffCopyrightCount counts the copyright statements on one side, which

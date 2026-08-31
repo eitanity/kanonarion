@@ -242,13 +242,19 @@ func walkDiffMiss(ctx context.Context, walks QueryWalksUseCase, idA, idB string,
 // walkDiffJSON is the compact, AI-friendly JSON representation of a walk diff.
 // All slice fields are non-nil so they always appear as [] in output, never null.
 type walkDiffJSON struct {
-	WalkA              string         `json:"walk_a"`
-	WalkB              string         `json:"walk_b"`
-	Added              []string       `json:"added"`
-	Removed            []string       `json:"removed"`
-	Upgraded           []upgradeEntry `json:"upgraded"`
-	LicenseRegressions []string       `json:"license_regressions"`
-	NewReachableCVEs   []string       `json:"new_reachable_cves"`
+	WalkA    string         `json:"walk_a"`
+	WalkB    string         `json:"walk_b"`
+	Added    []string       `json:"added"`
+	Removed  []string       `json:"removed"`
+	Upgraded []upgradeEntry `json:"upgraded"`
+	// StatusChanged is the per-node status delta: a node both walks hold whose
+	// walk result moved between them. It is a change category of its own beside
+	// added, removed and upgraded, and without it a document reported no change
+	// at all on two walks whose text output named the node and both statuses —
+	// a consumer diffing walks in CI to detect drift was told there was none.
+	StatusChanged      []statusChangeEntry `json:"status_changed"`
+	LicenseRegressions []string            `json:"license_regressions"`
+	NewReachableCVEs   []string            `json:"new_reachable_cves"`
 	// Unresolved names a completeness mismatch (differing scope/depth) that makes
 	// the added/removed sets an asymmetric comparison; empty when the walks are
 	// completeness-comparable.
@@ -263,6 +269,18 @@ type upgradeEntry struct {
 	From      string   `json:"from"`
 	To        string   `json:"to"`
 	FixedCVEs []string `json:"fixed_cves"`
+}
+
+// statusChangeEntry is one node whose per-node walk status moved, the status it
+// left and the status it reached.
+//
+// The node is named by its whole coordinate rather than by its path: two nodes
+// of one module differ only by version, and a path alone would not say which of
+// them changed.
+type statusChangeEntry struct {
+	Coordinate string `json:"coordinate"`
+	From       string `json:"from"`
+	To         string `json:"to"`
 }
 
 func toWalkDiffJSON(d application.WalkDiff) walkDiffJSON {
@@ -283,12 +301,21 @@ func toWalkDiffJSON(d application.WalkDiff) walkDiffJSON {
 			FixedCVEs: []string{},
 		}
 	}
+	statusChanged := make([]statusChangeEntry, len(d.StatusChanged))
+	for i, sc := range d.StatusChanged {
+		statusChanged[i] = statusChangeEntry{
+			Coordinate: sc.Coordinate.String(),
+			From:       sc.StatusA.String(),
+			To:         sc.StatusB.String(),
+		}
+	}
 	return walkDiffJSON{
 		WalkA:              d.WalkA,
 		WalkB:              d.WalkB,
 		Added:              added,
 		Removed:            removed,
 		Upgraded:           upgraded,
+		StatusChanged:      statusChanged,
 		LicenseRegressions: []string{},
 		NewReachableCVEs:   []string{},
 		Unresolved:         d.CompletenessMismatch,
