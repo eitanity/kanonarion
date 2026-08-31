@@ -25,8 +25,9 @@ type AuditSink interface {
 }
 
 // ErrModuleNotFetched is returned when extraction is attempted for a module
-// that has no FactRecord in the store. Callers should run 'kanonarion fetch' first.
-var ErrModuleNotFetched = errors.New("module not fetched: run 'kanonarion fetch' first")
+// that has no FactRecord in the store. It states the fact only: the remedy
+// depends on the coordinate, so wrappers add fetchdomain.NotFetchedRemedy.
+var ErrModuleNotFetched = errors.New("module not fetched")
 
 // ErrExampleNotFound is returned by ExampleStore.GetExampleRecord when no
 // record exists for the given coordinate and pipeline version.

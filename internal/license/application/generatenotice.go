@@ -404,7 +404,7 @@ func (uc *GenerateNoticeUseCase) noticeRequireFetchRecord(
 		return fetchdomain.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
 	if !ok {
-		return fetchdomain.FactRecord{}, fmt.Errorf("%w: %s", licenseports.ErrModuleNotFetched, coord)
+		return fetchdomain.FactRecord{}, fmt.Errorf("%w: %s: %s", licenseports.ErrModuleNotFetched, coord, fetchdomain.NotFetchedRemedy(coord))
 	}
 	return r.FactRecord, nil
 }

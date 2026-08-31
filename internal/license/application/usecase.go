@@ -206,7 +206,7 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 		return ExtractResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
 	}
 	if !hasZip {
-		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip", ports.ErrModuleNotFetched, req.Coordinate)
+		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain.NotFetchedRemedy(req.Coordinate))
 	}
 	zipReader, err := uc.blobs.Get(ctx, zipIdentity)
 	if err != nil {
@@ -329,7 +329,7 @@ func (uc *ExtractLicenseUseCase) requireFetchRecord(
 		return domain.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
 	if !ok {
-		return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+		return domain.FactRecord{}, fmt.Errorf("%w: %s: %s", ports.ErrModuleNotFetched, coord, domain.NotFetchedRemedy(coord))
 	}
 	return r.FactRecord, nil
 }

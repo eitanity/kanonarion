@@ -21,7 +21,7 @@ type AuditSink interface {
 
 // ErrModuleNotFetched is returned when extraction is attempted for a module
 // that has no FactRecord in the store.
-var ErrModuleNotFetched = errors.New("module not fetched: run 'kanonarion fetch' first")
+var ErrModuleNotFetched = errors.New("module not fetched")
 
 // ErrCallGraphNotFound is returned by CallGraphStore.GetCallGraphRecord when
 // no record exists for the given coordinate and pipeline version.
