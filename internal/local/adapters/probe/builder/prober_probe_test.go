@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ func TestFindMainPackages_BinaryModule(t *testing.T) {
 		"go.mod":  goMod,
 		"main.go": "package main\n\nfunc main() {}\n",
 	})
-	mains, err := findMainPackages(context.Background(), root, "go")
+	mains, err := findMainPackages(context.Background(), goenv.NewToolchains(), root, "go")
 	if err != nil {
 		t.Fatalf("findMainPackages: %v", err)
 	}
@@ -58,7 +59,7 @@ func TestFindMainPackages_LibraryModuleHasNoMain(t *testing.T) {
 		"go.mod":     goMod,
 		"lib/lib.go": "package lib\n\nfunc Exported() {}\n",
 	})
-	mains, err := findMainPackages(context.Background(), root, "go")
+	mains, err := findMainPackages(context.Background(), goenv.NewToolchains(), root, "go")
 	if err != nil {
 		t.Fatalf("findMainPackages: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestFindMainPackages_LibraryModuleHasNoMain(t *testing.T) {
 
 func TestFindMainPackages_NotAGoModule(t *testing.T) {
 	root := t.TempDir() // no go.mod
-	if _, err := findMainPackages(context.Background(), root, "go"); err == nil {
+	if _, err := findMainPackages(context.Background(), goenv.NewToolchains(), root, "go"); err == nil {
 		t.Fatal("expected error for non-module directory")
 	}
 }
@@ -135,7 +136,7 @@ func TestReadSymbolTable_InvalidBinary(t *testing.T) {
 	if err := os.WriteFile(bogus, []byte("nope"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := readSymbolTable(context.Background(), root, bogus, "go")
+	_, err := readSymbolTable(context.Background(), goenv.NewToolchains(), root, bogus, "go")
 	if err == nil {
 		t.Fatal("expected error from go tool nm on non-binary input")
 	}

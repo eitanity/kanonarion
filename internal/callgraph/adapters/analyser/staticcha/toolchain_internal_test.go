@@ -278,42 +278,6 @@ func TestAnalyseDir_UnsatisfiableGoDirectiveNamesTheVersionGap(t *testing.T) {
 	}
 }
 
-// TestIsToolchainTooOld_MatchesTheGoCommandsSentence pins the marker against the
-// wording the go command emits and against two strings that must not match it.
-func TestIsToolchainTooOld_MatchesTheGoCommandsSentence(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		detail string
-		want   bool
-	}{
-		{
-			name:   "unpinned",
-			detail: "meta load: err: exit status 1: stderr: go: go.mod requires go >= 1.26.6 (running go 1.26.5)\n",
-			want:   true,
-		},
-		{
-			name:   "pinned names the setting too",
-			detail: "go: go.mod requires go >= 1.26.6 (running go 1.26.5; GOTOOLCHAIN=local)\n",
-			want:   true,
-		},
-		{
-			name:   "the message this replaces",
-			detail: "go: golang.org/toolchain@v0.0.1-go1.26.6.linux-amd64: verifying module: checksum database disabled by GOSUMDB=off\n",
-			want:   false,
-		},
-		{
-			name:   "half the phrase in the module's own prose",
-			detail: "./doc.go:3:2: this package requires go >= 1.22 to build",
-			want:   false,
-		},
-	} {
-		if got := isToolchainTooOld(tc.detail); got != tc.want {
-			t.Errorf("%s: isToolchainTooOld = %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}
-
 // TestProbeToolchainVersion_AsksWithTheLoadersOwnEnvironment is the
 // reproduction the env argument exists for.
 //

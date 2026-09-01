@@ -124,16 +124,6 @@ func isOfflineCacheMiss(detail string) bool {
 	return strings.Contains(detail, offlineLookupMarker)
 }
 
-// isToolchainTooOld reports whether a load failed because the module asks for a
-// newer Go than the one running: "go.mod requires go >= X (running go Y)".
-//
-// The probe cannot see it — the go command runs, reads the directive and
-// refuses — so unmatched it files as the module's fault, which is cacheable.
-// Both halves are required so a module quoting the phrase cannot match.
-func isToolchainTooOld(detail string) bool {
-	return strings.Contains(detail, " requires go >= ") && strings.Contains(detail, "(running go ")
-}
-
 // probeToolchainVersion names the toolchain this analysis is running under, or
 // the zero value when it could not be established.
 //

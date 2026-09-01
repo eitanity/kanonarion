@@ -52,9 +52,11 @@ kanonarion uses these four words everywhere.
 
 ### 0. Before you start
 
-- **Go 1.26 or newer.** Use a Go version at least as new as the `go` line in your
-  project's `go.mod`. When kanonarion analyses code it sets `GOTOOLCHAIN=local`,
-  so it uses the toolchain you already have. It does not download a newer one.
+- **Go 1.26 or newer.** kanonarion never downloads a Go toolchain. It analyses
+  with the one you already have. If a project needs a newer Go than that, it
+  uses a newer Go that is already unpacked on this machine — in `~/sdk`, or one
+  the go command downloaded earlier into the module cache. If there is none, it
+  stops and tells you which version to install.
 - **git on your `PATH`.** kanonarion checks each download against the upstream
   source repository. Without git it still checks the Go checksum database, and it
   records that the repository check did not run.

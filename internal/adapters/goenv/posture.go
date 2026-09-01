@@ -72,6 +72,18 @@ var postures = map[string]Posture{
 			"GOFLAGS": "-mod=mod", "GOSUMDB": "off", "GOTOOLCHAIN": "local", "GOPROXY": "off",
 		},
 	},
+	// The one escalation any of the three pinned analysis postures may take: the
+	// installed toolchain is older than the analysed module's go directive and a
+	// toolchain that satisfies it is already unpacked on this host, so the
+	// selection moves from `local` to `path`. This posture is stated against the
+	// UNESCALATED environment as its base, so the Forbid list says what the
+	// escalation must leave exactly where it found it: the network stays off, the
+	// workspace stays isolated, the module flag stays as its own posture chose.
+	// PATH is absent from both lists because moving it is the whole mechanism.
+	"on-disk-toolchain": {
+		Require: map[string]string{"GOTOOLCHAIN": "path"},
+		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOWORK", "GOFLAGS", "GOMODCACHE", "GOGC"},
+	},
 	// A project that has a vendor tree and a caller declining it: Go selects
 	// -mod=vendor from the tree's mere presence, so the fetched surface has to
 	// say otherwise, and that flag is refused in workspace mode.
