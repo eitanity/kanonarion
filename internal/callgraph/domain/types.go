@@ -676,6 +676,16 @@ type CallGraphRecord struct {
 	// "none happened". Nothing may infer from an empty list that a record's
 	// membership was measured.
 	PrefixAttributedPackages []string
+	// DerivedBy states WHY this generation exists: which reuse gate governed the
+	// append, and whether the run asked it or forced past it. See
+	// GenerationDerivation.
+	//
+	// The zero value means the generation predates the field, or was written by a
+	// path that consults no gate — an exclusion record states its reason instead.
+	// It is never read as a gate or an outcome of its own, and no comparison or
+	// digest sees it, so a generation carrying one still restates one that does
+	// not.
+	DerivedBy GenerationDerivation
 }
 
 // ImplementersOf returns the implementations of interfaceID recorded in rec,

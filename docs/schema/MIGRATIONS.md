@@ -106,6 +106,42 @@ object whose `basis` is `"named"` or `"chosen"`, beside the candidate count the
 choice was made from. The last is the point of the change: the walk id alone
 looks the same whether the caller pinned the build or the tool picked it.
 
+## Call graph records: why a generation exists, no migration and no bump
+
+**No store migration, no schema-version bump, no pipeline bump.** A
+`CallGraphRecord` gains `derived_by`: which reuse gate governed the run that
+appended the generation (`worktree` or `ledger`) and whether that run asked the
+gate (`consulted`) or forced past it (`bypassed`).
+
+**Why.** `callgraph_records` is append-only and `--force` appending an identical
+measurement is correct. What was missing is the record being able to say that is
+what happened. Measured on the maintainer's store: one coordinate held thirteen
+generations of one analysis — same worktree digest, same 13861 nodes and 186221
+edges — and eight of them shared an identical `analysis_root`, so nothing in the
+data separated a deliberate re-measurement from a reuse gate that failed to fire.
+The only thing left to read intent out of was the directory name the run stood
+in, which is not evidence.
+
+**No purge and no bump.** `derived_by` is `omitzero` on the canonical record and
+absent from every record written before it, so every stored record marshals to
+the bytes it was sealed over and still verifies against its stored hash. Measured
+against the live store with a binary built from the parent commit and one built
+with the change: 825 stored call-graph records, 825 verified under both, every
+stored and recomputed hash byte-identical. It is inside the sealed shape because
+it is a claim the record makes about itself, and a value outside the seal could
+be edited without breaking the record's own integrity check.
+
+**Absent is not a value.** No comparison and no digest sees the field:
+`SameMeasurement`, `MeasurementDigest`, `RestatesAnalysis` and `GraphDigest` all
+blank it first. Why a measurement was taken is no part of what it says, and a
+generation written before the field must still be recognised as restating one
+that carries it — otherwise the first run after the change would append a
+duplicate of every generation the store holds.
+
+**What a reader sees change without re-extracting anything:** nothing. Records
+written from now on carry a `derived:` line in `callgraph-show --history`;
+records written before print none.
+
 ## Interface record: pipeline `0.5.0` → `0.6.0`
 
 **Record shape change; no store migration. This bump is also a repair** — a

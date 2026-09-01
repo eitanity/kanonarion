@@ -288,6 +288,11 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		return ExtractResult{}, fmt.Errorf("running call graph analyser: %w", err)
 	}
 
+	// Why this generation exists: the identical-generation ledger check below, and
+	// whether this run asked it or was told to re-measure regardless. It is stamped
+	// before the seal so the answer is as tamper-evident as the measurement.
+	record.DerivedBy = domain2.DerivationFor(domain2.ReuseGateLedger, req.Force)
+
 	record.ExtractedAt = uc.clock.Now().UTC()
 	record.PipelineVersion = uc.pipelineVersion
 	// Record the exclusion policy in force so callgraph-show can report it

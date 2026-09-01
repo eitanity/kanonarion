@@ -1585,3 +1585,36 @@ func resealed(t *testing.T, r domain2.CallGraphRecord) domain2.CallGraphRecord {
 	}
 	return sealed
 }
+
+// TestLedger_DerivationSurvivesTheStore: the derivation is inside the seal, so
+// the store must return it as written. A field the ledger dropped would answer
+// "why does this row exist" with silence on every read.
+func TestLedger_DerivationSurvivesTheStore(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	rec := ledgerRecord(t, ledgerSpec{
+		source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain2.CompletenessBuiltWithBodies,
+	})
+	rec.DerivedBy = domain2.DerivationFor(domain2.ReuseGateLedger, true)
+	var h domain2.CallGraphRecordHasher
+	sealed, err := h.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if err := s.PutCallGraphRecord(ctx, sealed); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+
+	got, found, err := s.GetCallGraphRecord(ctx, sealed.Coordinate, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.DerivedBy != sealed.DerivedBy {
+		t.Errorf("derivation read back as %v, want %v", got.DerivedBy, sealed.DerivedBy)
+	}
+	if got.ContentHash != sealed.ContentHash {
+		t.Errorf("content hash changed across the store: got %s, want %s", got.ContentHash, sealed.ContentHash)
+	}
+}
