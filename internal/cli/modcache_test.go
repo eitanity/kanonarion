@@ -31,7 +31,7 @@ func resetModcacheGlobals(t *testing.T) {
 
 func TestResolveModcacheMode_FlagAbsentLeavesModeOff(t *testing.T) {
 	resetModcacheGlobals(t)
-	if err := resolveModcacheMode("", "/anywhere/go.mod"); err != nil {
+	if err := resolveModcacheMode(t.Context(), "", "/anywhere/go.mod"); err != nil {
 		t.Fatalf("resolveModcacheMode: %v", err)
 	}
 	if modcacheMode {
@@ -51,7 +51,7 @@ func TestResolveModcacheMode_ExplicitDirSetsGlobals(t *testing.T) {
 	}
 	cacheDir := t.TempDir()
 
-	if err := resolveModcacheMode(cacheDir, gomod); err != nil {
+	if err := resolveModcacheMode(t.Context(), cacheDir, gomod); err != nil {
 		t.Fatalf("resolveModcacheMode: %v", err)
 	}
 	if !modcacheMode {
@@ -85,7 +85,7 @@ func TestResolveModcacheMode_BareFlagResolvesFromGoEnv(t *testing.T) {
 	t.Setenv("GOMODCACHE", cacheDir)
 	t.Setenv("GOFLAGS", "")
 
-	if err := resolveModcacheMode(modcacheFlagSentinel, gomod); err != nil {
+	if err := resolveModcacheMode(t.Context(), modcacheFlagSentinel, gomod); err != nil {
 		t.Fatalf("resolveModcacheMode(bare): %v", err)
 	}
 	if !modcacheMode {
@@ -116,7 +116,7 @@ func TestResolveModcacheMode_SentinelNamedDirectoryIsRefusedNotReinterpreted(t *
 	}
 	t.Chdir(work)
 
-	err := resolveModcacheMode(modcacheFlagSentinel, gomod)
+	err := resolveModcacheMode(t.Context(), modcacheFlagSentinel, gomod)
 	if err == nil {
 		t.Fatalf("want a refusal when a directory carries the sentinel's name, got nil")
 	}
@@ -128,7 +128,7 @@ func TestResolveModcacheMode_SentinelNamedDirectoryIsRefusedNotReinterpreted(t *
 	}
 
 	// Named unambiguously, the same directory is accepted.
-	if err := resolveModcacheMode(filepath.Join(work, modcacheFlagSentinel), gomod); err != nil {
+	if err := resolveModcacheMode(t.Context(), filepath.Join(work, modcacheFlagSentinel), gomod); err != nil {
 		t.Fatalf("explicit path to the same directory: %v", err)
 	}
 	if modcacheDir != filepath.Join(work, modcacheFlagSentinel) {
@@ -173,7 +173,7 @@ func TestResolveModcacheMode_MissingCacheDirErrors(t *testing.T) {
 	_ = os.WriteFile(gomod, []byte("module x\n"), 0o600)
 	_ = os.WriteFile(filepath.Join(projectDir, "go.sum"), []byte(""), 0o600)
 
-	if err := resolveModcacheMode(filepath.Join(t.TempDir(), "does-not-exist"), gomod); err == nil {
+	if err := resolveModcacheMode(t.Context(), filepath.Join(t.TempDir(), "does-not-exist"), gomod); err == nil {
 		t.Fatalf("want error for a missing cache dir, got nil")
 	}
 	if modcacheMode {
@@ -187,7 +187,7 @@ func TestResolveModcacheMode_MissingGoSumErrors(t *testing.T) {
 	gomod := filepath.Join(projectDir, "go.mod")
 	_ = os.WriteFile(gomod, []byte("module x\n"), 0o600)
 	// No go.sum written.
-	if err := resolveModcacheMode(t.TempDir(), gomod); err == nil {
+	if err := resolveModcacheMode(t.Context(), t.TempDir(), gomod); err == nil {
 		t.Fatalf("want error when go.sum is absent, got nil")
 	}
 }

@@ -177,7 +177,7 @@ func runSBOMGenerate(
 		if gerr != nil {
 			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
 		}
-		if merr := resolveModcacheMode(f.fromModcache, gomodPath); merr != nil {
+		if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
 			return merr
 		}
 	}
@@ -229,7 +229,7 @@ func sbomGenerateWith(
 	var allowList []coordinate.ModuleCoordinate
 	if f.packagePattern != "" {
 		var aerr error
-		allowList, aerr = buildPackageAllowList(f.packagePattern)
+		allowList, aerr = buildPackageAllowList(ctx, f.packagePattern)
 		if aerr != nil {
 			return aerr
 		}
@@ -518,8 +518,8 @@ func sbomListZeroScope(ctx context.Context, walkID string, ctr *Container) (list
 
 // buildPackageAllowList resolves the module coordinates for the binary's import
 // closure via go list -deps and returns them as a parsed AllowList.
-func buildPackageAllowList(packagePattern string) ([]coordinate.ModuleCoordinate, error) {
-	coordStrs, err := readPackageModules(packagePattern)
+func buildPackageAllowList(ctx context.Context, packagePattern string) ([]coordinate.ModuleCoordinate, error) {
+	coordStrs, err := readPackageModules(ctx, packagePattern)
 	if err != nil {
 		return nil, fmt.Errorf("resolving package modules for %q: %w", packagePattern, err)
 	}

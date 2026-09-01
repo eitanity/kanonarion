@@ -614,7 +614,7 @@ func TestReadPackageModules_LiveRepo(t *testing.T) {
 		t.Skip("skipping live go list test in short mode")
 	}
 
-	coords, err := readPackageModules("github.com/eitanity/kanonarion/cmd/kanonarion")
+	coords, err := readPackageModules(t.Context(), "github.com/eitanity/kanonarion/cmd/kanonarion")
 	if err != nil {
 		t.Fatalf("readPackageModules: %v", err)
 	}

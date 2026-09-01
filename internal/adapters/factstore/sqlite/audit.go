@@ -52,6 +52,11 @@ func NewAuditLog(path string) (*AuditLog, error) {
 		return nil, fmt.Errorf("closing audit log after create: %w", err)
 	}
 	// Best-effort: set append-only filesystem attribute on Linux. Fails on non-ext4 and in CI.
+	//
+	// This is the one child in the tree not started through childproc, and the
+	// exemption is registered in childproc.DirectSpawns with its reason: chattr
+	// is one ioctl on a path this process just created, with no context in
+	// scope, no grandchildren and nothing to strand.
 	_ = exec.Command("chattr", "+a", path).Run() /* #nosec G204 -- chattr path is a fixed string */
 	return &AuditLog{path: path}, nil
 }

@@ -46,7 +46,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 
 	logger := buildLogger(logLevel, stderr)
 
-	mods, res, err := resolveScopeModules(f.gomodPath, scope, f.excludeTests)
+	mods, res, err := resolveScopeModules(ctx, f.gomodPath, scope, f.excludeTests)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}

@@ -114,7 +114,7 @@ func manifestDriftAgainstWalk(
 	// current resolution against a stored walk, and that walk was taken over the
 	// scope's default. Resolving with a narrowed axis here would report every
 	// test-only module as removed and re-walk on drift that is not there.
-	resolved, _, err := resolveScopeModules(gomodPath, scope, false)
+	resolved, _, err := resolveScopeModules(ctx, gomodPath, scope, false)
 	if err != nil {
 		return manifestDrift{}, rec, fmt.Errorf("checking whether walk %s still describes %s (resolving the %s scope): %w", walkID, gomodPath, scope, err)
 	}

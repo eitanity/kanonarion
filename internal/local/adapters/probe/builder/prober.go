@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
@@ -70,7 +71,7 @@ func combinedCapture(cmd *exec.Cmd) ([]byte, string, error) {
 // host has nothing that can serve.
 func runChild(ctx context.Context, tc *goenv.Toolchains, root, goBin string, read capture, args ...string) ([]byte, string, error) {
 	for {
-		cmd := exec.CommandContext(ctx, goBin, args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+		cmd := childproc.CommandContext(ctx, goBin, args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 		cmd.Dir = root
 		cmd.Env = tc.Apply(probeEnv(root))
 		out, detail, err := read(cmd)

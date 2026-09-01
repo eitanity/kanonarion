@@ -364,7 +364,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 	f.gomodPath = gomodPath
 
-	if err := resolveModcacheMode(f.fromModcache, gomodPath); err != nil {
+	if err := resolveModcacheMode(ctx, f.fromModcache, gomodPath); err != nil {
 		return err
 	}
 	// On the normal network path, layer the project go.sum on as an always-on
@@ -380,7 +380,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if rerr := refuseTestScopeOnRecordingCommand("audit", f.excludeTests); rerr != nil {
 		return rerr
 	}
-	mods, res, err := resolveScopeModules(f.gomodPath, scope, false)
+	mods, res, err := resolveScopeModules(ctx, f.gomodPath, scope, false)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}

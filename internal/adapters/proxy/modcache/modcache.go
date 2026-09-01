@@ -22,10 +22,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -206,7 +206,7 @@ func (p *Proxy) download(ctx context.Context, coord coordinate.ModuleCoordinate)
 	}
 	arg := coord.Path() + "@" + coord.Version()
 	p.logger.InfoContext(ctx, "modcache_go_mod_download", slog.String("module", arg))
-	cmd := exec.CommandContext(ctx, goBin, "mod", "download", arg) // #nosec G204 -- goBin is operator-configured; arg is a validated coordinate
+	cmd := childproc.CommandContext(ctx, goBin, "mod", "download", arg) // #nosec G204 -- goBin is operator-configured; arg is a validated coordinate
 	cmd.Dir = p.projectDir
 	cmd.Env = append(os.Environ(), "GOMODCACHE="+p.dir)
 	if out, err := cmd.CombinedOutput(); err != nil {

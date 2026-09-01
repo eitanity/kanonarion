@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"golang.org/x/tools/go/packages"
 )
@@ -1121,6 +1122,180 @@ func buildsEnvironInline(body *ast.BlockStmt) bool {
 		return true
 	})
 	return found
+}
+
+// execImportName returns the local name bound to "os/exec" in f, or "" when
+// the file does not import it under a usable name. An aliased import is
+// therefore still caught, and an unrelated package called exec is not.
+func execImportName(f *ast.File) string {
+	for _, spec := range f.Imports {
+		if spec.Path.Value != `"os/exec"` {
+			continue
+		}
+		if spec.Name == nil {
+			return "exec"
+		}
+		if spec.Name.Name == "_" || spec.Name.Name == "." {
+			return ""
+		}
+		return spec.Name.Name
+	}
+	return ""
+}
+
+// spawnsChildDirectly reports whether body calls exec.Command or
+// exec.CommandContext, given the local name bound to os/exec in that file.
+func spawnsChildDirectly(body *ast.BlockStmt, execName string) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext" {
+			return true
+		}
+		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == execName {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+// TestEveryChildProcessIsHardened closes the class that regrew after the
+// childproc wrapper was written: the wrapper bounds child lifetime, the sites
+// that prompted it were converted, and twelve others went on calling os/exec
+// directly — three of them without a context at all, so nothing could stop
+// them, and the rest without the process group that makes a cancel reach the
+// grandchildren.
+//
+// What the hardening buys is not interactive cancellation, which a child in the
+// parent's own process group already gets from the terminal. It is the parent
+// that dies WITHOUT sending anything: a SIGKILL, an OOM kill, a crash. No signal
+// reaches the group then, and only PR_SET_PDEATHSIG reaps the child. A `go
+// build` or a `go list -m all` orphaned that way keeps holding the working set
+// that got its parent killed. TestUnhardenedChildOutlivesAKilledParent measures
+// exactly that, beside the hardened case it is the control for.
+//
+// A function that starts a child with os/exec must therefore be registered in
+// childproc.DirectSpawns with a reason. The map drains too: an entry naming a
+// function that no longer spawns one fails, so a permission cannot outlive the
+// call it was granted for.
+//
+// Test files are exempt. A fixture that runs `git init` or `go list` to build a
+// tree for one test is not a child of the product, and nothing outlives the
+// test binary that a hardening rule would protect.
+func TestEveryChildProcessIsHardened(t *testing.T) {
+	const wrapperDir = "internal/adapters/childproc"
+	seen := map[string]bool{}
+	for _, root := range []string{"../internal", "../cmd"} {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return fmt.Errorf("walk %s: %w", path, err)
+			}
+			if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			fset := token.NewFileSet()
+			f, perr := parser.ParseFile(fset, path, nil, parser.ImportsOnly|parser.SkipObjectResolution)
+			if perr != nil {
+				return fmt.Errorf("parse imports of %s: %w", path, perr)
+			}
+			execName := execImportName(f)
+			if execName == "" {
+				return nil
+			}
+			f, perr = parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+			if perr != nil {
+				return fmt.Errorf("parse %s: %w", path, perr)
+			}
+			pkgDir := strings.TrimPrefix(filepath.ToSlash(filepath.Dir(path)), "../")
+			if pkgDir == wrapperDir {
+				return nil // the wrapper is where os/exec is called from
+			}
+			for _, decl := range f.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil || !spawnsChildDirectly(fn.Body, execName) {
+					continue
+				}
+				key := pkgDir + " " + fn.Name.Name
+				if _, registered := childproc.DirectSpawns[key]; !registered {
+					t.Errorf("%s starts a child with os/exec directly; build it with childproc.CommandContext "+
+						"so a parent that dies without warning cannot orphan it, or register the exemption in "+
+						"childproc.DirectSpawns with the reason the default cannot apply", key)
+					continue
+				}
+				seen[key] = true
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
+		}
+	}
+	for key, reason := range childproc.DirectSpawns {
+		if !seen[key] {
+			t.Errorf("childproc.DirectSpawns exempts %q (%s), which no longer starts a child with os/exec — remove the entry", key, reason)
+		}
+	}
+}
+
+// TestHardeningGuardCatchesANewDirectSpawn plants the violation the guard
+// exists to catch and shows it caught. A guard whose detector is never run
+// against a positive case is decoration: the one this replaces a hand-list with
+// would pass just as quietly if spawnsChildDirectly matched nothing at all.
+func TestHardeningGuardCatchesANewDirectSpawn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{
+			name: "a new unhardened spawn",
+			src:  "package p\nimport \"os/exec\"\nfunc scan() { _ = exec.Command(\"go\", \"list\") }\n",
+			want: true,
+		},
+		{
+			name: "a new unhardened spawn under an aliased import",
+			src:  "package p\nimport osexec \"os/exec\"\nfunc scan() { _ = osexec.CommandContext(nil, \"go\", \"list\") }\n",
+			want: true,
+		},
+		{
+			name: "the hardened form the guard must not flag",
+			src:  "package p\nimport \"github.com/eitanity/kanonarion/internal/adapters/childproc\"\nfunc scan() { _ = childproc.CommandContext(nil, \"go\", \"list\") }\n",
+			want: false,
+		},
+		{
+			name: "an unrelated package that happens to be called exec",
+			src:  "package p\nimport \"example.com/exec\"\nfunc scan() { _ = exec.Command(\"go\") }\n",
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, "planted.go", tc.src, parser.SkipObjectResolution)
+			if err != nil {
+				t.Fatalf("parse planted source: %v", err)
+			}
+			execName := execImportName(f)
+			got := false
+			if execName != "" {
+				for _, decl := range f.Decls {
+					if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil && spawnsChildDirectly(fn.Body, execName) {
+						got = true
+					}
+				}
+			}
+			if got != tc.want {
+				t.Errorf("guard detected = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 // orderingFuncs are the sort entry points whose comparator this guard reads.

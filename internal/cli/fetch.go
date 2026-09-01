@@ -139,7 +139,7 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 	if rerr := refuseTestScopeOnRecordingCommand("fetch --gomod", f.excludeTests); rerr != nil {
 		return rerr
 	}
-	mods, res, err := resolveScopeModules(gomodPath, scope, false)
+	mods, res, err := resolveScopeModules(ctx, gomodPath, scope, false)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}

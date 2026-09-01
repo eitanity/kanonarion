@@ -135,7 +135,7 @@ func TestResolveScopeModules_LocalPathReplace(t *testing.T) {
 	write(gomod, "module example.com/main\n\ngo 1.24\n\nrequire example.com/dep v1.0.0\n\nreplace example.com/dep => ../dep\n")
 	write(filepath.Join(main, "main.go"), "package main\n\nimport \"example.com/dep\"\n\nfunc main() { _ = dep.D() }\n")
 
-	mods, _, err := resolveScopeModules(gomod, scopeCode, false)
+	mods, _, err := resolveScopeModules(t.Context(), gomod, scopeCode, false)
 	if err != nil {
 		t.Fatalf("resolveScopeModules: %v", err)
 	}

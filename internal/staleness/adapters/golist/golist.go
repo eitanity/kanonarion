@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/staleness/ports"
 )
@@ -113,7 +114,7 @@ func (r *Resolver) LatestBatch(ctx context.Context, paths []string) (map[string]
 	defer cancel()
 
 	args := append([]string{"list", "-m", "-u", "-json", "-mod=readonly"}, paths...)
-	cmd := exec.CommandContext(ctx, "go", args...) // #nosec G204 -- args are module paths resolved by the go command itself from this project's own build list
+	cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are module paths resolved by the go command itself from this project's own build list
 	cmd.Dir = r.dir
 	cmd.Env = r.childEnv()
 	out, err := cmd.Output()

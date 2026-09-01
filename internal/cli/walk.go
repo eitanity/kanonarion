@@ -179,7 +179,7 @@ func runWalkGoMod(ctx context.Context, f walkFlags, stdout, stderr io.Writer) er
 	// cache and the go.sum beside this go.mod is their sole anchor. Resolved
 	// first because resolveProjectGoSum is a no-op under it, and because the
 	// container below wires its adapters from the mode it sets.
-	if err := resolveModcacheMode(f.fromModcache, f.gomodPath); err != nil {
+	if err := resolveModcacheMode(ctx, f.fromModcache, f.gomodPath); err != nil {
 		return err
 	}
 	// On the network path the project's go.sum layers on as an always-on offline
@@ -314,7 +314,7 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	res := newScopeResolution(scope, false)
 	if scope != scopeComplete {
 		var mods []scopeModule
-		mods, res, err = resolveScopeModules(gomodPath, scope, false)
+		mods, res, err = resolveScopeModules(ctx, gomodPath, scope, false)
 		if err != nil {
 			return application.ExecuteWalkResult{}, fmt.Errorf("resolving %s scope: %w", scope, err)
 		}

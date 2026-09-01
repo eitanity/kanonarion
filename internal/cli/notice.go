@@ -433,12 +433,12 @@ func resolveNoticeModules(
 	if packagePattern != "" {
 		// --package narrows to a single binary's import closure, the most
 		// precise scope for a distributed NOTICE.
-		mods, err := goListNoticeModules("", []string{packagePattern}, false)
+		mods, err := goListNoticeModules(ctx, "", []string{packagePattern}, false)
 		return mods, "package " + packagePattern, err
 	}
 	// --gomod: the project's code dependencies (consistent with every other
 	// go.mod command).
-	mods, err := goListNoticeModules(filepath.Dir(gomodPath), []string{"./..."}, true)
+	mods, err := goListNoticeModules(ctx, filepath.Dir(gomodPath), []string{"./..."}, true)
 	return mods, "go.mod " + gomodPath, err
 }
 
@@ -446,14 +446,14 @@ func resolveNoticeModules(
 // the de-duplicated, sorted modules the patterns compile against, replacements
 // applied. It reads the same record every scope resolution reads, so attribution
 // and coverage cannot come to disagree about which module a build compiles.
-func goListNoticeModules(dir string, patterns []string, withTest bool) ([]scopeModule, error) {
+func goListNoticeModules(ctx context.Context, dir string, patterns []string, withTest bool) ([]scopeModule, error) {
 	args := []string{"list", "-deps"}
 	if withTest {
 		args = append(args, "-test")
 	}
 	args = append(args, "-f", goListModuleFmt)
 	args = append(args, patterns...)
-	out, err := runGoList(dir, args)
+	out, err := runGoList(ctx, dir, args)
 	if err != nil {
 		return nil, err
 	}

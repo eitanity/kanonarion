@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
@@ -191,8 +192,14 @@ func findPolicyFile() string {
 //
 // Requires the go toolchain to be on PATH. Returns an error with a --walk-id
 // hint if go is not found.
-func readPackageModules(pattern string) ([]string, error) {
-	cmd := exec.Command("go", "list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
+//
+// ctx bounds the child. `go list -deps` over a large pattern runs for minutes
+// and holds a working set the whole time, so it is spawned through childproc:
+// cancelling the command takes the whole process group down, and a parent that
+// dies without warning does not leave it resolving a build nobody is waiting
+// for.
+func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
+	cmd := childproc.CommandContext(ctx, "go", "list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
 		"{{if not .Standard}}{{.Module.Path}}@{{.Module.Version}}{{end}}", pattern)
 	out, err := cmd.Output()
 	if err != nil {
@@ -422,7 +429,7 @@ func requiredCoords(mods []scopeModule) []string {
 // state one axis and resolve another: the disclosure and the resolution come out
 // of the same call. The two -deps scopes default differently on that axis, and
 // correctly so — see testScopeFor, which is the only place the axis is decided.
-func resolveScopeModules(gomodPath string, scope depScope, excludeTests bool) ([]scopeModule, scopeResolution, error) {
+func resolveScopeModules(ctx context.Context, gomodPath string, scope depScope, excludeTests bool) ([]scopeModule, scopeResolution, error) {
 	res := newScopeResolution(scope, excludeTests)
 	args, err := scopeGoListArgs(gomodPath, scope, res.Tests)
 	if err != nil {
@@ -433,7 +440,7 @@ func resolveScopeModules(gomodPath string, scope depScope, excludeTests bool) ([
 		// asking the toolchain a question about no packages.
 		return nil, res, nil
 	}
-	out, err := runGoList(filepath.Dir(gomodPath), args)
+	out, err := runGoList(ctx, filepath.Dir(gomodPath), args)
 	if err != nil {
 		return nil, res, err
 	}
@@ -493,8 +500,14 @@ func goListDepsArgs(patterns []string, ts testScope) []string {
 // of the toolchain is named rather than reported as a generic exec failure, and
 // a non-zero exit carries the toolchain's own stderr, which says more about a
 // broken module graph than any message this could invent.
-func runGoList(dir string, args []string) ([]byte, error) {
-	cmd := exec.Command("go", args...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
+//
+// ctx bounds the child, which is the reason every caller of this now carries
+// one. `go list ./...` and `go list -m all` are the longest-running and
+// hungriest children this CLI starts; spawned unbounded they outlived a parent
+// that was killed rather than asked to stop, and went on holding the memory
+// that got it killed.
+func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
+	cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -1172,7 +1185,7 @@ func registerFromModcacheFlag(cmd *cobra.Command, target *string) {
 // sentinel when passed bare (dir resolves from `go env GOMODCACHE`), or an
 // explicit cache directory. gomodPath locates the sibling go.sum used for
 // hash verification. It is idempotent and safe to call once per invocation.
-func resolveModcacheMode(flagVal, gomodPath string) error {
+func resolveModcacheMode(ctx context.Context, flagVal, gomodPath string) error {
 	if flagVal == "" {
 		// Flag absent — the network + blob-store path, and it is CLEARED rather
 		// than left alone. These are process-wide, and one process runs one
@@ -1196,7 +1209,7 @@ func resolveModcacheMode(flagVal, gomodPath string) error {
 				"pass %q or an absolute path to mean the directory",
 				modcacheFlagSentinel, "."+string(os.PathSeparator)+modcacheFlagSentinel)
 		}
-		resolved, err := goEnvGOMODCACHE()
+		resolved, err := goEnvGOMODCACHE(ctx)
 		if err != nil {
 			return fmt.Errorf("--from-modcache: %w", err)
 		}
@@ -1295,8 +1308,13 @@ func goSumWalkGate(rec walkdomain.WalkRecord, local coordinate.ModuleCoordinate)
 
 // goEnvGOMODCACHE returns the effective module cache directory reported by
 // `go env GOMODCACHE`.
-func goEnvGOMODCACHE() (string, error) {
-	cmd := exec.Command("go", "env", "GOMODCACHE") // #nosec G204 -- fixed, argument-free go invocation
+//
+// The child is instant, so it is not the one that strands memory. It takes a
+// context all the same: the alternative is a second way of starting a Go child
+// in this file, and one regime cheap enough to apply everywhere is worth more
+// than an exemption argued from how fast this particular child returns.
+func goEnvGOMODCACHE(ctx context.Context) (string, error) {
+	cmd := childproc.CommandContext(ctx, "go", "env", "GOMODCACHE") // #nosec G204 -- fixed, argument-free go invocation
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {

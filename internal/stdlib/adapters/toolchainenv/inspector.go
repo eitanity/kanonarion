@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
 )
 
@@ -41,7 +42,7 @@ func (i *Inspector) goBin() string {
 // prints one value per line in argument order. An empty GOROOT is treated as a
 // probe failure — without it there is no source tree to anchor to.
 func (i *Inspector) Locate(ctx context.Context) (goRoot, goVersion string, err error) {
-	cmd := exec.CommandContext(ctx, i.goBin(), "env", "GOROOT", "GOVERSION") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+	cmd := childproc.CommandContext(ctx, i.goBin(), "env", "GOROOT", "GOVERSION") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	out, runErr := cmd.Output()
 	if runErr != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {

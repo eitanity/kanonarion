@@ -580,7 +580,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	// spinning up the project walk. An empty import closure is valid but
 	// produces no dependency analysis; surface it early and clearly.
 	if scope != scopeComplete {
-		mods, _, cerr := resolveScopeModules(f.gomodPath, scope, false)
+		mods, _, cerr := resolveScopeModules(ctx, f.gomodPath, scope, false)
 		if cerr == nil && len(mods) == 0 {
 			if f.sizeOnly {
 				// A size question about an empty scope gets the zero-module size

@@ -675,7 +675,7 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 	}
 	var deps []pinnedDep
 
-	mods, res, err := resolveScopeModules(gomodPath, scope, excludeTests)
+	mods, res, err := resolveScopeModules(ctx, gomodPath, scope, excludeTests)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}

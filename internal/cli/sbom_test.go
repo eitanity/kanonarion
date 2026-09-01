@@ -203,7 +203,7 @@ func TestBuildPackageAllowList_LiveRepo(t *testing.T) {
 		t.Skip("skipping live go list test in short mode")
 	}
 
-	list, err := buildPackageAllowList("github.com/eitanity/kanonarion/cmd/kanonarion")
+	list, err := buildPackageAllowList(t.Context(), "github.com/eitanity/kanonarion/cmd/kanonarion")
 	if err != nil {
 		t.Fatalf("buildPackageAllowList: %v", err)
 	}

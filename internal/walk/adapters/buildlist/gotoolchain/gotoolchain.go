@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -127,7 +128,7 @@ func (r *Resolver) buildEnv(ctx context.Context, projectDir string) (goVersion, 
 
 // run executes the configured go binary with args in dir and returns stdout.
 func (r *Resolver) run(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, r.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+	cmd := childproc.CommandContext(ctx, r.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

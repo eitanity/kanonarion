@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
@@ -55,7 +56,7 @@ func (a *Analyser) list(ctx context.Context, root string, args ...string) ([]byt
 	defer func() { _ = toolchains.Close() }()
 
 	for {
-		cmd := exec.CommandContext(ctx, a.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+		cmd := childproc.CommandContext(ctx, a.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 		cmd.Dir = root
 		cmd.Env = toolchains.Apply(listEnv(root))
 		out, err := cmd.Output()
