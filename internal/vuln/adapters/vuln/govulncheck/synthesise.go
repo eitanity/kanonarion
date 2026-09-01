@@ -7,12 +7,12 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -31,8 +31,14 @@ import (
 // It is asked in dir — the scratch directory the scan will run in. A toolchain
 // is resolved per directory, so asking from the caller's own working directory
 // can name a version that is not the one that will compile the module.
+//
+// It spawns through childproc like every other child of a scan. The command is
+// short, but GOTOOLCHAIN is not pinned on every surface it serves: this is the
+// one scan child that can be a toolchain DOWNLOAD, which is neither short nor
+// interruptible from the parent alone, and an orphan of it keeps writing into
+// the module cache after the scan that asked for it is gone.
 func toolchainGoVersion(ctx context.Context, dir string, env []string) string {
-	cmd := exec.CommandContext(ctx, "go", "env", "GOVERSION")
+	cmd := childproc.CommandContext(ctx, "go", "env", "GOVERSION") // #nosec G204 -- fixed command and literal arguments
 	cmd.Dir = dir
 	cmd.Env = env
 	out, err := cmd.Output()

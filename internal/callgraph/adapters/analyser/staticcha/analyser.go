@@ -452,7 +452,7 @@ func (a *Analyser) analyseDirOnce(
 		return a.classifyLoadFailure(ctx, tempDir, env)
 	}
 
-	envCleanup, err := a.setupGoEnv(ctx, tempDir)
+	envCleanup, err := a.setupGoEnv(ctx)
 	if err != nil {
 		// Preparing PATH and GOROOT for the analysis is entirely about the run;
 		// the module has not been touched at this point.
@@ -464,9 +464,15 @@ func (a *Analyser) analyseDirOnce(
 	// After setupGoEnv, never before: it installs the analysis PATH and clears
 	// GOROOT, and an earlier snapshot hands the child a toolchain other than the
 	// one it is exec'd as.
-	env = analysisEnv()
+	// Exclusive, not an override: a working tree never has the extracted-module
+	// environment built for it at all. The two postures disagree about the one
+	// thing this branch decides — an extracted zip's go.work is packaging and is
+	// disabled, a working tree's is the build and is honoured — and building both
+	// leaves a reader unable to tell which one the child was handed.
 	if worktree {
 		env = goenv.Worktree(os.Environ(), tempDir)
+	} else {
+		env = analysisEnv()
 	}
 	env = toolchains.Apply(env)
 

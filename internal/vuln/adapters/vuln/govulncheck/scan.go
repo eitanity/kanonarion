@@ -459,7 +459,16 @@ func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (do
 	return counted, nil
 }
 
-// scanEnv builds the process environment for the Go toolchain and govulncheck.
+// scanEnv builds the process environment for the Go toolchain and govulncheck
+// on every surface that analyses an artefact kanonarion itself produced: a
+// module zip extracted for an isolated scan, a walk target's zip, and a
+// project's own vendor tree. All three are copies this tool laid down, so it
+// owns their resolution and pins it.
+//
+// The project surface with no vendor tree is the one that is NOT built here. It
+// analyses a live working tree, where the build being measured is the one the go
+// command produces for the developer, so nothing about resolution is overridden;
+// see projectScanEnv, which states that posture in full.
 //
 // When a pre-populated GOMODCACHE is supplied, three overrides let the toolchain
 // resolve a multi-module member's siblings from the cache. A member's published
@@ -488,15 +497,20 @@ func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (do
 // Unscannable (version-not-in-toolchain), never papered over with a network
 // fetch. Without a modcache the default (network-backed) resolution is untouched.
 //
-// GOWORK=off is set unconditionally. A module is scanned in isolation as its
-// own main module, so a go.work shipped in its published zip is dev-time
-// configuration that does not apply here — exactly as its own filesystem
-// replace directives do not (neutraliseLocalReplaces). Left on, the toolchain
-// discovers ./go.work in the extract dir and enters workspace mode, which both
-// rejects -mod=mod outright and would resolve against sibling modules the zip
-// does not contain. Disabling it is the same normalisation applied to the same
-// class of dev-time metadata; without it such a module is misreported as not
-// building under the host toolchain.
+// GOWORK=off is set on every surface this function serves. A module is scanned
+// in isolation as its own main module, so a go.work shipped in its published zip
+// is dev-time configuration that does not apply here — exactly as its own
+// filesystem replace directives do not (neutraliseLocalReplaces). Left on, the
+// toolchain discovers ./go.work in the extract dir and enters workspace mode,
+// which both rejects -mod=mod outright and would resolve against sibling modules
+// the zip does not contain. Disabling it is the same normalisation applied to
+// the same class of dev-time metadata; without it such a module is misreported
+// as not building under the host toolchain.
+//
+// It holds on the vendored project surface too, for a different reason: that
+// analysis is asked for THIS project's vendor tree, and with a workspace in
+// scope -mod=vendor reads the workspace's vendor tree instead — different bytes
+// under a result that names this project's surface.
 //
 // The vendored surface is the other regime, and it is the opposite choice on
 // the one flag that matters. -mod=mod is precisely what tells the toolchain to

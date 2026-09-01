@@ -183,13 +183,21 @@ func requiredGoVersion(detail string) (required, running string, ok bool) {
 // shell from this tool's posture, and goes looking in the wrong place. It names
 // the version and the way to obtain it for the same reason — a refusal is only
 // actionable when it says what would make it stop.
+//
+// The two commands were run end to end against this refusal, and where the first
+// leaves its command is stated because the second cannot be typed without it: `go
+// install` writes the shim to $(go env GOPATH)/bin, and an operator whose PATH
+// does not carry that directory gets "command not found" from the remedy the
+// tool just told them to run. A remedy is a claim, and a claim that only works
+// on a correctly configured PATH has to say so.
 func unavailableDetail(required, running, reported string) string {
 	name := ToolchainName(required)
 	return "kanonarion pins the toolchain of every analysis child so it can never download one, and this code " +
 		"needs go >= " + required + " while the analysis is running go" + running + ". No toolchain that new is " +
 		"unpacked on this host, in either place one can be used from offline: ~/sdk or the module cache. " +
-		"Install it with `go install golang.org/dl/" + name + "@latest` then `" + name + " download`, which " +
-		"unpacks into ~/sdk, and re-run. The Go command reported: " + reported
+		"Install it with `go install golang.org/dl/" + name + "@latest`, which puts a `" + name + "` command in " +
+		"$(go env GOPATH)/bin; run that command as `" + name + " download` (from that directory if it is not on " +
+		"your PATH), which unpacks the toolchain into ~/sdk, and re-run. The Go command reported: " + reported
 }
 
 // OnDiskToolchainsAtLeast returns every toolchain unpacked on this host whose

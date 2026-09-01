@@ -98,7 +98,7 @@ func TestLoadAndBuildSSA_OnePackagePerImportPath(t *testing.T) {
 func loadTargets(t *testing.T, a *Analyser, dir string, coord coordinate.ModuleCoordinate) (fset *token.FileSet, cleanup func(), targets []string) {
 	t.Helper()
 	fset = token.NewFileSet()
-	envCleanup, err := a.setupGoEnv(context.Background(), dir)
+	envCleanup, err := a.setupGoEnv(context.Background())
 	if err != nil {
 		t.Skipf("no usable Go environment: %v", err)
 	}

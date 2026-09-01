@@ -453,6 +453,17 @@ project build in hand**, never to a project scan. Because the working tree
 mutates between runs, a project scan is recomputed fresh each time and is not
 served from the coordinate cache.
 
+**A project scan resolves the way your own `go` command does.** It analyses your
+working tree in place, so it changes nothing about resolution: your
+`GOTOOLCHAIN`, `GOPROXY`, `GOSUMDB` and `go.work` are all left as you have them,
+and the build measured is the build you compile. A workspace in scope is
+honoured — its `use` and `replace` directives decide the module graph, exactly as
+they do for `go build`. (The two vendored branches are the exception, and they
+say so: `--no-vendor` on a project that has a `vendor/` tree forces `-mod=mod`,
+which the Go toolchain refuses in workspace mode, and a vendored analysis is
+asked for *this* project's `vendor/` tree rather than a workspace's. Both
+therefore run with the workspace disabled.)
+
 **A positional walk id is project-rooted when the walk is.** A project walk
 records the directory it was taken from, so `kanonarion vuln-scan <walk-id>`
 reads that back and scans exactly as `--gomod` does over the same walk — one

@@ -91,6 +91,30 @@ var postures = map[string]Posture{
 		Require: map[string]string{"GOGC": "30", "GOWORK": "off", "GOFLAGS": "-mod=mod"},
 		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE"},
 	},
+	// The project surface with no vendor tree, and the one posture in this table
+	// that overrides nothing about resolution. It analyses a live working tree
+	// the caller named, so the build it must measure is the one the go command
+	// produces in that tree — which is defined by the caller's own environment.
+	//
+	// The toolchain and the network are therefore left exactly as the caller has
+	// them, and that is a decision rather than an omission. Pinning GOTOOLCHAIN
+	// would refuse a project whose go directive exceeds the installed toolchain,
+	// which is the class two closed defects have already had to undo; pinning
+	// GOPROXY would refuse a build whose dependency is not yet in the module
+	// cache. Both are builds the developer has and the scan would not.
+	//
+	// GOWORK is forbidden for the same reason, and it is the one this posture had
+	// wrong: a workspace in scope IS the tree's build configuration, and
+	// disabling it made the scan resolve a different module graph from the one
+	// the walk resolved and the developer compiles.
+	//
+	// GOGC is the single exception, and it is not resolution: govulncheck holds
+	// the whole package graph live, and the default pacing costs the host memory
+	// the analysis does not need to spend.
+	"scan-project": {
+		Require: map[string]string{"GOGC": "30"},
+		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE"},
+	},
 }
 
 // EnvBuilders is the closed set of functions allowed to build a process
@@ -133,6 +157,82 @@ func Verify(p Posture, base, got []string) []string {
 				p.Name, k, gv, gok, bv, bok))
 		}
 	}
+	return out
+}
+
+// Variables is every environment variable this table states an answer about, in
+// sorted order. A variable is "stated" by being required or forbidden by any one
+// posture; the table is then held to answering for it on all of them.
+func Variables() []string { return variables(postures) }
+
+// VerifyTable reports every way the table itself is incomplete, independently of
+// any producer.
+//
+// The rule is the one thing per-surface assertions cannot check: a variable that
+// matters on one surface has to be answered on every surface, either as a value
+// the child must see or as a value the producer must leave alone. Silence is not
+// an answer — it is what a reader cannot tell apart from a decision, and it is
+// how each of the four closed defects in this class spread. A fifth variable
+// added to one producer's posture and to no other fails here, which is the whole
+// reason the table exists rather than nine independent assertions.
+//
+// PATH is stated by no posture and so is asked of none: the toolchain escalation
+// moves it deliberately, and a table that forbade it would forbid the mechanism.
+func VerifyTable() []string { return verifyTable(postures) }
+
+// verifyTable is VerifyTable against a given table, so a test can plant a
+// misstatement in a copy and watch this catch it rather than asserting that the
+// shipped table happens to be right today.
+func verifyTable(table map[string]Posture) []string {
+	all := variables(table)
+	var out []string
+	for _, name := range sortedNames(table) {
+		p := table[name]
+		forbidden := map[string]bool{}
+		for _, k := range p.Forbid {
+			forbidden[k] = true
+		}
+		for _, k := range all {
+			_, required := p.Require[k]
+			switch {
+			case required && forbidden[k]:
+				out = append(out, fmt.Sprintf("%s: states %s both as a value the child must see and as one the producer must not set", name, k))
+			case !required && !forbidden[k]:
+				out = append(out, fmt.Sprintf("%s: says nothing about %s, which another posture states; every surface must answer for it, "+
+					"as a required value or as one this surface leaves alone", name, k))
+			}
+		}
+	}
+	return out
+}
+
+// variables is the union of everything table states, sorted.
+func variables(table map[string]Posture) []string {
+	seen := map[string]bool{}
+	for _, p := range table {
+		for k := range p.Require {
+			seen[k] = true
+		}
+		for _, k := range p.Forbid {
+			seen[k] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedNames lists a table's posture names in a fixed order, so a failure reads
+// the same way on every run.
+func sortedNames(table map[string]Posture) []string {
+	out := make([]string, 0, len(table))
+	for name := range table {
+		out = append(out, name)
+	}
+	sort.Strings(out)
 	return out
 }
 

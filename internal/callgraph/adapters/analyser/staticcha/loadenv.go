@@ -20,8 +20,13 @@ import "os"
 // GOWORK pointing at the invoking user's workspace.
 //
 // This applies only to extracted module directories. A local working-tree
-// analysis must keep honouring the project's own go.work: there the workspace is
-// the real build configuration rather than a stale artefact of packaging.
+// analysis keeps honouring the project's own go.work: there the workspace is the
+// real build configuration rather than a stale artefact of packaging. That is
+// not merely a rule stated here — a working tree is never given this
+// environment. It is built by goenv.Worktree, which asks the question the go
+// command asks (is a workspace in scope for this directory) and disables one
+// only when the answer is no; analyseDirOnce chooses between the two producers
+// rather than layering one over the other.
 func isolatedModuleEnv() []string {
 	return append(os.Environ(), "GOWORK=off")
 }

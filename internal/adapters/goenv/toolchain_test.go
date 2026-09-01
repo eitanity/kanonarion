@@ -300,7 +300,14 @@ func TestToolchains_RefusesInKanonarionsOwnName(t *testing.T) {
 	if retry {
 		t.Fatal("Escalate asked for a retry with no toolchain on this host to retry under")
 	}
-	for _, want := range []string{"kanonarion pins the toolchain", "go >= 1.28", "golang.org/dl/go1.28.0", reported} {
+	// $(go env GOPATH)/bin is named because the second command cannot be typed
+	// without it: `go install` leaves the shim there, and a PATH that does not
+	// carry it answers the remedy with "command not found". Measured end to end
+	// against a real absent toolchain.
+	for _, want := range []string{
+		"kanonarion pins the toolchain", "go >= 1.28", "golang.org/dl/go1.28.0@latest",
+		"$(go env GOPATH)/bin", "go1.28.0 download", reported,
+	} {
 		if !strings.Contains(refusal, want) {
 			t.Errorf("the refusal does not mention %q:\n%s", want, refusal)
 		}

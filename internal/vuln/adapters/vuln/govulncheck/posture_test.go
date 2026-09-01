@@ -42,7 +42,18 @@ func TestScanProducersMatchTheStatedPostures(t *testing.T) {
 	_, env = projectScanSurface(vendored, false)
 	checkPosture(t, "project-fetched-over-vendor", ambient, env)
 	_, env = projectScanSurface(plain, false)
-	checkPosture(t, "scan-fetched", ambient, env)
+	checkPosture(t, "scan-project", ambient, env)
+}
+
+// TestPostureTableAnswersForEveryVariableOnEverySurface holds the table itself,
+// from the package whose surfaces it most recently had to grow for. The
+// per-surface assertions above each check one producer against one posture and
+// cannot see a variable that entered one surface and was never asked about on
+// another, which is the shape every closed defect in this class had.
+func TestPostureTableAnswersForEveryVariableOnEverySurface(t *testing.T) {
+	for _, v := range goenv.VerifyTable() {
+		t.Error(v)
+	}
 }
 
 // TestEscalatedScanEnvironmentChangesTheToolchainAndNothingElse holds the one
