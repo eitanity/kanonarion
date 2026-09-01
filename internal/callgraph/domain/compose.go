@@ -1156,7 +1156,7 @@ func GraphDigest(r CallGraphRecord) string {
 // comparison needs the second question, or the input that separated them is the
 // one thing the comparison cannot show.
 func MeasurementDigest(r CallGraphRecord) string {
-	data, err := marshalCanonical(withoutMeasurementTime(r))
+	data, err := marshalCanonical(withoutRunCircumstance(r))
 	if err != nil {
 		return "unhashable:" + err.Error()
 	}
@@ -1177,27 +1177,74 @@ func MeasurementDigest(r CallGraphRecord) string {
 // later run of a coordinate that keeps failing re-derives it; before this, each
 // of those runs appended a generation, without bound.
 //
-// extracted_at and the seal computed over it are the only fields set aside.
-// Everything else is compared, including the provenance GraphDigest deliberately
-// ignores: two runs that read different bytes, or were offered different build
-// lists, are two measurements even where their graphs agree.
+// The circumstances of the run are the only fields set aside — when it was
+// taken, the seal over that, and why it was appended. Everything else is
+// compared, including the provenance GraphDigest deliberately ignores: two runs
+// that read different bytes, or were offered different build lists, are two
+// measurements even where their graphs agree.
 func SameMeasurement(a, b CallGraphRecord) (bool, error) {
-	ab, err := marshalCanonical(withoutMeasurementTime(a))
+	ab, err := marshalCanonical(withoutRunCircumstance(a))
 	if err != nil {
 		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
 	}
-	bb, err := marshalCanonical(withoutMeasurementTime(b))
+	bb, err := marshalCanonical(withoutRunCircumstance(b))
 	if err != nil {
 		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
 	}
 	return bytes.Equal(ab, bb), nil
 }
 
-// withoutMeasurementTime blanks when a record was measured, and the seal that
-// covers it.
-func withoutMeasurementTime(r CallGraphRecord) CallGraphRecord {
+// RestatesAnalysis reports whether a generation the ledger already holds records
+// the SAME ANALYSIS as one a run has just performed: the same graph, of the same
+// bytes, reached the same way.
+//
+// It is SameMeasurement with two differences, and both follow from the question
+// being asked at a different moment. SameMeasurement compares two records a
+// caller is holding. This one answers "has the ledger recorded this before",
+// which a run asks about an analysis it has just performed, so that it can
+// decline to append a second copy of it.
+//
+//   - The analysed content must be NAMED, on both sides. A record that does not
+//     say which bytes it read is not evidence that it read what any other record
+//     read, including another that says nothing.
+//   - SourceContentHash is dropped. It names WHICH FETCH MEASUREMENT handed the
+//     bytes over, not which bytes: a local root is never served from the fetch
+//     cache, so every project walk that analyses the root appends a fresh fetch
+//     record sealed under its own clock, and this field moves with it while the
+//     artefact identity — a content address over the same bytes — does not.
+//     Comparing it made every walk-then-extract of an unchanged tree look like a
+//     new analysis, which is the whole population this question exists to
+//     recognise. forGraphComparison drops it as provenance for the same reason,
+//     and dropping it is only sound because the artefact identity IS compared and
+//     the naming rule above guarantees it is there to compare.
+func RestatesAnalysis(fresh, held CallGraphRecord) (bool, error) {
+	if !NamesAnalysedContent(fresh) || !NamesAnalysedContent(held) {
+		return false, nil
+	}
+	return SameMeasurement(withoutFetchProvenance(fresh), withoutFetchProvenance(held))
+}
+
+// withoutFetchProvenance blanks which fetch measurement supplied the bytes,
+// leaving the artefact identity that names them.
+func withoutFetchProvenance(r CallGraphRecord) CallGraphRecord {
+	r.SourceContentHash = ""
+	return r
+}
+
+// withoutRunCircumstance blanks the circumstances of the run rather than what it
+// measured: when the record was measured, the seal that covers that, and why the
+// run appended it.
+//
+// The derivation is stripped for two reasons. Why a measurement was taken is no
+// part of what the measurement says, so a forced re-measurement and a gated one
+// state the same fact. And a generation written before the field carries none:
+// comparing an absent derivation against a stated one would make the first
+// post-field run disagree with every generation already held, which is exactly
+// the dedup this comparison exists to perform.
+func withoutRunCircumstance(r CallGraphRecord) CallGraphRecord {
 	r.ExtractedAt = time.Time{}
 	r.ContentHash = ""
+	r.DerivedBy = GenerationDerivation{}
 	return r
 }
 
@@ -1243,6 +1290,10 @@ func forGraphComparison(r CallGraphRecord) CallGraphRecord {
 	// toolchain conflict is raised first — and leaving it in would relabel that
 	// refusal as extractor non-determinism wherever a digest is read directly.
 	r.Toolchain = gotoolchain.Unrecorded
+	// WHY a generation was appended is a fact about the run, not about the graph.
+	// Two runs that reached the identical graph, one forced and one gated, agree
+	// about the graph completely.
+	r.DerivedBy = GenerationDerivation{}
 	return r
 }
 

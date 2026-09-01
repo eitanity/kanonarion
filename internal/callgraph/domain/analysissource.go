@@ -107,3 +107,15 @@ func RecordAnalysisSource(r CallGraphRecord) (AnalysisSource, string) {
 		return r.AnalysisSource, ""
 	}
 }
+
+// NamesAnalysedContent reports whether a record says WHICH content its analysis
+// read.
+//
+// A record that does not is not evidence that it read the same bytes as any
+// other, including another that also says nothing: absence is not a value two
+// records can share. It reads the discriminator RecordAnalysisSource projects,
+// so the zip route and the working-tree route obey one statement of the rule.
+func NamesAnalysedContent(r CallGraphRecord) bool {
+	_, discriminator := RecordAnalysisSource(r)
+	return discriminator != ""
+}

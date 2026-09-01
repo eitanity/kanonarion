@@ -42,7 +42,32 @@ func TestScanProducersMatchTheStatedPostures(t *testing.T) {
 	_, env = projectScanSurface(vendored, false)
 	checkPosture(t, "project-fetched-over-vendor", ambient, env)
 	_, env = projectScanSurface(plain, false)
-	checkPosture(t, "scan-fetched", ambient, env)
+	checkPosture(t, "scan-project", ambient, env)
+}
+
+// TestPostureTableAnswersForEveryVariableOnEverySurface holds the table itself,
+// from the package whose surfaces it most recently had to grow for. The
+// per-surface assertions above each check one producer against one posture and
+// cannot see a variable that entered one surface and was never asked about on
+// another, which is the shape every closed defect in this class had.
+func TestPostureTableAnswersForEveryVariableOnEverySurface(t *testing.T) {
+	for _, v := range goenv.VerifyTable() {
+		t.Error(v)
+	}
+}
+
+// TestEscalatedScanEnvironmentChangesTheToolchainAndNothingElse holds the one
+// escalation a pinned scan may take against the posture that states it, with the
+// UNESCALATED scan environment as the base — so every variable the scan chose has
+// to survive it. The network staying off across the switch is the guarantee the
+// whole mechanism lives inside: the pin exists so no scan child can reach out,
+// and an escalation that opened it would have traded one defect for a worse one.
+func TestEscalatedScanEnvironmentChangesTheToolchainAndNothingElse(t *testing.T) {
+	base := scanEnv([]string{"PATH=/usr/bin"}, goenv.ModCache, domain.AnalysisSurfaceFetched)
+
+	got := goenv.WithOnDiskToolchain(base, "/toolchains")
+
+	checkPosture(t, "on-disk-toolchain", base, got)
 }
 
 // TestProjectScanSurface_VendorTreeUnderAWorkspaceScans measures the combination

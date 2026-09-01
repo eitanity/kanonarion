@@ -179,7 +179,7 @@ func runWalkGoMod(ctx context.Context, f walkFlags, stdout, stderr io.Writer) er
 	// cache and the go.sum beside this go.mod is their sole anchor. Resolved
 	// first because resolveProjectGoSum is a no-op under it, and because the
 	// container below wires its adapters from the mode it sets.
-	if err := resolveModcacheMode(f.fromModcache, f.gomodPath); err != nil {
+	if err := resolveModcacheMode(ctx, f.fromModcache, f.gomodPath); err != nil {
 		return err
 	}
 	// On the network path the project's go.sum layers on as an always-on offline
@@ -313,12 +313,15 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	var scopeModules []string
 	res := newScopeResolution(scope, false)
 	if scope != scopeComplete {
-		var coords []string
-		coords, res, err = resolveScopeModules(gomodPath, scope, false)
+		var mods []scopeModule
+		mods, res, err = resolveScopeModules(ctx, gomodPath, scope, false)
 		if err != nil {
 			return application.ExecuteWalkResult{}, fmt.Errorf("resolving %s scope: %w", scope, err)
 		}
-		scopeModules = coordsToPaths(coords)
+		// The require paths: the graph filter keys scope membership on them and
+		// retains a replaced node through its OriginalCoordinate, so naming the
+		// replacement here would be naming a path the build list does not hold.
+		scopeModules = coordsToPaths(requiredCoords(mods))
 	}
 	// The test axis this walk was resolved over, stated on the same channel as
 	// the build-vendoring and coverage disclosures and for the same reason: the

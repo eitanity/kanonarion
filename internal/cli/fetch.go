@@ -139,10 +139,14 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 	if rerr := refuseTestScopeOnRecordingCommand("fetch --gomod", f.excludeTests); rerr != nil {
 		return rerr
 	}
-	coords, res, err := resolveScopeModules(gomodPath, scope, false)
+	mods, res, err := resolveScopeModules(ctx, gomodPath, scope, false)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
+	// The require entries: a fetch of a replaced module is a fetch of the
+	// requirement as the walk resolves it, and the walk applies the replacement
+	// itself.
+	coords := requiredCoords(mods)
 	// Which set is about to be fetched, on the same channel as the progress line
 	// below it and before the empty-scope return, so a fetch that pulled nothing
 	// still says which set was empty.

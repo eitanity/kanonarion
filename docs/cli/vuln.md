@@ -453,6 +453,17 @@ project build in hand**, never to a project scan. Because the working tree
 mutates between runs, a project scan is recomputed fresh each time and is not
 served from the coordinate cache.
 
+**A project scan resolves the way your own `go` command does.** It analyses your
+working tree in place, so it changes nothing about resolution: your
+`GOTOOLCHAIN`, `GOPROXY`, `GOSUMDB` and `go.work` are all left as you have them,
+and the build measured is the build you compile. A workspace in scope is
+honoured — its `use` and `replace` directives decide the module graph, exactly as
+they do for `go build`. (The two vendored branches are the exception, and they
+say so: `--no-vendor` on a project that has a `vendor/` tree forces `-mod=mod`,
+which the Go toolchain refuses in workspace mode, and a vendored analysis is
+asked for *this* project's `vendor/` tree rather than a workspace's. Both
+therefore run with the workspace disabled.)
+
 **A positional walk id is project-rooted when the walk is.** A project walk
 records the directory it was taken from, so `kanonarion vuln-scan <walk-id>`
 reads that back and scans exactly as `--gomod` does over the same walk — one
@@ -1171,6 +1182,17 @@ resolves fully offline. A module whose isolated build requires an
 out-of-toolchain version fails here deliberately, surfaced as an honest
 `Unscannable` (`version-not-in-toolchain`) rather than papered over with a
 network fetch of a version the project never selected.
+
+The same environment pins the Go toolchain, so no scan child can download one.
+When the module - or anything in its closure - asks for a newer Go than the
+installed toolchain, the scan looks for one already unpacked on this machine,
+first in `~/sdk` and then in the module cache, and runs its children under it.
+Nothing is fetched: the toolchain has to be on disk already. The decision is
+taken once per scan, so every child of it measures under the same Go, and the
+record names the version that actually ran. With nothing new enough on disk the
+scan refuses, and the reason on the record names kanonarion as the pinner, the
+version required, and the command that installs it. The vendored surface keeps
+its own regime and is unaffected.
 
 At the default log level this reads as the expected metadata-only outcome, not
 a failure. The govulncheck adapter records its non-zero exit and stderr at

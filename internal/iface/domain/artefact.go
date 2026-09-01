@@ -24,3 +24,24 @@ func RecordArtefactIdentity(r InterfaceRecord) (fetchdomain.ArtefactIdentity, er
 	}
 	return id, nil
 }
+
+// NamesAnalysedContent reports whether a record says WHICH content its
+// extraction read.
+//
+// A record that does not is not evidence that it read the same bytes as any
+// other, including another that also says nothing: absence is not a value two
+// records can share. The write leg refuses a record naming no artefact, so the
+// only shape this excludes is a generation written before the field existed —
+// which the read leg still serves, and which must not be collapsed with a second
+// such generation on the strength of a field neither of them carries.
+//
+// An identity the store cannot parse says nothing either. RecordArtefactIdentity
+// keeps a corrupt identity distinct from an absent one; both are answered here
+// with "does not name", because neither shows what was read.
+func NamesAnalysedContent(r InterfaceRecord) bool {
+	id, err := RecordArtefactIdentity(r)
+	if err != nil {
+		return false
+	}
+	return !id.IsZero()
+}

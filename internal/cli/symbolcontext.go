@@ -172,7 +172,7 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 			// arrive here as an absent record, and only one of them is a
 			// coordinate to check.
 			line := fmt.Sprintf("no interface record for %s in the store; run 'kanonarion interface %s' first", f.module, f.module)
-			if pipelines, superseded := supersededInterfacePipelines(coord, storedInterfaceSummaries(ctx, ctr.QueryInterface)); superseded {
+			if pipelines, superseded := supersededInterfaceRecord(ctx, ctr.QueryInterface, coord); superseded {
 				line = supersededInterfaceLine(coord, pipelines)
 			}
 			_, _ = fmt.Fprintf(stderr, "%s\n", line)

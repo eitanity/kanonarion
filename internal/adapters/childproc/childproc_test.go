@@ -183,8 +183,8 @@ func TestRunSetsWaitDelay(t *testing.T) {
 	grandchild := readPIDFile(t, pidFile)
 	defer func() { _ = syscall.Kill(grandchild, syscall.SIGKILL) }()
 
-	if elapsed > cmdWaitDelay+5*time.Second {
-		t.Errorf("Run blocked for %v on an inherited pipe; WaitDelay is %v", elapsed, cmdWaitDelay)
+	if elapsed > WaitDelay+5*time.Second {
+		t.Errorf("Run blocked for %v on an inherited pipe; WaitDelay is %v", elapsed, WaitDelay)
 	}
 	if err != nil && !strings.Contains(err.Error(), "WaitDelay") && !strings.Contains(err.Error(), "wait") {
 		t.Fatalf("unexpected error: %v", err)

@@ -2,7 +2,9 @@
 $ kanonarion audit --gomod $PROJECT/absent/go.mod --json
 exit 20
 --- error ---
-execute root command: resolving code scope: go list -deps -test -f {{if .Module}}{{if and (not .Standard) .Module.Version}}{{.Module.Path}}@{{.Module.Version}}{{end}}{{end}} ./...: chdir $PROJECT/absent: no such file or directory
+execute root command: --gomod $PROJECT/absent/go.mod: no such file or directory
+  the named manifest is what scopes this command; it could not be opened, so nothing was measured
+  pass the path of an existing go.mod, or omit --gomod to use ./go.mod in the working directory
 --- stdout ---
 (empty)
 --- stderr ---

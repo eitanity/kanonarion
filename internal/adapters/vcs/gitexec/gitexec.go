@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -47,13 +48,6 @@ const (
 	// git fetch attempt in CheckoutToDir, so a stalling or drip-feeding remote
 	// cannot wedge cross-verification indefinitely.
 	defaultFetchTimeout = 2 * time.Minute
-
-	// cmdWaitDelay bounds how long Run waits for I/O pipes after the context
-	// cancels the git process. git spawns helpers (git-remote-https) that
-	// inherit the output pipes and survive the parent's kill; without this
-	// grace period cmd.Run blocks until the helper exits on its own, which
-	// against a stalling remote defeats the fetch timeout entirely.
-	cmdWaitDelay = 3 * time.Second
 )
 
 // ErrGitNotInstalled is returned when the git binary cannot be found in PATH.
@@ -309,10 +303,15 @@ func (c *Client) run(ctx context.Context, dir string, args ...string) ([]byte, e
 	}
 
 	argv := append(c.configArgs(), args...)
-	cmd := exec.CommandContext(ctx, "git", argv...) // #nosec G204 -- binary is hard-coded; args come from internal call sites
+	cmd := childproc.CommandContext(ctx, "git", argv...) // #nosec G204 -- binary is hard-coded; args come from internal call sites
 	cmd.Dir = dir
 	cmd.Env = c.gitEnv(home, dir)
-	cmd.WaitDelay = cmdWaitDelay
+	// git spawns helpers (git-remote-https) that inherit the output pipes. The
+	// group kill childproc installs reaches them, so they no longer survive the
+	// cancel; the delay stays as the bound for the case where one is already
+	// past the kill and still holding a pipe, which against a stalling remote
+	// would otherwise defeat the fetch timeout entirely.
+	cmd.WaitDelay = childproc.WaitDelay
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf

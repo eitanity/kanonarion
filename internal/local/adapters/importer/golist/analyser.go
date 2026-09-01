@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
@@ -40,6 +41,44 @@ func (a *Analyser) goBin() string {
 // resolution the call-graph load of this tree runs under; these children were
 // inheriting the caller's instead, so one command answered two build questions.
 func listEnv(root string) []string { return goenv.Worktree(os.Environ(), root) }
+
+// list runs one `go list` over the tree at root and returns its stdout.
+//
+// The two callers differ only in their arguments, and they share this because
+// they share the failure that made it necessary: the environment above pins the
+// toolchain so no child of this tool can download one, which also refuses a
+// toolchain already unpacked on this host. A tree whose go directive is ahead of
+// the installed toolchain could not be listed at all, on a machine that had what
+// it needed. goenv.Toolchains decides that once and this runs the child again
+// under its answer.
+func (a *Analyser) list(ctx context.Context, root string, args ...string) ([]byte, error) {
+	toolchains := goenv.NewToolchains()
+	defer func() { _ = toolchains.Close() }()
+
+	for {
+		cmd := childproc.CommandContext(ctx, a.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+		cmd.Dir = root
+		cmd.Env = toolchains.Apply(listEnv(root))
+		out, err := cmd.Output()
+		if err == nil {
+			return out, nil
+		}
+		stderr := ""
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+			stderr = string(exitErr.Stderr)
+		}
+		retry, refusal := toolchains.Escalate(stderr)
+		if refusal != "" {
+			return nil, fmt.Errorf("go list: %w\n%s", err, refusal)
+		}
+		if !retry {
+			if stderr != "" {
+				return nil, fmt.Errorf("go list: %w\n%s", err, stderr)
+			}
+			return nil, fmt.Errorf("go list: %w", err)
+		}
+	}
+}
 
 // goListPackage mirrors the fields we need from `go list -json`.
 type goListPackage struct {
@@ -75,15 +114,9 @@ func (p goListPackage) isTestScope() bool {
 // answer with nothing saying so. BuildModules below deliberately runs without
 // it: that scope is about the artefact, which test-only modules never enter.
 func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.ImportedModule, error) {
-	cmd := exec.CommandContext(ctx, a.goBin(), "list", "-json", "-deps", "-test", "./...") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
-	cmd.Dir = root
-	cmd.Env = listEnv(root)
-	out, err := cmd.Output()
+	out, err := a.list(ctx, root, "list", "-json", "-deps", "-test", "./...")
 	if err != nil {
-		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil, fmt.Errorf("go list: %w\n%s", err, exitErr.Stderr)
-		}
-		return nil, fmt.Errorf("go list: %w", err)
+		return nil, err
 	}
 
 	pkgs, err := parseGoListOutput(out)
@@ -186,15 +219,9 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 // dependency is a real user for a context report and genuinely absent from the
 // shipped artefact, which is what this scope is read for.
 func (a *Analyser) BuildModules(ctx context.Context, root string) ([]domain.BuildModule, error) {
-	cmd := exec.CommandContext(ctx, a.goBin(), "list", "-json", "-deps", "./...") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
-	cmd.Dir = root
-	cmd.Env = listEnv(root)
-	out, err := cmd.Output()
+	out, err := a.list(ctx, root, "list", "-json", "-deps", "./...")
 	if err != nil {
-		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil, fmt.Errorf("go list: %w\n%s", err, exitErr.Stderr)
-		}
-		return nil, fmt.Errorf("go list: %w", err)
+		return nil, err
 	}
 
 	pkgs, err := parseGoListOutput(out)

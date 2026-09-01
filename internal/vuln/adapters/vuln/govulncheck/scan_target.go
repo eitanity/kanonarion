@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -57,9 +60,19 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// at and this path is fetched-surface by construction.
 	env := scanEnv(os.Environ(), req.GoModCache, domain.AnalysisSurfaceFetched)
 
+	// The environment above pins the toolchain so no scan child can download one,
+	// which also refuses a toolchain already unpacked on this host. One decision
+	// covers every child of this scan; see runGovulncheck.
+	toolchains := goenv.NewToolchains()
+	defer func() {
+		if cerr := toolchains.Close(); cerr != nil {
+			s.logger.Warn("vuln-scan: failed to remove the staged toolchain directory", "error", cerr)
+		}
+	}()
+
 	// Stamped on every result this scan returns, faults included; see ScanProject.
-	toolchain := gotoolchain.Version(toolchainGoVersion(ctx, tmpDir, env))
-	defer func() { res.Toolchain = toolchain }()
+	toolchainVersion := toolchainGoVersion(ctx, tmpDir, env)
+	defer func() { res.Toolchain = gotoolchain.Version(toolchainVersion) }()
 
 	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, req.ModuleSource, env, req.BuildList)
 	if err != nil {
@@ -89,47 +102,34 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// fatal on its own — the packages may still load — so it is reported by the
 	// scan's own exit status rather than pre-empted here.
 	s.logger.Info("vuln-scan: downloading target dependencies", "dir", scanDir)
-	dlCmd := childproc.CommandContext(ctx, "go", "mod", "download")
-	dlCmd.Dir = scanDir
-	dlCmd.Env = env
-	if out, dlErr := dlCmd.CombinedOutput(); dlErr != nil {
+	if out, dlErr := runGoChild(ctx, toolchains, env, scanDir, "mod", "download"); dlErr != nil {
 		s.logger.Debug("vuln-scan: go mod download failed for target", "error", dlErr, "output", string(out))
 	}
 	s.logMem(ctx, "target_deps_downloaded")
 
 	s.logger.Info("vuln-scan: running target-rooted govulncheck source mode", "dir", scanDir, "db", dbArg)
-	cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
-	cmd.Dir = scanDir
-	cmd.Env = env
-
-	stderr := &limitWriter{limit: 2048}
-	cmd.Stderr = stderr
-	pr, pw := io.Pipe()
-	cmd.Stdout = pw
-
-	if err := cmd.Start(); err != nil {
-		_ = pw.Close()
-		return domain.ProjectScanResult{}, fmt.Errorf("start govulncheck: %w", err)
+	var byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
+	run, err := runGovulncheck(toolchains, env, func(childEnv []string) *exec.Cmd {
+		cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+		cmd.Dir = scanDir
+		cmd.Env = childEnv
+		return cmd
+	}, func(r io.Reader) error {
+		var perr error
+		byModule, perr = s.parseResultsByModule(ctx, r, domain.ScanModeSource)
+		return perr
+	})
+	if err != nil {
+		return domain.ProjectScanResult{}, err
 	}
-
-	waitErrCh := make(chan error, 1)
-	go func() {
-		waitErrCh <- cmd.Wait()
-		_ = pw.Close() /* #nosec G104 -- pipe close in goroutine, error not actionable */
-	}()
-
-	byModule, perr := s.parseResultsByModule(ctx, pr, domain.ScanModeSource)
-	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
-	// is settled: a scan that died mid-stream must be classified as the failure it
-	// is, not as the truncated parse it also produced. The channel receive is the
-	// synchronisation edge that publishes the goroutine's write to this goroutine.
-	_, _ = io.Copy(io.Discard, pr)
-	_ = pr.Close()
-	waitErr := <-waitErrCh
+	// See Scan: the version the result names is re-asked of the environment this
+	// scan's children were actually handed, so an escalation does not leave a
+	// verdict naming a Go that did not compile it.
+	toolchainVersion = ranToolchain(ctx, toolchains, env, scanDir, toolchainVersion)
 	s.logMem(ctx, "target_output_parsed")
 
-	if waitErr != nil {
-		stderrStr := stderr.String()
+	if run.waitErr != nil {
+		waitErr, stderrStr := run.waitErr, run.detail
 		s.logger.Debug("vuln-scan: target-rooted govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
 		status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(waitErr, stderrStr)
 		return domain.ProjectScanResult{
@@ -140,8 +140,8 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 			AdvisoryCount:     advisories,
 		}, nil
 	}
-	if perr != nil {
-		return domain.ProjectScanResult{}, fmt.Errorf("parse target govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), perr)
+	if run.parseErr != nil {
+		return domain.ProjectScanResult{}, fmt.Errorf("parse target govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), run.parseErr)
 	}
 
 	runtime.GC()

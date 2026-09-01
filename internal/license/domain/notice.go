@@ -46,6 +46,19 @@ type NoticeEntry struct {
 	EmbeddedComponents []NoticeEmbeddedComponent // vendored/embedded third-party components
 }
 
+// NoticeIdentity is the licence identity an attribution document publishes for
+// a module: the licence covering its code, and the whole expression where that
+// says something the primary does not.
+//
+// It is a named function rather than two field assignments so the notice
+// generator and the cross-surface control reach the same decision. The licence
+// TEXTS are a separate question and are selected by file from the module zip,
+// so a grant this identity sets aside is still reproduced verbatim.
+func NoticeIdentity(rec LicenseRecord) (spdx, expression string) {
+	covered := ReadCoverage(rec)
+	return covered.PrimarySPDX, covered.Expression
+}
+
 // DeclarationAttributes reports whether the recorded declaration is what this
 // entry attributes, as opposed to corroborating an extracted notice.
 //

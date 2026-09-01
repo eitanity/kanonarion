@@ -151,6 +151,11 @@ func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalEx
 	// claims and carry different scheme prefixes.
 	record.WorktreeScanDigest = identity.ScanDigest
 
+	// Why this generation exists: the tree-scoped gate above, and whether this run
+	// asked it or was told to re-measure regardless. Without it a forced
+	// re-measurement and a gate that failed to fire leave the same row.
+	record.DerivedBy = domain2.DerivationFor(domain2.ReuseGateWorktree, req.Force)
+
 	record.ExtractedAt = uc.clock.Now().UTC()
 	record.PipelineVersion = uc.pipelineVersion
 	record.NodeCount = len(record.Nodes)

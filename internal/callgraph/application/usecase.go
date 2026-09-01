@@ -196,7 +196,8 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 
 	// A local coordinate (the project-walk root) is never served from cache:
 	// the working tree mutates between runs, so its records are recomputed
-	// fresh every time.
+	// fresh every time. Whether the result is worth APPENDING is a separate
+	// question, asked after the analysis — see identicalGeneration.
 	var existing domain2.CallGraphRecord
 	var found bool
 	if !req.Force && !req.Coordinate.IsLocal() {
@@ -264,33 +265,7 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	// budgets). The exclusion decision is a pure domain rule; the use case
 	// only orchestrates persisting the resulting record.
 	if domain2.IsModuleExcluded(req.Coordinate.Path(), uc.exclusions) {
-		record := domain2.NewExcludedRecord(req.Coordinate, uc.analyser.AnalyserMetadata().Algorithm, uc.exclusions)
-		record.ExtractedAt = uc.clock.Now().UTC()
-		record.PipelineVersion = uc.pipelineVersion
-		// An excluded module is still a decision about a specific artefact: the
-		// record says these bytes were not analysed, which is only checkable if it
-		// says which bytes.
-		record.ArtefactIdentity = artefact.String()
-		record.SourceContentHash = factRecord.ContentHash
-		record.BuildListSource = req.Inputs.Source
-		record, err = uc.hasher.SetContentHash(record)
-		if err != nil {
-			return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
-		}
-		if err := uc.store.PutCallGraphRecord(ctx, record); err != nil {
-			return ExtractResult{}, fmt.Errorf("persisting callgraph record: %w", err)
-		}
-		log.InfoContext(ctx, "callgraph_module_excluded_by_config",
-			slog.String("overall_status", record.OverallStatus.String()),
-			slog.String("content_hash", record.ContentHash),
-		)
-		// An exclusion is still a generation this run wrote, and the decision it
-		// records — these bytes were not analysed — is exactly the kind a later
-		// reader needs anchored in the append-only log.
-		if err := emitCallGraphExtracted(uc.audit, record); err != nil {
-			return ExtractResult{}, err
-		}
-		return ExtractResult{Record: record, FromCache: false}, nil
+		return uc.recordExclusion(ctx, log, req, artefact.String(), factRecord.ContentHash)
 	}
 
 	// The zip is addressed by what it is, not by where some earlier measurement
@@ -300,7 +275,7 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		return ExtractResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
 	}
 	if !hasZip {
-		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip", ports.ErrModuleNotFetched, req.Coordinate)
+		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain.NotFetchedRemedy(req.Coordinate))
 	}
 	zipPath, cleanup, err := blobZipPath(ctx, uc.blobs, zipIdentity)
 	if err != nil {
@@ -312,6 +287,11 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("running call graph analyser: %w", err)
 	}
+
+	// Why this generation exists: the identical-generation ledger check below, and
+	// whether this run asked it or was told to re-measure regardless. It is stamped
+	// before the seal so the answer is as tamper-evident as the measurement.
+	record.DerivedBy = domain2.DerivationFor(domain2.ReuseGateLedger, req.Force)
 
 	record.ExtractedAt = uc.clock.Now().UTC()
 	record.PipelineVersion = uc.pipelineVersion
@@ -326,6 +306,29 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
+	}
+
+	// A local coordinate never reached the cache lookup above, so nothing is held
+	// to compare against yet. Whether a stored generation may be SERVED and
+	// whether one already restates this analysis are different questions: the
+	// first is answered before the analysis and is always no for a working tree,
+	// the second only after it, and asking it is what stops a re-read of an
+	// unchanged tree appending its whole edge set again.
+	//
+	// The answer is returned as it stands rather than re-checked below. The ledger
+	// was asked exactly this question and applied domain.RestatesAnalysis to
+	// answer it; re-testing the result against the stricter rule the cache-hit
+	// path uses would have the two disagree, and the stricter one would win by
+	// being second — which is what left a walk-then-extract appending anyway.
+	if !found && !req.Force {
+		if held, ok := uc.identicalGeneration(ctx, log, record); ok {
+			log.InfoContext(ctx, "callgraph_remeasured_equal",
+				slog.String("overall_status", record.OverallStatus.String()),
+				slog.String("failure_cause", record.FailureCause.String()),
+				slog.String("content_hash", held.ContentHash),
+			)
+			return ExtractResult{Record: held, Reused: true}, nil
+		}
 	}
 
 	// The analysis ran because the stored record was not eligible to answer — an
@@ -367,6 +370,83 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// recordExclusion persists the decision that a listed module was not analysed,
+// and returns the generation the ledger already holds when this run's decision
+// repeats one.
+//
+// It is a separate method because the exclusion path shares nothing with the
+// measured path but the store: no zip is opened, no analyser runs, and the
+// record it writes states a policy decision rather than a graph.
+func (uc *ExtractCallGraphUseCase) recordExclusion(
+	ctx context.Context,
+	log *slog.Logger,
+	req ExtractRequest,
+	artefactIdentity string,
+	sourceContentHash string,
+) (ExtractResult, error) {
+	record := domain2.NewExcludedRecord(req.Coordinate, uc.analyser.AnalyserMetadata().Algorithm, uc.exclusions)
+	record.ExtractedAt = uc.clock.Now().UTC()
+	record.PipelineVersion = uc.pipelineVersion
+	// An excluded module is still a decision about a specific artefact: the
+	// record says these bytes were not analysed, which is only checkable if it
+	// says which bytes.
+	record.ArtefactIdentity = artefactIdentity
+	record.SourceContentHash = sourceContentHash
+	record.BuildListSource = req.Inputs.Source
+	record, err := uc.hasher.SetContentHash(record)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
+	}
+	// No held-generation check here, deliberately. An exclusion record states that
+	// nothing was read, so it names no analysis source and therefore no analysed
+	// content — and an unnamed analysis matches nothing, including another unnamed
+	// one. Giving it a source to make the check fire would have the record assert
+	// bytes it never read.
+	if err := uc.store.PutCallGraphRecord(ctx, record); err != nil {
+		return ExtractResult{}, fmt.Errorf("persisting callgraph record: %w", err)
+	}
+	log.InfoContext(ctx, "callgraph_module_excluded_by_config",
+		slog.String("overall_status", record.OverallStatus.String()),
+		slog.String("content_hash", record.ContentHash),
+	)
+	// An exclusion is still a generation this run wrote, and the decision it
+	// records — these bytes were not analysed — is exactly the kind a later
+	// reader needs anchored in the append-only log.
+	if err := emitCallGraphExtracted(uc.audit, record); err != nil {
+		return ExtractResult{}, err
+	}
+	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// identicalGeneration asks the ledger whether it already holds the measurement
+// this run has just taken, and reports nothing held when it cannot say.
+//
+// It never returns an error, and that is the difference between this lookup and
+// the one before the analysis. That one runs before any work and a store it
+// cannot read must stop the run. This one runs after: the run holds a
+// measurement, appending it is always correct, and refusing to record what was
+// measured because an optimisation could not be checked would lose the answer.
+// The fault is stated rather than swallowed, so a store that stops answering is
+// visible as the extra generations it causes plus the line that says why.
+func (uc *ExtractCallGraphUseCase) identicalGeneration(
+	ctx context.Context,
+	log *slog.Logger,
+	record domain2.CallGraphRecord,
+) (domain2.CallGraphRecord, bool) {
+	reader, ok := uc.store.(ports.IdenticalGenerationReader)
+	if !ok {
+		return domain2.CallGraphRecord{}, false
+	}
+	held, found, err := reader.IdenticalGeneration(ctx, record)
+	if err != nil {
+		log.WarnContext(ctx, "callgraph_held_generation_unreadable_appending",
+			slog.String("reason", err.Error()),
+		)
+		return domain2.CallGraphRecord{}, false
+	}
+	return held, found
 }
 
 // resolvedForThisToolchain re-asks the disagreeing coordinate for the generation
@@ -441,7 +521,7 @@ func (uc *ExtractCallGraphUseCase) requireFetchRecord(
 		return domain.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
 	if !ok {
-		return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+		return domain.FactRecord{}, fmt.Errorf("%w: %s: %s", ports.ErrModuleNotFetched, coord, domain.NotFetchedRemedy(coord))
 	}
 	return r.FactRecord, nil
 }

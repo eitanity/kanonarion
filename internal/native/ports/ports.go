@@ -16,7 +16,7 @@ import (
 
 // ErrModuleNotFetched is returned when a module has no fetch record, so there
 // is no verified artefact to read.
-var ErrModuleNotFetched = errors.New("module not fetched: run 'kanonarion fetch' first")
+var ErrModuleNotFetched = errors.New("module not fetched")
 
 // ErrNativeConflict is returned when the store holds records describing two
 // different artefacts for one pinned version at one generation. Composition

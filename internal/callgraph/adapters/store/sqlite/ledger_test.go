@@ -1402,3 +1402,219 @@ func TestLedger_EnvironmentLimitedGraphDoesNotDecideTheAnswer(t *testing.T) {
 		t.Fatal("the newest generation won although its own row says this host cut it short")
 	}
 }
+
+// TestLedger_IdenticalGenerationFindsTheMeasurementAlreadyHeld: the read a run
+// makes AFTER measuring, so a local coordinate — which may never be served from
+// cache — can still tell that its re-analysis states what the ledger states.
+func TestLedger_IdenticalGenerationFindsTheMeasurementAlreadyHeld(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	spec := ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:tree-one=",
+		completeness: domain2.CompletenessBuiltWithBodies, at: testTime, callee: "example.com/mod.A",
+	}
+	held := ledgerRecord(t, spec)
+	if perr := s.PutCallGraphRecord(ctx, held); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
+	}
+
+	// The next run of the unchanged tree: the same measurement, a later clock,
+	// and therefore a different seal.
+	later := spec
+	later.at = testTime.Add(time.Hour)
+	fresh := ledgerRecord(t, later)
+	if fresh.ContentHash == held.ContentHash {
+		t.Fatal("the two runs sealed identically; the fixture is not exercising the case")
+	}
+	got, found, err := s.IdenticalGeneration(ctx, fresh)
+	if err != nil || !found {
+		t.Fatalf("IdenticalGeneration: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != held.ContentHash {
+		t.Fatalf("content hash = %q, want the generation already held (%q)", got.ContentHash, held.ContentHash)
+	}
+}
+
+// TestLedger_IdenticalGenerationRefusesADifferentAnalysis is the half the
+// prefilter cannot decide on its own. Both generations state one node and one
+// edge, so every column the table records agrees; only the artefact identity
+// inside the record says they read different bytes.
+func TestLedger_IdenticalGenerationRefusesADifferentAnalysis(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	spec := ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:tree-one=",
+		completeness: domain2.CompletenessBuiltWithBodies, at: testTime, callee: "example.com/mod.A",
+	}
+	if perr := s.PutCallGraphRecord(ctx, ledgerRecord(t, spec)); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
+	}
+
+	edited := spec
+	edited.artefact = "zip:h1:tree-two="
+	edited.at = testTime.Add(time.Hour)
+	if _, found, gerr := s.IdenticalGeneration(ctx, ledgerRecord(t, edited)); gerr != nil || found {
+		t.Fatalf("an analysis of different bytes matched a held generation: found=%v err=%v", found, gerr)
+	}
+
+	// Same bytes, a graph that reached further: a new fact, and one the ladder
+	// needs in the ledger.
+	further := spec
+	further.at = testTime.Add(2 * time.Hour)
+	further.callee = "example.com/mod.Further"
+	if _, found, gerr := s.IdenticalGeneration(ctx, ledgerRecord(t, further)); gerr != nil || found {
+		t.Fatalf("a graph that reached a different symbol matched a held generation: found=%v err=%v", found, gerr)
+	}
+}
+
+// TestLedger_IdenticalGenerationMatchesNothingWhenTheAnalysisIsUnnamed: a
+// record that does not say which content it read is not evidence that it read
+// what any other record read, so it matches nothing — not even a generation
+// otherwise identical to it.
+//
+// The write leg already refuses a zip record naming no artefact, so the shape
+// this guards can only arrive from a generation written before the source field
+// existed. The read leg states the rule anyway: a guard that only holds while
+// another one does is a guard that disappears when that one moves.
+func TestLedger_IdenticalGenerationMatchesNothingWhenTheAnalysisIsUnnamed(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	spec := ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:tree-one=",
+		completeness: domain2.CompletenessBuiltWithBodies, at: testTime, callee: "example.com/mod.A",
+	}
+	if perr := s.PutCallGraphRecord(ctx, ledgerRecord(t, spec)); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
+	}
+
+	unnamed := ledgerRecord(t, spec)
+	unnamed.AnalysisSource = domain2.AnalysisSourceUnrecorded
+	unnamed.ArtefactIdentity = ""
+	if _, found, gerr := s.IdenticalGeneration(ctx, unnamed); gerr != nil || found {
+		t.Fatalf("a record naming no analysed content matched a held generation: found=%v err=%v", found, gerr)
+	}
+}
+
+// TestLedger_IdenticalGenerationRefusesTheZeroCoordinate pins the rule every
+// read leg of this store obeys: absence is the wrong answer to a question about
+// no module.
+func TestLedger_IdenticalGenerationRefusesTheZeroCoordinate(t *testing.T) {
+	s := openTestStore(t)
+	_, _, err := s.IdenticalGeneration(context.Background(), domain2.CallGraphRecord{
+		AnalysisSource: domain2.AnalysisSourceModuleZip, ArtefactIdentity: "zip:h1:one=",
+	})
+	if !errors.Is(err, coordinate.ErrZeroCoordinate) {
+		t.Fatalf("err = %v, want %v", err, coordinate.ErrZeroCoordinate)
+	}
+}
+
+// TestLedger_IdenticalGenerationIgnoresWhichFetchSuppliedTheBytes is the
+// realistic shape. A project walk that analyses its own root re-ingests the
+// tree on every run, because a local coordinate is never served from the fetch
+// cache, so each run's record points at a fresh fetch measurement while reading
+// the identical bytes. Every column the prefilter reads still agrees; only the
+// fetch provenance inside the record moves.
+func TestLedger_IdenticalGenerationIgnoresWhichFetchSuppliedTheBytes(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	spec := ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:tree-one=",
+		completeness: domain2.CompletenessBuiltWithBodies, at: testTime, callee: "example.com/mod.A",
+	}
+	held := ledgerRecord(t, spec)
+	held.SourceContentHash = "sha256:first-fetch"
+	held = resealed(t, held)
+	if perr := s.PutCallGraphRecord(ctx, held); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
+	}
+
+	later := spec
+	later.at = testTime.Add(time.Hour)
+	fresh := ledgerRecord(t, later)
+	fresh.SourceContentHash = "sha256:second-fetch"
+	fresh = resealed(t, fresh)
+
+	got, found, err := s.IdenticalGeneration(ctx, fresh)
+	if err != nil || !found {
+		t.Fatalf("a re-ingest of identical bytes was not recognised: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != held.ContentHash {
+		t.Fatalf("content hash = %q, want the generation already held (%q)", got.ContentHash, held.ContentHash)
+	}
+
+	// The control: the fetch provenance is dropped, the artefact identity is not.
+	other := later
+	other.artefact = "zip:h1:tree-two="
+	edited := ledgerRecord(t, other)
+	edited.SourceContentHash = "sha256:second-fetch"
+	edited = resealed(t, edited)
+	if _, found, gerr := s.IdenticalGeneration(ctx, edited); gerr != nil || found {
+		t.Fatalf("an analysis of different bytes matched a held generation: found=%v err=%v", found, gerr)
+	}
+}
+
+// resealed recomputes the content hash after a test has set a field the
+// ledgerRecord helper does not take, so the record reaching the store is sealed
+// over what it actually says.
+func resealed(t *testing.T, r domain2.CallGraphRecord) domain2.CallGraphRecord {
+	t.Helper()
+	var h domain2.CallGraphRecordHasher
+	sealed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	return sealed
+}
+
+// TestLedger_DerivationSurvivesTheStore: the derivation is inside the seal, so
+// the store must return it as written. A field the ledger dropped would answer
+// "why does this row exist" with silence on every read.
+func TestLedger_DerivationSurvivesTheStore(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	rec := ledgerRecord(t, ledgerSpec{
+		source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain2.CompletenessBuiltWithBodies,
+	})
+	rec.DerivedBy = domain2.DerivationFor(domain2.ReuseGateLedger, true)
+	var h domain2.CallGraphRecordHasher
+	sealed, err := h.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if err := s.PutCallGraphRecord(ctx, sealed); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+
+	got, found, err := s.GetCallGraphRecord(ctx, sealed.Coordinate, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.DerivedBy != sealed.DerivedBy {
+		t.Errorf("derivation read back as %v, want %v", got.DerivedBy, sealed.DerivedBy)
+	}
+	if got.ContentHash != sealed.ContentHash {
+		t.Errorf("content hash changed across the store: got %s, want %s", got.ContentHash, sealed.ContentHash)
+	}
+}

@@ -78,10 +78,10 @@ func TestNoticeWith_StatesTheScope(t *testing.T) {
 	}
 }
 
-// noticeModuleFmt's three record shapes, parsed. The tab-separated layout is the
+// goListModuleRecordFmt's three record shapes, parsed. The tab-separated layout is the
 // contract between the template and the parser, and a silent misread of it would
 // attribute the wrong module — the one error a NOTICE exists to prevent.
-func TestParseNoticeModuleRecords_ThreeShapes(t *testing.T) {
+func TestParseGoListModuleRecords_ThreeShapes(t *testing.T) {
 	out := []byte(strings.Join([]string{
 		"example.com/plain@v1.0.0\t\t",
 		"example.com/fork@v2.0.0\texample.com/upstream@v1.5.0\t",
@@ -90,15 +90,15 @@ func TestParseNoticeModuleRecords_ThreeShapes(t *testing.T) {
 		"example.com/plain@v1.0.0\t\t", // a second package of the same module
 	}, "\n"))
 
-	mods, err := parseNoticeModuleRecords(out)
+	mods, err := parseGoListModuleRecords(out)
 	if err != nil {
-		t.Fatalf("parseNoticeModuleRecords: %v", err)
+		t.Fatalf("parseGoListModuleRecords: %v", err)
 	}
 	if len(mods) != 3 {
 		t.Fatalf("expected 3 modules (blank dropped, duplicate collapsed), got %d: %+v", len(mods), mods)
 	}
 
-	byCompiled := map[string]noticeModule{}
+	byCompiled := map[string]scopeModule{}
 	for _, m := range mods {
 		byCompiled[m.coord.String()] = m
 	}
@@ -113,7 +113,7 @@ func TestParseNoticeModuleRecords_ThreeShapes(t *testing.T) {
 
 	// A local-path replace has no compiled coordinate at all: the zero value is
 	// how the caller tells it apart, and localPath says what does build.
-	var local noticeModule
+	var local scopeModule
 	for _, m := range mods {
 		if m.localPath != "" {
 			local = m
@@ -138,7 +138,7 @@ func TestPartitionNoticeModules_LocalReplaceIsReviewedNotAttributed(t *testing.T
 	fork := coordinatetest.MustNew("example.com/fork", "v2.0.0")
 	required := coordinatetest.MustNew("example.com/upstream", "v1.5.0")
 
-	coords, replaced, reviews := partitionNoticeModules([]noticeModule{
+	coords, replaced, reviews := partitionNoticeModules([]scopeModule{
 		{coord: fork, original: required},
 		{original: upstream, localPath: "../localfork"},
 	})

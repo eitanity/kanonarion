@@ -205,6 +205,7 @@ func (LicenseRecordHasher) Unmarshal(data []byte) (LicenseRecord, error) {
 	}
 	rec.EffectiveSet = DeriveEffectiveLicenseSet(rec.LicenseFiles)
 	rec.PackageLicenses = DerivePackageLicenses(rec.LicenseFiles)
+	SetLicenseCoverage(&rec)
 	return rec, nil
 }
 

@@ -17,6 +17,7 @@ import (
 type queryFakeStore struct {
 	records    map[queryIfaceKey]domain.InterfaceRecord
 	summaries  []ifaceports.InterfaceSummary
+	lastFilter ifaceports.InterfaceFilter
 	symbolRefs []ifaceports.SymbolRef
 	getErr     error
 	listErr    error
@@ -41,8 +42,18 @@ func (s *queryFakeStore) GetInterfaceRecord(_ context.Context, coord coordinate.
 	return r, ok, nil
 }
 
-func (s *queryFakeStore) ListInterfaceRecords(_ context.Context, _ ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error) {
-	return s.summaries, s.listErr
+func (s *queryFakeStore) ListInterfaceRecords(_ context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error) {
+	s.lastFilter = filter
+	if filter.Coordinate == nil {
+		return s.summaries, s.listErr
+	}
+	out := make([]ifaceports.InterfaceSummary, 0, len(s.summaries))
+	for _, sum := range s.summaries {
+		if sum.ModulePath == filter.Coordinate.Path() && sum.ModuleVersion == filter.Coordinate.Version() {
+			out = append(out, sum)
+		}
+	}
+	return out, s.listErr
 }
 
 func (s *queryFakeStore) FindSymbol(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
@@ -108,6 +119,34 @@ func TestQueryInterfaceUseCase_ListInterfaceRecords(t *testing.T) {
 	sums, err := uc.ListInterfaceRecords(context.Background(), ifaceports.InterfaceFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sums) != 1 {
+		t.Errorf("got %d summaries, want 1", len(sums))
+	}
+}
+
+// The use case must hand the filter to the store unchanged. A pass-through that
+// dropped a field would leave every caller asking a question the store never
+// heard, and the answer would still look right — just read from the whole corpus.
+func TestQueryInterfaceUseCase_ListInterfaceRecords_PassesTheFilterThrough(t *testing.T) {
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
+	store := &queryFakeStore{
+		summaries: []ifaceports.InterfaceSummary{
+			{ModulePath: "example.com/mod", ModuleVersion: "v1.0.0"},
+			{ModulePath: "example.com/other", ModuleVersion: "v2.0.0"},
+		},
+	}
+	uc := application.NewQueryInterfaceUseCase(store)
+
+	sums, err := uc.ListInterfaceRecords(context.Background(), ifaceports.InterfaceFilter{Coordinate: &coord})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.lastFilter.Coordinate == nil {
+		t.Fatal("the coordinate was dropped on the way to the store")
+	}
+	if store.lastFilter.Coordinate.String() != coord.String() {
+		t.Errorf("the store was asked about %s, want %s", store.lastFilter.Coordinate, coord)
 	}
 	if len(sums) != 1 {
 		t.Errorf("got %d summaries, want 1", len(sums))

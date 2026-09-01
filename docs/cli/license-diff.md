@@ -83,6 +83,8 @@ No license changes: both sides declare MIT at status Detected, over 1 license fi
 |-------|------|-------------|
 | `module_a` | string | First coordinate (`path@version`) |
 | `module_b` | string | Second coordinate (`path@version`) |
+| `declared_a` | object | What side A declares on its own: `{primary_spdx, overall_status, license_files, copyright_statements}` |
+| `declared_b` | object | The same for side B |
 | `spdx_changed` | object or null | `{from, to}` when primary SPDX differs |
 | `status_changed` | object or null | `{from, to}` when the record's overall status differs |
 | `files_added` | array | Licence files present in B but not in A - each `{path, spdx}` |
@@ -95,6 +97,18 @@ No license changes: both sides declare MIT at status Detected, over 1 license fi
 {
   "module_a": "github.com/example/lib@v1.0.0",
   "module_b": "github.com/example/lib@v2.0.0",
+  "declared_a": {
+    "primary_spdx": "MIT",
+    "overall_status": "Detected",
+    "license_files": 1,
+    "copyright_statements": 1
+  },
+  "declared_b": {
+    "primary_spdx": "GPL-3.0-only",
+    "overall_status": "Detected",
+    "license_files": 1,
+    "copyright_statements": 1
+  },
   "spdx_changed": { "from": "MIT", "to": "GPL-3.0-only" },
   "status_changed": null,
   "files_added": [],
@@ -104,6 +118,14 @@ No license changes: both sides declare MIT at status Detected, over 1 license fi
   "escalation": { "from": "none", "to": "strong" }
 }
 ```
+
+`declared_a` and `declared_b` state what each side says on its own, not only
+what moved between them. The delta fields alone cannot tell an unchanged licence
+from an absent one: two records that both declare Apache-2.0 and two records
+that are both unlicensed produce the same four empty lists. An unlicensed side
+reports `primary_spdx: ""` at status `None`, over zero files and zero
+statements; the counts are the same two populations the text form's no-change
+line names.
 
 ## Copyleft escalation
 

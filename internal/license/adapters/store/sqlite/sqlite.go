@@ -356,6 +356,78 @@ func decodeRecord(blob []byte) (domain2.LicenseRecord, error) {
 	return rec, nil
 }
 
+// IdenticalGeneration returns the generation the ledger already holds that
+// states the same measurement as rec. See ports.IdenticalGenerationReader for
+// why a run asks this after extracting rather than before.
+//
+// The SQL is a PREFILTER and nothing else. It matches every column the table
+// records except the clock, the seal and the blob — all of which a generation
+// stating the same measurement must agree on — and the decision is
+// domain.SameMeasurement over the decoded records, so the licence files, their
+// copyright statements and the artefact that was read are still compared. Columns
+// alone would collapse two findings that agree on the served SPDX and differ
+// inside the files it was read from. Narrowing in SQL is what keeps the decode
+// affordable.
+//
+// Newest first, stopping at the first match, because the generation a re-read of
+// an unchanged tree matches is the one it wrote last time; the content hash
+// breaks a tie so two rows sharing a second cannot order differently between
+// runs.
+//
+// A row this build cannot verify stops the read rather than being skipped, on the
+// same terms as every other read leg of this store. The caller treats a failure
+// as "nothing held" and appends, so an unverifiable row costs a redundant
+// generation, never a suppressed measurement.
+func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.LicenseRecord) (domain2.LicenseRecord, bool, error) {
+	if rec.Coordinate.IsZero() {
+		return domain2.LicenseRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	// A record that does not say WHICH artefact it read cannot be shown to have
+	// read the same bytes as any other, including another that says nothing.
+	if !domain2.NamesAnalysedContent(rec) {
+		return domain2.LicenseRecord{}, false, nil
+	}
+
+	const q = `SELECT serialised FROM licence_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND primary_spdx = ? AND spdx_expression = ? AND overall_status = ?
+  AND copyright_status = ? AND provenance_confidence = ?
+ORDER BY extracted_at DESC, content_hash DESC`
+	rows, err := s.db.DB().QueryContext(ctx, q,
+		rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
+		rec.PrimarySPDX, rec.Expression, int(rec.OverallStatus),
+		int(rec.CopyrightStatus), int(rec.Provenance.Confidence),
+	)
+	if err != nil {
+		return domain2.LicenseRecord{}, false, fmt.Errorf("querying licence generations of %s: %w", rec.Coordinate, err)
+	}
+	defer func() {
+		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
+	}()
+
+	for rows.Next() {
+		var blob []byte
+		if serr := rows.Scan(&blob); serr != nil {
+			return domain2.LicenseRecord{}, false, fmt.Errorf("scanning licence generation of %s: %w", rec.Coordinate, serr)
+		}
+		held, derr := decodeRecord(blob)
+		if derr != nil {
+			return domain2.LicenseRecord{}, false, derr
+		}
+		same, serr := domain2.SameMeasurement(rec, held)
+		if serr != nil {
+			return domain2.LicenseRecord{}, false, fmt.Errorf("comparing licence generations of %s: %w", rec.Coordinate, serr)
+		}
+		if same {
+			return held, true, nil
+		}
+	}
+	if cerr := rows.Err(); cerr != nil {
+		return domain2.LicenseRecord{}, false, fmt.Errorf("iterating licence generations of %s: %w", rec.Coordinate, cerr)
+	}
+	return domain2.LicenseRecord{}, false, nil
+}
+
 // ListLicenseRecords returns one summary per module, pipeline version pair —
 // the generation composition serves — ordered by extracted_at descending.
 //
@@ -388,9 +460,11 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		var sum ports.LicenseSummary
 		var extractedAt string
 		var status int
+		var blob []byte
 		if serr := rows.Scan(
 			&sum.ModulePath, &sum.ModuleVersion, &sum.PipelineVersion,
 			&sum.PrimarySPDX, &sum.Expression, &status, &extractedAt, &sum.ContentHash,
+			&blob,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning license summary: %w", serr)
 		}
@@ -404,7 +478,17 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		k := generationKey{sum.ModulePath, sum.ModuleVersion, sum.PipelineVersion}
 		if counts[k] == 0 {
 			order = append(order, k)
-			first[k] = sum
+			// The blob is decoded for the licence identity, which the indexed
+			// columns cannot answer: the identity a surface publishes is the
+			// record read through what its licences cover, and that needs the
+			// licence files. Measured on the maintainer's store,
+			// `license-list --limit 0 --json` over 1,828 records goes from 0.03s
+			// to 0.08s; --copyright already paid more (0.13s) for the same reason.
+			rec, derr := decodeRecord(blob)
+			if derr != nil {
+				return nil, derr
+			}
+			first[k] = ports.WithLicenceIdentity(sum, rec)
 		}
 		counts[k]++
 	}
@@ -445,16 +529,14 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		if !found {
 			continue
 		}
-		out = append(out, ports.LicenseSummary{
+		out = append(out, ports.WithLicenceIdentity(ports.LicenseSummary{
 			ModulePath:      k.path,
 			ModuleVersion:   k.version,
 			PipelineVersion: k.pipeline,
-			PrimarySPDX:     served.PrimarySPDX,
-			Expression:      served.Expression,
 			OverallStatus:   served.OverallStatus,
 			ExtractedAt:     served.ExtractedAt.UTC(),
 			ContentHash:     served.ContentHash,
-		})
+		}, served))
 	}
 
 	return page(out, filter.Limit, filter.Offset), nil
@@ -476,7 +558,8 @@ func page(sums []ports.LicenseSummary, limit, offset int) []ports.LicenseSummary
 
 func buildListQuery(f ports.LicenseFilter) (string, []any) {
 	q := `SELECT module_path, module_version, pipeline_version,
-	             primary_spdx, spdx_expression, overall_status, extracted_at, content_hash
+	             primary_spdx, spdx_expression, overall_status, extracted_at, content_hash,
+	             serialised
 	      FROM licence_records`
 	var conds []string
 	var args []any

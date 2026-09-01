@@ -1332,6 +1332,96 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	return rec, true, nil
 }
 
+// IdenticalGeneration returns the generation the ledger already holds that
+// states the same measurement as rec. See ports.IdenticalGenerationReader for
+// why a run asks this after measuring rather than before.
+//
+// The SQL is a PREFILTER and nothing else. It matches every column the table
+// records except the clock, the seal and the blob — all of which a generation
+// restating one analysis must agree on — and the decision is
+// domain.RestatesAnalysis over the decoded records, so the nodes, the edges and
+// the artefact that was read are still compared. Narrowing in SQL is what keeps
+// the decode affordable: decoding a candidate reconstructs its whole edge set.
+//
+// Newest first, stopping at the first match, because the generation a re-run of
+// an unchanged input matches is the one it wrote last time; the content hash
+// breaks a tie so two rows sharing a second cannot order differently between
+// runs.
+func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.CallGraphRecord) (domain2.CallGraphRecord, bool, error) {
+	if rec.Coordinate.IsZero() {
+		return domain2.CallGraphRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	// A record that does not say WHICH content it analysed cannot be shown to have
+	// read the same bytes as any other, including another that says nothing. The
+	// rule lives in the domain so the empty tree digest and the empty artefact
+	// identity are refused by one statement of it.
+	if !domain2.NamesAnalysedContent(rec) {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+
+	const q = `SELECT serialised, content_hash, analyser
+FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND algorithm = ? AND overall_status = ? AND completeness = ?
+  AND analysis_source = ? AND worktree_digest = ? AND analysis_root = ?
+  AND worktree_scan_digest = ? AND failure_cause = ? AND analyser = ?
+  AND node_count = ? AND edge_count = ?
+ORDER BY extracted_at DESC, content_hash DESC`
+	rows, err := s.db.DB().QueryContext(ctx, q,
+		rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
+		string(rec.Algorithm), int(rec.OverallStatus), string(rec.Completeness),
+		string(rec.AnalysisSource), rec.WorktreeDigest, rec.AnalysisRoot,
+		rec.WorktreeScanDigest, string(rec.FailureCause), rec.Analyser.Column(),
+		rec.NodeCount, rec.EdgeCount,
+	)
+	if err != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("querying generations of %s: %w", rec.Coordinate, err)
+	}
+	candidates, err := scanIdenticalCandidates(rows, rec.Coordinate)
+	if err != nil {
+		return domain2.CallGraphRecord{}, false, err
+	}
+
+	for _, c := range candidates {
+		held, ok, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser)
+		if derr != nil {
+			return domain2.CallGraphRecord{}, false, derr
+		}
+		if !ok {
+			// Written at an older canonical shape, so it cannot be verified and
+			// cannot be shown to restate this analysis.
+			continue
+		}
+		same, serr := domain2.RestatesAnalysis(rec, held)
+		if serr != nil {
+			return domain2.CallGraphRecord{}, false, fmt.Errorf("comparing generations of %s: %w", rec.Coordinate, serr)
+		}
+		if same {
+			return held, true, nil
+		}
+	}
+	return domain2.CallGraphRecord{}, false, nil
+}
+
+// scanIdenticalCandidates drains the prefilter's rows before any of them is
+// decoded. Decoding reads callgraph_edges on the same connection, so holding
+// this cursor open across it would nest two reads of one store.
+func scanIdenticalCandidates(rows *sql.Rows, coord coordinate.ModuleCoordinate) ([]generationRow, error) {
+	defer func() { _ = rows.Close() }()
+	var out []generationRow
+	for rows.Next() {
+		var c generationRow
+		if serr := rows.Scan(&c.blob, &c.hash, &c.analyser); serr != nil {
+			return nil, fmt.Errorf("scanning generation of %s: %w", coord, serr)
+		}
+		out = append(out, c)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		return nil, fmt.Errorf("iterating generations of %s: %w", coord, cerr)
+	}
+	return out, nil
+}
+
 // WorktreeRouting reports which tree answered for a local coordinate, and how
 // many the ledger holds.
 //

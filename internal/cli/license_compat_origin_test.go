@@ -168,35 +168,18 @@ func TestLicenseCompat_BundledComponentNamesItsOrigin_JSON(t *testing.T) {
 	}
 }
 
-// A conjunction is reported whole, as sbom does, with the offending arm named.
-// go-digest is the live case: "Apache-2.0 AND CC-BY-SA-4.0" was rendered as
-// "CC-BY-SA-4.0" alone, which reads as the module's licence and is not.
-func TestLicenseCompat_ConjunctiveExpressionReportedWhole_Text(t *testing.T) {
-	rec := licdomain.LicenseRecord{
-		PrimarySPDX:   "Apache-2.0",
-		Expression:    "Apache-2.0 AND CC-BY-SA-4.0",
-		OverallStatus: licdomain.LicenseStatusMultiple,
-		LicenseFiles: []licdomain.LicenseFileEntry{
-			{Path: "LICENSE", SPDX: "Apache-2.0", Confidence: 1},
-			{Path: "LICENSE.docs", SPDX: "CC-BY-SA-4.0", Confidence: 1},
-		},
-	}
-	ctr, root := compatFromRecords(t, map[string]licdomain.LicenseRecord{
-		"example.com/dep@v1.0.0": withEffectiveSet(rec),
-	})
-	out, err := runCompat(t, ctr, root, "Apache-2.0", false)
-	if err == nil {
-		t.Fatal("CC-BY-SA-4.0 is unmodelled by decision; want a review item")
-	}
-	if !strings.Contains(out, "Apache-2.0 AND CC-BY-SA-4.0") {
-		t.Errorf("the module's expression must be reported whole, never reduced to the offending arm:\n%s", out)
-	}
-	if !strings.Contains(out, "arm CC-BY-SA-4.0") {
-		t.Errorf("the offending arm must be identified:\n%s", out)
-	}
-}
-
-func TestLicenseCompat_ConjunctiveExpressionReportedWhole_JSON(t *testing.T) {
+// TestLicenseCompat_DocsArmLeavesTheIdentityButIsStillRaised is go-digest's
+// shape under the coverage reading, and it pins the line between the two
+// questions license-compat answers.
+//
+// The module's IDENTITY is Apache-2.0: the documentation licence does not
+// govern the code, so it is not part of what the module is licensed under, and
+// the report must not name a Go package after it. What the engine EVALUATES is
+// unchanged: CC-BY-SA-4.0 is still an identifier in the module's archive, still
+// raised, still handed to a human. Coverage decides what the module is called,
+// never what gets looked at — dropping the arm from the evaluation would hide a
+// real obligation, and that is the follow-up this fix deliberately does not make.
+func TestLicenseCompat_DocsArmLeavesTheIdentityButIsStillRaised(t *testing.T) {
 	rec := licdomain.LicenseRecord{
 		PrimarySPDX:   "Apache-2.0",
 		Expression:    "Apache-2.0 AND CC-BY-SA-4.0",
@@ -211,13 +194,71 @@ func TestLicenseCompat_ConjunctiveExpressionReportedWhole_JSON(t *testing.T) {
 	})
 	out, err := runCompat(t, ctr, root, "Apache-2.0", true)
 	if err == nil {
-		t.Fatal("CC-BY-SA-4.0 is unmodelled by decision; want a review item")
+		t.Fatal("CC-BY-SA-4.0 is unmodelled by decision; it must still be raised for review")
 	}
 	entry := soleConflictJSON(t, out)
-	if got := entry["module_spdx"]; got != "Apache-2.0 AND CC-BY-SA-4.0" {
-		t.Errorf("module_spdx = %v, want the whole expression", got)
+	if got := entry["module_spdx"]; got != "Apache-2.0" {
+		t.Errorf("module_spdx = %v, want Apache-2.0 — the documentation licence is not what "+
+			"this module is licensed under", got)
 	}
 	if got := entry["dep_spdx"]; got != "CC-BY-SA-4.0" {
+		t.Errorf("dep_spdx = %v: the documentation licence must still be evaluated and raised, "+
+			"never hidden by the identity being corrected", got)
+	}
+}
+
+// conjunctiveCodeRecord is a module under two grants that BOTH cover its code:
+// its own Apache-2.0 and an Artistic-2.0 component it carries in source. The
+// dataset models neither pair, so the entry is raised and there is a report to
+// read.
+//
+// The fixture used to be go-digest's "Apache-2.0 AND CC-BY-SA-4.0". That is no
+// longer a conjunction: the documentation licence does not cover the code, so it
+// leaves the expression rather than staying an arm of it — see
+// TestLicenseCompat_DocsArmLeavesTheIdentityButIsStillRaised.
+func conjunctiveCodeRecord() licdomain.LicenseRecord {
+	return licdomain.LicenseRecord{
+		PrimarySPDX:   "Apache-2.0",
+		Expression:    "Apache-2.0 AND Artistic-2.0",
+		OverallStatus: licdomain.LicenseStatusMultiple,
+		LicenseFiles: []licdomain.LicenseFileEntry{
+			{Path: "LICENSE", SPDX: "Apache-2.0", Confidence: 1},
+			{Path: "LICENSE.perl", SPDX: "Artistic-2.0", Confidence: 1},
+		},
+	}
+}
+
+// A conjunction is reported whole, as sbom does, with the offending arm named:
+// reducing it to the offending arm reads as the module's licence and is not.
+func TestLicenseCompat_ConjunctiveExpressionReportedWhole_Text(t *testing.T) {
+	ctr, root := compatFromRecords(t, map[string]licdomain.LicenseRecord{
+		"example.com/dep@v1.0.0": withEffectiveSet(conjunctiveCodeRecord()),
+	})
+	out, err := runCompat(t, ctr, root, "Apache-2.0", false)
+	if err == nil {
+		t.Fatal("Artistic-2.0 is not in the dataset; want a review item")
+	}
+	if !strings.Contains(out, "Apache-2.0 AND Artistic-2.0") {
+		t.Errorf("the module's expression must be reported whole, never reduced to the offending arm:\n%s", out)
+	}
+	if !strings.Contains(out, "arm Artistic-2.0") {
+		t.Errorf("the offending arm must be identified:\n%s", out)
+	}
+}
+
+func TestLicenseCompat_ConjunctiveExpressionReportedWhole_JSON(t *testing.T) {
+	ctr, root := compatFromRecords(t, map[string]licdomain.LicenseRecord{
+		"example.com/dep@v1.0.0": withEffectiveSet(conjunctiveCodeRecord()),
+	})
+	out, err := runCompat(t, ctr, root, "Apache-2.0", true)
+	if err == nil {
+		t.Fatal("Artistic-2.0 is not in the dataset; want a review item")
+	}
+	entry := soleConflictJSON(t, out)
+	if got := entry["module_spdx"]; got != "Apache-2.0 AND Artistic-2.0" {
+		t.Errorf("module_spdx = %v, want the whole expression", got)
+	}
+	if got := entry["dep_spdx"]; got != "Artistic-2.0" {
 		t.Errorf("dep_spdx = %v, want the offending arm", got)
 	}
 	if got := entry["spdx_origin"]; got != "module_root" {

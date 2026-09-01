@@ -17,6 +17,7 @@ exit 0
       "fixed_cves": []
     }
   ],
+  "status_changed": [],
   "license_regressions": [],
   "new_reachable_cves": []
 }

@@ -444,6 +444,80 @@ func decodeRecord(blob []byte, storedHash string) (domain2.InterfaceRecord, erro
 	return rec, nil
 }
 
+// IdenticalGeneration returns the generation the ledger already holds that
+// states the same measurement as rec. See ports.IdenticalGenerationReader for
+// why a run asks this after extracting rather than before.
+//
+// The SQL is a PREFILTER and nothing else. The table records only the status and
+// the package count, which two different APIs of the same size share, so the
+// decision is domain.SameMeasurement over the decoded records: every symbol,
+// every signature, the build frame, the toolchain and the artefact that was read.
+// The blob carries the whole API, so no symbol row is touched to answer this.
+//
+// The toolchain is part of the comparison and not part of the prefilter. It is
+// inside the seal but has no column, so two extractions of one tree under two
+// toolchains are separated by the decode rather than by the query — which is the
+// right way round: a dimension the table cannot see must never be assumed to
+// agree.
+//
+// Newest first, stopping at the first match, because the generation a re-read of
+// an unchanged tree matches is the one it wrote last time; the content hash
+// breaks a tie so two rows sharing a second cannot order differently between
+// runs.
+//
+// A row this build cannot verify stops the read rather than being skipped, on the
+// same terms as every other read leg of this store. The caller treats a failure
+// as "nothing held" and appends, so an unverifiable row costs a redundant
+// generation, never a suppressed measurement.
+func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.InterfaceRecord) (domain2.InterfaceRecord, bool, error) {
+	if rec.Coordinate.IsZero() {
+		return domain2.InterfaceRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	// A record that does not say WHICH artefact it read cannot be shown to have
+	// read the same bytes as any other, including another that says nothing.
+	if !domain2.NamesAnalysedContent(rec) {
+		return domain2.InterfaceRecord{}, false, nil
+	}
+
+	const q = `SELECT serialised, content_hash FROM interface_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND overall_status = ? AND package_count = ?
+ORDER BY extracted_at DESC, content_hash DESC`
+	rows, err := s.db.DB().QueryContext(ctx, q,
+		rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
+		int(rec.OverallStatus), len(rec.Packages),
+	)
+	if err != nil {
+		return domain2.InterfaceRecord{}, false, fmt.Errorf("querying interface generations of %s: %w", rec.Coordinate, err)
+	}
+	defer func() {
+		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
+	}()
+
+	for rows.Next() {
+		var blob []byte
+		var storedHash string
+		if serr := rows.Scan(&blob, &storedHash); serr != nil {
+			return domain2.InterfaceRecord{}, false, fmt.Errorf("scanning interface generation of %s: %w", rec.Coordinate, serr)
+		}
+		held, derr := decodeRecord(blob, storedHash)
+		if derr != nil {
+			return domain2.InterfaceRecord{}, false, derr
+		}
+		same, serr := domain2.SameMeasurement(rec, held)
+		if serr != nil {
+			return domain2.InterfaceRecord{}, false, fmt.Errorf("comparing interface generations of %s: %w", rec.Coordinate, serr)
+		}
+		if same {
+			return held, true, nil
+		}
+	}
+	if cerr := rows.Err(); cerr != nil {
+		return domain2.InterfaceRecord{}, false, fmt.Errorf("iterating interface generations of %s: %w", rec.Coordinate, cerr)
+	}
+	return domain2.InterfaceRecord{}, false, nil
+}
+
 // servedContentHash returns the content hash of the record composition serves for
 // one coordinate and pipeline version, and whether the ledger holds any.
 //
@@ -508,15 +582,25 @@ LIMIT 2`
 // than rows. Applying them in SQL would let a module with three generations
 // consume three places of a --limit 50, and the page an operator sees would
 // depend on how many times each module happened to be re-extracted.
+//
+// A coordinate filter is the opposite case and is applied IN SQL, before the
+// collapse: it selects which modules the answer is about rather than where the
+// page starts, and every row it excludes is a composition this read would
+// otherwise pay for and discard.
 func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.InterfaceFilter) ([]ports.InterfaceSummary, error) {
 	// No LIMIT or OFFSET here: paging happens after the collapse, on modules
 	// rather than rows.
-	const q = `SELECT module_path, module_version, pipeline_version,
+	q := `SELECT module_path, module_version, pipeline_version,
 	             overall_status, package_count, extracted_at, content_hash
-	      FROM interface_records
-	      ORDER BY extracted_at DESC, rowid DESC`
+	      FROM interface_records`
+	var args []any
+	if filter.Coordinate != nil {
+		q += ` WHERE module_path = ? AND module_version = ?`
+		args = append(args, filter.Coordinate.Path(), filter.Coordinate.Version())
+	}
+	q += ` ORDER BY extracted_at DESC, rowid DESC`
 
-	rows, err := s.db.DB().QueryContext(ctx, q)
+	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing interface records: %w", err)
 	}

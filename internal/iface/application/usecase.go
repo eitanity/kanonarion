@@ -88,6 +88,15 @@ type ExtractRequest struct {
 type ExtractResult struct {
 	Record    domain3.InterfaceRecord
 	FromCache bool
+	// Reused says the extraction ran and came back identical to a generation the
+	// ledger already holds, so nothing was appended and Record is that held
+	// generation.
+	//
+	// It is deliberately not FromCache. A cache hit means no extraction happened;
+	// this means one did, and its result was already recorded. Reporting them as
+	// one fact would tell a reader chasing a stale answer that the tree was never
+	// read, when it was.
+	Reused bool
 }
 
 // Execute runs the interface extraction pipeline for the given module.
@@ -161,7 +170,7 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 		return ExtractResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
 	}
 	if !hasZip {
-		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip", ports.ErrModuleNotFetched, req.Coordinate)
+		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain2.NotFetchedRemedy(req.Coordinate))
 	}
 	zipReader, err := uc.blobs.Get(ctx, zipIdentity)
 	if err != nil {
@@ -207,6 +216,23 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 		return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
 	}
 
+	// A local coordinate never reached the cache lookup above, so nothing is held
+	// to compare against yet. Whether a stored generation may be SERVED and
+	// whether one already states this measurement are different questions: the
+	// first is answered before the extraction and is always no for a working tree,
+	// the second only after it, and asking it is what stops a re-read of an
+	// unchanged tree appending its whole package set again.
+	if !req.Force {
+		if held, ok := uc.identicalGeneration(ctx, log, record); ok {
+			log.InfoContext(ctx, "interface_remeasured_equal",
+				slog.String("overall_status", record.OverallStatus.String()),
+				slog.Int("package_count", len(record.Packages)),
+				slog.String("content_hash", held.ContentHash),
+			)
+			return ExtractResult{Record: held, Reused: true}, nil
+		}
+	}
+
 	if err := uc.store.PutInterfaceRecord(ctx, record); err != nil {
 		return ExtractResult{}, fmt.Errorf("persisting interface record: %w", err)
 	}
@@ -228,6 +254,35 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 	return ExtractResult{Record: record, FromCache: false}, nil
 }
 
+// identicalGeneration asks the ledger whether it already holds the measurement
+// this run has just taken, and reports nothing held when it cannot say.
+//
+// It never returns an error, and that is the difference between this lookup and
+// the cache lookup before the extraction. That one runs before any work and a
+// store it cannot read must stop the run. This one runs after: the run holds a
+// measurement, appending it is always correct, and refusing to record what was
+// measured because an optimisation could not be checked would lose the answer.
+// The fault is stated rather than swallowed, so a store that stops answering is
+// visible as the extra generations it causes plus the line that says why.
+func (uc *ExtractInterfaceUseCase) identicalGeneration(
+	ctx context.Context,
+	log *slog.Logger,
+	record domain3.InterfaceRecord,
+) (domain3.InterfaceRecord, bool) {
+	reader, ok := uc.store.(ports.IdenticalGenerationReader)
+	if !ok {
+		return domain3.InterfaceRecord{}, false
+	}
+	held, found, err := reader.IdenticalGeneration(ctx, record)
+	if err != nil {
+		log.WarnContext(ctx, "interface_held_generation_unreadable_appending",
+			slog.String("reason", err.Error()),
+		)
+		return domain3.InterfaceRecord{}, false
+	}
+	return held, found
+}
+
 // requireFetchRecord asks the ledger what it has measured about coord and
 // returns the record composition serves. Returns ErrModuleNotFetched when
 // nothing has been measured.
@@ -247,7 +302,7 @@ func (uc *ExtractInterfaceUseCase) requireFetchRecord(
 		return domain2.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
 	if !ok {
-		return domain2.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+		return domain2.FactRecord{}, fmt.Errorf("%w: %s: %s", ports.ErrModuleNotFetched, coord, domain2.NotFetchedRemedy(coord))
 	}
 	return r.FactRecord, nil
 }

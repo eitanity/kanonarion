@@ -332,10 +332,70 @@ func treeDigest(root string, read []string) (string, error) {
 	return analysedTreeDigest(root, read)
 }
 
-// analyseDir holds the shared post-extraction analysis pipeline: load
+// analyseDir runs the analysis, and runs it a second time under a toolchain
+// already unpacked on this host when the first run refused for want of a newer
+// one.
+//
+// Every analysis child is pinned so it can never download a toolchain, which
+// leaves a module whose go directive exceeds the installed toolchain unanalysable
+// even on a host where a toolchain that satisfies it is sitting on disk. That is
+// a common and temporary state on any machine tracking Go releases, and the
+// module is not at fault for it.
+//
+// The retry is driven by the failure rather than by a prediction, because the go
+// command is the only thing that knows what the load actually needed: the
+// requirement can be raised by the module's own go line, by its toolchain line,
+// or by a dependency several levels down, and its own sentence names the version
+// in every one of those cases. Predicting it here would mean reimplementing
+// minimum version selection to guess an answer that arrives for free.
+//
+// It happens at most once. The second run either loads or reports what it found,
+// and nothing about it can produce a third requirement the second toolchain does
+// not satisfy — the shim directory offers every toolchain on the host at once and
+// the go command picks from the whole set.
+func (a *Analyser) analyseDir(
+	ctx context.Context,
+	tempDir string,
+	coord coordinate.ModuleCoordinate,
+	synth domain.SynthesisedGoMod,
+	read *[]string,
+	worktree bool,
+) (domain.CallGraphRecord, error) {
+	toolchains := goenv.NewToolchains()
+	defer func() {
+		if cerr := toolchains.Close(); cerr != nil {
+			a.logger.WarnContext(ctx, "callgraph_toolchain_cleanup_failed", slog.String("error", cerr.Error()))
+		}
+	}()
+
+	rec, err := a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, toolchains)
+	if err != nil {
+		return rec, err
+	}
+	retry, refusal := toolchains.Escalate(rec.FailureDetail)
+	if refusal != "" {
+		rec.FailureDetail = refusal
+		return rec, nil
+	}
+	if !retry {
+		return rec, nil
+	}
+	a.logger.InfoContext(ctx, "callgraph_toolchain_selected",
+		slog.String("module", coord.Path()),
+		slog.String("version", coord.Version()),
+		slog.String("toolchain", toolchains.Selected()),
+	)
+	return a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, toolchains)
+}
+
+// analyseDirOnce holds the shared post-extraction analysis pipeline: load
 // packages from dir, build SSA, run CHA, and walk the graph into a
 // CallGraphRecord. dir is either an extracted-zip temp dir (Analyse) or a
 // local working tree (AnalyseDir).
+//
+// toolchains carries the toolchain this analysis has settled on. It selects the
+// installed one on the first pass and, when that pass refused for want of a
+// newer Go this host actually has, names that one on the second.
 //
 // synth describes any go.mod written into tempDir before the load. It reaches
 // here because it changes how the load must run — a synthesised file beside a
@@ -350,13 +410,14 @@ func treeDigest(root string, read []string) (string, error) {
 //
 // worktree selects the environment: a published zip's go.work is dev-time
 // configuration that does not apply, and a working tree's is the build.
-func (a *Analyser) analyseDir(
+func (a *Analyser) analyseDirOnce(
 	ctx context.Context,
 	tempDir string,
 	coord coordinate.ModuleCoordinate,
 	synth domain.SynthesisedGoMod,
 	read *[]string,
 	worktree bool,
+	toolchains *goenv.Toolchains,
 ) (rec domain.CallGraphRecord, err error) {
 	fset := token.NewFileSet()
 
@@ -385,13 +446,13 @@ func (a *Analyser) analyseDir(
 			return domain.FailureCauseEnvironment
 		}
 		// Same shape, and the probe cannot see it either.
-		if isToolchainTooOld(detail) {
+		if goenv.IsToolchainTooOld(detail) {
 			return domain.FailureCauseEnvironment
 		}
 		return a.classifyLoadFailure(ctx, tempDir, env)
 	}
 
-	envCleanup, err := a.setupGoEnv(ctx, tempDir)
+	envCleanup, err := a.setupGoEnv(ctx)
 	if err != nil {
 		// Preparing PATH and GOROOT for the analysis is entirely about the run;
 		// the module has not been touched at this point.
@@ -403,10 +464,17 @@ func (a *Analyser) analyseDir(
 	// After setupGoEnv, never before: it installs the analysis PATH and clears
 	// GOROOT, and an earlier snapshot hands the child a toolchain other than the
 	// one it is exec'd as.
-	env = analysisEnv()
+	// Exclusive, not an override: a working tree never has the extracted-module
+	// environment built for it at all. The two postures disagree about the one
+	// thing this branch decides — an extracted zip's go.work is packaging and is
+	// disabled, a working tree's is the build and is honoured — and building both
+	// leaves a reader unable to tell which one the child was handed.
 	if worktree {
 		env = goenv.Worktree(os.Environ(), tempDir)
+	} else {
+		env = analysisEnv()
 	}
+	env = toolchains.Apply(env)
 
 	// Which toolchain ran is stamped on EVERY record this function returns,
 	// successes and failures alike, because a graph carries the toolchain's own

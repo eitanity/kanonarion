@@ -127,6 +127,15 @@ type ExtractRequest struct {
 type ExtractResult struct {
 	Record    domain2.LicenseRecord
 	FromCache bool
+	// Reused says the extraction ran and came back identical to a generation the
+	// ledger already holds, so nothing was appended and Record is that held
+	// generation.
+	//
+	// It is deliberately not FromCache. A cache hit means no extraction happened;
+	// this means one did, and its result was already recorded. Reporting them as
+	// one fact would tell a reader chasing a stale answer that the tree was never
+	// read, when it was.
+	Reused bool
 }
 
 func (uc *ExtractLicenseUseCase) GetLicenseStore() ports.LicenseStore {
@@ -206,7 +215,7 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 		return ExtractResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
 	}
 	if !hasZip {
-		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip", ports.ErrModuleNotFetched, req.Coordinate)
+		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain.NotFetchedRemedy(req.Coordinate))
 	}
 	zipReader, err := uc.blobs.Get(ctx, zipIdentity)
 	if err != nil {
@@ -260,6 +269,23 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 		return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
 	}
 
+	// Step 8.5: a local coordinate never reached the cache lookup above, so
+	// nothing is held to compare against yet. Whether a stored generation may be
+	// SERVED and whether one already states this measurement are different
+	// questions: the first is answered before the extraction and is always no for
+	// a working tree, the second only after it, and asking it is what stops a
+	// re-read of an unchanged tree appending its whole licence record again.
+	if !req.Force {
+		if held, ok := uc.identicalGeneration(ctx, log, record); ok {
+			log.InfoContext(ctx, "licence_remeasured_equal",
+				slog.String("overall_status", record.OverallStatus.String()),
+				slog.String("primary_spdx", record.PrimarySPDX),
+				slog.String("content_hash", held.ContentHash),
+			)
+			return ExtractResult{Record: held, Reused: true}, nil
+		}
+	}
+
 	// Step 9: persist.
 	if err := uc.licenses.PutLicenseRecord(ctx, record); err != nil {
 		return ExtractResult{}, fmt.Errorf("persisting license record: %w", err)
@@ -279,6 +305,35 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// identicalGeneration asks the ledger whether it already holds the measurement
+// this run has just taken, and reports nothing held when it cannot say.
+//
+// It never returns an error, and that is the difference between this lookup and
+// the cache lookup before the extraction. That one runs before any work and a
+// store it cannot read must stop the run. This one runs after: the run holds a
+// measurement, appending it is always correct, and refusing to record what was
+// measured because an optimisation could not be checked would lose the answer.
+// The fault is stated rather than swallowed, so a store that stops answering is
+// visible as the extra generations it causes plus the line that says why.
+func (uc *ExtractLicenseUseCase) identicalGeneration(
+	ctx context.Context,
+	log *slog.Logger,
+	record domain2.LicenseRecord,
+) (domain2.LicenseRecord, bool) {
+	reader, ok := uc.licenses.(ports.IdenticalGenerationReader)
+	if !ok {
+		return domain2.LicenseRecord{}, false
+	}
+	held, found, err := reader.IdenticalGeneration(ctx, record)
+	if err != nil {
+		log.WarnContext(ctx, "licence_held_generation_unreadable_appending",
+			slog.String("reason", err.Error()),
+		)
+		return domain2.LicenseRecord{}, false
+	}
+	return held, found
 }
 
 // emitLicenseExtracted appends one license_extracted event for a freshly
@@ -329,7 +384,7 @@ func (uc *ExtractLicenseUseCase) requireFetchRecord(
 		return domain.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
 	if !ok {
-		return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+		return domain.FactRecord{}, fmt.Errorf("%w: %s: %s", ports.ErrModuleNotFetched, coord, domain.NotFetchedRemedy(coord))
 	}
 	return r.FactRecord, nil
 }
@@ -435,7 +490,7 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 	})
 	provenance.Confidence = domain2.DeriveProvenanceConfidence(provenance, copyrightStatus)
 
-	return domain2.LicenseRecord{
+	rec := domain2.LicenseRecord{
 		SchemaVersion:     domain2.LicenseSchemaVersion,
 		Ecosystem:         domain.EcosystemGo,
 		Coordinate:        coord,
@@ -452,7 +507,28 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 		Provenance:        provenance,
 		ExtractedAt:       uc.clock.Now().UTC(),
 		PipelineVersion:   uc.pipelineVersion,
-	}, nil
+	}
+	// What each identified licence covers. Derived here so a freshly extracted
+	// record already states it, and derived again on every load so records
+	// written before it do too — it is a function of the licence files and the
+	// expression either way, which is why it costs no pipeline bump.
+	domain2.SetLicenseCoverage(&rec)
+	// A conjunction is a claim that every arm governs the module's code. Where
+	// coverage says one of them governs documentation or an embedded component
+	// instead, the arm is set aside here so the stored expression states the
+	// module's own licensing rather than the union of everything the archive
+	// carries. The same reading runs on every record the surfaces publish, so
+	// applying it to a record it has already corrected finds nothing to do.
+	coverage := domain2.ReadCoverage(rec)
+	rec.Expression = coverage.Expression
+	rec.ExpressionBasis = coverage.Basis
+	rec.PrimarySPDX = coverage.PrimarySPDX
+	if len(coverage.SetAside) > 0 {
+		// Coverage restated the expression, so the per-file answers derived
+		// from the old one are recomputed against the new.
+		domain2.SetLicenseCoverage(&rec)
+	}
+	return rec, nil
 }
 
 // processFile reads one zip entry, hashes its content, and runs the detector.

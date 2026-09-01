@@ -860,7 +860,7 @@ func runScanDiff(
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toScanDiffJSON(diff)); err != nil {
+		if err := enc.Encode(newScanRunDiffDocument(diff)); err != nil {
 			return fmt.Errorf("encoding scan diff: %w", err)
 		}
 		return nil

@@ -224,6 +224,13 @@ func TestStoredInterfaceSummaries_AbsentUseCaseIsNotAFault(t *testing.T) {
 	if _, superseded := supersededInterfacePipelines(coord, nil); superseded {
 		t.Error("no summaries cannot establish that a record is superseded")
 	}
+	// Same rule for the scoped read the callers actually use.
+	if _, superseded := supersededInterfaceRecord(context.Background(), nil, coord); superseded {
+		t.Error("an absent use case cannot establish that a record is superseded")
+	}
+	if _, superseded := supersededInterfaceRecord(context.Background(), failing, coord); superseded {
+		t.Error("an unreadable store cannot establish that a record is superseded")
+	}
 }
 
 var errStoreUnreadable = errors.New("store unreadable")

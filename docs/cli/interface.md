@@ -266,6 +266,12 @@ tables:
 - `interface_symbols` - a symbol index, so `symbol-find` need not deserialise
   the record blob.
 
+A `local` coordinate is never served from cache at all: the working tree
+mutates, so it is re-read and re-extracted on every run. The run appends a
+generation only when the extraction says something the ledger does not already
+say; a re-extraction that comes back identical appends nothing and says so on
+stderr. `--force` records the measurement either way.
+
 ## Assurance log
 
 Each persisted generation appends one `interface_extracted` event to the
@@ -273,7 +279,8 @@ append-only audit log (`{store-root}/audit.jsonl`): module, version, pipeline
 version, overall status, package count, build frame, the record's content hash,
 the identity of the artefact read and the content hash of the fetch record that
 supplied it. A failed or partial extraction carries its reason as
-`failure_detail`. A cache hit appends nothing; `--force` re-extracts and appends.
+`failure_detail`. A cache hit appends nothing; `--force` re-extracts and appends. A re-extraction that appends no generation appends no event either: the log
+records generations, not runs.
 
 ## Relation to other stages
 

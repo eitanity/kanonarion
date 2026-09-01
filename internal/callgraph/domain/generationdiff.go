@@ -460,10 +460,10 @@ var collectionIdentity = map[string][]string{
 	"implementations": {"interface_id", "type_id"},
 }
 
-// recordFields is the canonical shape of a record as a field map, with the time
-// of measurement and its seal set aside.
+// recordFields is the canonical shape of a record as a field map, with the
+// circumstances of the run — its time, its seal, its derivation — set aside.
 func recordFields(r CallGraphRecord) (map[string]json.RawMessage, error) {
-	r = withoutMeasurementTime(r)
+	r = withoutRunCircumstance(r)
 	// The collections are compared from the records themselves, so rendering them
 	// here only to skip them is the whole of what made this unaffordable. The
 	// counts stated alongside them are not collections and are still compared.

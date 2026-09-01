@@ -117,9 +117,13 @@ that appear in go.mod but are never distributed.`,
 			if flags > 1 {
 				return fmt.Errorf("--walk-id, --gomod, and --package are mutually exclusive")
 			}
-			if flags == 0 {
+			// A named --gomod goes through the resolver too, not only the
+			// default. Everything downstream takes the path's DIRECTORY to run
+			// `go list`, so an unresolved path that is not there produced a full,
+			// exit-coded notice about whatever sat beside it.
+			if flags == 0 || f.gomodPath != "" {
 				var rerr error
-				f.gomodPath, rerr = resolveGoModPath("")
+				f.gomodPath, rerr = resolveGoModPath(f.gomodPath)
 				if rerr != nil {
 					return rerr
 				}
@@ -349,7 +353,7 @@ notice: a replacement.
 // attribute a licence and copyright for code the build never compiles, which is
 // the one error a NOTICE exists to prevent — so it is reported for review with
 // the path named.
-func partitionNoticeModules(mods []noticeModule) (
+func partitionNoticeModules(mods []scopeModule) (
 	[]coordinate.ModuleCoordinate,
 	map[coordinate.ModuleCoordinate]coordinate.ModuleCoordinate,
 	[]licensedomain.ReviewItem,
@@ -397,22 +401,6 @@ func collectSnippetEntries(snippetDir string) ([]licensedomain.NoticeEntry, erro
 	return entries, nil
 }
 
-// noticeModule is one module the document must account for: the coordinate whose
-// code actually compiles into the target, plus the require entry a replace
-// directive acted on when there was one. The two are carried together rather
-// than one instead of the other — a NOTICE attributes the code that ships, and a
-// reader still needs to see which requirement produced it.
-type noticeModule struct {
-	// coord is what compiles. It is the zero value only for a local-path
-	// replace, which has no fetchable replacement coordinate.
-	coord coordinate.ModuleCoordinate
-	// original is the require entry a replace acted on; zero when the module
-	// was not replaced.
-	original coordinate.ModuleCoordinate
-	// localPath is the on-disk target of a local-path replace; empty otherwise.
-	localPath string
-}
-
 // resolveNoticeModules resolves the scope to attribute and a human-readable name
 // for it. All three branches resolve to the coordinates that COMPILE: a replaced
 // requirement is reported under its replacement, because attributing the module
@@ -422,22 +410,22 @@ func resolveNoticeModules(
 	ctx context.Context,
 	walkID, gomodPath, packagePattern string,
 	ctr *Container,
-) ([]noticeModule, string, error) {
+) ([]scopeModule, string, error) {
 	if walkID != "" {
 		rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
 		if err != nil {
 			return nil, "", fmt.Errorf("loading walk %s: %w", walkID, err)
 		}
-		mods := make([]noticeModule, 0, len(rec.Graph.Nodes))
+		mods := make([]scopeModule, 0, len(rec.Graph.Nodes))
 		for _, n := range rec.Graph.Nodes {
 			if n.ResolutionSource == walkdomain.ResolutionLocalReplace {
 				// Such a node keeps the original require as its Coordinate:
 				// no fetchable replacement exists, and LocalPath records what
 				// the build actually compiles.
-				mods = append(mods, noticeModule{original: n.Coordinate, localPath: n.LocalPath})
+				mods = append(mods, scopeModule{original: n.Coordinate, localPath: n.LocalPath})
 				continue
 			}
-			mods = append(mods, noticeModule{coord: n.Coordinate, original: n.OriginalCoordinate})
+			mods = append(mods, scopeModule{coord: n.Coordinate, original: n.OriginalCoordinate})
 		}
 		return mods, "walk " + walkID, nil
 	}
@@ -445,91 +433,31 @@ func resolveNoticeModules(
 	if packagePattern != "" {
 		// --package narrows to a single binary's import closure, the most
 		// precise scope for a distributed NOTICE.
-		mods, err := goListNoticeModules("", []string{packagePattern}, false)
+		mods, err := goListNoticeModules(ctx, "", []string{packagePattern}, false)
 		return mods, "package " + packagePattern, err
 	}
 	// --gomod: the project's code dependencies (consistent with every other
 	// go.mod command).
-	mods, err := goListNoticeModules(filepath.Dir(gomodPath), []string{"./..."}, true)
+	mods, err := goListNoticeModules(ctx, filepath.Dir(gomodPath), []string{"./..."}, true)
 	return mods, "go.mod " + gomodPath, err
 }
 
-// noticeModuleFmt is the `go list -f` template emitting one tab-separated record
-// per package: the coordinate that compiles, the require entry a replace acted
-// on, and the on-disk target of a local-path replace.
-//
-// `go list`'s .Module.Path and .Module.Version are the REQUIRE entry; for a
-// replaced module the code that compiles is .Module.Replace. The plain
-// "{{.Module.Path}}@{{.Module.Version}}" template the shared scope helpers use
-// therefore names a module the build never compiles, which is harmless for a
-// coverage question and wrong for an attribution one. Standard-library packages
-// and the main module emit an all-empty record and are dropped on parse.
-const noticeModuleFmt = `{{if and .Module (not .Standard)}}{{with .Module}}` +
-	`{{if .Replace}}` +
-	`{{if .Replace.Version}}{{.Replace.Path}}@{{.Replace.Version}}{{end}}` + "\t" +
-	`{{.Path}}@{{.Version}}` + "\t" +
-	`{{if not .Replace.Version}}{{.Replace.Path}}{{end}}` +
-	`{{else}}` +
-	`{{if .Version}}{{.Path}}@{{.Version}}{{end}}` + "\t\t" +
-	`{{end}}{{end}}{{end}}`
-
 // goListNoticeModules runs `go list -deps [-test] <patterns>` in dir and returns
 // the de-duplicated, sorted modules the patterns compile against, replacements
-// applied.
-func goListNoticeModules(dir string, patterns []string, withTest bool) ([]noticeModule, error) {
+// applied. It reads the same record every scope resolution reads, so attribution
+// and coverage cannot come to disagree about which module a build compiles.
+func goListNoticeModules(ctx context.Context, dir string, patterns []string, withTest bool) ([]scopeModule, error) {
 	args := []string{"list", "-deps"}
 	if withTest {
 		args = append(args, "-test")
 	}
-	args = append(args, "-f", noticeModuleFmt)
+	args = append(args, "-f", goListModuleFmt)
 	args = append(args, patterns...)
-	out, err := runGoList(dir, args)
+	out, err := runGoList(ctx, dir, args)
 	if err != nil {
 		return nil, err
 	}
-	return parseNoticeModuleRecords(out)
-}
-
-// parseNoticeModuleRecords turns the raw noticeModuleFmt output into modules. It
-// is split from the toolchain call so the record shapes — plain, replaced, and
-// local-path replaced — are testable without a module tree on disk.
-func parseNoticeModuleRecords(out []byte) ([]noticeModule, error) {
-	seen := make(map[string]bool)
-	var records []string
-	for line := range strings.SplitSeq(string(out), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(strings.ReplaceAll(line, "\t", "")) == "" || seen[line] {
-			continue
-		}
-		seen[line] = true
-		records = append(records, line)
-	}
-	sort.Strings(records)
-
-	mods := make([]noticeModule, 0, len(records))
-	for _, rec := range records {
-		fields := strings.Split(rec, "\t")
-		if len(fields) != 3 {
-			return nil, fmt.Errorf("go list emitted an unreadable module record %q: expected three tab-separated fields", rec)
-		}
-		m := noticeModule{localPath: fields[2]}
-		if fields[0] != "" {
-			coord, cerr := parseCoordinate(fields[0])
-			if cerr != nil {
-				return nil, fmt.Errorf("invalid coordinate %q: %w", fields[0], cerr)
-			}
-			m.coord = coord
-		}
-		if fields[1] != "" {
-			orig, cerr := parseCoordinate(fields[1])
-			if cerr != nil {
-				return nil, fmt.Errorf("invalid coordinate %q: %w", fields[1], cerr)
-			}
-			m.original = orig
-		}
-		mods = append(mods, m)
-	}
-	return mods, nil
+	return parseGoListModuleRecords(out)
 }
 
 // writeNoticeLicenseFile renders one file's attribution block, headed by what

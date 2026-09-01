@@ -259,11 +259,11 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    analyser: %s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
 			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), r.Analyser.String(),
-			historyOrigin(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
+			historyOrigin(r), historyDerivation(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -272,6 +272,20 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		return fmt.Errorf("writing output: %w", werr)
 	}
 	return nil
+}
+
+// historyDerivation renders why a generation was appended, as its own line, or
+// nothing when the record states no derivation.
+//
+// The history view is exactly where the question is asked: N generations of one
+// coordinate, and nothing else on the row says whether a re-measurement was
+// demanded or a reuse gate failed to fire. A record written before the field
+// prints no line rather than a guess.
+func historyDerivation(r domain.CallGraphRecord) string {
+	if !r.DerivedBy.IsRecorded() {
+		return ""
+	}
+	return "    derived:  " + r.DerivedBy.String() + "\n"
 }
 
 // historyFailure renders how a generation's analysis failed, as its own line,

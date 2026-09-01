@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -71,6 +73,44 @@ func (s LicenseStatus) String() string {
 	}
 }
 
+// MarshalJSON implements json.Marshaler for LicenseStatus. The status travels
+// as the name every other surface states — the text view and `context --json`
+// both say "Detected" — not as its position in the constant block.
+func (s LicenseStatus) MarshalJSON() ([]byte, error) {
+	return fmt.Appendf(nil, "%q", s.String()), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for LicenseStatus.
+func (s *LicenseStatus) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return fmt.Errorf("failed to unmarshal LicenseStatus: %w", err)
+	}
+	switch str {
+	case "Unknown":
+		*s = LicenceStatusUnknown
+	case "Detected":
+		*s = LicenseStatusDetected
+	case "Ambiguous":
+		*s = LicenceStatusAmbiguous
+	case "Multiple":
+		*s = LicenseStatusMultiple
+	case "None":
+		*s = LicenseStatusNone
+	case "Unclassified":
+		*s = LicenseStatusUnclassified
+	case "ExtractionFailed":
+		*s = LicenseStatusExtractionFailed
+	case "Cancelled":
+		*s = LicenseStatusCancelled
+	case "PerFile":
+		*s = LicenseStatusPerFile
+	default:
+		return fmt.Errorf("invalid LicenseStatus: %q", str)
+	}
+	return nil
+}
+
 // AltMatch is an alternative license identification for a file, reported when
 // the detector produced multiple candidates.
 type AltMatch struct {
@@ -97,6 +137,16 @@ type LicenseFileEntry struct {
 	// than being shown bare absence.
 	LowConfidenceSPDX     string
 	LowConfidenceCoverage float64 // coverage fraction (0.0–1.0) of the low-confidence match; 0 when none
+	// Coverage says what this file's licence governs — the module's code,
+	// documentation shipped beside it, or third-party material the module
+	// carries. It is the fact IsVendored and IsPerFile each answer for one
+	// case and neither answers for a root-level file, which is where a font's
+	// licence became a Go library's primary.
+	//
+	// Derived from the entries, like EffectiveSet and PackageLicenses: outside
+	// the content hash, recomputed by SetLicenseCoverage on every load, so
+	// adding it left every stored record verifiable.
+	Coverage LicenseCoverage
 }
 
 // EmbeddedComponent represents a distinct third-party component bundled within

@@ -10,6 +10,7 @@ Per-command pages link back here instead of restating these rules.
 - Pass `--json` to get machine-readable output on stdout. Log lines remain on stderr.
 - `--store-root` defaults to `~/.kanonarion`. It holds the SQLite database, blob store, sumdb cache, audit log, and `config.yaml`.
 - The `<module@version>` argument follows standard Go module coordinate syntax, e.g. `github.com/spf13/cobra@v1.8.1`.
+- `--gomod` takes the path of an existing `go.mod`. A path that is not there is refused before any work is done - see [A `--gomod` path that does not exist](#a---gomod-path-that-does-not-exist).
 
 ### Layered configuration
 
@@ -559,6 +560,28 @@ build an empty store at the typo and answer truthfully about *that* store -
 "the store holds no scan run at all" - which is the wrong answer to the question
 asked. Note that `--store-root` takes the next token as its value, so
 `--store-root --help` makes `--help` the store root and earns the same refusal.
+
+### A `--gomod` path that does not exist
+
+`--gomod` names the manifest that scopes the answer, and the path is checked
+before anything else runs. A path that cannot be opened is refused with exit
+code **20**, naming the flag and the value it was given:
+
+```
+--gomod ./no-such-file.mod: no such file or directory
+  the named manifest is what scopes this command; it could not be opened, so nothing was measured
+  pass the path of an existing go.mod, or omit --gomod to use ./go.mod in the working directory
+```
+
+A directory earns the same refusal. Without the check, the commands that take
+only the path's *directory* - they resolve their module set by running the Go
+toolchain there - never opened the named file at all, and answered in full about
+whatever else was beside it. Like `--store-root`, `--gomod` takes the next token
+as its value, so `--gomod --size-only` makes `--size-only` the path and earns
+the refusal rather than an answer.
+
+Omitting `--gomod` still falls back to `./go.mod` in the working directory,
+which is refused with the same exit code when it is not there.
 
 ---
 

@@ -46,22 +46,22 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 
 	logger := buildLogger(logLevel, stderr)
 
-	coords, res, err := resolveScopeModules(f.gomodPath, scope, f.excludeTests)
+	mods, res, err := resolveScopeModules(ctx, f.gomodPath, scope, f.excludeTests)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
 	// The scope the document set was selected by, stated before the documents,
 	// on the channel the vulnerability frame is stated on. An empty scope states
 	// it too: which set came back empty is the whole answer there.
-	if nerr := writeDepScopeNotice(stderr, res, len(coords), true); nerr != nil {
+	if nerr := writeDepScopeNotice(stderr, res, len(mods), true); nerr != nil {
 		return nerr
 	}
 	scopeField := newScopeJSON(res)
 	// The same three facts the notice above states, as the envelope's fields.
 	// Built here, from the same resolution and the same count, so the sentence
 	// and the document cannot disagree.
-	envelope := newEnvelopeScope(res, len(coords), true)
-	if len(coords) == 0 {
+	envelope := newEnvelopeScope(res, len(mods), true)
+	if len(mods) == 0 {
 		return writeEmptyContextScope(f, scope, envelope, array, stream, stdout)
 	}
 
@@ -132,16 +132,20 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		head: contextEnvelopeHead{envelopeScope: envelope, Rooting: rooting}}
 
 	var errs []error
-	for _, coordStr := range coords {
+	for _, mod := range mods {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context cancelled: %w", err)
 		}
 
-		coord, err := parseCoordinate(coordStr)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", coordStr, err))
-			continue
-		}
+		// The coordinate the build compiles: where a replace directive routed the
+		// requirement to a fork, every section below — verification, licence,
+		// dependencies, vulnerabilities — is a fact about the fork, and it is the
+		// coordinate the walk, the fetch ledger and every command this document
+		// names hold a record under. Reported against the require entry, the same
+		// sections answered "not fetched", "not run" and "this walk does not hold
+		// it" for a module the build had fetched, licensed and scanned.
+		coord := mod.answering()
+		coordStr := coord.String()
 
 		vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
 		var cmdWalkID string
@@ -156,7 +160,13 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		}
 
 		out := contextOutput{
-			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
+			Module: contextModuleInfo{
+				Path:    coord.Path(),
+				Version: coord.Version(),
+				// The require entry the build was routed away from, carried beside
+				// the module rather than in place of it.
+				Replace: replaceOf(mod),
+			},
 			DependencyScope: scopeField,
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),

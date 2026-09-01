@@ -98,6 +98,11 @@ type contextProvenance struct {
 type contextModuleInfo struct {
 	Path    string `json:"path"`
 	Version string `json:"version"`
+	// Replace is the go.mod replace directive that routed the build to this
+	// module, present only on a go.mod-scoped answer about a replaced
+	// requirement. Absent elsewhere: a coordinate named on the command line
+	// names itself, and no manifest was read to route it.
+	Replace *moduleReplace `json:"replace,omitempty"`
 }
 
 // Sentinel status values used when a record is absent or unreadable.

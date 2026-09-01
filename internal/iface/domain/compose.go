@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -320,4 +321,68 @@ func servesBefore(a, b InterfaceRecord) bool {
 	// authority and is not claimed to be — it is here so the served record does
 	// not depend on the order rows happen to come back in.
 	return a.ContentHash < b.ContentHash
+}
+
+// SameMeasurement reports whether two interface records state the identical
+// measurement, differing at most in WHEN it was taken and in which fetch
+// measurement handed over the bytes.
+//
+// It is the ledger's answer to "has this already been recorded". A re-extraction
+// that came back saying the same packages, the same symbols, the same status and under the
+// same toolchain has added no fact — the only thing new about it
+// is the clock — and appending it grows the ledger without making any answer
+// better.
+//
+// It matters where re-extraction is unconditional. A local coordinate is never
+// served from cache, by design: a local version pins no content and the working
+// tree mutates, so every read of the project's own root re-extracts. Before this,
+// each of those reads appended a generation whether the tree had changed or not.
+//
+// Three fields are set aside. ExtractedAt and the seal computed over it are when
+// the measurement was taken, not what it says. SourceContentHash is the third and
+// the one worth stating plainly: it names WHICH FETCH MEASUREMENT supplied the
+// bytes, not which bytes. The project root is re-ingested on every run — the
+// fetch ledger is never served a cached local record either — so a new fetch
+// record is appended each time and its own seal covers its own clock. Measured on
+// a scratch store: three runs over one unchanged tree, one artefact identity, and
+// three different source content hashes. Comparing it would make every re-read of
+// an unchanged tree a new measurement, which is exactly what this function exists
+// to recognise.
+//
+// Dropping it is sound only because ArtefactIdentity IS compared and is a content
+// address: two records naming one zip:h1 identity read the same bytes, whichever
+// fetch record handed them over. That soundness rests on the identity being
+// present, so a record naming no analysed content is never the same measurement
+// as anything — including another record naming none. Without that guard two
+// generations predating the field would be collapsed on the strength of two
+// fields neither of them carries.
+//
+// Everything else is compared, over the canonical shape rather than a chosen
+// subset, so anything else inside the seal separates two measurements.
+func SameMeasurement(a, b InterfaceRecord) (bool, error) {
+	// The rule the field-dropping above depends on. It is stated here rather than
+	// left to the caller: a comparison that is only sound when someone else
+	// checked something is a comparison that stops being sound when they stop.
+	if !NamesAnalysedContent(a) || !NamesAnalysedContent(b) {
+		return false, nil
+	}
+	ab, err := marshalCanonical(forMeasurementComparison(a))
+	if err != nil {
+		return false, fmt.Errorf("marshal interface record for measurement comparison: %w", err)
+	}
+	bb, err := marshalCanonical(forMeasurementComparison(b))
+	if err != nil {
+		return false, fmt.Errorf("marshal interface record for measurement comparison: %w", err)
+	}
+	return bytes.Equal(ab, bb), nil
+}
+
+// forMeasurementComparison blanks when a record was measured, the seal that
+// covers it, and which fetch measurement supplied the bytes. See SameMeasurement
+// for why the third one goes with the first two.
+func forMeasurementComparison(r InterfaceRecord) InterfaceRecord {
+	r.ExtractedAt = time.Time{}
+	r.ContentHash = ""
+	r.SourceContentHash = ""
+	return r
 }

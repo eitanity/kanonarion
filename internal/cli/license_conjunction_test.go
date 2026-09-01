@@ -331,14 +331,20 @@ func TestPrintLicenseRecord_ConjunctionWithUncataloguedArmSaysSo(t *testing.T) {
 }
 
 // TestPrintLicenseRecord_SeparateGrantsNameTheFileAndDoNotAssertAnOwedSet is
-// the control for github.com/opencontainers/go-digest@v1.0.0: LICENSE grants
-// Apache-2.0 over the code and LICENSE.docs grants CC-BY-SA-4.0 over the
-// documentation. Merging those into one set would tell a consumer linking the
-// Go package that they owe a documentation licence.
+// the control for a conjunction of arms that each grant CODE: LICENSE grants
+// Apache-2.0 over the module's own source and LICENSE.perl grants Artistic-2.0
+// over a component it carries. Both cover code, so neither is set aside; which
+// of them binds depends on whether the covered artefact reaches the consumer's
+// binary, and no licence record answers that.
+//
+// The fixture used to be go-digest's LICENSE beside LICENSE.docs. That pairing
+// is no longer this case: coverage says the documentation licence does not
+// govern the code, so it leaves the expression entirely rather than joining a
+// merged upper bound — see TestSeparateGrants_ADocsArmLeavesRatherThanMerging.
 func TestPrintLicenseRecord_SeparateGrantsNameTheFileAndDoNotAssertAnOwedSet(t *testing.T) {
-	r := separateGrantsRecord(t, "Apache-2.0 AND CC-BY-SA-4.0", "Apache-2.0", map[string]string{
+	r := separateGrantsRecord(t, "Apache-2.0 AND Artistic-2.0", "Apache-2.0", map[string]string{
 		"LICENSE":      "Apache-2.0",
-		"LICENSE.docs": "CC-BY-SA-4.0",
+		"LICENSE.perl": "Artistic-2.0",
 	})
 	var buf bytes.Buffer
 	if err := printLicenseRecord(r, false, false, &buf); err != nil {
@@ -351,8 +357,8 @@ func TestPrintLicenseRecord_SeparateGrantsNameTheFileAndDoNotAssertAnOwedSet(t *
 	if !strings.Contains(out, "obligations required by Apache-2.0, granted by LICENSE (catalogue") {
 		t.Errorf("the Apache-2.0 arm does not name the file that grants it:\n%s", out)
 	}
-	if !strings.Contains(out, "obligations required by CC-BY-SA-4.0, granted by LICENSE.docs: unknown") {
-		t.Errorf("the CC-BY-SA-4.0 arm does not name the file that grants it:\n%s", out)
+	if !strings.Contains(out, "obligations required by Artistic-2.0, granted by LICENSE.perl: unknown") {
+		t.Errorf("the Artistic-2.0 arm does not name the file that grants it:\n%s", out)
 	}
 	// The merged set is present but must say what it is.
 	if !strings.Contains(out, "an upper bound,") || !strings.Contains(out, "not what you owe") {
@@ -376,9 +382,9 @@ func TestPrintLicenseRecord_SeparateGrantsNameTheFileAndDoNotAssertAnOwedSet(t *
 // control on the machine-readable surface, and pins decision 4: the
 // record-level status stays known because one arm is known.
 func TestLicenseJSON_SeparateGrantsPublishPathsAndDoNotDegrade(t *testing.T) {
-	r := separateGrantsRecord(t, "Apache-2.0 AND CC-BY-SA-4.0", "Apache-2.0", map[string]string{
+	r := separateGrantsRecord(t, "Apache-2.0 AND Artistic-2.0", "Apache-2.0", map[string]string{
 		"LICENSE":      "Apache-2.0",
-		"LICENSE.docs": "CC-BY-SA-4.0",
+		"LICENSE.perl": "Artistic-2.0",
 	})
 	var buf bytes.Buffer
 	if err := printLicenseRecord(r, false, true, &buf); err != nil {
@@ -394,8 +400,8 @@ func TestLicenseJSON_SeparateGrantsPublishPathsAndDoNotDegrade(t *testing.T) {
 	if got := doc.ArmGrants["Apache-2.0"]; len(got) != 1 || got[0] != "LICENSE" {
 		t.Errorf("arm_grants[Apache-2.0] = %v, want [LICENSE]", got)
 	}
-	if got := doc.ArmGrants["CC-BY-SA-4.0"]; len(got) != 1 || got[0] != "LICENSE.docs" {
-		t.Errorf("arm_grants[CC-BY-SA-4.0] = %v, want [LICENSE.docs]", got)
+	if got := doc.ArmGrants["Artistic-2.0"]; len(got) != 1 || got[0] != "LICENSE.perl" {
+		t.Errorf("arm_grants[Artistic-2.0] = %v, want [LICENSE.perl]", got)
 	}
 	if doc.Reading != obligationsReadingMaximal {
 		t.Errorf("obligations_reading = %q, want the maximal statement — without it a reader "+
@@ -403,7 +409,7 @@ func TestLicenseJSON_SeparateGrantsPublishPathsAndDoNotDegrade(t *testing.T) {
 	}
 
 	raw := obligationsDocOf(t, buf.Bytes())
-	if want := obligationsWire(t, domain.MaximalObligations([]string{"Apache-2.0", "CC-BY-SA-4.0"})); string(raw.Obligations) != want {
+	if want := obligationsWire(t, domain.MaximalObligations([]string{"Apache-2.0", "Artistic-2.0"})); string(raw.Obligations) != want {
 		t.Errorf("obligations = %s, want the maximal set %s", raw.Obligations, want)
 	}
 	var record struct {
@@ -419,10 +425,57 @@ func TestLicenseJSON_SeparateGrantsPublishPathsAndDoNotDegrade(t *testing.T) {
 	}
 	if record.Obligations.Status != "known" {
 		t.Errorf("record-level status = %q, want known: the Apache-2.0 arm covers the code and "+
-			"is catalogued; an uncatalogued docs licence must not degrade it", record.Obligations.Status)
+			"is catalogued; an uncatalogued arm must not degrade it", record.Obligations.Status)
 	}
-	if record.Binding["CC-BY-SA-4.0"].Status != "unknown" {
+	if record.Binding["Artistic-2.0"].Status != "unknown" {
 		t.Error("the uncatalogued arm must still report unknown on its own row")
+	}
+}
+
+// TestSeparateGrants_ADocsArmLeavesRatherThanMerging is go-digest@v1.0.0 and
+// docker/go-metrics@v0.0.1 under the coverage reading. A documentation licence
+// is not an arm whose duties a consumer might owe depending on what they ship:
+// it does not govern the code at all, so it leaves the expression, and the
+// maximal-upper-bound machinery has nothing to qualify.
+func TestSeparateGrants_ADocsArmLeavesRatherThanMerging(t *testing.T) {
+	r := separateGrantsRecord(t, "Apache-2.0 AND CC-BY-SA-4.0", "Apache-2.0", map[string]string{
+		"LICENSE":      "Apache-2.0",
+		"LICENSE.docs": "CC-BY-SA-4.0",
+	})
+	var buf bytes.Buffer
+	if err := printLicenseRecord(r, false, true, &buf); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Expression string              `json:"expression"`
+		Basis      string              `json:"expression_basis"`
+		Primary    string              `json:"primary_spdx"`
+		ArmGrants  map[string][]string `json:"arm_grants"`
+		Binding    map[string]any      `json:"binding_obligations"`
+		Reading    string              `json:"obligations_reading"`
+		Files      []struct {
+			Path     string `json:"path"`
+			Coverage string `json:"coverage"`
+		} `json:"license_files"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Expression != "Apache-2.0" || doc.Primary != "Apache-2.0" {
+		t.Errorf("expression=%q primary=%q, want Apache-2.0 for both", doc.Expression, doc.Primary)
+	}
+	if !strings.Contains(doc.Basis, "coverage:") || !strings.Contains(doc.Basis, "CC-BY-SA-4.0") {
+		t.Errorf("expression_basis = %q, must say coverage took part and name the arm it set aside", doc.Basis)
+	}
+	if len(doc.ArmGrants) != 0 || len(doc.Binding) != 0 || doc.Reading != "" {
+		t.Errorf("arm_grants=%v binding=%v reading=%q, want all absent: there is no conjunction left",
+			doc.ArmGrants, doc.Binding, doc.Reading)
+	}
+	want := map[string]string{"LICENSE": "ModuleCode", "LICENSE.docs": "Documentation"}
+	for _, f := range doc.Files {
+		if f.Coverage != want[f.Path] {
+			t.Errorf("license_files[%s].coverage = %q, want %q", f.Path, f.Coverage, want[f.Path])
+		}
 	}
 }
 
@@ -488,9 +541,9 @@ func TestLicenseJSON_SeparateGrantsAcrossTheStoredShapes(t *testing.T) {
 // TestSeparateGrants_TheBasisDecides pins decision 1: the same files and the
 // same expression read two ways, and only the recorded basis tells them apart.
 func TestSeparateGrants_TheBasisDecides(t *testing.T) {
-	files := map[string]string{"LICENSE": "Apache-2.0", "LICENSE.docs": "CC-BY-SA-4.0"}
+	files := map[string]string{"LICENSE": "Apache-2.0", "LICENSE.perl": "Artistic-2.0"}
 
-	separate := separateGrantsRecord(t, "Apache-2.0 AND CC-BY-SA-4.0", "Apache-2.0", files)
+	separate := separateGrantsRecord(t, "Apache-2.0 AND Artistic-2.0", "Apache-2.0", files)
 	inseparable := separate
 	inseparable.ExpressionBasis = "split: is licensed under"
 
@@ -514,9 +567,9 @@ func TestSeparateGrants_TheBasisDecides(t *testing.T) {
 // TestContextLicense_SeparateGrantsCarryPathsAndTheReading is the third
 // surface.
 func TestContextLicense_SeparateGrantsCarryPathsAndTheReading(t *testing.T) {
-	rec := separateGrantsRecord(t, "Apache-2.0 AND CC-BY-SA-4.0", "Apache-2.0", map[string]string{
+	rec := separateGrantsRecord(t, "Apache-2.0 AND Artistic-2.0", "Apache-2.0", map[string]string{
 		"LICENSE":      "Apache-2.0",
-		"LICENSE.docs": "CC-BY-SA-4.0",
+		"LICENSE.perl": "Artistic-2.0",
 	})
 	uc := testfakes.NewFakeQueryLicense()
 	uc.AddRecord(rec.Coordinate, licapp.PipelineVersion, rec)
@@ -525,13 +578,13 @@ func TestContextLicense_SeparateGrantsCarryPathsAndTheReading(t *testing.T) {
 	if l.Obligations == nil || l.Obligations.Status != "known" {
 		t.Fatalf("record-level obligations = %+v, want status known", l.Obligations)
 	}
-	if got := l.ArmGrants["CC-BY-SA-4.0"]; len(got) != 1 || got[0] != "LICENSE.docs" {
-		t.Errorf("arm_grants[CC-BY-SA-4.0] = %v, want [LICENSE.docs]", got)
+	if got := l.ArmGrants["Artistic-2.0"]; len(got) != 1 || got[0] != "LICENSE.perl" {
+		t.Errorf("arm_grants[Artistic-2.0] = %v, want [LICENSE.perl]", got)
 	}
 	if l.ObligationsReading != obligationsReadingMaximal {
 		t.Errorf("obligations_reading = %q, want the maximal statement", l.ObligationsReading)
 	}
-	if arm := l.BindingObligations["CC-BY-SA-4.0"]; arm == nil || arm.Status != "unknown" {
+	if arm := l.BindingObligations["Artistic-2.0"]; arm == nil || arm.Status != "unknown" {
 		t.Errorf("the uncatalogued arm must report unknown on its own row: %+v", arm)
 	}
 }

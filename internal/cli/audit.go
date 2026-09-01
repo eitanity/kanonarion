@@ -364,7 +364,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 	f.gomodPath = gomodPath
 
-	if err := resolveModcacheMode(f.fromModcache, gomodPath); err != nil {
+	if err := resolveModcacheMode(ctx, f.fromModcache, gomodPath); err != nil {
 		return err
 	}
 	// On the normal network path, layer the project go.sum on as an always-on
@@ -380,10 +380,16 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if rerr := refuseTestScopeOnRecordingCommand("audit", f.excludeTests); rerr != nil {
 		return rerr
 	}
-	coords, res, err := resolveScopeModules(f.gomodPath, scope, false)
+	mods, res, err := resolveScopeModules(ctx, f.gomodPath, scope, false)
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
+	// The require entries, which is what an audit addresses a module by: the walk
+	// it drives filters its graph on the require path, and the batched latest
+	// resolution asks `go list -m` about the build list, where a replacement path
+	// is not a known dependency. The rows themselves come from the walk, which
+	// carries both coordinates.
+	coords := requiredCoords(mods)
 	// The set the table is the whole of, stated before it and on the channel the
 	// derivation, frame and coverage lines already use. It is written before the
 	// empty-scope return so a run that audited nothing still says which set was
@@ -1107,11 +1113,15 @@ type licenceArms struct {
 func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error, displayIn, statusIn string) (display, status, resolvedSPDX, uncertaintyReason string, arms licenceArms) {
 	display, status = displayIn, statusIn
 	uncertaintyReason = "no_record"
+	// The record is resolved through what each of its licences covers, so a
+	// bundled font's or a documentation licence never becomes the identity a
+	// policy is then asked to evaluate.
+	covered := licdomain.ReadCoverage(lrec)
 	switch {
 	case lerr == nil && found:
-		display = lrec.PrimarySPDX
+		display = covered.PrimarySPDX
 		status = lrec.OverallStatus.String()
-		resolvedSPDX = lrec.PrimarySPDX
+		resolvedSPDX = covered.PrimarySPDX
 		switch lrec.OverallStatus {
 		case licdomain.LicenseStatusNone:
 			display = "(none)"
@@ -1129,11 +1139,11 @@ func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error
 			// that named nothing resolve nothing and keep riding the
 			// unknown-licence machinery.
 			arms = licenceArms{
-				Electable:   licdomain.DisjunctionArms(lrec.Expression),
-				Obligations: licdomain.ConjunctionArms(lrec.Expression),
+				Electable:   licdomain.DisjunctionArms(covered.Expression),
+				Obligations: licdomain.ConjunctionArms(covered.Expression),
 			}
 			if len(arms.Electable) == 0 && len(arms.Obligations) == 0 {
-				resolvedSPDX = licdomain.SoleIdentifier(lrec.Expression)
+				resolvedSPDX = licdomain.SoleIdentifier(covered.Expression)
 			}
 		case licdomain.LicenseStatusExtractionFailed:
 			uncertaintyReason = "extraction_failed"

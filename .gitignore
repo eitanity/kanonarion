@@ -13,9 +13,13 @@
 
 # Code coverage profiles and other test artifacts
 *.out
-coverage.*
+coverage.html
+coverage.txt
 *.coverprofile
 profile.cov
+# `coverage.*` used to stand where the two lines above do. It matched Go source:
+# a domain file named coverage.go was invisible to `git status` and would have
+# been left out of its own commit without a word.
 
 # Go workspace file
 go.work

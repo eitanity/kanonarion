@@ -107,7 +107,9 @@ func (uc *QueryLicenseUseCase) ResolveForWalk(
 			results = append(results, DepLicenseResult{Coordinate: node.Coordinate, Err: extractErr})
 			continue
 		}
-		spdx := rec.PrimarySPDX
+		// The licence covering the module's code, never a bundled asset's or a
+		// documentation licence that happens to outrank it.
+		spdx := domain.ReadCoverage(rec).PrimarySPDX
 		if spdx == "" {
 			spdx = "None"
 		}

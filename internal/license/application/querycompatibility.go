@@ -164,11 +164,15 @@ func (uc *CheckCompatibilityUseCase) resolveRootTarget(
 	if !found {
 		return "", fmt.Errorf("%w: %s", ErrRootLicenceNotAnalysed, root)
 	}
-	if rec.Expression != "" {
-		return rec.Expression, nil
+	// The target is the licence the project GRANTS outbound, so it is the one
+	// covering its code: a documentation or embedded-asset licence in the
+	// project's own archive is not what its consumers receive.
+	covered := domain.ReadCoverage(rec)
+	if covered.Expression != "" {
+		return covered.Expression, nil
 	}
-	if rec.PrimarySPDX != "" {
-		return rec.PrimarySPDX, nil
+	if covered.PrimarySPDX != "" {
+		return covered.PrimarySPDX, nil
 	}
 	return "", fmt.Errorf("%w: %s resolved to status %s", ErrRootLicenceNoSPDX, root, rec.OverallStatus)
 }
@@ -217,10 +221,21 @@ func compatibilityInputsFor(ctx context.Context, store licenseStoreReader, coord
 	}
 
 	// The module's OWN licence, carried on every input so the report can always
-	// name it whatever the entry's identifier turned out to belong to.
-	moduleExpr := rec.Expression
+	// name it whatever the entry's identifier turned out to belong to. It is the
+	// record read through what each of its licences covers, because this field
+	// is an identity claim and every other surface answers it that way — a
+	// report naming a Go library after the font it embeds is the same wrong
+	// answer wherever it is printed.
+	//
+	// Which identifiers the engine EVALUATES is a separate question and is
+	// deliberately not touched here: a bundled component's licence is a real
+	// obligation and keeps its own entry, marked as the component's. Folding
+	// coverage into the evaluation is the follow-up the conjunction-policy work
+	// was narrowed for.
+	covered := domain.ReadCoverage(rec)
+	moduleExpr := covered.Expression
 	if moduleExpr == "" {
-		moduleExpr = rec.PrimarySPDX
+		moduleExpr = covered.PrimarySPDX
 	}
 
 	newInput := func() domain.CompatibilityInput {

@@ -280,7 +280,10 @@ artefact's own integrity was established by the fetch that stored it.
 A second run is served from the store and says so with `(cached)`; `--force`
 re-extracts. A record the environment cut short is never served from cache, so a
 repeat re-analyses; a re-analysis that comes back identical appends nothing and
-says so.
+says so. The same holds for a `local` coordinate, which is never served from
+cache at all: the tree is always re-read, and the run appends a generation only
+when the analysis says something the ledger does not already say. `--force`
+records the measurement either way.
 
 ### `callgraph-show`
 
@@ -548,6 +551,28 @@ measurement time and the fetch provenance blanked. It is there because the
 `record:` hash cannot answer "do these two agree": two analyses a second apart
 that produced the identical graph carry different record hashes, so a comparison
 on those would report every re-analysis as a disagreement.
+
+A generation carries a `derived:` line saying **why it exists**: which reuse
+gate governed the run that appended it, and whether the run asked that gate or
+was told to re-measure regardless.
+
+```
+    derived:  ledger reuse gate consulted, held nothing restating this analysis
+    derived:  worktree reuse gate bypassed (--force)
+```
+
+The `worktree` gate is the one `kanonarion local` consults before analysing: the
+generation the ledger already holds of this directory at this content. The
+`ledger` gate is the one the artefact route consults after analysing: whether a
+generation already restates the measurement just taken. A gate that answered
+appends nothing, so `consulted` on a stored generation always means it held
+nothing matching and the measurement is genuinely new. `bypassed` means
+`--force`.
+
+Without it two generations of one identical analysis are indistinguishable, and
+a deliberate re-measurement reads exactly like a reuse gate that failed to fire.
+Generations written before the line existed print none — absence there says the
+record predates the field, never that no gate was consulted.
 
 A generation whose analysis failed carries a `failure:` line between `from:` and
 `graph:`, naming the recorded cause and detail:

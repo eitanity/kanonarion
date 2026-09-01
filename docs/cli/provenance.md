@@ -15,6 +15,7 @@ separately. Both are inferences, never verdicts.
 |---|---|---|
 | Name-path heuristic | the module path alone | a fork published under a *different owner at the same name* |
 | Copyright-attribution signal | the module's stored **licence record** | a **republication**: the same project continued under a *different path* |
+| Recorded replacements | the `go.mod` replace directives in this store's walks | the module a **build compiles in place of this one** |
 
 The two are complementary because each is blind to what the other catches. A
 republication changes the path, so no element of the new path collides with the
@@ -89,7 +90,39 @@ counts as a holder.
 
 This signal needs a stored licence record. A module without one reports
 `not_analysed` with the reason and the command that produces one - never
-`none`, which would assert a negative nothing measured.
+`none`, which would assert a negative nothing measured. The remedy names **both**
+steps: `kanonarion license <coord>` exits 20 on a module the store has not
+fetched, so a remedy that named it alone failed on the very coordinate it was
+printed for.
+
+### Recorded replacements
+
+The two signals above are both blind to the same shape: a requirement routed by
+a `go.mod` `replace` to a fork at another owner. The name-path heuristic compares
+the path against a catalogue of canonical modules and cannot see a fork nobody
+catalogued; the copyright tier reads a licence record the requirement has none
+of, precisely because the build fetched the replacement instead. Asked about the
+module their `go.mod` requires, the command reported `no indicators` from a
+heuristic that had nothing to work with.
+
+A recorded walk holds the pair. Where one shows a module compiling in place of
+the subject, it is stated as a third signal with the walk it was read from, and
+the command that answers the question actually being asked:
+
+```
+github.com/PaesslerAG/gval
+  Fork Heuristic:    no indicators (name-path, catalogue 1.0.0)
+  Replaced By:       a recorded build compiles github.com/cortezaproject/gval@v1.2.4 in place of github.com/PaesslerAG/gval under a go.mod replace directive (walk 01M0VG1267S1XDJGDFZTVRPM84) - provenance facts about the code that ships are facts about that module
+    run: kanonarion provenance github.com/cortezaproject/gval@v1.2.4
+  Copyright Signal:  not analysed - no licence record for github.com/PaesslerAG/gval at any version; give a version and run: kanonarion fetch github.com/PaesslerAG/gval@<version> && kanonarion license github.com/PaesslerAG/gval@<version>
+```
+
+That remedy is the answer: run against the replacement, the copyright tier reads
+its record and reports the republication the bare path could not reach.
+
+It reaches the JSON as `replaced_by`, absent where no walk records one. The
+search is the same bounded read of the 50 most recent walks the copyright tier's
+related modules come from, stated in the same `coverage` line.
 
 ### Which record answers
 
@@ -129,7 +162,7 @@ carry a second holder.
 github.com/someuser/cobra
   Fork Heuristic:    path_match (name-path, catalogue 1.0.0)
     path suggests a fork of github.com/spf13/cobra - verify via VCS origin or content comparison
-  Copyright Signal:  not analysed - no licence record for github.com/someuser/cobra; run: kanonarion license github.com/someuser/cobra
+  Copyright Signal:  not analysed - no licence record for github.com/someuser/cobra at any version; give a version and run: kanonarion fetch github.com/someuser/cobra@<version> && kanonarion license github.com/someuser/cobra@<version>
 ```
 
 ```

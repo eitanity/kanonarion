@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/vulndbdir"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
@@ -40,14 +41,24 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	// is fetched-surface by construction.
 	env := scanEnv(os.Environ(), goModCache, domain.AnalysisSurfaceFetched)
 
+	// The environment above pins the toolchain so no scan child can download one,
+	// which also refuses a toolchain already unpacked on this host. One decision
+	// covers every child of this scan; see runGovulncheck.
+	toolchains := goenv.NewToolchains()
+	defer func() {
+		if cerr := toolchains.Close(); cerr != nil {
+			s.logger.Warn("vuln-scan: failed to remove the staged toolchain directory", "error", cerr)
+		}
+	}()
+
 	// Which toolchain compiled the module is stamped on EVERY record this scan
 	// returns, faults included, because the reachable set is the toolchain's and a
 	// verdict that cannot say which one produced it cannot be told apart from one
 	// written before the field existed. It is asked in the directory the scan will
 	// run in, under the scan's own environment, so it names the toolchain that
 	// will run rather than the one this process was compiled by.
-	toolchain := gotoolchain.Version(toolchainGoVersion(ctx, tmpDir, env))
-	defer func() { rec.Toolchain = toolchain }()
+	toolchainVersion := toolchainGoVersion(ctx, tmpDir, env)
+	defer func() { rec.Toolchain = gotoolchain.Version(toolchainVersion) }()
 
 	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, moduleSource, env, req.BuildList)
 	if err != nil {
@@ -91,15 +102,12 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 
 	// 3. Mode dispatch: binary mode builds a test binary first for a fast symbol-table
 	// scan; source mode does the full SSA + call-graph analysis.
-	var cmd *exec.Cmd
+	var build func(childEnv []string) *exec.Cmd
 	if scanMode == domain.ScanModeBinary {
 		pkg := findFirstGoPackage(scanDir)
 		s.logger.Info("vuln-scan: binary mode — building test binary", "dir", scanDir, "pkg", pkg)
 		tmpBin := filepath.Join(tmpDir, "vuln-test.bin")
-		buildCmd := childproc.CommandContext(ctx, "go", "test", "-c", "-o", tmpBin, pkg) // #nosec G204 -- pkg derived from local filesystem walk
-		buildCmd.Dir = scanDir
-		buildCmd.Env = env
-		out, buildErr := buildCmd.CombinedOutput()
+		out, buildErr := runGoChild(ctx, toolchains, env, scanDir, "test", "-c", "-o", tmpBin, pkg)
 		_, statErr := os.Stat(tmpBin)
 		switch {
 		case buildErr != nil:
@@ -113,17 +121,18 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 			scanMode = domain.ScanModeSource
 		default:
 			s.logger.Info("vuln-scan: test binary built, running govulncheck -mode=binary", "binary", tmpBin)
-			cmd = childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
+			build = func(childEnv []string) *exec.Cmd {
+				cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
+				cmd.Env = childEnv
+				return cmd
+			}
 			s.logMem(ctx, "binary_built")
 		}
 	}
 	if scanMode != domain.ScanModeBinary {
 		// Source mode: download deps then run govulncheck source analysis.
 		s.logger.Info("vuln-scan: downloading dependencies", "dir", scanDir)
-		dlCmd := childproc.CommandContext(ctx, "go", "mod", "download")
-		dlCmd.Dir = scanDir
-		dlCmd.Env = env
-		if out, dlErr := dlCmd.CombinedOutput(); dlErr != nil {
+		if out, dlErr := runGoChild(ctx, toolchains, env, scanDir, "mod", "download"); dlErr != nil {
 			// Source mode continues regardless: a download failure often just means
 			// the module's isolated build needs a version outside the project's
 			// pinned cache — an expected out-of-toolchain outcome the application
@@ -136,40 +145,33 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		}
 		s.logMem(ctx, "deps_downloaded")
 		s.logger.Info("vuln-scan: running govulncheck source mode", "dir", scanDir, "db", dbArg)
-		cmd = childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
-		cmd.Dir = scanDir
+		build = func(childEnv []string) *exec.Cmd {
+			cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+			cmd.Dir = scanDir
+			cmd.Env = childEnv
+			return cmd
+		}
 	}
-	cmd.Env = env
 
 	// 4. Stream govulncheck JSON output and parse results.
-	stderr := &limitWriter{limit: 2048}
-	cmd.Stderr = stderr
-	pr, pw := io.Pipe()
-	cmd.Stdout = pw
-
-	if err := cmd.Start(); err != nil {
-		_ = pw.Close()
-		return domain.VulnerabilityRecord{}, fmt.Errorf("start govulncheck: %w", err)
-	}
-
-	waitErrCh := make(chan error, 1)
-	go func() {
-		waitErrCh <- cmd.Wait()
-		_ = pw.Close() /* #nosec G104 -- pipe close in goroutine, error not actionable */
-	}()
-
 	s.logger.Info("vuln-scan: parsing govulncheck output")
-	findings, parseErr := s.parseResults(ctx, pr, coord.Path(), scanMode)
-	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
-	// is settled: a scan that died mid-stream must be classified as the failure it
-	// is, not as the truncated parse it also produced. The channel receive is the
-	// synchronisation edge that publishes the goroutine's write to this goroutine.
-	_, _ = io.Copy(io.Discard, pr)
-	_ = pr.Close()
-	waitErr := <-waitErrCh
+	var findings []domain.VulnerabilityFinding
+	run, err := runGovulncheck(toolchains, env, build, func(r io.Reader) error {
+		var perr error
+		findings, perr = s.parseResults(ctx, r, coord.Path(), scanMode)
+		return perr
+	})
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
+	}
+	// An escalation moved this scan onto a toolchain other than the installed one,
+	// so the version the record names is re-asked of the environment its children
+	// were actually handed. A verdict naming a Go that did not compile it names a
+	// reachable set that was never computed.
+	toolchainVersion = ranToolchain(ctx, toolchains, env, scanDir, toolchainVersion)
 	s.logMem(ctx, "output_parsed")
-	if waitErr != nil {
-		stderrStr := stderr.String()
+	if run.waitErr != nil {
+		waitErr, stderrStr := run.waitErr, run.detail
 		// This error is handed back to the application to classify: an
 		// out-of-toolchain module reads as an expected metadata-only outcome
 		// (logged at info by reason), a genuine crash as a warn — both from the
@@ -190,8 +192,8 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 			PipelineVersion:   s.pipelineVersion,
 		}, nil
 	}
-	if parseErr != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), parseErr)
+	if run.parseErr != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), run.parseErr)
 	}
 	s.logger.Info("vuln-scan: govulncheck finished", "findings", len(findings))
 
@@ -457,7 +459,16 @@ func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (do
 	return counted, nil
 }
 
-// scanEnv builds the process environment for the Go toolchain and govulncheck.
+// scanEnv builds the process environment for the Go toolchain and govulncheck
+// on every surface that analyses an artefact kanonarion itself produced: a
+// module zip extracted for an isolated scan, a walk target's zip, and a
+// project's own vendor tree. All three are copies this tool laid down, so it
+// owns their resolution and pins it.
+//
+// The project surface with no vendor tree is the one that is NOT built here. It
+// analyses a live working tree, where the build being measured is the one the go
+// command produces for the developer, so nothing about resolution is overridden;
+// see projectScanEnv, which states that posture in full.
 //
 // When a pre-populated GOMODCACHE is supplied, three overrides let the toolchain
 // resolve a multi-module member's siblings from the cache. A member's published
@@ -486,15 +497,20 @@ func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (do
 // Unscannable (version-not-in-toolchain), never papered over with a network
 // fetch. Without a modcache the default (network-backed) resolution is untouched.
 //
-// GOWORK=off is set unconditionally. A module is scanned in isolation as its
-// own main module, so a go.work shipped in its published zip is dev-time
-// configuration that does not apply here — exactly as its own filesystem
-// replace directives do not (neutraliseLocalReplaces). Left on, the toolchain
-// discovers ./go.work in the extract dir and enters workspace mode, which both
-// rejects -mod=mod outright and would resolve against sibling modules the zip
-// does not contain. Disabling it is the same normalisation applied to the same
-// class of dev-time metadata; without it such a module is misreported as not
-// building under the host toolchain.
+// GOWORK=off is set on every surface this function serves. A module is scanned
+// in isolation as its own main module, so a go.work shipped in its published zip
+// is dev-time configuration that does not apply here — exactly as its own
+// filesystem replace directives do not (neutraliseLocalReplaces). Left on, the
+// toolchain discovers ./go.work in the extract dir and enters workspace mode,
+// which both rejects -mod=mod outright and would resolve against sibling modules
+// the zip does not contain. Disabling it is the same normalisation applied to
+// the same class of dev-time metadata; without it such a module is misreported
+// as not building under the host toolchain.
+//
+// It holds on the vendored project surface too, for a different reason: that
+// analysis is asked for THIS project's vendor tree, and with a workspace in
+// scope -mod=vendor reads the workspace's vendor tree instead — different bytes
+// under a result that names this project's surface.
 //
 // The vendored surface is the other regime, and it is the opposite choice on
 // the one flag that matters. -mod=mod is precisely what tells the toolchain to

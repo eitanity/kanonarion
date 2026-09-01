@@ -69,7 +69,7 @@ command names the one before it when its input is missing.
 
 ```bash
 # Candidate not in the store yet? The error names the fix:
-#   error: ... module not fetched: run 'kanonarion fetch' first
+#   error: ... module not fetched: golang.org/x/mod@v0.37.0: run 'kanonarion fetch golang.org/x/mod@v0.37.0' first
 ./kanonarion fetch golang.org/x/mod@v0.37.0
 
 # Extract + persist the interface record for each version.

@@ -106,6 +106,51 @@ github.com/go-chi/chi@v3.3.4+incompatible  ahead of latest tag: v1.5.5; same maj
 Whether the newer major is *adoptable* is a different question; this only stops
 a several-majors-behind module reading as up to date.
 
+### Replaced modules
+
+A `go.mod` `replace` directive routes the build to a different module. The row is
+about the module that **compiles**, so `module` and `pinned` name the
+replacement, and the require entry the directive acted on is carried beside it —
+never instead of it — in `replace`:
+
+```
+github.com/cortezaproject/gval@v1.2.4   replaces github.com/PaesslerAG/gval@v1.2.1 (go.mod replace: bumping that require entry cannot take effect while it stands); current
+```
+
+```json
+{
+  "module": "github.com/cortezaproject/gval",
+  "pinned": "v1.2.4",
+  "latest": "v1.2.4",
+  "is_latest": true,
+  "replace": {
+    "require_module": "github.com/PaesslerAG/gval",
+    "require_version": "v1.2.1"
+  }
+}
+```
+
+The comparison is against the replacement's own path, which is the only one an
+upgrade can be adopted at: while the directive stands, moving the require entry
+moves nothing, and the version offered on the row is adopted by editing the
+`replace` line. Reported against the require entry instead, the same row read
+`github.com/PaesslerAG/gval@v1.2.1  latest: v1.2.4` — an upgrade to a module the
+directive keeps out of the build, whose version happened to match the fork
+already in it.
+
+A `replace` to a **local path** compiles a directory, which has no published
+version to compare against. Nothing is looked up and nothing is claimed:
+
+```
+example.com/dep@v1.0.0   compiled from ../dep (go.mod replace); unmeasured (local replace)
+```
+
+`is_latest` is `null` there with `staleness_unmeasured: "local_replace"`, and
+`replace.local_path` names the directory.
+
+Rows keep their order under the require entry, which is the order the manifest
+reads in and where a reader looking for their own dependency will look.
+
 ### Where the `--gomod` answer comes from
 
 With `--gomod`, the latest version of every module in the scope comes from

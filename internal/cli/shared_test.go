@@ -453,6 +453,35 @@ func TestResolveGoModPath_DefaultMissing(t *testing.T) {
 	}
 }
 
+// TestResolveGoModPath_NamedPathMustExist: the path a caller names is stat'd
+// like the default is, and the refusal names the flag and the value. statReason
+// keeps the *PathError's own repetition of the path out of that line, and falls
+// back to the error text for anything that is not one.
+func TestResolveGoModPath_NamedPathMustExist(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "no-such-file.mod")
+
+	_, err := resolveGoModPath(missing)
+	if err == nil {
+		t.Fatal("expected a refusal for a --gomod naming no file")
+	}
+	for _, want := range []string{"--gomod", missing, "no such file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal is missing %q, got: %v", want, err)
+		}
+	}
+
+	if _, err := resolveGoModPath(dir); err == nil {
+		t.Error("expected a refusal for a --gomod naming a directory")
+	} else if !strings.Contains(err.Error(), "is a directory") {
+		t.Errorf("expected the directory reason, got: %v", err)
+	}
+
+	if got := statReason(errors.New("plain")); got != "plain" {
+		t.Errorf("statReason of a non-path error = %q, want %q", got, "plain")
+	}
+}
+
 // projectModulePathFromGoMod reads the module directive so commands
 // (e.g. `directives list`) can infer --project from cwd's go.mod.
 func TestProjectModulePathFromGoMod(t *testing.T) {
@@ -585,7 +614,7 @@ func TestReadPackageModules_LiveRepo(t *testing.T) {
 		t.Skip("skipping live go list test in short mode")
 	}
 
-	coords, err := readPackageModules("github.com/eitanity/kanonarion/cmd/kanonarion")
+	coords, err := readPackageModules(t.Context(), "github.com/eitanity/kanonarion/cmd/kanonarion")
 	if err != nil {
 		t.Fatalf("readPackageModules: %v", err)
 	}

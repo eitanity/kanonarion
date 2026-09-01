@@ -178,9 +178,14 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 // fetched label. -mod=mod is forced explicitly there, which is what makes a
 // deliberate comparison run against the fetched artefacts a real comparison.
 //
-// Every branch takes its environment from scanEnv. Workspace mode rejects
-// -mod=mod outright, so a branch that forces the flag from os.Environ() exits 1
-// instead of comparing anything the moment a go.work is in scope.
+// The two vendor-tree branches disable the project's workspace and the third
+// does not, which is the difference a reader has to be able to see. Workspace
+// mode refuses -mod=mod outright, so the branch that forces that flag cannot
+// answer the question it was asked with a workspace in scope; and the vendored
+// branch is asked for THIS project's vendor tree, which is not the one
+// -mod=vendor reads once a workspace names another. The third branch forces no
+// mode flag at all, so it has nothing to protect and leaves the tree's own build
+// configuration alone.
 func projectScanSurface(projectDir string, wantVendored bool) (domain.AnalysisSurface, []string) {
 	_, err := os.Stat(filepath.Join(projectDir, "vendor", "modules.txt"))
 	hasVendorTree := err == nil
@@ -195,6 +200,37 @@ func projectScanSurface(projectDir string, wantVendored bool) (domain.AnalysisSu
 		// No vendor tree: the toolchain's own default resolution against the
 		// project's go.mod/go.sum is the fetched surface, and forcing a mode flag
 		// would only override whatever the project itself declares.
-		return domain.AnalysisSurfaceFetched, scanEnv(os.Environ(), "", domain.AnalysisSurfaceFetched)
+		return domain.AnalysisSurfaceFetched, projectScanEnv(os.Environ())
 	}
+}
+
+// projectScanEnv is the environment for a project-rooted scan of a live working
+// tree, and it overrides nothing that decides which code the build contains.
+//
+// This surface analyses a directory the caller named, in place, as its own main
+// module. The build it has to measure is therefore the one the go command
+// produces for the developer standing in that directory, and that build is
+// defined by the developer's environment — so the toolchain selection, the
+// proxy, the checksum database and the workspace are all left exactly as they
+// were found. That is a decision, not an omission:
+//
+//   - GOTOOLCHAIN unpinned. The developer's own build switches toolchains when
+//     the go directive asks for one; a scan pinned to `local` would refuse a
+//     project that builds, which is the class two closed defects had to undo.
+//   - GOPROXY and GOSUMDB unpinned. There is no kanonarion-owned module cache
+//     behind this surface to pin resolution to — the tree's own go.mod and
+//     go.sum decide the versions, and a dependency not yet in the local cache is
+//     one the developer's build fetches too.
+//   - GOWORK left alone. A workspace in scope IS the tree's build configuration,
+//     the same conclusion the working-tree call-graph surface reached; disabling
+//     it made this scan resolve a different module graph from the one the walk
+//     resolved and the developer compiles, silently where both graphs load.
+//
+// GOGC is the one value set, and it decides nothing about resolution:
+// govulncheck holds the whole package graph live, and the default pacing costs
+// the host memory this analysis has no need to spend.
+func projectScanEnv(base []string) []string {
+	env := make([]string, len(base), len(base)+1)
+	copy(env, base)
+	return append(env, "GOGC=30")
 }

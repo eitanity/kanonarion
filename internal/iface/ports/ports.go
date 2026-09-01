@@ -21,8 +21,9 @@ type AuditSink interface {
 }
 
 // ErrModuleNotFetched is returned when extraction is attempted for a module
-// that has no FactRecord in the store. Callers should run 'kanonarion fetch' first.
-var ErrModuleNotFetched = errors.New("module not fetched: run 'kanonarion fetch' first")
+// that has no FactRecord in the store. It states the fact only: the remedy
+// depends on the coordinate, so wrappers add fetchdomain.NotFetchedRemedy.
+var ErrModuleNotFetched = errors.New("module not fetched")
 
 // ErrInterfaceNotFound is returned by InterfaceStore.GetInterfaceRecord when no
 // record exists for the given coordinate and pipeline version.
@@ -107,7 +108,9 @@ type InterfaceStore interface {
 	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.InterfaceRecord, bool, error)
 
 	// ListInterfaceRecords returns summaries matching the filter, ordered by
-	// extracted_at descending.
+	// extracted_at descending. Every field of the filter is honoured; an
+	// implementation that ignored one would answer a narrower question with a
+	// wider corpus.
 	ListInterfaceRecords(ctx context.Context, filter InterfaceFilter) ([]InterfaceSummary, error)
 
 	// FindSymbol returns index entries for all packages that export a symbol
@@ -135,8 +138,41 @@ type InterfaceRecordLister interface {
 	ListInterfaceRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.InterfaceRecord, error)
 }
 
+// IdenticalGenerationReader is the optional after-the-fact read: the generation
+// the ledger ALREADY holds that states the measurement a run has just taken.
+//
+// It answers a question the cache lookup cannot. A cache lookup runs before the
+// extraction and asks whether a stored record may be SERVED; for a local
+// coordinate the answer is always no, because a local version pins no content
+// and the working tree mutates. Recognising afterwards that the extraction came
+// back saying what the ledger already says is a different question, and one a run
+// can only ask once it holds the answer.
+//
+// A store that does not offer it appends a generation per run, which is what
+// every store did before it existed.
+type IdenticalGenerationReader interface {
+	// IdenticalGeneration returns the generation stating the same measurement as
+	// rec — differing at most in when it was taken — or (zero, false, nil) when
+	// the ledger holds none.
+	//
+	// A record that does not name the artefact it read matches nothing, including
+	// another record that names none: absence is not a value two records can
+	// share.
+	IdenticalGeneration(ctx context.Context, rec domain.InterfaceRecord) (domain.InterfaceRecord, bool, error)
+}
+
 // InterfaceFilter constrains ListInterfaceRecords results.
 type InterfaceFilter struct {
+	// Coordinate restricts the listing to one module coordinate; nil is
+	// unrestricted, on the same terms as walk's WalkFilter.Target.
+	//
+	// It exists because a question about one coordinate must be askable as one:
+	// without it a caller answering "what does the ledger hold for this module"
+	// reads the whole corpus and discards all of it but one module's rows, and
+	// the ledger is composed generation by generation to produce what it throws
+	// away. Restriction happens before that composition.
+	Coordinate *coordinate.ModuleCoordinate
+
 	Limit  int // 0: no limit
 	Offset int
 }

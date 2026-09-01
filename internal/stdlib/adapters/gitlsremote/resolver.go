@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
@@ -96,7 +97,7 @@ func (r *Resolver) ResolveCommit(ctx context.Context, repoURL, tag string) (stri
 	args := append(gitenv.ConfigArgs(), "ls-remote", "--tags", "--end-of-options", repoURL, ref, ref+"^{}")
 	// #nosec G204 -- binary is hard-coded "git"; repoURL is the fixed Go source
 	// repository and the transport is restricted to https via GIT_ALLOW_PROTOCOL.
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := childproc.CommandContext(ctx, "git", args...)
 	cmd.Dir = home
 	cmd.Env = gitenv.Base(home, home, r.allowedProtocols)
 

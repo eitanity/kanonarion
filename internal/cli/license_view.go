@@ -38,7 +38,7 @@ import (
 //
 // So: no domain struct may be reachable from this type. Adding a field here that
 // holds one — embedded or named — reopens the link for everything under it, and
-// TestLicenseViewIsATotalProjection refuses it. Scalars, strings, numbers, bools
+// TestCLIViewsAreTotalProjections refuses it. Scalars, strings, numbers, bools
 // and slices of those are values and travel as they are; domain.Obligations is
 // the one exception and carries its own explicit tags already.
 //
@@ -130,6 +130,12 @@ type licenseFileJSON struct {
 	// them, because it is the same fact.
 	LowConfidenceSPDX     string  `json:"low_confidence_spdx"`
 	LowConfidenceCoverage float64 `json:"low_confidence_coverage"`
+	// Coverage says what this licence governs: the module's code, the
+	// documentation it ships, or third-party material it carries. It is
+	// emitted always, including for the ordinary code licence — an omitempty
+	// here would make "governs the code" indistinguishable from "this build
+	// does not derive coverage", and absence is not one of the answers.
+	Coverage domain.LicenseCoverage `json:"coverage"`
 }
 
 // licenseAltMatchJSON is an alternative identification for a licence file.
@@ -181,18 +187,24 @@ type licenseProvenanceJSON struct {
 // point of the view is that adding a field to a domain type does not add a key
 // to the wire, and only an explicit assignment has that property.
 func newLicenseDocument(r domain.LicenseRecord) licenseDocument {
+	// The document publishes the record read through what each of its licences
+	// covers, so `expression`, `expression_basis` and `primary_spdx` name the
+	// module's own licensing rather than the union of every grant the archive
+	// carries. The record is left as measured — those three are inside its
+	// content hash — and `content_hash` below still names the stored bytes.
+	coverage := domain.ReadCoverage(r)
 	reading := readLicenceObligations(r)
 	doc := licenseDocument{
 		SchemaVersion:     r.SchemaVersion,
 		Ecosystem:         r.Ecosystem,
 		Coordinate:        r.Coordinate,
 		Role:              r.Role,
-		PrimarySPDX:       r.PrimarySPDX,
-		Expression:        r.Expression,
-		ExpressionBasis:   r.ExpressionBasis,
+		PrimarySPDX:       coverage.PrimarySPDX,
+		Expression:        coverage.Expression,
+		ExpressionBasis:   coverage.Basis,
 		BundledSPDXs:      r.BundledSPDXs,
 		PrimaryConfidence: r.PrimaryConfidence,
-		LicenseFiles:      licenseFilesJSONOf(r.LicenseFiles),
+		LicenseFiles:      licenseFilesJSONOf(r.LicenseFiles, coverage.ByPath),
 		EffectiveSet:      licenseEffectiveSetJSONOf(r.EffectiveSet),
 		PackageLicenses:   licensePackagesJSONOf(r.PackageLicenses),
 		OverallStatus:     r.OverallStatus,
@@ -216,7 +228,7 @@ func newLicenseDocument(r domain.LicenseRecord) licenseDocument {
 			doc.ObligationsReading = obligationsReadingMaximal
 		}
 	}
-	if arms := domain.DisjunctionArms(r.Expression); len(arms) >= 2 {
+	if arms := domain.DisjunctionArms(coverage.Expression); len(arms) >= 2 {
 		doc.ElectiveObligations = make(map[string]domain.Obligations, len(arms))
 		for _, arm := range arms {
 			doc.ElectiveObligations[arm] = domain.LookupObligations(arm)
@@ -231,7 +243,7 @@ func newLicenseDocument(r domain.LicenseRecord) licenseDocument {
 // different answers on this surface, and the projection must not turn one into
 // the other on the way through.
 
-func licenseFilesJSONOf(in []domain.LicenseFileEntry) []licenseFileJSON {
+func licenseFilesJSONOf(in []domain.LicenseFileEntry, coverage map[string]domain.LicenseCoverage) []licenseFileJSON {
 	if in == nil {
 		return nil
 	}
@@ -249,6 +261,7 @@ func licenseFilesJSONOf(in []domain.LicenseFileEntry) []licenseFileJSON {
 			CopyrightStatements:   licenseCopyrightsJSONOf(f.CopyrightStatements),
 			LowConfidenceSPDX:     f.LowConfidenceSPDX,
 			LowConfidenceCoverage: f.LowConfidenceCoverage,
+			Coverage:              coverage[f.Path],
 		})
 	}
 	return out

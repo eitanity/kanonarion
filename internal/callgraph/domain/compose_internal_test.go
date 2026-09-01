@@ -176,6 +176,7 @@ func TestGraphClaimFields_ClassifiesEveryCanonicalField(t *testing.T) {
 		"completeness":               "how far the analysis got: the ladder, and already tied before comparing",
 		"content_hash":               "the record's own seal",
 		"coordinate":                 "which module: the key",
+		"derived_by":                 "why the run appended it: provenance about the run, not the graph",
 		"ecosystem":                  "which ecosystem: the key",
 		"exclusion_list":             "what was left out, which shows up in the nodes if it changed the graph",
 		"exclusion_reason":           "why something was left out",

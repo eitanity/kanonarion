@@ -3,7 +3,7 @@ $ kanonarion vuln-scan-diff 01JSCANRUN0GOLDEN00000002 01JSCANRUN0GOLDEN00000002 
 exit 0
 --- stdout ---
 {
-  "RunA": {
+  "run_a": {
     "id": "01JSCANRUN0GOLDEN00000002",
     "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
     "snapshot": {
@@ -33,7 +33,7 @@ exit 0
     "operator": "fixture",
     "content_hash": "sha256:57fe7e100e172cdb0f2b2a532956db69e0b4004f2a2223901386af328284a083"
   },
-  "RunB": {
+  "run_b": {
     "id": "01JSCANRUN0GOLDEN00000002",
     "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
     "snapshot": {
@@ -63,11 +63,11 @@ exit 0
     "operator": "fixture",
     "content_hash": "sha256:57fe7e100e172cdb0f2b2a532956db69e0b4004f2a2223901386af328284a083"
   },
-  "NewFindings": null,
-  "ResolvedFindings": null,
-  "WithdrawnFindings": null,
-  "ReachabilityChanges": null,
-  "UnresolvedFindings": null
+  "new_findings": null,
+  "resolved_findings": null,
+  "withdrawn_findings": null,
+  "reachability_changes": null,
+  "unresolved_findings": null
 }
 --- stderr ---
 (empty)

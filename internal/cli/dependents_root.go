@@ -65,10 +65,13 @@ func resolveDependentsRoot(
 	}
 	gomodPath, err := resolveGoModPath(f.gomod)
 	if err != nil {
-		// It fails on exactly one condition: nothing was passed and the working
-		// directory has no manifest. That is the question with no build at all, and
-		// it gets the refusal that names every way to give it one rather than a
-		// sentence about a missing file.
+		// Nothing passed and no manifest in the working directory is the question
+		// with no build at all, and it gets the refusal naming every way to give
+		// one. A --gomod the caller did name and that is not there is a different
+		// failure, and its own message says so rather than listing alternatives.
+		if f.gomod != "" {
+			return walkContainment{}, walkdomain.WalkRecord{}, err
+		}
 		return walkContainment{}, walkdomain.WalkRecord{}, noDependentsRoot(coord)
 	}
 	choice, err := latestWalkForGoMod(ctx, walks, gomodPath, scope)

@@ -108,6 +108,18 @@ Exit codes:
 	return cmd
 }
 
+// newSBOMShowCmd builds the command that prints a stored SBOM document.
+//
+// It renders one form and only one: the stored CycloneDX document's own bytes,
+// which are already JSON and are the deliverable artefact rather than a
+// rendering of something else. The global --json flag is a documented no-op
+// here and returns the same bytes, by decision and not by omission — a flag
+// that means "machine-readable" on every other command must not be the one that
+// WITHHOLDS the machine-readable document, which is what a metadata rendering
+// here did: it answered a request for the SBOM with a 345-byte descriptor of
+// it, and said nothing about the document it had replaced. The record fields
+// that descriptor carried, operator and licence completeness among them, are
+// served per record by sbom-list --json. Do not add a second rendering.
 func newSBOMShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "sbom-show <sbom-id>",
@@ -119,7 +131,7 @@ func newSBOMShowCmd(stdout, stderr io.Writer) *cobra.Command {
 		Example: `  kanonarion sbom-show sbom-abc123`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSBOMShow(cmd.Context(), args[0], storeRoot, jsonOut, stdout, stderr)
+			return runSBOMShow(cmd.Context(), args[0], storeRoot, stdout, stderr)
 		},
 	}
 
@@ -165,7 +177,7 @@ func runSBOMGenerate(
 		if gerr != nil {
 			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
 		}
-		if merr := resolveModcacheMode(f.fromModcache, gomodPath); merr != nil {
+		if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
 			return merr
 		}
 	}
@@ -217,7 +229,7 @@ func sbomGenerateWith(
 	var allowList []coordinate.ModuleCoordinate
 	if f.packagePattern != "" {
 		var aerr error
-		allowList, aerr = buildPackageAllowList(f.packagePattern)
+		allowList, aerr = buildPackageAllowList(ctx, f.packagePattern)
 		if aerr != nil {
 			return aerr
 		}
@@ -384,7 +396,7 @@ func undeterminedLicenceSummary(content []byte, build licenceRemedyBuild) string
 	return summary
 }
 
-func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout, stderr io.Writer) error {
+func runSBOMShow(ctx context.Context, id, storeRoot string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
@@ -395,37 +407,6 @@ func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout
 	record, err := ctr.QuerySBOM.GetSBOMRecord(ctx, id)
 	if err != nil {
 		return fmt.Errorf("retrieving sbom %q: %w", id, err)
-	}
-
-	if jsonOut {
-		type meta struct {
-			ID                 string `json:"id"`
-			Ecosystem          string `json:"ecosystem"`
-			WalkID             string `json:"walk_id"`
-			Format             string `json:"format"`
-			PipelineVersion    string `json:"pipeline_version"`
-			GeneratedAt        string `json:"generated_at"`
-			ContentHash        string `json:"content_hash"`
-			Operator           string `json:"operator"`
-			LicensesIncomplete bool   `json:"licenses_incomplete"`
-		}
-		m := meta{
-			ID:                 record.ID,
-			Ecosystem:          record.Ecosystem,
-			WalkID:             record.WalkID,
-			Format:             string(record.Format),
-			PipelineVersion:    record.PipelineVersion,
-			GeneratedAt:        record.GeneratedAt.Format("2006-01-02T15:04:05Z"),
-			ContentHash:        record.ContentHash,
-			Operator:           record.Operator,
-			LicensesIncomplete: record.LicensesIncomplete,
-		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(m); err != nil {
-			return fmt.Errorf("encoding sbom metadata: %w", err)
-		}
-		return nil
 	}
 
 	if _, err := stdout.Write(record.Content); err != nil {
@@ -448,25 +429,37 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 	}
 
 	if jsonOut {
+		// operator and licenses_incomplete are here because this listing is the
+		// only place they can be asked for across records. licenses_incomplete is
+		// the condition behind the non-zero exit an SBOM with undetermined
+		// licences carries, so a caller that cannot read it per record cannot
+		// tell a complete artefact from an incomplete one without opening every
+		// document. Both are written at every row, never omitted: a field that
+		// disappears at its zero value reads as "not recorded" rather than as
+		// "no operator" or "licences complete".
 		type row struct {
-			ID              string `json:"id"`
-			Ecosystem       string `json:"ecosystem"`
-			WalkID          string `json:"walk_id"`
-			Format          string `json:"format"`
-			PipelineVersion string `json:"pipeline_version"`
-			GeneratedAt     string `json:"generated_at"`
-			ContentHash     string `json:"content_hash"`
+			ID                 string `json:"id"`
+			Ecosystem          string `json:"ecosystem"`
+			WalkID             string `json:"walk_id"`
+			Format             string `json:"format"`
+			PipelineVersion    string `json:"pipeline_version"`
+			GeneratedAt        string `json:"generated_at"`
+			ContentHash        string `json:"content_hash"`
+			Operator           string `json:"operator"`
+			LicensesIncomplete bool   `json:"licenses_incomplete"`
 		}
 		rows := make([]row, len(records))
 		for i, r := range records {
 			rows[i] = row{
-				ID:              r.ID,
-				Ecosystem:       r.Ecosystem,
-				WalkID:          r.WalkID,
-				Format:          string(r.Format),
-				PipelineVersion: r.PipelineVersion,
-				GeneratedAt:     r.GeneratedAt.Format("2006-01-02T15:04:05Z"),
-				ContentHash:     r.ContentHash,
+				ID:                 r.ID,
+				Ecosystem:          r.Ecosystem,
+				WalkID:             r.WalkID,
+				Format:             string(r.Format),
+				PipelineVersion:    r.PipelineVersion,
+				GeneratedAt:        r.GeneratedAt.Format("2006-01-02T15:04:05Z"),
+				ContentHash:        r.ContentHash,
+				Operator:           r.Operator,
+				LicensesIncomplete: r.LicensesIncomplete,
 			}
 		}
 		enc := json.NewEncoder(stdout)
@@ -525,8 +518,8 @@ func sbomListZeroScope(ctx context.Context, walkID string, ctr *Container) (list
 
 // buildPackageAllowList resolves the module coordinates for the binary's import
 // closure via go list -deps and returns them as a parsed AllowList.
-func buildPackageAllowList(packagePattern string) ([]coordinate.ModuleCoordinate, error) {
-	coordStrs, err := readPackageModules(packagePattern)
+func buildPackageAllowList(ctx context.Context, packagePattern string) ([]coordinate.ModuleCoordinate, error) {
+	coordStrs, err := readPackageModules(ctx, packagePattern)
 	if err != nil {
 		return nil, fmt.Errorf("resolving package modules for %q: %w", packagePattern, err)
 	}

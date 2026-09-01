@@ -8,6 +8,7 @@ import (
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // acquiringCommands are the subcommands that must go and GET a module's bytes
@@ -104,4 +105,31 @@ func TestCallGraphConflictRemedy_IsRunnableForEitherCoordinateKind(t *testing.T)
 			})
 		}
 	}
+}
+
+// Every extraction stage that needs a module's bytes refuses a missing one
+// through this one builder, so a project coordinate reaches it from all five.
+func TestNotFetchedRemedy_IsRunnableForEitherCoordinateKind(t *testing.T) {
+	for _, coord := range []coordinate.ModuleCoordinate{
+		coordinatetest.MustNew("example.com/app", coordinate.LocalVersion),
+		coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1"),
+	} {
+		t.Run(coord.String(), func(t *testing.T) {
+			assertRunnableFor(t, coord, quotedInvocation(t, fetchdomain.NotFetchedRemedy(coord)))
+		})
+	}
+}
+
+// The remedy is a sentence around one command; the guard above checks commands.
+func quotedInvocation(t *testing.T, remedy string) string {
+	t.Helper()
+	_, after, ok := strings.Cut(remedy, "'")
+	if !ok {
+		t.Fatalf("remedy %q names no quoted command", remedy)
+	}
+	cmd, _, ok := strings.Cut(after, "'")
+	if !ok {
+		t.Fatalf("remedy %q leaves its command unclosed", remedy)
+	}
+	return cmd
 }

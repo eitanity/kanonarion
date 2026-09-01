@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
@@ -38,6 +39,54 @@ const probeHarnessDir = "_kanonarion_probe"
 // and the call-graph load measure one tree, and these children resolved by
 // whatever flags the caller happened to export while that load was pinned.
 func probeEnv(root string) []string { return goenv.Worktree(os.Environ(), root) }
+
+// capture is how one child's output and its own account of a failure are read.
+// A build reports through its combined output; a list and go tool nm keep stdout
+// clean and report on stderr. Both feed the same decision, because the go
+// command writes a toolchain refusal wherever the caller is already looking.
+type capture func(*exec.Cmd) (out []byte, detail string, err error)
+
+func stdoutCapture(cmd *exec.Cmd) ([]byte, string, error) {
+	out, err := cmd.Output()
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+		return out, string(ee.Stderr), err //nolint:wrapcheck // each caller names the command it ran; wrapping here would say it twice
+	}
+	return out, "", err //nolint:wrapcheck // as above
+}
+
+func combinedCapture(cmd *exec.Cmd) ([]byte, string, error) {
+	out, err := cmd.CombinedOutput()
+	return out, string(out), err
+}
+
+// runChild runs one Go child over the tree at root, and runs it again under a
+// toolchain already unpacked on this host when it refuses for want of a newer
+// Go than the installed one.
+//
+// Every child of one probe shares the tc it is given, so the decision is taken
+// once: a probe spawns up to five children, and neither paying five failed first
+// attempts nor letting two of them measure under different toolchains would be
+// right. detail is the child's own account of the failure, returned so each
+// caller keeps its own wording, and carries the refusal in its place when this
+// host has nothing that can serve.
+func runChild(ctx context.Context, tc *goenv.Toolchains, root, goBin string, read capture, args ...string) ([]byte, string, error) {
+	for {
+		cmd := childproc.CommandContext(ctx, goBin, args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+		cmd.Dir = root
+		cmd.Env = tc.Apply(probeEnv(root))
+		out, detail, err := read(cmd)
+		if err == nil {
+			return out, "", nil
+		}
+		retry, refusal := tc.Escalate(detail)
+		if refusal != "" {
+			return nil, refusal, err
+		}
+		if !retry {
+			return nil, detail, err
+		}
+	}
+}
 
 // Prober implements ports.SymbolTableProber.
 type Prober struct {
@@ -64,7 +113,10 @@ func (p *Prober) goBin() string {
 // symbol tables are unioned for the verdict and kept per binary for
 // attribution.
 func (p *Prober) Probe(ctx context.Context, root string) (ports.SymbolProbeResult, error) {
-	mainPkgs, err := findMainPackages(ctx, root, p.goBin())
+	toolchains := goenv.NewToolchains()
+	defer func() { _ = toolchains.Close() }()
+
+	mainPkgs, err := findMainPackages(ctx, toolchains, root, p.goBin())
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("detecting workspace kind: %w", err)
 	}
@@ -76,9 +128,9 @@ func (p *Prober) Probe(ctx context.Context, root string) (ports.SymbolProbeResul
 	defer func() { _ = os.RemoveAll(outDir) }()
 
 	if len(mainPkgs) == 0 {
-		return p.probeLibrary(ctx, root, filepath.Join(outDir, "probe"))
+		return p.probeLibrary(ctx, toolchains, root, filepath.Join(outDir, "probe"))
 	}
-	return p.probeBinaries(ctx, root, outDir, mainPkgs)
+	return p.probeBinaries(ctx, toolchains, root, outDir, mainPkgs)
 }
 
 // probeBinaries builds every main package and unions their symbol tables.
@@ -88,7 +140,7 @@ func (p *Prober) Probe(ctx context.Context, root string) (ports.SymbolProbeResul
 // still answer for the symbols they carry. The probe fails only when no main at
 // all could be probed, because then there is no symbol table and every finding
 // would read "absent" on the strength of a build that never happened.
-func (p *Prober) probeBinaries(ctx context.Context, root, outDir string, mainPkgs []string) (ports.SymbolProbeResult, error) {
+func (p *Prober) probeBinaries(ctx context.Context, tc *goenv.Toolchains, root, outDir string, mainPkgs []string) (ports.SymbolProbeResult, error) {
 	sorted := make([]string, len(mainPkgs))
 	copy(sorted, mainPkgs)
 	sort.Strings(sorted)
@@ -101,7 +153,7 @@ func (p *Prober) probeBinaries(ctx context.Context, root, outDir string, mainPkg
 	for i, mainPkg := range sorted {
 		entry := ports.ProbedBinary{ImportPath: mainPkg}
 		outBin := filepath.Join(outDir, fmt.Sprintf("probe_%d", i))
-		symbols, err := p.buildAndRead(ctx, root, mainPkg, outBin)
+		symbols, err := p.buildAndRead(ctx, tc, root, mainPkg, outBin)
 		if err != nil {
 			entry.BuildError = err.Error()
 			if firstErr == nil {
@@ -126,11 +178,11 @@ func (p *Prober) probeBinaries(ctx context.Context, root, outDir string, mainPkg
 }
 
 // buildAndRead builds one main package and reads the resulting symbol table.
-func (p *Prober) buildAndRead(ctx context.Context, root, mainPkg, outBin string) (map[string]struct{}, error) {
-	if err := buildBinary(ctx, root, mainPkg, outBin, p.goBin()); err != nil {
+func (p *Prober) buildAndRead(ctx context.Context, tc *goenv.Toolchains, root, mainPkg, outBin string) (map[string]struct{}, error) {
+	if err := buildBinary(ctx, tc, root, mainPkg, outBin, p.goBin()); err != nil {
 		return nil, fmt.Errorf("building probe binary: %w", err)
 	}
-	symbols, err := readSymbolTable(ctx, root, outBin, p.goBin())
+	symbols, err := readSymbolTable(ctx, tc, root, outBin, p.goBin())
 	if err != nil {
 		return nil, fmt.Errorf("reading symbol table: %w", err)
 	}
@@ -139,14 +191,14 @@ func (p *Prober) buildAndRead(ctx context.Context, root, mainPkg, outBin string)
 
 // probeLibrary builds the synthetic harness for a workspace with no main
 // package and reads its symbol table.
-func (p *Prober) probeLibrary(ctx context.Context, root, outBin string) (ports.SymbolProbeResult, error) {
+func (p *Prober) probeLibrary(ctx context.Context, tc *goenv.Toolchains, root, outBin string) (ports.SymbolProbeResult, error) {
 	harnessDir := filepath.Join(root, probeHarnessDir)
 	defer func() { _ = os.RemoveAll(harnessDir) }()
 
-	if err := buildLibraryProbe(ctx, root, harnessDir, outBin, p.goBin()); err != nil {
+	if err := buildLibraryProbe(ctx, tc, root, harnessDir, outBin, p.goBin()); err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("building library probe: %w", err)
 	}
-	symbols, err := readSymbolTable(ctx, root, outBin, p.goBin())
+	symbols, err := readSymbolTable(ctx, tc, root, outBin, p.goBin())
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("reading symbol table: %w", err)
 	}
@@ -163,16 +215,10 @@ type goListPackage struct {
 
 // findMainPackages runs go list -json./... and returns the import paths of
 // packages whose Name == "main".
-func findMainPackages(ctx context.Context, root, goBin string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, goBin, "list", "-json", "./...") // #nosec G204
-	cmd.Dir = root
-	cmd.Env = probeEnv(root)
-	out, err := cmd.Output()
+func findMainPackages(ctx context.Context, tc *goenv.Toolchains, root, goBin string) ([]string, error) {
+	out, detail, err := runChild(ctx, tc, root, goBin, stdoutCapture, "list", "-json", "./...")
 	if err != nil {
-		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil, fmt.Errorf("go list: %w\n%s", err, ee.Stderr)
-		}
-		return nil, fmt.Errorf("go list: %w", err)
+		return nil, fmt.Errorf("go list: %w\n%s", err, detail)
 	}
 
 	dec := json.NewDecoder(bytes.NewReader(out))
@@ -192,29 +238,23 @@ func findMainPackages(ctx context.Context, root, goBin string) ([]string, error)
 }
 
 // buildBinary builds mainPkg into outBin with inlining disabled.
-func buildBinary(ctx context.Context, root, mainPkg, outBin, goBin string) error {
-	cmd := exec.CommandContext(ctx, goBin, "build", // #nosec G204
-		"-gcflags=all=-l",
-		"-o", outBin,
-		mainPkg,
-	)
-	cmd.Dir = root
-	cmd.Env = probeEnv(root)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w\n%s", err, out)
+func buildBinary(ctx context.Context, tc *goenv.Toolchains, root, mainPkg, outBin, goBin string) error {
+	if _, detail, err := runChild(ctx, tc, root, goBin, combinedCapture,
+		"build", "-gcflags=all=-l", "-o", outBin, mainPkg); err != nil {
+		return fmt.Errorf("%w\n%s", err, detail)
 	}
 	return nil
 }
 
 // buildLibraryProbe generates a synthetic harness inside harnessDir and
 // builds it into outBin with inlining disabled.
-func buildLibraryProbe(ctx context.Context, root, harnessDir, outBin, goBin string) error {
+func buildLibraryProbe(ctx context.Context, tc *goenv.Toolchains, root, harnessDir, outBin, goBin string) error {
 	if err := os.MkdirAll(harnessDir, 0o700); err != nil {
 		return fmt.Errorf("creating harness dir: %w", err)
 	}
 
 	// Enumerate all workspace packages.
-	pkgs, err := listWorkspacePackages(ctx, root, goBin)
+	pkgs, err := listWorkspacePackages(ctx, tc, root, goBin)
 	if err != nil {
 		return fmt.Errorf("listing workspace packages: %w", err)
 	}
@@ -233,29 +273,17 @@ func buildLibraryProbe(ctx context.Context, root, harnessDir, outBin, goBin stri
 	}
 
 	// Build the harness.
-	cmd := exec.CommandContext(ctx, goBin, "build", // #nosec G204
-		"-gcflags=all=-l",
-		"-o", outBin,
-		"./"+probeHarnessDir,
-	)
-	cmd.Dir = root
-	cmd.Env = probeEnv(root)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("building harness: %w\n%s", err, out)
+	if _, detail, err := runChild(ctx, tc, root, goBin, combinedCapture,
+		"build", "-gcflags=all=-l", "-o", outBin, "./"+probeHarnessDir); err != nil {
+		return fmt.Errorf("building harness: %w\n%s", err, detail)
 	}
 	return nil
 }
 
-func listWorkspacePackages(ctx context.Context, root, goBin string) ([]goListPackage, error) {
-	cmd := exec.CommandContext(ctx, goBin, "list", "-json", "./...") // #nosec G204
-	cmd.Dir = root
-	cmd.Env = probeEnv(root)
-	out, err := cmd.Output()
+func listWorkspacePackages(ctx context.Context, tc *goenv.Toolchains, root, goBin string) ([]goListPackage, error) {
+	out, detail, err := runChild(ctx, tc, root, goBin, stdoutCapture, "list", "-json", "./...")
 	if err != nil {
-		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil, fmt.Errorf("go list: %w\n%s", err, ee.Stderr)
-		}
-		return nil, fmt.Errorf("go list: %w", err)
+		return nil, fmt.Errorf("go list: %w\n%s", err, detail)
 	}
 	dec := json.NewDecoder(bytes.NewReader(out))
 	var pkgs []goListPackage
@@ -391,16 +419,10 @@ func generateHarness(pkgs []goListPackage, exports map[string][]exportedFunc) st
 }
 
 // readSymbolTable runs go tool nm on binPath and returns the set of symbol names.
-func readSymbolTable(ctx context.Context, root, binPath, goBin string) (map[string]struct{}, error) {
-	cmd := exec.CommandContext(ctx, goBin, "tool", "nm", binPath) // #nosec G204
-	cmd.Dir = root
-	cmd.Env = probeEnv(root)
-	out, err := cmd.Output()
+func readSymbolTable(ctx context.Context, tc *goenv.Toolchains, root, binPath, goBin string) (map[string]struct{}, error) {
+	out, detail, err := runChild(ctx, tc, root, goBin, stdoutCapture, "tool", "nm", binPath)
 	if err != nil {
-		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil, fmt.Errorf("go tool nm: %w\n%s", err, ee.Stderr)
-		}
-		return nil, fmt.Errorf("go tool nm: %w", err)
+		return nil, fmt.Errorf("go tool nm: %w\n%s", err, detail)
 	}
 
 	symbols := make(map[string]struct{})

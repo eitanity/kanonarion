@@ -118,7 +118,13 @@ func resolveLicenceBasis(
 		case gerr != nil:
 			return licenceBasis{}, false, fmt.Sprintf("reading the licence record for %s: %v", coord, gerr)
 		case !found:
-			return licenceBasis{}, false, fmt.Sprintf("no licence record for %s; run: kanonarion license %s", coord, coord)
+			// The remedy names BOTH steps. `kanonarion license <coord>` exits 20 on a
+			// module the store has not fetched — "module not fetched: run
+			// 'kanonarion fetch' first" — so naming it alone as the fix for a missing
+			// record hands the reader a command that fails on the very coordinate
+			// this line was printed for.
+			return licenceBasis{}, false, fmt.Sprintf(
+				"no licence record for %s; run: kanonarion fetch %s && kanonarion license %s", coord, coord, coord)
 		}
 		return licenceBasis{rec: rec, coord: coord, pinned: true}, true, ""
 	}
@@ -129,7 +135,8 @@ func resolveLicenceBasis(
 	candidates := candidateVersions(path, summaries)
 	if len(candidates) == 0 {
 		return licenceBasis{}, false, fmt.Sprintf(
-			"no licence record for %s at any version; give a version or run: kanonarion license %s@<version>", path, path)
+			"no licence record for %s at any version; give a version and run: "+
+				"kanonarion fetch %s@<version> && kanonarion license %s@<version>", path, path, path)
 	}
 	coord, cerr := coordinate.NewModuleCoordinate(path, candidates[0])
 	if cerr != nil {
@@ -200,55 +207,93 @@ func newerVersion(a, b string) bool {
 	}
 }
 
-// replacedModulePaths returns the module paths that path replaces under a go.mod
-// replace directive, as the walks in this store recorded them.
+// walkReplace is one recorded replace directive naming the module that compiles
+// in place of the one asked about, and the walk that recorded it.
+type walkReplace struct {
+	// coord is the replacement, as a full coordinate: a remedy that names it can
+	// be run as it is printed.
+	coord string
+	// walkID is the walk the directive was read from, so the claim can be checked
+	// against a specific record rather than "the store".
+	walkID string
+}
+
+// walkReplaceFacts is what the recorded walks say about one module path's
+// replace relationships, in BOTH directions.
 //
-// This is what lets the holder-matches-path rule reach the commonest fork shape.
-// That rule compares a copyright holder against the owner of a related module,
-// and its only source of related modules was the licence ledger — so a fork whose
-// upstream was never licence-analysed here had nothing to be compared against,
-// and a republication carrying the upstream holder's line and no other read as a
-// module with no indicators. The replace directive names the upstream whether or
-// not anybody ever ran `kanonarion license` over it.
-// The second return value is what the search did not cover, in words, so a
-// "no indicators" answer that rests on it can say how thorough it was rather
-// than presenting a bounded search as an exhausted one. It is empty when the
-// search read every walk in the store.
-func replacedModulePaths(ctx context.Context, walks QueryWalksUseCase, path string) ([]string, string) {
+// Both come out of one listing so the two describe the same generation of the
+// store, and because they are the same question asked from either end: a walk
+// node carries the pair, and which half is the answer depends only on which half
+// the caller named.
+type walkReplaceFacts struct {
+	// replaces are the paths this module was recorded replacing.
+	replaces []string
+	// replacedBy are the modules recorded as replacing THIS path — the code that
+	// compiles where this module is required.
+	replacedBy []walkReplace
+	// coverage is what the search did not read, in words, so an answer resting on
+	// it can say how thorough it was. Empty when every walk was read.
+	coverage string
+}
+
+// walkReplaceFactsFor reads the replace directives the walks in this store
+// recorded for path.
+//
+// The forward direction is what lets the holder-matches-path rule reach the
+// commonest fork shape. That rule compares a copyright holder against the owner
+// of a related module, and its only source of related modules was the licence
+// ledger — so a fork whose upstream was never licence-analysed here had nothing
+// to be compared against, and a republication carrying the upstream holder's line
+// and no other read as a module with no indicators. The replace directive names
+// the upstream whether or not anybody ever ran `kanonarion license` over it.
+//
+// The reverse direction is the one a reader arrives with. Asked about the module
+// their go.mod requires, this command could see no record of any kind, report no
+// indicators from a heuristic that had nothing to work with, and name a remedy
+// that fails — for a module a recorded build replaces with a fork whose path
+// differs only in its owner, which is exactly the signal the name-path heuristic
+// exists to catch and structurally cannot see from a bare path.
+func walkReplaceFactsFor(ctx context.Context, walks QueryWalksUseCase, path string) walkReplaceFacts {
 	if walks == nil {
-		return nil, "no walk store available to this command, so no go.mod replace directive was consulted"
+		return walkReplaceFacts{coverage: "no walk store available to this command, so no go.mod replace directive was consulted"}
 	}
 	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{Limit: truncationFetchLimit(walkSearchLimit)})
 	if err != nil {
-		return nil, fmt.Sprintf("the walks holding go.mod replace directives could not be listed: %v", err)
+		return walkReplaceFacts{coverage: fmt.Sprintf("the walks holding go.mod replace directives could not be listed: %v", err)}
 	}
 	searched, bounded := truncateList(summaries, walkSearchLimit)
-	limit := ""
+	var out walkReplaceFacts
 	if bounded {
-		limit = fmt.Sprintf("go.mod replace directives were read from the %d most recent walks only", walkSearchLimit)
+		out.coverage = fmt.Sprintf("go.mod replace directives were read from the %d most recent walks only", walkSearchLimit)
 	}
-	seen := make(map[string]struct{})
-	var out []string
+	seenReplaces := make(map[string]struct{})
+	seenReplacedBy := make(map[string]struct{})
 	for _, s := range searched {
 		rec, rerr := walks.GetWalk(ctx, s.ID)
 		if rerr != nil {
 			continue
 		}
 		for _, node := range rec.Graph.Nodes {
-			if node.Coordinate.Path() != path {
-				continue
-			}
 			orig := node.OriginalCoordinate.Path()
-			if orig == "" || orig == path {
+			if orig == "" || orig == node.Coordinate.Path() {
 				continue
 			}
-			if _, done := seen[orig]; done {
-				continue
+			switch path {
+			case node.Coordinate.Path():
+				if _, done := seenReplaces[orig]; !done {
+					seenReplaces[orig] = struct{}{}
+					out.replaces = append(out.replaces, orig)
+				}
+			case orig:
+				coord := node.Coordinate.String()
+				if _, done := seenReplacedBy[coord]; !done {
+					seenReplacedBy[coord] = struct{}{}
+					out.replacedBy = append(out.replacedBy, walkReplace{coord: coord, walkID: s.ID})
+				}
 			}
-			seen[orig] = struct{}{}
-			out = append(out, orig)
 		}
 	}
-	sort.Strings(out)
-	return out, limit
+	sort.Strings(out.replaces)
+	sort.Slice(out.replacedBy, func(i, j int) bool { return out.replacedBy[i].coord < out.replacedBy[j].coord })
+	return out
 }

@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
@@ -30,7 +30,10 @@ import (
 // probe left to inherit the CLI process's own working directory can report a
 // usable toolchain for a load that had none.
 func goToolchainVersionProbe(ctx context.Context, dir string, env []string) (string, error) {
-	cmd := exec.CommandContext(ctx, "go", "env", "GOVERSION") // #nosec G204 -- fixed command and arguments; the binary is resolved through the analysis PATH by design
+	// Through childproc, like every other child an analysis spawns: the go command
+	// resolved here is whatever the analysis PATH offers, and a shim that hangs
+	// rather than answering must die with the run instead of outliving it.
+	cmd := childproc.CommandContext(ctx, "go", "env", "GOVERSION") // #nosec G204 -- fixed command and arguments; the binary is resolved through the analysis PATH by design
 	cmd.Dir = dir
 	// The loader's own environment, which pins GOTOOLCHAIN=local. Inheriting this
 	// process's instead lets the probe switch toolchains where the loader could

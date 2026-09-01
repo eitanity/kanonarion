@@ -26,9 +26,9 @@ type AuditSink interface {
 }
 
 // ErrModuleNotFetched is returned when extraction is attempted for a module
-// that has no FactRecord in the store. Callers should run 'kanonarion fetch'
-// first.
-var ErrModuleNotFetched = errors.New("module not fetched: run 'kanonarion fetch' first")
+// that has no FactRecord in the store. It states the fact only: the remedy
+// depends on the coordinate, so wrappers add fetchdomain.NotFetchedRemedy.
+var ErrModuleNotFetched = errors.New("module not fetched")
 
 // ErrLicenceNotFound is returned by LicenceStore.GetLicenceRecord when no
 // record exists for the given coordinate and pipeline version.
@@ -123,6 +123,29 @@ type LicenceRecordLister interface {
 	ListLicenseRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.LicenseRecord, error)
 }
 
+// IdenticalGenerationReader is the optional after-the-fact read: the generation
+// the ledger ALREADY holds that states the measurement a run has just taken.
+//
+// It answers a question the cache lookup cannot. A cache lookup runs before the
+// extraction and asks whether a stored record may be SERVED; for a local
+// coordinate the answer is always no, because a local version pins no content
+// and the working tree mutates. Recognising afterwards that the extraction came
+// back saying what the ledger already says is a different question, and one a run
+// can only ask once it holds the answer.
+//
+// A store that does not offer it appends a generation per run, which is what
+// every store did before it existed.
+type IdenticalGenerationReader interface {
+	// IdenticalGeneration returns the generation stating the same measurement as
+	// rec — differing at most in when it was taken — or (zero, false, nil) when
+	// the ledger holds none.
+	//
+	// A record that does not name the artefact it read matches nothing, including
+	// another record that names none: absence is not a value two records can
+	// share.
+	IdenticalGeneration(ctx context.Context, rec domain.LicenseRecord) (domain.LicenseRecord, bool, error)
+}
+
 // LicenseOverrideStore provides operator-supplied license corrections from a
 // source the application layer does not care about (YAML config today;
 // alternate backends may implement the same port). Implementations return a
@@ -163,4 +186,27 @@ type LicenseSummary struct {
 	// operator running license-list over 2,206 modules needs the 2,205 that are
 	// fine AND the one that is not. The command still exits non-zero.
 	Conflict error
+}
+
+// WithLicenceIdentity fills a list row's licence identity from the record it is
+// a projection of, read through what each of that record's licences covers.
+//
+// It lives here, beside the type, because it is the ONE place a listing's
+// identity is decided and more than one caller has to reach it: the store
+// projects rows through it, and the cross-surface control asserts the listing
+// agrees with every other surface through it. A caller that assembled the two
+// fields itself would be a second implementation, and a second implementation
+// is how the listing came to serve a Go library's embedded font licence while
+// `license` on the same coordinate served its own.
+//
+// The identity does NOT come from the indexed `primary_spdx` and
+// `spdx_expression` columns. Those hold what extraction measured, and a record
+// written before coverage existed holds a documentation or an embedded-asset
+// licence in them; the listing must decode the record to answer, which is what
+// its caller does.
+func WithLicenceIdentity(row LicenseSummary, rec domain.LicenseRecord) LicenseSummary {
+	covered := domain.ReadCoverage(rec)
+	row.PrimarySPDX = covered.PrimarySPDX
+	row.Expression = covered.Expression
+	return row
 }

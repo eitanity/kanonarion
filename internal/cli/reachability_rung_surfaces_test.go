@@ -240,7 +240,7 @@ func TestScanDiffCarriesTheRung(t *testing.T) {
 		}},
 		NewFindings: []vuldomain.FindingDelta{{Coordinate: rec.Coordinate, Finding: rec.Findings[0]}},
 	}
-	raw, err := json.Marshal(toScanDiffJSON(diff))
+	raw, err := json.Marshal(newScanRunDiffDocument(diff))
 	if err != nil {
 		t.Fatalf("marshalling scan diff: %v", err)
 	}

@@ -398,10 +398,10 @@ func TestAuditCmd_GomodMissingFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing go.mod")
 	}
-	// The shared scope resolver shells out to the Go toolchain in the go.mod's
-	// directory; a missing path surfaces as a resolution error.
-	if !strings.Contains(err.Error(), "resolving code scope") {
-		t.Errorf("expected 'resolving code scope' in error, got: %v", err)
+	// The named path is checked before any work: the resolver refuses it rather
+	// than letting the scope resolution run the Go toolchain in its directory.
+	if !strings.Contains(err.Error(), "--gomod /nonexistent/go.mod") {
+		t.Errorf("expected the refusal to name the flag and the path, got: %v", err)
 	}
 }
 

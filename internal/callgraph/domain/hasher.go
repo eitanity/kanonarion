@@ -210,6 +210,10 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		AnalysisRoot:             c.AnalysisRoot,
 		BuildListSource:          c.BuildListSource,
 		Toolchain:                gotoolchain.Version(c.Toolchain),
+		DerivedBy: GenerationDerivation{
+			Gate:    ReuseGate(c.DerivedBy.Gate),
+			Outcome: GateOutcome(c.DerivedBy.Outcome),
+		},
 		SynthesisedGoMod: SynthesisedGoMod{
 			ModulePath:        c.SynthesisedGoMod.ModulePath,
 			GoDirective:       c.SynthesisedGoMod.GoDirective,
@@ -333,16 +337,25 @@ type canonicalRecord struct {
 	// BuildListSource is omitted when empty on the same terms: no record written
 	// before the field existed was offered a build list, so absent is the truth
 	// about it rather than an unrecorded third state.
-	BuildListSource string          `json:"build_list_source,omitzero"`
-	ContentHash     string          `json:"content_hash"`
-	Coordinate      canonicalCoord  `json:"coordinate"`
-	Ecosystem       string          `json:"ecosystem"`
-	EdgeCount       int             `json:"edge_count"`
-	Edges           []canonicalEdge `json:"edges"`
-	ExclusionList   []string        `json:"exclusion_list,omitempty"`
-	ExclusionReason string          `json:"exclusion_reason,omitempty"`
-	ExtractedAt     string          `json:"extracted_at"`
-	FailedPackages  []string        `json:"failed_packages,omitempty"`
+	BuildListSource string         `json:"build_list_source,omitzero"`
+	ContentHash     string         `json:"content_hash"`
+	Coordinate      canonicalCoord `json:"coordinate"`
+	// DerivedBy is omitted when zero, on the terms every additive field on this
+	// shape has used: no generation written before it stated why it was appended,
+	// so every stored record re-marshals to the bytes it was sealed over.
+	//
+	// It is inside the seal because it is a claim the record makes about itself,
+	// and a value outside the seal could be edited without breaking the record's
+	// own integrity check — which for a field that exists to answer "why does this
+	// row exist" would defeat the point.
+	DerivedBy       canonicalDerivation `json:"derived_by,omitzero"`
+	Ecosystem       string              `json:"ecosystem"`
+	EdgeCount       int                 `json:"edge_count"`
+	Edges           []canonicalEdge     `json:"edges"`
+	ExclusionList   []string            `json:"exclusion_list,omitempty"`
+	ExclusionReason string              `json:"exclusion_reason,omitempty"`
+	ExtractedAt     string              `json:"extracted_at"`
+	FailedPackages  []string            `json:"failed_packages,omitempty"`
 	// FailureCause is omitted when zero so a record written before the cause axis
 	// existed — and every record that did not fail, which is almost all of them —
 	// marshals to exactly the bytes it always did and keeps its stored content
@@ -418,6 +431,14 @@ type canonicalSynthesisedGoMod struct {
 	// sealed over. An absent list means the module needed none.
 	Requires          []canonicalRequire `json:"requires,omitzero"`
 	VendorTreePresent bool               `json:"vendor_tree_present"`
+}
+
+// canonicalDerivation is the wire shape of domain.GenerationDerivation, pinned
+// separately from the domain type so a field added there does not silently
+// change what every stored record hashes over.
+type canonicalDerivation struct {
+	Gate    string `json:"gate,omitzero"`
+	Outcome string `json:"outcome,omitzero"`
 }
 
 // canonicalRequire is the wire shape of domain.SynthesisedRequire.
@@ -543,13 +564,17 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 	}
 
 	c := canonicalRecord{
-		Algorithm:                string(r.Algorithm),
-		AnalysisSource:           string(r.AnalysisSource),
-		ArtefactIdentity:         r.ArtefactIdentity,
-		ArtifactKind:             string(r.ArtifactKind),
-		Completeness:             string(r.Completeness),
-		ContentHash:              r.ContentHash,
-		Coordinate:               canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Algorithm:        string(r.Algorithm),
+		AnalysisSource:   string(r.AnalysisSource),
+		ArtefactIdentity: r.ArtefactIdentity,
+		ArtifactKind:     string(r.ArtifactKind),
+		Completeness:     string(r.Completeness),
+		ContentHash:      r.ContentHash,
+		Coordinate:       canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		DerivedBy: canonicalDerivation{
+			Gate:    string(r.DerivedBy.Gate),
+			Outcome: string(r.DerivedBy.Outcome),
+		},
 		Ecosystem:                r.Ecosystem,
 		EdgeCount:                r.EdgeCount,
 		Edges:                    cEdges,

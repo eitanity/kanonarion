@@ -84,7 +84,7 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		if gerr != nil {
 			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
 		}
-		if merr := resolveModcacheMode(f.fromModcache, gomodPath); merr != nil {
+		if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
 			return merr
 		}
 	}

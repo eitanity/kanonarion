@@ -282,7 +282,7 @@ func TestRunProvenance_WalkListFailureIsStatedNotSwallowed(t *testing.T) {
 // A walk that cannot be read back is skipped rather than aborting the search:
 // the remaining walks may still hold the directive, and one unreadable record is
 // not a reason to answer nothing.
-func TestReplacedModulePaths_UnreadableWalkIsSkipped(t *testing.T) {
+func TestWalkReplaceFacts_UnreadableWalkIsSkipped(t *testing.T) {
 	fork := coordinatetest.MustNew("github.com/cortezaproject/gval", "v1.2.4")
 	upstream := coordinatetest.MustNew("github.com/PaesslerAG/gval", "v1.2.1")
 
@@ -293,12 +293,12 @@ func TestReplacedModulePaths_UnreadableWalkIsSkipped(t *testing.T) {
 		{Coordinate: fork},
 	}}})
 
-	got, coverage := replacedModulePaths(context.Background(), fqw, fork.Path())
-	if len(got) != 1 || got[0] != upstream.Path() {
-		t.Fatalf("replaced paths = %v, want just %s", got, upstream.Path())
+	facts := walkReplaceFactsFor(context.Background(), fqw, fork.Path())
+	if len(facts.replaces) != 1 || facts.replaces[0] != upstream.Path() {
+		t.Fatalf("replaced paths = %v, want just %s", facts.replaces, upstream.Path())
 	}
-	if coverage != "" {
-		t.Errorf("coverage = %q, want none: every walk in the store was read", coverage)
+	if facts.coverage != "" {
+		t.Errorf("coverage = %q, want none: every walk in the store was read", facts.coverage)
 	}
 }
 
@@ -325,7 +325,7 @@ func TestRunProvenance_UnreadableCandidateReportsNoDisagreement(t *testing.T) {
 // The replace search is bounded. A store holding more walks than it reads has
 // not been exhausted, and the bound is stated so a "no indicators" answer is not
 // read as a search that found nothing.
-func TestReplacedModulePaths_BoundedSearchStatesTheBound(t *testing.T) {
+func TestWalkReplaceFacts_BoundedSearchStatesTheBound(t *testing.T) {
 	fqw := testfakes.NewFakeQueryWalks()
 	sums := make([]walkports.WalkSummary, 0, walkSearchLimit+5)
 	for i := range walkSearchLimit + 5 {
@@ -333,11 +333,11 @@ func TestReplacedModulePaths_BoundedSearchStatesTheBound(t *testing.T) {
 	}
 	fqw.SetSummaries(sums)
 
-	got, coverage := replacedModulePaths(context.Background(), fqw, "example.com/mod")
-	if len(got) != 0 {
-		t.Errorf("replaced paths = %v, want none", got)
+	facts := walkReplaceFactsFor(context.Background(), fqw, "example.com/mod")
+	if len(facts.replaces) != 0 {
+		t.Errorf("replaced paths = %v, want none", facts.replaces)
 	}
-	if !strings.Contains(coverage, "most recent walks") {
-		t.Errorf("coverage = %q, want the bound stated", coverage)
+	if !strings.Contains(facts.coverage, "most recent walks") {
+		t.Errorf("coverage = %q, want the bound stated", facts.coverage)
 	}
 }

@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 
@@ -62,9 +64,21 @@ func TestWalkCmd_GomodFileNotFound(t *testing.T) {
 	}
 }
 
+// writeWalkGoMod writes a real manifest and returns its path. The flag rules
+// below are checked after the --gomod path is resolved, so a path that is not
+// there would refuse first and the rule under test would never run.
+func writeWalkGoMod(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "go.mod")
+	if err := os.WriteFile(path, []byte("module example.com/app\n\ngo 1.21\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // --tool and --project select mutually exclusive scopes.
 func TestWalkCmd_ToolAndProjectMutuallyExclusive(t *testing.T) {
-	gomodPath := filepath.Join(t.TempDir(), "go.mod")
+	gomodPath := writeWalkGoMod(t)
 	var stdout, stderr bytes.Buffer
 	err := Run([]string{"walk", "--gomod", gomodPath, "--tool", "--project", "--store-root", t.TempDir()}, &stdout, &stderr)
 	if err == nil {
@@ -90,7 +104,7 @@ func TestWalkCmd_ScopeFlagsRequireGoMod(t *testing.T) {
 
 // --shallow is a positional-only depth lens; it does not apply to a go.mod walk.
 func TestWalkCmd_ShallowRejectedOnGoMod(t *testing.T) {
-	gomodPath := filepath.Join(t.TempDir(), "go.mod")
+	gomodPath := writeWalkGoMod(t)
 	var stdout, stderr bytes.Buffer
 	err := Run([]string{"walk", "--gomod", gomodPath, "--shallow", "--store-root", t.TempDir()}, &stdout, &stderr)
 	if err == nil {
@@ -117,7 +131,7 @@ func TestWalkCmd_AnalyseRootRequiresGoMod(t *testing.T) {
 // --analyse-root analyses the project's own packages, which a --tool walk does
 // not cover.
 func TestWalkCmd_AnalyseRootRejectsToolScope(t *testing.T) {
-	gomodPath := filepath.Join(t.TempDir(), "go.mod")
+	gomodPath := writeWalkGoMod(t)
 	var stdout, stderr bytes.Buffer
 	err := Run([]string{"walk", "--gomod", gomodPath, "--analyse-root", "--tool", "--store-root", t.TempDir()}, &stdout, &stderr)
 	if err == nil {
@@ -350,6 +364,54 @@ func TestRunWalkDiff_EmptyDiffUnderMismatchIsNotIdentical(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `not a confident "identical"`) {
 		t.Errorf("empty diff over unequal completeness reads as identical:\n%s", buf.String())
+	}
+}
+
+// TestRunWalkDiff_JSONCarriesAStatusChange is the differing case, and it is the
+// one the identical case cannot stand in for.
+//
+// A per-node status change is a change category of its own: the two walks name
+// the same modules at the same versions, so added, removed and upgraded are all
+// empty, and a document that carried only those reported no change at all while
+// the text output named the node and both statuses. A consumer diffing two walks
+// in CI to detect drift must not be told there is none.
+func TestRunWalkDiff_JSONCarriesAStatusChange(t *testing.T) {
+	jsonOut = true
+	t.Cleanup(func() { jsonOut = false })
+	moved := coordinatetest.MustNew("github.com/grafana/loki/pkg/push", "v0.0.0-20250630054201-94c0ba7b0952")
+	uc := &testfakes.FakeDiffWalks{
+		Result: walkapp.WalkDiff{
+			WalkA: "A", WalkB: "B",
+			StatusChanged: []walkapp.StatusChange{{
+				Coordinate: moved,
+				StatusA:    walkdomain.NodeLocalReplace,
+				StatusB:    walkdomain.NodeSucceeded,
+			}},
+			NodesA: 396, NodesB: 396,
+			FrameA: linuxAmd64Frame, FrameB: linuxAmd64Frame,
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runWalkDiff(context.Background(), "A", "B", uc, testfakes.NewFakeQueryWalks(), &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var doc walkDiffJSON
+	if uerr := json.Unmarshal(stdout.Bytes(), &doc); uerr != nil {
+		t.Fatalf("stdout is not the diff document: %v\n%s", uerr, stdout.String())
+	}
+	if len(doc.StatusChanged) != 1 {
+		t.Fatalf("the document carries %d status change(s), want 1:\n%s", len(doc.StatusChanged), stdout.String())
+	}
+	got := doc.StatusChanged[0]
+	if got.Coordinate != moved.String() {
+		t.Errorf("status change names %q, want the node the text names (%s)", got.Coordinate, moved)
+	}
+	if got.From != "local_replace" || got.To != "succeeded" {
+		t.Errorf("status change is %s -> %s, want local_replace -> succeeded", got.From, got.To)
+	}
+	// The change is a change: the document must not also claim the walks agree.
+	if doc.NoDifference != nil {
+		t.Errorf("a diff with a status change reported no difference:\n%s", stdout.String())
 	}
 }
 

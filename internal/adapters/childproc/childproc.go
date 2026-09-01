@@ -14,6 +14,29 @@
 //   - on Linux the kernel is asked to SIGKILL the child when the parent dies
 //     (PR_SET_PDEATHSIG), which is the only mechanism that survives the parent
 //     being killed without warning.
+//
+// # One regime
+//
+// Every Go or git child this repository starts is built here. That is the whole
+// rule, and it is enforced by TestEveryChildProcessIsHardened rather than by
+// habit: the class regrew once already, and twelve call sites bounding child
+// lifetime three different ways is twelve chances for two of them to disagree.
+//
+// The rule is stated as "by default" rather than "when the child is expensive"
+// because the hardening is a process-group attribute and a cancel function —
+// it costs no wall time, so there is no saving to trade a divergence for. A
+// site that genuinely cannot use it says so in [DirectSpawns], with its reason.
+//
+// Two things this deliberately does NOT decide for the caller:
+//
+//   - WaitDelay. It bounds the wait on I/O pipes AFTER the child is gone, and
+//     it introduces [exec.ErrWaitDelay] into the caller's error surface, so it
+//     is the caller's to set — from [WaitDelay], so there is one number.
+//   - the process group's effect on terminal signals. Setpgid takes the child
+//     out of the terminal's foreground group, so a Ctrl-C no longer reaches it
+//     directly; cancellation reaches it through the context instead. Every
+//     caller here is under the CLI's signal.NotifyContext, which is what makes
+//     that an equal trade rather than a loss.
 package childproc
 
 import (
@@ -25,10 +48,15 @@ import (
 	"time"
 )
 
-// cmdWaitDelay bounds how long Wait blocks on the child's I/O pipes after the
+// WaitDelay bounds how long Wait blocks on the child's I/O pipes after the
 // process itself has gone, so an inherited pipe held open by a grandchild
-// cannot hang the parent indefinitely. It matches the gitexec adapter.
-const cmdWaitDelay = 3 * time.Second
+// cannot hang the parent indefinitely.
+//
+// It is exported because the git adapters need the same bound for the same
+// reason — git's transport helper inherits the output pipes and outlives the
+// git process — and two constants of three seconds in two packages is the
+// shape this package exists to remove.
+const WaitDelay = 3 * time.Second
 
 // CommandContext returns an [exec.Cmd] for name/args that is hardened against
 // orphaning, as described in the package documentation. The caller owns every
@@ -52,7 +80,7 @@ func CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd 
 // keep the caller blocked after the child is gone.
 func Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := CommandContext(ctx, name, args...)
-	cmd.WaitDelay = cmdWaitDelay
+	cmd.WaitDelay = WaitDelay
 	var stderr syncBuffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()

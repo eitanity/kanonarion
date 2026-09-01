@@ -52,11 +52,53 @@ type provenanceCopyrightSignal struct {
 type provenanceOutput struct {
 	Module  string `json:"module"`
 	Version string `json:"version,omitempty"`
+	// ReplacedBy names the modules a recorded walk shows compiling in place of
+	// this one under a go.mod replace directive.
+	//
+	// It is a THIRD signal beside the two below, not a qualifier on either. The
+	// name-path heuristic compares this path against a catalogue of canonical
+	// modules and cannot see a fork nobody catalogued; the copyright tier reads a
+	// licence record this coordinate has none of, precisely because the build
+	// fetched the replacement instead. Both are structurally blind to the
+	// commonest shape there is — a requirement routed to a fork at the same name
+	// under another owner — and a recorded walk holds it as a fact.
+	ReplacedBy []provenanceReplacement `json:"replaced_by,omitempty"`
 	// Selection names the licence record the copyright signal answered from and
 	// the rule that picked it.
 	Selection       provenanceSelection       `json:"selection"`
 	ForkHeuristic   contextForkHeuristic      `json:"fork_heuristic"`
 	CopyrightSignal provenanceCopyrightSignal `json:"copyright_signal"`
+}
+
+// provenanceReplacement is one recorded replace directive: the module that
+// compiles in place of the one asked about, the walk that recorded it, and the
+// caveated sentence both renderings state.
+type provenanceReplacement struct {
+	Module string `json:"module"`
+	Walk   string `json:"walk"`
+	// Remedy is the command that answers the question the caller actually put,
+	// about the module their build compiles. It is named only where it will work:
+	// the replacement has a walk record behind it, which is what the bare
+	// coordinate asked about does not.
+	Remedy    string `json:"remedy"`
+	Statement string `json:"statement"`
+}
+
+// replacedByJSON renders the recorded replacements as the output's third signal.
+func replacedByJSON(path string, replacements []walkReplace) []provenanceReplacement {
+	out := make([]provenanceReplacement, 0, len(replacements))
+	for _, r := range replacements {
+		out = append(out, provenanceReplacement{
+			Module: r.coord,
+			Walk:   r.walkID,
+			Remedy: "kanonarion provenance " + r.coord,
+			Statement: fmt.Sprintf(
+				"a recorded build compiles %s in place of %s under a go.mod replace directive (walk %s) — "+
+					"provenance facts about the code that ships are facts about that module",
+				r.coord, path, r.walkID),
+		})
+	}
+	return out
 }
 
 func newProvenanceCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -116,7 +158,12 @@ nothing to report either way.`,
 
 func runProvenance(ctx context.Context, path, version string, uc QueryLicenseUseCase, walks QueryWalksUseCase, stdout io.Writer) error {
 	fp := fetchdomain.InferForkProvenance(path)
-	signal, selection := copyrightProvenance(ctx, path, version, uc, walks)
+	// One reading of the recorded walks answers both directions: what this module
+	// replaces, which feeds the copyright tier's related modules, and what
+	// replaces IT, which is a provenance fact in its own right and the one this
+	// command used to be silent about.
+	facts := walkReplaceFactsFor(ctx, walks, path)
+	signal, selection := copyrightProvenance(ctx, path, version, uc, facts)
 	out := provenanceOutput{
 		Module:  path,
 		Version: version,
@@ -124,6 +171,7 @@ func runProvenance(ctx context.Context, path, version string, uc QueryLicenseUse
 			Status:           fp.Status.String(),
 			CatalogueVersion: fp.CatalogueVersion,
 		},
+		ReplacedBy:      replacedByJSON(path, facts.replacedBy),
 		Selection:       selection,
 		CopyrightSignal: signal,
 	}
@@ -166,6 +214,13 @@ func runProvenance(ctx context.Context, path, version string, uc QueryLicenseUse
 	default:
 		w.printf("  Fork Heuristic:    no indicators (name-path, catalogue %s)\n", out.ForkHeuristic.CatalogueVersion)
 	}
+	// Between the two signals it stands beside, and stated whether or not either
+	// of them found anything: it is the fact that decides which module the reader
+	// should have been asking about.
+	for _, r := range out.ReplacedBy {
+		w.printf("  Replaced By:       %s\n", r.Statement)
+		w.printf("    run: %s\n", r.Remedy)
+	}
 	printCopyrightSignal(w, out.CopyrightSignal)
 	if w.err != nil {
 		return fmt.Errorf("writing provenance: %w", w.err)
@@ -204,7 +259,7 @@ func printCopyrightSignal(w *errWriter, cs provenanceCopyrightSignal) {
 // them is evidence about the module, and reporting a store that could not be
 // read as a module with no indicators would be the tier asserting a negative it
 // never measured.
-func copyrightProvenance(ctx context.Context, path, version string, uc QueryLicenseUseCase, walks QueryWalksUseCase,
+func copyrightProvenance(ctx context.Context, path, version string, uc QueryLicenseUseCase, facts walkReplaceFacts,
 ) (provenanceCopyrightSignal, provenanceSelection) {
 	if uc == nil {
 		return provenanceCopyrightSignal{
@@ -217,17 +272,16 @@ func copyrightProvenance(ctx context.Context, path, version string, uc QueryLice
 	// a scan wrote between them, and the evidence would then quote one and the
 	// candidate set come from the other.
 	summaries, listErr := uc.ListLicenseRecords(ctx, licports.LicenseFilter{})
-	replaced, coverage := replacedModulePaths(ctx, walks, path)
 	related := append(
 		fetchdomain.LedgerModules(storeModulePaths(summaries, listErr)),
-		fetchdomain.ReplacedModules(replaced)...)
+		fetchdomain.ReplacedModules(facts.replaces)...)
 
 	basis, ok, detail := resolveLicenceBasis(ctx, path, version, uc, summaries, listErr)
 	if !ok {
 		return provenanceCopyrightSignal{
 			Status:   fetchdomain.CopyrightSignalNotAnalysed.String(),
 			Detail:   detail,
-			Coverage: coverage,
+			Coverage: facts.coverage,
 		}, provenanceSelection{}
 	}
 
@@ -236,7 +290,7 @@ func copyrightProvenance(ctx context.Context, path, version string, uc QueryLice
 	if signal.Status == fetchdomain.CopyrightSignalNotAnalysed.String() {
 		signal.Detail = fmt.Sprintf("the licence record for %s %s", signal.Source, signal.Detail)
 	}
-	signal.Coverage = coverage
+	signal.Coverage = facts.coverage
 	return signal, provenanceSelectionFor(ctx, path, basis, uc, related)
 }
 
