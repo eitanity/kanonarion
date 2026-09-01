@@ -187,3 +187,26 @@ type LicenseSummary struct {
 	// fine AND the one that is not. The command still exits non-zero.
 	Conflict error
 }
+
+// WithLicenceIdentity fills a list row's licence identity from the record it is
+// a projection of, read through what each of that record's licences covers.
+//
+// It lives here, beside the type, because it is the ONE place a listing's
+// identity is decided and more than one caller has to reach it: the store
+// projects rows through it, and the cross-surface control asserts the listing
+// agrees with every other surface through it. A caller that assembled the two
+// fields itself would be a second implementation, and a second implementation
+// is how the listing came to serve a Go library's embedded font licence while
+// `license` on the same coordinate served its own.
+//
+// The identity does NOT come from the indexed `primary_spdx` and
+// `spdx_expression` columns. Those hold what extraction measured, and a record
+// written before coverage existed holds a documentation or an embedded-asset
+// licence in them; the listing must decode the record to answer, which is what
+// its caller does.
+func WithLicenceIdentity(row LicenseSummary, rec domain.LicenseRecord) LicenseSummary {
+	covered := domain.ReadCoverage(rec)
+	row.PrimarySPDX = covered.PrimarySPDX
+	row.Expression = covered.Expression
+	return row
+}

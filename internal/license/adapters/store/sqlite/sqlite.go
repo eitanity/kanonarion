@@ -460,9 +460,11 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		var sum ports.LicenseSummary
 		var extractedAt string
 		var status int
+		var blob []byte
 		if serr := rows.Scan(
 			&sum.ModulePath, &sum.ModuleVersion, &sum.PipelineVersion,
 			&sum.PrimarySPDX, &sum.Expression, &status, &extractedAt, &sum.ContentHash,
+			&blob,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning license summary: %w", serr)
 		}
@@ -476,7 +478,17 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		k := generationKey{sum.ModulePath, sum.ModuleVersion, sum.PipelineVersion}
 		if counts[k] == 0 {
 			order = append(order, k)
-			first[k] = sum
+			// The blob is decoded for the licence identity, which the indexed
+			// columns cannot answer: the identity a surface publishes is the
+			// record read through what its licences cover, and that needs the
+			// licence files. Measured on the maintainer's store,
+			// `license-list --limit 0 --json` over 1,828 records goes from 0.03s
+			// to 0.08s; --copyright already paid more (0.13s) for the same reason.
+			rec, derr := decodeRecord(blob)
+			if derr != nil {
+				return nil, derr
+			}
+			first[k] = ports.WithLicenceIdentity(sum, rec)
 		}
 		counts[k]++
 	}
@@ -517,16 +529,14 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		if !found {
 			continue
 		}
-		out = append(out, ports.LicenseSummary{
+		out = append(out, ports.WithLicenceIdentity(ports.LicenseSummary{
 			ModulePath:      k.path,
 			ModuleVersion:   k.version,
 			PipelineVersion: k.pipeline,
-			PrimarySPDX:     served.PrimarySPDX,
-			Expression:      served.Expression,
 			OverallStatus:   served.OverallStatus,
 			ExtractedAt:     served.ExtractedAt.UTC(),
 			ContentHash:     served.ContentHash,
-		})
+		}, served))
 	}
 
 	return page(out, filter.Limit, filter.Offset), nil
@@ -548,7 +558,8 @@ func page(sums []ports.LicenseSummary, limit, offset int) []ports.LicenseSummary
 
 func buildListQuery(f ports.LicenseFilter) (string, []any) {
 	q := `SELECT module_path, module_version, pipeline_version,
-	             primary_spdx, spdx_expression, overall_status, extracted_at, content_hash
+	             primary_spdx, spdx_expression, overall_status, extracted_at, content_hash,
+	             serialised
 	      FROM licence_records`
 	var conds []string
 	var args []any

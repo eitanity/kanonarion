@@ -67,6 +67,7 @@ var licenseWireNames = map[string]map[string]string{
 		"CopyrightStatements":   "copyright_statements",
 		"LowConfidenceSPDX":     "low_confidence_spdx",
 		"LowConfidenceCoverage": "low_confidence_coverage",
+		"Coverage":              "coverage",
 	},
 	"AltMatch": {
 		"SPDX":       "spdx",
@@ -278,6 +279,10 @@ func TestLicenseJSONPublishesNoGoFieldNameAtAnyDepth(t *testing.T) {
 // dropped, invented, or a nil slice normalised to [] at any depth fails here.
 func TestLicenseViewRenamesKeysAndChangesNoValue(t *testing.T) {
 	rec := licenseRecordForWire(t)
+	// Coverage is derived on load, so the reference record carries it the way
+	// one read out of the store does; the view derives the same answer and the
+	// two must agree key for key.
+	domain.SetLicenseCoverage(&rec)
 
 	// The old contract, reproduced exactly: what `license --json` emitted before
 	// the view existed.

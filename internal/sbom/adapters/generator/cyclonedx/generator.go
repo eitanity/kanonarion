@@ -175,11 +175,16 @@ func (g *Generator) buildBOM(
 			continue
 		}
 		lic, hasLic := licenses[node.Coordinate]
+		// A component's licence clause states what governs that component's
+		// code. Reading the record through coverage keeps an embedded font's or
+		// a documentation licence out of it — the SBOM would otherwise assert a
+		// Go library is licensed OFL-1.1.
+		covered := licensedomain.ReadCoverage(lic)
 		input := domain.ComponentInput{
 			Module:      moduleRef(node.Coordinate),
 			HasLicense:  hasLic,
-			PrimarySPDX: lic.PrimarySPDX,
-			Expression:  lic.Expression,
+			PrimarySPDX: covered.PrimarySPDX,
+			Expression:  covered.Expression,
 			Copyright:   copyrightString(lic),
 		}
 		// The subject's component entry carries the clause the subject carries,
@@ -704,10 +709,11 @@ func resolveSubject(
 	req ports.GenerateRequest,
 ) subject {
 	lic, hasLic := licenses[target]
+	covered := licensedomain.ReadCoverage(lic)
 	s := subject{
 		target:      target,
 		ref:         moduleRef(target),
-		licenseSPDX: domain.LicenseClause(hasLic, lic.PrimarySPDX, lic.Expression),
+		licenseSPDX: domain.LicenseClause(hasLic, covered.PrimarySPDX, covered.Expression),
 		copyright:   copyrightString(lic),
 	}
 	if target.Version() != coordinate.LocalVersion {

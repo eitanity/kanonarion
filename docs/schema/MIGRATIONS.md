@@ -341,6 +341,84 @@ findings, and the ones it reports are the ones its stated database can produce. 
 scan whose snapshot agrees with live is unchanged. A scan that cannot read its
 pinned database now fails instead of quietly answering from another one.
 
+## Licence records: what each licence covers, no migration and no bump
+
+**No store migration, no schema-version bump, no pipeline bump.** A licence
+record now says what each identified licence GOVERNS — the module's own code,
+documentation it ships, or third-party material it carries — and a licence that
+does not govern the code no longer enters the expression, holds the primary, or
+contributes obligations.
+
+**Why it owes no bump.** Coverage is derived from `LicenseFiles`, on the same
+contract as `EffectiveSet` and `PackageLicenses`: recomputed at extraction and on
+every deserialisation, never stored, and outside the canonical shape the content
+hash covers. Measured read-only over all 1,828 stored records decoded through the
+store's own read path: **0 fail `VerifyContentHash`**. The hashed key set is
+unchanged and `TestCanonicalShape_KeySetIsPinned` is untouched.
+
+**A correction the earlier account got wrong, recorded so nobody repeats it.**
+`Expression`, `ExpressionBasis` and `PrimarySPDX` are NOT derived at read time —
+`Unmarshal` recomputes only `EffectiveSet` and `PackageLicenses`, and the other
+three are read straight out of the sealed blob. A derivation change therefore
+does NOT correct a stored record on its own. The correction is applied twice
+instead: extraction stores the corrected values, so a re-extracted record is
+right in the indexed `primary_spdx` and `spdx_expression` columns; and the
+licence surfaces compose the same reading over a record already in the ledger, so
+records written before this change answer correctly today without re-extraction.
+The reading is idempotent — applying it to a record it has already corrected
+finds nothing to do — so the two legs cannot disagree.
+
+**Measured population.** Of 1,828 records, 19 carry a conjunction and **4 move**:
+`github.com/alecthomas/chroma/v2` at v2.24.1 and v2.27.0 from `MIT AND OFL-1.1`
+with `primary_spdx: OFL-1.1` to `MIT`, and `github.com/opencontainers/go-digest@v1.0.0`
+and `github.com/docker/go-metrics@v0.0.1` from `Apache-2.0 AND CC-BY-SA-4.0` to
+`Apache-2.0`. The other 15 conjunctions are conjunctions of code licences and are
+untouched; **none of the 1,809 records with no conjunction moves.**
+
+**Consumer impact.** Every surface that answers "what is this module licensed
+under" names the licence covering the module's code: `license` (text and
+`--json`), `license-list`, `license-diff`, `context --json` / `inspect`, `audit`,
+`sbom`, `notice` and `license-compat`. The list is closed and pinned by a
+cross-surface control that reads one record through all nine and requires them to
+agree; a surface answering this question and absent from that control is a
+surface nothing checks. `license --json`
+gains `coverage` on every `license_files` entry, emitted always (`ModuleCode`,
+`Documentation`, `BundledComponent`, `AttributionOnly`, `NotDetermined`), and
+`expression_basis` states that coverage took part and keeps the reading it
+displaced. On the four records above, `binding_obligations`, `arm_grants` and
+`obligations_reading` become absent because there is no conjunction left, and
+chroma's `obligations` lose the `same_license: weak` a bundled font imposed.
+`effective_set`, `package_licenses` and `content_hash` are unchanged for every
+record — `effective_set` deliberately: it is a faithful account of the
+identifiers the zip contains, and coverage is the separate statement of what each
+of them governs.
+
+`license-list` pays a decode per listed record for this: the identity is not in
+the indexed `primary_spdx` and `spdx_expression` columns, because it is the
+record read through what its licences cover and that needs the licence files.
+Measured on the maintainer's store, `license-list --limit 0 --json` over 1,828
+records goes from 0.03s to 0.08s, and 1,669 of its 1,673 rows are byte-identical.
+`--copyright` already paid more than this — 0.13s — for the same reason: the
+question is not in the columns.
+
+**What is corrected is the IDENTITY, never what gets looked at.** Two surfaces
+draw that line explicitly. `notice` publishes the code licence in its heading and
+still reproduces every licence text the archive carries, a set-aside grant's
+included — the texts are selected by file from the module zip, not by identifier,
+so attribution travels with the artefact whether or not the grant governs the
+code. `license-compat` reports the module's own licence as the code licence and
+still EVALUATES every identifier in the archive, so a documentation licence is
+still raised for a human rather than hidden by the identity being corrected.
+
+**Not changed here.** Which identifiers `license-compat` evaluates. Folding
+coverage into policy evaluation — so a docs or asset arm is reported without
+blocking on it — is the follow-up the conjunction-policy work was narrowed for.
+The dataset already records the same judgement independently: its
+`unmodelledDeliberately` table says of CC-BY-4.0, CC-BY-SA-3.0 and CC-BY-SA-4.0
+that "every entry here is a licence whose obligations attach to material other
+than the linked Go code — documentation, media, fonts", which is the instrument
+reading this fix derives coverage from.
+
 ## Licence record: pipeline `1.2.0` → `1.3.0`
 
 **No shape change; not hash-transparent.** The expression was inferred from a

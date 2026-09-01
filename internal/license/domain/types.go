@@ -137,6 +137,16 @@ type LicenseFileEntry struct {
 	// than being shown bare absence.
 	LowConfidenceSPDX     string
 	LowConfidenceCoverage float64 // coverage fraction (0.0–1.0) of the low-confidence match; 0 when none
+	// Coverage says what this file's licence governs — the module's code,
+	// documentation shipped beside it, or third-party material the module
+	// carries. It is the fact IsVendored and IsPerFile each answer for one
+	// case and neither answers for a root-level file, which is where a font's
+	// licence became a Go library's primary.
+	//
+	// Derived from the entries, like EffectiveSet and PackageLicenses: outside
+	// the content hash, recomputed by SetLicenseCoverage on every load, so
+	// adding it left every stored record verifiable.
+	Coverage LicenseCoverage
 }
 
 // EmbeddedComponent represents a distinct third-party component bundled within

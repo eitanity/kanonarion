@@ -23,6 +23,13 @@ type LicenseDiff struct {
 	// Escalation is non-nil when the primary SPDX changed from a permissive
 	// license to a stronger copyleft (the Redis/Terraform/HashiCorp pattern).
 	Escalation *LicenseEscalation
+	// CoverageA and CoverageB are each side read through what its licences
+	// cover. They are the identities SPDXChanged and Escalation were computed
+	// from, and a surface printing either side's licence prints these rather
+	// than the record's stored primary, so the diff and its rendering cannot
+	// disagree about which identifier was compared.
+	CoverageA CoverageReading
+	CoverageB CoverageReading
 }
 
 // HasChanges reports whether any aspect of the license record changed.
@@ -58,12 +65,21 @@ type LicenseEscalation struct {
 // is a pure function: no I/O, no clock. The output is sorted for determinism.
 func DiffRecords(a, b LicenseRecord) LicenseDiff {
 	diff := LicenseDiff{RecordA: a, RecordB: b}
+	// Each side is read through what its licences cover, and the reading is
+	// carried on the diff so the surfaces print the identity that was compared
+	// rather than re-deriving one. A diff computed on the stored primary
+	// reports a licence change whenever one side's primary is an embedded
+	// asset's — and reports NO change between two records that are both wrong
+	// in the same way, which is how this surface kept serving OFL-1.1 for a Go
+	// library after every other surface had stopped.
+	diff.CoverageA = ReadCoverage(a)
+	diff.CoverageB = ReadCoverage(b)
 
-	if a.PrimarySPDX != b.PrimarySPDX {
-		diff.SPDXChanged = &SPDXChange{From: a.PrimarySPDX, To: b.PrimarySPDX}
+	if diff.CoverageA.PrimarySPDX != diff.CoverageB.PrimarySPDX {
+		diff.SPDXChanged = &SPDXChange{From: diff.CoverageA.PrimarySPDX, To: diff.CoverageB.PrimarySPDX}
 
-		strengthA, okA := CopyleftStrengthOf(a.PrimarySPDX)
-		strengthB, okB := CopyleftStrengthOf(b.PrimarySPDX)
+		strengthA, okA := CopyleftStrengthOf(diff.CoverageA.PrimarySPDX)
+		strengthB, okB := CopyleftStrengthOf(diff.CoverageB.PrimarySPDX)
 		if okA && okB && strengthA == CopyleftNone && strengthB > CopyleftNone {
 			diff.Escalation = &LicenseEscalation{From: strengthA, To: strengthB}
 		}

@@ -228,9 +228,13 @@ func buildLicense(
 	if !found {
 		return contextLicense{Status: sectionStatusNotRun}
 	}
+	// The section names the licence covering the module's code, read through
+	// what each of the record's licences covers — never a bundled font's or a
+	// documentation licence, which is what `spdx` used to be able to hold.
+	covered := licdomain.ReadCoverage(rec)
 	l := contextLicense{
 		ExtractedAt:     isoTime(rec.ExtractedAt),
-		SPDX:            rec.PrimarySPDX,
+		SPDX:            covered.PrimarySPDX,
 		Status:          rec.OverallStatus.String(),
 		CopyrightStatus: rec.CopyrightStatus.String(),
 		Error:           rec.FailureDetail,
@@ -238,7 +242,7 @@ func buildLicense(
 	// When the root licence could not be classified, surface any recognisable
 	// but sub-threshold fragment (highest-coverage root-level match) so the
 	// consumer sees "licence present, low-confidence X" rather than blank.
-	if rec.PrimarySPDX == "" {
+	if covered.PrimarySPDX == "" {
 		for _, f := range rec.LicenseFiles {
 			if f.IsVendored || f.LowConfidenceSPDX == "" {
 				continue
@@ -274,7 +278,7 @@ func buildLicense(
 	// reported a fraction of the duties as though it were the set. What may be
 	// said instead turns on the record's own basis — see readLicenceObligations.
 	reading := readLicenceObligations(rec)
-	if rec.PrimarySPDX != "" || len(reading.Arms) > 0 {
+	if covered.PrimarySPDX != "" || len(reading.Arms) > 0 {
 		l.Obligations = contextObligationsOf(reading.Set)
 	}
 	if len(reading.Arms) > 0 {

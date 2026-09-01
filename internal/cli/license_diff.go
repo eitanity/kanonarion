@@ -120,7 +120,7 @@ func printLicenseDiff(diff domain.LicenseDiff, stdout io.Writer) error {
 		// nothing in them to disagree about. Both read as no change today.
 		if _, err := fmt.Fprintf(stdout,
 			"No license changes: both sides declare %s at status %s, over %s and %s\n",
-			licenseDiffSPDXLabel(diff.RecordA.PrimarySPDX),
+			licenseDiffSPDXLabel(diff.CoverageA.PrimarySPDX),
 			diff.RecordA.OverallStatus.String(),
 			countOf(len(diff.RecordA.LicenseFiles), "license files"),
 			countOf(licenseDiffCopyrightCount(diff.RecordA), "copyright statements")); err != nil {
@@ -131,7 +131,7 @@ func printLicenseDiff(diff domain.LicenseDiff, stdout io.Writer) error {
 
 	if diff.Escalation != nil {
 		if _, err := fmt.Fprintf(stdout, "\n[ESCALATION] %s → %s (permissive to %s copyleft)\n",
-			diff.RecordA.PrimarySPDX, diff.RecordB.PrimarySPDX, diff.Escalation.To.String()); err != nil {
+			diff.CoverageA.PrimarySPDX, diff.CoverageB.PrimarySPDX, diff.Escalation.To.String()); err != nil {
 			return fmt.Errorf("writing escalation: %w", err)
 		}
 	}
@@ -267,8 +267,8 @@ func toLicenseDiffJSON(diff domain.LicenseDiff) licenseDiffJSON {
 	out := licenseDiffJSON{
 		ModuleA:          a.Path() + "@" + a.Version(),
 		ModuleB:          b.Path() + "@" + b.Version(),
-		DeclaredA:        licenseDiffSideOf(diff.RecordA),
-		DeclaredB:        licenseDiffSideOf(diff.RecordB),
+		DeclaredA:        licenseDiffSideOf(diff.RecordA, diff.CoverageA),
+		DeclaredB:        licenseDiffSideOf(diff.RecordB, diff.CoverageB),
 		FilesAdded:       make([]licFileDeltaJSON, 0, len(diff.FilesAdded)),
 		FilesRemoved:     make([]licFileDeltaJSON, 0, len(diff.FilesRemoved)),
 		CopyrightAdded:   make([]string, 0, len(diff.CopyrightAdded)),
@@ -316,10 +316,12 @@ func licenseDiffSPDXLabel(spdx string) string {
 	return spdx
 }
 
-// licenseDiffSideOf states one side's own licence facts.
-func licenseDiffSideOf(rec domain.LicenseRecord) licenseDiffSideJSON {
+// licenseDiffSideOf states one side's own licence facts. The identity is the
+// coverage reading's — the same one DiffRecords compared — never the record's
+// stored primary, which can name a licence covering an embedded asset.
+func licenseDiffSideOf(rec domain.LicenseRecord, covered domain.CoverageReading) licenseDiffSideJSON {
 	return licenseDiffSideJSON{
-		PrimarySPDX:         rec.PrimarySPDX,
+		PrimarySPDX:         covered.PrimarySPDX,
 		OverallStatus:       rec.OverallStatus.String(),
 		LicenseFiles:        len(rec.LicenseFiles),
 		CopyrightStatements: licenseDiffCopyrightCount(rec),

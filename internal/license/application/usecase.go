@@ -490,7 +490,7 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 	})
 	provenance.Confidence = domain2.DeriveProvenanceConfidence(provenance, copyrightStatus)
 
-	return domain2.LicenseRecord{
+	rec := domain2.LicenseRecord{
 		SchemaVersion:     domain2.LicenseSchemaVersion,
 		Ecosystem:         domain.EcosystemGo,
 		Coordinate:        coord,
@@ -507,7 +507,28 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 		Provenance:        provenance,
 		ExtractedAt:       uc.clock.Now().UTC(),
 		PipelineVersion:   uc.pipelineVersion,
-	}, nil
+	}
+	// What each identified licence covers. Derived here so a freshly extracted
+	// record already states it, and derived again on every load so records
+	// written before it do too — it is a function of the licence files and the
+	// expression either way, which is why it costs no pipeline bump.
+	domain2.SetLicenseCoverage(&rec)
+	// A conjunction is a claim that every arm governs the module's code. Where
+	// coverage says one of them governs documentation or an embedded component
+	// instead, the arm is set aside here so the stored expression states the
+	// module's own licensing rather than the union of everything the archive
+	// carries. The same reading runs on every record the surfaces publish, so
+	// applying it to a record it has already corrected finds nothing to do.
+	coverage := domain2.ReadCoverage(rec)
+	rec.Expression = coverage.Expression
+	rec.ExpressionBasis = coverage.Basis
+	rec.PrimarySPDX = coverage.PrimarySPDX
+	if len(coverage.SetAside) > 0 {
+		// Coverage restated the expression, so the per-file answers derived
+		// from the old one are recomputed against the new.
+		domain2.SetLicenseCoverage(&rec)
+	}
+	return rec, nil
 }
 
 // processFile reads one zip entry, hashes its content, and runs the detector.

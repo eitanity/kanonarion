@@ -71,8 +71,11 @@ the closure contains.
 
 ```
 github.com/spf13/cobra@v1.8.1: Detected - Apache-2.0
-  LICENSE: Apache-2.0 (100%)
+  LICENSE.txt: Apache-2.0 (100%) — covers this module's code
 ```
+
+Every licence file line ends with what that licence covers. See
+[what each licence covers](#what-each-licence-covers).
 
 For a dual-licensed module (a disjunctive expression such as
 `Apache-2.0 OR GPL-3.0`), the output prints one obligation set per arm and
@@ -80,8 +83,8 @@ names the election as the operator's to record:
 
 ```
 github.com/gorhill/cronexpr@v0.0.0-…: Multiple — Apache-2.0 OR GPL-3.0
-  APLv2: Apache-2.0 (100%)
-  GPLv3: GPL-3.0 (95%)
+  APLv2: Apache-2.0 (100%) — covers this module's code
+  GPLv3: GPL-3.0 (95%) — covers this module's code
   dual licence: obligations depend on the elected arm — the election is an
   operator decision, recorded as a license_overrides entry for this module
   obligations if Apache-2.0 is elected (catalogue v1.2.0):
@@ -103,8 +106,8 @@ arm's own set, so a reader can see which licence imposed which duty:
 ```
 gopkg.in/yaml.v3@v3.0.1: Multiple — Apache-2.0 AND MIT
   basis: split: covered by two different licenses
-  LICENSE: MIT (85%)
-  NOTICE: Apache-2.0 (100%)
+  LICENSE: MIT (85%) — covers this module's code
+  NOTICE: Apache-2.0 (100%) — grants nothing: an attribution document
   conjunction: every arm binds at once, so the obligations below are the union
   of all arms — there is no election to make
   obligations (Apache-2.0 AND MIT, catalogue v1.2.0):
@@ -119,32 +122,36 @@ Where an arm is not in the obligations catalogue the union reports
 `incomplete`: the merge saw part of what binds, and the arms it did recognise
 are still listed beneath.
 
-**One licence file per licence.** Here each file names what its arm covers —
-`LICENSE.docs` is documentation, `LICENSE.libyaml` is vendored C,
-`LICENSE.Golang` is vendored Go — so each arm is printed with the file that
-grants it. Whether you owe an arm depends on whether the artefact that file
-covers reaches your binary, which kanonarion cannot determine, so the merged
-set is printed last and labelled as an upper bound rather than as what you owe:
+**One licence file per licence.** Here every arm covers code, and each file
+names which code — `LICENSE.libyaml` is vendored C, `LICENSE.Golang` is
+vendored Go — so each arm is printed with the file that grants it. Whether you
+owe an arm depends on whether the artefact that file covers reaches your binary,
+which kanonarion cannot determine, so the merged set is printed last and
+labelled as an upper bound rather than as what you owe:
 
 ```
-github.com/opencontainers/go-digest@v1.0.0: Multiple — Apache-2.0 AND CC-BY-SA-4.0
+example.com/mod@v1.0.0: Multiple — Apache-2.0 AND Artistic-2.0
   basis: split: one file per licence, none naming a choice
-  LICENSE: Apache-2.0 (100%)
-  LICENSE.docs: CC-BY-SA-4.0 (82%)
+  LICENSE: Apache-2.0 (100%) — covers this module's code
+  LICENSE.perl: Artistic-2.0 (100%) — covers this module's code
   separate grants: each arm is granted by its own licence file, named below, and
   that file states what the arm covers
   obligations required by Apache-2.0, granted by LICENSE (catalogue v1.2.0):
     …
-  obligations required by CC-BY-SA-4.0, granted by LICENSE.docs: unknown (…)
+  obligations required by Artistic-2.0, granted by LICENSE.perl: unknown (…)
   maximal obligations across every arm (…) — an upper bound,
   not what you owe: which arms bind depends on which covered artefacts you ship
     …
 ```
 
 An arm the catalogue does not know is reported on its own row and does not
-degrade the rest: here the Apache-2.0 grant over the code is identified at full
-confidence, and a documentation licence with no catalogue entry says nothing
-about it.
+degrade the rest: here the Apache-2.0 grant is identified at full confidence,
+and an arm with no catalogue entry says nothing about it.
+
+An arm that does not cover the module's code at all — a documentation licence,
+an embedded font's licence — is a different case and never reaches this one: it
+leaves the expression rather than joining the upper bound. See
+[what each licence covers](#what-each-licence-covers).
 
 With `--json` the merged set is the `obligations` object and the per-arm sets
 are `binding_obligations`, keyed by SPDX identifier — the shape
@@ -166,7 +173,7 @@ neither an arm anyone may elect nor an obligation the module imposes.
 go.opentelemetry.io/otel@v1.44.0: Multiple — Apache-2.0
   basis: bundled-grant: copyright 2009 the go authors. — bundled: BSD-3-Clause
   bundled in the licence file, not a licence of this module: BSD-3-Clause
-  LICENSE: Apache-2.0 (100%)
+  LICENSE: Apache-2.0 (100%) — covers this module's code
 ```
 
 Where the file carries several grants and says nothing about how they relate,
@@ -335,10 +342,104 @@ append-only assurance log - independent of the mutable licence record. A cache h
 nothing. A re-extraction that appends no generation appends no event either: the log
 records generations, not runs.
 
+## What each licence covers
+
+A module can carry more than one licence for more than one reason. Some of them
+grant rights in its Go code; some grant rights in documentation it ships or in
+an asset it embeds. Every entry of `license_files` therefore carries a
+`coverage` field, and every licence file line in the text output ends with the
+same statement:
+
+| `coverage` | Text output | Meaning |
+|---|---|---|
+| `ModuleCode` | covers this module's code | The licence governs the module's own source |
+| `Documentation` | covers documentation | The licence governs documentation the module ships |
+| `BundledComponent` | covers a bundled component | The licence governs third-party material carried inside the module — a vendored library, an embedded font |
+| `AttributionOnly` | grants nothing: an attribution document | The file is a `NOTICE`; it grants nothing, so there is nothing for it to cover |
+| `NotDetermined` | covers something this artefact does not establish | The artefact does not settle it. A real answer, not an absence |
+
+The field is emitted **always**, including for the ordinary code licence: an
+absent field would make "governs the code" indistinguishable from "this build
+does not derive coverage".
+
+**A licence that does not cover the code does not enter the expression.**
+`github.com/alecthomas/chroma/v2` is a Go syntax-highlighting library that
+embeds a Liberation font; its root `COPYING` carries the library's MIT grant and
+the font's SIL Open Font Licence, and the font licence covers more of the file:
+
+```
+github.com/alecthomas/chroma/v2@v2.27.0: Multiple — MIT
+  basis: coverage: OFL-1.1 covers a bundled component, not this module's code; set aside from the recorded reading: split: is licensed under
+  COPYING: OFL-1.1 (98%) — covers a bundled component
+```
+
+`github.com/opencontainers/go-digest` is the other shape — a root `LICENSE` for
+the code beside a root `LICENSE.docs` for the documentation:
+
+```
+github.com/opencontainers/go-digest@v1.0.0: Multiple — Apache-2.0
+  basis: coverage: CC-BY-SA-4.0 covers documentation, not this module's code; set aside from the recorded reading: split: one file per licence, none naming a choice
+  LICENSE: Apache-2.0 (100%) — covers this module's code
+  LICENSE.docs: CC-BY-SA-4.0 (82%) — covers documentation
+```
+
+In both cases `primary_spdx`, `expression` and the obligations are the code
+licence's, `expression_basis` states that coverage took part and keeps the
+reading it displaced, and the grant that was set aside is still reported against
+what it covers. The licences are not lost — they are attributed.
+
+**How coverage is decided.** By the licence instrument, never by the file's name
+or where it sits. `COPYING` carries a font licence in chroma and a legitimate
+code licence in `github.com/dchest/uniuri`, so no rule about names could tell
+them apart. What tells them apart is what the instrument itself licenses:
+OFL-1.1 defines *"Font Software"* and grants rights in nothing else, and the
+Creative Commons attribution family grants rights in *"Licensed Material"*.
+Those are clauses of the text the detector matched.
+
+Three consequences follow, and each is deliberate:
+
+- **A Creative Commons instrument is not automatically a documentation
+  licence.** `CC0-1.0` is a public-domain dedication with no subject-matter
+  restriction, published for software and widely used for Go source. It stays a
+  code licence and stays the primary.
+- **A module whose ONLY grant is a font or content instrument is left alone.** A
+  font package licensed `OFL-1.1`, or a module its author genuinely published
+  under `CC-BY-4.0`, has no code grant beside it to prefer; nothing in the
+  artefact settles the question, so the coverage reads `NotDetermined` and the
+  expression does not move.
+- **A declared election is the module's own answer.** Where a module offers a
+  choice — `codeberg.org/go-fonts/liberation` elects between `BSD-3-Clause` and
+  `OFL-1.1` — every arm covers the whole work by the module's own statement, and
+  none is set aside.
+
+An SPDX identifier the instrument tables do not name reads `NotDetermined` and
+is never set aside, so a licence new to the corpus cannot be silently demoted
+out of a module's expression.
+
+**Every surface answers this the same way.** `license` (text and `--json`),
+`license-list`, `license-diff`, `context --json` / `inspect`, `audit`, `sbom`,
+`notice` and `license-compat` all name the licence covering the module's code.
+Where a surface has a second job, the correction is to the identity only:
+`notice` names the code licence and still reproduces every licence text the
+archive carries, and `license-compat` names the code licence and still evaluates
+every identifier in the archive, so a documentation licence is raised for review
+rather than hidden.
+
+**Derivation rule:** `coverage` is computed from `license_files` on every
+extraction and on every deserialisation — the same derived-field contract as
+`effective_set` and `package_licenses`. It is never stored separately and is
+outside the record's content hash, so records written before the field existed
+still verify and still answer the question.
+
+`effective_set` is deliberately unaffected: it is a faithful account of the
+identifiers the module zip contains, so a set-aside grant is still listed there.
+Coverage says what each of them governs.
+
 ## Vendored licences
 
 Licence files under `vendor/` are recorded in `license_files` with
-`is_vendored: true` and are included in `effective_set.components` (see above).
+`is_vendored: true` and `coverage: BundledComponent`, and are included in
+`effective_set.components` (see above).
 They do not contribute to `primary_spdx` or `expression` - those fields reflect
 the module author's own licence only. Each vendored dependency is also a
 separate module in the walk graph with its own `LicenseRecord`.
@@ -383,7 +484,7 @@ A module with a single, uniform root licence reports `package_licenses: null`
 
 **Derivation rule:** `package_licenses` is computed from `license_files` on every
 extraction and on every deserialisation - the same derived-field contract as
-`effective_set`. It is never stored separately. Vendored entries
+`effective_set` and `coverage`. It is never stored separately. Vendored entries
 (`is_vendored: true`) and NOTICE files are excluded. When a directory contains
 multiple licence files, the highest-confidence match wins.
 
@@ -392,8 +493,8 @@ multiple licence files, the highest-confidence match wins.
 ```
 $ kanonarion --json=false licence github.com/klauspost/compress@v1.18.2
 github.com/klauspost/compress@v1.18.2: Multiple - Apache-2.0 (cached)
-  LICENSE: Apache-2.0 (99%)
-  gzhttp/LICENSE: Apache-2.0 (100%)
+  LICENSE: Apache-2.0 (99%) — covers this module's code
+  gzhttp/LICENSE: Apache-2.0 (100%) — covers this module's code
   ...
   per-package licenses (9 sub-packages):
     gzhttp                                   Apache-2.0 (100%)

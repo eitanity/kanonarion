@@ -1113,11 +1113,15 @@ type licenceArms struct {
 func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error, displayIn, statusIn string) (display, status, resolvedSPDX, uncertaintyReason string, arms licenceArms) {
 	display, status = displayIn, statusIn
 	uncertaintyReason = "no_record"
+	// The record is resolved through what each of its licences covers, so a
+	// bundled font's or a documentation licence never becomes the identity a
+	// policy is then asked to evaluate.
+	covered := licdomain.ReadCoverage(lrec)
 	switch {
 	case lerr == nil && found:
-		display = lrec.PrimarySPDX
+		display = covered.PrimarySPDX
 		status = lrec.OverallStatus.String()
-		resolvedSPDX = lrec.PrimarySPDX
+		resolvedSPDX = covered.PrimarySPDX
 		switch lrec.OverallStatus {
 		case licdomain.LicenseStatusNone:
 			display = "(none)"
@@ -1135,11 +1139,11 @@ func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error
 			// that named nothing resolve nothing and keep riding the
 			// unknown-licence machinery.
 			arms = licenceArms{
-				Electable:   licdomain.DisjunctionArms(lrec.Expression),
-				Obligations: licdomain.ConjunctionArms(lrec.Expression),
+				Electable:   licdomain.DisjunctionArms(covered.Expression),
+				Obligations: licdomain.ConjunctionArms(covered.Expression),
 			}
 			if len(arms.Electable) == 0 && len(arms.Obligations) == 0 {
-				resolvedSPDX = licdomain.SoleIdentifier(lrec.Expression)
+				resolvedSPDX = licdomain.SoleIdentifier(covered.Expression)
 			}
 		case licdomain.LicenseStatusExtractionFailed:
 			uncertaintyReason = "extraction_failed"

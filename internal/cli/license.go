@@ -449,8 +449,8 @@ func printLicenseRecursive(
 
 	primaryLic := "Unknown"
 	if primaryRec, found, err := queryUC.GetLicenseRecord(ctx, target, licapp.PipelineVersion); err == nil && found {
-		if primaryRec.PrimarySPDX != "" {
-			primaryLic = primaryRec.PrimarySPDX
+		if covered := domain.ReadCoverage(primaryRec); covered.PrimarySPDX != "" {
+			primaryLic = covered.PrimarySPDX
 		} else {
 			primaryLic = "None"
 		}
@@ -540,9 +540,14 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 	if fromCache {
 		cached = " (cached)"
 	}
-	displayLicense := r.PrimarySPDX
-	if r.Expression != "" {
-		displayLicense = r.Expression
+	// The record is published through what each of its licences covers, so a
+	// bundled font's licence is never handed over as the module's own. The
+	// record itself is left as measured: Expression, ExpressionBasis and
+	// PrimarySPDX are inside its content hash.
+	coverage := domain.ReadCoverage(r)
+	displayLicense := coverage.PrimarySPDX
+	if coverage.Expression != "" {
+		displayLicense = coverage.Expression
 	}
 	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %s%s\n",
 		r.Coordinate.Path(), r.Coordinate.Version(),
@@ -560,8 +565,8 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 	// OR, a set of obligations under AND — so the reader is shown what settled
 	// it, and any grant that was read as somebody else's rather than this
 	// module's, which is the one fact the expression deliberately omits.
-	if r.ExpressionBasis != "" {
-		if _, err := fmt.Fprintf(stdout, "  basis: %s\n", r.ExpressionBasis); err != nil {
+	if coverage.Basis != "" {
+		if _, err := fmt.Fprintf(stdout, "  basis: %s\n", coverage.Basis); err != nil {
 			return fmt.Errorf("writing expression basis: %w", err)
 		}
 	}
@@ -578,8 +583,8 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 		if f.IsVendored {
 			vendored = " [vendored]"
 		}
-		if _, err := fmt.Fprintf(stdout, "  %s: %s (%.0f%%)%s\n",
-			f.Path, f.SPDX, f.Confidence*100, vendored,
+		if _, err := fmt.Fprintf(stdout, "  %s: %s (%.0f%%)%s — %s\n",
+			f.Path, f.SPDX, f.Confidence*100, vendored, coverage.ByPath[f.Path].Covers(),
 		); err != nil {
 			return fmt.Errorf("writing file entry: %w", err)
 		}
@@ -598,7 +603,7 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 	// rendered per election rather than asserting the primary's obligations —
 	// which would claim, e.g., GPL disclose-source of a consumer electing the
 	// Apache arm.
-	if arms := domain.DisjunctionArms(r.Expression); len(arms) >= 2 {
+	if arms := domain.DisjunctionArms(coverage.Expression); len(arms) >= 2 {
 		return printElectiveObligationsSection(arms, stdout)
 	}
 	// A conjunction (A AND B) is the opposite case: there is no election. What
@@ -607,11 +612,11 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 	// arms sharing a file cannot state coverage and all bind.
 	switch reading := readLicenceObligations(r); {
 	case reading.Maximal:
-		return printSeparateGrantsSection(r.Expression, reading.Set, reading.Arms, reading.Grants, stdout)
+		return printSeparateGrantsSection(coverage.Expression, reading.Set, reading.Arms, reading.Grants, stdout)
 	case len(reading.Arms) > 0:
-		return printBindingObligationsSection(r.Expression, reading.Set, reading.Arms, stdout)
+		return printBindingObligationsSection(coverage.Expression, reading.Set, reading.Arms, stdout)
 	}
-	return printObligationsSection(r.PrimarySPDX, stdout)
+	return printObligationsSection(coverage.PrimarySPDX, stdout)
 }
 
 // obligationsReadingMaximal qualifies an obligations set merged across
@@ -642,7 +647,13 @@ type licenceObligationsReading struct {
 }
 
 // readLicenceObligations answers the obligations a licence record puts on a
-// consumer, reading the record's own basis for how its arms relate.
+// consumer, reading the record through what each of its licences covers and
+// then the record's own basis for how the remaining arms relate.
+//
+// Coverage comes first because an arm that does not govern the module's code
+// is not an obligation on using it: chroma's OFL-1.1 is a bundled font's
+// licence, and merging it in handed a Go syntax-highlighting library's consumer
+// a share-alike condition.
 //
 // A conjunction of arms granted by ONE file binds every arm at once — nothing
 // attributes coverage, so the answer is the union of them all, never
@@ -660,15 +671,16 @@ type licenceObligationsReading struct {
 // A disjunction is not this function's case and is handled by its callers
 // before they reach it.
 func readLicenceObligations(r domain.LicenseRecord) licenceObligationsReading {
-	arms := domain.ConjunctionArms(r.Expression)
+	coverage := domain.ReadCoverage(r)
+	arms := domain.ConjunctionArms(coverage.Expression)
 	switch {
 	case len(arms) < 2:
-		return licenceObligationsReading{Set: domain.LookupObligations(r.PrimarySPDX)}
-	case domain.ArmsAreSeparatelyGranted(r.ExpressionBasis):
+		return licenceObligationsReading{Set: domain.LookupObligations(coverage.PrimarySPDX)}
+	case domain.ArmsAreSeparatelyGranted(coverage.Basis):
 		return licenceObligationsReading{
 			Set:     domain.MaximalObligations(arms),
 			Arms:    arms,
-			Grants:  domain.ArmGrants(r.Expression, r.LicenseFiles),
+			Grants:  domain.ArmGrants(coverage.Expression, r.LicenseFiles),
 			Maximal: true,
 		}
 	default:
@@ -972,6 +984,25 @@ func printProvenanceSection(r domain.LicenseRecord, stdout io.Writer) error {
 	return nil
 }
 
+// licenceFromSummary is the licence a list row states: the expression where the
+// record has one, the primary otherwise.
+//
+// It is one function because the text listing, the JSON listing and the
+// cross-surface control all have to ask it the same way. A test that
+// re-implements this rule agrees with the renderer only by coincidence, and the
+// coincidence ended the day the licence surfaces started reading a record
+// through what its licences cover: the mirrored rule kept passing while the
+// listing served a Go library's embedded font licence.
+//
+// The identity itself is composed further upstream, where the record is read —
+// see the licence store's summary projection.
+func licenceFromSummary(s ports.LicenseSummary) string {
+	if s.Expression != "" {
+		return s.Expression
+	}
+	return s.PrimarySPDX
+}
+
 // -- license-list command --
 
 func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -1132,10 +1163,7 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit, offset i
 			}
 			continue
 		}
-		license := s.PrimarySPDX
-		if s.Expression != "" {
-			license = s.Expression
-		}
+		license := licenceFromSummary(s)
 		source := "scanner"
 		if ov, ok := overrides.Resolve(coord); ok {
 			license = ov.SPDX

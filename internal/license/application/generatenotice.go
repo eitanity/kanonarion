@@ -169,10 +169,17 @@ func (uc *GenerateNoticeUseCase) processModule(
 	}
 	sort.Strings(copyrights)
 
+	// The identity the document publishes is the licence covering the module's
+	// code, read through what each of the record's licences covers. The TEXTS
+	// are untouched by that reading and must be: readLicenseTexts selects them
+	// by file from the module zip, not by identifier, so a grant set aside from
+	// the identity is still reproduced verbatim. Attribution travels with the
+	// artefact; naming a Go library after the font it embeds does not.
+	coveredSPDX, coveredExpression := licensedomain.NoticeIdentity(rec)
 	entry := &licensedomain.NoticeEntry{
 		Coordinate:         coord,
-		SPDX:               rec.PrimarySPDX,
-		Expression:         rec.Expression,
+		SPDX:               coveredSPDX,
+		Expression:         coveredExpression,
 		LicenseTexts:       licenseTexts,
 		Copyrights:         copyrights,
 		EmbeddedComponents: embeddedComps,
@@ -373,13 +380,16 @@ func embeddedComponentPrefix(relPath string) string {
 // ambiguousReason builds a human-readable review reason listing the competing
 // SPDX identifiers found in the root license file.
 func ambiguousReason(rec licensedomain.LicenseRecord) string {
-	candidates := []string{rec.PrimarySPDX}
+	// The primary named here is the one the document would publish, so it is
+	// the coverage reading's rather than the record's stored shim.
+	primarySPDX := licensedomain.ReadCoverage(rec).PrimarySPDX
+	candidates := []string{primarySPDX}
 	for _, f := range rec.LicenseFiles {
 		if f.IsVendored || !isRootLevel(f.Path) {
 			continue
 		}
 		for _, a := range f.AltMatches {
-			if a.SPDX != "" && a.SPDX != rec.PrimarySPDX {
+			if a.SPDX != "" && a.SPDX != primarySPDX {
 				candidates = append(candidates, fmt.Sprintf("%s (%.0f%%)", a.SPDX, a.Confidence*100))
 			}
 		}
@@ -387,7 +397,7 @@ func ambiguousReason(rec licensedomain.LicenseRecord) string {
 	if len(candidates) == 1 {
 		return "ambiguous license: " + candidates[0]
 	}
-	primary := fmt.Sprintf("%s (%.0f%%)", rec.PrimarySPDX, rec.PrimaryConfidence*100)
+	primary := fmt.Sprintf("%s (%.0f%%)", primarySPDX, rec.PrimaryConfidence*100)
 	return "ambiguous license: primary=" + primary + ", alts=[" + strings.Join(candidates[1:], ", ") + "]"
 }
 
