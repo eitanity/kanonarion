@@ -20,6 +20,20 @@ func TestIsBuildIncompatibility(t *testing.T) {
 		{"missing module", "no required module provides package example.com/x", true},
 		{"goproxy off lookup", "govulncheck: loading packages: There are errors with the provided package patterns:\nstdr.go:25:2: module lookup disabled by GOPROXY=off", true},
 		{"case-insensitive", "GOVULNCHECK: LOADING PACKAGES failed", true},
+		// The go command's own refusal, met by a plain Go child of the scan rather
+		// than through the analyser. It carries none of the analyser's wording, so
+		// before this it fell through to a bare failure and the coordinate match a
+		// module no analysis could load is still entitled to was dropped.
+		{"toolchain gap reported by a go child", "go: go.mod requires go >= 1.26.6 (running go 1.26.5; GOTOOLCHAIN=local)", true},
+		// The same class as this tool accounts for it. A reader sees kanonarion's
+		// sentence, and the classification must not depend on which of the two
+		// wordings reached the record.
+		{"toolchain gap as this tool refuses it", "kanonarion pins the toolchain of every analysis child so it can never " +
+			"download one, and this code needs go >= 1.99.0 while the analysis is running go1.26.5. The Go command " +
+			"reported: go: go.mod requires go >= 1.99.0 (running go 1.26.5; GOTOOLCHAIN=local)", true},
+		// Both halves are required, so a module quoting one of them in its own
+		// prose cannot be mistaken for the toolchain gap.
+		{"prose quoting half the sentence", "the README says this requires go >= 1.24 to build", false},
 		{"generic scanner error", "exit status 1", false},
 		{"oom", "govulncheck was killed (likely OOM)", false},
 		{"empty", "", false},

@@ -16,6 +16,18 @@ import (
 // is recorded as a coverage gap, never as a confident clean.
 func IsBuildIncompatibility(detail string) bool {
 	d := strings.ToLower(detail)
+	// The toolchain gap is asked for directly rather than left to the signatures
+	// below. Those are govulncheck's own wording, so the class was recognised only
+	// when the go command's refusal reached the scan wrapped in one of them; the
+	// same refusal met by a plain Go child of the scan — a module download, a test
+	// build — reads identically to a reader and was falling through to a bare
+	// failure, dropping the coordinate match that is still available for a module
+	// no analysis could load. ClassifyBuildIncompatibility already names this
+	// class, so recognising it here is what makes that branch reachable on its own
+	// terms rather than by the accident of which child reported it.
+	if isToolchainTooOldFailure(d) {
+		return true
+	}
 	for _, sig := range []string{
 		"loading packages",
 		"errors with the provided package patterns",
@@ -37,8 +49,9 @@ func ClassifyBuildIncompatibility(detail string) string {
 	d := strings.ToLower(detail)
 	switch {
 	case isToolchainTooOldFailure(d):
-		return "host Go toolchain is older than the version the module asks for: the scan runs offline and cannot " +
-			"switch toolchains, so this is a property of this host and not of the module"
+		return "host Go toolchain is older than the version the module asks for: the scan runs offline, so it can " +
+			"only switch to a toolchain already unpacked on this host and none is new enough — a property of this " +
+			"host and not of the module"
 	case isWorkspaceModeFailure(d):
 		return "scan environment entered Go workspace mode: a go.work applied to a module scanned in isolation"
 	case strings.Contains(d, "go.work file") && (strings.Contains(d, "no such file or directory") || strings.Contains(d, "cannot load module")):

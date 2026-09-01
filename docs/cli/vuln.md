@@ -1172,6 +1172,17 @@ out-of-toolchain version fails here deliberately, surfaced as an honest
 `Unscannable` (`version-not-in-toolchain`) rather than papered over with a
 network fetch of a version the project never selected.
 
+The same environment pins the Go toolchain, so no scan child can download one.
+When the module - or anything in its closure - asks for a newer Go than the
+installed toolchain, the scan looks for one already unpacked on this machine,
+first in `~/sdk` and then in the module cache, and runs its children under it.
+Nothing is fetched: the toolchain has to be on disk already. The decision is
+taken once per scan, so every child of it measures under the same Go, and the
+record names the version that actually ran. With nothing new enough on disk the
+scan refuses, and the reason on the record names kanonarion as the pinner, the
+version required, and the command that installs it. The vendored surface keeps
+its own regime and is unaffected.
+
 At the default log level this reads as the expected metadata-only outcome, not
 a failure. The govulncheck adapter records its non-zero exit and stderr at
 `debug` and hands the error up; severity is then decided once, by reason, in the

@@ -73,16 +73,34 @@ func NewHost(t *testing.T, onDisk bool) *Host {
 
 	t.Setenv("KANONARION_CHILD_ENV_DIR", h.envDir)
 	h.GoBinary = filepath.Join(t.TempDir(), "go")
-	writeExec(t, h.GoBinary, "#!/bin/sh\n"+
+	h.Shim(t, h.GoBinary,
+		"if [ -f "+h.relent+" ] || [ \"$GOTOOLCHAIN\" = path ]; then\n"+
+			"  exec env GOTOOLCHAIN=local "+realGo+" \"$@\"\n"+
+			"fi\n"+
+			"echo 'go: go.mod requires go >= 1.99.0 (running go 1.26.5; GOTOOLCHAIN=local)' >&2\n"+
+			"exit 1\n")
+	return h
+}
+
+// Shim writes an executable at path that records the environment it is handed
+// and then runs body, which is shell source.
+//
+// It is exported because an analysis spawns Go children that are not the go
+// command — a scan runs govulncheck, which loads packages itself and meets the
+// same refusal — and the assertions below read what every child was given. One
+// recording prologue rather than one per fabricated child is what keeps
+// "GOTOOLCHAIN was never negotiated" a statement about the whole operation.
+//
+// The shim resolves go1.99.0 through its own PATH and records the answer, so a
+// child claiming to have switched toolchains can be held to having one to switch
+// to: the go command finds a toolchain on PATH by that exact file name.
+func (h *Host) Shim(t *testing.T, path, body string) {
+	t.Helper()
+	writeExec(t, path, "#!/bin/sh\n"+
 		"f=$(mktemp \"$KANONARION_CHILD_ENV_DIR/child.XXXXXX\")\n"+
 		"env > \"$f\"\n"+
 		"echo \"KANONARION_SHIM_RESOLVED=$(command -v go1.99.0 || true)\" >> \"$f\"\n"+
-		"if [ -f "+h.relent+" ] || [ \"$GOTOOLCHAIN\" = path ]; then\n"+
-		"  exec env GOTOOLCHAIN=local "+realGo+" \"$@\"\n"+
-		"fi\n"+
-		"echo 'go: go.mod requires go >= 1.99.0 (running go 1.26.5; GOTOOLCHAIN=local)' >&2\n"+
-		"exit 1\n")
-	return h
+		body)
 }
 
 // NeverRefuse makes the fake go behave like a toolchain that satisfies the tree,

@@ -307,6 +307,32 @@ func TestToolchains_RefusesInKanonarionsOwnName(t *testing.T) {
 	}
 }
 
+// TestToolchains_RepeatsTheRefusalToEveryChildOfTheOperation. An operation runs
+// several children over ONE tree, so they all want the same Go, and the child
+// that carries the outcome is rarely the one that met the gap first — a scan's
+// module download meets it, and its analyser is what writes the record. Handing
+// the second child the go command's own sentence would make the account a reader
+// is shown depend on which child happened to fail first.
+func TestToolchains_RepeatsTheRefusalToEveryChildOfTheOperation(t *testing.T) {
+	isolate(t)
+	tc := goenv.NewToolchains()
+	reported := "go: go.mod requires go >= 1.28 (running go 1.26.5; GOTOOLCHAIN=local)"
+
+	_, first := tc.Escalate(reported)
+	retry, second := tc.Escalate("govulncheck: loading packages: err: exit status 1: stderr: " + reported)
+
+	if retry {
+		t.Error("Escalate asked for a retry with no toolchain on this host to retry under")
+	}
+	if second != first {
+		t.Errorf("the second child was told:\n%s\nrather than the refusal the first was given:\n%s", second, first)
+	}
+	if retry, none := tc.Escalate("./doc.go:3:2: undefined: Foo"); retry || none != "" {
+		t.Errorf("a failure that is not the toolchain gap was answered (%t, %q); a refusal is repeated to the "+
+			"children that meet the same wall, not to every later failure", retry, none)
+	}
+}
+
 // TestToolchains_IgnoresAFailureThatIsNotTheToolchainGap: a compile error, a
 // cold module cache and a missing checksum line all arrive on the same channel,
 // and none of them is answered by a different Go.

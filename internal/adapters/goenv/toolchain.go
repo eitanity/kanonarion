@@ -52,6 +52,7 @@ type OnDiskToolchain struct {
 type Toolchains struct {
 	shimDir  string
 	selected string
+	refusal  string
 	settled  bool
 }
 
@@ -81,12 +82,23 @@ func (t *Toolchains) Apply(env []string) []string {
 // sentence cannot say who pinned the toolchain or how to obtain one.
 //
 // Exactly one of the two is ever set. A failure that is not the toolchain gap
-// returns neither, and so does a second call after the escalation has already
-// been taken — the retry happens once and the operation then reports whatever
-// it found.
+// returns neither, and neither does a second call after an escalation was taken —
+// the retry happens once and the operation then reports whatever it found.
+//
+// A REFUSAL, though, is repeated to every later child of the operation that meets
+// the same wall. It is the operation's answer, not one child's: an operation
+// spawns several children over ONE tree, so they all want the same Go, and the
+// child that meets the gap second must not fall back to reporting the go
+// command's own sentence — which names neither the pinner nor the remedy — just
+// because another child asked first. Without this the account a reader is shown
+// depends on which child happened to fail, and the scan surface shows it every
+// time, since the child whose failure is recorded is never the first one run.
 func (t *Toolchains) Escalate(detail string) (retry bool, refusal string) {
-	if t.settled || !IsToolchainTooOld(detail) {
+	if !IsToolchainTooOld(detail) {
 		return false, ""
+	}
+	if t.settled {
+		return false, t.refusal
 	}
 	required, running, ok := requiredGoVersion(detail)
 	if !ok {
@@ -95,15 +107,17 @@ func (t *Toolchains) Escalate(detail string) (retry bool, refusal string) {
 	t.settled = true
 	found := OnDiskToolchainsAtLeast(required)
 	if len(found) == 0 {
-		return false, unavailableDetail(required, running, detail)
+		t.refusal = unavailableDetail(required, running, detail)
+		return false, t.refusal
 	}
 	dir, err := ToolchainShims(found)
 	if err != nil {
 		// The toolchain is here and the operation still cannot reach it. That is
 		// this host's fault rather than the module's, exactly as the missing
 		// toolchain is, and the report has to say which of the two it met.
-		return false, "kanonarion found " + found[0].Name + " on this host but could not stage it for the " +
+		t.refusal = "kanonarion found " + found[0].Name + " on this host but could not stage it for the " +
 			"analysis: " + err.Error() + ". The Go command reported: " + detail
+		return false, t.refusal
 	}
 	t.shimDir, t.selected = dir, found[0].Name
 	return true, ""

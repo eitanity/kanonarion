@@ -45,6 +45,20 @@ func TestScanProducersMatchTheStatedPostures(t *testing.T) {
 	checkPosture(t, "scan-fetched", ambient, env)
 }
 
+// TestEscalatedScanEnvironmentChangesTheToolchainAndNothingElse holds the one
+// escalation a pinned scan may take against the posture that states it, with the
+// UNESCALATED scan environment as the base — so every variable the scan chose has
+// to survive it. The network staying off across the switch is the guarantee the
+// whole mechanism lives inside: the pin exists so no scan child can reach out,
+// and an escalation that opened it would have traded one defect for a worse one.
+func TestEscalatedScanEnvironmentChangesTheToolchainAndNothingElse(t *testing.T) {
+	base := scanEnv([]string{"PATH=/usr/bin"}, goenv.ModCache, domain.AnalysisSurfaceFetched)
+
+	got := goenv.WithOnDiskToolchain(base, "/toolchains")
+
+	checkPosture(t, "on-disk-toolchain", base, got)
+}
+
 // TestProjectScanSurface_VendorTreeUnderAWorkspaceScans measures the combination
 // that reached a user: a vendor tree, a caller declining it, and a go.work in
 // scope. The toolchain rejects -mod=mod in workspace mode outright, so the scan
