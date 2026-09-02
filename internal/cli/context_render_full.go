@@ -336,6 +336,12 @@ func printFullCVE(w *errWriter, cve contextCVE) {
 	if cve.Score != nil && *cve.Score != 0 {
 		w.printf("    Score:     %.1f\n", *cve.Score)
 	}
+	// The state is printed on every finding, never omitted at a "normal" value, so
+	// the text form and the JSON form of this report answer with the same word.
+	w.printf("    Reachability: %s — %s\n", cve.ReachabilityState, cve.ReachabilityState.Statement())
+	// The stored bit stays under the state it no longer stands in for. On its own
+	// it read "true" for a finding the advisory named no symbol in, which is what
+	// sent a reader to report that finding as reachable.
 	if cve.Reachable != nil {
 		w.printf("    Reachable: %v\n", *cve.Reachable)
 	}

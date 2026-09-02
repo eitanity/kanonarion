@@ -237,7 +237,7 @@ carries a `commands` section, which names the exact command for each part.
 `context --json` always prints one JSON object. The per-module records are in
 its `modules` list, whether you asked about the whole project or named one
 module. Beside them the object says which dependency scope was read, how many
-modules that was, and which build the vulnerability verdicts came from. The JSON
+modules that was, and which build the vulnerability answers came from. The JSON
 is large. For all 20 modules of this project it is 1.6 MB. When you feed an LLM,
 ask for one module at a time.
 
@@ -293,7 +293,7 @@ checksum. The version comes from your live toolchain (`go env GOVERSION`). Pass
 after an `inspect` costs more, because it extracts any licence records that are
 still missing and asks upstream for the latest version of each module.
 
-The vulnerability verdict is **project-rooted**: one `govulncheck` run over your
+The vulnerability answer is **project-rooted**: one `govulncheck` run over your
 live working tree. kanonarion does not measure it every time. It reuses a stored
 run when nothing that matters has changed, and it names the run it reused.
 `--force` measures again. The exact conditions are in

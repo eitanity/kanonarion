@@ -335,11 +335,26 @@ type contextCVE struct {
 	// shaped exactly like a live one — with the withdrawal legible only as prose in
 	// the upstream summary, which is what the field exists to stop being the signal.
 	WithdrawnAt string `json:"withdrawn_at,omitempty"`
-	// Reachable is three-valued and emitted always: true, false, or null for a
+	// ReachabilityState is the answer, in the word every kanonarion surface
+	// publishes it as. It is derived by vuldomain.FindingReachabilityState and
+	// emitted on every finding, never omitted at a "normal" value: absent,
+	// not_reachable and package_level_only collapse into one another, which is
+	// exactly the collapse this field exists to undo.
+	ReachabilityState vuldomain.ReachabilityState `json:"reachability_state"`
+	// Reachable is the stored bit, kept beside the state and no longer the whole
+	// answer. It is three-valued and emitted always: true, false, or null for a
 	// finding no reachability analysis answered. Omitting the null put the
 	// unanswered finding and a build that does not derive reachability into the
 	// same document; Soundness cannot separate them, because it reads
 	// "not stated" for a positive verdict too.
+	//
+	// It is NOT the state and must not be read as it. The bit has two positions
+	// and the question has more answers: a finding whose advisory names no symbol
+	// for this module path was never determinable at symbol level, and this bit
+	// reads true for 24 such findings in a working store — a consumer that read it
+	// as the answer counted one of them as reachable and published it. Read
+	// reachability_state; this stays because it is the stored field the record
+	// seals, and dropping it from the wire would say the record does not carry it.
 	Reachable *bool `json:"reachable"`
 	// Soundness states how thorough the search behind a NEGATIVE reachability
 	// answer was, and SoundnessReason names the basis for that rung in the

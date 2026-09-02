@@ -251,7 +251,7 @@ had nowhere to put:
 | `dependency_scope` | The go.mod dependency scope that selected the documents (`code`, `tool` or `complete`) and the test axis it applied (`included`, `excluded` or `unavailable`). **`null`** on the coordinate and `--walk-id` forms, which project no go.mod scope. |
 | `module_count` | How many modules the answer is over. On `--gomod` it is the count the `notice:` line on stderr states; a module that failed to render is missing from `modules`, named on stderr, and the run exits non-zero. |
 | `narrow_with` | The flag that narrows this scope, as data: `"--exclude-tests"`. Absent where nothing narrows the answer. |
-| `rooting` | The build the vulnerability verdicts were read in, and **how that build was arrived at** - see [Rooting](#rooting). `null` on the forms that anchor nothing for the run. |
+| `rooting` | The build the vulnerability answers were read in, and **how that build was arrived at** - see [Rooting](#rooting). `null` on the forms that anchor nothing for the run. |
 | `modules` | The per-module documents, unchanged. |
 
 `--stream` selects a different framing for the `--gomod` and `--walk-id` forms:
@@ -271,17 +271,17 @@ it to read modules as they arrive instead of waiting for the whole answer.
 
 #### Rooting
 
-A vulnerability verdict is a property of one build. When you name a walk with
+A vulnerability answer is a property of one build. When you name a walk with
 `--walk-id`, that is the build. When you do not, kanonarion picks one out of
 however many the store holds - and `rooting` says so, in fields, so an agent
-reading verdicts can tell a build it asked for from one that was chosen for it.
+reading these answers can tell a build it asked for from one that was chosen for it.
 The walk id alone cannot: it looks the same either way.
 
 | Key | Meaning |
 | --- | --- |
-| `basis` | `"named"` when the caller pinned the build with `--walk-id`, `"chosen"` when kanonarion picked one, `"none"` when nothing anchored the verdicts (`reason` says why). |
+| `basis` | `"named"` when the caller pinned the build with `--walk-id`, `"chosen"` when kanonarion picked one, `"none"` when nothing anchored the answers (`reason` says why). |
 | `walk_id`, `walk_scope`, `walk_frame` | The build itself: the walk, the dependency scope it covered, the platform it resolved for. |
-| `toolchain` | The Go toolchain that walk was resolved by - the standard library the verdicts are about. `"unrecorded"` when the walk records none. |
+| `toolchain` | The Go toolchain that walk was resolved by - the standard library the answers are about. `"unrecorded"` when the walk records none. |
 | `gomod` | The manifest that named the build. Absent on a pinned read, where no manifest was consulted. |
 | `manifest_reresolved` | Always `false`: this read compares the manifest's `require` directives against the walk's recorded resolution, it does not put the manifest back through the toolchain. A walk taken before the last `go.mod` edit can answer here. |
 | `pin_with` | `"--walk-id"` - the flag that takes the choice back. |
@@ -588,7 +588,7 @@ When `context` is invoked with `--walk-id`, or with `--gomod` on a project that
 has a walk, every module's `vulnerabilities` section is answered in that build's
 frame and read from that walk's runs. On a store holding scans of more than one
 project this is what keeps a report about your build from carrying another
-project's verdict for a shared dependency; `frame` on each section names the
+project's status for a shared dependency; `frame` on each section names the
 frame the served record was measured in.
 
 A bare `context <module>@<version>` names no build. It serves the best-founded
@@ -597,15 +597,15 @@ rest of the section — the walk status word, the coverage caveat, the
 `[walk: affected via …]` annotation — from the walk that record was measured in.
 That walk is stated: `walk_basis_id` and `walk_basis_frame` name it and the
 frame it was rooted at, and the text output prints a `Walk basis:` line beneath
-the verdict. `walk_basis_id` always equals the section's own `walk_id`, so every
+the status. `walk_basis_id` always equals the section's own `walk_id`, so every
 field under one heading describes one build. The pair is set only on this
 unanchored form; `--walk-id` and `--gomod` name their build themselves.
 
 The run context — the walk status word, the coverage caveat, the affected-peer
 annotation — is read from the **10 most recent walks**, a recency window that
-keeps the report from reading every walk's runs on every invocation. The verdict
+keeps the report from reading every walk's runs on every invocation. The status
 itself does not come from that window, so the window cannot make a module look
-clean; what it can do is leave a verdict without its run context. When that is
+clean; what it can do is leave a status without its run context. When that is
 why the context is missing, the section says so:
 
 ```
@@ -624,7 +624,7 @@ notice: vulnerability verdicts read in walk "01KZ3VA296P8KTP265M6CDBCHB" (code s
 
 The anchoring walk is the one of the **scope this invocation asked for** —
 `--tool` and `--project` select it, as they already select the module set printed
-below — resolved for this platform. Anchoring `--tool` verdicts to a code walk
+below — resolved for this platform. Anchoring `--tool` answers to a code walk
 that happened to be walked more recently reports one build's dependencies against
 another build's scan, so the notice names the scope it anchored in.
 
@@ -642,7 +642,7 @@ when the tree has moved since the walk this notice names. The notice is on
 stderr, so `--json` / `--stream` stdout is unaffected.
 
 Read the annotation accordingly: `[walk: affected via …]` names affected peers in
-the closure of the build that produced this verdict, not in the newest build that
+the closure of the build that produced this answer, not in the newest build that
 happens to cover the module. Another walk may hold a different answer for the
 same module; the answer moves only when better-founded evidence lands, not when a
 neighbouring project walks a tree containing it. A walk older than the ten most
@@ -662,7 +662,8 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 | `findings[].fixed_in` | string | Earliest version with a fix |
 | `findings[].score` | float\|null | CVSS base score. Always present; `null` when the advisory publishes no severity, which is different from a published `0.0` |
 | `findings[].withdrawn_at` | string | Retraction timestamp, present **only** on an advisory retracted upstream. Absent means live — the retraction is a fact on the finding, never something to infer from the `WITHDRAWN: ` prefix upstream puts on the summary |
-| `findings[].reachable` | bool\|null | Reachability verdict. Always present; `null` when no reachability analysis answered for this finding — `soundness` cannot stand in for it, since it reads `not stated` for a positive verdict too |
+| `findings[].reachability_state` | string | The reachability answer as one word: `reachable`, `not_reachable`, `package_level_only`, `withdrawn`, `not_determined`, `not_computed` or `not_analysed`. **Always present**, whatever the value. Derived at read time, so it is on records scanned long before the field existed. It is the field to read: `reachable` below is the stored bit, which has two positions for a question with more answers than two — a finding whose advisory names no symbol for this module path is `package_level_only`, and the bit reads `true` for some of them |
+| `findings[].reachable` | bool\|null | reachability answer. Always present; `null` when no reachability analysis answered for this finding — `soundness` cannot stand in for it, since it reads `not stated` for a positive answer too |
 | `findings[].soundness` | string | How thorough the search behind a **negative** was: `confirmed`, `inferred`, `unconfirmed`, `unsearchable`, `disputed`, or `not stated` where there is no absence to qualify. Always present. Derived at read time, so it is on records scanned long before the field existed. See [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was) |
 | `findings[].soundness_reason` | string | The basis for that rung in the producing analyser's own terms. Absent where no rung is stated |
 
@@ -675,14 +676,14 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `walk_status` | string | The walk run's collapsed `overall_status` (`AllClean` / `Affected` / `Partial` / `ScanFailed`), carried as a compatibility summary. It collapses two independent axes into one word, so read `walk_coverage` for coverage rather than deriving it here |
 | `walk_coverage` | string | The coverage axis of the walk run, set only when the run left modules unanalysed (`Partial` or `Failed`). Independent of findings: it surfaces alongside `walk_affected`, so an incomplete-coverage run that also carries an affected peer states both |
 | `walk_affected` | array | Affected walk peers (`module@version`) that lie in **this module's own transitive dependency closure**, sorted; empty/omitted when no affected peer is reachable from this module |
-| `walk_error` | string | Set when a walk-peer's verdict could not be read from the store while resolving `walk_affected`. The peer set may be incomplete; the fault is surfaced rather than fabricated into an affected verdict or misattributed to this module's own status |
+| `walk_error` | string | Set when a walk-peer's status could not be read from the store while resolving `walk_affected`. The peer set may be incomplete; the fault is surfaced rather than fabricated into an affected status or misattributed to this module's own status |
 | `walk_id` | string | Walk used for reachability analysis |
 | `walk_basis_id` | string | The walk whose scan run answered, when the answer came from the walk window rather than a build named with `--walk-id` / `--gomod`. Omitted on those anchored forms |
 | `walk_basis_frame` | string | The frame that walk was rooted at (e.g. `target-rooted:example.com/app@v1.0.0`). Omitted when the walk record is no longer in the store, which loses the frame but not the walk's identity |
 | `walk_window_note` | string | Why this section carries no run context: the record's walk falls outside the 10-walk recency window the report loaded runs for. Omitted whenever the window covered every walk in the store |
 | `snapshot_version` | string | Vulnerability database snapshot date |
 | `snapshot_retrieved_at` | string | When that snapshot was fetched. Absent when the record's snapshot carries no retrieval time |
-| `snapshot_age_days` | int\|null | How old the snapshot was when the verdict was validated. Always present; `0` is the freshest answer the field has — validated against a snapshot pulled the same day — and `null` means the snapshot carries no retrieval time to measure from |
+| `snapshot_age_days` | int\|null | How old the snapshot was when the answer was validated. Always present; `0` is the freshest answer the field has — validated against a snapshot pulled the same day — and `null` means the snapshot carries no retrieval time to measure from |
 | `extracted_at` | string | RFC3339 scan timestamp |
 | `error` | string | Set when `status` is `read_error` |
 

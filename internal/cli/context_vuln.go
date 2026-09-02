@@ -526,6 +526,11 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 			r := f.Reachable.IsReachable
 			cve.Reachable = &r
 		}
+		// The answer, on the same read-time contract as the rung below and from the
+		// one function every surface shares. Before it, this projection published
+		// the stored bit alone, so a package-level-only finding and a finding with a
+		// route to the vulnerable symbol left here as the same document.
+		cve.ReachabilityState = vuldomain.FindingReachabilityState(f)
 		// Derived, never read off a stored field: NegativeSoundness classifies the
 		// answer from the analyser that produced it and that analyser's own
 		// fidelity, so every record already in the store carries a rung here.

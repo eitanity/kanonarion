@@ -46,7 +46,7 @@ The snapshot is also counted. When a scan extracts the pinned database it counts
 the advisories the extracted tree holds, and a database holding none fails the
 scan naming the snapshot and the count. `govulncheck` reports
 `No vulnerabilities found.` and exits 0 against an empty database, so scanning
-against one would seal a `Clean` verdict for every module while consulting
+against one would seal a `Clean` status for every module while consulting
 nothing — a confident negative derived from no analysis, indistinguishable from
 a measured clean. This is a precondition failure, not a per-module outcome: the
 operator asked for a measurement the supplied database cannot produce, and
@@ -83,7 +83,7 @@ back to scanning each module in isolation — a weaker question, since an isolat
 scan describes the module built alone rather than the build that consumes it.
 The target's refusal is recorded in the run's own frame under the
 `target-load-failed` reason, carrying the toolchain's own load error, and the
-run counts *that* rather than a verdict derived in another frame. A record from
+run counts *that* rather than a status derived in another frame. A record from
 the other frame is not destroyed and still answers its own question; the run
 simply declines to present it as coverage of the question that was asked, and
 names the frame it declined in its log.
@@ -272,7 +272,7 @@ This limits expensive SSA work to the modules that actually need it.
   SSA builds are memory-heavy; keep this value low.
 - If the subprocess fails or times out, the finding's `Reachable` is left as
   `null` and a `reachability_note` is set describing the failure. The overall
-  verdict (`StatusAffected`) is not changed - the uncertainty is traceable.
+  status (`StatusAffected`) is not changed - the uncertainty is traceable.
 - `--force` re-runs callgraph extraction even when a cached record exists.
 - Modules with `StatusClean`, `StatusUnscannable`, or findings without
   `AffectedSymbols` never trigger a subprocess.
@@ -286,15 +286,15 @@ exists, its result is served and `govulncheck` does not run:
 vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability verdicts came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
-The line names the run whose verdicts you are reading and when it was made. The
+The line names the run whose answers you are reading and when it was made. The
 findings, roll-ups, exit code and `--json` document are the ones **that run**
 produced, rebuilt from the records it wrote, and `audit` states the same line.
 
 Which advisories apply is fixed by the resolved module versions, so reuse is
 sound there. Reachability is computed from source, which is not a condition
-below, so the line states what those verdicts rest on and does not claim the
+below, so the line states what those answers rest on and does not claim the
 source is unchanged — nothing re-read it. Absent when none were answered. Under
-`--json` the same fact is `reachability_basis`: the verdict count, and
+`--json` the same fact is `reachability_basis`: the answer count, and
 `source_read_by_this_run`.
 
 A stored run is served only when the walk, the advisory snapshot (source,
@@ -444,7 +444,7 @@ scanning walk 01KQDBVW092ER1HNXZ60X27CMD rooted at github.com/spf13/cobra@v1.8.1
 
 **The project-scoped views are project-rooted.** A `--gomod`/`--tool`/`--project`
 scan (and the project walk behind `audit` and `inspect --gomod`) derives its
-verdict from **one scan of the project's live working tree** - `govulncheck` over
+status from **one scan of the project's live working tree** - `govulncheck` over
 the project's real import graph, with each finding attributed to the module that
 owns the vulnerable symbol and every other in-build module analysed-and-clean.
 No dependency is scanned in isolation on this path, so the per-module-isolation
@@ -489,7 +489,7 @@ version, that directory is a different build and its analysis is not evidence
 about this walk, so the run does not analyse it. It still matches every
 coordinate against the advisory database — you keep the "this walk is pinned to a
 vulnerable version" answer, at the versions the walk pinned — and records **no
-reachability verdict at all**: those findings carry no reachable/not-reachable
+reachability answer at all**: those findings carry no reachable/not-reachable
 answer, the module's coverage is `Unscannable` with reason
 `project-build-diverged`, and the reason names the directory and every module
 version the two disagree on (`path walked -> required`). The run's coverage is
@@ -630,7 +630,7 @@ timestamp is a fact a consumer can route on; the prefix is prose that kanonarion
 passes through. It carries no fix or reachability line, because neither applies to an
 advisory that no longer stands — and reachability is not the lever here: a retracted
 advisory is excluded on the strength of its retraction, not on nothing calling it.
-`reachability` answers such a query with its own `withdrawn` verdict rather than
+`reachability` answers such a query with its own `withdrawn` state rather than
 computing a call graph for it.
 
 ```
@@ -743,7 +743,7 @@ Reachability of 61 finding(s):
     unsearchable    2 — the advisory names no symbol for this module path, so no search was ever possible
 ```
 
-#### The build the run's verdicts are about
+#### The build the run's answers are about
 
 `build:` names the platform and Go toolchain the walk this run scanned was
 resolved under — the toolchain that pins the `stdlib` node the run reported on.
@@ -847,10 +847,11 @@ A module is in `superseded_records` or in `missing_records`, never both: the
 first is held and declined, the second is not there.
 
 The text form lists finding ids per module and publishes no reachability
-verdict. `--json` does: each finding carries `reachable`, and beside it the
-derived `soundness` and `soundness_reason` that say how thorough the search
-behind a negative was, and `route_root` — null where the finding records no
-route — saying where the route begins and how far below an entry point that is.
+answer. `--json` does: each finding carries the derived `reachability_state`,
+the stored `reachable` bit beside it, the derived `soundness` and
+`soundness_reason` that say how thorough the search behind a negative was, and
+`route_root` — null where the finding records no route — saying where the route
+begins and how far below an entry point that is.
 See
 [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was)
 for the rungs.
@@ -964,6 +965,37 @@ is itself information:
     GO-2025-3553: not_reachable [confidence: High, soundness: inferred, by: govulncheck]
 ```
 
+#### The reachability answer is a word, not a boolean
+
+Every finding carries `reachability_state` — in the text form on its own
+`reachability:` line, and in `--json` beside `reachable`. It is **always
+present**, whatever the value, and takes one of seven words:
+
+| State | What it says |
+|---|---|
+| `reachable` | The analysis found a path from an entry point of this build to the vulnerable symbol. The route is in `--json`. |
+| `not_reachable` | The analysis reported no path. `soundness` says how thorough that search was. |
+| `package_level_only` | The advisory matches this coordinate but names **no symbol** in it, so symbol-level reachability was never determinable. Neither reachable nor not reachable: nothing showed the vulnerable code running, and no re-scan can change that. |
+| `withdrawn` | The advisory was retracted upstream. Answered ahead of reachability, because there is nothing here to reach. |
+| `not_determined` | An analysis ran and declined to decide; it recorded its answer at `Unknown` confidence. |
+| `not_computed` | Reachability was requested and could not be produced. `reachability_note` carries the cause. |
+| `not_analysed` | No reachability analysis was asked for this finding. |
+
+`reachable.is_reachable` beside it is the **stored bit**, and it is not the
+answer. The bit has two positions and the question has more: a
+`package_level_only` finding may carry the bit reading either way, because a
+project-rooted analysis reports a symbolic trace for the advisory as a whole
+while the entry matching *this* module path names no symbols. Read
+`reachability_state`; the bit stays on the wire because it is the field the
+record seals.
+
+The state is derived at read time from what the record already carries, on the
+same terms as `soundness` — nothing is stored, no record's content hash changes,
+and every record already in the store answers with it. The same key and the same
+words appear on `vuln-show --json`, `vuln-show --history`, `vuln-by-id --json`,
+`vuln-scan-show --json`, `vuln-scan-diff --json` and `context`, and
+`reachability --json` publishes the same words under `verdict`.
+
 Every negative carries the rung behind it on both surfaces. In text it is
 appended to the finding's label — `[not reachable — inferred]`. In `--json` each
 finding carries `soundness` and `soundness_reason` beside `reachable`; the same
@@ -999,11 +1031,12 @@ was reached in. The same selection backs the `vulnerabilities` section of
 `Toolchain:` names the Go toolchain that compiled the module for the scan, as
 `go env GOVERSION` of the process govulncheck was driven in. Which files build
 constraints selected, which stdlib was linked and which symbols the analysis
-could reach are all the toolchain's, so a verdict is a verdict about that build.
-Records written before it was recorded read `Toolchain: not recorded`. Two
-records for one coordinate naming different toolchains are reported as a conflict
-**when they reached different verdicts** — the verdict difference is the
-disagreement and the toolchain is what explains it; two toolchains that reached
+could reach are all the toolchain's, so what a record states is stated about
+that build. Records written before it was recorded read
+`Toolchain: not recorded`. Two records for one coordinate naming different
+toolchains are reported as a conflict **when they reached different answers** —
+the difference between them is the disagreement and the toolchain is what
+explains it; two toolchains that reached
 the same status, the same findings and the same reachability produced the same
 answer and compose. A record naming no toolchain never conflicts with one that
 does. Under `--json` the field is `toolchain`, emitted on every record, empty when
@@ -1095,9 +1128,10 @@ go.etcd.io/bbolt@v1.4.3 — Withdrawn
   Last validated:  2026-07-28T06:06:20Z
   Snapshot:        vuln.go.dev@2026-07-27T16:28:49Z
   Advisories:      6027 in the snapshot scanned against
-  GO-2026-4923 (CVE-2026-33817, GHSA-6jwv-w5xf-7j27) [not reachable]: WITHDRAWN: out-of-range-index in go.etcd.io/bbolt
+  GO-2026-4923 (CVE-2026-33817, GHSA-6jwv-w5xf-7j27): WITHDRAWN: out-of-range-index in go.etcd.io/bbolt
       WITHDRAWN: advisory retracted upstream 2026-04-08T13:33:56Z — not a finding against this module
       fix:      no fix available
+      reachability: withdrawn — the advisory was retracted upstream, so there is nothing here to reach
 
 $ kanonarion vuln-show www.velocidex.com/golang/velociraptor@v0.76.6
 www.velocidex.com/golang/velociraptor@v0.76.6 - Unscannable (generated-assets-missing)
@@ -1202,7 +1236,7 @@ its isolated build simply needs a version outside the project toolchain), a
 genuine build incompatibility that still falls back to metadata logs at `warn`,
 and a hard scanner fault logs at `error`. Nothing is dumped as a warning per
 out-of-toolchain module. Run with `--log-level debug` to see the raw
-`govulncheck` stderr behind an `Unscannable` verdict.
+`govulncheck` stderr behind an `Unscannable` status.
 
 ### Which bytes were analysed
 
@@ -1210,7 +1244,7 @@ A module version has more than one copy on disk: the zip kanonarion fetched and
 holds in its blob store, and — for a vendored project — the tree under `vendor/`
 that the project actually compiles. They can differ, and detecting exactly that
 divergence is what the tool is for, so every vulnerability record names the
-surface its verdict was reached from:
+surface its findings were reached from:
 
 | `analysis_surface` | Meaning |
 |------|---------|
@@ -1242,7 +1276,7 @@ analysed like any other.
 A module in the walk's build list that `vendor/` holds no files for is recorded
 `Unscannable` with reason `absent-from-vendor`, never quietly fetched and
 scanned in its place. Substituting a fetched artefact for an absent vendored one
-would report findings about bytes the project does not build, under a verdict a
+would report findings about bytes the project does not build, under a status a
 reader would take for the build's — which is the divergence choosing the
 vendored surface exists to close. The reason's prose distinguishes the two ways
 a module can be absent: listed in `modules.txt` with no files under `vendor/`
@@ -1287,7 +1321,7 @@ Two families of label appear, and the difference is what the run actually
 learned about the module:
 
 - **`Metadata-only (…)`** - the isolated scan could not analyse the source, but
-  the module's advisory set was still matched by coordinate. The verdict is
+  the module's advisory set was still matched by coordinate. The finding is
   real; only reachability is absent.
 - **`Not scanned (…)`** - no advisory match was performed at all. A local
   filesystem replace has no fetched source, and a project-rooted scan that could
@@ -1333,11 +1367,11 @@ event list and flags a coordinate only when its version falls inside a genuine
 affected interval. For example the stdlib advisory whose affected set is
 `[0, 1.25.12)`, `[1.26.0-0, 1.26.5)`, `[1.27.0-0, 1.27.0-rc.2)` collapses in the
 index to `fixed 1.27.0-rc.2`; `go1.26.5` is **not** flagged (the 1.26 branch is
-fixed at 1.26.5), matching the full-range verdict `govulncheck` produces on the
+fixed at 1.26.5), matching the full-range answer `govulncheck` produces on the
 project-rooted path. The coarse index is still used as a cheap pre-filter - it
 only ever over-includes, never wrongly excludes - and when a candidate
 advisory's record cannot be fetched the finding falls back to the conservative
-index verdict rather than being dropped.
+index answer rather than being dropped.
 
 ---
 
@@ -1408,7 +1442,7 @@ notice: results restricted to the modules scanned under walk "01KQDBVW092ER1HNXZ
 github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
 ```
 
-The text rows carry a status, not a reachability verdict. `--json` emits the
+The text rows carry a status, not a reachability answer. `--json` emits the
 whole record for each row, so it does carry one — and with it the derived
 `soundness` and `soundness_reason` on every finding, which is the only place
 this command's answer states how thorough the search behind a negative was. A
@@ -1536,4 +1570,4 @@ kanonarion vuln-snapshot-list --store-root ~/.kanonarion
 
 ## Modules resolved under pre-modules semantics
 
-A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: reachability under such a coordinate is measured over a call graph built from a module whose own requirements the toolchain never resolved, so a not-reached verdict rests on less than the completeness axis alone states. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).
+A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: reachability under such a coordinate is measured over a call graph built from a module whose own requirements the toolchain never resolved, so a not-reached answer rests on less than the completeness axis alone states. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).

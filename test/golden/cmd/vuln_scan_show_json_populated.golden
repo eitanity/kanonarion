@@ -81,6 +81,7 @@ exit 0
           ],
           "published_at": "2026-01-05T00:00:00Z",
           "modified_at": "2026-01-06T00:00:00Z",
+          "reachability_state": "reachable",
           "soundness": "not stated",
           "route_root": {
             "kind": "unrooted",
@@ -108,6 +109,7 @@ exit 0
           "published_at": "2026-01-05T00:00:00Z",
           "modified_at": "2026-01-06T00:00:00Z",
           "withdrawn_at": "2026-02-10T00:00:00Z",
+          "reachability_state": "withdrawn",
           "soundness": "not stated",
           "route_root": null
         }

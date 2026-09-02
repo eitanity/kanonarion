@@ -28,7 +28,7 @@ of data is never presented as an answer):
 ## The answering walk
 
 The closure checked is the closure of one walk. Both output forms name it, so a
-verdict is always attributable to a build rather than to the module in the
+answer is always attributable to a build rather than to the module in the
 abstract:
 
 ```
@@ -147,7 +147,7 @@ obligations".
 
 The obligations catalogue and the compatibility dataset are separate datasets
 and their coverage is not identical. BSL-1.0, Python-2.0 and WTFPL have a
-compatibility verdict but no obligations entry, so `license` reports
+compatibility result but no obligations entry, so `license` reports
 `status: unknown` for a module whose root licence is one of those while
 `license-compat` settles it as permissive.
 
@@ -218,7 +218,7 @@ The outcomes:
 
 - **every arm compatible** — settled compatible whichever arm is elected; no
   open item;
-- **some arm compatible** — verdict `electable` (kind `election_required`):
+- **some arm compatible** — `verdict` is `electable` (kind `election_required`):
   the module is compatible *if* a compatible arm is elected. The election is
   an operator decision, never resolved silently: record the elected arm as a
   `license_overrides` entry for the module and re-run. Pending elections exit
@@ -340,7 +340,7 @@ Dataset coverage — 1 licence identifier in this closure is not modelled (data 
 `deliberate` (JSON `coverage_holes[].deliberate`) separates the two cases:
 
 - **unmodelled by decision** — the identifier has a recorded reason for having
-  no verdict, and the reason is printed. The current set is the Creative Commons
+  no compatibility answer, and the reason is printed. The current set is the Creative Commons
   content licences (CC-BY-4.0, CC-BY-SA-3.0, CC-BY-SA-4.0) and OFL-1.1: their
   obligations attach to documentation, data, media or fonts rather than to linked
   Go code. These still require review and still exit `2`.
@@ -356,7 +356,7 @@ bundling Boost-licensed or public-domain-equivalent code raises nothing.
 
 ## Modules resolved under pre-modules semantics
 
-A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: a pre-modules module contributes its own licence and none of its dependencies', because none were resolved, so a clean verdict is clean over a closure smaller than the build. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).
+A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: a pre-modules module contributes its own licence and none of its dependencies', because none were resolved, so a clean answer is clean over a closure smaller than the build. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).
 
 Under `--json` the caveat is a field of the document, `pre_modules_caveat`,
 carrying `coordinates`, `limitation` and `remedy` — never a line after the
@@ -372,6 +372,6 @@ $ kanonarion license-compat github.com/henomis/phero@v1.0.1 --target Apache-2.0 
 ]
 ```
 
-A consumer that ignores it reads the verdict as covering the whole build. It
+A consumer that ignores it reads the answer as covering the whole build. It
 does not: those modules' dependencies are absent from the answer rather than
 measured to be none.

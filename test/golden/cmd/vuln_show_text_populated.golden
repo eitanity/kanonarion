@@ -1,0 +1,32 @@
+# populated, text, per-finding: the ONE case that records printFindingLines. The history views print a line per scan record and the JSON views a key per finding, so neither pins what a person reads under a finding — which is where the reachability state and the instrument that produced it are stated.
+$ kanonarion vuln-show example.com/mod@v1.2.0
+exit 0
+--- stdout ---
+example.com/mod@v1.2.0 — Affected
+  Walk:            01ARZ3NDEKTSV4RRFFQ69G5FAV
+  Analysis frame:  target-rooted
+  Toolchain:       not recorded
+  First validated: 2026-01-15T09:00:00Z
+  Last validated:  2026-02-20T09:00:00Z
+  Snapshot:        govulndb@v2026-02-14T00-00-00
+  Advisories:      not recorded (this record predates the advisory count)
+  Snapshot age:    retrieved 2026-02-14T00:00:00Z (6 day(s) old at validation)
+  GO-2026-0001 (CVE-2026-00001) [reachable] [root: unrooted]: example vulnerability in example.com/mod
+      affected: <v1.3.0
+      fix:      fixed in v1.3.0
+      symbols:  Parse
+      reachability: reachable — the analysis found a path from an entry point of this build to the vulnerable symbol
+      derived:  by govulncheck, fidelity source, rooted at target-rooted
+      route:    entry point first
+        example.com/app main
+        example.com/mod@v1.2.0 Handle
+        example.com/mod@v1.2.0 Parse
+      root:     unrooted — the route's entry point is in example.com/app, which names no version on the frame and is not the module the analysis frame identifies, so no call graph can be located for it
+  GO-2026-0002 (CVE-2026-00002): withdrawn advisory for example.com/mod
+      WITHDRAWN: advisory retracted upstream 2026-02-10T00:00:00Z — not a finding against this module
+      affected: <v1.3.0
+      fix:      fixed in v1.3.0
+      symbols:  Parse
+      reachability: withdrawn — the advisory was retracted upstream, so there is nothing here to reach
+--- stderr ---
+(empty)

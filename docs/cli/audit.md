@@ -78,7 +78,7 @@ For each module in the scope, `audit` emits a single line containing:
   matched advisory was retracted upstream reads `Withdrawn`, and its count is
   reported as *retracted* rather than as findings: only one of the two is
   something to act on. A module carrying both reads
-  `Affected (N findings, M retracted)`. The verdict is **project-rooted**: it
+  `Affected (N findings, M retracted)`. The status is **project-rooted**: it
   comes from a single scan of the project's resolved, pruned build graph, not
   from scanning each dependency in isolation. A module the project builds
   cleanly reads `Clean`, `Affected` or `Withdrawn` within that graph; only a genuine fault of the whole scan (no `go.mod`, an OOM
@@ -102,17 +102,17 @@ custody](sbom.md#standard-library-chain-of-custody) for the full evidence set.
 
 Its **Vulnerability** column answers in the frame of the walk this audit ran,
 and reads only records that walk's scans covered. A store holding scans of a
-second project therefore cannot put that project's verdict for a shared
+second project therefore cannot put that project's status for a shared
 dependency into this report.
 
 Its **Vulnerability** column is **call-graph-analysed against the build
 toolchain**, not resolved from advisory metadata by coordinate: the same
 project-rooted `govulncheck` run that analyses the dependency graph also reasons
 over standard-library symbols, so a surfaced stdlib finding carries a populated
-`Reachable` verdict and `AffectedSymbols` exactly as a module finding does. A
+`Reachable` answer and `AffectedSymbols` exactly as a module finding does. A
 standard-library advisory that affects the pinned toolchain version but whose
 vulnerable symbols are **not reached** from the project therefore reads `Clean`,
-as an unreachable advisory in a fetched module does. Query a specific verdict
+as an unreachable advisory in a fetched module does. Query a specific finding
 with `kanonarion reachability stdlib@vX.Y.Z --vuln <id>`.
 
 The scope is an **import closure**, not a `require`-line listing: the `code`
@@ -325,7 +325,7 @@ object states the facts about the run, which a bare array had nowhere to put:
 | `module_count` | How many modules that scope resolved. It is the number the `notice:` line on stderr states. A module that failed to render is missing from `modules`, named on stderr, and the run exits non-zero. |
 | `walk` | Which walk fixed the dependency set: `id`, `completed_at` (the record's date, RFC 3339), and `reused` - true when this run re-resolved the go.mod, found the resolution identical to a stored walk, and served that record. `resolved` is false when no walk was taken at all. |
 | `scan` | Which vulnerability scan run filled the `vuln_status` column: `run_id`, `reused`, and the advisory `snapshot` it was judged against. `answered` is false when no run answered - an empty scope, or a scan leg that failed and said so on stderr. The run id is stated on both arms, which the stderr sentence is not: a scan derived by this run names no id there. |
-| `reachability_basis` | How much of the answer depends on the project's own source: `verdicts` counts the findings carrying a reachability answer, and `source_read_by_this_run` is false on a served run, whose verdicts came from source this invocation did not re-read. The same object `vuln-scan --json` publishes under the same key. |
+| `reachability_basis` | How much of the answer depends on the project's own source: `verdicts` counts the findings carrying a reachability answer, and `source_read_by_this_run` is false on a served run, whose reachability answers came from source this invocation did not re-read. The same object `vuln-scan --json` publishes under the same key. |
 | `toolchain` | The toolchain axis, in the shape [`vuln-scan --json`](vuln-scan.md) publishes: `judged`, `status`, the `version` judged, the `snapshot` it was judged against, `reason` when nothing was judged, the `covering` advisory ids, and `statement`, the sentence stderr shows, verbatim. The toolchain is not a dependency of the artefact: it is no row and is counted in no roll-up. |
 | `staleness` | Dates the staleness column for the run as a whole - the machine-readable half of the table's `latest as of ...` footer, which the text form prints on stdout. `as_of` is the OLDEST lookup behind the column, `age` is how old it was when this run read it, `ttl` is the `staleness.ttl` in force in the same units, and `refresh_with` names the command that re-queries. `measured` is false when no row carries a lookup. |
 | `modules` | The per-module rows. `[]` when the scope resolved nothing - the empty answer is the same object, not a different shape. |
@@ -541,7 +541,7 @@ vendored build:
   this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
 ```
 
-It states a fact and changes no verdict: a vendored project answers exactly as
+It states a fact and changes no answer: a vendored project answers exactly as
 before, with one more line of basis. `kanonarion vendor` is the command that
 compares the shipped bytes against the published module zips.
 
@@ -590,13 +590,13 @@ keyed to it — answers this run too. **"derived by this run"** means a new walk
 was recorded.
 
 Reading the scan line: **"reused run … of &lt;date&gt;"** names the scan run whose
-verdicts you are reading and when it was made; `govulncheck` did not run. The
+answers you are reading and when it was made; `govulncheck` did not run. The
 findings, roll-ups and exit code are the ones that run produced.
 
 Which advisories apply is fixed by the resolved module versions, so reuse is
 sound there. Reachability is not: `govulncheck` reads source, and source is not
 a reuse condition below. The reachability clause therefore appears whenever the
-run answered any, and it states what those verdicts rest on rather than claiming
+run answered any, and it states what those answers rest on rather than claiming
 your tree is unchanged — nothing re-read it.
 
 Under `--json` the same three facts are the `walk`, `scan` and
@@ -611,7 +611,7 @@ A stored scan is reused only when **all** of these hold:
 
 | condition | |
 |---|---|
-| same walk | verdicts belong to the dependency set they were derived over |
+| same walk | findings belong to the dependency set they were derived over |
 | same advisory snapshot (source, version, retrieval time and seal) | a newer advisory database re-scans |
 | same scan pipeline version | a newer kanonarion re-scans |
 | the stored run's coverage is **complete** | a partial or failed run is never served |

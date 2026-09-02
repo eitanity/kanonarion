@@ -93,7 +93,7 @@ vulnerability scan dominates, as `govulncheck` analyses the project. Narrow
 or widen the set with `--tool` / `--project`; see the CLI reference.
 
 `audit`, `inspect` (no argument), and `vuln-scan --gomod` are **project-rooted**:
-they derive each module's vulnerability verdict from a single scan of your
+they derive each module's vulnerability status from a single scan of your
 project's real build, so an in-build dependency reads `Clean`/`Affected`, never
 un-analysable merely for a build your project never produces. A *single-module*
 `inspect <module@version>` or `vuln-scan --module <module@version>` is the
@@ -164,10 +164,10 @@ All query commands support `--json` for machine-readable output, making them eas
 - **Offline-first.** After the initial walk and extract, all queries are local SQLite reads. No network calls, no rate limits, no flaky CI.
 - **Deterministic.** Pinned versions, checksum-verified ZIPs, sorted JSON output. The same query returns the same result today and a year from now.
 - **No SaaS, no phone home.** A single binary that runs where you run it. No account, no telemetry, no vendor in the loop.
-- **Reachability-aware vulnerability scanning.** Integrates govulncheck with optional `--reachability` filtering. CVEs your code can't actually reach are triaged down, not paged on at 2am.
+- **Reachability-aware vulnerability scanning.** Integrates govulncheck with optional `--reachability` filtering. Every finding states whether a path from your entry points to the vulnerable symbol was found, was not found, or was never determinable because the advisory names no symbol for that module path - and says which, so the triage is yours to make on evidence rather than on a severity number.
 - **Licence compliance with provenance.** Per-module SPDX licence detection with a full transitive summary, classified as Detected, Unclassified, or None.
 - **Interface extraction.** Full public API surface - types, functions, methods, constants - in structured JSON the agent can consume directly, measured in one named build frame (`goos/goarch` plus cgo) rather than every platform at once.
-- **Call graph with a three-valued verdict.** Intra-module call graph for impact analysis and reachability queries. Every answer says whether an empty result is a *measurement* (`RESOLVED-ABSENT`) or an *undecided* one (`UNRESOLVED`, naming what blocked it) - so "nothing calls this" is never a guess dressed as a fact. `_test.go` declarations are in the graph and tagged, because test fakes are most of the edit surface of an interface change; `--exclude-tests` narrows any query to production code and says so on the answer, empty or not.
+- **Call graph with a three-valued answer.** Intra-module call graph for impact analysis and reachability queries. Every answer says whether an empty result is a *measurement* (`RESOLVED-ABSENT`) or an *undecided* one (`UNRESOLVED`, naming what blocked it) - so "nothing calls this" is never a guess dressed as a fact. `_test.go` declarations are in the graph and tagged, because test fakes are most of the edit surface of an interface change; `--exclude-tests` narrows any query to production code and says so on the answer, empty or not.
 - **Interface implementers.** `implementers` lists the concrete types satisfying an interface, including ones that satisfy it only by embedding - the question a port-signature change actually raises, and one a grep for the method name answers wrongly.
 - **Usage examples.** Verified code snippets extracted from module test files, so the agent codes against patterns that actually work.
 - **Policy gates.** Walk-traversal rules in YAML - max depth, whether replace directives and indirect requirements are followed, and which VCS forges may be cross-verified against - validated with `policy validate`.

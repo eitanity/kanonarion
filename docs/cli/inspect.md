@@ -34,7 +34,7 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 
 If the binary is missing, the scan fails with a descriptive error naming the
 install command, and the summary reports `Partial` with a scan-failure count
-instead of a clean verdict.
+instead of a clean status.
 
 ## Commands
 
@@ -44,7 +44,7 @@ The two modes scan from **different roots**, and their vuln legs differ to match
   which becomes the main module and is scanned in isolation (the coordinate-keyed
   path). This is the intended "scan it on its own to see what it looks like" view.
 - **Project** (`inspect`, `--gomod`, `--tool`, `--project`) roots the walk at the
-  local main module and derives its vuln verdict from a single **project-rooted**
+  local main module and derives its vulnerability status from a single **project-rooted**
   scan of the live working tree - the project's real build - not from re-scanning
   each dependency in isolation. In-build modules read `Clean`/`Affected`/`Withdrawn`; only a
   genuine fault reads `Unscannable`/`ScanFailed`.
@@ -272,7 +272,7 @@ vendored build:
   this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
 ```
 
-It states a fact and changes no verdict: a vendored project answers exactly as
+It states a fact and changes no answer: a vendored project answers exactly as
 before, with one more line of basis. `kanonarion vendor` is the command that
 compares the shipped bytes against the published module zips.
 

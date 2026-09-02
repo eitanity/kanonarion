@@ -28,11 +28,11 @@ which indexes the directory in place.
 
 ### What the answers claim
 
-Every query in this family reports a **three-valued verdict**, because an empty
-answer has two very different causes and conflating them is the failure mode the
-whole design exists to prevent:
+Every query in this family reports a **three-valued answer**, printed on a
+`verdict:` line, because an empty answer has two very different causes and
+conflating them is the failure mode the whole design exists to prevent:
 
-| Verdict | Meaning |
+| `verdict:` | Meaning |
 |---|---|
 | `RESOLVED-PRESENT` | Edges (or implementers) were found. |
 | `RESOLVED-ABSENT` | A measurement: nothing was found across a fully-built path, with no soundness sink in the way. |
@@ -822,7 +822,7 @@ method — an ID `callers` and `callees` also accept.
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
-| `--json` | `false` | Emit the result, verdict and scope as JSON |
+| `--json` | `false` | Emit the result, its `verdict` and the scope as JSON |
 
 ```
 $ kanonarion implementers 'github.com/org/repo/internal/vuln/ports.VulnerabilityStore'
@@ -895,7 +895,7 @@ constructing them by hand.
 | `uses_plugin` | The body references the Go `plugin` package |
 
 The last three are body-level facts a callee-identity map cannot witness. They
-are used by [`capability`](capability.md) analysis and by the verdict layer,
+are used by [`capability`](capability.md) analysis and by the answer layer,
 where each is a leaf soundness sink that downgrades a negative answer.
 
 ## Edge confidence
@@ -906,7 +906,7 @@ where each is a leaf soundness sink that downgrades a negative answer.
 | `CHA-overapprox` | An unrefined Class Hierarchy Analysis over-approximation of an interface dispatch: every type-compatible method is a possible callee |
 | `VTA` | An interface dispatch narrowed to the types that actually flow to the call site |
 | `Framework` | An edge bound by a framework model or thunk rather than observed in source |
-| `Unknown` | An edge the analyser cannot resolve. A soundness sink: a verdict reaching one is `UNRESOLVED` |
+| `Unknown` | An edge the analyser cannot resolve. A soundness sink: an answer reaching one is `UNRESOLVED` |
 
 Reflect-dispatched calls carry `Unknown` plus a separate `reflect_dispatch`
 attribute, so the reflect provenance is preserved without inventing a

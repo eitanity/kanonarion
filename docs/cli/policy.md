@@ -21,7 +21,7 @@ Exits non-zero if the path does not exist or any file fails schema
 validation, so it is suitable for use in CI as a pre-merge check on policy
 changes.
 
-`--json` changes only the rendering, never the verdict: the exit code is the
+`--json` changes only the rendering, never the result: the exit code is the
 same with and without it. The document is one array with one object per file
 validated - a directory with no policy files is `[]`, not prose:
 

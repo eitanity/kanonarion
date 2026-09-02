@@ -26,6 +26,16 @@ type RegisteredCommand struct {
 	// including the persistent flags inherited from parent commands: a caller
 	// can write --json on any command, and --help on all of them.
 	Flags []string
+	// HiddenFlags are the members of Flags the command registers but does not
+	// offer: a flag is hidden here when it is registered to be EXPLAINED rather
+	// than accepted, so that a caller who types it is told why instead of being
+	// shown cobra's "unknown flag".
+	//
+	// It is reported separately because Flags cannot carry the distinction and a
+	// guard needs it: a command's flag set answers "yes" for a flag the command
+	// refuses at runtime, so documentation advertising that flag passes any check
+	// that only asks what the tree accepts.
+	HiddenFlags []string
 	// StoreIntent is what the command declared about the store root: "create"
 	// if running it may bring that directory into existence, "read" if it must
 	// not, "none" if it opens no store at all, and "" if it declared nothing.
@@ -65,6 +75,7 @@ func RegisteredCommands() []RegisteredCommand {
 				Runnable:    c.Runnable(),
 				Children:    children,
 				Flags:       longFlags(c),
+				HiddenFlags: hiddenLongFlags(c),
 				StoreIntent: c.Annotations[annotationStoreIntent],
 			})
 		}
@@ -76,6 +87,26 @@ func RegisteredCommands() []RegisteredCommand {
 		}
 	}
 	walk(nil, root)
+	return out
+}
+
+// hiddenLongFlags returns the long flag names c registers and hides, its own
+// and the persistent ones it inherits, without the leading dashes and in order.
+func hiddenLongFlags(c *cobra.Command) []string {
+	c.InitDefaultHelpFlag()
+	seen := map[string]bool{}
+	for _, set := range []*flag.FlagSet{c.LocalFlags(), c.InheritedFlags()} {
+		set.VisitAll(func(f *flag.Flag) {
+			if f.Hidden {
+				seen[f.Name] = true
+			}
+		})
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
 	return out
 }
 

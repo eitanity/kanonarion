@@ -99,6 +99,7 @@ exit 0
             "summary": "example vulnerability in example.com/mod",
             "fixed_in": "v1.3.0",
             "score": null,
+            "reachability_state": "reachable",
             "reachable": true,
             "soundness": "not stated"
           },
@@ -111,6 +112,7 @@ exit 0
             "fixed_in": "v1.3.0",
             "score": null,
             "withdrawn_at": "2026-02-10T00:00:00Z",
+            "reachability_state": "withdrawn",
             "reachable": null,
             "soundness": "not stated"
           }

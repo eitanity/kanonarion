@@ -23,18 +23,30 @@ import (
 // shape exists to make impossible.
 
 // vulnFindingRungJSON is one stored finding on the wire with its derived
-// reachability rung beside it.
+// reachability state and rung beside it.
 //
-// Soundness is emitted on every finding, positive and negative alike, and never
-// omitted. "not stated" on a reachable finding is a statement — a route is its
-// own evidence and there is no absence to qualify — and it is a different
-// statement from the key being missing, which says the producer does not derive
-// the rung at all. SoundnessReason is omitted when there is none, because
-// NegativeSoundness returns a reason exactly when it returns a rung.
+// ReachabilityState is the answer; soundness qualifies it. The embedded record
+// carries reachable.is_reachable, which is a stored bit with two positions, and
+// the question has more answers than that — an advisory that names no symbol in
+// this module path was never determinable at symbol level, and the bit says
+// nothing about it in either position. A consumer reading the bit alone counted
+// exactly such a finding as reachable and published it. The state is derived
+// here by the same function every other surface calls, so no reader has to
+// reconstruct it from the bit and AdvisoryNamesNoSymbols itself.
+//
+// Both are emitted on every finding, and never omitted. "not stated" on a
+// reachable finding is a statement — a route is its own evidence and there is no
+// absence to qualify — and it is a different statement from the key being
+// missing, which says the producer does not derive the rung at all. The state
+// key carries the same rule for the same reason: absent, "not_reachable" and
+// "package_level_only" collapse back into one another. SoundnessReason is
+// omitted when there is none, because NegativeSoundness returns a reason exactly
+// when it returns a rung.
 type vulnFindingRungJSON struct {
 	vuldomain.VulnerabilityFinding
-	Soundness       vuldomain.ReachabilitySoundness `json:"soundness"`
-	SoundnessReason string                          `json:"soundness_reason,omitempty"`
+	ReachabilityState vuldomain.ReachabilityState     `json:"reachability_state"`
+	Soundness         vuldomain.ReachabilitySoundness `json:"soundness"`
+	SoundnessReason   string                          `json:"soundness_reason,omitempty"`
 }
 
 // vulnFindingJSON is a finding whose producer holds the record its routes were
@@ -62,10 +74,15 @@ type vulnFindingJSON struct {
 	RouteRoot *routeRootOutput `json:"route_root"`
 }
 
-// toVulnFindingRungJSON derives the rung for one finding.
+// toVulnFindingRungJSON derives the state and the rung for one finding.
 func toVulnFindingRungJSON(f vuldomain.VulnerabilityFinding) vulnFindingRungJSON {
 	soundness, reason := vuldomain.NegativeSoundness(f)
-	return vulnFindingRungJSON{VulnerabilityFinding: f, Soundness: soundness, SoundnessReason: reason}
+	return vulnFindingRungJSON{
+		VulnerabilityFinding: f,
+		ReachabilityState:    vuldomain.FindingReachabilityState(f),
+		Soundness:            soundness,
+		SoundnessReason:      reason,
+	}
 }
 
 // toVulnFindingJSON derives the rung and the first route's root for one finding.

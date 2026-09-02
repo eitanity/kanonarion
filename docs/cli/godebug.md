@@ -42,7 +42,7 @@ fails safe to the **red** posture until the taxonomy is updated.
 
 The classifying taxonomy revision is recorded as `taxonomy_version` on every
 record, and folded into the store key, so a taxonomy update transparently
-re-classifies an unchanged project instead of returning a stale verdict.
+re-classifies an unchanged project instead of returning a stale classification.
 
 ## Applied vs not-applied
 
@@ -84,7 +84,7 @@ whether or not its module can be named.
 
 Every detected setting is appended to `audit.jsonl` as a
 `godebug_setting_observed` event with its classification
-and policy verdict. Because one event is emitted per setting per scan,
+and policy result. Because one event is emitted per setting per scan,
 add/remove/modify between scans is observable directly from the append-only
 log without a bespoke diff schema.
 

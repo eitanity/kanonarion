@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -750,4 +752,81 @@ func TestEveryCommandDeclaresItsStoreIntent(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("the CLI registered no runnable commands: this guard would then hold nothing to anything")
 	}
+}
+
+// hiddenFlagNames is every long flag name the CLI registers somewhere and hides
+// there.
+//
+// Hiding is this codebase's marker for a flag registered to be EXPLAINED rather
+// than offered: registerRecordedTestScopeFlag installs --exclude-tests hidden on
+// the commands that record a walk precisely so the refusal can say why. The set
+// is therefore the set of flags a command may decline at runtime, and it is read
+// off the command tree rather than restated, so a flag that joins the class
+// joins this guard with it.
+func hiddenFlagNames(t *testing.T) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	for _, c := range cli.RegisteredCommands() {
+		for _, name := range c.HiddenFlags {
+			out[name] = true
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("the CLI hides no flag: the guard below would then execute nothing and hold every document to nothing")
+	}
+	return out
+}
+
+// TestShippedDocsNameNoRefusedFlag catches the case TestShippedDocsUseOnlyRealFlags
+// cannot: a flag the command REGISTERS and then REFUSES.
+//
+// `audit` registers --exclude-tests and declines it at runtime, because it
+// records a walk and a walk record names its scope but not its test axis. The
+// flag is therefore in the command's flag set, so a guard that asks the command
+// tree "do you accept this flag" answers yes, and documentation advertising
+// `kanonarion audit --exclude-tests` passes. It was written into
+// writing-quality-code.md that way and shipped through the flag guard untouched.
+//
+// The distinction the tree cannot make is made by running the invocation. The
+// refusal is raised after the go.mod scope resolves, not during flag parsing, so
+// the invocation is given this repository's own go.mod when it names no scope of
+// its own - without that it dies on "./go.mod not found" and never reaches the
+// check. Any other failure - no store, no walk, no network - is not this guard's
+// business and is ignored, which is what lets a documented invocation that simply
+// needs data pass here.
+//
+// Only invocations naming a HIDDEN flag are run, and running is the whole cost
+// of this guard. Executing every flag-bearing line in the shipped docs walks
+// module graphs and fills a store for each one: it fetched 122MB of blobs per
+// run and it is not what the guard reads, because a flag no command hides is a
+// flag no command declines. Hidden is the marker - see hiddenFlagNames - so the
+// narrowing follows the refusals rather than guessing at them.
+func TestShippedDocsNameNoRefusedFlag(t *testing.T) {
+	const refusal = "does not act on --"
+	hidden := hiddenFlagNames(t)
+	store := t.TempDir()
+	checked := 0
+	for _, doc := range shippedDocs(t) {
+		for _, inv := range fencedInvocations(t, doc) {
+			if !slices.ContainsFunc(docFlags(inv.args), func(f string) bool { return hidden[f] }) {
+				continue // no flag any command declines
+			}
+			checked++
+			args := append([]string{}, inv.args...)
+			if !slices.Contains(args, "--gomod") && !slices.Contains(args, "--walk-id") {
+				args = append(args, "--gomod", "../go.mod")
+			}
+			args = append(args, "--store-root", store)
+			var stdout, stderr bytes.Buffer
+			err := cli.Run(args, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), refusal) {
+				continue
+			}
+			t.Errorf("%s:%d documents an invocation the command refuses: `%s`\n\t%v"+
+				"\n\tthe flag is registered on the command, so the flag guard accepts it;"+
+				" only running it shows the refusal. Move the line to a command that acts on the flag.",
+				inv.doc, inv.line, inv.text, err)
+		}
+	}
+	t.Logf("executed %d documented invocations naming a hidden flag", checked)
 }

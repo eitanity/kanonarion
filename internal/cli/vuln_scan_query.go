@@ -918,25 +918,24 @@ func runScanDiff(
 	if len(diff.ReachabilityChanges) > 0 {
 		_, _ = fmt.Fprintf(stdout, "REACHABILITY changes (%d):\n", len(diff.ReachabilityChanges))
 		for _, c := range diff.ReachabilityChanges {
-			was := "not reachable"
+			was := vuldomain.StateNotReachable.String()
 			if c.WasReachable {
-				was = "reachable"
+				was = vuldomain.StateReachable.String()
 			}
-			now := "not reachable"
-			if c.IsReachable {
-				now = "reachable"
-			} else if soundness, _ := vuldomain.NegativeSoundness(c.Finding); soundness != vuldomain.SoundnessNotStated {
+			// The later run's answer is the shared reading of the finding, not the
+			// bit. Read off the bit, a change INTO package_level_only rendered as
+			// "reachable" whenever the bit happened to read true and as a plain
+			// "not reachable" — a resolution — whenever it read false, and neither
+			// is what the later run measured.
+			state := vuldomain.FindingReachabilityState(c.Finding)
+			now := state.String()
+			if state == vuldomain.StateNotReachable {
 				// The transition an operator acts on is the one INTO a negative, and
 				// the rung says how thorough the search behind that negative was. A
 				// bare "not reachable" here reads as a resolution.
-				now = "not reachable — " + soundness.String()
-			}
-			if !c.IsReachable && c.Finding.AdvisoryNamesNoSymbols {
-				// The later run did not search and fail; there was no symbol for it to
-				// search for. Rendering this as "not reachable" would read as a
-				// resolution and invite the operator to stand down on a module that is
-				// still affected at package level.
-				now = "not determined at symbol level (advisory names no symbols)"
+				if soundness, _ := vuldomain.NegativeSoundness(c.Finding); soundness != vuldomain.SoundnessNotStated {
+					now += " — " + soundness.String()
+				}
 			}
 			_, _ = fmt.Fprintf(stdout, "  ~ %s  %s@%s  %s → %s\n", c.Finding.ID, c.Coordinate.Path(), c.Coordinate.Version(), was, now)
 		}

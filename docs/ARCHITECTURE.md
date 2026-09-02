@@ -206,7 +206,7 @@ made. *Adapters:* `proxy` (with `retrying`), `golist`, `store/sqlite`.
 module ships inside its own published zip and compiles into the binary through
 cgo. `github.com/mattn/go-sqlite3` carries the whole SQLite amalgamation as an
 8.4 MB `sqlite3-binding.c`; its licence record describes the Go wrapper and its
-vulnerability verdict is keyed on the Go coordinate, so nothing downstream knew
+vulnerability answer is keyed on the Go coordinate, so nothing downstream knew
 the library was there.
 
 Scope is decided by what the build compiles, not by what the zip contains: a
@@ -508,7 +508,7 @@ Licence extraction records what was *classified* (`license_extracted`: module,
 version, resolved primary SPDX, overall status, identity source), and the walk
 records what was *resolved* (`walk_completed`: walk id, root, scope
 (`code`/`tool`/`complete`), node count, content hash). Both anchor the inputs
-that bound every downstream verdict in the append-only assurance log, not only
+that bound every downstream answer in the append-only assurance log, not only
 in a mutable record. Each is emitted only after a successful, freshly computed
 result is persisted; cache hits re-serve without re-emitting.
 

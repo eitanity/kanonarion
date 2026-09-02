@@ -671,7 +671,7 @@ vendored build:
   this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
 ```
 
-It states a fact and changes no verdict: a vendored project answers exactly as
+It states a fact and changes no answer: a vendored project answers exactly as
 before, with one more line of basis. `kanonarion vendor` is the command that
 compares the shipped bytes against the published module zips.
 
@@ -715,7 +715,7 @@ Each standard-library custody measurement the walk persists appends one
 run), the verification anchors that acquisition established (`godev_checksum`,
 `googlesource_commit`, `local_toolchain_source`), the artefact identity it was
 taken over, and the record's content hash. It witnesses the write, not the
-verdict - the custody record itself carries the verification status, the
+conclusion - the custody record itself carries the verification status, the
 published checksum and the licence, and the content hash is what reaches them.
 The tarball is cached per Go version, so a re-used measurement appends nothing
 and `--force` re-acquires and appends again; a run that could not establish

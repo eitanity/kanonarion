@@ -356,6 +356,14 @@ func reachabilityCases(emptyStore string) []cmdCase {
 func vulnShowHistoryCases(emptyStore string) []cmdCase {
 	return []cmdCase{
 		{
+			name: "vuln_show_text_populated",
+			args: []string{"vuln-show", "example.com/mod@v1.2.0"},
+			why: "populated, text, per-finding: the ONE case that records printFindingLines. " +
+				"The history views print a line per scan record and the JSON views a key per " +
+				"finding, so neither pins what a person reads under a finding — which is where " +
+				"the reachability state and the instrument that produced it are stated.",
+		},
+		{
 			name: "vuln_show_history_json_populated",
 			args: []string{"vuln-show", "example.com/mod@v1.2.0", "--history", "--json"},
 			why: "populated: ONE coordinate scanned against TWO advisory snapshots. A change to how " +

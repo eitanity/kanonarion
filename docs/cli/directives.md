@@ -117,4 +117,4 @@ one line, exiting `4`.
 
 Every directive is appended to `audit.jsonl` as a
 `replace_directive_observed` / `exclude_directive_observed` event with
-classification and policy verdict.
+classification and policy result.

@@ -33,24 +33,31 @@ const localVulnPipelineVersion = vulnPipelineVersion
 const reachabilityMethodNone = "none"
 
 // reachability verdicts for the stored-module query mode.
+//
+// Each is the wire word of the shared vuldomain.ReachabilityState of the same
+// name, not a second spelling of it. This command was the only reader deriving
+// the full set while the record-shaped surfaces served the stored boolean, so
+// the vocabulary is pinned to the domain type rather than restated here: a word
+// that drifts is a word two surfaces disagree on, and that disagreement is what
+// let a package-level-only finding be published as reachable.
 const (
-	verdictReachable    = "reachable"
-	verdictNotReachable = "not_reachable"
-	verdictNotAffected  = "not_affected"
+	verdictReachable    = string(vuldomain.StateReachable)
+	verdictNotReachable = string(vuldomain.StateNotReachable)
+	verdictNotAffected  = string(vuldomain.StateNotAffected)
 	// verdictWithdrawn is its own verdict, not a flavour of not_affected and
 	// certainly not a reachability answer. A retracted advisory is excluded on the
 	// strength of its retraction, and answering "not reachable" for one would offer
 	// reachability as the mitigation — inviting the reader to conclude the module
 	// would be at risk if only something called it, when there is nothing to be at
 	// risk from.
-	verdictWithdrawn = "withdrawn"
+	verdictWithdrawn = string(vuldomain.StateWithdrawn)
 	// verdictPackageLevelOnly is the answer for a coordinate the advisory matches
 	// but names no symbol in: the module is affected, and symbol-level
 	// reachability was never determinable because there is no symbol to reach.
 	// It is neither "reachable" — nothing showed the vulnerable code running —
 	// nor "not reachable", which would offer a search that was never possible as
 	// the reason.
-	verdictPackageLevelOnly = "package_level_only"
+	verdictPackageLevelOnly = string(vuldomain.StatePackageLevelOnly)
 )
 
 // -- output types --
@@ -437,13 +444,13 @@ func isolatedAsideFor(rec vuldomain.VulnerabilityRecord, has bool, vulnID string
 	if !ok || f.Reachable == nil {
 		return nil
 	}
-	verdict := verdictNotReachable
-	if f.Reachable.IsReachable {
-		verdict = verdictReachable
-	}
 	soundness, soundnessReason := vuldomain.NegativeSoundness(f)
 	return &isolatedAside{
-		Verdict:         verdict,
+		// The same derivation the answer beside it uses. Reading the stored bit
+		// here would have published the isolated frame's package-level-only finding
+		// as "reachable" in the one place a reader is being shown two answers and
+		// asked to weigh them.
+		Verdict:         vuldomain.FindingReachabilityState(f).String(),
 		Confidence:      string(f.Reachable.Confidence),
 		Method:          f.Reachable.DerivedBy.Analyser.String(),
 		Fidelity:        f.Reachable.DerivedBy.Fidelity,
@@ -727,11 +734,16 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		}, nil
 	}
 
+	// One reading, shared with every other surface that publishes this finding's
+	// reachability answer. The order of its tests is the order this function
+	// applied inline before it was extracted, and the branches below follow it.
+	state := vuldomain.FindingReachabilityState(f)
+
 	// The retraction is answered before reachability is consulted, because it makes
 	// the reachability question moot: whether anything calls the symbol does not
 	// matter for an advisory that no longer stands, and the two directing errors
 	// below would otherwise send the operator to compute a call graph for it.
-	if f.IsWithdrawn() {
+	if state == vuldomain.StateWithdrawn {
 		return vulnReachabilityQuery{
 			Module:  coord.Path(),
 			Version: coord.Version(),
@@ -752,52 +764,31 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 	// a missing flag when the flag was passed and the analysis failed sends the
 	// operator to re-run a command that already ran, and buries the failure the
 	// message exists to surface.
-	if f.ReachabilityAttemptFailed() {
+	if state == vuldomain.StateNotComputed {
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"reachability was requested for %s in %s and could not be computed: %s\nThe scan recorded the attempt. Re-run the same scan once that cause is resolved — a per-module re-run would root the analysis at %s rather than at the project, and would not reproduce the route this scan was asked for",
 			f.ID, coord, f.ReachabilityNote, coord.Path())
 	}
 
-	if f.Reachable == nil {
+	if state == vuldomain.StateNotAnalysed {
 		return vulnReachabilityQuery{}, nilReachabilityRefusal(coord, rec, f, aside)
 	}
 
-	// Answered before the undetermined-confidence diagnostic below, because that
-	// diagnostic sends the operator to compute a call graph — advice which cannot
-	// help here. No graph resolves a symbol the advisory never named, and the
-	// scan that produced this record did run.
-	if f.AdvisoryNamesNoSymbols {
-		routes := routesToOutput(f.Reachable.Routes, classify)
-		soundness, soundnessReason := vuldomain.NegativeSoundness(f)
-		return vulnReachabilityQuery{
-			Module:          coord.Path(),
-			Version:         coord.Version(),
-			VulnID:          f.ID,
-			Aliases:         f.Aliases,
-			Summary:         f.Summary,
-			Verdict:         verdictPackageLevelOnly,
-			Confidence:      string(f.Reachable.Confidence),
-			Method:          f.Reachable.DerivedBy.Analyser.String(),
-			Fidelity:        f.Reachable.DerivedBy.Fidelity,
-			Rooting:         f.Reachable.DerivedBy.Rooting.String(),
-			Soundness:       soundness,
-			SoundnessReason: soundnessReason,
-			Routes:          routes,
-			RouteRoot:       firstRouteRoot(routes),
-			ScannedAt:       rec.ScannedAt.UTC().Format(time.RFC3339),
-		}, nil
-	}
-
-	if f.Reachable.Confidence == vuldomain.ConfidenceUnknown {
+	// The undetermined-confidence diagnostic sends the operator to compute a call
+	// graph, so the state ordering answers package_level_only ahead of it: no
+	// graph resolves a symbol the advisory never named, and the scan that produced
+	// this record did run.
+	if state == vuldomain.StateNotDetermined {
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"reachability for %s in %s is undetermined: the call graph was unavailable during the scan. %s",
 			f.ID, coord, remedyRebuildGraphThenRescan(coord))
 	}
 
-	verdict := verdictNotReachable
-	if f.Reachable.IsReachable {
-		verdict = verdictReachable
-	}
+	// reachable, not_reachable and package_level_only take one reply. They differ
+	// in the word and in nothing else — the route, the rung, the instrument and
+	// the frame are reported the same way for all three — and while
+	// package_level_only was built in its own branch the two constructions were
+	// free to drift.
 	routes := routesToOutput(f.Reachable.Routes, classify)
 	// Empty on the positive: NegativeSoundness states a rung only where there is
 	// an absence to qualify, and a route answers its own soundness question.
@@ -808,7 +799,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		VulnID:          f.ID,
 		Aliases:         f.Aliases,
 		Summary:         f.Summary,
-		Verdict:         verdict,
+		Verdict:         state.String(),
 		Confidence:      string(f.Reachable.Confidence),
 		Method:          f.Reachable.DerivedBy.Analyser.String(),
 		Fidelity:        f.Reachable.DerivedBy.Fidelity,

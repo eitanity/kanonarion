@@ -145,43 +145,55 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 	printFindingLines(stdout, rec, classify)
 }
 
-// reachabilityLabel renders the one-word reachability tag beside a finding.
+// reachabilityLabel renders the reachability tag beside a finding, from the one
+// shared reading every surface uses.
 //
-// It has three outcomes, not two. A finding whose answer was never determined at
-// symbol level — because the advisory names no symbol for this module path, or
-// because the analysis could not decide — is not a negative: labelling it "not
-// reachable" reports a search that was never run, and the operator acts on the
-// negative by not upgrading. notReachable lets each caller keep its own wording
-// for the genuine negative, which differs in how much of the instrument it names.
+// It has more outcomes than two, and the branch that matters is the one it used
+// to reach last. A finding whose answer was never determined at symbol level —
+// because the advisory names no symbol for this module path — is not a negative
+// and not a positive: labelling it "not reachable" reports a search that was
+// never run, and labelling it "[reachable]" reports code as running that nothing
+// showed running. This function tested the stored bit BEFORE the advisory, so a
+// finding carrying both read "[reachable]" here while the reachability command,
+// over the same record, reported it at package level. The state settles the
+// order once, for every surface.
+//
+// notReachable lets each caller keep its own wording for the genuine negative,
+// which differs in how much of the instrument it names.
 func reachabilityLabel(f vuldomain.VulnerabilityFinding, notReachable string) string {
-	if f.Reachable == nil {
+	switch state := vuldomain.FindingReachabilityState(f); state {
+	case vuldomain.StateNotAnalysed:
+		// Nobody asked. No tag: there is no answer here to qualify, and the state
+		// line under the finding says so in full.
+		return ""
+	case vuldomain.StateNotComputed:
 		// A reachability question that was asked and could not be answered is not
 		// the same as one nobody asked, and the blank label rendered them alike. The
 		// note printed under the finding carries the reason; this is what stops the
 		// entry reading as a finding reachability was simply not run for.
-		if f.ReachabilityAttemptFailed() {
-			return " [reachability requested but not computed]"
-		}
-		return ""
-	}
-	if f.Reachable.IsReachable {
+		return " [reachability requested but not computed]"
+	case vuldomain.StateReachable:
 		return " [reachable]"
-	}
-	if f.AdvisoryNamesNoSymbols {
+	case vuldomain.StatePackageLevelOnly:
 		return " [affected at package level; symbol-level reachability not determined]"
-	}
-	if f.Reachable.Confidence == vuldomain.ConfidenceUnknown {
+	case vuldomain.StateNotDetermined:
 		return " [reachability not determined]"
+	case vuldomain.StateWithdrawn:
+		// The retraction has its own line under the finding and it is the whole
+		// answer; a reachability tag beside it would offer reachability as the
+		// mitigation for an advisory that no longer stands.
+		return ""
+	default:
+		// The genuine negative: the entry an operator acts on by NOT upgrading, so
+		// the label says how thorough the search behind it was. A bare "[not
+		// reachable]" reads the same whether a call graph was searched or an
+		// analyser simply never mentioned the module, and on a working store every
+		// one of them was the second.
+		if soundness, _ := vuldomain.NegativeSoundness(f); soundness != vuldomain.SoundnessNotStated {
+			return strings.TrimSuffix(notReachable, "]") + " — " + soundness.String() + "]"
+		}
+		return notReachable
 	}
-	// The negative is the entry an operator acts on by NOT upgrading, so the
-	// label says how thorough the search behind it was. A bare "[not reachable]"
-	// reads the same whether a call graph was searched or an analyser simply
-	// never mentioned the module, and on a working store every one of them was
-	// the second.
-	if soundness, _ := vuldomain.NegativeSoundness(f); soundness != vuldomain.SoundnessNotStated {
-		return strings.TrimSuffix(notReachable, "]") + " — " + soundness.String() + "]"
-	}
-	return notReachable
 }
 
 // fixReferenceURLs returns the URLs of a finding's FIX references, in the
@@ -250,6 +262,14 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 		if f.AdvisoryNamesNoSymbols {
 			_, _ = fmt.Fprintln(stdout, "      symbols:  none named by the advisory for this module path — affected at package level, symbol-level reachability not determinable")
 		}
+		// The state is printed on every finding and never omitted at a "normal"
+		// value, in the same word the JSON surfaces publish. A reader must be able
+		// to tell not_reachable from package_level_only from a build that does not
+		// derive the state at all, and only a line that is always present carries
+		// the third distinction. The tag on the heading above is prose for a
+		// person; this is the word every surface agrees on.
+		state := vuldomain.FindingReachabilityState(f)
+		_, _ = fmt.Fprintf(stdout, "      reachability: %s — %s\n", state, state.Statement())
 		// A reachability answer never prints without saying what produced it. The
 		// same advisory in the same module is reachable in one build and not in
 		// the next, so an unlabelled answer reads as a property of the module and

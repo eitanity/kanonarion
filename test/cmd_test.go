@@ -47,7 +47,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testscript.Main(m, map[string]func(){
+	commands := map[string]func(){
 		"kanonarion": func() {
 			if err := cli.Run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 				// Mirror cmd/kanonarion/main.go: the CLI silences cobra's own
@@ -84,7 +84,46 @@ func TestMain(m *testing.M) {
 		"seednative": func() {
 			cmdSeedNative(os.Args[1:])
 		},
-	})
+	}
+
+	// A child spawned from os.Executable() by a test that drives the CLI in
+	// process is THIS binary under a name testscript.Main does not recognise, so
+	// testscript reads it as `go test` starting the suite and runs every test
+	// again — the fork bomb cli.TestBinaryIsCLIEnv describes. The registered
+	// names dispatch first and are untouched: only a child that testscript would
+	// otherwise hand the whole suite is answered as the CLI it was asked to be.
+	if isSpawnedCLIChild(commands) {
+		commands["kanonarion"]()
+		os.Exit(0)
+	}
+	// Set for the children of the suite, never for the suite itself: this process
+	// was started by `go test` and the variable is what tells its descendants
+	// apart from that.
+	if err := os.Setenv(cli.TestBinaryIsCLIEnv, "1"); err != nil {
+		fmt.Fprintf(os.Stderr, "marking test-binary children as the CLI: %v\n", err)
+		os.Exit(1)
+	}
+
+	testscript.Main(m, commands)
+}
+
+// isSpawnedCLIChild reports whether this process is a child spawned from
+// os.Executable() by a suite running above it, rather than a test binary `go
+// test` started or a testscript command.
+//
+// Three conditions, and each rules out one thing this process could otherwise
+// be. The marker is set only by a suite for its descendants, so an unset one is
+// the top-level run. A name testscript registers is a testscript command and
+// dispatches on its own. A first argument spelled -test.* is the testing
+// package's own, so a nested test binary is still a test binary.
+func isSpawnedCLIChild(commands map[string]func()) bool {
+	if os.Getenv(cli.TestBinaryIsCLIEnv) != "1" {
+		return false
+	}
+	if _, registered := commands[filepath.Base(os.Args[0])]; registered {
+		return false
+	}
+	return len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-test.")
 }
 
 func TestScript(t *testing.T) {

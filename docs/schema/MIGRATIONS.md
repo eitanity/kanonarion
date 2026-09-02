@@ -73,7 +73,7 @@ Each of the three answers with one row per module, and each wrote those rows as 
 bare JSON array (`context` wrote an object for a single coordinate). An array has
 nowhere to put a fact about the RUN, so the facts a person reads on stderr —
 which dependency scope resolved the rows, how many modules that was, the flag
-that narrows it, and for `context` which build the vulnerability verdicts were
+that narrows it, and for `context` which build the vulnerability answers were
 read in and whether that build was NAMED by the caller or CHOSEN for them —
 reached a `--json` consumer nowhere at all. That is a verdict dressed as evidence
 on the surface an agent reads.
@@ -316,9 +316,9 @@ snapshot's generation rather than trusted.
 Migration for existing stores: **none, and no purge.** Reads are keyed on the
 pipeline version, so the `v23` rows are already unreachable for a `v24` question,
 and the change lives inside the serialised record — which findings it carries,
-and the reachability verdict on each — rather than in a column. It cannot be a
+and the reachability answer on each — rather than in a column. It cannot be a
 migration in any case: which findings in a stored record came from the live
-service was never recorded, and the correct reachability verdict for one depends
+service was never recorded, and the correct reachability answer for one depends
 on an analysis that never ran.
 
 The re-scan cost is the smallest a vuln bump has carried. Measured before the
@@ -334,7 +334,7 @@ affect the host toolchain go1.26.5. `govulncheck` over this repository against
 the extracted snapshot: 168 messages, **0 findings**. The same tree and toolchain
 against the live database: 207 messages, 29 finding messages, 10 advisories. Under
 `v23` a scan at that snapshot produced a stdlib record carrying eight findings the
-analysis could not have seen, each with a high-confidence not-reachable verdict.
+analysis could not have seen, each with a high-confidence not-reachable answer.
 
 Consumer impact: a scan whose snapshot lags the live database reports fewer
 findings, and the ones it reports are the ones its stated database can produce. A
@@ -521,7 +521,7 @@ applies. It never overwrites a reached symbol: the two lists say different thing
 
 Migration for existing stores: **none, and no purge.** Reads are keyed on the
 pipeline version, so the `v22` rows are already unreachable for a `v23` question,
-and the fixed version, symbol list and reachability verdict all live inside the
+and the fixed version, symbol list and reachability answer all live inside the
 serialised record rather than in a column. The cost that IS owed is a re-scan:
 **650 stored records at `v22` go dark for a `v23` question until re-scanned**, on
 top of 2,548 already dark at `v19`, 1 at `v20` and 158 at `v21`.
@@ -530,7 +530,7 @@ Measured across the change on one project walk — same walk, same snapshot, sam
 coordinate — the stdlib record's seal moved from `sha256:548def0a` to
 `sha256:1c23a321`, with exactly one field changed: the advisory carrying no
 symbol-level message moved from `v1.27.0-rc.3` to `v1.26.6`. Findings (13),
-reachable verdicts (9), routes (45) and symbol lists were identical either side.
+reachable answers (9), routes (45) and symbol lists were identical either side.
 
 Consumer impact: `vuln` / `vuln-show` name the branch-correct fix on the `fix:`
 line, and a finding whose advisory was reported at module or package level
@@ -595,7 +595,7 @@ alter the canonical bytes it hashes over, hence the pipeline bump:
   record's shape and empty on every record ever written.
 
 Migration for existing stores: **none required by the consumer.** Store
-migration 11 back-fills the axis columns from `overall_status`; the projection is exact, so no verdict changes.
+migration 11 back-fills the axis columns from `overall_status`; the projection is exact, so no answer changes.
 Records at `v14` and earlier are kept and still answer queries — their blobs
 carry no axes, and readers derive them from `overall_status` on read. New scans
 write `v15`.
@@ -616,7 +616,7 @@ decides the axis, and the retracted ones remain visible per finding.
 Migration for existing stores: **none.** No store migration and no purge; existing
 records verify unchanged. Their `withdrawn_at` is absent, which reads as "the
 generation that wrote this never asked", not as "confirmed live" — re-scan to get a
-retraction verdict for a coordinate scanned before `v16`. New scans write `v16`.
+retraction answer for a coordinate scanned before `v16`. New scans write `v16`.
 
 Consumer impact: `audit --json` gains `vuln_withdrawn` (`vuln_findings` keeps its
 existing meaning, retracted advisories included), `context` gains
@@ -771,7 +771,7 @@ everything the record says, so a stored row cannot be altered without detection
 `graph.resolved_at` and the per-node fetch durations. Two runs of an unchanged
 checkout differ in every one of those, so they produced two content hashes and,
 with them, two walk ids; every record keyed on a walk id (licences,
-vulnerability verdicts, SBOMs) became unreachable from the next run, and a full
+vulnerability answers, SBOMs) became unreachable from the next run, and a full
 re-scan followed because the cache key was fresh by construction rather than
 because anything had changed.
 
@@ -1048,7 +1048,7 @@ record say something FALSE, not merely something less*. Two facts settle it.
   verifies. (See the fetch-record precedent for the same exemption.)
 - The one thing an old record WOULD have said falsely is now stated by the
   record itself. `CallGraphRecord.ReferenceScope` reads "not measured" on every
-  record written before references existed, and the verdict layer downgrades an
+  record written before references existed, and the answer layer downgrades an
   empty `callers` answer over such a record to `UNRESOLVED` naming
   `reference-scope-unmeasured` — instead of the `RESOLVED-ABSENT` that was the
   actual defect.
@@ -1278,7 +1278,7 @@ method every request runs. That is exactly the condition
 **Why it still does not earn a bump.** The population that can make that false
 claim is bounded by `ReferenceScope`, and it is small and self-healing. Measured
 read-only against the store: 461 stored call-graph records, all schema v13; 456
-have no `ReferenceScope`, so the verdict layer already downgrades an empty
+have no `ReferenceScope`, so the answer layer already downgrades an empty
 `callers` answer over them to `UNRESOLVED` naming `reference-scope-unmeasured`
 and they cannot claim an absence at all. The remaining 5 are one module's local
 working-tree generations, which the next `kanonarion local .` supersedes. A bump
@@ -1700,7 +1700,7 @@ reads as proof that nothing happened:
 
 | Not witnessed | Note |
 |---|---|
-| individual vulnerability record generations | `vuln_scan_completed` **counts** them and `vuln_finding_observed` names each finding, but no event names a per-module verdict; a Clean generation is only an increment, and a single-module scan names no generation either — it appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query |
+| individual vulnerability record generations | `vuln_scan_completed` **counts** them and `vuln_finding_observed` names each finding, but no event names a per-module answer; a Clean generation is only an increment, and a single-module scan names no generation either — it appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query |
 | attestations | additive provenance recorded beside a fact record, not mirrored into the log |
 | latest-version (staleness) ledger entries | the staleness context has no audit sink wired at all |
 | blob content writes | `fact_record_written` names the blob identity; the write of the bytes appends nothing |

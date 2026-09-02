@@ -570,6 +570,19 @@ func SnapshotAgeDays(validatedAt, retrievedAt time.Time) int {
 // produced it, how well it could see, and what it was rooted at will be read as
 // a property of the module, which it is not.
 type ReachabilityResult struct {
+	// IsReachable is the stored bit: the analysis either did or did not report a
+	// path to the vulnerable symbol. It is ONE INPUT to the answer and is not the
+	// answer — FindingReachabilityState is, and every surface that publishes a
+	// finding publishes that beside this.
+	//
+	// The bit has two positions and the question has more answers than two. Where
+	// the advisory names no symbol for this module path there was never a symbol
+	// to reach, so neither position describes the finding: measured on a working
+	// store, 24 such findings carry the bit true and 30 carry it false, and a
+	// consumer reading it as the answer counted one of the first group as
+	// reachable and published it. It is stored, sealed and part of the content
+	// hash, so it stays on the wire — but a reader deriving a state from it alone
+	// is reproducing the collapse rather than the answer.
 	IsReachable bool                   `json:"is_reachable"`
 	Confidence  ReachabilityConfidence `json:"confidence"`
 	// Routes are the paths from an entry point to the vulnerable symbol, entry
