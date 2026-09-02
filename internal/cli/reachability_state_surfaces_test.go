@@ -251,7 +251,7 @@ func TestTheThreeSurfacesAgreeOnOneFinding(t *testing.T) {
 		states  string
 		denies  []string
 	}{
-		{"reachability --json", string(reachJSON), `"verdict":"package_level_only"`, []string{`"verdict":"reachable"`, `"verdict":"not_reachable"`}},
+		{"reachability --json", string(reachJSON), `"reachability_state":"package_level_only"`, []string{`"reachability_state":"reachable"`, `"reachability_state":"not_reachable"`}},
 		{"reachability text", reachText.String(), "at PACKAGE level", []string{"is REACHABLE", "but is NOT reachable"}},
 		{"vuln-show --json", string(showJSON), `"reachability_state":"package_level_only"`, nil},
 		{"vuln-show text", entryFor(showText.String(), id), "reachability: package_level_only", []string{"[reachable]", "[not reachable"}},
@@ -294,8 +294,8 @@ func TestTheControlFindingsAreUnchanged(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: vulnReachabilityVerdict: %v", id, err)
 		}
-		if res.Verdict != want.verdict {
-			t.Errorf("%s: verdict = %q, want %q", id, res.Verdict, want.verdict)
+		if res.ReachabilityState != want.verdict {
+			t.Errorf("%s: verdict = %q, want %q", id, res.ReachabilityState, want.verdict)
 		}
 		var buf bytes.Buffer
 		printVulnReachability(&buf, res)

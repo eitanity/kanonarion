@@ -283,7 +283,7 @@ When a scan run of the same walk against the same advisory snapshot already
 exists, its result is served and `govulncheck` does not run:
 
 ```
-vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability verdicts came from the source that run read, which this run did not re-read (--force to re-measure)
+vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability answers came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 The line names the run whose answers you are reading and when it was made. The
@@ -820,7 +820,7 @@ build serves — including the plain coverage gap below, whose modules the store
 does not hold at the run's generation either:
 
 ```
-No scan record (1): the run reports a verdict for these modules but no record backs it
+No scan record (1): the run reports a status for these modules but no record backs it
 ```
 
 The report is printed in full before the refusal; the header, the module count,
@@ -994,7 +994,7 @@ same terms as `soundness` — nothing is stored, no record's content hash change
 and every record already in the store answers with it. The same key and the same
 words appear on `vuln-show --json`, `vuln-show --history`, `vuln-by-id --json`,
 `vuln-scan-show --json`, `vuln-scan-diff --json` and `context`, and
-`reachability --json` publishes the same words under `verdict`.
+`reachability --json` publishes them under that same key.
 
 Every negative carries the rung behind it on both surfaces. In text it is
 appended to the finding's label — `[not reachable — inferred]`. In `--json` each

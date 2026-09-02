@@ -41,7 +41,7 @@ type storeLedgerFlags struct {
 // the same commit as any change to what emits, on the rule the migrations
 // document already states for the event table.
 var ledgerNotEmitted = []string{
-	"individual vulnerability record generations — a walk scan COUNTS them (vuln_scan_completed) and names each finding (vuln_finding_observed), but no event names a per-module verdict, and a Clean generation is only an increment; a single-module scan names no generation either, and appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query",
+	"individual vulnerability record generations — a walk scan COUNTS them (vuln_scan_completed) and names each finding (vuln_finding_observed), but no event names a per-module status, and a Clean generation is only an increment; a single-module scan names no generation either, and appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query",
 	"attestations — additive provenance, recorded beside a fact record and not mirrored into the log",
 	"latest-version (staleness) ledger entries — resolved and written with no audit sink wired at all",
 	"blob content writes — the artefact bytes themselves; fact_record_written names the blob identity, the write of the bytes appends nothing",

@@ -180,7 +180,7 @@ When a CVE *does* land on a dependency, gate on reachability rather than mere
 presence:
 
 ```bash
-# Read a stored verdict computed by 'vuln-scan --reachability':
+# Read a stored answer computed by 'vuln-scan --reachability':
 ./kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
 
 # Or probe the live working tree directly:
@@ -199,7 +199,7 @@ reflects the database as of the release, not whenever the walk was first scanned
 
 ```bash
 # Always pulls a fresh DB and bypasses the per-module cache, so the new
-# snapshot is actually consulted (a plain re-scan would reuse cached verdicts).
+# snapshot is actually consulted (a plain re-scan would reuse cached answers).
 ./kanonarion vuln-scan-rescan "$WALK_ID"
 ./kanonarion vuln-scan-show <run-id>   # confirm: 0 affected
 ```

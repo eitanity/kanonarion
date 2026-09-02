@@ -792,7 +792,7 @@ func printReachabilityClosureBanner(w io.Writer, gomodPath string) {
 	projectDir := filepath.Dir(gomodPath)
 	_, _ = fmt.Fprintln(w, "==> NOTE: reachability is rooted at the DEPENDENCY CLOSURE, not the project's own code.")
 	_, _ = fmt.Fprintln(w, "    The consumer module is analysed in consumer-mode, so its call graph is not")
-	_, _ = fmt.Fprintln(w, "    loaded: a 'reachable' verdict means reachable from the closure roots, one hop")
+	_, _ = fmt.Fprintln(w, "    loaded: a 'reachable' answer means reachable from the closure roots, one hop")
 	_, _ = fmt.Fprintln(w, "    short of reachable from a project entrypoint. The final app->dependency edge")
 	_, _ = fmt.Fprintln(w, "    is absent from this analysis.")
 	_, _ = fmt.Fprintf(w, "    To root reachability at the application, run: kanonarion local %s\n", projectDir)

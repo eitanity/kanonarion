@@ -90,8 +90,8 @@ type implementersResult struct {
 	Method       string            `json:"method,omitempty"`
 	Count        int               `json:"count"`
 	Implementers []implementerJSON `json:"implementers"`
-	Verdict      string            `json:"verdict"`
-	VerdictWhy   string            `json:"verdict_reason,omitempty"`
+	Answer       string            `json:"answer"`
+	AnswerWhy    string            `json:"answer_reason,omitempty"`
 	// Scope names what the measurement covered, so an empty list is read as the
 	// answer to the question that was actually asked. It is one English sentence,
 	// which is why the four fields below field the same limits: `count` reads as
@@ -363,8 +363,8 @@ func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMeth
 		InterfaceID:  interfaceID,
 		Count:        len(out),
 		Implementers: out,
-		Verdict:      string(v.Outcome),
-		VerdictWhy:   v.Reason(),
+		Answer:       string(v.Outcome),
+		AnswerWhy:    v.Reason(),
 		Scope:        scopeLine,
 
 		SearchedModule: searchedModule,
@@ -430,20 +430,20 @@ func writeImplementersText(stdout io.Writer, queryID, method string, perMethod b
 	switch v.Outcome {
 	case domain.VerdictResolvedPresent:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: RESOLVED-PRESENT — %s %s %s\n", countConcreteTypes(len(impls)), satisfyVerb(len(impls)), queryID); err != nil {
-			return fmt.Errorf("writing verdict: %w", err)
+			"answer: RESOLVED-PRESENT — %s %s %s\n", countConcreteTypes(len(impls)), satisfyVerb(len(impls)), queryID); err != nil {
+			return fmt.Errorf("writing answer: %w", err)
 		}
 	case domain.VerdictUnresolved:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: UNRESOLVED — implementers of %s cannot be confirmed absent: %s\n",
+			"answer: UNRESOLVED — implementers of %s cannot be confirmed absent: %s\n",
 			queryID, v.Reason()); err != nil {
-			return fmt.Errorf("writing verdict: %w", err)
+			return fmt.Errorf("writing answer: %w", err)
 		}
 	default:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: RESOLVED-ABSENT — no type in %s satisfies %s\n",
+			"answer: RESOLVED-ABSENT — no type in %s satisfies %s\n",
 			moduleOfScopeLine(scopeLine), queryID); err != nil {
-			return fmt.Errorf("writing verdict: %w", err)
+			return fmt.Errorf("writing answer: %w", err)
 		}
 	}
 	return nil

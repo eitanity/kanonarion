@@ -1,4 +1,4 @@
-# populated: a stored, reachable verdict with a versioned route, a fidelity and a rooting.
+# populated: a stored, reachable answer with a versioned route, a fidelity and a rooting.
 $ kanonarion reachability example.com/mod@v1.2.0 --vuln GO-2026-0001 --json
 exit 0
 --- stdout ---
@@ -10,7 +10,7 @@ exit 0
     "CVE-2026-00001"
   ],
   "summary": "example vulnerability in example.com/mod",
-  "verdict": "reachable",
+  "reachability_state": "reachable",
   "confidence": "High",
   "method": "govulncheck",
   "fidelity": "source",

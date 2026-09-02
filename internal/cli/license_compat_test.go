@@ -164,12 +164,12 @@ func TestPrintCompatReportJSON_ConflictFields(t *testing.T) {
 	}
 	var out struct {
 		Conflicts []struct {
-			Module  string `json:"module"`
-			Version string `json:"version"`
-			DepSPDX string `json:"dep_spdx"`
-			Target  string `json:"target_spdx"`
-			Verdict string `json:"verdict"`
-			Kind    string `json:"kind"`
+			Module        string `json:"module"`
+			Version       string `json:"version"`
+			DepSPDX       string `json:"dep_spdx"`
+			Target        string `json:"target_spdx"`
+			Compatibility string `json:"compatibility"`
+			Kind          string `json:"kind"`
 		} `json:"conflicts"`
 	}
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
@@ -182,8 +182,8 @@ func TestPrintCompatReportJSON_ConflictFields(t *testing.T) {
 	if c.DepSPDX != "AGPL-3.0-only" {
 		t.Errorf("dep_spdx = %q, want AGPL-3.0-only", c.DepSPDX)
 	}
-	if c.Verdict != "incompatible" {
-		t.Errorf("verdict = %q, want incompatible", c.Verdict)
+	if c.Compatibility != "incompatible" {
+		t.Errorf("compatibility = %q, want incompatible", c.Compatibility)
 	}
 	if c.Kind != "network_trigger" {
 		t.Errorf("kind = %q, want network_trigger", c.Kind)

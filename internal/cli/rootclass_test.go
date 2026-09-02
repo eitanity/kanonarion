@@ -120,8 +120,8 @@ func TestReachabilityVerdictCarriesTheRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}
-	if res.Verdict != verdictReachable {
-		t.Fatalf("Verdict = %q, want the classification to qualify the verdict, never replace it", res.Verdict)
+	if res.ReachabilityState != verdictReachable {
+		t.Fatalf("Verdict = %q, want the classification to qualify the verdict, never replace it", res.ReachabilityState)
 	}
 	if res.RouteRoot == nil || res.RouteRoot.Kind != "ingress" {
 		t.Fatalf("RouteRoot = %+v, want the first route's ingress classification", res.RouteRoot)

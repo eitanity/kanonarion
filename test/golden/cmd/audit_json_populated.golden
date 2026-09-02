@@ -24,7 +24,7 @@ exit 0
     }
   },
   "reachability_basis": {
-    "verdicts": 1,
+    "answers": 1,
     "source_read_by_this_run": true
   },
   "toolchain": {

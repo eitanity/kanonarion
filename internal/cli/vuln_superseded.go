@@ -310,14 +310,14 @@ func scanShowServedExit(superseded []supersededRunRecord, missing []string, tota
 	case len(missing) == 0:
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"%d of %d module(s) this run names are recorded at a pipeline generation this build does "+
-				"not read; no verdict above rests on them", n, total)}
+				"not read; no status above rests on them", n, total)}
 	case len(superseded) == 0:
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"%d of %d module(s) this run names have no record in the store; no verdict above rests on them",
+			"%d of %d module(s) this run names have no record in the store; no status above rests on them",
 			n, total)}
 	default:
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"%d of %d module(s) this run names produced no record this build serves (%d superseded, "+
-				"%d absent); no verdict above rests on them", n, total, len(superseded), len(missing))}
+				"%d absent); no status above rests on them", n, total, len(superseded), len(missing))}
 	}
 }

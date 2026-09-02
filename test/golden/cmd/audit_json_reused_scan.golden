@@ -1,4 +1,4 @@
-# REUSED, json: the run-level facts on the machine channel when the answer was NOT measured by this invocation — the walk re-resolved and found identical, the scan served from a stored run, and its reachability verdicts resting on source this run did not read. Its control is audit_json_populated, which must keep reading `"reused": false` and `"source_read_by_this_run": true` for the same fixture. The pair is what shows the fields track the run rather than being constants.
+# REUSED, json: the run-level facts on the machine channel when the answer was NOT measured by this invocation — the walk re-resolved and found identical, the scan served from a stored run, and its reachability answers resting on source this run did not read. Its control is audit_json_populated, which must keep reading `"reused": false` and `"source_read_by_this_run": true` for the same fixture. The pair is what shows the fields track the run rather than being constants.
 $ kanonarion audit --gomod $AUDIT_PROJECT/go.mod --from-modcache=$MODCACHE --json
 exit 0
 --- stdout ---
@@ -24,7 +24,7 @@ exit 0
     }
   },
   "reachability_basis": {
-    "verdicts": 1,
+    "answers": 1,
     "source_read_by_this_run": false
   },
   "toolchain": {
@@ -144,7 +144,7 @@ Starting extraction for walk $ULID...
 ==> audit: scanning vulnerabilities for walk $ULID
 derivation:
   walk $ULID: re-resolved and found identical to the walk taken 2026-03-01T00:00:00Z; that record was reused
-  vulnerability scan: reused run vscan-$ULID-1772323200 of 2026-03-01T00:00:00Z against snapshot vuln.go.dev@2026-02-14T00:00:00Z; nothing was re-scanned, and its 1 reachability verdict came from the source that run read, which this run did not re-read (--force to re-measure)
+  vulnerability scan: reused run vscan-$ULID-1772323200 of 2026-03-01T00:00:00Z against snapshot vuln.go.dev@2026-02-14T00:00:00Z; nothing was re-scanned, and its 1 reachability answer came from the source that run read, which this run did not re-read (--force to re-measure)
 toolchain:
   $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
 verification coverage over 3 module(s):

@@ -628,7 +628,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 			// the roll-ups it feeds are the result, printed to stdout.
 			writeVulnScanProgress(record, coord, current, total, progressOut)
 			rollups.add(coord, record)
-			reach.Verdicts += recordReachabilityVerdicts(record)
+			reach.Answers += recordReachabilityVerdicts(record)
 		},
 	})
 	if err != nil {
@@ -772,10 +772,10 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 	// How much of this answer is a function of the project's own source, counted
 	// from the records the run wrote — the same count the statement and the JSON
 	// field both report, taken once.
-	reach := vulnScanReachability{Verdicts: reachabilityVerdicts(recs)}
+	reach := vulnScanReachability{Answers: reachabilityVerdicts(recs)}
 
 	if announce {
-		if _, werr := fmt.Fprintf(stderr, "%s\n", reusedScanLine(run, reach.Verdicts)); werr != nil {
+		if _, werr := fmt.Fprintf(stderr, "%s\n", reusedScanLine(run, reach.Answers)); werr != nil {
 			return vulnScanRunFacts{}, fmt.Errorf("writing output: %w", werr)
 		}
 	}

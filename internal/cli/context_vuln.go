@@ -185,7 +185,7 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 		for coord := range run.PerModuleResults {
 			rec, found, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
 			if err != nil {
-				return nil, fmt.Errorf("reading walk-peer verdict for %s in walk %s: %w", coord, run.WalkID, err)
+				return nil, fmt.Errorf("reading walk-peer status for %s in walk %s: %w", coord, run.WalkID, err)
 			}
 			if !found {
 				continue

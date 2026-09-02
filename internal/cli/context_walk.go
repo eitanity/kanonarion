@@ -276,7 +276,7 @@ func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldoma
 		// of a shared dependency cannot decide whether this walk is affected.
 		rec, found, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
 		if err != nil {
-			return nil, fmt.Errorf("reading verdict for %s in walk %s: %w", coord, run.WalkID, err)
+			return nil, fmt.Errorf("reading status for %s in walk %s: %w", coord, run.WalkID, err)
 		}
 		if !found {
 			continue

@@ -65,7 +65,7 @@ func reusedScanLine(run vulndomain.WalkScanRun, verdicts int) string {
 		run.ID, run.CompletedAt.UTC().Format(time.RFC3339),
 		run.Snapshot.Source(), run.Snapshot.Version())
 	if verdicts > 0 {
-		line += fmt.Sprintf(", and its %d reachability verdict%s came from the source that run read, which this run did not re-read",
+		line += fmt.Sprintf(", and its %d reachability answer%s came from the source that run read, which this run did not re-read",
 			verdicts, pluralise(verdicts, "", "s"))
 	}
 	return line + " (--force to re-measure)"
@@ -85,7 +85,7 @@ func reusedScanLine(run vulndomain.WalkScanRun, verdicts int) string {
 type vulnScanReachability struct {
 	// Verdicts is the number of findings in the run carrying a reachability
 	// answer. Zero means nothing in this document depends on the source.
-	Verdicts int `json:"verdicts"`
+	Answers int `json:"answers"`
 	// SourceReadByThisRun is false on a served run: the verdicts came from the
 	// source the named run read, and this invocation did not read it again.
 	SourceReadByThisRun bool `json:"source_read_by_this_run"`

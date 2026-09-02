@@ -63,13 +63,13 @@ const (
 // -- output types --
 
 type reachabilityFinding struct {
-	CVEID          string   `json:"cve_id"`
-	Aliases        []string `json:"aliases,omitempty"`
-	Summary        string   `json:"summary"`
-	Verdict        string   `json:"verdict"`
-	VerdictSource  string   `json:"verdict_source,omitempty"`
-	Reason         string   `json:"reason,omitempty"`
-	MatchedSymbols []string `json:"matched_symbols,omitempty"`
+	CVEID             string   `json:"cve_id"`
+	Aliases           []string `json:"aliases,omitempty"`
+	Summary           string   `json:"summary"`
+	ReachabilityState string   `json:"reachability_state"`
+	StateSource       string   `json:"state_source,omitempty"`
+	Reason            string   `json:"reason,omitempty"`
+	MatchedSymbols    []string `json:"matched_symbols,omitempty"`
 	// MatchedBinaries names the main packages whose symbol table carried the
 	// matched symbols — which of a multi-binary build's artefacts ships the
 	// vulnerable code.
@@ -186,14 +186,14 @@ func newReachabilityCmd(stdout, stderr io.Writer) *cobra.Command {
 		Long: `reachability has two modes.
 
 Stored-module query (read-only): 'reachability <module>@<version> --vuln <id>'
-reads the reachability verdict that 'vuln-scan --reachability' previously
+reads the reachability state that 'vuln-scan --reachability' previously
 computed and persisted for a module, for a single CVE. It never scans or
 recomputes; when the data is absent it tells you which command to run.
 
-A stored verdict is a verdict about one build, so the query names one:
---walk-id answers in that walk's frame, --gomod in the frame of the newest
+A stored reachability state was measured against one build, so the query names
+one: --walk-id answers in that walk's frame, --gomod in the frame of the newest
 project walk for that go.mod (defaults to ./go.mod). A notice states which
-build the answer was restricted to, and the verdict names its rooting either
+build the answer was restricted to, and the answer names its rooting either
 way.
 
 With neither flag, and more than one project's scans of the module in the
@@ -419,10 +419,10 @@ func selectConsumerRecord(recs []vuldomain.VulnerabilityRecord, coord coordinate
 // as the second is the false stand-down this type exists to stop, so the verdict
 // travels with the frame that produced it, labelled, in its own field.
 type isolatedAside struct {
-	Verdict    string `json:"verdict"`
-	Confidence string `json:"confidence,omitempty"`
-	Method     string `json:"method,omitempty"`
-	Fidelity   string `json:"fidelity,omitempty"`
+	ReachabilityState string `json:"reachability_state"`
+	Confidence        string `json:"confidence,omitempty"`
+	Method            string `json:"method,omitempty"`
+	Fidelity          string `json:"fidelity,omitempty"`
 	// Soundness and SoundnessReason qualify the aside's own negative. It is a
 	// verdict like any other and it is published like any other, so it owes the
 	// same statement of what was searched to reach it — the more so here, where a
@@ -450,13 +450,13 @@ func isolatedAsideFor(rec vuldomain.VulnerabilityRecord, has bool, vulnID string
 		// here would have published the isolated frame's package-level-only finding
 		// as "reachable" in the one place a reader is being shown two answers and
 		// asked to weigh them.
-		Verdict:         vuldomain.FindingReachabilityState(f).String(),
-		Confidence:      string(f.Reachable.Confidence),
-		Method:          f.Reachable.DerivedBy.Analyser.String(),
-		Fidelity:        f.Reachable.DerivedBy.Fidelity,
-		Soundness:       soundness,
-		SoundnessReason: soundnessReason,
-		ScannedAt:       rec.ScannedAt.UTC().Format(time.RFC3339),
+		ReachabilityState: vuldomain.FindingReachabilityState(f).String(),
+		Confidence:        string(f.Reachable.Confidence),
+		Method:            f.Reachable.DerivedBy.Analyser.String(),
+		Fidelity:          f.Reachable.DerivedBy.Fidelity,
+		Soundness:         soundness,
+		SoundnessReason:   soundnessReason,
+		ScannedAt:         rec.ScannedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -464,13 +464,13 @@ func isolatedAsideFor(rec vuldomain.VulnerabilityRecord, has bool, vulnID string
 // reachability query for a single CVE. Method records which analysis produced
 // the verdict so a future probe-based method is reported, not silently mixed in.
 type vulnReachabilityQuery struct {
-	Module     string   `json:"module"`
-	Version    string   `json:"version"`
-	VulnID     string   `json:"vuln_id"`
-	Aliases    []string `json:"aliases,omitempty"`
-	Summary    string   `json:"summary,omitempty"`
-	Verdict    string   `json:"verdict"`
-	Confidence string   `json:"confidence,omitempty"`
+	Module            string   `json:"module"`
+	Version           string   `json:"version"`
+	VulnID            string   `json:"vuln_id"`
+	Aliases           []string `json:"aliases,omitempty"`
+	Summary           string   `json:"summary,omitempty"`
+	ReachabilityState string   `json:"reachability_state"`
+	Confidence        string   `json:"confidence,omitempty"`
 	// Method is the analyser that produced the stored answer, read off the
 	// answer itself. It used to be the constant "call-graph" on every reply,
 	// which mislabelled every govulncheck-derived answer in the store — most of
@@ -722,10 +722,10 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 	if !ok {
 		// Genuine zero: the scan ran and this CVE is not among its findings.
 		return vulnReachabilityQuery{
-			Module:  coord.Path(),
-			Version: coord.Version(),
-			VulnID:  vulnID,
-			Verdict: verdictNotAffected,
+			Module:            coord.Path(),
+			Version:           coord.Version(),
+			VulnID:            vulnID,
+			ReachabilityState: verdictNotAffected,
 			// No Method: this reply is a statement about the advisory set, not the
 			// output of a reachability analyser. Naming one would attribute an
 			// answer to an instrument that was never consulted.
@@ -745,12 +745,12 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 	// below would otherwise send the operator to compute a call graph for it.
 	if state == vuldomain.StateWithdrawn {
 		return vulnReachabilityQuery{
-			Module:  coord.Path(),
-			Version: coord.Version(),
-			VulnID:  f.ID,
-			Aliases: f.Aliases,
-			Summary: f.Summary,
-			Verdict: verdictWithdrawn,
+			Module:            coord.Path(),
+			Version:           coord.Version(),
+			VulnID:            f.ID,
+			Aliases:           f.Aliases,
+			Summary:           f.Summary,
+			ReachabilityState: verdictWithdrawn,
 			// No Method, for the reason given on the not-affected reply above: a
 			// retraction is read off the advisory, not computed.
 			Method:      reachabilityMethodNone,
@@ -794,21 +794,21 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 	// an absence to qualify, and a route answers its own soundness question.
 	soundness, soundnessReason := vuldomain.NegativeSoundness(f)
 	return vulnReachabilityQuery{
-		Module:          coord.Path(),
-		Version:         coord.Version(),
-		VulnID:          f.ID,
-		Aliases:         f.Aliases,
-		Summary:         f.Summary,
-		Verdict:         state.String(),
-		Confidence:      string(f.Reachable.Confidence),
-		Method:          f.Reachable.DerivedBy.Analyser.String(),
-		Fidelity:        f.Reachable.DerivedBy.Fidelity,
-		Rooting:         f.Reachable.DerivedBy.Rooting.String(),
-		Soundness:       soundness,
-		SoundnessReason: soundnessReason,
-		Routes:          routes,
-		RouteRoot:       firstRouteRoot(routes),
-		ScannedAt:       rec.ScannedAt.UTC().Format(time.RFC3339),
+		Module:            coord.Path(),
+		Version:           coord.Version(),
+		VulnID:            f.ID,
+		Aliases:           f.Aliases,
+		Summary:           f.Summary,
+		ReachabilityState: state.String(),
+		Confidence:        string(f.Reachable.Confidence),
+		Method:            f.Reachable.DerivedBy.Analyser.String(),
+		Fidelity:          f.Reachable.DerivedBy.Fidelity,
+		Rooting:           f.Reachable.DerivedBy.Rooting.String(),
+		Soundness:         soundness,
+		SoundnessReason:   soundnessReason,
+		Routes:            routes,
+		RouteRoot:         firstRouteRoot(routes),
+		ScannedAt:         rec.ScannedAt.UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -853,7 +853,7 @@ func nilReachabilityRefusal(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 	if aside != nil {
 		return fmt.Errorf(
 			"no reachability answer for %s in %s in the frame that was asked about: the best-founded analysis in a consumer frame (%s) recorded no route, and the answer is not taken from the isolated-frame scan of %s (%s at confidence %s, by %s), which asks whether the module reaches its own vulnerable code when built alone — a different question, and not evidence about the build that consumes it. %s",
-			f.ID, coord, rec.Rooting.String(), coord.Path(), aside.Verdict, aside.Confidence, aside.Method, remedyProjectRooted())
+			f.ID, coord, rec.Rooting.String(), coord.Path(), aside.ReachabilityState, aside.Confidence, aside.Method, remedyProjectRooted())
 	}
 	return fmt.Errorf(
 		"reachability was not computed for %s in %s (the module was scanned without --reachability). %s",
@@ -998,12 +998,12 @@ func printIsolatedAside(stdout io.Writer, aside *isolatedAside) {
 	}
 	_, _ = fmt.Fprintf(stdout,
 		"  isolated frame (a different question — the module built alone, not the build that consumes it): %s [confidence: %s, soundness: %s, by: %s]\n",
-		aside.Verdict, aside.Confidence, aside.Soundness, aside.Method)
+		aside.ReachabilityState, aside.Confidence, aside.Soundness, aside.Method)
 }
 
 func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 	coord := res.Module + "@" + res.Version
-	switch res.Verdict {
+	switch res.ReachabilityState {
 	case verdictReachable:
 		// The root tag rides on the verdict line rather than under the route,
 		// because one of its five values is a warning: a test-scope root read as a
@@ -1076,9 +1076,9 @@ func renderLocalReachability(stdout io.Writer, out reachabilityOutput, asJSON bo
 // its own evidence and an undetermined verdict has no absence to qualify.
 func localVerdictLabel(f reachabilityFinding) string {
 	if f.Soundness == "" || f.Soundness == vuldomain.SoundnessNotStated.String() {
-		return f.Verdict
+		return f.ReachabilityState
 	}
-	return f.Verdict + " — " + f.Soundness
+	return f.ReachabilityState + " — " + f.Soundness
 }
 
 // printLocalReachability renders the local probe as prose.
@@ -1133,7 +1133,7 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 				aliases = " (" + strings.Join(f.Aliases, ", ") + ")"
 			}
 			w.printf("    %s%s [%s, by: %s]: %s\n",
-				f.CVEID, aliases, localVerdictLabel(f), verdictSourceLabel(f.VerdictSource), f.Summary)
+				f.CVEID, aliases, localVerdictLabel(f), verdictSourceLabel(f.StateSource), f.Summary)
 			// The reason under the rung, for the reason printSoundness gives on the
 			// stored-query surface: a rung alone is a label, and a label is what
 			// turns a measurement into a verdict.
@@ -1204,16 +1204,16 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 		findings := make([]reachabilityFinding, 0, len(m.Findings))
 		for _, f := range m.Findings {
 			findings = append(findings, reachabilityFinding{
-				CVEID:           f.CVEID,
-				Aliases:         f.Aliases,
-				Summary:         f.Summary,
-				Verdict:         string(f.Verdict),
-				VerdictSource:   string(f.VerdictSource),
-				Reason:          f.Reason,
-				MatchedSymbols:  f.MatchedSymbols,
-				MatchedBinaries: f.MatchedBinaries,
-				Soundness:       vuldomain.ReachabilitySoundness(f.Soundness).String(),
-				SoundnessReason: f.SoundnessReason,
+				CVEID:             f.CVEID,
+				Aliases:           f.Aliases,
+				Summary:           f.Summary,
+				ReachabilityState: string(f.Verdict),
+				StateSource:       string(f.VerdictSource),
+				Reason:            f.Reason,
+				MatchedSymbols:    f.MatchedSymbols,
+				MatchedBinaries:   f.MatchedBinaries,
+				Soundness:         vuldomain.ReachabilitySoundness(f.Soundness).String(),
+				SoundnessReason:   f.SoundnessReason,
 			})
 		}
 		mods = append(mods, reachabilityModule{

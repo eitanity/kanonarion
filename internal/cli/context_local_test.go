@@ -121,7 +121,7 @@ func TestPrintLocalContextText_RendersReachabilityFindings(t *testing.T) {
 				Path:    "golang.org/x/mod",
 				Version: "v0.36.0",
 				Findings: []reachabilityFinding{
-					{CVEID: "GO-2024-0001", Verdict: "reachable"},
+					{CVEID: "GO-2024-0001", ReachabilityState: "reachable"},
 				},
 			},
 		},

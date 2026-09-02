@@ -1,4 +1,4 @@
-# REUSED: the same audit run a second time against the store the first one wrote. It is the only recording of what the tool says about work it did NOT do — the walk re-resolved and found identical, the scan served from a stored run, and what that run's reachability verdicts rest on. The date and the run identifier below are recorded literally, so a change to WHICH stored run answers moves this file. Its control is audit_text_populated, which must keep reading `derived by this run`.
+# REUSED: the same audit run a second time against the store the first one wrote. It is the only recording of what the tool says about work it did NOT do — the walk re-resolved and found identical, the scan served from a stored run, and what that run's reachability answers rest on. The date and the run identifier below are recorded literally, so a change to WHICH stored run answers moves this file. Its control is audit_text_populated, which must keep reading `derived by this run`.
 $ kanonarion audit --gomod $AUDIT_PROJECT/go.mod --from-modcache=$MODCACHE
 exit 0
 --- stdout ---
@@ -15,7 +15,7 @@ Starting extraction for walk $ULID...
 ==> audit: scanning vulnerabilities for walk $ULID
 derivation:
   walk $ULID: re-resolved and found identical to the walk taken 2026-03-01T00:00:00Z; that record was reused
-  vulnerability scan: reused run vscan-$ULID-1772323200 of 2026-03-01T00:00:00Z against snapshot vuln.go.dev@2026-02-14T00:00:00Z; nothing was re-scanned, and its 1 reachability verdict came from the source that run read, which this run did not re-read (--force to re-measure)
+  vulnerability scan: reused run vscan-$ULID-1772323200 of 2026-03-01T00:00:00Z against snapshot vuln.go.dev@2026-02-14T00:00:00Z; nothing was re-scanned, and its 1 reachability answer came from the source that run read, which this run did not re-read (--force to re-measure)
 toolchain:
   $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
 verification coverage over 3 module(s):

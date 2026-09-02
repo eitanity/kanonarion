@@ -29,10 +29,10 @@ which indexes the directory in place.
 ### What the answers claim
 
 Every query in this family reports a **three-valued answer**, printed on a
-`verdict:` line, because an empty answer has two very different causes and
+`answer:` line, because an empty answer has two very different causes and
 conflating them is the failure mode the whole design exists to prevent:
 
-| `verdict:` | Meaning |
+| `answer:` | Meaning |
 |---|---|
 | `RESOLVED-PRESENT` | Edges (or implementers) were found. |
 | `RESOLVED-ABSENT` | A measurement: nothing was found across a fully-built path, with no soundness sink in the way. |
@@ -42,7 +42,7 @@ conflating them is the failure mode the whole design exists to prevent:
 forced the downgrade, so a reader can act on them:
 
 ```
-verdict: UNRESOLVED — callers of pkg.(*T).Do cannot be confirmed absent:
+answer: UNRESOLVED — callers of pkg.(*T).Do cannot be confirmed absent:
   test-scope-unmeasured at pkg.(*T).Do (_test.go declarations were not analysed for this module)
 ```
 
@@ -174,10 +174,10 @@ every test-only consumer.
   absence it cannot substantiate.
 
 When you pass `--exclude-tests`, the answer says so, so a narrowed answer is
-never read as a wider one. An empty answer says it on the verdict line:
+never read as a wider one. An empty answer says it on the answer line:
 
 ```
-verdict: RESOLVED-ABSENT — no callers of pkg.(*T).Do across a fully-built path (production only; --exclude-tests was given)
+answer: RESOLVED-ABSENT — no callers of pkg.(*T).Do across a fully-built path (production only; --exclude-tests was given)
 ```
 
 A non-empty answer says it on a `scope:` line under the list — "1 caller" is
@@ -200,7 +200,7 @@ analysis does not read. `callers` on one answers `UNRESOLVED` naming
 `test-harness-entry`, not a confident absence:
 
 ```
-verdict: UNRESOLVED — callers of pkg.TestThing cannot be confirmed absent:
+answer: UNRESOLVED — callers of pkg.TestThing cannot be confirmed absent:
   test-harness-entry at pkg.TestThing (the go test harness invokes it through a synthesised main package that is not part of the analysed graph)
 ```
 
@@ -822,7 +822,7 @@ method — an ID `callers` and `callees` also accept.
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
-| `--json` | `false` | Emit the result, its `verdict` and the scope as JSON |
+| `--json` | `false` | Emit the result, its `answer` and the scope as JSON |
 
 ```
 $ kanonarion implementers 'github.com/org/repo/internal/vuln/ports.VulnerabilityStore'
@@ -831,7 +831,7 @@ $ kanonarion implementers 'github.com/org/repo/internal/vuln/ports.Vulnerability
   github.com/org/repo/internal/vuln/application_test.(*fakeVulnStore)  [test]  (github.com/org/repo@v0.0.0)
   ...
 scope: concrete types declared in github.com/org/repo; types in other modules that satisfy this interface are not measured
-verdict: RESOLVED-PRESENT — 7 concrete types satisfy github.com/org/repo/internal/vuln/ports.VulnerabilityStore
+answer: RESOLVED-PRESENT — 7 concrete types satisfy github.com/org/repo/internal/vuln/ports.VulnerabilityStore
 ```
 
 An implementer that satisfies the interface through an embedded type is
@@ -935,7 +935,7 @@ it could not measure. That package produced no SSA, so edges with an end inside
 it were dropped and the symbol is not a node in its own module's graph — but
 edges INTO it recorded in a consumer's complete graph are unaffected, and those
 are what the answer lists. The output carries a `notice: unmeasured on one
-side …` line naming the package, and an empty answer is `verdict: UNRESOLVED`
+side …` line naming the package, and an empty answer is `answer: UNRESOLVED`
 with a `dropped-package-edges` sink.
 
 The remedy the notice names depends on whose module failed: a project

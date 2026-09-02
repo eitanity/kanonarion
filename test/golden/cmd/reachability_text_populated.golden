@@ -1,4 +1,4 @@
-# populated, text: the same verdict on the human channel.
+# populated, text: the same answer on the human channel.
 $ kanonarion reachability example.com/mod@v1.2.0 --vuln GO-2026-0001
 exit 0
 --- stdout ---

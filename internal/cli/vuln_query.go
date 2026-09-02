@@ -271,7 +271,7 @@ func printDeclinedIsolatedFrame(stdout io.Writer, rec vuldomain.VulnerabilityRec
 	for _, f := range rec.Findings {
 		if aside := isolatedAsideFor(rec, true, f.ID); aside != nil {
 			lines = append(lines, fmt.Sprintf("    %s: %s [confidence: %s, soundness: %s, by: %s]",
-				f.ID, aside.Verdict, aside.Confidence, aside.Soundness, aside.Method))
+				f.ID, aside.ReachabilityState, aside.Confidence, aside.Soundness, aside.Method))
 		}
 	}
 	if len(lines) == 0 {

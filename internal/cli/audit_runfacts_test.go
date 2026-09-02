@@ -92,7 +92,7 @@ func TestAuditRunFactsStateAReusedRun(t *testing.T) {
 		t.Errorf("the scan field and the derivation sentence name different runs:\nfield: %+v\nsaid:  %s", run.Scan, said)
 	}
 
-	if run.Reachability.Verdicts != 4 || run.Reachability.SourceReadByThisRun {
+	if run.Reachability.Answers != 4 || run.Reachability.SourceReadByThisRun {
 		t.Errorf("reachability_basis = %+v, want 4 verdicts resting on source this run did not read", run.Reachability)
 	}
 	if _, ok := fields["reachability_basis"]; !ok {
@@ -110,7 +110,7 @@ func TestAuditRunFactsStateADerivedRun(t *testing.T) {
 	facts := vulnScanRunFacts{
 		RunID:        "vscan-01KZ0AVM2897N6J6YE4GABYG27-1754107500",
 		Snapshot:     vulnScanSnapshotOf(vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z")),
-		Reachability: vulnScanReachability{Verdicts: 7, SourceReadByThisRun: true},
+		Reachability: vulnScanReachability{Answers: 7, SourceReadByThisRun: true},
 	}
 	d := auditDerivation{walkRecord: auditWalkForFacts(), scanFacts: facts}
 	run := newAuditRunJSON(d, nil, time.Hour, time.Now())

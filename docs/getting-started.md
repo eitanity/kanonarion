@@ -414,7 +414,7 @@ A text search for the method name does not answer this. It cannot tell an
 implementation from a call, and it misses types that satisfy the interface by
 embedding.
 
-**Read the verdict line.** When `callers`, `callees` or `implementers` find
+**Read the answer line.** When `callers`, `callees` or `implementers` find
 nothing, they say which kind of nothing it is:
 
 ```bash
@@ -423,7 +423,7 @@ kanonarion callers 'github.com/google/uuid.NewDCEGroup' --exclude-tests
 
 ```
 No callers found for github.com/google/uuid.NewDCEGroup
-verdict: RESOLVED-ABSENT — no callers of github.com/google/uuid.NewDCEGroup across a fully-built path (production only; --exclude-tests was given)
+answer: RESOLVED-ABSENT — no callers of github.com/google/uuid.NewDCEGroup across a fully-built path (production only; --exclude-tests was given)
 ```
 
 `RESOLVED-ABSENT` is a measurement. You may report it as "nothing calls this".
@@ -606,7 +606,7 @@ Interpretation rules. These are load-bearing.
 2. Queries over unanalysed data exit non-zero and print the command to run.
    Run that command, then repeat the query. An empty result with exit 0 over
    analysed data is a real zero. Report it as one.
-3. Read the verdict line on callers, callees and implementers, not just the
+3. Read the answer line on callers, callees and implementers, not just the
    list. RESOLVED-ABSENT is a measurement and you may report it as "nothing
    calls this". UNRESOLVED is not an answer: the graph could not decide, and
    the line names what stopped it. Relay that. Never turn it into a confident

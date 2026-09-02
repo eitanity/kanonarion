@@ -48,7 +48,7 @@ func TestRunCallers_ResolvedAbsent(t *testing.T) {
 	if err := runCallers(context.Background(), "example.com/m.Root", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "verdict: RESOLVED-ABSENT") {
+	if !strings.Contains(buf.String(), "answer: RESOLVED-ABSENT") {
 		t.Errorf("expected RESOLVED-ABSENT verdict, got: %q", buf.String())
 	}
 }
@@ -72,7 +72,7 @@ func TestRunCallers_UnresolvedInterfaceDispatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "verdict: UNRESOLVED") {
+	if !strings.Contains(out, "answer: UNRESOLVED") {
 		t.Fatalf("expected UNRESOLVED verdict, got: %q", out)
 	}
 	if !strings.Contains(out, "example.com/m.Client") {
@@ -92,7 +92,7 @@ func TestRunCallees_TypeOnlyModuleUnresolved(t *testing.T) {
 	if err := runCallees(context.Background(), "example.com/m.Leaf", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "verdict: UNRESOLVED") {
+	if !strings.Contains(buf.String(), "answer: UNRESOLVED") {
 		t.Errorf("expected UNRESOLVED for type-only module, got: %q", buf.String())
 	}
 }
@@ -131,7 +131,7 @@ func TestRunCallersTransitive_UnresolvedInterfaceDispatch(t *testing.T) {
 	if err := runCallersTransitive(context.Background(), "example.com/m.(*Target).Do", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "verdict: UNRESOLVED") {
+	if !strings.Contains(buf.String(), "answer: UNRESOLVED") {
 		t.Errorf("expected UNRESOLVED transitive verdict, got: %q", buf.String())
 	}
 }
@@ -145,7 +145,7 @@ func TestRunCalleesTransitive_ResolvedAbsent(t *testing.T) {
 	if err := runCalleesTransitive(context.Background(), "example.com/m.Leaf", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "verdict: RESOLVED-ABSENT") {
+	if !strings.Contains(buf.String(), "answer: RESOLVED-ABSENT") {
 		t.Errorf("expected RESOLVED-ABSENT transitive verdict, got: %q", buf.String())
 	}
 }

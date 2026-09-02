@@ -169,7 +169,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		}
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
-	uc.logger.Info("target-rooted scan derived verdicts for the walk", "target", target, "modules", len(allCoords))
+	uc.logger.Info("target-rooted scan derived answers for the walk", "target", target, "modules", len(allCoords))
 	return true, nil
 }
 

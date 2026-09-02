@@ -106,7 +106,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	switch {
 	case werr != nil:
 		rooting = contextRootingUnanchored(werr.Error(), f.gomodPath)
-		_, _ = fmt.Fprintf(stderr, "notice: no walk anchors these vulnerability verdicts: %v\n", werr)
+		_, _ = fmt.Fprintf(stderr, "notice: no walk anchors these vulnerability statuses: %v\n", werr)
 	default:
 		vulnBatch.anchorTo(ctx, choice.summary.ID)
 		// The same walk the verdicts are read in answers the dependency section,
@@ -115,7 +115,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		// The same statement as fields: which walk, chosen rather than named, out
 		// of how many, against which manifest and under which toolchain.
 		rooting = contextRootingForChoice(choice, f.gomodPath)
-		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (%s, frame %s)%s\n",
+		_, _ = fmt.Fprintf(stderr, "notice: vulnerability statuses read in walk %q (%s, frame %s)%s\n",
 			choice.summary.ID, walkScopeLabel(choice.summary.Scope), choice.summary.BuildFrame(),
 			choice.basisNotes())
 	}

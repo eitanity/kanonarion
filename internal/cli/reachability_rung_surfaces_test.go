@@ -259,8 +259,8 @@ func TestStoredQueryAlwaysStatesTheRung(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}
-	if res.Verdict != verdictReachable {
-		t.Fatalf("verdict = %q, want the positive under test", res.Verdict)
+	if res.ReachabilityState != verdictReachable {
+		t.Fatalf("verdict = %q, want the positive under test", res.ReachabilityState)
 	}
 	raw, err := json.Marshal(res)
 	if err != nil {

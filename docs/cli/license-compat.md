@@ -218,7 +218,7 @@ The outcomes:
 
 - **every arm compatible** — settled compatible whichever arm is elected; no
   open item;
-- **some arm compatible** — `verdict` is `electable` (kind `election_required`):
+- **some arm compatible** — `compatibility` is `electable` (kind `election_required`):
   the module is compatible *if* a compatible arm is elected. The election is
   an operator decision, never resolved silently: record the elected arm as a
   `license_overrides` entry for the module and re-run. Pending elections exit

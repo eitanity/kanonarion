@@ -63,7 +63,7 @@ func TestReusedScanLine_StatesWhatTheReachabilityLegWasComputedAgainst(t *testin
 		"vscan-01KZ0AVM2897N6J6YE4GABYG27-1754107449",
 		"2026-08-02T04:14:09Z",
 		"vuln.go.dev@2026-07-27T20:14:16Z",
-		"4 reachability verdicts",
+		"4 reachability answers",
 		"the source that run read",
 		"this run did not re-read",
 		"--force",
@@ -175,7 +175,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 
 	var served bytes.Buffer
 	if err := printVulnScanResult(run, nil, nil, nil, nil,
-		vulnScanReachability{Verdicts: 3}, vulnScanToolchainJSON{}, true, &served); err != nil {
+		vulnScanReachability{Answers: 3}, vulnScanToolchainJSON{}, true, &served); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 
@@ -190,8 +190,8 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 	if !ok {
 		t.Fatalf("the document carries no reachability_basis:\n%s", served.String())
 	}
-	if basis["verdicts"] != float64(3) {
-		t.Errorf("reachability_basis.verdicts = %v, want 3", basis["verdicts"])
+	if basis["answers"] != float64(3) {
+		t.Errorf("reachability_basis.answers = %v, want 3", basis["answers"])
 	}
 	if basis["source_read_by_this_run"] != false {
 		t.Errorf("a served run reports source_read_by_this_run = %v, want false", basis["source_read_by_this_run"])
@@ -201,7 +201,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 	// than inferring the fact from a key's absence.
 	var fresh bytes.Buffer
 	if err := printVulnScanResult(run, nil, nil, nil, nil,
-		vulnScanReachability{Verdicts: 3, SourceReadByThisRun: true}, vulnScanToolchainJSON{}, true, &fresh); err != nil {
+		vulnScanReachability{Answers: 3, SourceReadByThisRun: true}, vulnScanToolchainJSON{}, true, &fresh); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 	if err := json.Unmarshal(fresh.Bytes(), &doc); err != nil {

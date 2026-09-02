@@ -2,11 +2,13 @@ package cmd_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -829,4 +831,142 @@ func TestShippedDocsNameNoRefusedFlag(t *testing.T) {
 		}
 	}
 	t.Logf("executed %d documented invocations naming a hidden flag", checked)
+}
+
+// emittedJSONKeys reports whether a key named in a document is one this
+// repository can put on the wire.
+//
+// Three sources, because there are three ways a key reaches the wire. Most come
+// from struct tags in this tree. A few are assigned into a document map by
+// literal - `walk --json` builds its `verification_coverage` key that way - and
+// a guard that read only the tags would call those documented keys imaginary.
+// The rest are CycloneDX's: the SBOM this repository publishes IS the shape
+// github.com/CycloneDX/cyclonedx-go declares, so that module's tags name keys
+// this repository emits exactly as its own do.
+//
+// The literal half asks whether the quoted key appears anywhere in the non-test
+// source, rather than enumerating the tree's string literals. Enumerating them
+// needs a regexp that pairs quotes, and one literal holding a backslash escape
+// mispairs every quote after it in that file. The guard is not trying to prove
+// a key is reachable from a particular command, which would need the CLI to be
+// run; it is trying to catch a key the tree does not contain AT ALL, which is
+// what a rename leaves behind in a document.
+func emittedJSONKeys(t *testing.T) func(key string) bool {
+	t.Helper()
+	// The name only: a tag carries options after a comma (`json:"x,omitempty"`),
+	// and a pattern demanding the closing quote misses every tag that has them.
+	tag := regexp.MustCompile(`json:"([^",]+)`)
+	tagged := map[string]bool{}
+	var source strings.Builder
+	collect := func(dir string, keepSource bool) {
+		var paths []string
+		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return fmt.Errorf("walk %s: %w", path, err)
+			}
+			if !info.IsDir() && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+				paths = append(paths, path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("collecting JSON keys from %s: %v", dir, err)
+		}
+		for _, path := range paths {
+			src, rerr := os.ReadFile(path) // #nosec G304 -- path comes from walking this repository or a module it declares a dependency on
+			if rerr != nil {
+				t.Fatalf("reading %s: %v", path, rerr)
+			}
+			for _, m := range tag.FindAllStringSubmatch(string(src), -1) {
+				if m[1] != "" && m[1] != "-" {
+					tagged[m[1]] = true
+				}
+			}
+			if keepSource {
+				source.Write(src)
+				source.WriteByte('\n')
+			}
+		}
+	}
+	for _, dir := range []string{"../internal", "../pkg", "../cmd"} {
+		collect(dir, true)
+	}
+	collect(cycloneDXModuleDir(t), false)
+	if len(tagged) == 0 || source.Len() == 0 {
+		t.Fatal("the tree declares no JSON keys: the guard below would hold every document to nothing")
+	}
+	text := source.String()
+	return func(key string) bool {
+		return tagged[key] || strings.Contains(text, `"`+key+`"`)
+	}
+}
+
+// cycloneDXModuleDir is the unpacked source of the CycloneDX library whose
+// document shape `sbom` emits.
+func cycloneDXModuleDir(t *testing.T) string {
+	t.Helper()
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/CycloneDX/cyclonedx-go")
+	cmd.Dir = ".."
+	out, err := cmd.Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			t.Fatalf("locating cyclonedx-go: %v: %s", err, exit.Stderr)
+		}
+		t.Fatalf("locating cyclonedx-go: %v", err)
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		t.Fatal("cyclonedx-go reports no directory: the module is not unpacked, and the SBOM keys it owns would read as imaginary")
+	}
+	return dir
+}
+
+// TestShippedDocsNameOnlyEmittedJSONKeys fails when a ```json block in a shipped
+// document names a key nothing in the tree emits.
+//
+// A renamed key is invisible to every other guard here. The flag guards ask the
+// command tree what it accepts; the golden files pin what one fixture prints.
+// Neither reads a hand-written JSON sample in a document, so a key renamed on
+// the wire leaves every sample in the docs describing a shape the tool no longer
+// produces, and the docs go on looking authoritative. That is not hypothetical:
+// this guard was written alongside a rename of six such keys, and before it the
+// only thing standing between a half-finished rename and a shipped release was
+// someone reading both sides.
+func TestShippedDocsNameOnlyEmittedJSONKeys(t *testing.T) {
+	keyRef := regexp.MustCompile(`"([a-z0-9_]+)"\s*:`)
+	emits := emittedJSONKeys(t)
+	checked := 0
+	for _, doc := range shippedDocs(t) {
+		raw, err := os.ReadFile(doc) // #nosec G304 -- doc comes from walking this repository's own docs/
+		if err != nil {
+			t.Fatalf("reading %s: %v", doc, err)
+		}
+		inJSON, inFence := false, false
+		for i, line := range strings.Split(string(raw), "\n") {
+			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "```") {
+				// Only blocks a writer labelled `json` are read. An unlabelled fence
+				// holds shell, YAML or a jq expression that constructs a shape of its
+				// own, and none of those is a claim about what a command emits.
+				inJSON = !inFence && strings.EqualFold(strings.TrimPrefix(trimmed, "```"), "json")
+				inFence = !inFence
+				continue
+			}
+			if !inJSON {
+				continue
+			}
+			for _, m := range keyRef.FindAllStringSubmatch(line, -1) {
+				checked++
+				if !emits(m[1]) {
+					t.Errorf("%s:%d documents the JSON key %q, which nothing in the tree emits\n\t%s"+
+						"\n\tthe key was renamed or removed and the sample was left behind; update the sample to the shape the command produces.",
+						doc, i+1, m[1], strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no JSON key was read from any shipped document: the guard reads nothing")
+	}
+	t.Logf("checked %d JSON key references across the shipped documents", checked)
 }

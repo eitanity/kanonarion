@@ -656,7 +656,7 @@ func writeScanFailures(faults []scanRecordFault, w io.Writer) {
 	if len(faults) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Scan failed (%d): the scan of these modules failed — no verdict was reached\n", len(faults))
+	_, _ = fmt.Fprintf(w, "Scan failed (%d): the scan of these modules failed — no status was reached\n", len(faults))
 	for _, f := range faults {
 		if f.Error == "" {
 			_, _ = fmt.Fprintf(w, "  %s\n", f.Coordinate)
@@ -706,7 +706,7 @@ func writeMissingScanRecords(coords []string, w io.Writer) {
 	if len(coords) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "No scan record (%d): the run reports a verdict for these modules but no record backs it\n", len(coords))
+	_, _ = fmt.Fprintf(w, "No scan record (%d): the run reports a status for these modules but no record backs it\n", len(coords))
 	for _, c := range coords {
 		_, _ = fmt.Fprintf(w, "  %s\n", c)
 	}
@@ -943,7 +943,7 @@ func runScanDiff(
 	}
 
 	if len(diff.UnresolvedFindings) > 0 {
-		_, _ = fmt.Fprintf(stdout, "UNRESOLVED (%d) — completeness parity mismatch, verdict withheld:\n", len(diff.UnresolvedFindings))
+		_, _ = fmt.Fprintf(stdout, "UNRESOLVED (%d) — completeness parity mismatch, answer withheld:\n", len(diff.UnresolvedFindings))
 		for _, u := range diff.UnresolvedFindings {
 			_, _ = fmt.Fprintf(stdout, "  ? %s  %s@%s  would-be %s but %s\n",
 				u.Finding.ID, u.Coordinate.Path(), u.Coordinate.Version(), u.Kind, u.Reason)

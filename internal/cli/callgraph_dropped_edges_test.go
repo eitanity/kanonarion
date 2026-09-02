@@ -113,7 +113,7 @@ func TestRunCallers_DroppedEdgePackageWithNoEdgesIsUnresolvedNotAbsent(t *testin
 		t.Fatalf("an empty answer was raised as an error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "verdict: UNRESOLVED") {
+	if !strings.Contains(out, "answer: UNRESOLVED") {
 		t.Errorf("expected UNRESOLVED, got:\n%s", out)
 	}
 	if !strings.Contains(out, string(cgdomain.SinkDroppedPackageEdges)) {
@@ -155,7 +155,7 @@ func TestDroppedEdgePackage_EveryEdgeCommandAnswers(t *testing.T) {
 			if !strings.Contains(out, "unmeasured on one side") {
 				t.Errorf("%s does not state the gap:\n%s", name, out)
 			}
-			if !strings.Contains(out, "verdict: UNRESOLVED") {
+			if !strings.Contains(out, "answer: UNRESOLVED") {
 				t.Errorf("%s does not downgrade its empty answer:\n%s", name, out)
 			}
 		})

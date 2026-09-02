@@ -20,7 +20,7 @@ import (
 func RecordArtefactIdentity(r VulnerabilityRecord) (fetchdomain.ArtefactIdentity, error) {
 	id, err := fetchdomain.StoredArtefactIdentity(r.ArtefactIdentity)
 	if err != nil {
-		return fetchdomain.ArtefactIdentity{}, fmt.Errorf("reading the artefact identity of the vulnerability verdict for %s: %w", r.Coordinate, err)
+		return fetchdomain.ArtefactIdentity{}, fmt.Errorf("reading the artefact identity of the vulnerability record for %s: %w", r.Coordinate, err)
 	}
 	return id, nil
 }

@@ -71,11 +71,11 @@ func TestReachabilityResultToOutput(t *testing.T) {
 	if len(f.Aliases) != 1 || f.Aliases[0] != "GO-2024-0001" {
 		t.Errorf("Aliases = %v", f.Aliases)
 	}
-	if f.Verdict != string(localdomain.SymbolProbePresent) {
-		t.Errorf("Verdict = %q", f.Verdict)
+	if f.ReachabilityState != string(localdomain.SymbolProbePresent) {
+		t.Errorf("Verdict = %q", f.ReachabilityState)
 	}
-	if f.VerdictSource != string(localdomain.VerdictSourceSymbolTable) {
-		t.Errorf("VerdictSource = %q", f.VerdictSource)
+	if f.StateSource != string(localdomain.VerdictSourceSymbolTable) {
+		t.Errorf("VerdictSource = %q", f.StateSource)
 	}
 	if len(f.MatchedSymbols) != 1 {
 		t.Errorf("MatchedSymbols = %v", f.MatchedSymbols)
@@ -147,8 +147,8 @@ func TestVulnReachabilityVerdict_ConfidentAnswers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if res.Verdict != tt.wantVerdict {
-				t.Errorf("verdict = %q, want %q", res.Verdict, tt.wantVerdict)
+			if res.ReachabilityState != tt.wantVerdict {
+				t.Errorf("verdict = %q, want %q", res.ReachabilityState, tt.wantVerdict)
 			}
 			if res.Method != tt.wantMethod {
 				t.Errorf("method = %q, want %q", res.Method, tt.wantMethod)

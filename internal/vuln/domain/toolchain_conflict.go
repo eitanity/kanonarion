@@ -35,7 +35,7 @@ type ToolchainConflict struct {
 func (c ToolchainConflict) Error() string {
 	return fmt.Sprintf(
 		"conflicting vulnerability records for %s: two Go toolchains scanned it (%v; records %v). "+
-			"A scan's reachable set is the toolchain's, so neither verdict supersedes the other — "+
+			"A scan's reachable set is the toolchain's, so neither answer supersedes the other — "+
 			"re-scan under the toolchain you are using:\n  kanonarion vuln-scan-rescan",
 		c.Coordinate, c.Values, c.ContentHashes)
 }

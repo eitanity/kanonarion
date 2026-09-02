@@ -189,8 +189,8 @@ JSON, under the same two keys:
 
 | Surface | Where the rung appears |
 |---|---|
-| `reachability <mod> --vuln <id>` | verdict line and `soundness` / `soundness_reason`; the isolated-frame aside carries its own |
-| `reachability --local <dir>` | on the verdict, and in each finding's `soundness` / `soundness_reason` |
+| `reachability <mod> --vuln <id>` | answer line and `soundness` / `soundness_reason`; the isolated-frame aside carries its own |
+| `reachability --local <dir>` | on the answer, and in each finding's `soundness` / `soundness_reason` |
 | `vuln-show`, `vuln-show --history` | the `[not reachable — …]` label, and per finding in `--json` |
 | `vuln-by-id --json` | per finding (this command's text form publishes no reachability answer) |
 | `vuln-scan-show --json` | per finding (its text form lists finding ids only) |
@@ -206,7 +206,7 @@ shared reading:
 
 | Surface | Where the answer appears |
 |---|---|
-| `reachability <mod> --vuln <id>` | the answer line, and `verdict` in `--json`; the isolated-frame aside carries its own |
+| `reachability <mod> --vuln <id>` | the answer line, and `reachability_state` in `--json`; the isolated-frame aside carries its own |
 | `vuln-show`, `vuln-show --history` | the `reachability:` line, and `reachability_state` per finding in `--json` |
 | `vuln-by-id --json`, `vuln-scan-show --json` | `reachability_state` per finding |
 | `vuln-scan-diff` | the transition's later side in text, `reachability_state` per finding in `--json` |
@@ -276,7 +276,7 @@ over — the test axis, the exported-API flag, and the edges into the node.
 | `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, or a function a dependency calls back into. The `reason` says which. |
 | `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
 | `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
-| `test` | The root is a test-scope declaration. This is printed **on the same line as the verdict**, so a test-only reach is never read as a production one. |
+| `test` | The root is a test-scope declaration. This is printed **on the same line as the answer**, so a test-only reach is never read as a production one. |
 | `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. The `remedy` is the command that re-derives *that* module's graph: `kanonarion local <dir>` when the route starts in the project's own module (which carries the synthetic `@local` version and cannot be fetched), `kanonarion callgraph <module>@<version>` when it starts in a dependency. |
 
 Two rules keep this honest:
@@ -351,7 +351,7 @@ JSON shape:
   "vuln_id": "GO-2026-0001",
   "aliases": ["CVE-2026-00001"],
   "summary": "...",
-  "verdict": "reachable",
+  "reachability_state": "reachable",
   "confidence": "High",
   "method": "govulncheck",
   "fidelity": "source",
@@ -392,7 +392,7 @@ carries no `soundness_reason`. A negative names its rung and its basis, and drop
 
 ```json
 {
-  "verdict": "not_reachable",
+  "reachability_state": "not_reachable",
   "confidence": "High",
   "method": "govulncheck",
   "fidelity": "source",
@@ -409,7 +409,7 @@ package-level finding is explained by the advisory naming no symbols, and
 answering `unrooted` there would offer a missing root as the reason for a search
 that was never possible.
 
-A retracted advisory answers with `"verdict": "withdrawn"` and a `withdrawn_at`
+A retracted advisory answers with `"reachability_state": "withdrawn"` and a `withdrawn_at`
 timestamp instead of a reachability determination, so the answer states its reason
 rather than asserting a bare negative the reader has to take on trust:
 
@@ -420,7 +420,7 @@ rather than asserting a bare negative the reader has to take on trust:
   "vuln_id": "GO-2026-4923",
   "aliases": ["CVE-2026-33817", "GHSA-6jwv-w5xf-7j27"],
   "summary": "WITHDRAWN: out-of-range-index in go.etcd.io/bbolt",
-  "verdict": "withdrawn",
+  "reachability_state": "withdrawn",
   "method": "none",
   "withdrawn_at": "2026-04-08T13:33:56Z",
   "scanned_at": "2026-07-28T06:06:20Z"
@@ -584,8 +584,8 @@ JSON shape:
           "cve_id": "GHSA-xxxx-yyyy-zzzz",
           "aliases": ["CVE-2024-12345"],
           "summary": "...",
-          "verdict": "reachable",
-          "verdict_source": "callgraph",
+          "reachability_state": "reachable",
+          "state_source": "callgraph",
           "reason": "<why>",
           "matched_symbols": ["pkg.Symbol"],
           "matched_binaries": ["github.com/example/app/cmd/server"],
@@ -602,7 +602,7 @@ JSON shape:
 The probe publishes two kinds of negative and they are not the same claim, so
 they do not carry the same rung.
 
-| Verdict | `verdict_source` | `soundness` |
+| `reachability_state` | `state_source` | `soundness` |
 |---|---|---|
 | `absent` | `symbol-table` | `unconfirmed` - the affected symbols are not in the symbol table of the binaries this build links, so the linker did not keep them. Real evidence, and not a search: no call graph was built, so nothing could have found a route whether or not one exists. |
 | `unreachable` | `govulncheck` | whatever the stored scan's own analyser and fidelity earn, usually `inferred`. This answer was not measured here; it was carried from the store, and it states the rung of the search it actually came from. |
@@ -634,8 +634,8 @@ kanonarion reachability --local /path/to/workspace --json | jq '.modules[]'
 
 # Every negative in the tree, with the rung behind it
 kanonarion reachability --local . --json | jq '.modules[].findings[]
-  | select(.verdict=="absent" or .verdict=="unreachable")
-  | {cve_id, verdict, soundness}'
+  | select(.reachability_state=="absent" or .reachability_state=="unreachable")
+  | {cve_id, reachability_state, soundness}'
 ```
 
 ## See also

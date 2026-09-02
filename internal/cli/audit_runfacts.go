@@ -193,7 +193,7 @@ func auditScanOf(d auditDerivation) auditScanJSON {
 // that run took as it wrote the records.
 func auditReachabilityOf(d auditDerivation) vulnScanReachability {
 	if d.scanReused {
-		return vulnScanReachability{Verdicts: d.scanReachabilityVerdicts, SourceReadByThisRun: false}
+		return vulnScanReachability{Answers: d.scanReachabilityVerdicts, SourceReadByThisRun: false}
 	}
 	return d.scanFacts.Reachability
 }

@@ -10,7 +10,7 @@ seedvulnforwalk $WORK/stores
 
 # The fixture's target module carries no buildable packages, so the
 # target-rooted analysis cannot load it and the run reports Partial coverage —
-# which exits non-zero. This script is about STREAM ROUTING, not the verdict, so
+# which exits non-zero. This script is about STREAM ROUTING, not the answer, so
 # each invocation is negated and the assertions below are unchanged.
 
 ! kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores

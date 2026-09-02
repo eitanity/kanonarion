@@ -523,15 +523,15 @@ func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict,
 	switch v.Outcome {
 	case domain.VerdictUnresolved:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: UNRESOLVED — %s of %s cannot be confirmed absent%s: %s\n",
+			"answer: UNRESOLVED — %s of %s cannot be confirmed absent%s: %s\n",
 			kind, symbolID, scope, v.Reason()); err != nil {
-			return fmt.Errorf("writing verdict: %w", err)
+			return fmt.Errorf("writing answer: %w", err)
 		}
 	default:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: RESOLVED-ABSENT — no %s of %s across a fully-built path%s\n",
+			"answer: RESOLVED-ABSENT — no %s of %s across a fully-built path%s\n",
 			kind, symbolID, scope); err != nil {
-			return fmt.Errorf("writing verdict: %w", err)
+			return fmt.Errorf("writing answer: %w", err)
 		}
 	}
 	return nil

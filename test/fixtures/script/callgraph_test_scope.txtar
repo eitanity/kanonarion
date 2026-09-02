@@ -3,7 +3,7 @@ seedcallgraph $WORK/stores
 
 # The graph carries test declarations, and a callers answer includes them by
 # default: a test caller the tool hides is a false negative dressed as a
-# measurement, which is exactly what the three-valued verdict exists to prevent.
+# measurement, which is exactly what the three-valued answer exists to prevent.
 kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores
 stdout '2 callers'
 stdout 'example.com/app.Main'
@@ -42,7 +42,7 @@ stdout '"scope": "scope: test callers omitted \(--exclude-tests was given\)"'
 kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores --transitive --json
 stdout '"scope": ""'
 
-# The narrowing is stated on the verdict line, so an empty production-only
+# The narrowing is stated on the answer line, so an empty production-only
 # answer is never read as wider than it is.
 kanonarion callers 'example.com/app.(*Store).Put' --store-root=$WORK/stores --exclude-tests
 stdout 'RESOLVED-ABSENT'
@@ -80,9 +80,9 @@ stdout '1 implementer of'
 ! stdout 'fakeStore'
 stdout 'test implementations omitted'
 
-# JSON carries the verdict and the scope alongside the list.
+# JSON carries the answer and the scope alongside the list.
 kanonarion implementers 'example.com/app.Store' --store-root=$WORK/stores --json
-stdout '"verdict": "RESOLVED-PRESENT"'
+stdout '"answer": "RESOLVED-PRESENT"'
 stdout '"is_test": true'
 stdout '"scope"'
 

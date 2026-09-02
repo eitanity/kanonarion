@@ -132,7 +132,7 @@ var ErrSnapshotEmpty = errors.New("vulnerability database snapshot holds no advi
 func EmptySnapshotAbort(snapshot domain.DatabaseSnapshot, count int) error {
 	return fmt.Errorf(
 		"%w: the advisory database snapshot %s@%s holds %d advisories, so a scan against it can only report "+
-			"that nothing was found because nothing was consulted; no verdict may be sealed against it — "+
+			"that nothing was found because nothing was consulted; no status may be sealed against it — "+
 			"fetch a populated database (--fresh) and re-run",
 		ErrSnapshotEmpty, snapshot.Source(), snapshot.Version(), count)
 }
@@ -163,7 +163,7 @@ var ErrSnapshotUnavailable = errors.New("vulnerability database snapshot could n
 func UnavailableSnapshotAbort(snapshot domain.DatabaseSnapshot, stage string, err error) error {
 	return fmt.Errorf(
 		"%w: %s for the advisory database snapshot %s@%s: %v; the record this scan would write names that "+
-			"snapshot, and answering from the live database instead would seal a verdict against an advisory "+
+			"snapshot, and answering from the live database instead would seal a status against an advisory "+
 			"set the record does not state — fix the store or re-fetch the database (--fresh) and re-run",
 		ErrSnapshotUnavailable, stage, snapshot.Source(), snapshot.Version(), err)
 }

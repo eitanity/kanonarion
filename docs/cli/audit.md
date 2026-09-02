@@ -243,7 +243,7 @@ kanonarion audit --gomod ./go.mod --json
     "reused": true,
     "snapshot": { "source": "vuln.go.dev", "version": "2026-08-14T16:22:54Z" }
   },
-  "reachability_basis": { "verdicts": 4, "source_read_by_this_run": false },
+  "reachability_basis": { "answers": 4, "source_read_by_this_run": false },
   "toolchain": {
     "judged": true,
     "status": "clear",
@@ -325,7 +325,7 @@ object states the facts about the run, which a bare array had nowhere to put:
 | `module_count` | How many modules that scope resolved. It is the number the `notice:` line on stderr states. A module that failed to render is missing from `modules`, named on stderr, and the run exits non-zero. |
 | `walk` | Which walk fixed the dependency set: `id`, `completed_at` (the record's date, RFC 3339), and `reused` - true when this run re-resolved the go.mod, found the resolution identical to a stored walk, and served that record. `resolved` is false when no walk was taken at all. |
 | `scan` | Which vulnerability scan run filled the `vuln_status` column: `run_id`, `reused`, and the advisory `snapshot` it was judged against. `answered` is false when no run answered - an empty scope, or a scan leg that failed and said so on stderr. The run id is stated on both arms, which the stderr sentence is not: a scan derived by this run names no id there. |
-| `reachability_basis` | How much of the answer depends on the project's own source: `verdicts` counts the findings carrying a reachability answer, and `source_read_by_this_run` is false on a served run, whose reachability answers came from source this invocation did not re-read. The same object `vuln-scan --json` publishes under the same key. |
+| `reachability_basis` | How much of the answer depends on the project's own source: `answers` counts the findings carrying a reachability answer, and `source_read_by_this_run` is false on a served run, whose reachability answers came from source this invocation did not re-read. The same object `vuln-scan --json` publishes under the same key. |
 | `toolchain` | The toolchain axis, in the shape [`vuln-scan --json`](vuln-scan.md) publishes: `judged`, `status`, the `version` judged, the `snapshot` it was judged against, `reason` when nothing was judged, the `covering` advisory ids, and `statement`, the sentence stderr shows, verbatim. The toolchain is not a dependency of the artefact: it is no row and is counted in no roll-up. |
 | `staleness` | Dates the staleness column for the run as a whole - the machine-readable half of the table's `latest as of ...` footer, which the text form prints on stdout. `as_of` is the OLDEST lookup behind the column, `age` is how old it was when this run read it, `ttl` is the `staleness.ttl` in force in the same units, and `refresh_with` names the command that re-queries. `measured` is false when no row carries a lookup. |
 | `modules` | The per-module rows. `[]` when the scope resolved nothing - the empty answer is the same object, not a different shape. |
@@ -572,7 +572,7 @@ Every run reports, on **stderr**, where its two expensive answers came from:
 ```
 derivation:
   walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
-  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability verdicts came from the source that run read, which this run did not re-read (--force to re-measure)
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability answers came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 or, when the run measured for itself:

@@ -154,12 +154,12 @@ func CompletenessCaveat(level CompletenessLevel, phase AnalysisPhase) string {
 	}
 	switch phase {
 	case PhaseCoding:
-		return fmt.Sprintf("call graph is %s, not built with bodies — run `go generate ./...` and `go build ./...`, then re-analyse; verdicts over this module may be incomplete", level)
+		return fmt.Sprintf("call graph is %s, not built with bodies — run `go generate ./...` and `go build ./...`, then re-analyse; answers over this module may be incomplete", level)
 	case PhaseInclusion:
-		return fmt.Sprintf("call graph is %s, not built with bodies — generators are not run on untrusted code, so this verdict is degraded and may be incomplete", level)
+		return fmt.Sprintf("call graph is %s, not built with bodies — generators are not run on untrusted code, so this answer is degraded and may be incomplete", level)
 	case PhaseDiff:
-		return fmt.Sprintf("call graph is %s, not built with bodies — a before/after verdict over this module is unresolved unless both sides match", level)
+		return fmt.Sprintf("call graph is %s, not built with bodies — a before/after answer over this module is unresolved unless both sides match", level)
 	default:
-		return fmt.Sprintf("call graph is %s, not built with bodies — verdicts over this module may be incomplete", level)
+		return fmt.Sprintf("call graph is %s, not built with bodies — answers over this module may be incomplete", level)
 	}
 }

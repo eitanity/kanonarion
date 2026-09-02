@@ -325,12 +325,12 @@ func reachabilityCases(emptyStore string) []cmdCase {
 		{
 			name: "reachability_json_populated",
 			args: []string{"reachability", "example.com/mod@v1.2.0", "--vuln", "GO-2026-0001", "--json"},
-			why:  "populated: a stored, reachable verdict with a versioned route, a fidelity and a rooting.",
+			why:  "populated: a stored, reachable answer with a versioned route, a fidelity and a rooting.",
 		},
 		{
 			name: "reachability_text_populated",
 			args: []string{"reachability", "example.com/mod@v1.2.0", "--vuln", "GO-2026-0001"},
-			why:  "populated, text: the same verdict on the human channel.",
+			why:  "populated, text: the same answer on the human channel.",
 		},
 		{
 			name: "reachability_json_unknown_vuln",
@@ -341,7 +341,7 @@ func reachabilityCases(emptyStore string) []cmdCase {
 			name:      "reachability_json_store_missing",
 			args:      []string{"reachability", "example.com/mod@v1.2.0", "--vuln", "GO-2026-0001", "--json"},
 			storeRoot: emptyStore,
-			why:       "error-shaped: nothing is stored, so no verdict can be served.",
+			why:       "error-shaped: nothing is stored, so no answer can be served.",
 		},
 		{
 			name: "reachability_json_no_target",
@@ -686,7 +686,7 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 			mintedValues: true,
 			why: "REUSED: the same audit run a second time against the store the first one wrote. It is the " +
 				"only recording of what the tool says about work it did NOT do — the walk re-resolved and found " +
-				"identical, the scan served from a stored run, and what that run's reachability verdicts rest on. " +
+				"identical, the scan served from a stored run, and what that run's reachability answers rest on. " +
 				"The date and the run identifier below are recorded literally, so a change to WHICH stored run " +
 				"answers moves this file. Its control is audit_text_populated, which must keep reading " +
 				"`derived by this run`.",
@@ -703,7 +703,7 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 			mintedValues: true,
 			why: "REUSED, json: the run-level facts on the machine channel when the answer was NOT measured " +
 				"by this invocation — the walk re-resolved and found identical, the scan served from a stored " +
-				"run, and its reachability verdicts resting on source this run did not read. Its control is " +
+				"run, and its reachability answers resting on source this run did not read. Its control is " +
 				"audit_json_populated, which must keep reading `\"reused\": false` and " +
 				"`\"source_read_by_this_run\": true` for the same fixture. The pair is what shows the fields " +
 				"track the run rather than being constants.",

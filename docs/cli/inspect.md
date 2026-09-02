@@ -170,7 +170,7 @@ directly to `sbom`, `extract`, `vuln-scan`, and `walk-show`.
 > **Reachability roots at the dependency closure, not the project's own code.**
 > With `--reachability`, the project walk analyses the consumer module in
 > consumer-mode, so its call graph is not loaded into the store. A `reachable`
-> verdict therefore means "reachable from the closure roots", one hop short of
+> answer therefore means "reachable from the closure roots", one hop short of
 > "reachable from a project entrypoint" - the final application-to-dependency
 > edge is absent. `inspect --gomod --reachability` prints an explicit banner to
 > stderr stating this. To root reachability at the application, run
