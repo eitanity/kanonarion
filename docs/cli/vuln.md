@@ -188,6 +188,18 @@ The scan then runs pinned to that cache (`GOPROXY=off`, see the resolution note
 below): the analysis is faithful to the project's verified toolchain rather than
 reaching to the network for versions the project never builds.
 
+**The binary pre-pass builds with cgo off**
+
+`--binary-pre-pass` compiles a test binary for each module and reads its symbol
+table, and that build runs with `CGO_ENABLED=0`. Binary mode reads compiled
+symbols, so it needs no C toolchain, and this build is the only step of a scan
+that would hand a dependency's C source, headers and include paths to the host C
+compiler. A module that cannot build without cgo is not lost: the failed build
+falls through to the source-mode analysis, so the reduction costs that module the
+fast path rather than its answer. Source-mode and project scans are unaffected —
+they load packages with type information, which runs cgo wherever a package needs
+it, and turning it off there would make such a module `Unscannable`.
+
 **The toolchain axis**
 
 Beside the result, on **stderr**, every scan states what the advisory database

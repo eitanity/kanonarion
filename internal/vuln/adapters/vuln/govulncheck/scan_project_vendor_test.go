@@ -17,7 +17,7 @@ import (
 // nothing: a vendored build that reached the network would no longer be the
 // build being analysed.
 func TestScanEnv_VendoredSurfaceReadsTheVendoredTree(t *testing.T) {
-	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceVendored))
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", surfaceVendored))
 
 	if got["GOFLAGS"] != "-mod=vendor" {
 		t.Errorf("GOFLAGS = %q, want -mod=vendor", got["GOFLAGS"])
@@ -37,7 +37,7 @@ func TestScanEnv_VendoredSurfaceReadsTheVendoredTree(t *testing.T) {
 // GOFLAGS=-mod=mod must not survive into a vendored analysis, because it would
 // silently redirect the scan away from the tree the project compiles.
 func TestScanEnv_VendoredOverridesInheritedModMod(t *testing.T) {
-	got := envMap(scanEnv([]string{"GOFLAGS=-mod=mod"}, "", domain.AnalysisSurfaceVendored))
+	got := envMap(scanEnv([]string{"GOFLAGS=-mod=mod"}, "", surfaceVendored))
 
 	if got["GOFLAGS"] != "-mod=vendor" {
 		t.Errorf("GOFLAGS = %q, want -mod=vendor to override the inherited -mod=mod", got["GOFLAGS"])
@@ -169,7 +169,7 @@ func writeVendoredFixture(t *testing.T) string {
 // switch here verifies from cached data and completes without touching the
 // network, and pinning would break a project that resolves today.
 func TestScanEnv_VendoredSurfaceLeavesTheToolchainSwitchAlone(t *testing.T) {
-	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceVendored))
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", surfaceVendored))
 
 	if v, ok := got["GOTOOLCHAIN"]; ok {
 		t.Errorf("vendored scanEnv set GOTOOLCHAIN=%q; this surface leaves the checksum database on, so a "+

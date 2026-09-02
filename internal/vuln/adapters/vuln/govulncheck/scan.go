@@ -39,7 +39,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	// An isolated scan extracts a published zip into a scratch directory: there
 	// is no working tree and therefore no vendor/ tree to root at, so this path
 	// is fetched-surface by construction.
-	env := scanEnv(os.Environ(), goModCache, domain.AnalysisSurfaceFetched)
+	env := scanEnv(os.Environ(), goModCache, surfaceNormalised)
 
 	// The environment above pins the toolchain so no scan child can download one,
 	// which also refuses a toolchain already unpacked on this host. One decision
@@ -107,7 +107,12 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		pkg := findFirstGoPackage(scanDir)
 		s.logger.Info("vuln-scan: binary mode — building test binary", "dir", scanDir, "pkg", pkg)
 		tmpBin := filepath.Join(tmpDir, "vuln-test.bin")
-		out, buildErr := runGoChild(ctx, toolchains, env, scanDir, "test", "-c", "-o", tmpBin, pkg)
+		// Built with cgo off. This is the one scan child that would hand an
+		// untrusted module's C source, headers and include paths to the system C
+		// compiler, and binary mode reads a symbol table, so nothing about the
+		// answer needs it. A module that will not build without cgo takes the
+		// buildErr branch below to source mode, which still answers.
+		out, buildErr := runGoChild(ctx, toolchains, withCgoDisabled(env), scanDir, "test", "-c", "-o", tmpBin, pkg)
 		_, statErr := os.Stat(tmpBin)
 		switch {
 		case buildErr != nil:
@@ -459,16 +464,54 @@ func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (do
 	return counted, nil
 }
 
-// scanEnv builds the process environment for the Go toolchain and govulncheck
-// on every surface that analyses an artefact kanonarion itself produced: a
-// module zip extracted for an isolated scan, a walk target's zip, and a
-// project's own vendor tree. All three are copies this tool laid down, so it
-// owns their resolution and pins it.
+// scanSurface names which copy of the source an environment is being built for.
+// It is finer-grained than domain.AnalysisSurface because the fetched surface
+// covers two opposite postures: copies kanonarion itself laid down or
+// deliberately bypassed, whose resolution it owns and pins, and a developer's
+// live working tree, whose resolution is theirs.
+type scanSurface int
+
+const (
+	// surfaceNormalised — a module zip extracted for an isolated scan, a walk
+	// target's zip, and a project whose vendor tree is deliberately bypassed.
+	// None of these is the tree the developer builds in, so each is normalised.
+	surfaceNormalised scanSurface = iota
+	// surfaceVendored — a project's own vendor/ tree, which is what that project
+	// compiles.
+	surfaceVendored
+	// surfaceLiveTree — a live working tree analysed in place.
+	surfaceLiveTree
+)
+
+// scanEnv builds the process environment for every Go toolchain and govulncheck
+// child a scan starts. It is the one place scan environment policy is decided,
+// so the three surfaces cannot drift apart over what they override.
 //
-// The project surface with no vendor tree is the one that is NOT built here. It
-// analyses a live working tree, where the build being measured is the one the go
-// command produces for the developer, so nothing about resolution is overridden;
-// see projectScanEnv, which states that posture in full.
+// The normalised surfaces analyse artefacts kanonarion itself produced — a
+// module zip extracted for an isolated scan, a walk target's zip, a project's
+// own vendor tree, or a project whose vendor tree it is bypassing. All are
+// copies this tool laid down or chose against, so it owns their resolution and
+// pins it.
+//
+// surfaceLiveTree is the opposite posture and overrides nothing that decides
+// which code the build contains. It analyses a directory the caller named, in
+// place, as its own main module, so the build it has to measure is the one the
+// go command produces for the developer standing there — and that build is
+// defined by the developer's environment. Leaving GOTOOLCHAIN, GOPROXY, GOSUMDB,
+// GOWORK and CGO_ENABLED alone there is a decision, not an omission: a scan
+// pinned to GOTOOLCHAIN=local refuses a project that builds (the class two
+// closed defects had to undo); there is no kanonarion-owned module cache behind
+// this surface to pin resolution to; and a workspace in scope IS the tree's
+// build configuration, so disabling it made this scan resolve a different module
+// graph from the one the walk resolved and the developer compiles.
+//
+// GOGC is the one value every surface sets, and it decides nothing about
+// resolution: govulncheck holds the whole package graph live, and the default
+// pacing costs the host memory this analysis has no need to spend.
+//
+// CGO_ENABLED is deliberately not set here on any surface. Only one child gets
+// cgo turned off — the binary-mode test build; see withCgoDisabled — because
+// that is the only place the reduction is free.
 //
 // When a pre-populated GOMODCACHE is supplied, three overrides let the toolchain
 // resolve a multi-module member's siblings from the cache. A member's published
@@ -517,9 +560,9 @@ func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (do
 // IGNORE a vendor/ directory, so for a project that carries one the environment
 // above does not merely prefer the fetched copy — it makes the vendored copy
 // unreadable, and the analysis measures bytes the project does not compile.
-// AnalysisSurfaceVendored therefore sets -mod=vendor and nothing else that
-// touches resolution: under vendor mode the toolchain reads no module cache and
-// performs no MVS, so GOMODCACHE and a checksum database have nothing to say.
+// surfaceVendored therefore sets -mod=vendor and nothing else that touches
+// resolution: under vendor mode the toolchain reads no module cache and performs
+// no MVS, so GOMODCACHE and a checksum database have nothing to say.
 // GOPROXY=off stays as the guarantee that a vendored analysis fetches nothing —
 // a vendored build that reached the network would no longer be the build.
 //
@@ -531,12 +574,16 @@ func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (do
 // Duplicate keys are appended rather than replaced because exec.Cmd honours the
 // last value for a repeated key, so these overrides win over any inherited
 // GOWORK/GOFLAGS/GOSUMDB/GOPROXY/GOTOOLCHAIN.
-func scanEnv(base []string, goModCache string, surface domain.AnalysisSurface) []string {
+func scanEnv(base []string, goModCache string, surface scanSurface) []string {
 	// Copy rather than append onto base so a caller's slice is never mutated.
 	env := make([]string, len(base), len(base)+7)
 	copy(env, base)
-	env = append(env, "GOGC=30", "GOWORK=off")
-	if surface == domain.AnalysisSurfaceVendored {
+	env = append(env, "GOGC=30")
+	if surface == surfaceLiveTree {
+		return env
+	}
+	env = append(env, "GOWORK=off")
+	if surface == surfaceVendored {
 		return append(env, "GOFLAGS=-mod=vendor", "GOPROXY=off")
 	}
 	if goModCache != "" {
@@ -549,6 +596,21 @@ func scanEnv(base []string, goModCache string, surface domain.AnalysisSurface) [
 		)
 	}
 	return env
+}
+
+// withCgoDisabled returns env with cgo turned off for one child, appended rather
+// than replaced because exec.Cmd honours the last value for a repeated key.
+//
+// It is applied only to the binary-mode test build, which is the sole scan child
+// whose downgrade path is already tested: it compiles the untrusted module, and
+// a module that then will not build falls back to source mode rather than losing
+// its answer. Source and project analysis load packages with type information,
+// which runs cgo for a cgo package, so disabling it there would turn a scannable
+// module Unscannable — coverage lost, not surface reduced.
+func withCgoDisabled(env []string) []string {
+	out := make([]string, len(env), len(env)+1)
+	copy(out, env)
+	return append(out, "CGO_ENABLED=0")
 }
 
 // classifyScanFailure maps a govulncheck non-zero exit to a status and the

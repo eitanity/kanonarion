@@ -58,7 +58,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// The target of a coordinate-keyed walk is a published zip extracted into a
 	// scratch directory, not a working tree, so there is no vendor/ tree to root
 	// at and this path is fetched-surface by construction.
-	env := scanEnv(os.Environ(), req.GoModCache, domain.AnalysisSurfaceFetched)
+	env := scanEnv(os.Environ(), req.GoModCache, surfaceNormalised)
 
 	// The environment above pins the toolchain so no scan child can download one,
 	// which also refuses a toolchain already unpacked on this host. One decision
