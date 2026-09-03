@@ -1259,6 +1259,115 @@ binary therefore gains no line anywhere.
 metadata-only operation in SQLite. The back-fill is one `SELECT` of two columns
 plus one `UPDATE` per row, with no decompression.
 
+## Call graph store: module `callgraph`, migration 16
+
+**Additive; one new column, a back-fill, no purge, no schema-version bump and no
+pipeline bump.** `callgraph_records` gains `foreign_modules_built`: the modules
+OTHER than the analysed one whose packages that record built with bodies, each
+with the version resolution gave it. The whole store's migration count goes
+`v83` -> `v84`.
+
+**What the column is a copy of.** Target selection for the syntax load admits
+every package whose import path lies under the analysed module's path, and Go
+module paths NEST — `cloud.google.com/go` and `cloud.google.com/go/auth` are
+separately published, separately versioned modules — so a record routinely holds
+a second module's code, built with real bodies rather than types alone. That is
+deliberate: building wide and claiming narrowly is what resolves the nested
+module's dispatch instead of losing it. What the record could not previously do
+was SAY so, while claiming `BUILT_WITH_BODIES` uniformly, so within one record
+the fidelity level meant two different things depending on which node a query
+landed on. The record now names them, inside the seal; this column is a
+denormalised copy of that field.
+
+**Measured.** `github.com/bytedance/sonic@v1.15.1`: 504 of its external nodes
+belong to `github.com/bytedance/sonic/loader`, and 396 of those (78.6%) carry
+outgoing edges — against 7 of the other 593 external nodes (1.2%), a ratio of
+about 65x. Three other large parents in the same store — `cloud.google.com/go`,
+`github.com/hashicorp/go-msgpack`, `github.com/aws/aws-sdk-go-v2` — hold none at
+all, which is the ordinary case and why the axis prints only when it has
+something to say.
+
+**Why a column, when the field is already in the record.** This table already
+denormalises exactly this class of field: `completeness`, `node_count` and
+`edge_count` are each a column AND a field inside the sealed blob, for one
+reason — a read that QUALIFIES an answer must not have to decompress one. The
+qualification here is on `callers`, `callees` and their transitive forms, which
+are answered out of `callgraph_edges` alone and decode no record at all.
+Composing one to learn a small set that is empty on almost every row in the store
+is the wrong trade, and it was measured — one store, three binaries differing
+only in that read, five runs each:
+
+| `callers` answer | unqualified | qualified from a composed record | qualified from this column |
+|---|---|---|---|
+| 1 row, `kanonarion@local` (16,005 nodes, 213,828 edges, 80 generations) | 1,574 ms | 2,078 ms | 1,582 ms |
+| 184 rows, `sonic@v1.15.1` across two records | 31 ms | 74 ms | 29 ms |
+
+The test `TestEdgeQuery_CleanModuleNeedsNoRecordForItsNotices` is the codified
+form of that decision, and it asserts zero record reads.
+
+**One read, not one per generation.** The column is taken as the DISTINCT values
+across a coordinate's generations, capped at two, before any generation is
+chosen: where they all state the same set, whichever one composition would serve
+states that set, so the answer is known without deciding which. It is the one-way
+gate `AnyPartial` and `AnyBelowFull` are built on, applied to a column instead of
+a flag. Without it the coordinates that hurt most are the ones that pay — the
+local working tree holds 80 generations, one per ingest, and composing them was
+the whole of the 2,078 ms above. Only a coordinate whose generations were built
+over genuinely DIFFERENT foreign modules asks composition, because only then does
+which generation answers change the set.
+
+**The blob stays authoritative.** The column is derived, and written in the same
+transaction as the blob it copies so the two cannot diverge on any row the write
+leg writes. Nothing reads it to decide what a record IS — composition reads the
+decoded record, as it always has — and no answer's CONTENT comes from it. It is
+read to decide whether an answer needs a sentence saying which record answered.
+
+**The back-fill reads a value the record already holds.** This is call graph
+migration 9's shape rather than migration 15's: the value is inside each blob,
+merely unprojected, so the back-fill decompresses, unmarshals, and copies. One
+decode per row, offline, once — which is what a migration is for. Measured
+population on the maintainer's store: 476 coordinates, 836 generations.
+
+**Every row is visited, including the ones that hold nothing.** The column's
+empty value has exactly one meaning — the empty SET — and it only earns that
+meaning because the pass decided it from the record rather than leaving the
+`DEFAULT` in place unexamined. A row whose record predates the field back-fills
+to empty, and that is the truth about it: the analysis named no foreign module,
+so the set of modules it can name is empty. "Predates the field" remains readable
+where it belongs, on the record's own `schema_version`, which `callgraph-show
+--json` publishes. A row that cannot be decoded fails the migration rather than
+being skipped, on migration 10's rule: guessing what an unreadable row holds is
+exactly the judgement a migration must not make on its own.
+
+**No purge and no pipeline bump, because THE SEAL DOES NOT MOVE.** The canonical
+encoding carries `foreign_modules_built` as `omitzero`, so a record that built
+none marshals to exactly the bytes it was sealed over and keeps its stored
+`content_hash` verifiable; the column is derived from bytes the store already
+holds. No stored record is made to say anything FALSE by this — they were silent
+about holding another module's built code, and silence is what is being replaced,
+which is the rule `CallGraphSchemaVersion`'s own doc comment sets. Verified after
+the change across the maintainer's whole store: 836 of 836 stored generations
+still pass content-hash verification, none failing.
+
+**No index.** Nothing filters on it. The column is read for rows already found by
+the coordinate's own primary-key prefix, over the handful of generations it
+holds, and an index nothing queries is a write cost and a second place to be
+wrong — migration 15's reasoning, unchanged.
+
+**What it changes for a read.** `callgraph-show` prints a `foreign modules
+built:` line beside `test scope` and `reference scope`, only when non-empty, the
+way `module membership` prints; `--json` carries `foreign_modules_built` on the
+same terms. `callers`, `callees`, their transitive forms and `implementers`
+qualify their `answer:` line when part of the answer is drawn from those modules'
+nodes, naming the module, its version and the record that held it. An answer
+drawn wholly from the queried module's own nodes prints nothing, and neither does
+one served from a record written before the axis existed — that record makes no
+claim, and the query layer does not invent one from a node's import path.
+
+**Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a
+metadata-only operation in SQLite. The back-fill is one decompress plus one
+unmarshal per row, and an `UPDATE` only for the rows that hold something.
+
 ## Call graph records: the wrapper hop, no migration and no bump
 
 **No store migration, no schema-version bump, no pipeline bump.** The analyser

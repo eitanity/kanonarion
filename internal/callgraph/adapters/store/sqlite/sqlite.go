@@ -478,6 +478,56 @@ ALTER TABLE callgraph_records ADD COLUMN worktree_scan_digest TEXT NOT NULL DEFA
 		{Module: "callgraph", Version: 15, SQL: `
 ALTER TABLE callgraph_records ADD COLUMN analyser TEXT NOT NULL DEFAULT ''`,
 			Fn: backfillAnalyser},
+		// Migration v16: add the foreign_modules_built column, so an edge query can
+		// qualify its answer without decoding the record.
+		//
+		// A record holds another module's code built with real bodies whenever the
+		// analysed module's path nests one — target selection for the syntax load is
+		// by path prefix, deliberately wider than membership, so the nested module's
+		// dispatch is resolved rather than lost. The record now NAMES those modules
+		// and the version resolution gave each. What that leaves is a read problem:
+		// `callers` is answered out of callgraph_edges alone, and deciding whether an
+		// answer's rows are one of those modules' nodes meant composing the record
+		// they came from. Measured against one store with three binaries differing
+		// only in that read: a one-row `callers` answer over a 16,005-node,
+		// 213,828-edge working-tree record cost 1,574 ms unqualified, 2,078 ms
+		// qualified from a composed record, and 1,582 ms qualified from this column —
+		// for a set that is empty on almost every record in the store.
+		//
+		// THIS TABLE ALREADY DENORMALISES EXACTLY THIS CLASS OF FIELD. completeness,
+		// node_count and edge_count are each a column AND a field inside the sealed
+		// blob, for this reason and no other: a read that qualifies an answer must not
+		// have to decompress one. This axis does the same job, so it takes the same
+		// shape.
+		//
+		// THE BLOB REMAINS AUTHORITATIVE. The column is a derived copy, written in the
+		// same transaction as the blob it copies so the two cannot diverge, and
+		// nothing reads it to decide what a record IS — composition reads the decoded
+		// record, as it always has.
+		//
+		// BACK-FILLED FROM THE BLOB, which is what a migration is for: one decode per
+		// row, offline, once. Measured population at the time of writing: 476
+		// coordinates, 836 generations. A row whose record predates the field
+		// back-fills to the empty string, and that is the truth about it rather than a
+		// default — the analysis named no foreign module, so the set of modules it can
+		// name is empty. "Predates the field" stays readable where it belongs, on the
+		// record's own SchemaVersion.
+		//
+		// NO PIPELINE BUMP AND NO PURGE, because THE SEAL DOES NOT MOVE. The canonical
+		// encoding omits foreign_modules_built when empty, so every stored record
+		// marshals to the bytes it was sealed over and every content_hash in the table
+		// is left exactly as written; this column is derived from bytes the store
+		// already holds. No stored record is made to say anything false: they were
+		// silent about holding another module's built code, and silence is what is
+		// being replaced.
+		//
+		// NO INDEX. Nothing filters on it. The column is read for rows already found by
+		// the coordinate's own primary-key prefix, over the handful of generations it
+		// holds, and an index nothing queries is a write cost and a second place to be
+		// wrong — the same reasoning migration 15 records for the analyser column.
+		{Module: "callgraph", Version: 16, SQL: `
+ALTER TABLE callgraph_records ADD COLUMN foreign_modules_built TEXT NOT NULL DEFAULT ''`,
+			Fn: backfillForeignModulesBuilt},
 	}
 }
 
@@ -711,6 +761,71 @@ func backfillCompleteness(tx *sql.Tx) error {
 	return nil
 }
 
+// backfillForeignModulesBuilt copies each record's foreign-module set out of its
+// own sealed blob into the column migration 16 added.
+//
+// Every row is visited, not only the ones that turn out to hold something. The
+// column's empty value has exactly one meaning — the empty set — and it only has
+// that meaning because this pass decided it from the record rather than leaving
+// the DEFAULT in place unexamined. A row skipped here would carry a value nothing
+// measured, which is the state migration 9 exists because of.
+//
+// Rows are drained fully before any UPDATE is issued: the store runs on a single
+// connection, so writing while the SELECT's result set is still open deadlocks.
+//
+// A row that cannot be decoded is an error rather than a skip, on the same terms
+// as migration 10: guessing what an unreadable row holds is exactly the judgement
+// a migration must not make on its own.
+func backfillForeignModulesBuilt(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT rowid, serialised FROM callgraph_records`)
+	if err != nil {
+		return fmt.Errorf("selecting rows to back-fill foreign modules: %w", err)
+	}
+	type pending struct {
+		rowID int64
+		blob  []byte
+	}
+	var todo []pending
+	for rows.Next() {
+		var p pending
+		if serr := rows.Scan(&p.rowID, &p.blob); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return fmt.Errorf("scanning row to back-fill foreign modules: %w", serr)
+		}
+		todo = append(todo, p)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return fmt.Errorf("iterating rows to back-fill foreign modules: %w", cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return fmt.Errorf("closing foreign module back-fill rows: %w", cerr)
+	}
+
+	var h domain2.CallGraphRecordHasher
+	for _, p := range todo {
+		raw, derr := blobcodec.Decode(p.blob)
+		if derr != nil {
+			return fmt.Errorf("decompressing record %d: %w", p.rowID, derr)
+		}
+		rec, uerr := h.Unmarshal(raw)
+		if uerr != nil {
+			return fmt.Errorf("unmarshalling record %d: %w", p.rowID, uerr)
+		}
+		column := domain2.ForeignModulesColumn(rec.ForeignModulesBuilt)
+		if column == "" {
+			// The DEFAULT is already this value, and it is now a measured one: this
+			// record names no foreign module, so its set is empty.
+			continue
+		}
+		if _, uerr := tx.Exec(`UPDATE callgraph_records SET foreign_modules_built = ? WHERE rowid = ?`,
+			column, p.rowID); uerr != nil {
+			return fmt.Errorf("back-filling foreign modules for record %d: %w", p.rowID, uerr)
+		}
+	}
+	return nil
+}
+
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 // Use ":memory:" for tests.
 func Open(dsn string) (*Store, error) {
@@ -825,10 +940,10 @@ INSERT INTO callgraph_records (
     module_path, module_version, pipeline_version,
     algorithm, overall_status, completeness, analysis_source, worktree_digest,
     analysis_root, worktree_scan_digest,
-    failure_cause, analyser,
+    failure_cause, analyser, foreign_modules_built,
     node_count, edge_count,
     extracted_at, content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
@@ -843,6 +958,9 @@ DO NOTHING`
 		string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
 		r.AnalysisRoot, r.WorktreeScanDigest,
 		string(r.FailureCause), r.Analyser.Column(),
+		// Written in the same statement as the blob it copies, so the derived column
+		// and the sealed record cannot diverge on any row this leg writes.
+		domain2.ForeignModulesColumn(r.ForeignModulesBuilt),
 		r.NodeCount, r.EdgeCount,
 		r.ExtractedAt.UTC().Format(time.RFC3339),
 		r.ContentHash, blob,
@@ -1985,6 +2103,102 @@ LIMIT 2`
 		}
 		return served.ContentHash, found, nil
 	}
+}
+
+// ForeignModulesBuilt returns the modules OTHER than this one whose packages the
+// SERVED record for this coordinate built with bodies, read from the
+// denormalised column rather than from the record.
+//
+// It is the read the answer qualification exists for, and reading the column is
+// the whole point of the column. An edge query is answered out of callgraph_edges
+// alone; composing the record to learn one small set would pay a decompress, a
+// full unmarshal, an edge reconstruction and a seal check for a value that is
+// empty on almost every record in the store. Measured before the column: 483 ms
+// added to a one-row answer over a 213,828-edge record.
+//
+// It is keyed on the SERVED generation, through the same resolution the edge
+// query itself uses, because the rows being qualified are that generation's rows.
+// The single-generation case — every module in the store today — costs two
+// indexed column reads and decodes nothing.
+//
+// A coordinate the ledger does not hold reports no modules and found=false. That
+// is not the same statement as an empty set, and the caller must not read it as
+// one: nothing was consulted.
+func (s *Store) ForeignModulesBuilt(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) ([]domain2.ForeignModule, bool, error) {
+	// The DISTINCT values across every generation, capped at two, before any
+	// generation is chosen. It is the one-way gate AnyPartial and AnyBelowFull are
+	// built on, applied to a column instead of a flag: when every generation
+	// states the SAME set, whichever one composition serves states that set, so
+	// the answer is known without deciding which one that is.
+	//
+	// Without it a coordinate with many generations pays a composition here, and
+	// those are exactly the coordinates where it hurts. Measured on the
+	// maintainer's store: the local working-tree coordinate holds 80 generations,
+	// one per ingest, and composing them cost 2,073 ms against 1,710 ms for the
+	// same answer before the axis existed.
+	const qDistinct = `SELECT DISTINCT foreign_modules_built FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+LIMIT 2`
+	rows, err := s.db.DB().QueryContext(ctx, qDistinct, coord.Path(), coord.Version(), pipelineVersion)
+	if err != nil {
+		return nil, false, fmt.Errorf("querying foreign modules for %s: %w", coord, err)
+	}
+	var columns []string
+	for rows.Next() {
+		var c string
+		if serr := rows.Scan(&c); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return nil, false, fmt.Errorf("scanning foreign modules for %s: %w", coord, serr)
+		}
+		columns = append(columns, c)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return nil, false, fmt.Errorf("iterating foreign modules for %s: %w", coord, cerr)
+	}
+	// Drained and closed before resolving the served generation: the store runs on
+	// a single connection, so issuing that query while this result set is still
+	// open deadlocks.
+	if cerr := rows.Close(); cerr != nil {
+		return nil, false, fmt.Errorf("closing foreign module rows: %w", cerr)
+	}
+
+	switch len(columns) {
+	case 0:
+		// Nothing is held for the coordinate. Not an empty set: nothing was
+		// consulted, so nothing is claimed.
+		return nil, false, nil
+	case 1:
+		mods, perr := domain2.ParseForeignModulesColumn(columns[0])
+		if perr != nil {
+			return nil, false, fmt.Errorf("reading the foreign modules of %s: %w", coord, perr)
+		}
+		return mods, true, nil
+	}
+
+	// The generations disagree, so which one answers decides the set, and that is
+	// the composition's question. This is the only path that decodes anything, and
+	// it is reached only by a coordinate whose generations were built over
+	// genuinely different foreign modules.
+	hash, found, err := s.servedContentHash(ctx, coord, pipelineVersion, toolchain)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	var column string
+	err = s.db.DB().QueryRowContext(ctx,
+		`SELECT foreign_modules_built FROM callgraph_records WHERE content_hash = ? LIMIT 1`,
+		hash).Scan(&column)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("querying foreign modules for %s: %w", coord, err)
+	}
+	mods, perr := domain2.ParseForeignModulesColumn(column)
+	if perr != nil {
+		return nil, false, fmt.Errorf("reading the foreign modules of record %s: %w", hash, perr)
+	}
+	return mods, true, nil
 }
 
 // FindCallers returns all edges where the callee matches symbolID, restricted

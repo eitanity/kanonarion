@@ -70,6 +70,10 @@ func canonicalOrder(r CallGraphRecord) CallGraphRecord {
 	sort.Strings(r.FailedPackages)
 	r.PrefixAttributedPackages = append([]string(nil), r.PrefixAttributedPackages...)
 	sort.Strings(r.PrefixAttributedPackages)
+	r.ForeignModulesBuilt = append([]ForeignModule(nil), r.ForeignModulesBuilt...)
+	sort.Slice(r.ForeignModulesBuilt, func(i, j int) bool {
+		return ForeignModuleLess(r.ForeignModulesBuilt[i], r.ForeignModulesBuilt[j])
+	})
 	return r
 }
 
@@ -195,6 +199,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		FailureDetail:            c.FailureDetail,
 		FailedPackages:           c.FailedPackages,
 		PrefixAttributedPackages: c.PrefixAttributedPackages,
+		ForeignModulesBuilt:      domainForeignModules(c.ForeignModulesBuilt),
 		ExclusionReason:          c.ExclusionReason,
 		ExclusionList:            c.ExclusionList,
 		NodeCount:                c.NodeCount,
@@ -221,6 +226,39 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			Requires:          domainRequires(c.SynthesisedGoMod.Requires),
 		},
 	}, nil
+}
+
+// canonicalForeignModules renders the foreign modules this analysis built onto
+// the wire, keeping nil as nil so a record that built none marshals to the bytes
+// it always did.
+func canonicalForeignModules(mods []ForeignModule) []canonicalForeignModule {
+	if len(mods) == 0 {
+		return nil
+	}
+	out := make([]canonicalForeignModule, 0, len(mods))
+	for _, m := range mods {
+		// The wire and domain shapes are deliberately separate types; the conversion
+		// is legal only while their fields coincide, so a field added to either
+		// stops compiling here rather than silently changing what stored records
+		// hash over.
+		out = append(out, canonicalForeignModule(m))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return ForeignModuleLess(ForeignModule(out[i]), ForeignModule(out[j]))
+	})
+	return out
+}
+
+// domainForeignModules reads the foreign modules back off the wire.
+func domainForeignModules(mods []canonicalForeignModule) []ForeignModule {
+	if len(mods) == 0 {
+		return nil
+	}
+	out := make([]ForeignModule, 0, len(mods))
+	for _, m := range mods {
+		out = append(out, ForeignModule(m))
+	}
+	return out
 }
 
 // canonicalRequires renders the pinned require directives onto the wire, keeping
@@ -376,12 +414,25 @@ type canonicalRecord struct {
 	// exactly the bytes it always did and keeps its stored content hash
 	// verifiable. Absent is "no prefix attribution recorded", not "none happened"
 	// — see the domain field.
-	PrefixAttributedPackages []string        `json:"prefix_attributed_packages,omitempty"`
-	Nodes                    []canonicalNode `json:"nodes"`
-	OverallStatus            int             `json:"overall_status"`
-	PipelineVersion          string          `json:"pipeline_version"`
-	SchemaVersion            string          `json:"schema_version"`
-	SourceContentHash        string          `json:"source_content_hash,omitempty"`
+	PrefixAttributedPackages []string `json:"prefix_attributed_packages,omitempty"`
+	// ForeignModulesBuilt is omitted when empty, on the terms every additive field
+	// on this shape has used: every record sealed before it marshals to exactly
+	// the bytes it always did and keeps its stored content hash verifiable, so the
+	// axis lands with no PipelineVersion bump and no migration.
+	//
+	// Absent therefore reads two ways — this analysis built no foreign module's
+	// packages, or the record predates the field — and the record's own
+	// schema_version is what separates them. That is what a schema version is for,
+	// and an always-present key bought the same distinction at the cost of every
+	// stored record's content hash: verification re-marshals the struct rather
+	// than checking the stored bytes, so a new key present on every record moves
+	// every record's digest.
+	ForeignModulesBuilt []canonicalForeignModule `json:"foreign_modules_built,omitzero"`
+	Nodes               []canonicalNode          `json:"nodes"`
+	OverallStatus       int                      `json:"overall_status"`
+	PipelineVersion     string                   `json:"pipeline_version"`
+	SchemaVersion       string                   `json:"schema_version"`
+	SourceContentHash   string                   `json:"source_content_hash,omitempty"`
 	// SynthesisedGoMod is omitted when zero so every record sealed before the
 	// field existed marshals to exactly the bytes it always did and keeps its
 	// stored content hash verifiable — the terms every additive field on this
@@ -443,6 +494,14 @@ type canonicalDerivation struct {
 
 // canonicalRequire is the wire shape of domain.SynthesisedRequire.
 type canonicalRequire struct {
+	Path    string `json:"path"`
+	Version string `json:"version"`
+}
+
+// canonicalForeignModule is the wire shape of domain.ForeignModule, pinned
+// separately from the domain type so a field added there does not silently
+// change what every stored record hashes over.
+type canonicalForeignModule struct {
 	Path    string `json:"path"`
 	Version string `json:"version"`
 }
@@ -589,6 +648,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		NodeCount:                r.NodeCount,
 		Nodes:                    cNodes,
 		PrefixAttributedPackages: prefixAttributed,
+		ForeignModulesBuilt:      canonicalForeignModules(r.ForeignModulesBuilt),
 		OverallStatus:            int(r.OverallStatus),
 		PipelineVersion:          r.PipelineVersion,
 		SchemaVersion:            r.SchemaVersion,

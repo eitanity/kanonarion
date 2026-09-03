@@ -567,6 +567,22 @@ func CallEdgeRefLess(a, b CallEdgeRef) bool {
 	return false
 }
 
+// CallGraphForeignModuleReader is the read that names the modules OTHER than the
+// analysed one whose packages the SERVED record for a coordinate built with
+// bodies, at the version resolution gave each.
+//
+// It is separate from the record read on purpose, and the separation is the
+// feature. An edge query is answered out of the edge table without decoding any
+// record; qualifying that answer must not turn it into one that does. The store
+// keeps this set in a column beside the record for exactly this read.
+//
+// found=false means the ledger holds no served generation for the coordinate.
+// That is not an empty set and must never be reported as one — nothing was
+// consulted, so nothing is claimed.
+type CallGraphForeignModuleReader interface {
+	ForeignModulesBuilt(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) ([]domain.ForeignModule, bool, error)
+}
+
 // CallGraphWorktreeRouter is the optional read that reports which working tree
 // answered for a local coordinate. A store that cannot distinguish trees does
 // not implement it, and a caller that cannot ask simply prints no notice —

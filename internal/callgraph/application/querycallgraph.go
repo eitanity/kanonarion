@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -91,6 +92,26 @@ func (uc *QueryCallGraphUseCase) WorktreeRouting(ctx context.Context, coord coor
 		return cgports.WorktreeRouting{}, false, fmt.Errorf("resolving the working tree that answers for %s: %w", coord, err)
 	}
 	return r, found, nil
+}
+
+// ForeignModulesBuilt names the modules OTHER than the analysed one whose
+// packages the served record for this coordinate built with bodies, with the
+// version resolution gave each.
+//
+// found is false when the store cannot answer the question or holds no served
+// generation for the coordinate. It is never an empty set: an answer qualified
+// from a store that was not asked would be a claim about which record answered
+// that nothing established.
+func (uc *QueryCallGraphUseCase) ForeignModulesBuilt(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) ([]domain.ForeignModule, bool, error) {
+	reader, ok := uc.store.(cgports.CallGraphForeignModuleReader)
+	if !ok {
+		return nil, false, nil
+	}
+	mods, found, err := reader.ForeignModulesBuilt(ctx, coord, pipelineVersion, toolchain)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading the foreign modules built into the record for %s: %w", coord, err)
+	}
+	return mods, found, nil
 }
 
 // ListCallGraphRecords returns summaries matching the given filter.

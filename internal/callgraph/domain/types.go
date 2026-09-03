@@ -101,6 +101,20 @@ import (
 // the verdict layer downgrades to UNRESOLVED over it. Bumping instead would take
 // every stored graph out of every answer until re-extraction — a purge by
 // another name, to replace a fact the record can simply state.
+//
+// ForeignModulesBuilt joined on those same terms, and it is the one case where
+// the "absent reads as not-measured" argument is carried by THIS constant rather
+// than by the field. It is omitted when empty, so every stored record re-marshals
+// to the bytes it was sealed over; but an absent value genuinely does read two
+// ways — this analysis built no foreign module's packages, or the record predates
+// the field — and a consumer that must tell them apart reads the schema version,
+// which is what a schema version is for. The alternative considered was an
+// always-present key, and it is not available: verification re-marshals the
+// struct rather than checking the stored bytes, so a key on every record moves
+// every record's digest and the axis would cost a bump plus a migration to state
+// a fact that changes no old record's meaning. No old record is made to say
+// anything false: they were silent about holding another module's built code, and
+// silence is what is being replaced.
 const CallGraphSchemaVersion = "13"
 
 // TestScope records whether a module's _test.go declarations were part of the
@@ -676,6 +690,24 @@ type CallGraphRecord struct {
 	// "none happened". Nothing may infer from an empty list that a record's
 	// membership was measured.
 	PrefixAttributedPackages []string
+	// ForeignModulesBuilt names every module OTHER than the analysed one whose
+	// packages this analysis built with bodies, at the version resolution gave
+	// it, sorted.
+	//
+	// It is the claim the completeness ladder could not make. Completeness is a
+	// per-MODULE level, and a record that holds a nested module's built packages
+	// says BUILT_WITH_BODIES about code belonging to a module it does not name —
+	// so within one record the level meant two different things depending on
+	// which node a query landed on. This names the second population, so a
+	// negative answered from it can say which record answered and at what version.
+	//
+	// Empty means this analysis built no foreign module's packages. It is also
+	// what a record written before the field existed carries, and those two are
+	// separated by the record's own SchemaVersion rather than by an
+	// always-present key: the field is omitted from the sealed shape when empty,
+	// on the terms every additive field here has used, so every stored record
+	// re-marshals to the bytes it was sealed over.
+	ForeignModulesBuilt []ForeignModule
 	// DerivedBy states WHY this generation exists: which reuse gate governed the
 	// append, and whether the run asked it or forced past it. See
 	// GenerationDerivation.

@@ -767,6 +767,11 @@ func (a *Analyser) analyseDirOnce(
 	// says the loader named every in-module package itself; non-empty is the
 	// reconstruction, stated rather than hidden inside the membership answer.
 	rec.PrefixAttributedPackages = mem.prefixAttributed()
+	// Every module other than this one whose packages this analysis built with
+	// bodies. The selection above is deliberately wider than membership, so this
+	// is what stops BUILT_WITH_BODIES being claimed uniformly over code belonging
+	// to modules the record does not name.
+	rec.ForeignModulesBuilt = build.ForeignModulesBuilt
 	return rec, nil
 }
 

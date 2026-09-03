@@ -476,7 +476,13 @@ holds several answers per dependency. The seed is restricted to the records
 measured in **this tree's own frame** — a walk rooted at the module path this
 tree's `go.mod` declares, at any version — plus the **isolated** frame, which
 answers "the module built alone" and belongs to no project. Another project's
-records are never read. `seed_restriction` states this on every run:
+records are never read.
+
+**Why this matters:** another project resolves the same dependency to its own
+version set and its own entry points, so its reachability answer is about a
+build that is not yours. Read here it would answer a question you never asked,
+with nothing to show it had. `seed_restriction` states the boundary on every
+run:
 
 ```
 seed restricted to stored records measured in this tree's own frame (rooted at

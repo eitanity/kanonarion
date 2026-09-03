@@ -184,6 +184,7 @@ func TestGraphClaimFields_ClassifiesEveryCanonicalField(t *testing.T) {
 		"failed_packages":            "which packages did not load: a diagnostic",
 		"failure_cause":              "why the analysis failed: a diagnostic",
 		"failure_detail":             "how the analysis failed: a diagnostic",
+		"foreign_modules_built":      "which other modules' packages were built with bodies: a scope, which shows up in the nodes",
 		"overall_status":             "the status derived from the run",
 		"pipeline_version":           "which pipeline wrote it: the key",
 		"prefix_attributed_packages": "how packages were attributed: a diagnostic",

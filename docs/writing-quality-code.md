@@ -130,10 +130,30 @@ The second cannot be improved by re-running anything. The first can, by
 analysing more of the closure. Treating them the same is how a gap becomes a
 false reassurance.
 
-For the same reason the answer is not a boolean. A finding is `reachable`,
-`not_reachable`, `package_level_only` (the advisory matches the module but names
-no symbol, so symbol-level reachability was never determinable),
-`not_affected`, or `withdrawn`. And a `reachable` answer usually carries
+For the same reason the answer is not a boolean. It is one of eight words,
+published as `reachability_state` on every surface that carries a finding - and
+only two of them are answers about your code:
+
+| | |
+|---|---|
+| `reachable` | a path was found from an entry point of this build to the vulnerable symbol |
+| `not_reachable` | the analysis ran and found no path; `soundness` says how thorough that search was |
+
+The other six say why there is no symbol-level answer, and they call for
+different next steps:
+
+| | |
+|---|---|
+| `package_level_only` | the advisory names no symbol for this module path, so there was never a target to search for. No re-scan at any fidelity changes it |
+| `withdrawn` | the advisory was retracted upstream, so there is nothing to reach |
+| `not_determined` | an analysis ran and declined to decide |
+| `not_computed` | reachability was asked for and could not be produced; the finding records the cause, and re-running once that cause is fixed will answer |
+| `not_affected` | the module was scanned and this advisory is not among its findings |
+| `not_analysed` | nobody asked. A statement about the scan, not about your code |
+
+Collapsing any of the six into "not reachable" is the mistake to avoid:
+`not_analysed` and `not_reachable` are separated by an entire scan that never
+ran. And a `reachable` answer usually carries
 *several* routes - dozens is normal - of which a rendering shows the first. Read
 the set: one route can pass through a hop the analysis over-approximated and
 suggest something the source does not support, while the rest of the set is

@@ -185,6 +185,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// that difference is only knowable here: downstream, a program with registered
 	// packages and no built bodies is indistinguishable from one built from
 	// metadata. Recording it is what gives CompletenessTypeOnly a producer.
+	var builtPaths []string
 	for _, ssaPkg := range built {
 		if berr := buildSSAPackageSafe(ssaPkg); berr != nil {
 			path := ""
@@ -196,7 +197,15 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			continue
 		}
 		res.BodiesBuilt++
+		if ssaPkg.Pkg != nil {
+			builtPaths = append(builtPaths, ssaPkg.Pkg.Path())
+		}
 	}
+	// Which modules other than this one had their packages built here. The target
+	// set was selected by path prefix and Go module paths nest, so this is
+	// routinely non-empty; it is taken from the packages that actually BUILT,
+	// because the claim being recorded is about bodies and not about selection.
+	res.ForeignModulesBuilt = res.Membership.foreignModules(builtPaths)
 	// The ASTs and type info are held only until the packages that need them are
 	// built; ssa keeps its own references while building and drops them after.
 	for _, p := range loaded {
@@ -241,6 +250,11 @@ type ssaBuildResult struct {
 	// moduleMembership: this is the only place the loader's answer is available,
 	// so it is captured here rather than reconstructed downstream.
 	Membership moduleMembership
+	// ForeignModulesBuilt names the modules other than the analysed one whose
+	// packages were built with bodies by this load, at the versions the loader
+	// resolved. See domain.ForeignModule for why a record that holds them must
+	// say so.
+	ForeignModulesBuilt []domain.ForeignModule
 	// SourceFiles are the absolute paths the LOADER resolved for the packages it
 	// returned: compiled Go files, the Go files as written, and the non-Go source
 	// (assembly, cgo) that goes into the same packages. They are what the worktree

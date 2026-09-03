@@ -26,6 +26,7 @@ const determinismShuffles = 50
 // collection cannot join the seal without a decision about its order.
 var sealedCallGraphCollections = map[string]bool{
 	"Edges":                     true,
+	"ForeignModulesBuilt":       true,
 	"ExclusionList":             true,
 	"FailedPackages":            true,
 	"Implementations":           true,
@@ -117,6 +118,10 @@ func makeTiedCallGraphRecord() domain.CallGraphRecord {
 		ExclusionList:            []string{"example.com/mod/internal", "example.com/mod/testdata"},
 		FailedPackages:           []string{"example.com/mod/broken", "example.com/mod/worse"},
 		PrefixAttributedPackages: []string{"example.com/mod/x", "example.com/mod/y"},
+		ForeignModulesBuilt: []domain.ForeignModule{
+			{Path: "example.com/mod/nested", Version: "v1.0.0"},
+			{Path: "example.com/mod/nested", Version: "v1.1.0"},
+		},
 		SynthesisedGoMod: domain.SynthesisedGoMod{
 			ModulePath: "example.com/mod",
 			Requires: []domain.SynthesisedRequire{
@@ -153,6 +158,9 @@ func shuffleCallGraphRecord(rng *rand.Rand, r *domain.CallGraphRecord) {
 	})
 	rng.Shuffle(len(r.PrefixAttributedPackages), func(i, j int) {
 		r.PrefixAttributedPackages[i], r.PrefixAttributedPackages[j] = r.PrefixAttributedPackages[j], r.PrefixAttributedPackages[i]
+	})
+	rng.Shuffle(len(r.ForeignModulesBuilt), func(i, j int) {
+		r.ForeignModulesBuilt[i], r.ForeignModulesBuilt[j] = r.ForeignModulesBuilt[j], r.ForeignModulesBuilt[i]
 	})
 	req := r.SynthesisedGoMod.Requires
 	rng.Shuffle(len(req), func(i, j int) { req[i], req[j] = req[j], req[i] })

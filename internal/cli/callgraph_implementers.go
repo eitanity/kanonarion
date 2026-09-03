@@ -114,6 +114,12 @@ type implementersResult struct {
 	// which of the two questions it was the answer to, nor ask the other one.
 	TestsExcluded    bool   `json:"tests_excluded"`
 	TestsExcludeFlag string `json:"tests_exclude_flag"`
+	// AnswerForeignModules names the modules OTHER than the searched one that own
+	// implementers in this answer, because the record that held them built their
+	// packages with bodies under its own path prefix. Absent means every row is
+	// the searched module's own declaration — see domain.ForeignModule for why
+	// the distinction is not cosmetic.
+	AnswerForeignModules []foreignModuleJSON `json:"answer_foreign_modules,omitempty"`
 }
 
 // runImplementers answers an implementers query and renders it with the same
@@ -157,14 +163,15 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 	scopeLine := implementersScopeLine(found.modulePath, opts)
 
 	if jsonOut {
-		return writeImplementersJSON(stdout, interfaceID, method, perMethod, impls, verdict, scopeLine, found.modulePath, opts)
+		return writeImplementersJSON(stdout, interfaceID, method, perMethod, impls, verdict, scopeLine, found.modulePath, opts,
+			foreignDrawOfImplementers(impls))
 	}
 	// The implementer relation is read out of the served record, so the same
 	// routing question applies: which working tree's types are these.
 	if err := writeWorktreeNotice(ctx, interfaceID, uc, stdout, sc.modules); err != nil {
 		return err
 	}
-	return writeImplementersText(stdout, queryID, method, perMethod, impls, verdict, scopeLine, sc)
+	return writeImplementersText(stdout, queryID, method, perMethod, impls, verdict, scopeLine, sc, foreignDrawOfImplementers(impls))
 }
 
 // scopedImplementer is one implementation plus the record it was measured in.
@@ -172,6 +179,11 @@ type scopedImplementer struct {
 	impl          domain.InterfaceImplementation
 	modulePath    string
 	moduleVersion string
+	// foreign names the module the implementing type actually belongs to, when
+	// the record that holds it is a record about a different module. Zero when
+	// the type is the searched module's own — the ordinary case, since the
+	// relation is computed over the analysed module's declarations.
+	foreign domain.ForeignModule
 }
 
 // implementerLookup is the outcome of searching the in-scope records for an
@@ -299,10 +311,22 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 				continue
 			}
 			seen[im.TypeID] = struct{}{}
+			// A record can hold a nested module's declarations, built with bodies
+			// under the parent's path prefix. Naming the module the type really
+			// belongs to keeps the answer from reading as the searched module's own.
+			//
+			// Read off the record rather than off the store's column, and that is not
+			// an exception to the column's rule. The column exists so that an answer
+			// served from the EDGE TABLE need not compose a record to qualify itself.
+			// This answer IS the record — the implementer relation lives nowhere else
+			// — so the set is already in hand, and a column read here would be a
+			// second read of a value derived from the very bytes just decoded.
+			fm, _ := domain.ForeignModuleOwning(rec.ForeignModulesBuilt, im.TypeID)
 			out.implementations = append(out.implementations, scopedImplementer{
 				impl:          im,
 				modulePath:    s.ModulePath,
 				moduleVersion: s.ModuleVersion,
+				foreign:       fm,
 			})
 		}
 		if rec.OverallStatus == domain.CallGraphStatusPartial && out.partialPkg == "" {
@@ -325,6 +349,25 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 	return out, nil
 }
 
+// foreignDrawOfImplementers classifies an implementers answer the way
+// foreignDrawOfEdges classifies an edge answer: how many of its rows are types
+// belonging to a module the record that holds them is not about.
+func foreignDrawOfImplementers(impls []scopedImplementer) foreignDraw {
+	d := foreignDraw{total: len(impls)}
+	modules := map[domain.ForeignModule]struct{}{}
+	holders := map[string]struct{}{}
+	for _, im := range impls {
+		if im.foreign.Path == "" {
+			continue
+		}
+		d.rows++
+		modules[im.foreign] = struct{}{}
+		holders[im.modulePath+"@"+im.moduleVersion] = struct{}{}
+	}
+	d.modules, d.holders = sortedForeignModules(modules), sortedLabels(holders)
+	return d
+}
+
 // implementersScopeLine states what the measurement covered. It is printed on
 // every answer, not only an empty one: the relation is computed over the
 // declaring module's own types, and a reader who assumes otherwise would take a
@@ -342,7 +385,7 @@ func implementersScopeLine(modulePath string, opts ports.EdgeQueryOptions) strin
 	return line
 }
 
-func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMethod bool, impls []scopedImplementer, v domain.Verdict, scopeLine, searchedModule string, opts ports.EdgeQueryOptions) error {
+func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMethod bool, impls []scopedImplementer, v domain.Verdict, scopeLine, searchedModule string, opts ports.EdgeQueryOptions, foreign foreignDraw) error {
 	out := make([]implementerJSON, 0, len(impls))
 	for _, im := range impls {
 		entry := implementerJSON{
@@ -373,6 +416,7 @@ func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMeth
 		CrossModuleTypesMeasured: false,
 		TestsExcluded:            opts.ExcludeTests,
 		TestsExcludeFlag:         "--" + testScopeFlagName,
+		AnswerForeignModules:     foreign.foreignModuleJSONs(),
 	}
 	if perMethod {
 		res.Method = method
@@ -385,7 +429,7 @@ func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMeth
 	return nil
 }
 
-func writeImplementersText(stdout io.Writer, queryID, method string, perMethod bool, impls []scopedImplementer, v domain.Verdict, scopeLine string, sc buildScope) error {
+func writeImplementersText(stdout io.Writer, queryID, method string, perMethod bool, impls []scopedImplementer, v domain.Verdict, scopeLine string, sc buildScope, foreign foreignDraw) error {
 	if err := writeScopeNotice(stdout, sc); err != nil {
 		return err
 	}
@@ -430,7 +474,9 @@ func writeImplementersText(stdout io.Writer, queryID, method string, perMethod b
 	switch v.Outcome {
 	case domain.VerdictResolvedPresent:
 		if _, err := fmt.Fprintf(stdout,
-			"answer: RESOLVED-PRESENT — %s %s %s\n", countConcreteTypes(len(impls)), satisfyVerb(len(impls)), queryID); err != nil {
+			"answer: RESOLVED-PRESENT — %s %s %s%s\n",
+			countConcreteTypes(len(impls)), satisfyVerb(len(impls)), queryID,
+			foreign.clause("implementers")); err != nil {
 			return fmt.Errorf("writing answer: %w", err)
 		}
 	case domain.VerdictUnresolved:

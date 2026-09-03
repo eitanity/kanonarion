@@ -473,11 +473,17 @@ type callGraphRecordJSON struct {
 	FailedPackages  []string `json:"failed_packages,omitempty"`
 	ExclusionReason string   `json:"exclusion_reason,omitempty"`
 	ExclusionList   []string `json:"exclusion_list,omitempty"`
-	NodeCount       int      `json:"node_count"`
-	EdgeCount       int      `json:"edge_count"`
-	ExtractedAt     string   `json:"extracted_at"`
-	PipelineVersion string   `json:"pipeline_version"`
-	ContentHash     string   `json:"content_hash"`
+	// ForeignModulesBuilt names the modules other than this one whose packages
+	// this analysis built with bodies, with the version resolution gave each.
+	// Absent means either that none were built or that the record predates the
+	// field, and `schema_version` above is what tells those apart — see
+	// domain.ForeignModule.
+	ForeignModulesBuilt []foreignModuleJSON `json:"foreign_modules_built,omitempty"`
+	NodeCount           int                 `json:"node_count"`
+	EdgeCount           int                 `json:"edge_count"`
+	ExtractedAt         string              `json:"extracted_at"`
+	PipelineVersion     string              `json:"pipeline_version"`
+	ContentHash         string              `json:"content_hash"`
 	// TestScope says whether _test.go declarations were part of the analysis.
 	// A record that makes no claim renders the token: an empty string here is
 	// read as "no test code", which is the confusion the axis exists to remove.
@@ -602,6 +608,27 @@ func synthesisedGoModToJSON(s domain.SynthesisedGoMod, buildListSource string) *
 	}
 }
 
+// foreignModuleJSON is one module the analysis built with bodies while
+// reporting on another. The version is fielded rather than folded into the path
+// because it is the half the record could not previously state: the parent names
+// its own coordinate, and a route through a nested module's nodes was a route
+// through a version nobody stated.
+type foreignModuleJSON struct {
+	Path    string `json:"path"`
+	Version string `json:"version"`
+}
+
+func toForeignModulesJSON(mods []domain.ForeignModule) []foreignModuleJSON {
+	if len(mods) == 0 {
+		return nil
+	}
+	out := make([]foreignModuleJSON, 0, len(mods))
+	for _, m := range mods {
+		out = append(out, foreignModuleJSON{Path: m.Path, Version: m.Version})
+	}
+	return out
+}
+
 func callNodeRole(n domain.CallNode) string {
 	if n.IsExternal {
 		return "external"
@@ -670,6 +697,9 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		FailedPackages:  r.FailedPackages,
 		ExclusionReason: r.ExclusionReason,
 		ExclusionList:   r.ExclusionList,
+
+		ForeignModulesBuilt: toForeignModulesJSON(r.ForeignModulesBuilt),
+
 		NodeCount:       r.NodeCount,
 		EdgeCount:       r.EdgeCount,
 		ExtractedAt:     isoTime(r.ExtractedAt),
@@ -816,6 +846,29 @@ func writeModuleMembershipLine(stdout io.Writer, r domain.CallGraphRecord) error
 		len(r.PrefixAttributedPackages), joinWithOverflow(r.PrefixAttributedPackages, 5))
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing module membership: %w", err)
+	}
+	return nil
+}
+
+// writeForeignModulesLine reports the modules OTHER than this one whose packages
+// this analysis built with bodies.
+//
+// It prints only when there are some, the way module membership does, and for
+// the same reason: on the great majority of records there is nothing to say and
+// a line saying so on every record would be noise. When there IS something to
+// say it is the caveat on the fidelity line directly above — BUILT_WITH_BODIES
+// is a per-module level, and a record holding a nested module's built packages
+// claims it over code belonging to a module it does not otherwise name.
+func writeForeignModulesLine(stdout io.Writer, r domain.CallGraphRecord) error {
+	if len(r.ForeignModulesBuilt) == 0 {
+		return nil
+	}
+	line := fmt.Sprintf("  foreign modules built: %d module(s) other than %s had packages built with bodies here — "+
+		"each has its own record, which is the measurement of it: %s",
+		len(r.ForeignModulesBuilt), r.Coordinate.Path(),
+		joinWithOverflow(renderedModules(r.ForeignModulesBuilt), 5))
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing foreign modules: %w", err)
 	}
 	return nil
 }
@@ -1002,6 +1055,9 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		return err
 	}
 	if err := writeReferenceScopeLine(stdout, r); err != nil {
+		return err
+	}
+	if err := writeForeignModulesLine(stdout, r); err != nil {
 		return err
 	}
 	if err := writeModuleMembershipLine(stdout, r); err != nil {

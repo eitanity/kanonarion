@@ -207,6 +207,47 @@ answer: UNRESOLVED — callers of pkg.TestThing cannot be confirmed absent:
 A method on a test fake is not an entry point — it is reached by dispatch or not
 at all — so its absence is still a measurement.
 
+## Answers that came from another module's code
+
+**Why this matters:** without this line you can read another module's answer as
+though it were this module's, and act on it. The rows look identical. Worse, what
+you are reading is a *partial* copy of that module, so "no callers" can mean
+"nothing calls it" or "the part that was copied here has no callers" — and those
+are opposite conclusions.
+
+Go module paths nest, but a nested path is a separate module. `example.com/mod`
+and `example.com/mod/loader` look like a package and its subdirectory. They are
+two modules, published separately, versioned separately.
+
+A call graph for `example.com/mod` can therefore hold `example.com/mod/loader`'s
+code, compiled with real function bodies. That is deliberate — those bodies are
+how calls passing through that code get resolved, and dropping them would make
+the graph worse — but they belong to a module this record is not about, at a
+version this record's coordinate does not name.
+
+So when part of an answer comes from that code, the answer says so:
+
+```
+answer: RESOLVED-PRESENT — 72 callers of fmt.Sprintf; 21 of 72 callers are nodes of a
+module the answering record is not about — example.com/mod/loader@v0.5.1, built with
+bodies inside example.com/mod@v1.15.1 — so that module's own record, not this one, is
+the measurement of it
+```
+
+Both counts appear because "21 of 72" and "72 of 72" call for different next
+steps. **Query the named module directly when the count matters** — its own
+record is the whole measurement of it; what is here is only what the parent's
+build happened to reach.
+
+No line means every row came from the queried module's own code, the same way
+the `--exclude-tests` scope line appears only when you narrowed the query. A
+record written before this axis existed also prints nothing: it makes no claim,
+and the query will not invent one by guessing from import paths.
+
+`implementers --json` carries the same statement as `answer_foreign_modules`,
+present only when non-empty. Single-hop `callers`/`callees` `--json` is a bare
+array of edges with nowhere to put it, and has never carried the answer line.
+
 ## Commands
 
 ### `callgraph`
@@ -362,6 +403,46 @@ packages come back as, and this line names every package decided that way. No
 line means every in-module package was named by the build. On a record written
 before the line existed, its absence says nothing either way: those records
 decided every package by prefix and had nowhere to record it.
+
+A `foreign modules built:` line appears only when this analysis built another
+module's packages with real bodies:
+
+```
+  foreign modules built: 1 module(s) other than example.com/mod had packages built
+  with bodies here — each has its own record, which is the measurement of it:
+  example.com/mod/loader@v0.5.1
+```
+
+**Why this matters:** `BUILT_WITH_BODIES` is the label you read to decide
+whether "nothing calls this" is believable. Without this line that label quietly
+means two different things inside one record, depending which node a query landed
+on — and you have no way to tell which you got.
+
+The code is here on purpose. Which packages a record BUILDS is chosen by path
+prefix, deliberately wider than membership: a nested module built with bodies has
+its interface dispatch resolved rather than lost, and the graph is better for it.
+What the record could not previously say is that it had done so.
+
+Treat the line as a redirection. The nodes those modules contribute are a partial
+copy — the parent built whatever its own build reached, not the module — so an
+answer drawn from them is not the answer that module's own record gives. The
+version is named here because the parent's coordinate does not name it; a route
+through those nodes is otherwise a route through a version nobody stated.
+
+No line means this analysis built no foreign module's packages. On a record
+written before the line existed the absence says nothing either way, and
+`schema_version` under `--json` is what tells the two apart. In JSON the axis is
+`foreign_modules_built`, a list of `path`/`version` objects, present only when
+non-empty:
+
+```json
+{
+  "schema_version": "13",
+  "foreign_modules_built": [
+    {"path": "github.com/bytedance/sonic/loader", "version": "v0.5.1"}
+  ]
+}
+```
 
 `--node` is compared against the **fully-qualified node ID** — the package path
 plus the symbol, e.g. `example.com/mod/render.(*Engine).Render` — so a module
@@ -858,6 +939,7 @@ one module:
 | `tests_excluded` | Whether `--exclude-tests` narrowed this answer |
 | `tests_exclude_flag` | The flag that narrows it, so a consumer can ask the other question |
 | `scope` | The sentence the text prints, kept as it was |
+| `answer_foreign_modules` | The modules other than the searched one that own implementers in this answer, `path`/`version`. Present only when non-empty — see [Answers drawn from a module the record is not about](#answers-drawn-from-a-module-the-record-is-not-about) |
 
 Three failure modes are kept distinct rather than collapsed into an empty list:
 
@@ -914,9 +996,12 @@ confidence rank for it.
 
 Confidence answers *how was the target resolved*, a different question from
 *what kind of edge is it*. A reference edge is usually `Direct` — the analyser
-knows whose value was taken — and that is not a claim that a call happens. Read
-`kind` alongside `confidence`; a path is a chain of resolved calls only when
-every hop is `Direct` **and** no hop is a reference.
+knows whose value was taken — and that is not a claim that a call happens.
+
+**Why this matters:** read `confidence` alone and a chain of `Direct` hops looks
+like proof that the code runs, when one of those hops may only be a function
+value handed to a router that never invokes it. A path is a chain of resolved
+calls only when every hop is `Direct` **and** no hop is a reference.
 
 ## Overall status
 

@@ -24,6 +24,7 @@ import (
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fipsdomain "github.com/eitanity/kanonarion/internal/fips/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
@@ -699,6 +700,11 @@ type FakeQueryCallGraph struct {
 	// coordinate in the store to read fields no part of the answer looks at.
 	CoordinateListCalls int
 	RecordReads         int
+	// ForeignModuleReads counts the column read that qualifies an answer. It is
+	// separate from RecordReads because in the store it IS separate: a column
+	// beside the record, read without decompressing or decoding one, which is the
+	// whole reason the column exists.
+	ForeignModuleReads  int
 	mu                  sync.Mutex
 	records             map[string]cgdomain.CallGraphRecord
 	list                []cgports.CallGraphSummary
@@ -722,6 +728,24 @@ func (f *FakeQueryCallGraph) AddRecord(coord coordinate.ModuleCoordinate, pipeli
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[coord.String()+"|"+pipelineVersion] = rec
+}
+
+// ForeignModulesBuilt answers from the added record's own field, which is what
+// the store's derived column holds: the write leg copies it out of the record in
+// the same transaction as the blob, so the two can never disagree. It counts no
+// record read, because reading the column is not one.
+func (f *FakeQueryCallGraph) ForeignModulesBuilt(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, _ gotoolchain.Version) ([]cgdomain.ForeignModule, bool, error) {
+	if f.Err != nil {
+		return nil, false, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ForeignModuleReads++
+	rec, ok := f.records[coord.String()+"|"+pipelineVersion]
+	if !ok {
+		return nil, false, nil
+	}
+	return rec.ForeignModulesBuilt, true, nil
 }
 
 func (f *FakeQueryCallGraph) SetList(summaries []cgports.CallGraphSummary) {

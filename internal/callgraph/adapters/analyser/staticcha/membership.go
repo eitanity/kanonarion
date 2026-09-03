@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"golang.org/x/tools/go/packages"
@@ -44,21 +45,31 @@ type moduleMembership struct {
 	// contains treats them the same way only because the fallback is the same for
 	// both; the distinction is preserved so prefixAttributed can name the first.
 	pkgModule map[string]string
+	// pkgVersion maps an import path to the module VERSION the loader resolved
+	// for it, keyed the same way as pkgModule. It is kept because a foreign
+	// module held inside this record is only nameable with the version the build
+	// gave it: the path alone names a module the record is not about, at a
+	// version nobody stated.
+	pkgVersion map[string]string
 }
 
 // newModuleMembership records what the loader reported about every package it
 // resolved, including the transitive dependencies, so membership can be decided
 // for any package that reaches the SSA program.
 func newModuleMembership(coord coordinate.ModuleCoordinate, loaded []*packages.Package) moduleMembership {
-	m := moduleMembership{coord: coord, pkgModule: make(map[string]string, len(loaded)*8)}
+	m := moduleMembership{
+		coord:      coord,
+		pkgModule:  make(map[string]string, len(loaded)*8),
+		pkgVersion: make(map[string]string, len(loaded)*8),
+	}
 	for _, p := range loaded {
 		packages.Visit([]*packages.Package{p}, nil, func(dp *packages.Package) {
 			if dp.PkgPath == "" {
 				return
 			}
-			modPath := ""
+			modPath, modVersion := "", ""
 			if dp.Module != nil {
-				modPath = dp.Module.Path
+				modPath, modVersion = dp.Module.Path, dp.Module.Version
 			}
 			// The internal test variant of a package shares its import path with the
 			// production package and reports the same module, so a later empty value
@@ -67,6 +78,7 @@ func newModuleMembership(coord coordinate.ModuleCoordinate, loaded []*packages.P
 				return
 			}
 			m.pkgModule[dp.PkgPath] = modPath
+			m.pkgVersion[dp.PkgPath] = modVersion
 		})
 	}
 	return m
@@ -126,5 +138,34 @@ func (m moduleMembership) prefixAttributed() []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// foreignModules names every module other than the analysed one that the loader
+// placed one of pkgPaths in, with the version it resolved, sorted and
+// deduplicated.
+//
+// Only the loader's own answer counts. A package the loader placed in NO module
+// is decided by path prefix elsewhere, and a prefix cannot tell a nested module
+// from the analysed one — which is the exact confusion this set exists to state
+// rather than reproduce. Such a package is therefore never reported as foreign:
+// the record's prefix-attribution list is where a reconstruction is named.
+func (m moduleMembership) foreignModules(pkgPaths []string) []domain.ForeignModule {
+	seen := make(map[domain.ForeignModule]struct{})
+	for _, pkgPath := range pkgPaths {
+		modPath := m.pkgModule[pkgPath]
+		if modPath == "" || modPath == m.coord.Path() {
+			continue
+		}
+		seen[domain.ForeignModule{Path: modPath, Version: m.pkgVersion[pkgPath]}] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]domain.ForeignModule, 0, len(seen))
+	for fm := range seen {
+		out = append(out, fm)
+	}
+	sort.Slice(out, func(i, j int) bool { return domain.ForeignModuleLess(out[i], out[j]) })
 	return out
 }

@@ -18,6 +18,7 @@ import (
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fipsdomain "github.com/eitanity/kanonarion/internal/fips/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
@@ -173,6 +174,15 @@ type QueryCallGraphUseCase interface {
 	// the different question "what does the served generation say" — and pays a
 	// composition per multi-generation coordinate to do it.
 	ListCallGraphCoordinates(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphCoordinate, error)
+	// ForeignModulesBuilt names the modules OTHER than the analysed one whose
+	// packages the served record for a coordinate built with bodies. It is read
+	// from the store's own column, never from a composed record: an edge query is
+	// answered out of the edge table without decoding anything, and qualifying
+	// that answer must not turn it into a query that does.
+	//
+	// found is false when the store holds no served generation. That is not an
+	// empty set and is never rendered as one.
+	ForeignModulesBuilt(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) ([]callgraphdomain.ForeignModule, bool, error)
 	FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
 	FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
 	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error)

@@ -765,6 +765,13 @@ longer resolves the recorded toolchain, a second line names both versions.
 `--json` carries the same fact as a `build` object of `goos`, `goarch` and
 `go_version`.
 
+**Why this matters:** the findings you are reading include the standard
+library's, and which standard library that is comes from the toolchain named
+here. Scan under one toolchain and ship under another and the stdlib findings
+belong to a build you do not release — clean here, not necessarily clean in
+production. The second line exists so that mismatch is visible rather than
+inferred.
+
 #### The reachability split
 
 `Reachability of N finding(s)` is the run's findings in the three buckets a
@@ -1256,7 +1263,12 @@ A module version has more than one copy on disk: the zip kanonarion fetched and
 holds in its blob store, and — for a vendored project — the tree under `vendor/`
 that the project actually compiles. They can differ, and detecting exactly that
 divergence is what the tool is for, so every vulnerability record names the
-surface its findings were reached from:
+surface its findings were reached from.
+
+**Why this matters:** a clean answer over the fetched zip says nothing about a
+`vendor/` tree that differs from it, and the vendored tree is what your build
+compiles. Read the surface before you act on the answer — otherwise you are
+trusting a measurement of bytes you do not ship.
 
 | `analysis_surface` | Meaning |
 |------|---------|

@@ -124,3 +124,53 @@ func TestModuleMembership_LabelsWhatItDecidedByPrefix(t *testing.T) {
 		t.Errorf("prefixAttributed() = %v, want %v", got, want)
 	}
 }
+
+// TestModuleMembership_ForeignModulesNamesTheModuleAndItsVersion pins the claim
+// the record now makes about the packages it built that belong to someone else.
+//
+// The version is the point. The parent record names only its own coordinate, so
+// a route through a nested module's nodes was a route through a version nobody
+// stated; the loader resolved one, and this is where it survives.
+func TestModuleMembership_ForeignModulesNamesTheModuleAndItsVersion(t *testing.T) {
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	if err != nil {
+		t.Fatalf("coord: %v", err)
+	}
+	mem := newModuleMembership(coord, []*packages.Package{
+		{PkgPath: "example.com/mod/inside", Module: &packages.Module{Path: "example.com/mod", Version: "v1.0.0"}},
+		{PkgPath: "example.com/mod/nested/pkg", Module: &packages.Module{Path: "example.com/mod/nested", Version: "v0.3.0"}},
+		{PkgPath: "example.com/mod/nested/other", Module: &packages.Module{Path: "example.com/mod/nested", Version: "v0.3.0"}},
+		// Placed in no module: the prefix decides membership, and a prefix cannot
+		// tell a nested module from the analysed one — which is the confusion this
+		// set exists to state rather than reproduce. It is never reported foreign.
+		{PkgPath: "example.com/mod/unplaced"},
+		{PkgPath: "net/http"},
+	})
+
+	built := []string{
+		"example.com/mod/inside",
+		"example.com/mod/nested/pkg",
+		"example.com/mod/nested/other",
+		"example.com/mod/unplaced",
+	}
+	got := mem.foreignModules(built)
+	if len(got) != 1 {
+		t.Fatalf("foreignModules() = %+v, want exactly one entry", got)
+	}
+	if got[0].Path != "example.com/mod/nested" || got[0].Version != "v0.3.0" {
+		t.Errorf("foreignModules() = %+v, want example.com/mod/nested@v0.3.0", got[0])
+	}
+
+	// A build that reached nothing foreign records the empty set, which is a
+	// different statement from a record predating the field — the record's schema
+	// version is what separates those, so this one must be nil, not a guess.
+	if own := mem.foreignModules([]string{"example.com/mod/inside", "example.com/mod/unplaced"}); own != nil {
+		t.Errorf("a build of the module's own packages reported foreign modules: %+v", own)
+	}
+
+	// A package the loader never saw is not evidence of anything, and must not be
+	// invented into the set.
+	if unseen := mem.foreignModules([]string{"example.com/mod/never/loaded"}); unseen != nil {
+		t.Errorf("an unloaded package produced a foreign module: %+v", unseen)
+	}
+}

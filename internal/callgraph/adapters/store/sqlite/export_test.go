@@ -195,3 +195,76 @@ VALUES (?,?,?,?,?,?,'','',?,?,?,?,?)`,
 	}
 	return nil
 }
+
+// BackfillForeignModulesBuiltForTest runs migration 16's Go step against an
+// already-open store, so the back-fill can be exercised directly rather than only
+// through a migration that has already been applied by the time a test store
+// opens.
+func (s *Store) BackfillForeignModulesBuiltForTest(ctx context.Context) error {
+	tx, err := s.db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+	if err := backfillForeignModulesBuilt(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing: %w", err)
+	}
+	return nil
+}
+
+// ForeignModulesColumnsForTest returns every row's content hash and
+// foreign_modules_built column, so a test can assert what the store HOLDS rather
+// than what a read projects.
+func (s *Store) ForeignModulesColumnsForTest(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.DB().QueryContext(ctx,
+		`SELECT content_hash, foreign_modules_built FROM callgraph_records`)
+	if err != nil {
+		return nil, fmt.Errorf("reading foreign module columns: %w", err)
+	}
+	defer func() { _ = rows.Close() }() //nolint:errcheck
+	out := map[string]string{}
+	for rows.Next() {
+		var hash, column string
+		if serr := rows.Scan(&hash, &column); serr != nil {
+			return nil, fmt.Errorf("scanning foreign module column: %w", serr)
+		}
+		out[hash] = column
+	}
+	if cerr := rows.Err(); cerr != nil {
+		return nil, fmt.Errorf("iterating foreign module columns: %w", cerr)
+	}
+	return out, nil
+}
+
+// ClearForeignModulesColumnForTest blanks every row's foreign_modules_built
+// column, reproducing the state migration 16 meets: the ALTER TABLE has run and
+// the DEFAULT is in place, but nothing has read a blob yet.
+func (s *Store) ClearForeignModulesColumnForTest(ctx context.Context) error {
+	if _, err := s.db.DB().ExecContext(ctx,
+		`UPDATE callgraph_records SET foreign_modules_built = ''`); err != nil {
+		return fmt.Errorf("clearing foreign module columns: %w", err)
+	}
+	return nil
+}
+
+// SetForeignModulesColumnForTest writes the foreign_modules_built column of the
+// row addressed by a content hash, bypassing the write leg. It is how a test
+// seeds a row whose column no reader can parse.
+func (s *Store) SetForeignModulesColumnForTest(ctx context.Context, contentHash, value string) error {
+	res, err := s.db.DB().ExecContext(ctx,
+		`UPDATE callgraph_records SET foreign_modules_built = ? WHERE content_hash = ?`, value, contentHash)
+	if err != nil {
+		return fmt.Errorf("setting the foreign modules column: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("counting rows set: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("no record at content hash %s", contentHash)
+	}
+	return nil
+}

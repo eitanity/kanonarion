@@ -28,8 +28,39 @@ Build, test, and lint before opening a PR - all three must pass:
 ```bash
 make build
 make test    # all packages, race detector
-make lint    # golangci-lint; write lint-clean code the first time
+make lint    # vet, staticcheck, govulncheck, gosec
 ```
+
+`make lint` does **not** run golangci-lint. Run it separately, and expect zero
+issues:
+
+```bash
+go tool golangci-lint run ./...
+```
+
+gosec runs standalone there, which means `//nolint:gosec` is ignored - a
+suppression it will honour must be written `// #nosec Gxxx -- reason`.
+
+### Documentation
+
+`docs/cli/*.md` documents behaviour: what a command does, and the nuance a reader
+needs in order to act on the answer. Why it was built that way belongs in the
+commit message and the issue.
+
+**A section that states a rule must also state what goes wrong without it.** "This
+line names the toolchain the walk was resolved under" tells a reader what they are
+looking at. It does not tell them that scanning under one toolchain and shipping
+under another means the standard library findings belong to a build they never
+release. The second sentence is the one that changes what they do, and it is the
+one that keeps getting left out of new material.
+
+Lead with the consequence where there is a real one. Mechanism after.
+
+Examples in a fenced block are checked by `make test`: across every shipped
+document, an invocation must use flags the command accepts and must not name one
+the command refuses, and a ```json block must not name a key nothing emits. In
+the onboarding documents, example coordinates must not be this repository's own
+pinned dependencies.
 
 ### Changing dependencies
 
