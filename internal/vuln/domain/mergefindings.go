@@ -27,14 +27,14 @@ import "slices"
 //	                                    attach to an unreported match is derived from the
 //	                                    analysis's SILENCE — it is not a fact about the
 //	                                    advisory and must never displace a real answer.
+//	                                    AdvisoryNamesNoSymbols below only WITHDRAWS it.
 //	ReachabilityNote         analysis   states why a requested analysis produced no
 //	                                    answer; the match never requests one.
-//	AffectedSymbols          analysis   the analysis reports the symbols the build
-//	                                    actually reaches; the advisory declares the
-//	                                    symbols it considers at risk. They are different
-//	                                    facts with the same shape, so the match's list is
+//	AffectedSymbols          analysis   the analysis states the advisory's symbols this
+//	                                    build reaches, or the advisory's whole list where
+//	                                    it reached none. Either way the match's list is
 //	                                    NEVER merged in or substituted — an analysis that
-//	                                    reached no symbol would otherwise come to look
+//	                                    reached one symbol would otherwise come to look
 //	                                    like one that reached every symbol the advisory
 //	                                    names.
 //	AffectedRange            match      the analysis route never sets it. This is the
@@ -50,11 +50,11 @@ import "slices"
 //	                                    no advisory was read", so a match that carries one
 //	                                    fills an analysis that does not: a finding missing
 //	                                    it is counted as live.
-//	AdvisoryNamesNoSymbols   either     a fact about the advisory entry for this module
-//	                                    path, which both routes read from the same
-//	                                    snapshot. Adopted from the match only where the
-//	                                    analysis names no symbols of its own, so the flag
-//	                                    can never contradict a symbol list beside it.
+//	AdvisoryNamesNoSymbols   either     a fact about the advisory entry, which both
+//	                                    routes read from the same snapshot. Adopting it
+//	                                    empties AffectedSymbols and withdraws Reachable's
+//	                                    symbol-level claim, keeping the routes, so the
+//	                                    flag can never contradict what stands beside it.
 //
 // Where the table says "either", the analysis's value wins when it is set and
 // the match fills it when it is not. That direction is not arbitrary: an empty
@@ -141,8 +141,21 @@ func mergeCoordinateMatch(analysis, match VulnerabilityFinding) VulnerabilityFin
 	if f.WithdrawnAt.IsZero() {
 		f.WithdrawnAt = match.WithdrawnAt
 	}
-	if match.AdvisoryNamesNoSymbols && len(f.AffectedSymbols) == 0 {
+	if match.AdvisoryNamesNoSymbols {
 		f.AdvisoryNamesNoSymbols = true
+		// An advisory naming no symbols for this path is neither the source of a
+		// list under it nor a target anything could have reached, so both go. The
+		// routes stay; only the analysis route can normally reach this, and it does
+		// so already — this covers a stream whose OSV message never arrived.
+		f.AffectedSymbols = nil
+		if f.Reachable != nil {
+			// Copied, never written through: the merged set is a shallow clone, so
+			// mutating the pointee would rewrite the caller's own finding.
+			r := *f.Reachable
+			r.IsReachable = false
+			r.Confidence = ConfidenceUnknown
+			f.Reachable = &r
+		}
 	}
 	return f
 }

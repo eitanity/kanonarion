@@ -281,6 +281,91 @@ gives `kanonarion interface <coord>` as the remedy: `interface-show`,
 wording is the call graph's `supersededPipelineError`, which answers the same
 condition on the other side of the binary.
 
+## Vulnerability record: pipeline `v24` → `v25`
+
+**Content change on three fields; not hash-transparent.** A finding whose
+advisory names no symbols for the matched module path no longer seals two facts
+it cannot support: a symbol list, and a symbol-level reachability claim.
+
+Where the matched advisory entry named no symbols for the module path, the
+finding carried `advisory_names_no_symbols: true` and a symbol list beside it —
+the symbols the `govulncheck` trace terminated at, which are functions of the
+affected package this build happened to call rather than anything the advisory
+named. One field held two different facts and the record could not say which.
+This is the unswept half of the class the `v17` init-only fix closed: that change
+removed `init` from the field where every frame of the trace was package
+initialisation, and deliberately kept a trace with a real call frame as a route,
+so on those the trace's terminals went on being written into the field.
+
+The field is now emptied wherever the flag is set — on the analysis route at the
+point the flag is written, and on the field-by-field merge that adopts the flag
+from a coordinate match. The reached symbols are not discarded: they are already
+carried, in order, as the last hop of each route under `reachable.routes`.
+
+**Second, `reachable.is_reachable` and `reachable.confidence`.** The same
+findings carried `is_reachable: true` at `confidence: High`, derived by
+`govulncheck` at `source` fidelity — a claim that the vulnerable code executes,
+made by an analysis that was never given a symbol to look for. They now carry
+`false` at `Unknown`, the store's existing "not determined" pair and the same
+demotion the `v17` init-only fix applied to the other half of this class.
+
+**The routes stay, and that is what separates this from `v17`.** An
+all-initialisation trace contains no call at all, so `v17` dropped its route as
+package linkage. A trace terminating in a real call frame does show the build
+calling into the affected package: it answers "which of my dependencies pulls
+this in" even though it cannot answer "does the vulnerable code run". The derived
+`reachability_state` says which question was answered — the advisory fact
+outranks both the bit and the confidence there — and it is published on
+`vuln-show --json`, `context --json` and the scan-diff views, so the route is
+read as evidence rather than as a verdict.
+
+Both halves close in one generation because they are one cause, and because a
+second bump would cost the same store-wide re-scan over again.
+
+Migration for existing stores: **none, and no purge.** Reads are keyed on the
+pipeline version, so the `v24` rows are already unreachable for a `v25` question,
+and the symbol list lives inside the serialised record rather than in a column.
+Unlike the previous vuln bumps the affected rows ARE identifiable from the store
+— the flag beside a non-empty list, or beside a reachability answer — but that
+does not make a migration possible: all three fields are inside the hashed
+canonical shape, so correcting them means re-sealing a `v24` record against a
+conclusion the `v24` generation did not reach, which is what migration 10 was
+withdrawn for.
+
+The re-scan cost is the largest a vuln bump has carried. Measured before the
+change: **3,214 records at `v24`** and 365 at `v22`. `v24` was taken at a moment
+when nothing sat at the servable version, so it darkened nothing that was not
+already awaiting a re-scan; this one darkens 3,214 records that were servable.
+The store cannot answer a `v25` question about any module until it is re-scanned.
+
+Measured on the defect itself, 2026-09-03: **24 findings over 5 (advisory,
+module) pairs** carried the conflated shape — GO-2026-4316 on
+`github.com/go-chi/chi`, GO-2026-4753 on
+`github.com/russellhaering/goxmldsig`, GO-2026-4394 on
+`go.opentelemetry.io/otel/sdk`, and GO-2026-5764 at two `aws-sdk-go-v2`
+coordinates. On every one of them the stored symbol list was exactly the set of
+route terminal symbols. The bump is not scoped to those 24 because a stored
+record does not record whether its symbol list came from the advisory or from
+the trace.
+
+The reachability half was measured on one 128-module project scan: four
+coordinates carried the flag beside a `High`-confidence reachability answer, two
+of them (`github.com/go-chi/chi@v3.3.4+incompatible`,
+`github.com/russellhaering/goxmldsig@v1.4.0`) asserting `is_reachable: true` with
+15 and 20 routes respectively.
+
+Consumer impact: a finding whose advisory names no symbols for the module path
+now presents an empty `affected_symbols` and a `false`/`Unknown` reachability
+answer beside the flag, which is the shape `AdvisoryNamesNoSymbols` was
+documented to produce. `vuln-show` prints one `symbols:` line for it instead of
+two; a machine consumer reading `reachable.is_reachable` no longer gets `true` at
+`High` beside a flag saying the advisory named none; and the local symbol-table
+probe reports `unknown` with the advisory's reason instead of computing a
+present/absent verdict against symbols no advisory named. The rendered
+`reachability_state` is unchanged — it already answered `package_level_only` —
+so no text or JSON key moves. Findings whose advisory does name symbols are
+unchanged.
+
 ## Vulnerability record: pipeline `v23` → `v24`
 
 **No shape change; not hash-transparent.** One record was built from two advisory

@@ -631,10 +631,11 @@ type VulnerabilityFinding struct {
 	//
 	// Where it is true, symbol-level reachability was never available for this
 	// coordinate: the analysis has no target to search for, so an empty
-	// AffectedSymbols and an empty route are the expected shape rather than a
-	// gap, and a reader must not read the absent route as "nothing calls it".
-	// Recording it explicitly is what lets a consumer tell the two apart instead
-	// of inferring the reason from an empty field.
+	// AffectedSymbols and a Reachable of false at Confidence Unknown are the
+	// expected shape rather than a gap. A ROUTE may still be present — a call
+	// into the affected package is traceable with no symbol named — and it says
+	// which dependency pulls the package in, never that its code runs. An absent
+	// route must not be read as "nothing calls it" either.
 	//
 	// False means either that the entry names symbols or that no advisory entry
 	// was read to ask — an enrichment that never ran states nothing here, on the

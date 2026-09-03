@@ -18,12 +18,12 @@ exit 0
     },
     "scanned_at": "2026-02-20T09:00:00Z",
     "first_scanned_at": "2026-01-15T09:00:00Z",
-    "pipeline_version": "v24",
+    "pipeline_version": "v25",
     "callgraph_completeness": "BUILT_WITH_BODIES",
     "callgraph_algorithm": "CHA",
     "rooting": "target-rooted",
     "analysis_surface": "fetched",
-    "content_hash": "sha256:2a771a09976ef446cc78d7ec9937fc3a0b9a05d34665ae70fc7f38ad40972912",
+    "content_hash": "sha256:08001736470b48c243e9fa0a9d86b98348be3449621cfd095058e10e9c59219f",
     "findings": [
       {
         "id": "GO-2026-0001",

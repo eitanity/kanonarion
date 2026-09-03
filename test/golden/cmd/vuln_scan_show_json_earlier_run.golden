@@ -17,14 +17,14 @@ exit 0
     "content_hash": "sha256:066c65bdf0a2404975109e3b09f7e137c84552c775d1898bdf840cddcb389a60"
   },
   "per_module_results": {
-    "example.com/mod@v1.2.0": "sha256:e94a403712ad0e9a66199dc42e1dbd1aa8e0ddbb32ce6e996d55a1255902b7a1"
+    "example.com/mod@v1.2.0": "sha256:885d000d8200f0de756cdfeafa01e380147eb780599d3cf2fc34bac1b1cc0651"
   },
   "started_at": "2026-01-15T09:00:00Z",
   "completed_at": "2026-01-15T09:00:01Z",
   "overall_status": "Affected",
-  "pipeline_version": "v24",
+  "pipeline_version": "v25",
   "operator": "fixture",
-  "content_hash": "sha256:993a30666036d10ee45c57b412546388b9d9680966a6171e03917061037252e2",
+  "content_hash": "sha256:78344f8e72edb2a40fe6a1d09dd549c186d54dbbdaf839e9175127ae5ebecfd8",
   "affected_modules": [
     {
       "coordinate": "example.com/mod@v1.2.0",
@@ -91,7 +91,7 @@ exit 0
     }
   ],
   "superseded": false,
-  "reads_pipeline_version": "v24"
+  "reads_pipeline_version": "v25"
 }
 --- stderr ---
 (empty)

@@ -12,7 +12,7 @@ example.com/mod@v1.2.0
   Examples:        (not run — run: kanonarion examples-find <symbol> | kanonarion examples-show example.com/mod@v1.2.0 <name>)
   Vulnerabilities: Affected (1 finding(s), 1 retracted)
   Walk basis:      01ARZ3NDEKTSV4RRFFQ69G5FAV (frame target-rooted:example.com/app@v1.0.0)
-  Snapshot:        v2026-02-14T00-00-00 (pipeline v24)
+  Snapshot:        v2026-02-14T00-00-00 (pipeline v25)
 
 Context size: ~982 tokens (3931 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 --- stderr ---

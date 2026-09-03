@@ -19,9 +19,9 @@ exit 0
     },
     "scanned_at": "2026-02-20T09:00:00Z",
     "first_scanned_at": "2026-02-20T09:00:00Z",
-    "pipeline_version": "v24",
+    "pipeline_version": "v25",
     "rooting": "target-rooted",
-    "content_hash": "sha256:3a9dd143511331aea4a3d2a9a033f6085c522ae52f40afa9c86da84a4baa4a70",
+    "content_hash": "sha256:a622c385892c679b578924b8be775ea4ccc00e92bb20c00302c2c2b82ba4cf9e",
     "superseded": false,
     "toolchain": ""
   }

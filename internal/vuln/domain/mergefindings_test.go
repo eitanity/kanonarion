@@ -198,9 +198,10 @@ func TestMergeCoordinateMatches_FillsARetractionTheAnalysisMissed(t *testing.T) 
 	}
 }
 
-// TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList: the
-// "advisory names no symbols" flag is adopted from the match only where the
-// analysis names none of its own, so the record can never state both.
+// TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList: the record
+// can never state both the "advisory names no symbols" flag and a symbol list.
+// The flag is what the advisory entry says, and it decides: a list standing
+// under it did not come from the advisory, so adopting the flag empties it.
 func TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList(t *testing.T) {
 	match := coordinateMatch()
 	match.AffectedSymbols = nil
@@ -211,8 +212,39 @@ func TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList(t *testing
 		[]domain.VulnerabilityFinding{match},
 		nil,
 	)
-	if merged[0].AdvisoryNamesNoSymbols {
-		t.Error("AdvisoryNamesNoSymbols set on a finding that names symbols: the record would say the advisory named none while listing one")
+	if !merged[0].AdvisoryNamesNoSymbols {
+		t.Error("AdvisoryNamesNoSymbols dropped: the advisory fact the match read is the one thing the analysis route could not have")
+	}
+	if len(merged[0].AffectedSymbols) != 0 {
+		t.Errorf("AffectedSymbols = %v, want empty: the record would say the advisory named none while listing one", merged[0].AffectedSymbols)
+	}
+	// The same reasoning reaches the reachability answer: with no symbol named
+	// there was nothing for the analysis to reach, so the record must not seal a
+	// symbol-level claim beside the flag. The route stays — a real call frame is
+	// evidence about which dependency reaches the package.
+	if r := merged[0].Reachable; r == nil {
+		t.Error("the reachability answer was dropped rather than withdrawn")
+	} else {
+		if r.IsReachable {
+			t.Error("is_reachable = true beside a flag saying the advisory names no symbol for this path")
+		}
+		if r.Confidence != domain.ConfidenceUnknown {
+			t.Errorf("confidence = %q, want %q", r.Confidence, domain.ConfidenceUnknown)
+		}
+	}
+	// And the caller's own finding is untouched: the merge returns a shallow clone,
+	// so withdrawing the claim through the shared pointer would rewrite its input.
+	if src := analysisFinding(); !src.Reachable.IsReachable || src.Reachable.Confidence != domain.ConfidenceHigh {
+		t.Fatal("fixture changed")
+	}
+	input := analysisFinding()
+	_, _ = domain.MergeCoordinateMatches(
+		[]domain.VulnerabilityFinding{input},
+		[]domain.VulnerabilityFinding{match},
+		nil,
+	)
+	if !input.Reachable.IsReachable || input.Reachable.Confidence != domain.ConfidenceHigh {
+		t.Errorf("the merge rewrote its own input's reachability answer: %+v", input.Reachable)
 	}
 
 	bare := analysisFinding()
