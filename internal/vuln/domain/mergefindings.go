@@ -71,8 +71,9 @@ import "slices"
 //
 // onAdd, when non-nil, is applied to each match the analysis did not report,
 // before it joins the set. It is where a caller states what the analysis's
-// silence about that advisory means. Findings are never dropped in either
-// direction.
+// silence about that advisory means. Whatever it states, the flag row above
+// still applies afterwards: a silence about an advisory naming no symbol is not
+// a symbol-level answer. Findings are never dropped in either direction.
 func MergeCoordinateMatches(
 	analysis, matched []VulnerabilityFinding,
 	onAdd func(*VulnerabilityFinding),
@@ -96,6 +97,10 @@ func MergeCoordinateMatches(
 		if onAdd != nil {
 			onAdd(&m)
 		}
+		// After onAdd, not before: the caller stamps what the analysis's silence
+		// means, and a silence about an advisory naming no symbol is not a
+		// symbol-level answer. Nothing else withdraws it on this route.
+		WithdrawSymbolLevelClaim(&m)
 		byID[m.ID] = len(merged)
 		merged = append(merged, m)
 		added++
@@ -143,19 +148,9 @@ func mergeCoordinateMatch(analysis, match VulnerabilityFinding) VulnerabilityFin
 	}
 	if match.AdvisoryNamesNoSymbols {
 		f.AdvisoryNamesNoSymbols = true
-		// An advisory naming no symbols for this path is neither the source of a
-		// list under it nor a target anything could have reached, so both go. The
-		// routes stay; only the analysis route can normally reach this, and it does
-		// so already — this covers a stream whose OSV message never arrived.
-		f.AffectedSymbols = nil
-		if f.Reachable != nil {
-			// Copied, never written through: the merged set is a shallow clone, so
-			// mutating the pointee would rewrite the caller's own finding.
-			r := *f.Reachable
-			r.IsReachable = false
-			r.Confidence = ConfidenceUnknown
-			f.Reachable = &r
-		}
+		// Only the analysis route normally reaches this; it withdraws the claim
+		// itself already, so this covers a stream whose OSV message never arrived.
+		WithdrawSymbolLevelClaim(&f)
 	}
 	return f
 }

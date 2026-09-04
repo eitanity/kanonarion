@@ -15,90 +15,61 @@ kanonarion vuln-snapshot-show <source> <version> [flags]
 
 ## Description
 
-The `vuln` family of commands scans Go modules for known vulnerabilities using
-the Go vulnerability database (`vuln.go.dev`) and queries the results.
+The `vuln` commands scan Go modules against the Go vulnerability database
+(`vuln.go.dev`) and query the results.
 
-Scanning works at the walk level: given a walk ID, every module in the walk is
-scanned against a pinned snapshot of the vulnerability database. Results are
-stored in the local SQLite store and can be queried offline.
+Scanning works on a walk: give it a walk ID and every module in that walk is
+scanned. Results go into the local store and can be read back offline.
 
-The vulnerability database is fetched once and stored as a `DatabaseSnapshot`
-blob. Subsequent scans reuse the cached snapshot, making them fast and
-offline-capable. The snapshot is pinned so repeat scans are reproducible.
+The database is fetched once and kept as a snapshot blob. Later scans reuse it,
+so they are fast and need no network. Pinning the snapshot is what makes a
+repeat scan reproducible.
 
-The snapshot is content-addressed. Its `content_hash` is computed over the blob
-when it is fetched, stored beside it, and verified before any scan consumes it —
-so the pinning is a checkable claim rather than a version string the blob itself
-asserts, and two stores holding the same `version` can be shown to hold the same
-advisories. A blob that no longer matches its stored hash is refused as an
-integrity failure rather than reported as absent, because absence would trigger
-a silent re-fetch that overwrites the evidence.
+**The snapshot is verified before use.** Its hash is taken when the blob is
+fetched and checked before any scan reads it. A blob that no longer matches is
+refused as an integrity failure (exit 10) rather than reported as missing —
+missing would trigger a silent re-fetch and overwrite the evidence.
 
-Snapshots stored before the hash existed carry an empty one, and are deliberately
-**left that way**. Hashing a blob the store already holds would attest "these are
-the bytes we hold now", not "these are the bytes we fetched" — a seal
-indistinguishable from an honest one, reporting an integrity guarantee that was
-never established. Such a snapshot therefore reads as *unverifiable*, which is
-what it honestly is; it is still returned and still serves a scan. They age out
-as fresh snapshots are fetched.
+**An empty advisory database fails the scan.** `govulncheck` reports
+`No vulnerabilities found.` and exits 0 against one, so scanning against an empty
+database would mark every module `Clean` having consulted nothing. The scan
+refuses instead, naming the snapshot and the count.
 
-The snapshot is also counted. When a scan extracts the pinned database it counts
-the advisories the extracted tree holds, and a database holding none fails the
-scan naming the snapshot and the count. `govulncheck` reports
-`No vulnerabilities found.` and exits 0 against an empty database, so scanning
-against one would seal a `Clean` status for every module while consulting
-nothing — a confident negative derived from no analysis, indistinguishable from
-a measured clean. This is a precondition failure, not a per-module outcome: the
-operator asked for a measurement the supplied database cannot produce, and
-recording 128 `Unscannable` modules would bury the one fact that matters.
+**The `Advisories` line says how many advisories the scan consulted**, on `vuln`
+and `vuln-scan-show`. It is what tells a clean answer over six thousand
+advisories apart from a clean answer over three. It catches an *empty* database,
+not a truncated one: a database that lost most of itself still parses, and
+nothing in it says how many entries it should have had.
 
-A populated database records its count onto the snapshot every record in the run
-names, shown as the `Advisories` line of `vuln` and `vuln-scan-show`. A run
-normally extracts the database once and shares it; when it cannot, each module
-scan extracts one of its own and records the count it measured there, so those
-records name the count too. A scan handed an already-extracted database, or
-answered by the live service, records no count — that reading was taken
-elsewhere or not at all. That is
-what lets a reader tell a clean scan against six thousand advisories from a clean
-scan against three. Records written before the count existed report it as *not
-recorded* rather than as zero — a measured zero cannot exist, because such a scan
-is refused. Note the limit: the count detects an **empty** database, not a
-truncated one. A database that lost most of itself still parses and still counts,
-and nothing readable from it says how many entries it ought to have had, so the
-count is carried to the reader rather than judged.
+The module must be fetched first (`kanonarion walk` or `kanonarion fetch`).
 
-The module must have been fetched first (`kanonarion walk` or `kanonarion fetch`).
 
 ### Coverage decides the exit code
 
-`vuln-scan` exits on what it *established*, not on what it found. A run whose
-coverage is `Complete` exits 0 whether or not it found advisories: it did the
-work it was asked to do, and whether findings should fail a build is a policy
-question this command does not answer. A run that could not analyse part of the
-walk exits `1` (partial coverage), and one that analysed nothing exits `2`.
+`vuln-scan` exits on what it established, not on what it found:
 
-That distinction matters most for the walk's own target. When a coordinate-keyed
-walk's target-rooted analysis cannot load the module's packages, the run falls
-back to scanning each module in isolation — a weaker question, since an isolated
-scan describes the module built alone rather than the build that consumes it.
-The target's refusal is recorded in the run's own frame under the
-`target-load-failed` reason, carrying the toolchain's own load error, and the
-run counts *that* rather than a status derived in another frame. A record from
-the other frame is not destroyed and still answers its own question; the run
-simply declines to present it as coverage of the question that was asked, and
-names the frame it declined in its log.
+| Exit | Coverage | Meaning |
+|---|---|---|
+| 0 | `Complete` | every module was analysed, findings or not |
+| 1 | partial | some modules were not analysed |
+| 2 | none | nothing was analysed; the run established nothing |
 
-Without this, a walk whose target never loaded reported `Complete, Clean` at
-exit 0 — an un-run scan indistinguishable from a passing one on the line an
-operator reads.
+Findings do not change the exit code. Whether a finding should fail a build is a
+policy question, and `audit` answers it.
 
-Note that partial coverage on a **project-scoped** scan (`--gomod`, `--tool`,
-`--project`) means something has genuinely gone unanalysed: the project path is
-rooted at the resolved graph, so modules are not re-resolved in isolation and
-`version not in project build` cannot arise there. Seeing that reason means the
-scan was not project-rooted — for example a walk-id scan whose recorded project
-directory no longer exists, which degrades to per-module isolation by design and
-names the missing directory in its log.
+**If the walk's own target will not load**, the run scans each module in
+isolation instead. That is a weaker answer — it describes each module built
+alone, not the build that consumes it — so the run records the target's refusal
+under the `target-load-failed` reason with the toolchain's error, and counts that
+rather than the isolated result. Records from the other frame still stand and
+still answer their own question.
+
+**On a project scope** (`--gomod`, `--tool`, `--project`) partial coverage always
+means something genuinely went unanalysed. A `version not in project build`
+reason cannot arise there, so seeing one means the scan was not project-rooted —
+usually a walk-id scan whose recorded project directory is gone, which falls back
+to per-module isolation and names the missing directory in its log.
+
 
 ### Prerequisites
 
@@ -188,17 +159,13 @@ The scan then runs pinned to that cache (`GOPROXY=off`, see the resolution note
 below): the analysis is faithful to the project's verified toolchain rather than
 reaching to the network for versions the project never builds.
 
-**The binary pre-pass builds with cgo off**
+**`--binary-pre-pass`**
 
-`--binary-pre-pass` compiles a test binary for each module and reads its symbol
-table, and that build runs with `CGO_ENABLED=0`. Binary mode reads compiled
-symbols, so it needs no C toolchain, and this build is the only step of a scan
-that would hand a dependency's C source, headers and include paths to the host C
-compiler. A module that cannot build without cgo is not lost: the failed build
-falls through to the source-mode analysis, so the reduction costs that module the
-fast path rather than its answer. Source-mode and project scans are unaffected —
-they load packages with type information, which runs cgo wherever a package needs
-it, and turning it off there would make such a module `Unscannable`.
+Compiles a test binary per module and reads its symbol table, then runs the
+slower source analysis only on modules that look affected. The build sets
+`CGO_ENABLED=0`, so a module needing cgo fails the fast path and falls through
+to source mode. It loses the speed-up, not its answer. Source-mode and project
+scans are unaffected.
 
 **The toolchain axis**
 
@@ -816,13 +783,13 @@ holds behind each, and a notice under the report names both generations:
 
 ```
 Modules:     283
-Superseded scan records (279): the store holds these modules at pipeline v19 and this build reads pipeline v24, so none of them is served
-  cel.dev/expr@v0.25.1 (1 record(s), 0 finding(s) at pipeline v19)
+Superseded scan records (279): the store holds these modules at pipeline v24 and this build reads pipeline v25, so none of them is served
+  cel.dev/expr@v0.25.1 (1 record(s), 0 finding(s) at pipeline v24)
   ...
 
-notice: 279 of 283 module(s) this run names are recorded at pipeline v19, holding 366
-        record(s) and 57 finding(s) this build does not serve: it reads pipeline v24 and
-        the store holds them at pipeline v19. A superseded record is not served, so this
+notice: 279 of 283 module(s) this run names are recorded at pipeline v24, holding 366
+        record(s) and 57 finding(s) this build does not serve: it reads pipeline v25 and
+        the store holds them at pipeline v24. A superseded record is not served, so this
         answer is empty for want of a scan at this generation — they have been
         vuln-scanned, and this is a stale cache, not a coverage gap. Re-scanning does
         not repair this run: a run names the records it was built from, so a new scan
@@ -949,7 +916,7 @@ records and findings sit in it:
 
 ```
 $ kanonarion vuln-show golang.org/x/crypto@v0.31.0
-error: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v20 and the store holds this coordinate at pipeline v19 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it:
+error: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v25 and the store holds this coordinate at pipeline v24 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it:
   kanonarion vuln-scan --module golang.org/x/crypto@v0.31.0 --reachability
 ```
 
@@ -1162,11 +1129,11 @@ www.velocidex.com/golang/velociraptor@v0.76.6 - Unscannable (generated-assets-mi
 $ kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history
 github.com/gin-gonic/gin@v1.6.2 - 3 scan record(s)
 
-  2024-03-01T08:00:00Z  walk=01KQDBVW092ER1HNXZ60X27CMD  snap=20240301000000  frame=target-rooted  pipeline=v23                 Affected  GO-2020-0001  GO-2024-0042
-  2024-02-01T08:00:00Z  walk=01KQABC123...               snap=20240201000000  frame=target-rooted  pipeline=v22 [superseded]    Affected  GO-2020-0001
-  2024-01-01T08:00:00Z  walk=01KQXYZ789...               snap=20240101000000  frame=target-rooted  pipeline=v22 [superseded]    Clean     no findings
+  2024-03-01T08:00:00Z  walk=01KQDBVW092ER1HNXZ60X27CMD  snap=20240301000000  frame=target-rooted  pipeline=v25                 Affected  GO-2020-0001  GO-2024-0042
+  2024-02-01T08:00:00Z  walk=01KQABC123...               snap=20240201000000  frame=target-rooted  pipeline=v24 [superseded]    Affected  GO-2020-0001
+  2024-01-01T08:00:00Z  walk=01KQXYZ789...               snap=20240101000000  frame=target-rooted  pipeline=v24 [superseded]    Clean     no findings
 
-notice: 2 of 3 record(s) were produced by superseded scan logic (this build reads pipeline v23).
+notice: 2 of 3 record(s) were produced by superseded scan logic (this build reads pipeline v25).
         They are the history this coordinate has, and they are not what a current scan would
         answer — the point-in-time reads serve none of them. Re-scan to add a current record:
           kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2 --reachability
@@ -1256,6 +1223,16 @@ genuine build incompatibility that still falls back to metadata logs at `warn`,
 and a hard scanner fault logs at `error`. Nothing is dumped as a warning per
 out-of-toolchain module. Run with `--log-level debug` to see the raw
 `govulncheck` stderr behind an `Unscannable` status.
+
+### If you also run govulncheck
+
+kanonarion runs `govulncheck` underneath and the reachability answers agree, but
+the counts differ in two places: kanonarion reports withdrawn advisories that
+govulncheck omits, and where an advisory names no symbol for a module path
+govulncheck reports it called while kanonarion reports `package_level_only`.
+Compare per (advisory, module) — one advisory can be called in one module and
+package-level only in another.
+
 
 ### Which bytes were analysed
 
@@ -1451,10 +1428,10 @@ and all.
 
 ```
 $ kanonarion vuln-by-id GO-2020-0001
-github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z   pipeline=v20
-github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z   pipeline=v19 [superseded]
+github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z   pipeline=v25
+github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z   pipeline=v24 [superseded]
 
-notice: 1 of 2 row(s) were produced by superseded scan logic (this build reads pipeline v20).
+notice: 1 of 2 row(s) were produced by superseded scan logic (this build reads pipeline v25).
         They are the newest evidence the store holds for those coordinates, and they are not
         what a current scan would answer. Re-scan a coordinate to replace one.
 
@@ -1577,20 +1554,6 @@ kanonarion vuln-by-id CVE-2020-28483 --store-root ~/.kanonarion
 # 6. Inspect stored database snapshots
 kanonarion vuln-snapshot-list --store-root ~/.kanonarion
 ```
-
-## Design decisions
-
-- All vulnerabilities are reported, including non-reachable findings.
-- Reachability is reported with explicit confidence levels.
-- The vulnerability database snapshot is pinned so repeat scans are reproducible.
-- `govulncheck` runs as a subprocess with `Cmd.Dir` (goroutine-safe working
-  directory; binary requirement) rather than as an in-process library.
-- The `GOMODCACHE` is pre-populated from the blob store for walk scans - the
-  selected module zips plus, for a graph with a pre-pruning (go < 1.17)
-  dependency, the `go.mod` of the superseded intermediate versions minimal
-  version selection reads. The scan is then pinned to that cache (`GOPROXY=off`),
-  so the analysis is faithful to the project's verified toolchain and never
-  fetches a version the project's build list did not resolve.
 
 ## Modules resolved under pre-modules semantics
 

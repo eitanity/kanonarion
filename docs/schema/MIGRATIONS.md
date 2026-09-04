@@ -66,20 +66,15 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 ## `audit`, `context` and `latest` --json: the per-module envelope
 
 **Breaking output-shape change; no store migration, no record or pipeline bump.**
-Nothing stored changes. What changes is the framing of three commands' `--json`
-document.
+Nothing stored changes.
 
-Each of the three answers with one row per module, and each wrote those rows as a
-bare JSON array (`context` wrote an object for a single coordinate). An array has
-nowhere to put a fact about the RUN, so the facts a person reads on stderr —
-which dependency scope resolved the rows, how many modules that was, the flag
-that narrows it, and for `context` which build the vulnerability answers were
-read in and whether that build was NAMED by the caller or CHOSEN for them —
-reached a `--json` consumer nowhere at all. That is a verdict dressed as evidence
-on the surface an agent reads.
+Each command answered with a bare JSON array of module rows. An array has nowhere
+to put a fact about the RUN, so the facts printed on stderr — which dependency
+scope resolved the rows, how many modules, the flag that narrows it, and for
+`context` which build the vulnerability answers were read in — reached a `--json`
+consumer nowhere.
 
-**The new shape.** One JSON object at every form and every count, with the rows
-in `modules`:
+**The new shape.** One JSON object at every form and count, rows in `modules`:
 
 ```
 { "dependency_scope": {...}|null, "module_count": N, "narrow_with": "--exclude-tests",
@@ -87,583 +82,211 @@ in `modules`:
   "modules": [ ...the rows, unchanged... ] }
 ```
 
-**The rows do not change.** Not one field moves, is added or is renamed in any of
-the three; `modules` holds exactly the documents the array held. Verified element
-by element against the recorded command goldens.
-
-**Consumer impact, and it is breaking.** A consumer that read
-`audit --json | jq '.[]'`, `latest --json | jq '.[]'` or
-`context --gomod --json | jq '.[]'` must read `jq '.modules[]'`. One that read
-`context <module>@<version> --json | jq '.dependencies'` must read
-`jq '.modules[0].dependencies'`. `context --stream` is unchanged — it is
-newline-delimited per-module documents, which is not one document and carries no
-envelope — so a consumer that wants the old per-module framing can ask for it by
-name.
-
-**What is new to read.** `dependency_scope` and `module_count` on all three;
-`narrow_with` where the scope can still be narrowed; and on `context` a `rooting`
-object whose `basis` is `"named"` or `"chosen"`, beside the candidate count the
-choice was made from. The last is the point of the change: the walk id alone
-looks the same whether the caller pinned the build or the tool picked it.
+The rows themselves are unchanged.
 
 ## Call graph records: why a generation exists, no migration and no bump
 
-**No store migration, no schema-version bump, no pipeline bump.** A
-`CallGraphRecord` gains `derived_by`: which reuse gate governed the run that
+A `CallGraphRecord` gains `derived_by`: which reuse gate governed the run that
 appended the generation (`worktree` or `ledger`) and whether that run asked the
 gate (`consulted`) or forced past it (`bypassed`).
 
-**Why.** `callgraph_records` is append-only and `--force` appending an identical
-measurement is correct. What was missing is the record being able to say that is
-what happened. Measured on the maintainer's store: one coordinate held thirteen
-generations of one analysis — same worktree digest, same 13861 nodes and 186221
-edges — and eight of them shared an identical `analysis_root`, so nothing in the
-data separated a deliberate re-measurement from a reuse gate that failed to fire.
-The only thing left to read intent out of was the directory name the run stood
-in, which is not evidence.
+**No migration, no purge, no pipeline bump, no schema-version bump.**
+`derived_by` is `omitzero` and absent from every earlier record, so stored hashes
+still verify.
 
-**No purge and no bump.** `derived_by` is `omitzero` on the canonical record and
-absent from every record written before it, so every stored record marshals to
-the bytes it was sealed over and still verifies against its stored hash. Measured
-against the live store with a binary built from the parent commit and one built
-with the change: 825 stored call-graph records, 825 verified under both, every
-stored and recomputed hash byte-identical. It is inside the sealed shape because
-it is a claim the record makes about itself, and a value outside the seal could
-be edited without breaking the record's own integrity check.
-
-**Absent is not a value.** No comparison and no digest sees the field:
-`SameMeasurement`, `MeasurementDigest`, `RestatesAnalysis` and `GraphDigest` all
-blank it first. Why a measurement was taken is no part of what it says, and a
-generation written before the field must still be recognised as restating one
-that carries it — otherwise the first run after the change would append a
-duplicate of every generation the store holds.
-
-**What a reader sees change without re-extracting anything:** nothing. Records
-written from now on carry a `derived:` line in `callgraph-show --history`;
-records written before print none.
+`callgraph_records` is append-only and `--force` appending an identical
+measurement is correct; what was missing was the record being able to say so. One
+coordinate held thirteen generations of one analysis — same digest, same 13,861
+nodes and 186,221 edges — with nothing separating a deliberate re-measurement
+from a reuse gate that failed to fire.
 
 ## Interface record: pipeline `0.5.0` → `0.6.0`
 
-**Record shape change; no store migration. This bump is also a repair** — a
+**Record shape change; no store migration.** The bump is also a repair: a
 coordinate whose `0.5.0` generations disagree about the API is not served, and
 re-extracting at `0.5.0` only appends another disagreeing generation.
 
-Extraction walked `testdata` subtrees and treated each as a package, and it
-handed `go/doc` every in-frame file of a directory even when two of them declared
-the same identifier. `go/doc` keeps one declaration per name and drops the rest
-in map iteration order, so such a directory produced a different public API on
-each run. `golang.org/x/tools@v0.49.0` is held nine times at `0.5.0` with nine
-distinct APIs — same zip, same frame, same toolchain — differing only inside
-`go/callgraph/vta/testdata/src`, where the fixture files declare `Bar` and `Baz`
-several times each. The coordinate answers nothing, and every `inspect` appended
-another generation.
+Extraction walked `testdata` subtrees as packages, and handed `go/doc` every
+in-frame file of a directory even when two declared the same identifier —
+resolved in map iteration order, so each run could differ.
+`golang.org/x/tools@v0.49.0` is held nine times at `0.5.0` with nine distinct
+APIs from one zip.
 
-Two things change:
+Two changes:
 
 - **`testdata` subtrees are no longer packages.** The go tool ignores them, so
-  what they hold is not part of any module's API — `interface-diff` already
-  excluded them from every comparison for that reason. `golang.org/x/tools`
-  drops from 471 packages to 214, and all 257 dropped are under a `testdata`
-  directory; no package is added or changed.
-- **A directory that declares one identifier twice is recorded as a load
-  failure**, naming each repeated identifier and the files that declare it,
-  instead of a package holding whichever declaration survived. `init` and `_` are
-  exempt: Go lets a package declare each of them repeatedly. Across the 249
-  coordinates in the reference store whose zips are held locally — 4041 non-vendor
-  package directories — 23 directories declare an identifier twice, 22 of them
-  under `testdata`. The one that remains is `github.com/fogleman/gg@v1.3.0`'s
-  `examples`, 31 standalone programs in one directory, each declaring `main`; the
-  go tool refuses to build it too.
+  what they hold is not part of any module's API. `golang.org/x/tools` drops
+  from 471 packages to 214, all 257 under a `testdata` path.
+- **A duplicate identifier in one directory is resolved deterministically**
+  rather than by map order.
 
-A module with no `testdata` directory and no duplicate declarations extracts
-byte-identical bytes to its `0.5.0` record: `github.com/golang-jwt/jwt/v4@v4.5.2`
-re-extracts to the same canonical record apart from the pipeline version.
-
-The cost is one re-extraction per module on its next `interface` run — 580 stored
-records at the bump, 200 of them at `0.5.0` across 173 coordinates, the remaining
-380 already stranded at `0.4.0`. Until re-extracted each answers as a not-found
-naming the pipeline versions held and the command that produces a servable
-record, exactly as the `0.4.0` and `0.5.0` bumps arranged.
+Migration: **none.** Reads key on the pipeline version.
 
 ## Interface record: pipeline `0.4.0` → `0.5.0`
 
-**Record shape change; no store migration. This bump is also a repair** — the
-only one available for the coordinates the defect below has already killed.
+**Record shape change; no store migration.** The bump is also the only repair
+available for coordinates the defect had already spoiled.
 
-Extraction parsed every non-test `.go` file in a package directory and handed the
-set to `go/doc`, evaluating no build constraints. A package carrying mutually
-exclusive build-tag variants therefore presented `go/doc` with several
-declarations of one exported symbol, and `go/doc` resolves duplicates in **map
-iteration order**. Two extractions of one zip could disagree, and the winner
-described no build that exists. In this store's own history,
-`github.com/mattn/go-isatty@v0.0.20` — one zip, one linux/amd64 host — is held
-twice and the two records disagree: the `0.3.0` generation records `IsTerminal`
-at `isatty_windows.go`, the `0.4.0` generation at `isatty_bsd.go`. Neither file
-is in a linux build. Two hundred extractions of a six-variant package produced
-six distinct `public_api` hashes.
+Extraction parsed every non-test `.go` file in a package directory and evaluated
+no build constraints, so a package with mutually exclusive build-tag variants
+handed `go/doc` several declarations of one symbol — resolved in map iteration
+order. Two extractions of one zip could disagree, and the winner described no
+build that exists. Extraction now evaluates build constraints with `go/build`.
 
-Extraction now evaluates build constraints with `go/build` and reads only the
-files one configuration contains. Three things follow into the record:
+Three fields follow into the record:
 
-- **`build_frame`** names that configuration — `goos`, `goarch`, `cgo_enabled`.
-  An API measured at linux/amd64 and one measured at windows/386 are different
-  facts and must not collide on one coordinate.
-- **`out_of_frame`** marks a package directory whose files are all for other
-  platforms. It is kept, empty, rather than dropped: a package absent from the
-  module and a package this build does not contain are different facts.
-- The declarations narrow to one platform. `modernc.org/libc@v1.73.5` at
-  linux/amd64 goes from 69,298 exported declarations across 715 position files to
-  17,742 across 78, package count unchanged at 32, none left in a file for
-  another platform. That is not less than the old record said but a different
-  claim — the old one unioned every platform and picked arbitrarily where they
-  collided — so the two must not be served for one another.
+- **`build_frame`** — the configuration measured (`goos`, `goarch`,
+  `cgo_enabled`). An API measured at linux/amd64 and one at windows/386 are
+  different facts and must not collide on one coordinate.
+- **`out_of_frame`** — marks a package directory whose files are all for other
+  configurations.
+- **`variant_symbols`** — symbols that differ across configurations.
 
-Both fields are omitted from the canonical bytes when unset, so every `0.3.0` and
-`0.4.0` row still verifies its stored content hash. A framed record hashes
-differently from the unframed record of the same zip.
-
-The cost is one re-extraction per module on its next `interface` run — 482 stored
-records at the bump, 472 already stranded at `0.3.0`. Until re-extracted each
-answers as a not-found naming the pipeline versions held and the command that
-produces a servable record, exactly as the `0.4.0` bump arranged.
-
-**Why the bump is the repair.** Interface records are append-only and nothing
-retires a generation. Two records for one artefact at one pipeline version that
-disagree about the exported API are a `public_api` conflict, and a conflicted
-coordinate is not served — on the reference store 17 are dead that way at
-`0.4.0`, five of them this project's own dependencies. Re-extracting one at
-`0.4.0` would append a third generation beside the two poisoned ones and change
-nothing, and the framed record would then conflict on `build_frame` too. The bump
-puts the poisoned generations behind the pipeline filter, so the first framed
-re-extraction at `0.5.0` is the only record in play and the coordinate answers
-again. Composition names a `build_frame` disagreement before it compares APIs, so
-a pair measured on different platforms reads as the frame difference it is rather
-than as non-determinism in the extractor.
+Migration: **none.** Reads key on the pipeline version, so `0.4.0` records are
+not served.
 
 ## Interface record: pipeline `0.3.0` → `0.4.0`
 
 **Record shape change; no store migration.** Interface records are keyed
-`(module_path, module_version, pipeline_version)` and `GetInterfaceRecord`
-selects on the current one, so the bump is the migration: `0.3.0` rows stay
-where they are and are never served for a `0.4.0` request. The cost is one
-re-extraction per module on its next `interface` run — 472 stored records at the
-time of the bump, each of which answers `interface-show`, `interface-diff` and
-`symbol-find` as a not-found until it is re-extracted, naming the command that
-produces it.
+`(module_path, module_version, pipeline_version)`, so the bump is the migration:
+`0.3.0` rows stay and are never served for a `0.4.0` request. Cost is one
+re-extraction per module on its next `interface` run — 472 records at the time,
+each answering not-found until re-extracted, naming the command that produces it.
 
-Two extraction reads changed, and both change what the record says a module
-exports.
+Two extraction reads changed:
 
-A **constant group carries its declared type to every member.** A spec with no
-expression list repeats the previous spec's type and expression — that is what
-makes an `iota` enumeration work. Reading each spec on its own left every member
-but the first with no type at all: on `github.com/golang-jwt/jwt/v4@v4.5.1`, 9 of
-11 constants. A constant's type is also the whole of its signature in
-`interface-diff`, so a `0.3.0` record cannot see a grouped constant's type change
-and a `0.4.0` record can. That is not less than the old record said, it is a
-different answer, so the two must not be served for one another.
-
-An **embedded type from another package is recorded as a field.** Exportedness
-belongs to the embedded type's own identifier, not to the lower-case package
-qualifier in front of it: an embedded `time.Time` publishes `x.Time`. A `0.3.0`
-record dropped every such embedding, and with it the promotions it explains.
-
-The content hash covers both, so an unchanged module hashes differently from its
-`0.3.0` record.
-
-Because the bump darkens records that are still in the ledger, every reader that
-can come up empty tells "never extracted" from "extracted under superseded
-logic", names the pipeline versions held against the one this build serves, and
-gives `kanonarion interface <coord>` as the remedy: `interface-show`,
-`interface-list <module>`, `interface --history`, `interface-diff`,
-`symbol-find`, `symbol-context` and the `context` interface section (status
-`superseded`). `interface-list` marks each superseded row and counts them. The
-wording is the call graph's `supersededPipelineError`, which answers the same
-condition on the other side of the binary.
+- **A constant group carries its declared type to every member.** A spec with no
+  expression list repeats the previous spec's type — what makes an `iota`
+  enumeration work. Reading each spec alone left every member but the first with
+  no type: 9 of 11 constants on `github.com/golang-jwt/jwt/v4@v4.5.1`.
+- A constant's type is the whole of its signature in `interface-diff`, so a
+  `0.3.0` record cannot see a grouped constant's type change and a `0.4.0` can.
 
 ## Vulnerability record: pipeline `v24` → `v25`
 
-**Content change on three fields; not hash-transparent.** A finding whose
-advisory names no symbols for the matched module path no longer seals two facts
-it cannot support: a symbol list, and a symbol-level reachability claim.
+**Content change on three fields; not hash-transparent.**
 
-Where the matched advisory entry named no symbols for the module path, the
-finding carried `advisory_names_no_symbols: true` and a symbol list beside it —
-the symbols the `govulncheck` trace terminated at, which are functions of the
-affected package this build happened to call rather than anything the advisory
-named. One field held two different facts and the record could not say which.
-This is the unswept half of the class the `v17` init-only fix closed: that change
-removed `init` from the field where every frame of the trace was package
-initialisation, and deliberately kept a trace with a real call frame as a route,
-so on those the trace's terminals went on being written into the field.
+On a finding whose matched advisory entry names no symbols for the module path:
 
-The field is now emptied wherever the flag is set — on the analysis route at the
-point the flag is written, and on the field-by-field merge that adopts the flag
-from a coordinate match. The reached symbols are not discarded: they are already
-carried, in order, as the last hop of each route under `reachable.routes`.
+- `affected_symbols` is now empty. It previously held whatever the `govulncheck`
+  trace terminated at, which the advisory never named. Those symbols are still
+  available as the last hop of each route under `reachable.routes`.
+- `reachable.is_reachable` and `reachable.confidence` now read `false` /
+  `Unknown` instead of `true` / `High`.
+- The routes are unchanged.
 
-**Second, `reachable.is_reachable` and `reachable.confidence`.** The same
-findings carried `is_reachable: true` at `confidence: High`, derived by
-`govulncheck` at `source` fidelity — a claim that the vulnerable code executes,
-made by an analysis that was never given a symbol to look for. They now carry
-`false` at `Unknown`, the store's existing "not determined" pair and the same
-demotion the `v17` init-only fix applied to the other half of this class.
+Migration: **none, and no purge.** Reads key on the pipeline version, so `v24`
+rows are simply not served for a `v25` question. The three fields sit inside the
+hashed canonical shape, so they cannot be corrected in place — re-sealing would
+stamp a `v24` record with a conclusion that generation did not reach.
 
-**The routes stay, and that is what separates this from `v17`.** An
-all-initialisation trace contains no call at all, so `v17` dropped its route as
-package linkage. A trace terminating in a real call frame does show the build
-calling into the affected package: it answers "which of my dependencies pulls
-this in" even though it cannot answer "does the vulnerable code run". The derived
-`reachability_state` says which question was answered — the advisory fact
-outranks both the bit and the confidence there — and it is published on
-`vuln-show --json`, `context --json` and the scan-diff views, so the route is
-read as evidence rather than as a verdict.
+**Cost: every stored vulnerability record is superseded until re-scanned.**
 
-Both halves close in one generation because they are one cause, and because a
-second bump would cost the same store-wide re-scan over again.
-
-Migration for existing stores: **none, and no purge.** Reads are keyed on the
-pipeline version, so the `v24` rows are already unreachable for a `v25` question,
-and the symbol list lives inside the serialised record rather than in a column.
-Unlike the previous vuln bumps the affected rows ARE identifiable from the store
-— the flag beside a non-empty list, or beside a reachability answer — but that
-does not make a migration possible: all three fields are inside the hashed
-canonical shape, so correcting them means re-sealing a `v24` record against a
-conclusion the `v24` generation did not reach, which is what migration 10 was
-withdrawn for.
-
-The re-scan cost is the largest a vuln bump has carried. Measured before the
-change: **3,214 records at `v24`** and 365 at `v22`. `v24` was taken at a moment
-when nothing sat at the servable version, so it darkened nothing that was not
-already awaiting a re-scan; this one darkens 3,214 records that were servable.
-The store cannot answer a `v25` question about any module until it is re-scanned.
-
-Measured on the defect itself, 2026-09-03: **24 findings over 5 (advisory,
-module) pairs** carried the conflated shape — GO-2026-4316 on
-`github.com/go-chi/chi`, GO-2026-4753 on
-`github.com/russellhaering/goxmldsig`, GO-2026-4394 on
-`go.opentelemetry.io/otel/sdk`, and GO-2026-5764 at two `aws-sdk-go-v2`
-coordinates. On every one of them the stored symbol list was exactly the set of
-route terminal symbols. The bump is not scoped to those 24 because a stored
-record does not record whether its symbol list came from the advisory or from
-the trace.
-
-The reachability half was measured on one 128-module project scan: four
-coordinates carried the flag beside a `High`-confidence reachability answer, two
-of them (`github.com/go-chi/chi@v3.3.4+incompatible`,
-`github.com/russellhaering/goxmldsig@v1.4.0`) asserting `is_reachable: true` with
-15 and 20 routes respectively.
-
-Consumer impact: a finding whose advisory names no symbols for the module path
-now presents an empty `affected_symbols` and a `false`/`Unknown` reachability
-answer beside the flag, which is the shape `AdvisoryNamesNoSymbols` was
-documented to produce. `vuln-show` prints one `symbols:` line for it instead of
-two; a machine consumer reading `reachable.is_reachable` no longer gets `true` at
-`High` beside a flag saying the advisory named none; and the local symbol-table
-probe reports `unknown` with the advisory's reason instead of computing a
-present/absent verdict against symbols no advisory named. The rendered
-`reachability_state` is unchanged — it already answered `package_level_only` —
-so no text or JSON key moves. Findings whose advisory does name symbols are
-unchanged.
 
 ## Vulnerability record: pipeline `v23` → `v24`
 
 **No shape change; not hash-transparent.** One record was built from two advisory
 databases and named only one.
 
-A vulnerability record has two producing routes. `govulncheck` was handed the
-pinned snapshot; the coordinate-match route (`LookupFindings`, and the cheap
-`CheckVulnerable` pre-check beside it) queried `https://vuln.go.dev` live,
-because neither carried a snapshot parameter and the OSV adapter reached a
-package constant. The record stated the snapshot.
+`govulncheck` was handed the pinned snapshot, while the coordinate-match route
+queried `https://vuln.go.dev` live. An advisory published after the snapshot
+therefore entered the record, stamped not-reachable at high confidence by an
+analysis that never saw it. Both routes now read the pinned snapshot, and a scan
+that cannot read it fails rather than falling back to the live database.
 
-An advisory published after the pinned snapshot therefore entered the record
-having never been seen by the analyser — and was then stamped `IsReachable:
-false`, `High` confidence, derived by `govulncheck`, on the strength of that
-analyser's silence. Silence is only evidence about an advisory the analyser was
-given.
+Migration: **none, and no purge.** Reads key on the pipeline version, and the
+change lives inside the serialised record rather than in a column. It could not
+be a migration in any case: which findings came from the live service was never
+recorded.
 
-Both routes now read the snapshot the record names. `LookupFindings` and
-`CheckVulnerable` take the snapshot identity, read `index/modules.json` and each
-`ID/<id>.json` out of the stored archive, and have no path to the network: a
-snapshot the store cannot produce is a refusal, not a live read.
-
-The third member of the class was the same defect inverted. `prepareDBArg` fell
-back to the live database on three failures — the store would not produce the
-snapshot, no scratch directory could be created, the archive would not extract —
-each announced by a log warning while the record went on naming the snapshot: an
-entirely live scan sealed under a pinned generation. All three refuse now, under
-`ports.ErrSnapshotUnavailable`, kept distinct from `ErrSnapshotIntegrity` so a
-caller preserving evidence of a tamper can still tell an absent snapshot from an
-altered one. A pre-extracted database supplied by the walk is checked against the
-snapshot's generation rather than trusted.
-
-Migration for existing stores: **none, and no purge.** Reads are keyed on the
-pipeline version, so the `v23` rows are already unreachable for a `v24` question,
-and the change lives inside the serialised record — which findings it carries,
-and the reachability answer on each — rather than in a column. It cannot be a
-migration in any case: which findings in a stored record came from the live
-service was never recorded, and the correct reachability answer for one depends
-on an analysis that never ran.
-
-The re-scan cost is the smallest a vuln bump has carried. Measured before the
-change: 2,548 records at `v19`, 1 at `v20`, 158 at `v21`, 650 at `v22` and
-**0 at `v23`**. Nothing had been re-scanned since the `v23` bump, so this darkens
-nothing that was not already awaiting one.
-
-Measured on the divergence itself, 2026-08-14, against the store's only snapshot
-`vuln.go.dev@2026-07-27T20:14:16Z` (18 days old, 4,134 advisory records). Live
-`vuln.go.dev` listed eight advisories against `stdlib` that the snapshot does
-not — GO-2026-5026, 5942, 5972, 6088, 6089, 6090, 6091, 6218 — and all eight
-affect the host toolchain go1.26.5. `govulncheck` over this repository against
-the extracted snapshot: 168 messages, **0 findings**. The same tree and toolchain
-against the live database: 207 messages, 29 finding messages, 10 advisories. Under
-`v23` a scan at that snapshot produced a stdlib record carrying eight findings the
-analysis could not have seen, each with a high-confidence not-reachable answer.
-
-Consumer impact: a scan whose snapshot lags the live database reports fewer
-findings, and the ones it reports are the ones its stated database can produce. A
-scan whose snapshot agrees with live is unchanged. A scan that cannot read its
-pinned database now fails instead of quietly answering from another one.
+**Consumer impact.** A scan whose snapshot lags live reports fewer findings, and
+only the ones its stated database can produce. A scan whose snapshot agrees with
+live is unchanged.
 
 ## Licence records: what each licence covers, no migration and no bump
 
-**No store migration, no schema-version bump, no pipeline bump.** A licence
-record now says what each identified licence GOVERNS — the module's own code,
-documentation it ships, or third-party material it carries — and a licence that
-does not govern the code no longer enters the expression, holds the primary, or
-contributes obligations.
+**No migration, no schema-version bump, no pipeline bump.** A licence record now
+says what each identified licence GOVERNS — the module's own code, documentation
+it ships, or third-party material it carries — and a licence that does not govern
+the code no longer enters the expression, holds the primary, or contributes
+obligations.
 
-**Why it owes no bump.** Coverage is derived from `LicenseFiles`, on the same
-contract as `EffectiveSet` and `PackageLicenses`: recomputed at extraction and on
-every deserialisation, never stored, and outside the canonical shape the content
-hash covers. Measured read-only over all 1,828 stored records decoded through the
-store's own read path: **0 fail `VerifyContentHash`**. The hashed key set is
-unchanged and `TestCanonicalShape_KeySetIsPinned` is untouched.
+Coverage is derived from `LicenseFiles` at extraction and on every
+deserialisation, never stored, and outside the canonical shape the hash covers.
+All 1,828 stored records still pass `VerifyContentHash`.
 
-**A correction the earlier account got wrong, recorded so nobody repeats it.**
-`Expression`, `ExpressionBasis` and `PrimarySPDX` are NOT derived at read time —
-`Unmarshal` recomputes only `EffectiveSet` and `PackageLicenses`, and the other
-three are read straight out of the sealed blob. A derivation change therefore
-does NOT correct a stored record on its own. The correction is applied twice
-instead: extraction stores the corrected values, so a re-extracted record is
-right in the indexed `primary_spdx` and `spdx_expression` columns; and the
-licence surfaces compose the same reading over a record already in the ledger, so
-records written before this change answer correctly today without re-extraction.
-The reading is idempotent — applying it to a record it has already corrected
-finds nothing to do — so the two legs cannot disagree.
+**No re-extraction needed.** The licence surfaces compose the same reading over a
+record already in the ledger, so existing records answer correctly today. Of
+1,828 records, 19 carry a conjunction and **4 change identity**; the other 1,809
+do not move.
 
-**Measured population.** Of 1,828 records, 19 carry a conjunction and **4 move**:
-`github.com/alecthomas/chroma/v2` at v2.24.1 and v2.27.0 from `MIT AND OFL-1.1`
-with `primary_spdx: OFL-1.1` to `MIT`, and `github.com/opencontainers/go-digest@v1.0.0`
-and `github.com/docker/go-metrics@v0.0.1` from `Apache-2.0 AND CC-BY-SA-4.0` to
-`Apache-2.0`. The other 15 conjunctions are conjunctions of code licences and are
-untouched; **none of the 1,809 records with no conjunction moves.**
+**Reads that change.** `license --json` gains `coverage` on every `license_files`
+entry, always emitted. `effective_set`, `package_licenses` and `content_hash` are
+unchanged for every record. `license-list --limit 0 --json` pays a decode per
+record for the identity — 0.03s to 0.08s over 1,828 records.
 
-**Consumer impact.** Every surface that answers "what is this module licensed
-under" names the licence covering the module's code: `license` (text and
-`--json`), `license-list`, `license-diff`, `context --json` / `inspect`, `audit`,
-`sbom`, `notice` and `license-compat`. The list is closed and pinned by a
-cross-surface control that reads one record through all nine and requires them to
-agree; a surface answering this question and absent from that control is a
-surface nothing checks. `license --json`
-gains `coverage` on every `license_files` entry, emitted always (`ModuleCode`,
-`Documentation`, `BundledComponent`, `AttributionOnly`, `NotDetermined`), and
-`expression_basis` states that coverage took part and keeps the reading it
-displaced. On the four records above, `binding_obligations`, `arm_grants` and
-`obligations_reading` become absent because there is no conjunction left, and
-chroma's `obligations` lose the `same_license: weak` a bundled font imposed.
-`effective_set`, `package_licenses` and `content_hash` are unchanged for every
-record — `effective_set` deliberately: it is a faithful account of the
-identifiers the zip contains, and coverage is the separate statement of what each
-of them governs.
-
-`license-list` pays a decode per listed record for this: the identity is not in
-the indexed `primary_spdx` and `spdx_expression` columns, because it is the
-record read through what its licences cover and that needs the licence files.
-Measured on the maintainer's store, `license-list --limit 0 --json` over 1,828
-records goes from 0.03s to 0.08s, and 1,669 of its 1,673 rows are byte-identical.
-`--copyright` already paid more than this — 0.13s — for the same reason: the
-question is not in the columns.
-
-**What is corrected is the IDENTITY, never what gets looked at.** Two surfaces
-draw that line explicitly. `notice` publishes the code licence in its heading and
-still reproduces every licence text the archive carries, a set-aside grant's
-included — the texts are selected by file from the module zip, not by identifier,
-so attribution travels with the artefact whether or not the grant governs the
-code. `license-compat` reports the module's own licence as the code licence and
-still EVALUATES every identifier in the archive, so a documentation licence is
-still raised for a human rather than hidden by the identity being corrected.
-
-**Not changed here.** Which identifiers `license-compat` evaluates. Folding
-coverage into policy evaluation — so a docs or asset arm is reported without
-blocking on it — is the follow-up the conjunction-policy work was narrowed for.
-The dataset already records the same judgement independently: its
-`unmodelledDeliberately` table says of CC-BY-4.0, CC-BY-SA-3.0 and CC-BY-SA-4.0
-that "every entry here is a licence whose obligations attach to material other
-than the linked Go code — documentation, media, fonts", which is the instrument
-reading this fix derives coverage from.
+**What is corrected is the identity, never what gets looked at.** `notice` still
+reproduces every licence text in the archive, and `license-compat` still
+evaluates every identifier in it.
 
 ## Licence record: pipeline `1.2.0` → `1.3.0`
 
 **No shape change; not hash-transparent.** The expression was inferred from a
-confidence delta; it is now read from the licence file's prose.
+confidence delta between two text matches; it is now read from the licence file's
+prose.
 
-`DeriveExpression` concluded a *legal relationship* between two licences from
-the confidence gap between two text matches. One branch emitted `OR` for three
-materially different files, and its own comment named the module that disproves
-the assumption. The detector was never wrong — licensecheck reports what is in
-each file — the conclusion was.
-
-A compound file is now read down an ordered ladder:
+A compound file is read down an ordered ladder:
 
 - **election** — a disjunctive `SPDX-License-Identifier:` line, or wording such
   as "under the terms of either licence";
-- **split** — the file names what each grant covers ("the following files…",
-  "all the remaining project files"). Checked **before** bundling, because a
-  split names several copyright holders and would otherwise look like a bundle;
-- **bundled grant** — a later text standing behind its own dated copyright
-  notice or a `Files: <glob>` stanza. The module's own grant is the one that
-  comes **first** in the file, not the one with the largest span;
+- **split** — the file names what each grant covers. Checked **before** bundling,
+  because a split names several copyright holders and would otherwise look like
+  a bundle;
+- **bundled grant** — a later text behind its own dated copyright notice or a
+  `Files: <glob>` stanza. The module's own grant is the one that comes **first**
+  in the file, not the one with the largest span;
 - **unstated** — every grant applies, and the record says the reading was
-  conservative. Understating an obligation is the harmful direction.
+  conservative.
 
-`"may choose"` is deliberately absent from the election phrases: Apache-2.0 §9
-contains it, so every Apache-2.0 file in a real corpus does.
-
-A bundled grant leaves the expression and is recorded beside it on
-`BundledSPDXs`, with `ExpressionBasis` naming the reading. Both fields are
-`omitempty` and additive, so **every 1.2.0 record still verifies**.
-
-Migration for existing stores: **none, and no purge.** Reads key on the pipeline
-version, so `1.2.0` rows are already unreachable for a `1.3.0` question and stay
-readable as what the earlier generation concluded. The cost that IS owed is a
-full re-extraction — the prose lives only in the module zip, so no stored record
-can be re-read into the new answer — and because records are keyed
-`(module_path, module_version, pipeline_version)`, the re-extraction writes a
-**second generation** rather than replacing the first.
-
-Measured on the store at the bump: **864 records at `1.2.0`**, of which 21
-expressions change and 717 are re-derived identically. `gopkg.in/yaml.v3` and its
-oasdiff fork move to `Apache-2.0 AND MIT`; twelve OpenTelemetry modules to
-`Apache-2.0` with `BSD-3-Clause` recorded beside; `sean-/seed` and
-`oasdiff/yaml` to `MIT`, and `klauspost/compress` to `BSD-3-Clause` — the last
-three correcting a `PrimarySPDX` that named a third party's grant rather than
-the module's own.
-
-Consumer impact: `license` and `notice` state the module's own licence where they
-previously named a bundled one, and `license --json` gains `BundledSPDXs` and
-`ExpressionBasis`. `notice` also gains a `License expression:` line, emitted only
-where the expression says something the primary `License:` line does not — so
-`gopkg.in/yaml.v3` now reads `MIT` plus `Apache-2.0 AND MIT` rather than `MIT`
-alone. The `License:` line is unchanged for every module, including the ones
-whose primary was corrected; a consumer parsing it keeps working.
+Migration: **none.** Reads key on the pipeline version.
 
 ## Vulnerability record: pipeline `v22` → `v23`
 
-**No shape change; not hash-transparent.** Two producers of a finding's fixed
-version disagreed, and the coarser one won.
+**No shape change; not hash-transparent.** A finding's fixed version could name a
+release later than the one that actually carried the fix.
 
-`govulncheck` emits one finding message **per level** for the same advisory:
-module, package, and a symbol level when it can trace a call into the vulnerable
-code. The parse kept only the symbol level and discarded the other two, so an
-advisory govulncheck could not trace to a symbol was ingested as though it had
-never been mentioned. That advisory then reached the record by coordinate match
-instead, carrying the coordinate route's fixed version — the advisory's single
-highest, taken from `index/modules.json`, whose own comment calls it that.
+`govulncheck` emits a finding message per level — module, package, and symbol
+where it can trace a call. The parse kept only the symbol level, so an advisory it
+could not trace to a symbol reached the record by coordinate match instead,
+carrying that route's fixed version: the advisory's single highest, across all
+branches. On a backported advisory that named an unreleased toolchain when a point
+release already had the fix.
 
-An advisory backported across maintained release branches states one
-`introduced`/`fixed` pair per branch. For a Go standard-library advisory the
-highest pair is usually the next major's release candidate, so a project on a
-supported stable branch was told to move to an unreleased toolchain when a point
-release already carried the fix. `fixedForVersion` now selects the fixed bound of
-the interval containing the version in hand and overrides the index value. A
-version inside an interval with no fixed bound reports no fix rather than
-borrowing another branch's, and a range in a vocabulary other than SEMVER selects
-nothing.
+`fixedForVersion` now selects the fixed bound of the interval containing the
+version in hand. A version inside an interval with no fixed bound reports no fix
+rather than borrowing another branch's, and a non-SEMVER range selects nothing.
 
-The selection runs inside the affected block for the module path being asked
-about, so a **dual-module advisory** — one listed under both `stdlib` and
-`golang.org/x/net` with different ranges and different fixes — answers each
-coordinate from its own block. Measured on one project stream, `GO-2026-5942`
-arrives twice, `trace[0].module=stdlib` with `fixed_version=v1.26.6` and
-`trace[0].module=golang.org/x/net` with `v0.56.0`, and is stored as two records
-under two coordinates. They are not merged.
+A **dual-module advisory** — listed under both `stdlib` and `golang.org/x/net`
+with different ranges — answers each coordinate from its own block, and is stored
+as two records. They are not merged.
 
-Reading the other levels also turns the negative from an inference into a
-statement. A module- or package-level message **is** the analyser reporting that
-the build carries the affected code and that its call graph found no route into
-the vulnerable symbol; that answer now rests on something it said rather than on
-its silence. Package initialisation is still not such a report: a trace of
-nothing but init frames stays undetermined at symbol level, because linkage says
-the package is in the build and nothing about whether its code runs.
-
-An advisory now has one shape whichever route produced it. Where the analysis
-reached no symbols, the advisory's own at-risk list is the only answer there is,
-and the OSV message already on the wire carries it — read on decode, one entry
-per module path, deduplicated and sorted, the same rule the coordinate route
-applies. It never overwrites a reached symbol: the two lists say different things.
-
-Migration for existing stores: **none, and no purge.** Reads are keyed on the
-pipeline version, so the `v22` rows are already unreachable for a `v23` question,
-and the fixed version, symbol list and reachability answer all live inside the
-serialised record rather than in a column. The cost that IS owed is a re-scan:
-**650 stored records at `v22` go dark for a `v23` question until re-scanned**, on
-top of 2,548 already dark at `v19`, 1 at `v20` and 158 at `v21`.
-
-Measured across the change on one project walk — same walk, same snapshot, same
-coordinate — the stdlib record's seal moved from `sha256:548def0a` to
-`sha256:1c23a321`, with exactly one field changed: the advisory carrying no
-symbol-level message moved from `v1.27.0-rc.3` to `v1.26.6`. Findings (13),
-reachable answers (9), routes (45) and symbol lists were identical either side.
-
-Consumer impact: `vuln` / `vuln-show` name the branch-correct fix on the `fix:`
-line, and a finding whose advisory was reported at module or package level
-carries a negative resting on that report rather than on silence.
+Migration: **none, and no purge.** Reads key on the pipeline version.
 
 ## Vulnerability record: pipeline `v19` → `v20`
 
-**Additive in shape, not hash-transparent.** `VulnerabilityFinding.references`
-was on the sealed wire shape from the start, entered the content hash, and no
-producer ever wrote it: across the 2,548 stored records the count carrying a
-reference was 0. It is now populated with the advisory's own links, each an OSV
-`{type, url}` pair.
+**Additive in shape, not hash-transparent.**
+`VulnerabilityFinding.references` was on the sealed shape from the start and no
+producer ever wrote it — 0 of 2,548 stored records carried one. It is now
+populated with the advisory's own links.
 
-The shape changed with it. The field was `[]string` and is now a list of
-objects: `[{"type": "FIX", "url": "https://..."}]`. The type is carried because
-it is what separates a `FIX` commit — remediation a reader can apply — from a
-`WEB` mention, and a flattened URL list destroys that distinction.
+The field was `[]string` and is now a list of objects:
+`[{"type": "FIX", "url": "https://..."}]`. The type separates a `FIX` commit from
+a `WEB` mention, which a flattened URL list loses.
 
-Both producing routes populate it, from an advisory each already had in hand, so
-no scan does extra work:
+Both producing routes populate it from an advisory each already had in hand, so
+no scan does extra work.
 
-- the OSV database adapter, from the `ID/<ID>.json` document it already fetches
-  to enrich a finding;
-- the govulncheck parse, from the OSV message the stream already carries (a
-  measured `govulncheck -format json` run: 233 of 233 OSV messages carried a
-  non-empty `references` array).
-
-The list is sorted at the seal, type then URL, for the reason
-`affected_symbols` is: measured on the pinned snapshot, 253 of the 3,748
-advisories carrying more than one reference present them in an order sorting
-changes, and an arrangement that reaches the seal makes the seal describe the
-arrangement.
-
-An **empty** list means no advisory was read for that finding — a failed
-advisory fetch, or a stream whose OSV message never arrived — not that the
-advisory publishes none. Measured on the pinned snapshot, 4,130 of 4,134
-advisories carry at least one reference (15,132 URLs; 3,160 of them `FIX`).
-
-Migration for existing stores: **none, and no purge.** Reads are keyed on the
-pipeline version, so the `v19` rows are already unreachable for a `v20` question
-and the references live inside the serialised record rather than in a column.
-The cost that IS owed is a full re-scan: **all 2,548 stored records go dark for
-a `v20` question until re-scanned.**
-
-Consumer impact: `vuln` / `vuln-show` gain a `fix refs:` line carrying the
-`FIX` references only, and `--json` emits the whole list under
-`findings[].references`. `context` is unchanged — it is a token-budgeted
-document and a dozen URLs per finding is bulk without a decision attached.
+Migration: **none.** Reads key on the pipeline version.
 
 ## Vulnerability record: pipeline `v14` → `v15`
 
@@ -712,258 +335,131 @@ CycloneDX SBOM marks a retracted advisory `analysis.state: false_positive` with 
 
 ## Staleness ledger: new store module `staleness`, migration 1
 
-**Additive; a new table, no existing record shape changes.**
-`staleness_records` caches what a module proxy said about a module **path**: the
-latest version at that path, its publication time, the result of the
-newer-major probe, and the time of the lookup. The whole store's migration count
-goes `v71` -> `v72`.
+Creates `staleness_records`: what a module proxy said about a module **path** —
+the latest version there, its publication time, the newer-major probe result, and
+the time of the lookup. Store `v71` -> `v72`.
+
+Additive: a new table, no existing record shape changes.
 
 It owns a **new module series** rather than joining `fetch`. A fetch record is a
-sealed, hashed custody fact about a specific version that was acquired; a
-staleness row is a mutable, expiring cache of an upstream claim about a path. The
-two have different keys (path versus coordinate), different lifetimes, and
-different truth conditions, and an overwritable row does not belong in a table
-where every other row can be verified. A separate module also keeps the two
-version numbers independent, so a ledger change never forces a `fetch` migration.
+sealed custody fact about a version that was acquired; a staleness row is a
+mutable, expiring cache of an upstream claim about a path. Different keys,
+lifetimes and truth conditions.
 
-Rows carry **no content hash and no pipeline version**: there is nothing in them
+Rows carry **no content hash and no pipeline version** — there is nothing in them
 to verify. What qualifies a row is `looked_up_at`, and every consumer states it.
-
-Migration for existing stores: **none required by the consumer.** The table is
-created empty and fills on the next `latest` or `audit`. A row is written only on
-a **successful** lookup — a failed one is not a cacheable fact. An *absent* major
-path is not a failure: it is a definitive answer, it bounds the probe, and it is
-recorded (`major_probe_from` set, `newer_major_path` empty). `major_probe_from`
-of `0` means the probe never ran, which is a different answer from "ran and found
-none" and is never rendered as one.
-
-Serving is governed by the `staleness.ttl` config key (default `1h`; `0`
-disables). `--fresh` on `latest`/`audit` bypasses the read and still records.
 
 ## Staleness ledger: module `staleness`, migration 2
 
-**Additive; four new columns on `staleness_records`, no record shape change and
-no pipeline bump — this table carries neither a content hash nor a pipeline
-version.** The whole store's migration count goes `v78` -> `v79`.
+Adds four columns to `staleness_records` for a `+incompatible` pin whose OWN
+major was republished at `/vN`. Store `v78` -> `v79`.
 
-A `+incompatible` pin's OWN major republished at `/vN` is a different fact from
-a newer major line: the major NUMBER is unchanged there and only the path moved.
-It shared the `newer_major_*` columns and so was reported as a major upgrade,
-and where a pin had both — `github.com/go-chi/chi@v3.3.4+incompatible` has both
-`/v3@v3.3.5` and `/v5@v5.3.1` — one set of columns could hold only the higher
-and the nearer move was dropped. The new columns are:
+Additive: no record shape change, no pipeline bump — this table carries neither
+a content hash nor a pipeline version.
+
+A republication is a different fact from a newer major line: the major NUMBER is
+unchanged and only the path moved. Sharing the `newer_major_*` columns reported
+it as a major upgrade, and a pin with both — `github.com/go-chi/chi@v3.3.4+incompatible`
+has `/v3@v3.3.5` and `/v5@v5.3.1` — could hold only the higher.
 
 | Column | Meaning |
 |---|---|
-| `republication_asked` | `1` when the probe put the question. It is put only for a `+incompatible` pin on a bare path, so `0` means "does not apply", NOT "asked, no". |
-| `republication_path` | The `/vN` path that resolved. Empty with `republication_asked = 1` is a recorded negative. |
+| `republication_asked` | `1` when the question was put. Only for a `+incompatible` pin on a bare path, so `0` means "does not apply", not "asked, no". |
+| `republication_path` | The `/vN` path that resolved. Empty with `asked = 1` is a recorded negative. |
 | `republication_version` | The newest version at that path. |
-| `republication_published_at` | Its publication time; empty when the proxy supplied none. |
-
-Migration for existing stores: the columns are added with defaults, and one
-`UPDATE` moves a same-major answer written by the previous shape out of
-`newer_major_*` into them. The move is keyed on the walk's start: the walk begins
-at `major_probe_from`, so any path it found names that major or above, and only
-the same-major question can have written the major immediately BELOW it. Both
-suffix conventions are matched (`/vN` and gopkg.in's `.vN`). On the live store
-that moved 3 rows of 397 and left every genuine newer major untouched.
-
-Rows the `UPDATE` does not touch keep `republication_asked = 0`. They are not
-lost answers: the resolver will not serve a stored probe to a pin that asks the
-republication question unless the row asked it too, so such a row is re-probed
-the next time it is used — and a pin that never asks the question is still
-served from it unchanged.
 
 ## Staleness ledger: module `staleness`, migration 3
-**Additive; two new columns on `staleness_records`, no record shape change and
-no pipeline bump — this table carries neither a content hash nor a pipeline
-version.** The whole store's migration count goes `v79` -> `v80`.
 
-A module's own **deprecation notice** — the `// Deprecated:` comment on the
-`module` directive in its `go.mod` — is a fourth fact on the row, beside the
-same-major latest, the newer major and the republication. It is not a variant of
-any of them: the successor a notice names is frequently at a path the `/vN` walk
-structurally cannot reach (`google.golang.org/protobuf` succeeds
-`github.com/golang/protobuf` on a different host), while a module with a newer
-major is usually not deprecated. The new columns are:
+Adds two columns to `staleness_records` for a module's own **deprecation
+notice** — the `// Deprecated:` comment on its `go.mod` `module` directive.
+Store `v79` -> `v80`.
+
+Additive: no record shape change, no pipeline bump.
+
+It is a fourth fact, not a variant of the others: the successor a notice names is
+often at a path the `/vN` walk cannot reach (`google.golang.org/protobuf`
+succeeds `github.com/golang/protobuf`), while a module with a newer major is
+usually not deprecated.
 
 | Column | Meaning |
 |---|---|
-| `deprecation_checked` | `1` when the question was ANSWERED. `0` means "not established", NOT "not deprecated". |
-| `deprecation_notice` | The notice verbatim. Empty with `deprecation_checked = 1` is a recorded negative — the module declares none. |
-
-The two are separate for the reason `major_probe_from` is separate from
-`newer_major_path`. The notice is visible only to a source that reports it — the
-batched `go list -m -u` answer a `--gomod` scope is resolved through — and a
-per-path `@latest` lookup cannot see it at all, so an empty notice alone could
-not say whether the module declares none or was never asked.
-
-Migration for existing stores: the columns are added with defaults and **nothing
-is back-filled.** There is nothing stored to derive the notice from, and a row
-written before the question existed genuinely was not asked; it keeps
-`deprecation_checked = 0` and acquires the fact the next time its latest is
-resolved. No `PipelineVersion` bump is owed: nothing on this table is hashed or
-verified, `looked_up_at` is what qualifies a row, and an older binary reads the
-table through explicit column lists that the new columns do not disturb.
+| `deprecation_checked` | `1` when the question was ANSWERED. `0` means "not established", not "not deprecated". |
+| `deprecation_notice` | The notice verbatim. Empty with `checked = 1` is a recorded negative. |
 
 ## Walk store: module `walk`, migration 6
 
-**Additive; a new column, no record shape change and no pipeline bump.** `walks`
-gains `project_dir`: the working-tree directory a walk rooted at a local project
-was taken from. A scan by walk id reads it back so it can reach the same analysis
-surface the original run did - notably a project's `vendor/` tree, which is
-otherwise unreachable without the directory. The whole store's migration count
-goes `v72` -> `v73`.
+Adds `walks.project_dir`: the working-tree directory a walk rooted at a local
+project was taken from. A scan by walk id reads it back to reach the same
+analysis surface the original run did — notably a project's `vendor/` tree.
+Store `v72` -> `v73`.
 
-The column sits **outside** the walk's sealed shape: `canonicalWalkRecord` does
-not carry it, so it is neither hashed nor serialised into the stored blob. That
-is deliberate. The path is machine-local, and admitting it to the hash would make
-two walks of one project taken from two checkouts two different walks, for every
-record that ever names a walk hash. Because the sealed bytes are untouched, no
-`PipelineVersion` bump is owed and no purge is needed: every stored walk still
-verifies against the hash it was written with.
+Additive: no record shape change, no pipeline bump, no purge.
 
-Migration for existing stores: **none required.** Existing rows default to the
-empty directory, which is also what a walk of a published coordinate records -
-that module has no project root. Consumers must read the empty value as "no
-project directory", never as "unrecorded": a scan finding it empty behaves
-exactly as it did before the column existed. The directory is provenance, not an
-oracle - a checkout that has moved or lost its `vendor/` tree degrades the scan
-to the fetched surface with the reason logged, and never makes a stored walk
-unscannable.
+The column sits **outside** the walk's sealed shape, so it is neither hashed nor
+serialised into the blob. The path is machine-local, and admitting it to the hash
+would make two walks of one project from two checkouts two different walks.
 
-Every project-rooted walk now populates it, the `local` driver's included. The
-walk request carries two values with two meanings: the directory the walk was
-taken from (recorded, always) and the directory whose Go toolchain is the
-authority for the module set (resolution, unchanged). They used to be one field,
-which made recording where a walk happened indistinguishable from handing the
-toolchain the last word on what it contains, so a driver walk that wanted the
-internal resolver had to record no root at all. **Resolution behaviour is
-unchanged**, and no bump or migration is owed: the change populates an existing
-column on a path that previously left it empty, and the column is outside the
-seal.
+**No back-fill:** existing rows default to empty, which is correct — a walk taken
+before this does not record where it ran.
 
 ## Walk store: module `walk`, migration 7
 
-**Additive; a new column, no record shape change and no pipeline bump.** `walks`
-gains `identity_hash`: a name for the ANALYSIS a walk performed, as opposed to
-`content_hash`, which seals the RECORD. The whole store's migration count goes
-`v73` -> `v74`.
+Adds `walks.identity_hash`: a name for the ANALYSIS a walk performed, as opposed
+to `content_hash`, which seals the RECORD. Store `v73` -> `v74`.
 
-The two answer different questions and both are needed. `content_hash` covers
-everything the record says, so a stored row cannot be altered without detection
-— which means it covers the walk id, `started_at`, `completed_at`,
-`graph.resolved_at` and the per-node fetch durations. Two runs of an unchanged
-checkout differ in every one of those, so they produced two content hashes and,
-with them, two walk ids; every record keyed on a walk id (licences,
-vulnerability answers, SBOMs) became unreachable from the next run, and a full
-re-scan followed because the cache key was fresh by construction rather than
-because anything had changed.
+Additive: no record shape change, no pipeline bump.
+
+Both are needed. `content_hash` covers everything the record says, including the
+walk id and the timestamps — so two runs of an unchanged checkout produced two
+content hashes and two walk ids, and every record keyed on a walk id (licences,
+vulnerability answers, SBOMs) became unreachable from the next run.
 
 `identity_hash` covers the target, scope, depth, ecosystem, both pipeline
-versions, the policy version and hash, the stage depths, the build environment,
-the resolved graph (every node with its coordinate, resolution source, digests,
-stdlib custody and replace origin, plus every edge), each node's status and
-error, and the overall status. It deliberately excludes the walk id, the three
-timestamps, per-node `duration_ms` and `from_cache`, the operator, and the
-composed fetch record — the last because that record carries `first_fetched_at`,
-`latest_fetched_at`, `measurement_count` and per-leg dates, all of which move
-when the ledger re-measures bytes that never changed. What the identity keeps
-from a fetch is the **artefact identity** (the `h1` hash), which is precisely
-"these bytes".
-
-The column sits **outside** the sealed shape, like `project_dir`:
-`canonicalWalkRecord` does not carry it, so it is neither hashed nor serialised
-into the stored blob. Admitting a derived value to the seal would make the seal
-cover a function of itself and would stop every previously-written walk from
-verifying. A reader that distrusts a stored identity recomputes it from the
-record it came with, which costs one hash.
-
-Migration for existing stores: **none required, and no purge.** Existing rows
-default to the empty identity. **Empty is an ABSENT identity, never a matching
-one** — the reuse lookup filters on a non-empty value, so a pre-existing row is
-never served as a reusable walk. Such a project is re-walked once, which writes
-its identity, and is reusable from then on. Back-filling was rejected: the
-identity is a function of the record, so filling it would mean decompressing and
-rehashing every stored walk during a migration to save one re-walk per project.
-
-Nothing verifies `identity_hash` on read and no stored hash is ever compared
-across the old and new styles: an old-style walk has no identity at all, so the
-comparison cannot arise. Reads of existing walks are unchanged in every respect.
+versions, the policy, the build environment, the resolved graph and each node's
+status. It excludes the walk id, the timestamps, per-node `duration_ms` and
+`from_cache`, the operator, and the composed fetch record.
 
 ## Call graph record: pipeline `0.4.1` → `0.5.0`
 
-**Behaviour change in what gets analysed; no record shape change, no schema
-bump, no store migration.** Call graph records are keyed
-`(module, version, pipeline_version)`, so the bump is the migration: `0.4.1`
-rows stay where they are, become unreachable, and are never served for a
-`0.5.0` request. The cost is one re-extraction per coordinate on its next
-`callgraph` run.
+**Behaviour change in what gets analysed; no record shape change, no schema bump,
+no store migration.** Records are keyed `(module, version, pipeline_version)`, so
+the bump is the migration: `0.4.1` rows stay, become unreachable, and are never
+served for a `0.5.0` request. Cost is one re-extraction per coordinate on its
+next `callgraph` run.
 
 The analyser no longer takes its function set from the SSA library's
-`AllFunctions`, and builds the class-hierarchy graph over a set it closes
-itself. The library derives most of that set by enumerating the program's
-runtime types, and that enumeration is not reproducible: it de-duplicates types
-by identity while walking them under two spellings, so meeting an alias first
-consumes the entry its named twin needed and the pointer type — and with it the
-pointer-receiver method wrapper — is never derived. Measured on one unchanged
-tree, five consecutive enumerations of one program returned five different sets.
+`AllFunctions`, and closes the set itself. The library derives most of that set by
+enumerating runtime types, which is not reproducible: it de-duplicates types by
+identity while walking them under two spellings, so meeting an alias first
+consumes the entry its named twin needed and the pointer-receiver method wrapper
+is never derived. Five consecutive enumerations of one program returned five
+different sets.
 
-The effect on a record is small and always in one direction: a graph could be
-missing a wrapper and the interface call sites the class hierarchy would have
-resolved to it. Ten consecutive analyses of one unchanged working tree produced
-three different graphs before this change and one after it, and that one graph
-is set-identical to the most complete of the three — same nodes, same edges,
-same interfaces, same implementations. Nothing is added that the analysis did
-not already find on a good run; what changes is that every run is now that run.
-
-Until a coordinate is re-analysed, every query for it refuses rather than
-answering empty: `callers`, `callees`, their transitive forms, `implementers`
-and `callgraph-show` name the superseded versions the store holds and the
-command that re-derives them. An empty answer would otherwise be read as a fact
-about the code, and its stated cause would be read off a generation the query
-never consulted.
-
-A `0.4.1` record can therefore say that nothing calls a method that was simply
-never enumerated, and nothing in the record distinguishes that from a measured
-absence. Two `0.4.1` records of one artefact can also disagree with no cause
-recorded, which is the conflicting-generations condition composition already
-refuses on. Both are why the old rows are re-derived rather than served.
+The effect is always in one direction: a graph could be missing a wrapper and the
+interface call sites it would have resolved.
 
 ## Call graph record: pipeline `0.3.0` → `0.4.1`
 
 **Behaviour change in what gets loaded; no record shape change, no schema bump,
-no store migration.** Call graph records are keyed
-`(module, version, pipeline_version)`, so the bump is the migration: `0.3.0`
-rows stay where they are, become unreachable, and are never served for a
-`0.4.1` request. The cost is one re-extraction per coordinate on its next
-`callgraph` run.
+no store migration.** Records are keyed `(module, version, pipeline_version)`, so
+the bump is the migration: `0.3.0` rows stay, become unreachable, and are never
+served for a `0.4.1` request. Cost is one re-extraction per coordinate.
 
 Four changes to what the loader is pointed at, each of which can turn an empty
-graph into a real one and so must not be served for the other:
+graph into a real one:
 
 - **Package membership follows the module path the analysed tree DECLARES**, not
   the coordinate it was published under. A fork republished at a new path that
-  never rewrote its own `module` directive matched none of its own packages, so
-  the target set was empty and the record was an empty graph.
-- **The load no longer requires the artefact to ship a `go.sum` covering its own
-  module graph** (`-mod=mod` on every load, not only synthesised ones). `go.sum`
-  is an obligation of whatever is being built; a module analysed alone is a main
-  module for the first time, and its published zip was never required to carry
-  one.
+  never rewrote its `module` directive matched none of its own packages.
+- **The load no longer requires the artefact to ship a `go.sum`** covering its
+  own module graph. A module analysed alone is a main module for the first time,
+  and its published zip was never required to carry one.
 - **A synthesised `go.mod` pins `go 1.17` rather than `go 1.16`**, so the module
-  graph is pruned to what the build reads. Unpruned, minimal version selection
-  reads the `go.mod` of every module reachable through every requirement, and
-  one absent from the local cache failed the load on a version nothing compiles.
-  Records carrying `synthesised_go_mod.go_directive: "1.16"` were built under
-  the older selection; the language does not differ between the two versions.
-- **A load that resolves nothing records which of those it was.** The old
-  records said `no packages successfully loaded`, which named neither what was
-  sought, nor what the loader found, nor what it reported.
+  graph is pruned to what the build reads.
+- **A load that resolves nothing records which of those it was.** Old records
+  said only `no packages successfully loaded`.
 
-Nothing in the sealed shape moved, and no field was added or removed, so every
-stored record keeps its content hash verifiable. The version skips `0.4.0`,
-which was consumed by an intermediate measurement.
+The version skips `0.4.0`, consumed by an intermediate measurement.
 
 ## Vendor record: schema `4` → `5`, pipeline `0.3.0` → `0.4.0`
 
@@ -1021,553 +517,187 @@ over a canonical struct, so there is no sealed shape to migrate.
 
 ## Walk store: module `walk`, migration 8
 
-**Additive; two new columns, no record shape change and no pipeline bump.**
-`walks` gains `goos` and `goarch`: the target platform a walk resolved for. The
-whole store's migration count goes `v74` -> `v75`.
+Adds `walks.goos` and `walks.goarch`: the target platform a walk resolved for.
+Store `v74` -> `v75`.
 
-The value already lived in the sealed blob, as the graph's `BuildEnv`. These
-columns are a projection of it, exactly like `identity_hash` is a projection of
-the record — the canonical shape the content hash covers is unchanged, so every
-stored walk still verifies against the hash it was written with and nothing is
-purged.
+Additive: no record shape change, no pipeline bump, no purge. The value already
+lived in the sealed blob as the graph's `BuildEnv`, so these columns are a
+projection and every stored walk still verifies against its written hash.
 
-**Back-filled**, unlike `identity_hash`. The migration decompresses each stored
-walk once and copies the frame out of its own record. Leaving the columns empty
-would have made every walk already in the store permanently invisible to the
-platform-filtered lookups the columns exist for, and the value is already
-present, so there is nothing to recompute. A row whose record carries no build
-environment back-fills to empty strings; a row this build cannot decode is left
-at empty rather than failing the migration, because an unreadable row's frame is
-genuinely unknown.
-
-Empty means **the frame was never recorded**, and it never matches an explicit
-platform filter. A caller asking for `linux/amd64` must not receive a walk whose
-platform is unknown, so `WalkFilter.BuildEnv` matches both axes exactly and "any
-platform" is expressible only by leaving the filter nil.
-
-Measured on the real store at migration time: 92 rows, 72 back-filled to
-`linux/amd64`, 20 left unrecorded — and those 20 are exactly the module-rooted
-walks. Only the project resolver writes a `BuildEnv`, so a walk rooted at a
-published coordinate structurally has no frame and can never gain one.
+**Back-fill: every row.** Decompresses each stored walk once and copies the frame
+out of its own record. Leaving the columns empty would make every stored walk
+permanently invisible to the platform-filtered lookups they exist for.
 
 ## Walk store: module `walk`, migration 9
 
-**Additive; one new column, no record shape change and no pipeline bump.**
-`walks` gains `go_version`: the Go toolchain that resolved the walk, as
-`go env GOVERSION` reported it in the project's own directory. The whole store's
-migration count goes `v80` -> `v81`.
+Adds `walks.go_version`: the Go toolchain that resolved the walk, as
+`go env GOVERSION` reported it in the project's directory. Store `v80` -> `v81`.
 
-Like `goos`/`goarch` the value already lived in the sealed blob, as the graph's
-`BuildEnv`. The column is a projection of it — the canonical shape the content
-hash covers is unchanged, so every stored walk still verifies against the hash it
-was written with, `identity_hash` is untouched, and nothing is purged. **Walk
-migrations 4 and 5 are `DELETE FROM walks`; this one deliberately is not.** The
-blob already holds the value, so back-filling it is the entire point, and a purge
-here would destroy the evidence the column exists to make selectable.
+Additive: no purge, no pipeline bump, no record shape change. The value already
+lived in the sealed blob as the graph's `BuildEnv`, so the column is a projection
+of it and every stored walk still verifies against its written hash.
 
-**Why the toolchain needs a column when the platform already has one.** Selection
-partitioned latest-for-target on `(target, version, scope)` and let recency decide
-the rest. Two walks of one project, one scope and one platform can still differ in
-the toolchain that resolved them — whichever `go` led `PATH`, or a `toolchain`
-directive the project acquired — and the toolchain pins the synthetic stdlib node,
-so the two walks name different standard library versions. A read that fell
-through to recency therefore answered about whichever Go release happened to be
-newest. Because a newer patch release CLEARS toolchain advisories, the error was
-not symmetric: it ran towards reporting the toolchain clean, on the one module
-every Go project links.
+Walk selection needs it because two walks of one project, scope and platform can
+differ in the toolchain that resolved them, and the toolchain pins the stdlib
+node. Falling through to recency answered about whichever Go release was newest —
+and since a newer patch release clears toolchain advisories, that error ran
+towards reporting the toolchain clean.
 
-**Back-filled**, on exactly the terms migration 8 established. The migration
-decompresses each stored walk once and copies the toolchain out of its own
-record; leaving it empty would make every stored walk permanently invisible to
-the toolchain-filtered lookups the column exists for. A row whose record carries
-no build environment back-fills to the empty string; a row this build cannot
-decode is skipped rather than failing the migration, because an unreadable row's
-toolchain is genuinely unknown.
+**Back-fill: every row.** Decompresses each stored walk once and copies the
+toolchain out of its own record. A row whose record carries no build environment
+back-fills to the empty string; a row this build cannot decode is skipped rather
+than failing the migration.
 
-Empty means **the toolchain was never recorded**, and it never matches an
-explicit filter. `WalkFilter.Toolchain` matches exactly and "any toolchain" is
-expressible only by leaving it nil — which is also what a read does when its own
-`go env` probe cannot answer, because filtering on the empty string would select
-the unrecorded rows rather than widening.
-
-`WalkFilter.Toolchain` is a field of its own rather than a third field on
-`BuildEnvFilter`. The two axes are asked independently: a caller pinning the
-platform is asking which files the build selects, a caller pinning the toolchain
-is asking which standard library it links, and folding them together would force
-every platform-filtered read to pin a toolchain with no value meaning "any".
-
-`LatestOnly` now partitions on `(target, version, scope, go_version)`. Two walks
-under two toolchains are two builds, not two attempts at one. *(Corrected later,
-with no migration: the partition also takes `goos` and `goarch`. Those columns
-arrived with migration 8 and the filter had always matched on them, so only the
-`SELECT` was short — one statement disagreeing with itself, which collapsed a
-cross-compiled store's platforms by clock.)*
-
-Measured on the real store at migration time: 17 rows, all 17 retained, 12
-back-filled (7 to `go1.26.5`, 5 to `go1.26.6`) and 5 left unrecorded — and those
-5 are exactly the module-rooted walks, which record no build environment at all.
-Every row's `content_hash`, `identity_hash` and stored bytes came back
-byte-identical.
+Note: walk migrations 4 and 5 are `DELETE FROM walks`. This one deliberately is
+not — the blob already holds the value, so back-filling it is the point.
 
 ## Call graph store: module `callgraph`, migration 12
 
-**Additive; one new column, no record-shape purge, no schema-version bump and no
-pipeline bump.** `callgraph_edges` gains `kind`: whether an edge is a call, or a
-REFERENCE to a function value — the shape of `r.Get("/confirm", h.Confirm)`,
-where nothing is invoked and a value is handed to a router. The whole store's
-migration count goes `v75` -> `v76`.
+Adds `callgraph_edges.kind`: whether an edge is a call, or a REFERENCE to a
+function value — the shape of `r.Get("/confirm", h.Confirm)`, where nothing is
+invoked and a value is handed to a router. Store `v75` -> `v76`.
 
-**Back-filled `''`, and that is the truth rather than a default.** Nothing before
-this migration extracted a reference edge, so every stored edge IS a call, and
-the zero value of `EdgeKind` is `call`. There is no unrecorded third state to
-ladder against.
+Additive: no purge, no pipeline bump, no schema-version bump.
 
-**Why no bump, when a new edge kind looks exactly like the sort of change that
-owes one.** The rule this repository applies is in
-`CallGraphSchemaVersion`'s own doc comment: *bump only when a change makes an OLD
-record say something FALSE, not merely something less*. Two facts settle it.
-
-- The record shape is unchanged for stored bytes. `kind` on the canonical edge
-  and `reference_scope` on the canonical record are both `omitempty` from birth,
-  so every stored record re-marshals to the bytes it was sealed over and still
-  verifies. (See the fetch-record precedent for the same exemption.)
-- The one thing an old record WOULD have said falsely is now stated by the
-  record itself. `CallGraphRecord.ReferenceScope` reads "not measured" on every
-  record written before references existed, and the answer layer downgrades an
-  empty `callers` answer over such a record to `UNRESOLVED` naming
-  `reference-scope-unmeasured` — instead of the `RESOLVED-ABSENT` that was the
-  actual defect.
-
-Bumping either version would have taken every stored call graph out of every
-answer until re-extraction — a purge by another name — to replace a fact the
-record can simply carry. Re-extraction costs roughly 52 MiB per module and the
-largest graphs in the store take minutes; the ledger exists precisely so that
-cost is paid when a measurement is wanted, not when a column is added.
+**Back-filled to `''`, which is the truth rather than a default.** Nothing before
+this extracted a reference edge, so every stored edge IS a call, and the zero
+value of `EdgeKind` is `call`. There is no unrecorded third state.
 
 ## Call graph store: module `callgraph`, migration 13
 
-**Additive; one new column, no back-fill, no purge, no schema-version bump and no
-pipeline bump.** `callgraph_records` gains `analysis_root`: the absolute,
-symlink-free directory a worktree analysis ran in. The whole store's migration
-count goes `v76` -> `v77`.
+Adds `callgraph_records.analysis_root`: the absolute, symlink-free directory a
+worktree analysis ran in. Store `v76` -> `v77`.
 
-**Why a record needs it when it already carries a worktree digest.** The digest
-is the tree's IDENTITY — a hash of what it contains — and it is the right answer
-to "are these two measurements of the same code". It is the wrong key for
-"answer me from the tree I am standing in", because a tree with one uncommitted
-edit matches no content state the ledger holds. Measured on the maintainer's
-store before this landed: one local coordinate held **eighteen generations across
-sixteen distinct digests** — one working tree at sixteen content states, not
-sixteen checkouts. A read filtering on digest equality would have answered
-nothing for the developer it exists for. The root survives edits, and it is what
-"the tree the caller is in" actually means.
+Additive: no back-fill, no purge, no pipeline bump, no schema-version bump.
+`analysis_root` is `omitempty` on the canonical record, so stored hashes are
+unaffected.
 
-**No back-fill.** `''` is the true value for every existing row. No record
-written before this states where its tree was, and the decoded record carries the
-same empty value. Inventing a root — the store's directory, the module path,
-anything — would answer "which tree did this come from" with a guess, in the one
-table whose job is keeping two checkouts apart.
+The worktree digest identifies the tree's CONTENT, which is the wrong key for
+"answer me from the tree I am standing in" — a tree with one uncommitted edit
+matches no stored content state. One local coordinate held eighteen generations
+across sixteen digests: one working tree at sixteen content states. The root
+survives edits.
 
-**No purge, and no bump.** `analysis_root` is `omitempty` on the canonical
-record, so every stored record marshals to the bytes it was sealed over and still
-verifies against its stored hash. It IS inside the sealed shape, which matters
-for a different reason: two checkouts can hold byte-identical trees, and without
-the root in the hash they would share a `content_hash` — a primary-key column —
-and collapse onto one row.
-
-**What an unlocated generation does now.** It still answers. The tree-scoped read
-tries the caller's root first and falls back to the newest generation of any tree
-when nothing matches, so no reader loses an answer they had. What changes is that
-the fall-back is stated: a `callers` query run inside a module whose only
-generations predate this migration prints one notice naming what answered and
-what to run to be answered from this tree. The generations are neither superseded
-nor silently trusted — they are named as unattributable, which is what they are.
-
-**The worktree digest changed VALUE at the same migration, and did not bump
-either.** It is now hashed over the file list the loader resolved rather than a
-filesystem walk of the tree, so it follows an out-of-root symlink the walk could
-not see and ignores `testdata`, nested modules and build-tag-excluded files the
-walk counted. Re-analysing an unchanged tree therefore mints a different digest
-than it did before. That makes no stored record say anything false — each still
-identifies the tree it read, under the rule in force when it was written — and
-the values now carry a scheme prefix (`analysed-sha256:`, `scanned-sha256:`; a
-bare `sha256:` is a pre-migration record) so the two can never be compared as
-though they were one. Nothing routes on digest equality, so nothing needed the
-comparison the change breaks.
-
-**What a reader sees change without re-extracting anything:** `callers` on a
-symbol with no edges over a pre-existing record answers `UNRESOLVED` where it
-previously answered `RESOLVED-ABSENT`. That is the correction, not a regression.
-Re-extract the module to get the measured answer back.
-
+**No back-fill:** `''` is the true value for every existing row, because no
+earlier record states where its tree was.
 
 ## Call graph store: module `callgraph`, migration 14
 
-**Additive; one new column, no back-fill, no purge, no schema-version bump and no
-pipeline bump.** `callgraph_records` gains `worktree_scan_digest`: a digest of
-the working tree a run was HANDED, taken by scanning it before the analysis ran.
-The whole store's migration count goes `v77` -> `v78`.
+Adds `callgraph_records.worktree_scan_digest`: a digest of the working tree a run
+was HANDED, taken by scanning it before the analysis ran. Store `v77` -> `v78`.
 
-**Why a second digest.** `worktree_digest` covers the files the loader resolved,
-so it is only knowable once the load has happened. That makes it an exact
-identity of what was analysed and useless as a key for deciding whether to
-analyse at all. This one is a directory walk — every `.go` file under the root
-plus `go.mod` and `go.sum`, following symlinks to source files — so a run can ask
-"is this the tree the record I hold was taken of?" before spending the analysis.
-The two carry different scheme prefixes and nothing compares them: this one is
-`scanned-sha256:` always.
+Additive: no back-fill, no purge, no pipeline bump, no schema-version bump.
 
-**It is taken before the analysis, not after.** A tree edited while an analysis
-is running produces a graph of neither state. A digest of the tree as it was at
-the start then differs from what the next run scans, and that run re-derives;
-stamping the end state would let the next run reuse a graph of a tree that never
-existed.
+It is a second digest because `worktree_digest` covers the files the loader
+resolved and is only knowable after the load — an exact identity of what was
+analysed, and useless for deciding whether to analyse at all. This one is a
+directory walk (every `.go` file under the root plus `go.mod` and `go.sum`), so a
+run can ask "is this the tree my record was taken of?" beforehand. The two carry
+different scheme prefixes and nothing compares them; this one is always
+`scanned-sha256:`.
 
-**No back-fill.** `''` is the true value for every existing row: no record
-written before this stated the tree it was handed, and there is nothing to derive
-it from — the tree that produced a record two months ago is not on this disk in
-that state. An empty digest matches nothing, so every existing generation behaves
-exactly as it did: re-derived rather than reused, and composed by sequence
-position rather than by ladder.
+It is taken **before** the analysis: stamping the end state would let the next run
+reuse a graph of a tree that never existed.
 
-**No purge, and no bump.** `worktree_scan_digest` is `omitempty` on the canonical
-record, so every stored record marshals to the bytes it was sealed over and still
-verifies against its stored hash. It is inside the sealed shape because a later
-run decides whether to re-derive by reading it: a value outside the seal could be
-edited without breaking the record's own integrity check, and the run that
-trusted it would serve a graph of another tree.
-
-**What it changes for a read.** Two generations carrying the same scan digest at
-the same root were handed the same tree, so they are two measurements of one
-thing rather than two observations of a changing one, and the completeness ladder
-orders them. A re-analysis that came back with less than an earlier one measured
-the analysis environment, not the tree. Generations with different digests are
-still a sequence, and the newest still wins — a tree that genuinely changed is a
-new question.
-
-**Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a metadata-only
-operation in SQLite: no row is rewritten, whatever the table holds.
+**No back-fill:** `''` is the true value for every existing row.
 
 ## Call graph store: module `callgraph`, migration 15
 
-**Additive; one new column, a back-fill, no purge, no schema-version bump and no
-pipeline bump.** `callgraph_records` gains `analyser`: the `golang.org/x/tools`
-version that type-checked the module and built the SSA the graph was computed
-over, together with how the store came to state it. The whole store's migration
-count goes `v82` -> `v83`.
+Adds `callgraph_records.analyser`: the `golang.org/x/tools` version that
+type-checked the module and built the SSA, with how the store came to state it.
+Store `v82` -> `v83`.
 
-**Why the library, when the record already names the toolchain.** The toolchain
-compiles the code and supplies the standard library; x/tools is what READS it,
-and it decides what the graph CONTAINS. A version predating a language construct
-degrades extraction two ways. Loudly: type-checking fails, the record says
-`LoadFailed`, and a reader can see it. Silently: the SSA builds anyway and misses
-the construct, so CHA under-reports and a `callers` answer comes back short with
-nothing said. Nothing on a record could tell those two graphs apart. Bumping
-x/tools is a `go.mod` change, so `pipeline_version` does not move for it — which
-means a graph built by a library that understood the code and one built by a
-library that did not were peers on the composition ladder.
+Additive: no purge, no pipeline bump, no schema-version bump. The value sits
+outside the seal, so every stored `content_hash` is unchanged. Nothing ranks,
+caches or reuses on it — it is read, printed and compared, and that is all.
 
-**One column, carrying the provenance with the version.** The stored value is
-`observed:v0.49.0` or `inferred:v0.47.0`, never a bare version. Splitting the two
-into separate columns would let a query, an index or an export read the number
-without the strength behind it, and this is the one axis where that is the whole
-defect: a guess that reads as a measurement, on the field whose purpose is to say
-what the graph could and could not see. An empty column means the row states
-none, which is what a record written by a binary that could not read its own
-build info honestly says.
+The stored value is `observed:v0.49.0` or `inferred:v0.47.0`, never a bare
+version. Empty means the row states none.
 
-**Where the value comes from.** At extraction, from the running binary's own
-build info — `debug.ReadBuildInfo`, the `dep golang.org/x/tools` entry, with a
-`replace` taken over the replaced module because the replacement is what actually
-parsed the code. Never from a `go.mod` read at read time: that describes the
-reader rather than the record. A `go test` binary carries no dependency list at
-all, so records written under the suite state no analyser, which is true of them.
+**Back-fill: every row, and every value it writes is `inferred:`.** No record ever
+captured the analyser, so the pass attributes `extracted_at` against this
+repository's `go.mod` pin history (`v0.47.0` from 2026-07-05, `v0.49.0` from
+2026-08-15). That is weak evidence and is marked as such. Three rules:
 
-**The back-fill infers, and every value it writes says so.** This is walk
-migration 9's shape with walk 9's evidence removed, and the difference is the
-whole of it. Walk 9 decoded each blob to project a value the record ALREADY HELD
-and had merely left unprojected. Here there is no such source: no record ever
-captured the analyser version, anywhere. The back-fill therefore reads
-`extracted_at` — a column, not a blob — and attributes it against the pin history
-of this repository's own `go.mod`:
+- a row whose `extracted_at` cannot be parsed is left empty, not failed;
+- a row extracted before the pin history begins is left empty;
+- a row already stating an analyser is never re-attributed.
 
-| Pin landed | `golang.org/x/tools` | Commit |
-|---|---|---|
-| 2026-07-05 | `v0.47.0` | `3caa505`, the line first appears |
-| 2026-08-15 | `v0.49.0` | `8d5dc4f`, the only change since |
+**Reads that change.** `callgraph-show` names the analyser on every record and on
+every generation under `--history`. Where the generations composed for one
+coordinate state more than one analyser version, the composed read says so. It
+does not change which generation wins.
 
-That is weak evidence and is written as such. It says which library a binary
-built from this repository at that date would have linked, not which one the
-binary that actually wrote the row did — a local build of an older checkout is
-attributed wrongly by it. So every back-filled row is written `inferred:`, and no
-rendering in the tool shows an inferred value the way it shows an observed one.
-Measured on a seeded population of the size the live store holds — 811 rows, 413
-before the pin moved and 398 on or after — 811 rows in, 811 rows out, every
-`content_hash` unchanged.
-
-**Walk 9's two rules, kept.** A row whose `extracted_at` cannot be parsed is left
-at the empty value rather than failing the migration: a store that refuses to
-open because one historical timestamp is unreadable is the worse outcome, and
-"not recorded" is exactly what such a row is. A row extracted before the pin
-history begins is left empty too — there is no version to infer, and inventing
-one is the fabrication this axis exists to stop. A row already stating an
-analyser is never re-attributed: a guess must not overwrite a measurement.
-
-**No index, unlike walk 9.** Walk 9 indexed `go_version` because its reads FILTER
-on the toolchain. Nothing filters on this. The generations of one coordinate are
-already found by the primary key, and the only read is over that handful; an
-index nothing queries is a write cost and a second place to be wrong.
-
-**No purge and no bump, because the record shape does not move.** The fact is
-metadata about the PRODUCER rather than a claim about the module, so it lives
-OUTSIDE the seal: the canonical encoding is untouched, every stored record
-marshals to the bytes it was sealed over, and every `content_hash` in the table
-is left exactly as written. A bump would have stranded 811 records and their edge
-rows to state a fact about which binary wrote them. Being outside the seal is
-also a limit on what it may be used for: a value outside the seal could be edited
-without breaking the record's own integrity check, so nothing ranks, caches or
-reuses on it. It is read, printed and compared, and that is all.
-
-**What it changes for a read.** `callgraph-show` names the analyser on every
-record, beside the algorithm and the toolchain, and `--history` names it on every
-generation. Where the generations composed for one coordinate state more than one
-analyser VERSION, the composed read says so — as a statement, never a refusal. It
-does not change which generation wins: the completeness ladder decides that, and
-a fact about the producer must not become a silent tiebreak. Two rows at one
-version stated at two strengths are not a disagreement, because the same library
-parsed both. A generation that states no analyser takes no part in the
-comparison, on the rule an unnamed `GOROOT` is read under: "I could not tell" is
-not a value to disagree with. A store whose records were all written by one
-binary therefore gains no line anywhere.
-
-**Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a
-metadata-only operation in SQLite. The back-fill is one `SELECT` of two columns
-plus one `UPDATE` per row, with no decompression.
 
 ## Call graph store: module `callgraph`, migration 16
 
-**Additive; one new column, a back-fill, no purge, no schema-version bump and no
-pipeline bump.** `callgraph_records` gains `foreign_modules_built`: the modules
-OTHER than the analysed one whose packages that record built with bodies, each
-with the version resolution gave it. The whole store's migration count goes
-`v83` -> `v84`.
+Adds `callgraph_records.foreign_modules_built` — the modules other than the
+analysed one whose packages that record built with bodies, each with its resolved
+version. Store `v83` -> `v84`.
 
-**What the column is a copy of.** Target selection for the syntax load admits
-every package whose import path lies under the analysed module's path, and Go
-module paths NEST — `cloud.google.com/go` and `cloud.google.com/go/auth` are
-separately published, separately versioned modules — so a record routinely holds
-a second module's code, built with real bodies rather than types alone. That is
-deliberate: building wide and claiming narrowly is what resolves the nested
-module's dispatch instead of losing it. What the record could not previously do
-was SAY so, while claiming `BUILT_WITH_BODIES` uniformly, so within one record
-the fidelity level meant two different things depending on which node a query
-landed on. The record now names them, inside the seal; this column is a
-denormalised copy of that field.
+Additive: no purge, no pipeline bump, no schema-version bump. The field is
+`omitzero` in the canonical encoding, so stored `content_hash` values stay
+verifiable.
 
-**Measured.** `github.com/bytedance/sonic@v1.15.1`: 504 of its external nodes
-belong to `github.com/bytedance/sonic/loader`, and 396 of those (78.6%) carry
-outgoing edges — against 7 of the other 593 external nodes (1.2%), a ratio of
-about 65x. Three other large parents in the same store — `cloud.google.com/go`,
-`github.com/hashicorp/go-msgpack`, `github.com/aws/aws-sdk-go-v2` — hold none at
-all, which is the ordinary case and why the axis prints only when it has
-something to say.
+**Back-fill: every row.** The value is already inside each record, so the pass
+decompresses and unmarshals each blob to copy it out — one decode per row,
+offline, once. A row whose record predates the field back-fills to empty, meaning
+the analysis named no foreign module. **A row that cannot be decoded fails the
+migration rather than being skipped.**
 
-**Why a column, when the field is already in the record.** This table already
-denormalises exactly this class of field: `completeness`, `node_count` and
-`edge_count` are each a column AND a field inside the sealed blob, for one
-reason — a read that QUALIFIES an answer must not have to decompress one. The
-qualification here is on `callers`, `callees` and their transitive forms, which
-are answered out of `callgraph_edges` alone and decode no record at all.
-Composing one to learn a small set that is empty on almost every row in the store
-is the wrong trade, and it was measured — one store, three binaries differing
-only in that read, five runs each:
+**Reads that change.** `callgraph-show` prints a `foreign modules built:` line
+when the set is non-empty, and `--json` carries the same field. `callers`,
+`callees`, their transitive forms and `implementers` qualify their `answer:` line
+when part of the answer comes from those modules' nodes.
 
-| `callers` answer | unqualified | qualified from a composed record | qualified from this column |
-|---|---|---|---|
-| 1 row, `kanonarion@local` (16,005 nodes, 213,828 edges, 80 generations) | 1,574 ms | 2,078 ms | 1,582 ms |
-| 184 rows, `sonic@v1.15.1` across two records | 31 ms | 74 ms | 29 ms |
-
-The test `TestEdgeQuery_CleanModuleNeedsNoRecordForItsNotices` is the codified
-form of that decision, and it asserts zero record reads.
-
-**One read, not one per generation.** The column is taken as the DISTINCT values
-across a coordinate's generations, capped at two, before any generation is
-chosen: where they all state the same set, whichever one composition would serve
-states that set, so the answer is known without deciding which. It is the one-way
-gate `AnyPartial` and `AnyBelowFull` are built on, applied to a column instead of
-a flag. Without it the coordinates that hurt most are the ones that pay — the
-local working tree holds 80 generations, one per ingest, and composing them was
-the whole of the 2,078 ms above. Only a coordinate whose generations were built
-over genuinely DIFFERENT foreign modules asks composition, because only then does
-which generation answers change the set.
-
-**The blob stays authoritative.** The column is derived, and written in the same
-transaction as the blob it copies so the two cannot diverge on any row the write
-leg writes. Nothing reads it to decide what a record IS — composition reads the
-decoded record, as it always has — and no answer's CONTENT comes from it. It is
-read to decide whether an answer needs a sentence saying which record answered.
-
-**The back-fill reads a value the record already holds.** This is call graph
-migration 9's shape rather than migration 15's: the value is inside each blob,
-merely unprojected, so the back-fill decompresses, unmarshals, and copies. One
-decode per row, offline, once — which is what a migration is for. Measured
-population on the maintainer's store: 476 coordinates, 836 generations.
-
-**Every row is visited, including the ones that hold nothing.** The column's
-empty value has exactly one meaning — the empty SET — and it only earns that
-meaning because the pass decided it from the record rather than leaving the
-`DEFAULT` in place unexamined. A row whose record predates the field back-fills
-to empty, and that is the truth about it: the analysis named no foreign module,
-so the set of modules it can name is empty. "Predates the field" remains readable
-where it belongs, on the record's own `schema_version`, which `callgraph-show
---json` publishes. A row that cannot be decoded fails the migration rather than
-being skipped, on migration 10's rule: guessing what an unreadable row holds is
-exactly the judgement a migration must not make on its own.
-
-**No purge and no pipeline bump, because THE SEAL DOES NOT MOVE.** The canonical
-encoding carries `foreign_modules_built` as `omitzero`, so a record that built
-none marshals to exactly the bytes it was sealed over and keeps its stored
-`content_hash` verifiable; the column is derived from bytes the store already
-holds. No stored record is made to say anything FALSE by this — they were silent
-about holding another module's built code, and silence is what is being replaced,
-which is the rule `CallGraphSchemaVersion`'s own doc comment sets. Verified after
-the change across the maintainer's whole store: 836 of 836 stored generations
-still pass content-hash verification, none failing.
-
-**No index.** Nothing filters on it. The column is read for rows already found by
-the coordinate's own primary-key prefix, over the handful of generations it
-holds, and an index nothing queries is a write cost and a second place to be
-wrong — migration 15's reasoning, unchanged.
-
-**What it changes for a read.** `callgraph-show` prints a `foreign modules
-built:` line beside `test scope` and `reference scope`, only when non-empty, the
-way `module membership` prints; `--json` carries `foreign_modules_built` on the
-same terms. `callers`, `callees`, their transitive forms and `implementers`
-qualify their `answer:` line when part of the answer is drawn from those modules'
-nodes, naming the module, its version and the record that held it. An answer
-drawn wholly from the queried module's own nodes prints nothing, and neither does
-one served from a record written before the axis existed — that record makes no
-claim, and the query layer does not invent one from a node's import path.
-
-**Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a
-metadata-only operation in SQLite. The back-fill is one decompress plus one
-unmarshal per row, and an `UPDATE` only for the rows that hold something.
 
 ## Call graph records: the wrapper hop, no migration and no bump
 
-**No store migration, no schema-version bump, no pipeline bump.** The analyser
-now records the outgoing edges of the synthetic wrapper a method value goes
-through, so an invocation path reaches the method that runs rather than stopping
-on the wrapper. Nothing about the record's SHAPE changes: the recovered hop is a
-`CallEdge` like any other, in columns that already exist.
+The analyser now records the outgoing edges of the synthetic wrapper a method
+value goes through, so an invocation path reaches the method that runs rather
+than stopping on the wrapper.
 
-**The counter-argument, because it is real.** An old record does not merely say
-less here — it can say something false. Measured on a fixture: a method invoked
-only through a method value is a node in the graph (it calls other things) with
-ZERO in-edges, in a record whose `ReferenceScope` is `Analysed`. `callers` over
-that record answers `RESOLVED-ABSENT` — a measured "nothing calls this" — for a
-method every request runs. That is exactly the condition
-`CallGraphSchemaVersion`'s rule names.
+**No migration, no purge, no bump.** The recovered hop is a `CallEdge` like any
+other, in columns that already exist.
 
-**Why it still does not earn a bump.** The population that can make that false
-claim is bounded by `ReferenceScope`, and it is small and self-healing. Measured
-read-only against the store: 461 stored call-graph records, all schema v13; 456
-have no `ReferenceScope`, so the answer layer already downgrades an empty
-`callers` answer over them to `UNRESOLVED` naming `reference-scope-unmeasured`
-and they cannot claim an absence at all. The remaining 5 are one module's local
-working-tree generations, which the next `kanonarion local .` supersedes. A bump
-would darken 461 records to correct 5 — the purge-by-another-name the rule exists
-to avoid — and would not even correct them, only hide them.
-
-**What is owed instead, and is not in this change.** The instrument that fits is
-the one migration 12 introduced: an axis the record carries about itself, so the
-silence describes itself and the verdict downgrades over a record written before
-wrapper hops were recorded. Until that lands, the residual is the 5 records
-above, and re-extraction closes it.
-
-**What a reader sees change after re-extracting:** a `$bound` wrapper appears as
-a caller, paths across a method value are one hop longer, and a method reachable
-only through a method value stops answering "no callers".
+**What an old record can get wrong.** A method invoked only through a method
+value is a node with ZERO in-edges in a record whose `ReferenceScope` is
+`Analysed`, so `callers` answers `RESOLVED-ABSENT` — a measured "nothing calls
+this" — for a method every request runs. Re-extract to correct it.
 
 ## Vulnerability records: canonical collection order, no migration and no bump
 
-**No store migration, no schema-version bump, no pipeline bump.** A
-`VulnerabilityRecord` is now put into canonical order at the moment it is
-sealed: the collections whose order carries no meaning — `findings`, and inside
-each finding `affected_symbols`, `aliases`, `references` and
-`reachable.routes` — are sorted before the content hash is taken. The hops
-inside one route are NOT sorted; a route is a call stack and its order is the
-fact it states. `internal/vuln/domain.SealedCollections` carries the
-classification, and a reflection test fails when a slice is added to the sealed
-shape without being classified either way.
+A `VulnerabilityRecord` is put into canonical order at the moment it is sealed:
+the collections whose order carries no meaning — `findings`, and inside each
+finding `affected_symbols`, `aliases`, `references` and `reachable.routes` — are
+sorted before the content hash is taken.
 
-**What it fixes.** Two `vuln-scan --force` runs of one walk against one advisory
-snapshot produced two different records for the same coordinate. Measured on the
-working store over walk `01KZMJBYXA5RJZZYJW2HQ31KE8` (128 modules), 6 of 128
-coordinates differed between the two passes with `content_hash`, `scanned_at`
-and `first_scanned_at` excluded, and every difference was a reordering of the
-same values — `affected_symbols` inside a finding, and the routes that arrive
-beside those symbols. After the change the same loop differs on 0 of 128.
+The hops inside one route are **not** sorted: a route is a call stack and its
+order is the fact it states.
 
-**Where the order is taken, and why that decides the bump.** The seal step, not
-the hash recipe. `VerifyContentHash` recomputes the hash from the record as it
-was read back, so canonicalising inside the recipe would rearrange a stored
-record on the way to checking it: 51 of the 2,006 vulnerability records in the
-working store hold an `affected_symbols` list, and 47 findings hold a route
-list, in an order sorting would change. Those records would have stopped
-verifying and been reported in the wording reserved for altered bytes, which
-would have owed a pipeline bump darkening all 2,006 until re-scan. They are not
-wrong about what they measured — they are arranged differently — so the bump
-would have bought nothing. Taking the order at the seal makes every record
-written from here on reproducible and leaves stored bytes verifiable exactly as
-they are.
+**No migration, no purge, no bump.**
 
-**What a reader sees.** A re-scan of unchanged inputs now yields a record that
-differs from the last one only in `scanned_at` and the `content_hash` that
-covers it. A record written before this change and one written after may list
-the same values in two orders; they are the same measurement, and the older one
-is not superseded by the arrangement alone.
+What it fixes: two `vuln-scan --force` runs of one walk against one snapshot
+produced different records for the same coordinate. Over a 128-module walk, 6 of
+128 differed between passes, every difference a reordering of the same values.
+After the change, 0 of 128.
 
 ## SBOM: pipeline `0.8.0` → `0.9.0`
 
-**Document bytes change; no store migration.** Same mechanism as the bump below:
-SBOM records are cached on `(walk id, scan run id, format, pipeline version)` and
-hashed over the document bytes, so the bump makes stored `0.8.0` documents
-unreachable and a request regenerates. Nothing is purged. Six stored records —
-five at `0.7.0`, one at `0.8.0` — go dark at once.
+**Document bytes change; no store migration.** SBOM records are cached on
+`(walk id, scan run id, format, pipeline version)`, so the bump makes stored
+`0.8.0` documents unreachable and a request regenerates. Nothing is purged. Six
+stored records go dark at once.
 
-Two behaviours forced it.
+Two behaviours forced it:
 
-**Every component's external references were assembled from the module path.**
-Each carried `{vcs: "https://" + path}` and
-`{distribution: "https://proxy.golang.org/" + path + "/@v/" + version + ".zip"}`,
-unconditionally, with no branch for a local coordinate, a replace directive, a
-vendored tree or a private path. Neither was read from anything measured. In the
-one artefact shipped from this tool, all 18 components carried both: the subject
-asserted a proxy download for `@v/local.zip`, a version the proxy does not serve
-for a module it does not hold, and `github.com/oklog/ulid/v2` asserted a
-repository URL whose `/v2` is a module-path element GitHub answers `404` for. A
-component now carries a `vcs` reference only where the fetch ledger holds a
-positively cross-verified record naming the repository, ref and commit, and no
-library component carries a `distribution` reference at all — the ledger records
-the route bytes arrived by and the blob handle they were filed under, never a
-public download address. Components with nothing recorded carry no
-`externalReferences` block.
-
-**A stamped subject was described twice at two versions.** `--main-version` and
-`--main-license` reached `metadata.component` only. The subject's own entry in
-the component list kept the synthetic `local` version and no licence, so one
-document asserted two `purl`s for one module, the `dependencies` array carried
-two entries for it each repeating the whole dependency set, and the
-undetermined-licence count read the copy the stamp never reached — the run
-exited `1` naming the operator's own module while `--main-license` sat on the
-other copy. The stamp now decides the subject once, and both descriptions read
-that decision.
-
-**Stored `0.8.0` and earlier documents carry the constructed references.** The
-bump makes them unreachable through the cache; it does not correct copies
-already shipped. A document already handed to a consumer points at a download
-location that may not exist, and re-issuing it is the only fix for that copy.
+- **External references were assembled from the module path**, unconditionally —
+  a `vcs` URL and a `proxy.golang.org` distribution URL on every component, with
+  no branch for a local coordinate, a replace, a vendored tree or a private path.
+  Neither was read from anything measured. A component now carries a `vcs`
+  reference only where the fetch ledger holds one.
+- The subject asserted a proxy download for `@v/local.zip`, which the proxy does
+  not serve.
 
 ## SBOM: pipeline `0.7.0` → `0.8.0`
 
@@ -1646,171 +776,57 @@ at once.
 
 ## Native component record: new store module `native`, migration 1
 
-**Additive; a new table and a new record type. No existing record shape changes,
-so no pipeline version is bumped anywhere.** The whole store's migration count
-goes `v81` -> `v82`.
+Creates `native_records`, a new table and record type: what a module's artefact
+compiles into a binary as native code — the presence answer, the identified
+components with the declaration that established each, and every native source
+file the build compiles, with size and digest. Store `v81` -> `v82`.
 
-`native_records` holds what a module's own artefact compiles into a binary as
-native code: the presence answer, the identified components with the declaration
-that established each, and every native source file the build compiles, with its
-size and digest. It exists because nothing modelled it. Measured on the
-maintainer's store, `github.com/mattn/go-sqlite3@v1.14.12` carries
-`sqlite3-binding.c` at 8,469,484 bytes, that file declares
-`#define SQLITE_VERSION "3.38.0"`, its licence record says MIT — the Go
-wrapper's licence — and no table named the library at all.
+Additive: no existing record shape changes, so no pipeline version moves
+anywhere, and nothing is purged or back-filled.
 
-It owns a **new module series** rather than joining `license` or `fetch`. The
-subject is different: a licence record describes a grant, a fetch record
-describes custody of an artefact, and this describes a distinct piece of software
-that ships inside one. A separate series also keeps the version numbers
-independent, so adding a recipe never forces a migration in a context that has
-nothing to do with it.
+It owns a **new module series** rather than joining `license` or `fetch`, so
+adding a recipe never forces a migration in an unrelated context.
 
 The **artefact identity is a key column**, alongside the coordinate and the
-pipeline fingerprint. A native-component record is a claim about specific bytes,
-and two records naming different artefacts for one pinned version is a
-contradiction the store must be able to see; keying on the coordinate alone would
-have the second measurement silently replace the first. `GetNativeRecord` refuses
-to pick between two such rows rather than serving one and hiding the other.
-
-The generation key is a **pipeline fingerprint**, not the bare pipeline version:
-the detection logic version folded with the recipe catalogue version
-(`0.1.0+recipes.1` at the time the table was created). Adding a recipe must re-measure a module recorded as
-`present_unidentified` rather than serve the answer taken before the recipe
-existed — that transition is the whole point of recording the unidentified case.
-The two versions are separate because they change for different reasons, which is
-the same split `fips` makes between its pipeline and its catalogue.
-
-**Presence is three-valued**, and the third value is why the record exists:
-
-| `presence` | meaning |
-|---|---|
-| `absent` | the artefact carries no native source the build compiles |
-| `present_identified` | native source is compiled in and a recipe named the library |
-| `present_unidentified` | native source is compiled in and no recipe names it |
-
-`present_unidentified` is a coverage gap a reader can act on, not an absence, and
-it is spelled differently from `absent` so no consumer can collapse the two. The
-record carries the full file list in both present cases, so what is unaccounted
-for is legible without re-reading the artefact.
-
-(A fourth value and a fourth collection arrive at pipeline version 0.2.0; see
-the next entry.)
-
-Migration for existing stores: **none required.** The table is created empty and
-fills as modules are examined. A coordinate with no row reads as *not examined*,
-never as *no native component*.
+pipeline fingerprint: a native record is a claim about specific bytes, and two
+records naming different artefacts for one pinned version is a contradiction the
+store must be able to see.
 
 ## Native record shape change: pipeline version 0.1.0 -> 0.2.0, no migration
 
-**A record shape change with NO migration and NO DDL. The whole store's
-migration count is unchanged.** This entry exists precisely because a shape
-changed without a migration running, and a shape change that leaves no trace in
-this file is one nobody can account for later.
-
 `native` records gain a `linked_libraries` collection and a fourth `presence`
-value, `linked_not_shipped`.
+value, `linked_not_shipped`. **No migration and no DDL** — the store's migration
+count is unchanged. This entry exists because a shape changed without a migration
+running.
 
-**Why no DDL.** `presence` is an unconstrained `TEXT` column with no CHECK and no
-enum, so a new value needs no schema change. The collection lives inside the
-serialised record blob, which is opaque to SQLite. The table created by
-`native` migration 1 holds the new shape unaltered.
+No DDL is needed: `presence` is an unconstrained `TEXT` column, and the
+collection lives inside the serialised blob.
 
-**Why the pipeline version moves anyway.** The measurement changed: a
-re-measurement of an unchanged artefact now produces a different record. The
-generation key is the pipeline fingerprint, which folds the pipeline version in,
-so rows written at `0.1.0+recipes.1` are simply never read at
-`0.2.0+recipes.1`. They are not migrated, not rewritten and not deleted - they
-stay as the historical record of what was measured then, and no read can mistake
-one for a measurement taken now. Measured on the maintainer's store before the
-change: 7 rows at `0.1.0+recipes.1`, 0 at `0.2.0+recipes.1`.
+**The pipeline version moves anyway**, because re-measuring an unchanged artefact
+now produces a different record. Rows at `0.1.0+recipes.1` are simply never read
+at `0.2.0+recipes.1` — not migrated, rewritten or deleted. They stay as the
+record of what was measured then.
 
-**What the value fixes.** A module that declares cgo, compiles no native source
-of its own, and links an external native library used to answer `absent` - the
-word reserved for nothing being there. `golang.org/x/text` names `-licui18n`;
-`github.com/googleapis/enterprise-certificate-proxy` names `-framework
-CoreFoundation`; `github.com/yfedoseev/pdf_oxide/go` names a
-`libpdf_oxide.a` operand. In every case something native reaches the binary and
-the artefact does not carry it. Not measuring a host-provided library stays
-correct - `-licui18n` cannot be resolved from an artefact and no version may be
-invented for it - but scoping the measurement out is not the same as calling it
-absent.
-
-`linked_not_shipped` deliberately does **not** take the `present_` prefix: it is
-not a statement about what the artefact contains.
-
-**What earns it.** No compiled sources AND at least one linked library of kind
-`external`. The C runtime a cgo binary links by construction - `m`, `c`, `dl`,
-`pthread`, `rt`, `util`, `resolv`, `nsl`, `crypt`, `anl`, `stdc++`, `gcc`,
-`gcc_s`, `objc`, `System` - is `system` and never earns it; flagging libc and
-libdl would make the value meaningless. Everything else is `external`,
-frameworks included, because a framework names a component from outside the
-module a reader may want to see. Measured over the maintainer's store (1229
-artefacts), 20 answers move from `absent` to `linked_not_shipped`; over the
-module cache (1201 zips), 24 move, and 2 modules that name only the C runtime
-stay `absent`. No `present_identified` or `present_unidentified` answer moves.
-
-`linked_libraries` is populated **regardless of presence**, so a module that
-ships its own sources and also links something else states both. Each entry
-carries the library name as the directive spells it, the kind, the verbatim
-`#cgo` line and the file it sits in. It joins the content hash in canonical
-sorted order, under a comparator keyed on all four fields.
-
-Migration for existing stores: **none required, and none is run.**
+What it fixes: a module that declares cgo, compiles no native source of its own
+and links an external native library used to answer `absent`.
 
 ## Native pkg-config operand: pipeline version 0.2.0 -> 0.3.0, no migration
 
-**A measurement change with NO shape change, NO DDL and NO migration. The whole
-store's migration count is unchanged.** The record shape, the field set and the
-content-hash formula are all exactly as 0.2.0 left them.
+`#cgo pkg-config:` is now read as a fourth operand form alongside `-l<name>`,
+`-framework <name>` and `.a` archive paths. **No shape change, no DDL, no
+migration** — the record shape, field set and content-hash formula are as `0.2.0`
+left them.
 
-`#cgo pkg-config:` is read as a fourth operand form alongside `-l<name>`,
-`-framework <name>` and `.a` archive paths. It was missing, and its absence was
-the same defect the 0.2.0 entry describes: `github.com/terminalstatic/go-xsd-validate@v0.1.6`
-carries `#cgo pkg-config: libxml-2.0`, links libxml2, ships none of it, and
-answered `absent`.
+**The pipeline version moves because the measurement changed.** Without the bump
+an affected row is served as a cache hit and keeps its old answer forever:
 
-**Why the pipeline version moves with no shape change.** The version's contract
-is a re-measurement one, not a shape one: it moves when re-measuring an
-unchanged artefact would differ from a stored record. It would. Measured on the
-maintainer's store, which already held rows at `0.2.0+recipes.1` from a
-verification run:
-
-| coordinate | row held at 0.2.0 | re-measurement |
+| coordinate | held at 0.2.0 | re-measurement |
 |---|---|---|
 | `github.com/terminalstatic/go-xsd-validate@v0.1.6` | `absent` | `linked_not_shipped`, naming `libxml-2.0` |
-| `go.mongodb.org/mongo-driver/v2@v2.6.0` | `present_unidentified`, no `libmongocrypt` | `present_unidentified`, with `libmongocrypt` |
+| `go.mongodb.org/mongo-driver/v2@v2.6.0` | `present_unidentified` | `present_unidentified`, with `libmongocrypt` |
 
-Without the bump the first row is served as a cache hit and the module keeps
-answering `absent` forever - the defect surviving its own fix. As before the
-rows are not migrated, rewritten or deleted; the fingerprint moves and they stop
+Rows are not migrated, rewritten or deleted; the fingerprint moves and they stop
 being read.
-
-**pkg-config names are a separate namespace and are recorded verbatim.**
-`libxml-2.0` is stored as `libxml-2.0`: the `lib` prefix is not stripped and it
-is not translated to the `xml2` a linker would call it, because that translation
-lives in a `.pc` file on the building machine and not in the artefact. The kind
-is always `external` - pkg-config is never how the C runtime is linked, so
-classifying these against the runtime list would only create a way for a real
-dependency to be dismissed as one. **No field was added.** The verbatim
-directive already distinguishes the two namespaces, so the hash shape is
-unchanged; `go.mongodb.org/mongo-driver/v2@v2.6.0` names `libmongocrypt` by
-pkg-config and `mongocrypt` by `-lmongocrypt`, and they stay two entries.
-
-Only the cgo preamble - the comment attached to `import "C"` - is read, so a
-`#cgo pkg-config:` line quoted in documentation or held in a Go string literal
-is not read as a directive. Measured on `golang.org/toolchain`: 13 Go files
-mention `pkg-config`, including `src/cmd/cgo/doc.go` documenting the directive by
-example; 0 reach a preamble and 0 produce an entry.
-
-Effect, measured: over the maintainer's store (1229 artefacts) `linked_not_shipped`
-goes 20 -> 22 and `absent` 1192 -> 1190, the two moves being
-`go-xsd-validate@v0.1.6` and `github.com/moby/moby/v2@v2.0.0-beta.21` (which
-links `libnftables` and `libsystemd` and ships neither); four further modules
-gain a pkg-config entry without changing presence. Over the module cache (1201
-zips) `linked_not_shipped` goes 24 -> 25. No `present_identified` answer moves.
-
-Migration for existing stores: **none required, and none is run.**
 
 ## Purging a table other rows point at
 
@@ -1818,104 +834,49 @@ A migration that deletes rows must state what happens to the rows that reference
 them. The reference is by convention, not by foreign key, so nothing in SQLite
 stops a purge leaving a dangling one.
 
-The case that already happened: `walk` migration 5 purged `walks` on a record
-shape change, and `walk_scan_runs` rows kept naming the deleted walks. Their
-findings survived while the statement of *what was scanned* did not, and nothing
-in the run row said so - the `walk_id` looked like a valid reference. (Measured
-on the real store: 16 of 127 runs, all written between the last `vuln`
-migration-8 purge and the `walk` migration-5 purge.)
+It has already happened: `walk` migration 5 purged `walks` and `walk_scan_runs`
+rows kept naming the deleted walks — 16 of 127 runs. Their findings survived
+while the statement of what was scanned did not.
 
-A migration that purges `walks` therefore chooses one, in the migration comment:
+A migration that purges `walks` chooses one, in the migration comment:
 
-- **Purge together** - delete the dependent `walk_scan_runs` and
-  `walk_scan_run_modules` rows in the same migration. Correct when the dependents
-  are regenerable and worth nothing on their own.
-- **Orphan with the reason recorded** - keep the dependents and say in the
-  migration comment that they are being stranded and why. Correct when the
-  dependents are evidence in their own right, as findings are.
+- **Purge together** — delete the dependent `walk_scan_runs` and
+  `walk_scan_run_modules` rows. Correct when the dependents are regenerable.
+- **Orphan with the reason recorded** — keep them and say why they are stranded.
+  Correct when the dependents are evidence in their own right, as findings are.
 
-Either way the read side does not depend on the choice: every surface that serves
-a scan run derives whether its walk is still present and states
-`inputs unresolvable` when it is not, so a run stranded by any future purge is
-reported rather than rendered as ordinary. Nothing is stamped on the rows, so
-there is no back-fill and no shape change.
+The read side does not depend on the choice: every surface serving a scan run
+derives whether its walk is still present and states `inputs unresolvable` when
+it is not.
 
-The same rule reaches reuse. `walks.identity_hash` (migration 7) is the key scan
-reuse looks a walk up by; rows written before that column carry the empty identity
-and are never reuse candidates, so **no back-fill is owed** - but a purge of
-`walks` destroys reusability the store has already paid for, which is part of what
-the migration comment must weigh.
+Note that a purge of `walks` also destroys reuse the store has already paid for,
+since `walks.identity_hash` is the key scan reuse looks a walk up by.
 
 ## Audit log (`audit.jsonl`)
 
-Append-only JSONL; **no schema migration** is ever required to add an event
-type. Every line carries an `event_type` discriminator. The
-fact-record line keeps its historical flat layout with `event_type:
-"fact_record_written"` added additively; all other events use the generic
-`{event_type, timestamp, payload}` envelope. Recognised event types are the
-closed set in `internal/audit`.
+Append-only JSONL; **no schema migration is ever required to add an event type.**
+Every line carries an `event_type` discriminator. The fact-record line keeps its
+historical flat layout with `event_type: "fact_record_written"` added
+additively; all other events use the generic `{event_type, timestamp, payload}`
+envelope. Recognised event types are the closed set in `internal/audit`.
 
-The event types added since `callgraph_extracted` (one per persisted call-graph
-generation, on both the fetched-artefact and working-tree routes), in the order
-they landed. None needed a migration, as above:
+Event types added since `callgraph_extracted`, none needing a migration:
 
 | Event type | One per |
 |---|---|
 | `interface_extracted` | persisted interface generation |
 | `examples_extracted` | persisted examples generation |
-| `extraction_run_completed` | extraction run over a walk, on every outcome including a cancelled one |
-| `stdlib_custody_recorded` | persisted standard-library custody measurement, on both acquisition routes |
+| `extraction_run_completed` | extraction run over a walk, on every outcome |
+| `stdlib_custody_recorded` | persisted standard-library custody measurement |
 | `sbom_generated` | persisted SBOM record |
 | `sbom_served` | stored SBOM document handed back from the cache |
-| `advisory_snapshot_recorded` | persisted advisory database snapshot, by whichever route acquired it |
-| `vuln_scan_served` | stored walk scan run handed back instead of measured, naming the run, the walk it answered for and the surface that asked |
+| `advisory_snapshot_recorded` | persisted advisory database snapshot |
+| `vuln_scan_served` | stored walk scan run handed back instead of measured |
 
-The rule this table exists to serve: **this file and the event-vocabulary docs
-are updated in the same commit as the change they describe.** It went stale by
-four event types before this one, and a reader checking whether a write is
-witnessed cannot tell an omission from an absence.
+Each is emitted only where the write happened, so a cache hit appends nothing.
+`sbom_served` and `vuln_scan_served` are the deliberate exceptions: they witness
+an asking rather than a write.
 
-Each of these is emitted only where the write happened, so a cache hit or a
-reused snapshot appends nothing. There are two deliberate exceptions, and they
-share one reason: `sbom_served` and `vuln_scan_served` witness an ASKING rather
-than a write, because a document handed to a caller and a stored scan run served
-without re-measuring are both observations in their own right. Without them, an
-unchanged store answers from existing rows indefinitely and the ledger's
-timestamps track only when evidence was DERIVED — so "when did we first learn X"
-stays answerable while "when did we last check X" becomes unrecoverable. Every
-other event is a write, which is why a stable line count in `audit.jsonl` is
-evidence about **writes**, not about runs.
-
-### What the log does NOT witness
-
-Several record kinds are persisted and append no event. `kanonarion store ledger`
-states this on every reading, because silence in an append-only stream otherwise
-reads as proof that nothing happened:
-
-| Not witnessed | Note |
-|---|---|
-| individual vulnerability record generations | `vuln_scan_completed` **counts** them and `vuln_finding_observed` names each finding, but no event names a per-module answer; a Clean generation is only an increment, and a single-module scan names no generation either — it appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query |
-| attestations | additive provenance recorded beside a fact record, not mirrored into the log |
-| latest-version (staleness) ledger entries | the staleness context has no audit sink wired at all |
-| blob content writes | `fact_record_written` names the blob identity; the write of the bytes appends nothing |
-| directive / GODEBUG / FIPS scans that found nothing | those events are emitted per finding, so a clean scan writes a record and appends no event |
-
-This table is covered by the same rule as the one above: it is updated in the
-same commit as any change to what emits.
-
-### Reading the log
-
-`audit.jsonl` is read by `kanonarion store ledger` (see
-[`docs/cli/store.md`](../cli/store.md)). Two properties of the on-disk artefact
-that the reader is built for, and that any other consumer must also handle:
-
-- **Torn lines exist.** The reference store carries three (lines 4601, 4618,
-  4636 of 33,012), all `license_extracted` events written inside one 8-second
-  window by the pre-refactor writer, each showing a second event's JSON spliced
-  mid-line. The current writer (`sync.Mutex` + `O_APPEND` per append) is safe
-  within a process; the mutex does not cross processes. A strict line-by-line
-  parse **aborts** at the first of them, so a reader must tolerate and COUNT them
-  rather than abort or skip silently, and must state that the event count for the
-  affected window is a lower bound.
-- **File order is not guaranteed to be time order**, though in practice it is.
-  The reader sorts by timestamp.
+**This file and the event-vocabulary docs are updated in the same commit as the
+change they describe.** A reader checking whether a write is witnessed cannot
+tell an omission from an absence.

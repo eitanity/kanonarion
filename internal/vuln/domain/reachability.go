@@ -455,3 +455,26 @@ func soundnessFromDerivation(d ReachabilityDerivation) (soundness ReachabilitySo
 		return SoundnessUnconfirmed, "the answer does not name the analyser that produced it, so the search behind it cannot be weighed"
 	}
 }
+
+// WithdrawSymbolLevelClaim empties the symbol list and withdraws the reachability
+// verdict on a finding whose advisory names no symbol for this module path: there
+// was no target, so a confident negative would assert a search that never ran. The
+// routes stay — a call frame says which dependency pulls the package in.
+//
+// It is one function because the flag and the verdict beside it are set on
+// different routes, so no single producer can hold the invariant.
+func WithdrawSymbolLevelClaim(f *VulnerabilityFinding) {
+	if f == nil || !f.AdvisoryNamesNoSymbols {
+		return
+	}
+	f.AffectedSymbols = nil
+	if f.Reachable == nil {
+		return
+	}
+	// Copied, never written through: callers hold shallow clones of the finding,
+	// so mutating the pointee would rewrite a result they still own.
+	r := *f.Reachable
+	r.IsReachable = false
+	r.Confidence = ConfidenceUnknown
+	f.Reachable = &r
+}

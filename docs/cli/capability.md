@@ -11,15 +11,17 @@ kanonarion capability <module>@<version> --against <module>@<version> [flags]
 
 `capability` reports which sensitive capabilities a module's reachable code can
 exercise (NETWORK, FILES, EXEC, UNSAFE_POINTER, …), derived from the module's
-stored call graph. The taxonomy mirrors capslock (`github.com/google/capslock`)
-so reports are directly comparable.
+stored call graph.
 
-Roots are the module's exported API plus its package `init` functions (init runs
-unconditionally at package load, so init-reachable code is reachable in any real
-execution). When nothing qualifies, roots fall back to every node the module
-owns. From those roots a widest-path search finds, for each reachable
-sink, the witnessing path with the strongest minimum edge confidence. Each
-capability is reported once, with its example path and that path's weakest edge.
+Roots are the module's exported API, its package `init` functions (init runs
+unconditionally at package load), **and its test functions**. When nothing
+qualifies, roots fall back to every node the module owns. A capability whose only
+witnessing path starts at a `Test…` root is reached by the module's test suite
+and not by code a consumer compiles — read the path, not just the label.
+
+From those roots a widest-path search finds, for each reachable sink, the
+witnessing path with the strongest minimum edge confidence. Each capability is
+reported once, with its example path and that path's weakest edge.
 
 The call graph must exist first: run `kanonarion callgraph <module>@<version>`.
 
@@ -82,14 +84,20 @@ capability set is a lower bound, never presented as clean.
 ## Report
 
 ```
-$ kanonarion capability example.com/mod@v1.4.0
-example.com/mod@v1.4.0 capabilities:
-  ARBITRARY_EXECUTION  [Direct]  via time.Sleep
-    path: …/pkg/engine.(*Batch).AddInstance → …tryLock → time.Sleep
-  UNSAFE_POINTER       [Direct]  via google.golang.org/protobuf/internal/impl.LoadMessageInfo
-    path: …/pkg/proto.(*Request).ProtoReflect → …impl.LoadMessageInfo
+$ kanonarion capability github.com/spf13/cobra@v1.8.1
+github.com/spf13/cobra@v1.8.1 capabilities:
+  ARBITRARY_EXECUTION  [Unknown]  via crypto/fips140.setBypass
+    path: …(*Command).ExecuteC → …(*Command).execute → …(*Command).postRun → crypto/fips140.setBypass
+  EXEC                 [Direct]  via os/exec.Run
+    path: github.com/spf13/cobra.TestBashCompletions → os/exec.(*Cmd).Run
+  FILES                [Direct]  via io/ioutil.TempDir
+    path: github.com/spf13/cobra/doc.TestGenYamlTree → io/ioutil.TempDir
   …
 ```
+
+Two things to read off that report. `ARBITRARY_EXECUTION` is `[Unknown]`, so it
+rests on an unresolved edge rather than a call anyone can point at. `EXEC` and
+`FILES` are `[Direct]` but both witnesses are test functions.
 
 JSON (`--json`) emits `module`, `version`, `partial`, `caveat`, `capabilities`
 (the sorted set) and `findings` (each with `capability`, `weakest_confidence`,
@@ -98,22 +106,21 @@ JSON (`--json`) emits `module`, `version`, `partial`, `caveat`, `capabilities`
 ## Diff
 
 `--against` compares two versions' capability sets to answer whether an update
-expanded them:
+expanded them. Where a capability was added the line reads `+ NETWORK`. When
+neither set moved, it names the set held in common — a different finding from
+neither version witnessing anything:
 
 ```
-$ kanonarion capability github.com/spf13/cobra@v1.8.0 --against github.com/spf13/cobra@v1.8.1
-capability diff github.com/spf13/cobra@v1.8.0 → github.com/spf13/cobra@v1.8.1:
-  + NETWORK
+$ kanonarion capability github.com/spf13/cobra@v1.4.0 --against github.com/spf13/cobra@v1.8.1
+capability diff github.com/spf13/cobra@v1.4.0 → github.com/spf13/cobra@v1.8.1:
+  no capability change: both versions witness the same 12 capabilities (ARBITRARY_EXECUTION,
+  CGO, EXEC, FILES, MODIFY_SYSTEM_STATE, NETWORK, OPERATING_SYSTEM, READ_SYSTEM_STATE,
+  REFLECT, RUNTIME, SYSTEM_CALLS, UNSAFE_POINTER)
 ```
 
-When neither set moved, the line names the set held in common — or says neither
-version witnesses any capability, which is a different finding from two
-identical non-empty sets:
-
-```
-capability diff github.com/spf13/cobra@v1.8.0 → github.com/spf13/cobra@v1.8.1:
-  no capability change: both versions witness the same 2 capabilities (EXEC, NETWORK)
-```
+**The set is coarse.** A module that reaches the whole taxonomy holds it at both
+versions, so the diff has nothing to report even where the code changed a great
+deal. Read it as a coarse gate, not as a review.
 
 The diff is only valid when neither side is `Partial`; otherwise it is flagged
 with a caveat and the added/removed sets are provisional. JSON output adds
@@ -123,6 +130,16 @@ with a caveat and the added/removed sets are provisional. JSON output adds
 
 - **Requires:** `kanonarion callgraph <module>@<version>` - the stored call
   graph the analysis reads.
+
+## If you also run capslock
+
+The taxonomy is modelled on capslock (`github.com/google/capslock`) but the two
+are not directly comparable without normalising: `CGO` is kanonarion's alone,
+capslock reports an `UNANALYZED` marker in the same list as capabilities, and it
+qualifies some names (`MODIFY_SYSTEM_STATE/ENV`). More importantly capslock
+analyses the module **and its dependencies' bodies** as one program, so it sees a
+capability reached only by passing through a dependency — where this command
+analyses one module with its dependencies at type level and stops at that edge.
 
 ## See also
 

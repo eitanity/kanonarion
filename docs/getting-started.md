@@ -102,7 +102,7 @@ github.com/spf13/cobra@v1.8.1
   Vulnerabilities: Clean
   Walk basis:      01KZWK6GHN7CK9Y54YTHMTNRKJ (frame target-rooted:github.com/spf13/cobra@v1.8.1)
   Run context:     this record was measured in a walk outside the 10 most recent walks this report loaded, so there is no run context to show
-  Snapshot:        2026-08-21T20:38:00Z (pipeline v24)
+  Snapshot:        2026-08-28T14:47:45Z (pipeline v25)
 
 Context size: ~6062 tokens (24248 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 ```

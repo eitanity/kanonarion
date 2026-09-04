@@ -589,7 +589,7 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 				Fidelity: string(mode),
 			},
 		}
-		demotePackageLevelReachability(f)
+		domain.WithdrawSymbolLevelClaim(f)
 	}
 	s.logMem(ctx, "parse_enriched")
 
@@ -778,24 +778,12 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader, mode do
 				m = &findingMeta{}
 			}
 			mf.findings[i].Reachable.Confidence = findingConfidence(m)
-			demotePackageLevelReachability(&mf.findings[i])
+			domain.WithdrawSymbolLevelClaim(&mf.findings[i])
 		}
 		domain.SortFindings(mf.findings)
 		out[coord] = mf.findings
 	}
 	return out, nil
-}
-
-// demotePackageLevelReachability withdraws the symbol-level claim — the bit and
-// the confidence — from a finding whose advisory names no symbol for this path:
-// there was no target, so nothing was reached. The routes stay: a real call frame
-// answers which dependency pulls the package in, not whether its code runs.
-func demotePackageLevelReachability(f *domain.VulnerabilityFinding) {
-	if !f.AdvisoryNamesNoSymbols || f.Reachable == nil {
-		return
-	}
-	f.Reachable.IsReachable = false
-	f.Reachable.Confidence = domain.ConfidenceUnknown
 }
 
 // applyOSV copies the advisory-level facts of entry onto f. Both parse paths call
