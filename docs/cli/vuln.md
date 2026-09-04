@@ -916,9 +916,23 @@ records and findings sit in it:
 
 ```
 $ kanonarion vuln-show golang.org/x/crypto@v0.31.0
-error: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v25 and the store holds this coordinate at pipeline v24 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it:
-  kanonarion vuln-scan --module golang.org/x/crypto@v0.31.0 --reachability
+error: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v25 and the store holds this coordinate at pipeline v24 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it — the walk that measured it most recently, of the 3 that hold it:
+  kanonarion vuln-scan 01M0VG1267S1XDJGDFZTVRPM84 --reachability
 ```
+
+The command named is the one that resolves for the records held. `vuln-scan
+--module` looks up a walk **rooted at** the coordinate, which a module measured
+as somebody else's dependency has none of, so the remedy names that walk by id
+instead — and says how many other walks hold the coordinate, when more than one
+does. Where a walk **is** rooted at the coordinate the remedy keeps the
+`--module` form:
+
+```
+  kanonarion vuln-scan --module github.com/spf13/cobra@v1.8.1 --reachability
+```
+
+Where no walk is rooted at the coordinate and its records name none either, the
+refusal names no command at all rather than one that cannot resolve.
 
 This is a different statement from `no vulnerability record for <coord> — run:
 kanonarion vuln-scan <walk-id>`, which means the store holds the coordinate at
@@ -1135,8 +1149,10 @@ github.com/gin-gonic/gin@v1.6.2 - 3 scan record(s)
 
 notice: 2 of 3 record(s) were produced by superseded scan logic (this build reads pipeline v25).
         They are the history this coordinate has, and they are not what a current scan would
-        answer — the point-in-time reads serve none of them. Re-scan to add a current record:
-          kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2 --reachability
+        answer — the point-in-time reads serve none of them.
+        Re-scan to add a current record — the walk that measured it most recently, of the 3 that
+        hold it:
+          kanonarion vuln-scan 01KQDBVW092ER1HNXZ60X27CMD --reachability
 ```
 
 The last row above shows the module was clean on 2024-01-01 because

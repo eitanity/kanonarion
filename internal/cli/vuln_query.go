@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -104,7 +105,7 @@ func runVulnShow(
 	}
 
 	if history {
-		return runVulnShowHistory(ctx, coord, jsonOut, uc, graphs, stdout)
+		return runVulnShowHistory(ctx, coord, jsonOut, uc, walks, graphs, stdout)
 	}
 
 	anchor, anchored, err := resolveVulnFrameAnchor(ctx, walks, walkID, gomod, gomodSet)
@@ -141,7 +142,7 @@ func runVulnShow(
 			// be a coordinate this build has superseded rather than one nobody has
 			// scanned. Asked before the miss is reported, because the two absences
 			// carry opposite instructions.
-			if err := supersededVulnRefusal(ctx, uc, coord); err != nil {
+			if err := supersededVulnRefusal(ctx, uc, walks, coord); err != nil {
 				return err
 			}
 			// No walk was named, so there is no "newer than what you passed" to
@@ -457,7 +458,7 @@ func walkAge(t time.Time) string {
 // The rows a superseded generation wrote are marked, in vuln-by-id's words: they
 // reach a reader here and nowhere else, and an unmarked one would be quoted as
 // the current answer.
-func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
+func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
 	recs, err := uc.ListRecordsForModuleAllGenerations(ctx, coord)
 	if err != nil {
 		return fmt.Errorf("listing vulnerability history: %w", err)
@@ -502,7 +503,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 			findingSummary,
 		)
 	}
-	if note := supersededHistoryNote(recs); note != "" {
+	if note := supersededHistoryNote(recs, supersededHistoryRemedy(ctx, walks, recs)); note != "" {
 		_, _ = fmt.Fprint(stdout, note)
 	}
 	return nil
@@ -537,27 +538,51 @@ func supersededVulnRowCount(records []vuldomain.VulnerabilityRecord) int {
 // history, so most of them are not "the newest evidence the store holds" and
 // saying so would be false. What both notes must carry is the same: how many
 // rows, out of how many, and which pipeline this build reads.
-func supersededHistoryNote(records []vuldomain.VulnerabilityRecord) string {
+func supersededHistoryNote(records []vuldomain.VulnerabilityRecord, remedy reachabilityRemedy) string {
 	n := supersededVulnRowCount(records)
 	if n == 0 {
 		return ""
 	}
-	return fmt.Sprintf(
+	note := fmt.Sprintf(
 		"\nnotice: %d of %d record(s) were produced by superseded scan logic (this build reads pipeline %s).\n"+
 			"        They are the history this coordinate has, and they are not what a current scan would\n"+
-			"        answer — the point-in-time reads serve none of them. Re-scan to add a current record:\n"+
-			"          kanonarion vuln-scan --module %s --reachability\n",
-		n, len(records), vulnPipelineVersion, coordOf(records))
+			"        answer — the point-in-time reads serve none of them.\n",
+		n, len(records), vulnPipelineVersion)
+	if tail := supersededNoteRemedy(remedy); tail != "" {
+		note += tail + "\n"
+	}
+	return note
 }
 
-// coordOf names the coordinate a single-coordinate listing is about, taken from
-// the rows themselves so the remedy line cannot name a different module from the
-// one the rows describe.
-func coordOf(records []vuldomain.VulnerabilityRecord) string {
+// supersededHistoryRemedyLead introduces the re-scan under a history listing.
+const supersededHistoryRemedyLead = "Re-scan to add a current record"
+
+// supersededHistoryRemedy is the re-scan a history listing names, built from the
+// rows themselves so it cannot name a module or a walk the listing does not show.
+func supersededHistoryRemedy(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	records []vuldomain.VulnerabilityRecord,
+) reachabilityRemedy {
 	if len(records) == 0 {
-		return ""
+		return reachabilityRemedy{}
 	}
-	return records[0].Coordinate.String()
+	coord := records[0].Coordinate
+	return remedyRescanSuperseded(supersededHistoryRemedyLead, coord,
+		walkRootedAt(ctx, walks, coord), historyWalks(records))
+}
+
+// historyWalks is the walks a history listing's rows name, newest row first and
+// without repeats. The rows arrive ordered by scanned_at descending, which is
+// the same rank the coordinate refusal uses.
+func historyWalks(records []vuldomain.VulnerabilityRecord) []string {
+	var out []string
+	for _, rec := range records {
+		if rec.WalkID != "" && !slices.Contains(out, rec.WalkID) {
+			out = append(out, rec.WalkID)
+		}
+	}
+	return out
 }
 
 func newVulnByIDCmd(stdout, stderr io.Writer) *cobra.Command {

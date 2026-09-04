@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -350,6 +352,7 @@ func (f *fakeVulnStore) ListVulnerabilityRecordGenerationsForModule(_ context.Co
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	byPipeline := make(map[string]*ports.VulnerabilityRecordGeneration)
+	walkSeen := make(map[string]map[string]time.Time)
 	for _, gens := range f.records {
 		for _, rec := range gens {
 			if rec.Coordinate != coord {
@@ -362,10 +365,30 @@ func (f *fakeVulnStore) ListVulnerabilityRecordGenerationsForModule(_ context.Co
 			}
 			g.Records++
 			g.Findings += len(rec.Findings)
+			// The walk and the recency come off the records too, for the same
+			// reason the counts do: a census that named a walk the reads cannot
+			// show would let a refusal print a command about nothing.
+			if rec.ScannedAt.After(g.LastScannedAt) {
+				g.LastScannedAt = rec.ScannedAt
+			}
+			if rec.WalkID != "" && rec.ScannedAt.After(walkSeen[rec.PipelineVersion][rec.WalkID]) {
+				if walkSeen[rec.PipelineVersion] == nil {
+					walkSeen[rec.PipelineVersion] = make(map[string]time.Time)
+				}
+				walkSeen[rec.PipelineVersion][rec.WalkID] = rec.ScannedAt
+			}
 		}
 	}
 	out := make([]ports.VulnerabilityRecordGeneration, 0, len(byPipeline))
 	for _, g := range byPipeline {
+		// Newest first, and the id breaks a tie: the fake holds its records in a
+		// map, so an order taken from iteration would differ per run.
+		g.Walks = slices.SortedFunc(maps.Keys(walkSeen[g.PipelineVersion]), func(a, b string) int {
+			if c := walkSeen[g.PipelineVersion][b].Compare(walkSeen[g.PipelineVersion][a]); c != 0 {
+				return c
+			}
+			return strings.Compare(a, b)
+		})
 		out = append(out, *g)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PipelineVersion < out[j].PipelineVersion })

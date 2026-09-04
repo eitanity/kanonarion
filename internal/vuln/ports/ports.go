@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -434,6 +435,18 @@ type VulnerabilityRecordGeneration struct {
 	PipelineVersion string
 	Records         int
 	Findings        int
+	// Walks names the walks whose scans wrote these records, the walk that
+	// wrote the newest of them first. A refusal that must name a re-scan needs
+	// it: vuln-scan takes a walk id, and its --module form resolves only a walk
+	// ROOTED at the coordinate, which a module measured in a consumer's build
+	// has none of.
+	Walks []string
+	// LastScannedAt is the newest scanned_at among these records, and it is what
+	// ranks one generation against another: pipeline version strings do not
+	// order, and this census is returned in their order for display. Zero when
+	// the stored instant cannot be read, which ranks it last rather than
+	// failing a diagnostic.
+	LastScannedAt time.Time
 }
 
 // ScanRequest carries the inputs for one isolated per-module scan.

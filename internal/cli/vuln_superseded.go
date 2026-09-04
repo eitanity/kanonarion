@@ -3,12 +3,14 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // Telling "never vuln-scanned" from "scanned under logic this build supersedes".
@@ -85,12 +87,67 @@ func supersededVulnHeld(gens []vulnports.VulnerabilityRecordGeneration) string {
 //
 // It says what the emptiness is NOT, in the words the wrong message used, because
 // that is the sentence the reader arrived with.
-func supersededVulnLine(coord coordinate.ModuleCoordinate, gens []vulnports.VulnerabilityRecordGeneration) string {
-	return fmt.Sprintf(
-		"no vulnerability record for %s that this build serves: %s Re-scan it:\n  %s",
+func supersededVulnLine(coord coordinate.ModuleCoordinate, gens []vulnports.VulnerabilityRecordGeneration, remedy reachabilityRemedy) string {
+	msg := fmt.Sprintf(
+		"no vulnerability record for %s that this build serves: %s",
 		coord,
-		supersededVulnCause("this coordinate at pipeline "+supersededVulnHeld(gens), "the module has"),
-		"kanonarion vuln-scan --module "+coord.String()+" --reachability")
+		supersededVulnCause("this coordinate at pipeline "+supersededVulnHeld(gens), "the module has"))
+	if remedy.empty() {
+		return msg
+	}
+	return msg + " " + remedy.String()
+}
+
+// supersededVulnRemedy is the re-scan this refusal names.
+//
+// vuln-scan --module resolves a walk ROOTED at the coordinate, and a module
+// measured in a consumer's build has none — so the store is asked whether one
+// exists rather than the coordinate being concatenated onto the flag, and where
+// it does not the walks its own records name are what re-scan it.
+func supersededVulnRemedy(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	coord coordinate.ModuleCoordinate,
+	gens []vulnports.VulnerabilityRecordGeneration,
+) reachabilityRemedy {
+	return remedyRescanSuperseded("Re-scan it", coord,
+		walkRootedAt(ctx, walks, coord), supersededVulnWalks(gens))
+}
+
+// walkRootedAt reports whether the store holds a walk whose target is coord —
+// the only walk vuln-scan --module resolves, searched on the filter that
+// command itself uses.
+//
+// A reader it cannot ask answers false: naming the walk the records carry is
+// runnable either way, and a diagnostic must not become a fault of its own.
+func walkRootedAt(ctx context.Context, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate) bool {
+	if walks == nil {
+		return false
+	}
+	target := coord
+	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{Target: &target, Limit: 1})
+	return err == nil && len(summaries) > 0
+}
+
+// supersededVulnWalks is the walks the census names, the one that wrote the
+// newest record first and without repeats.
+//
+// Generations are ranked by their own newest record because the census is
+// ordered by pipeline version for display, and those strings do not order.
+func supersededVulnWalks(gens []vulnports.VulnerabilityRecordGeneration) []string {
+	ranked := slices.Clone(gens)
+	slices.SortStableFunc(ranked, func(a, b vulnports.VulnerabilityRecordGeneration) int {
+		return b.LastScannedAt.Compare(a.LastScannedAt)
+	})
+	var out []string
+	for _, g := range ranked {
+		for _, id := range g.Walks {
+			if id != "" && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
 }
 
 // supersededVulnCause is the whole explanation, and the only one this binary
@@ -120,19 +177,24 @@ func supersededVulnCause(holds, scanned string) string {
 // says; what changes is that the reason is now true. A command that had exited 4
 // on this coordinate still exits 4, so nothing scripted around the old behaviour
 // starts passing silently.
-func supersededVulnError(coord coordinate.ModuleCoordinate, gens []vulnports.VulnerabilityRecordGeneration) error {
-	return &exitError{code: ExitNotFound, msg: supersededVulnLine(coord, gens)}
+func supersededVulnError(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	coord coordinate.ModuleCoordinate,
+	gens []vulnports.VulnerabilityRecordGeneration,
+) error {
+	return &exitError{code: ExitNotFound, msg: supersededVulnLine(coord, gens, supersededVulnRemedy(ctx, walks, coord, gens))}
 }
 
 // supersededVulnRefusal is the whole check as one call, for the readers whose
 // empty branch is a refusal: nil when the emptiness has some other cause, and
 // the caller carries on to whatever it said before.
-func supersededVulnRefusal(ctx context.Context, uc QueryVulnUseCase, coord coordinate.ModuleCoordinate) error {
+func supersededVulnRefusal(ctx context.Context, uc QueryVulnUseCase, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate) error {
 	gens, superseded := supersededVulnGenerations(ctx, uc, coord)
 	if !superseded {
 		return nil
 	}
-	return supersededVulnError(coord, gens)
+	return supersededVulnError(ctx, walks, coord, gens)
 }
 
 // The same condition, one level up: a RUN whose records this build does not read.
@@ -242,9 +304,25 @@ func supersededRunNote(recs []supersededRunRecord, total int, runPipeline, walkI
 	// so the first line is measured to the same width as the rest.
 	b.WriteString(wrapContinued("notice: "+body, supersededNoteWidth, supersededNoteIndent))
 	b.WriteString("\n")
-	if walkID != "" {
-		b.WriteString(supersededNoteIndent + "Scan the walk again for a current answer:\n")
-		fmt.Fprintf(&b, "%s  kanonarion vuln-scan %s --reachability\n", supersededNoteIndent, walkID)
+	if tail := supersededNoteRemedy(remedyRescanWalk(walkID)); tail != "" {
+		b.WriteString(tail)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// supersededNoteRemedy renders a remedy under a wrapped notice: the lead at the
+// notice's own indent, then one invocation per line beneath it. Empty for a
+// remedy that names no command, so the lead is never printed over nothing.
+func supersededNoteRemedy(r reachabilityRemedy) string {
+	if r.empty() {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(supersededNoteIndent)
+	b.WriteString(wrapContinued(r.lead+":", supersededNoteWidth, supersededNoteIndent))
+	for _, l := range r.lines {
+		b.WriteString("\n" + supersededNoteIndent + "  " + l)
 	}
 	return b.String()
 }

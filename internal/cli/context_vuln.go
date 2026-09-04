@@ -274,9 +274,9 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	if batch.anchored {
-		return supersededOr(ctx, coord, vulnUC, batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC))
+		return supersededOr(ctx, coord, vulnUC, batch.walkUC, batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC))
 	}
-	return supersededOr(ctx, coord, vulnUC, batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC))
+	return supersededOr(ctx, coord, vulnUC, batch.walkUC, batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC))
 }
 
 // supersededOr replaces a not_run section with the superseded one when that is
@@ -292,6 +292,7 @@ func supersededOr(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	vulnUC QueryVulnUseCase,
+	walks QueryWalksUseCase,
 	section contextVulnerabilities,
 ) contextVulnerabilities {
 	if section.Status != sectionStatusNotRun {
@@ -303,7 +304,7 @@ func supersededOr(
 	}
 	return contextVulnerabilities{
 		Status: sectionStatusSuperseded,
-		Error:  supersededVulnLine(coord, gens),
+		Error:  supersededVulnLine(coord, gens, supersededVulnRemedy(ctx, walks, coord, gens)),
 	}
 }
 

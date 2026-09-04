@@ -368,7 +368,7 @@ func runVulnReachability(
 			// pipeline version — so it said that about coordinates the store had
 			// scanned sixteen times. Asked here rather than in the classifier,
 			// which is pure and holds no store.
-			if serr := supersededVulnRefusal(ctx, uc, coord); serr != nil {
+			if serr := supersededVulnRefusal(ctx, uc, walks, coord); serr != nil {
 				return serr
 			}
 		}
@@ -704,7 +704,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		}
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"%s could not be scanned (ScanFailed)%s; reachability is unknown. %s",
-			coord, detail, remedyRescanModule(coord))
+			coord, detail, remedyRescanModule(coord, rec.WalkID))
 	case vuldomain.CoverageUnscannable:
 		detail := ""
 		if rec.UnscannableReason != "" {
@@ -781,7 +781,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 	if state == vuldomain.StateNotDetermined {
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"reachability for %s in %s is undetermined: the call graph was unavailable during the scan. %s",
-			f.ID, coord, remedyRebuildGraphThenRescan(coord))
+			f.ID, coord, remedyRebuildGraphThenRescan(coord, rec.WalkID))
 	}
 
 	// reachable, not_reachable and package_level_only take one reply. They differ
@@ -857,7 +857,7 @@ func nilReachabilityRefusal(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 	}
 	return fmt.Errorf(
 		"reachability was not computed for %s in %s (the module was scanned without --reachability). %s",
-		f.ID, coord, remedyRebuildGraphThenRescan(coord))
+		f.ID, coord, remedyRebuildGraphThenRescan(coord, rec.WalkID))
 }
 
 // findFindingByID matches a vulnerability ID against each finding's primary ID

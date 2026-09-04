@@ -2051,12 +2051,16 @@ func (s *Store) ListVulnerabilityRecordGenerationsForModule(
 	if coord.IsZero() {
 		return nil, coordinate.ErrZeroCoordinate
 	}
+	// Grouped by walk as well as by generation, and folded back into one row per
+	// generation below. The walk is what a re-scan is named by, so a census that
+	// dropped it forced every refusal built on it to guess a command.
 	const q = `
-SELECT pipeline_version, COUNT(*), COALESCE(SUM(finding_count), 0)
+SELECT pipeline_version, COALESCE(walk_id, ''), COUNT(*), COALESCE(SUM(finding_count), 0),
+       MAX(scanned_at)
 FROM vulnerability_records
 WHERE module_path = ? AND module_version = ?
-GROUP BY pipeline_version
-ORDER BY pipeline_version`
+GROUP BY pipeline_version, walk_id
+ORDER BY pipeline_version, MAX(scanned_at) DESC, walk_id`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version())
 	if err != nil {
@@ -2067,12 +2071,34 @@ ORDER BY pipeline_version`
 	}()
 
 	var out []ports.VulnerabilityRecordGeneration
+	byPipeline := make(map[string]int, 8)
 	for rows.Next() {
-		var g ports.VulnerabilityRecordGeneration
-		if serr := rows.Scan(&g.PipelineVersion, &g.Records, &g.Findings); serr != nil {
+		var (
+			pipeline, walkID, scannedAt string
+			records, findings           int
+		)
+		if serr := rows.Scan(&pipeline, &walkID, &records, &findings, &scannedAt); serr != nil {
 			return nil, fmt.Errorf("scanning vulnerability record generations: %w", serr)
 		}
-		out = append(out, g)
+		i, seen := byPipeline[pipeline]
+		if !seen {
+			out = append(out, ports.VulnerabilityRecordGeneration{PipelineVersion: pipeline})
+			i = len(out) - 1
+			byPipeline[pipeline] = i
+		}
+		out[i].Records += records
+		out[i].Findings += findings
+		if walkID != "" {
+			out[i].Walks = append(out[i].Walks, walkID)
+		}
+		// The rows arrive newest first within a generation, so the first one sets
+		// the recency and the rest cannot move it. An unparseable instant leaves
+		// the zero value: a census may not fail over a column it only ranks by.
+		if !seen {
+			if t, perr := time.Parse(time.RFC3339, scannedAt); perr == nil {
+				out[i].LastScannedAt = t
+			}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability record generations: %w", err)

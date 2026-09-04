@@ -243,7 +243,7 @@ func TestSupersededCause_SharedBetweenTheCoordinateAndTheRun(t *testing.T) {
 	coord := mustVulnCoord(t, "example.com/app", "v1.0.0")
 	gens := []vulnports.VulnerabilityRecordGeneration{{PipelineVersion: "v22", Records: 3, Findings: 2}}
 
-	coordLine := supersededVulnLine(coord, gens)
+	coordLine := supersededVulnLine(coord, gens, remedyRescanSuperseded("Re-scan it", coord, true, nil))
 	runNote := supersededRunNote(
 		[]supersededRunRecord{{Coordinate: coord.String(), PipelineVersion: "v22", Records: 3, Findings: 2}},
 		1, "v22", fixtureWalkID)

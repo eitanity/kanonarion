@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -28,6 +29,11 @@ type reachabilityRemedy struct {
 	// indistinguishable from an argument to the parser and to the reader.
 	lines []string
 }
+
+// empty reports a remedy that names no command. A refusal names a command that
+// resolves for the record in hand, or it names none — so callers ask this
+// rather than printing a lead over nothing.
+func (r reachabilityRemedy) empty() bool { return len(r.lines) == 0 }
 
 // String renders the remedy as the tail of a refusal message: the lead, then one
 // indented invocation per line.
@@ -78,29 +84,86 @@ func remedyScanModule(coord coordinate.ModuleCoordinate) reachabilityRemedy {
 	}
 }
 
+// rescanInvocation names the vuln-scan that re-measures coord.
+//
+// vuln-scan's --module form resolves only a walk ROOTED at the coordinate, and
+// a module measured in a consumer's build has none — so where the record names
+// the walk that measured it, that walk id is the form that resolves.
+func rescanInvocation(coord coordinate.ModuleCoordinate, walkID string, force bool) string {
+	target := "--module " + coord.String()
+	if walkID != "" {
+		target = walkID
+	}
+	line := "kanonarion vuln-scan " + target + " --reachability"
+	if force {
+		line += " --force"
+	}
+	return line
+}
+
 // remedyRescanModule is the remedy for a coordinate whose scan failed. No
 // --force: a ScanFailed record is never served from the scan cache, so the
 // re-run measures rather than replaying the failure.
-func remedyRescanModule(coord coordinate.ModuleCoordinate) reachabilityRemedy {
+//
+// walkID is the walk the failed record was written by, empty when it names
+// none.
+func remedyRescanModule(coord coordinate.ModuleCoordinate, walkID string) reachabilityRemedy {
 	return reachabilityRemedy{
 		lead: "Re-run",
 		lines: []string{
-			"kanonarion vuln-scan --module " + coord.String() + " --reachability",
+			rescanInvocation(coord, walkID, false),
 		},
 	}
 }
+
+// remedyRescanSuperseded is the remedy for a coordinate the store holds only
+// under scan logic this build supersedes.
+//
+// rooted says a walk targets the coordinate, which is the only case --module
+// resolves; otherwise the walks its records name are what re-scan it. The other
+// walks are counted rather than listed: one runnable command is what the reader
+// needs, and the count is what tells them it was a choice.
+func remedyRescanSuperseded(lead string, coord coordinate.ModuleCoordinate, rooted bool, walkIDs []string) reachabilityRemedy {
+	if rooted {
+		return reachabilityRemedy{lead: lead, lines: []string{rescanInvocation(coord, "", false)}}
+	}
+	if len(walkIDs) == 0 {
+		return reachabilityRemedy{lead: lead}
+	}
+	if len(walkIDs) > 1 {
+		lead = fmt.Sprintf("%s — the walk that measured it most recently, of the %d that hold it", lead, len(walkIDs))
+	} else {
+		lead += " — the walk that measured it"
+	}
+	return reachabilityRemedy{lead: lead, lines: []string{rescanInvocation(coord, walkIDs[0], false)}}
+}
+
+// remedyRescanWalk is the remedy for a report whose records a walk still holds
+// at a generation this build reads nothing from.
+func remedyRescanWalk(walkID string) reachabilityRemedy {
+	if walkID == "" {
+		return reachabilityRemedy{lead: supersededRunRemedyLead}
+	}
+	return reachabilityRemedy{
+		lead:  supersededRunRemedyLead,
+		lines: []string{"kanonarion vuln-scan " + walkID + " --reachability"},
+	}
+}
+
+// supersededRunRemedyLead introduces the walk re-scan under a run report.
+const supersededRunRemedyLead = "Scan the walk again for a current answer"
 
 // remedyRebuildGraphThenRescan is the remedy for a coordinate that HAS a usable
 // scan whose reachability leg could not see a call graph. --force is on the scan
 // because a stored answer for this coordinate already exists: without it the run
 // may be served from cache and report the same undetermined answer, which reads
 // as the remedy having been tried and failed.
-func remedyRebuildGraphThenRescan(coord coordinate.ModuleCoordinate) reachabilityRemedy {
+func remedyRebuildGraphThenRescan(coord coordinate.ModuleCoordinate, walkID string) reachabilityRemedy {
 	return reachabilityRemedy{
 		lead: "Run",
 		lines: []string{
 			cgdomain.ReanalysisCommand(coord, ""),
-			"kanonarion vuln-scan --module " + coord.String() + " --reachability --force",
+			rescanInvocation(coord, walkID, true),
 		},
 	}
 }
@@ -177,18 +240,30 @@ func remedyShowRecord(coord coordinate.ModuleCoordinate) reachabilityRemedy {
 	}
 }
 
-// reachabilityRemedies returns every remedy the reachability surfaces can print,
-// built against one coordinate. It exists so the contract test enumerates the
-// set from the code rather than from a hand-copied list that a new refusal would
-// quietly fall outside of.
-func reachabilityRemedies(coord coordinate.ModuleCoordinate) []reachabilityRemedy {
+// printableRemedies returns every remedy the reachability and superseded-record
+// surfaces can print, built against one coordinate and one walk id. It exists so
+// the contract test enumerates the set from the code rather than from a
+// hand-copied list that a new refusal would quietly fall outside of.
+//
+// Both branches of the walk-or-module choice are built, because only one of them
+// is reached per store and a line the parser never sees is a line nothing checks.
+func printableRemedies(coord coordinate.ModuleCoordinate, walkID string) []reachabilityRemedy {
+	other := walkID + "X"
 	return []reachabilityRemedy{
 		remedyScanModule(coord),
-		remedyRescanModule(coord),
-		remedyRebuildGraphThenRescan(coord),
+		remedyRescanModule(coord, walkID),
+		remedyRescanModule(coord, ""),
+		remedyRebuildGraphThenRescan(coord, walkID),
+		remedyRebuildGraphThenRescan(coord, ""),
 		remedyProjectRooted(),
 		remedyScanUncovered(),
 		remedyRescanProject("/srv/checkouts/project"),
 		remedyShowRecord(coord),
+		remedyRescanSuperseded("Re-scan it", coord, true, nil),
+		remedyRescanSuperseded("Re-scan it", coord, false, []string{walkID}),
+		remedyRescanSuperseded("Re-scan it", coord, false, []string{walkID, other}),
+		remedyRescanSuperseded(supersededHistoryRemedyLead, coord, true, nil),
+		remedyRescanSuperseded(supersededHistoryRemedyLead, coord, false, []string{walkID}),
+		remedyRescanWalk(walkID),
 	}
 }
