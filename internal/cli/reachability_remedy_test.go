@@ -106,8 +106,9 @@ func (e *remedyGrammarError) Error() string {
 }
 
 // A remedy the tool then rejects costs the caller exactly the round trip the
-// remedy existed to save. Every line every remedy can print is parsed here, so a
-// refusal cannot ship advice the CLI refuses — which is what
+// remedy existed to save. Every line every remedy can print is checked here, so
+// a refusal cannot ship advice the CLI refuses — nor a line no reader could run
+// because it carries a placeholder — which is what
 // "kanonarion vuln-scan <module>@<version> --reachability" was: vuln-scan takes
 // a walk id positionally, so following it failed with "walk record not found".
 //
@@ -135,7 +136,7 @@ func TestPrintableRemedies_EveryLineIsAcceptedByTheParser(t *testing.T) {
 					t.Errorf("remedy %q prints no invocation", r.lead)
 				}
 				for _, line := range r.lines {
-					assertRunnableFor(t, coord, line)
+					assertRemedyLine(t, coord, line)
 				}
 			}
 		})

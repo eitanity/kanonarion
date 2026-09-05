@@ -48,9 +48,12 @@ different budget: see 'kanonarion extract --help'.`,
 				// Direct, never execute: 'callgraph' analyses fetched
 				// (consumer-mode) modules; the local working tree is
 				// author-mode and has its own command.
+				// The tree meant is the one the reader is standing in — that is what
+				// they asked for — so the command names it rather than a placeholder
+				// they would have to fill in.
 				return errors.New(
-					"the 'callgraph' command analyses fetched modules; to analyse the " +
-						"local working tree use the 'local' command:\n  kanonarion local <dir>")
+					"the 'callgraph' command analyses fetched modules; the local working " +
+						"tree is analysed by 'kanonarion local .' run from that tree")
 			}
 			if len(args) == 0 {
 				return usageErr(cmd)

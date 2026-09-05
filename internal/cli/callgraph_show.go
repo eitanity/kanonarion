@@ -129,10 +129,10 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		if note != "" {
 			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 				"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
-				coord, cgapp.PipelineVersion, note, domain.ReanalysisCommand(coord, ""))}
+				coord, cgapp.PipelineVersion, note, domain.ReanalysisInstruction(coord, ""))}
 		}
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisCommand(coord, ""))}
+			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisInstruction(coord, ""))}
 	}
 	// Asked before --node narrows the record: the disagreement is between whole
 	// generations of this coordinate, and a filtered view of the served one says
@@ -228,7 +228,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		}
 		line := fmt.Sprintf("no callgraph records for %s at pipeline %s", coord, cgapp.PipelineVersion)
 		if note != "" {
-			line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisCommand(coord, "")
+			line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisInstruction(coord, "")
 		}
 		if _, werr := fmt.Fprintln(stdout, line); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)

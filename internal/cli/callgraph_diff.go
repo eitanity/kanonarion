@@ -26,7 +26,7 @@ func runCallGraphDiff(ctx context.Context, coord coordinate.ModuleCoordinate, f 
 	if len(recs) == 0 {
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no callgraph records for %s at pipeline %s — analyse it first:\n  %s",
-			coord, cgapp.PipelineVersion, domain.ReanalysisCommand(coord, ""))}
+			coord, cgapp.PipelineVersion, domain.ReanalysisInstruction(coord, ""))}
 	}
 
 	measurements := groupBy(recs, domain.MeasurementDigest)

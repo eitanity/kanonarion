@@ -140,7 +140,7 @@ func supersededPipelineError(symbolID, modulePath string, stored []ports.CallGra
 	if cErr != nil {
 		return fmt.Errorf("naming the re-analysis of module %q: %w", modulePath, cErr)
 	}
-	remedy := "  " + domain.ReanalysisCommand(remedyCoord, "")
+	remedy := "  " + domain.ReanalysisInstruction(remedyCoord, "")
 	return fmt.Errorf(
 		"symbol %q belongs to module %q, whose every stored call graph was produced by "+
 			"superseded extraction logic: this build serves pipeline %s and the store holds "+
@@ -290,6 +290,10 @@ type partialRoot struct {
 	// package that does not compile from a checksum the tree does not carry, and
 	// those two need opposite remedies.
 	detail string
+	// analysisRoot is the working tree the record was analysed in, empty when it
+	// does not say. It is carried so the remedy names that directory rather than
+	// leaving the reader an invocation they cannot run.
+	analysisRoot string
 }
 
 // rootPartialStatus loads the call graph record(s) owning symbolID and reports
@@ -341,6 +345,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 			out.coord = coord
 			out.cause = rec.FailureCause
 			out.detail = rec.FailureDetail
+			out.analysisRoot = rec.AnalysisRoot
 		}
 	}
 	if len(failedSet) > 0 {
@@ -580,7 +585,7 @@ func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
 	// the reader's to fix, and a gap this host's cold module cache opened is not a
 	// compile error to go looking for. Naming a command that cannot run and naming
 	// one that re-serves the record complained about are the same defect.
-	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, pr.detail, "")
+	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, pr.detail, pr.analysisRoot)
 }
 
 // writeDroppedEdgesNotice prints droppedEdgesNotice, in text mode only.
@@ -814,10 +819,13 @@ func unresolvedSymbolError(symbolID string) error {
 func unresolvedSymbolMessage(symbolID, localModulePath string) string {
 	if localModulePath != "" {
 		if _, ok := domain.ResolveSymbolModule(symbolID, []string{localModulePath}); ok {
+			// The module was identified from the go.mod in the current directory, so
+			// that directory IS the tree to ingest: name it rather than print a
+			// placeholder the reader has to substitute.
 			return fmt.Sprintf(
 				"symbol %q is not in the call-graph store: it belongs to the local "+
 					"module %q (author-mode code); ingest the working tree "+
-					"first:\n  kanonarion local <dir>",
+					"first:\n  kanonarion local .",
 				symbolID, localModulePath)
 		}
 	}

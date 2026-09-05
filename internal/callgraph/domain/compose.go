@@ -84,6 +84,12 @@ type CallGraphConflict struct {
 	// ContentHashes name the records carrying each of Values, in the same order.
 	ContentHashes []string
 
+	// AnalysisRoot is the working tree every disagreeing record that names one
+	// agrees it was analysed in, empty when they disagree or none says. A remedy
+	// that re-analyses a working tree needs it, and naming one of two trees a
+	// conflict is precisely about would be inventing the answer.
+	AnalysisRoot string
+
 	// Difference is what the first two disagreeing generations actually differ
 	// about, when the conflict is one over the graph and both generations passed
 	// their own seal.
@@ -193,7 +199,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 		if sel := selectableToolchain(c.Values); sel != "" {
 			lines = append(lines, "kanonarion callgraph-show "+coord+" --toolchain "+sel)
 		}
-		lines = append(lines, ForcedReanalysisCommand(c.Coordinate, ""))
+		lines = append(lines, ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot))
 		return Remedy{
 			Lead: "Two Go toolchains built this coordinate and produced different graphs, and a graph carries " +
 				"the toolchain's own stdlib and vendored trees, so neither answer supersedes the other. Name " +
@@ -212,7 +218,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 					"Inspect the generations, then analyse the tree you mean",
 				Lines: []string{
 					"kanonarion callgraph-show " + coord + " --history",
-					ReanalysisCommand(c.Coordinate, ""),
+					ReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
 				},
 			}
 		}
@@ -222,7 +228,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
 				"kanonarion fetch " + coord,
-				ForcedReanalysisCommand(c.Coordinate, ""),
+				ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
 			},
 		}
 	default:
@@ -263,7 +269,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 				// --force is on the analysis because a stored answer already exists, so
 				// without it the run is served from cache and reads as the remedy having
 				// been tried and failed.
-				ForcedReanalysisCommand(c.Coordinate, ""),
+				ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
 			},
 		}
 	}
@@ -569,6 +575,7 @@ func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGra
 		return nil, CallGraphConflict{
 			Coordinate:      records[0].Coordinate,
 			PipelineVersion: records[0].PipelineVersion,
+			AnalysisRoot:    agreedAnalysisRoot(records),
 			Field:           ConflictFieldAnalysisSource,
 			Values:          distinctSources(records),
 			ContentHashes:   hashesForSources(records),
@@ -599,6 +606,24 @@ func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGra
 	default:
 		return silent, nil
 	}
+}
+
+// agreedAnalysisRoot returns the working tree these records agree they were
+// analysed in, or empty when any two that state one disagree. A remedy may name
+// only a tree every measurement points at; two trees under one name is the
+// conflict itself, not something to pick a side of.
+func agreedAnalysisRoot(records []CallGraphRecord) string {
+	root := ""
+	for _, r := range records {
+		if r.AnalysisRoot == "" {
+			continue
+		}
+		if root != "" && root != r.AnalysisRoot {
+			return ""
+		}
+		root = r.AnalysisRoot
+	}
+	return root
 }
 
 // analysedIn reports whether any of these records was analysed in root. An empty
@@ -966,6 +991,7 @@ func unmeasurableGraphs(records []CallGraphRecord, err error) *CallGraphConflict
 	return &CallGraphConflict{
 		Coordinate:      records[0].Coordinate,
 		PipelineVersion: records[0].PipelineVersion,
+		AnalysisRoot:    agreedAnalysisRoot(records),
 		Field:           ConflictFieldCallGraph,
 		Completeness:    records[0].Completeness,
 		Values:          values,
@@ -1078,6 +1104,7 @@ func disagreementOf(records []CallGraphRecord, field string, values []string) *C
 	return &CallGraphConflict{
 		Coordinate:      records[0].Coordinate,
 		PipelineVersion: records[0].PipelineVersion,
+		AnalysisRoot:    agreedAnalysisRoot(records),
 		Field:           field,
 		Values:          distinct,
 		ContentHashes:   hashes,

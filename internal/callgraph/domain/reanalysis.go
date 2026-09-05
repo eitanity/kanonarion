@@ -7,16 +7,22 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
-// LocalDirPlaceholder stands in for the working tree's directory in a remedy
-// built somewhere the directory is not known.
+// LocalDirPlaceholder is the token a remedy must never contain.
 //
-// It is a placeholder and reads as one. The alternative — omitting the argument
-// and printing a bare "kanonarion local" — is worse: that form is a valid
-// invocation which analyses whatever directory the reader happens to be in, so a
-// remedy that meant "the project's tree" would silently analyse the wrong one.
+// No builder emits it. It is named here so the guard that refuses it, and the
+// tests that assert its absence, share one spelling with the thing they forbid:
+// a reader cannot run a line with "<dir>" in it, and a remedy that cannot be run
+// is not a remedy.
 const LocalDirPlaceholder = "<dir>"
 
-// ReanalysisCommand names the one command that re-derives coord's call graph.
+// UnnamedWorkingTreeLead opens the instruction given when a local coordinate's
+// working tree is not recorded anywhere. It is exported so a guard can
+// recognise that answer without re-spelling it, and so the two forms of the
+// sentence cannot drift apart.
+const UnnamedWorkingTreeLead = "no stored record names the working tree"
+
+// ReanalysisInstruction names the one thing that re-derives coord's call graph,
+// as a line a reader can act on.
 //
 // The answer is a property of the COORDINATE, not of the site asking. A
 // published module is fetched and analysed by 'callgraph <module>@<version>'. A
@@ -30,30 +36,40 @@ const LocalDirPlaceholder = "<dir>"
 // Every refusal that tells a reader to re-derive a graph goes through here, so
 // the decision is made once and a new refusal cannot get it wrong on its own.
 //
-// dir is the working tree behind a local coordinate, when the caller knows it;
-// empty yields LocalDirPlaceholder. It is ignored for a published coordinate,
-// which has no working tree.
-func ReanalysisCommand(coord coordinate.ModuleCoordinate, dir string) string {
-	if !coord.IsLocal() {
-		return "kanonarion callgraph " + coord.String()
-	}
-	if dir == "" {
-		dir = LocalDirPlaceholder
-	}
-	return "kanonarion local " + dir
+// dir is the working tree behind a local coordinate, when the caller knows it.
+// When it does not, the line says so rather than printing a template: there is
+// no argument the reader could be expected to fill in, and a bare
+// "kanonarion local" is worse still — it is a valid invocation that analyses
+// whatever directory the reader happens to be standing in. dir is ignored for a
+// published coordinate, which has no working tree.
+func ReanalysisInstruction(coord coordinate.ModuleCoordinate, dir string) string {
+	return reanalysis(coord, dir, "")
 }
 
-// ForcedReanalysisCommand names the command that re-derives coord's call graph
-// even though the store already holds one, for a refusal raised BY a stored
-// record: without bypassing the cache the run is served the very record the
-// refusal was about, and reads as the remedy having been tried and failed.
+// ForcedReanalysisInstruction names what re-derives coord's call graph even
+// though the store already holds one, for a refusal raised BY a stored record:
+// without bypassing the cache the run is served the very record the refusal was
+// about, and reads as the remedy having been tried and failed.
 //
 // Both forms take --force, and 'local' has one for the same reason 'callgraph'
 // does: it no longer analyses the tree it is pointed at every time. It serves
 // the record it already holds of an unchanged tree, so a remedy that omitted the
 // flag would hand back the record the refusal was raised about.
-func ForcedReanalysisCommand(coord coordinate.ModuleCoordinate, dir string) string {
-	return ReanalysisCommand(coord, dir) + " --force"
+func ForcedReanalysisInstruction(coord coordinate.ModuleCoordinate, dir string) string {
+	return reanalysis(coord, dir, " --force")
+}
+
+// reanalysis is the single construction both forms use. There is no path through
+// it that yields a placeholder: an unnamed working tree produces a sentence, so
+// no caller can emit one by passing the empty string.
+func reanalysis(coord coordinate.ModuleCoordinate, dir, flags string) string {
+	if !coord.IsLocal() {
+		return "kanonarion callgraph " + coord.String() + flags
+	}
+	if dir == "" {
+		return UnnamedWorkingTreeLead + ", so run kanonarion local" + flags + " from inside it"
+	}
+	return "kanonarion local " + dir + flags
 }
 
 // IsReFetchable reports whether coord names bytes 'kanonarion fetch' can go and
@@ -113,9 +129,9 @@ const MissingChecksumRemedy = "go mod tidy"
 //
 // dir is the working tree behind a local coordinate when the caller knows it.
 func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause, detail, dir string) string {
-	rerun := ReanalysisCommand(coord, dir)
+	rerun := ReanalysisInstruction(coord, dir)
 	if cause == FailureCauseModule && !coord.IsLocal() {
-		rerun = ForcedReanalysisCommand(coord, dir)
+		rerun = ForcedReanalysisInstruction(coord, dir)
 	}
 	// Ahead of the cause branches below: this shares their axis and contradicts
 	// the advice they give.

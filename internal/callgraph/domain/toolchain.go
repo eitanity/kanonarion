@@ -231,6 +231,7 @@ func toolchainExplainedGraphDifference(records []CallGraphRecord) *CallGraphConf
 			c := &CallGraphConflict{
 				Coordinate:      records[0].Coordinate,
 				PipelineVersion: records[0].PipelineVersion,
+				AnalysisRoot:    agreedAnalysisRoot(records),
 				Field:           ConflictFieldToolchain,
 				Completeness:    records[i].Completeness,
 				Values:          values,

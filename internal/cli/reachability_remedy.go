@@ -25,8 +25,11 @@ type reachabilityRemedy struct {
 	// String supplies the colon.
 	lead string
 	// lines are whole invocations, "kanonarion" included, each parseable on its
-	// own. Prose never appears here — an annotation inside a line would be
-	// indistinguishable from an argument to the parser and to the reader.
+	// own — with one exception, held to the same standard. Where no command can
+	// be given, a line may be the sentence saying why, and it must still name the
+	// command it is about, so a reader is never left without one. What stays
+	// forbidden is an annotation bolted onto an otherwise runnable line: that is
+	// indistinguishable from an argument, to the parser and to the reader alike.
 	lines []string
 }
 
@@ -162,7 +165,7 @@ func remedyRebuildGraphThenRescan(coord coordinate.ModuleCoordinate, walkID stri
 	return reachabilityRemedy{
 		lead: "Run",
 		lines: []string{
-			cgdomain.ReanalysisCommand(coord, ""),
+			cgdomain.ReanalysisInstruction(coord, ""),
 			rescanInvocation(coord, walkID, true),
 		},
 	}
