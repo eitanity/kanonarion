@@ -332,3 +332,38 @@ func TestAnalyse_MethodSymbol_MatchedByReceiverDotName(t *testing.T) {
 		t.Error("expected method to be reachable when it is an exported entry point")
 	}
 }
+
+// TestAnalyse_TestRootStillReachesTheSymbol pins the decision that vuln
+// reachability keeps test declarations as roots where capability analysis drops
+// them. A route names its own root and the classification marks a test-scope one
+// as such, so a test-only reach is reported and disclosed rather than becoming a
+// silent negative. A change of default here must be deliberate.
+func TestAnalyse_TestRootStillReachesTheSymbol(t *testing.T) {
+	a := reachability.New()
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+
+	loader := &fakeLoader{record: ports.CallGraphProjection{
+		Nodes: []ports.CallGraphNode{
+			{ID: "github.com/foo/bar.Exported", Module: "github.com/foo/bar", Symbol: "Exported", IsExportedAPI: true},
+			{ID: "github.com/foo/bar_test.TestVuln", Module: "github.com/foo/bar",
+				Symbol: "TestVuln", IsExportedAPI: true, IsTest: true},
+			{ID: "github.com/foo/bar.Vuln", Module: "github.com/foo/bar", Symbol: "Vuln"},
+		},
+		Edges: []ports.CallGraphEdge{
+			// Only the test reaches Vuln; Exported reaches nothing.
+			{FromID: "github.com/foo/bar_test.TestVuln", ToID: "github.com/foo/bar.Vuln"},
+		},
+	}}
+	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
+
+	result, err := a.Analyse(t.Context(), coord, symbols, loader)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsReachable {
+		t.Fatal("expected reachable from the test root")
+	}
+	if len(result.Routes) == 0 || result.Routes[0][0].Symbol != "TestVuln" {
+		t.Errorf("expected the route rooted at the test declaration, got %v", result.Routes)
+	}
+}

@@ -15,7 +15,30 @@ type RootCandidate struct {
 	Symbol        string
 	IsExternal    bool
 	IsExportedAPI bool
+	// IsTest is the node's test axis: declared in a _test.go file or an external
+	// test package. It is carried because a test declaration is exported and
+	// owned like any other, so without it the selector cannot tell a consumer's
+	// entry point from one only `go test` runs.
+	IsTest bool
 }
+
+// RootScope says whether test-declared nodes may root a traversal.
+//
+// The two answers are both correct and belong to different questions, so the
+// caller states which it is asking rather than the selector guessing: a
+// consumer does not compile a dependency's _test.go files, while an analysis
+// that names the test root in its answer is showing the reader a real path.
+type RootScope int
+
+const (
+	// RootScopeProduction drops test-declared candidates before the artifact
+	// kind's rule is applied — the consumer's question, and the zero value so a
+	// caller that says nothing gets the narrower root set rather than the wider.
+	RootScopeProduction RootScope = iota
+	// RootScopeWithTests keeps them, for a surface whose answer states that the
+	// root it found is a test declaration.
+	RootScopeWithTests
+)
 
 // IsInitSymbol reports whether a symbol name denotes a package init function.
 // The Go compiler names the user-written init as "init" and any additional
@@ -88,11 +111,18 @@ func ExternalEntryPointReason(symbol, receiver string) string {
 // qualifies it falls back to every owned node so the analysis still reasons
 // about the analysed code.
 //
+// A RootScopeProduction scope drops test-declared candidates first, so the
+// exclusion holds for the application rule and the owned-node fallback too: a
+// consumer compiles none of those files whatever the analysed module is.
+//
 // Results are sorted for determinism.
-func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind) []string {
+func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind, scope RootScope) []string {
 	var roots, owned []string
 	for _, c := range candidates {
 		if c.IsExternal {
+			continue
+		}
+		if c.IsTest && scope == RootScopeProduction {
 			continue
 		}
 		owned = append(owned, c.ID)

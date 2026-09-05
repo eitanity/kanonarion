@@ -13,11 +13,15 @@ kanonarion capability <module>@<version> --against <module>@<version> [flags]
 exercise (NETWORK, FILES, EXEC, UNSAFE_POINTER, …), derived from the module's
 stored call graph.
 
-Roots are the module's exported API, its package `init` functions (init runs
-unconditionally at package load), **and its test functions**. When nothing
-qualifies, roots fall back to every node the module owns. A capability whose only
-witnessing path starts at a `Test…` root is reached by the module's test suite
-and not by code a consumer compiles — read the path, not just the label.
+Roots are the module's exported API and its package `init` functions (init runs
+unconditionally at package load). **Test declarations are not roots**: a
+consumer compiles none of the module's `_test.go` files, so a sink only its test
+suite reaches is not in the consuming build. `--include-tests` widens the roots
+to them. When nothing qualifies, roots fall back to every node the module owns,
+under the same test scope.
+
+Every report states which root set produced it, in text and in JSON
+(`test_roots`).
 
 From those roots a widest-path search finds, for each reachable sink, the
 witnessing path with the strongest minimum edge confidence. Each capability is
@@ -39,6 +43,13 @@ A node witnesses a capability in two ways:
   - `IsAssemblyOrLinkname` → **ARBITRARY_EXECUTION** (the function has no Go
     body - assembly or `//go:linkname` - so nothing calls into it as a Go
     function).
+
+**A body fact on a stdlib callee reaches its callers.** The fact is about that
+function's body, not yours, so calling one is enough to carry the label:
+`sync.(*RWMutex).Lock` witnesses `UNSAFE_POINTER` and `time.Sleep` witnesses
+`ARBITRARY_EXECUTION`, both at `[Direct]`. Read the sink before acting on the
+label — a witness naming a stdlib function you merely called says less than one
+naming your own code.
 
 ## Capability taxonomy
 
@@ -77,6 +88,7 @@ capability set is a lower bound, never presented as clean.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--against` | _(none)_ | Second `<module>@<version>`; diff the capability sets instead of reporting one |
+| `--include-tests` | `false` | Also root the traversal at test functions, which a consumer of the module does not compile |
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--json` | `false` | Emit the report (or diff) as JSON |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -86,22 +98,28 @@ capability set is a lower bound, never presented as clean.
 ```
 $ kanonarion capability github.com/spf13/cobra@v1.8.1
 github.com/spf13/cobra@v1.8.1 capabilities:
+  roots: exported API and package init; test functions excluded (widen with --include-tests)
   ARBITRARY_EXECUTION  [Unknown]  via crypto/fips140.setBypass
-    path: …(*Command).ExecuteC → …(*Command).execute → …(*Command).postRun → crypto/fips140.setBypass
-  EXEC                 [Direct]  via os/exec.Run
-    path: github.com/spf13/cobra.TestBashCompletions → os/exec.(*Cmd).Run
-  FILES                [Direct]  via io/ioutil.TempDir
-    path: github.com/spf13/cobra/doc.TestGenYamlTree → io/ioutil.TempDir
+    path: …(*Command).ExecuteC → …(*Command).execute → …(*Command).preRun → crypto/fips140.setBypass
+  EXEC                 [Direct]  via os/exec.init
+    path: github.com/spf13/cobra.init → os/exec.init
+  READ_SYSTEM_STATE    [Direct]  via os.Getenv
+    path: github.com/spf13/cobra.GetActiveHelpConfig → os.Getenv
   …
 ```
 
-Two things to read off that report. `ARBITRARY_EXECUTION` is `[Unknown]`, so it
-rests on an unresolved edge rather than a call anyone can point at. `EXEC` and
-`FILES` are `[Direct]` but both witnesses are test functions.
+Three things to read off that report. `ARBITRARY_EXECUTION` is `[Unknown]`, so
+it rests on an unresolved edge rather than a call anyone can point at.
+`READ_SYSTEM_STATE` names a function anyone can look up. `EXEC` names another
+package's `init`, which says the package is linked in, not that anything in it
+was called — a package `init` is reached from an `init` whose imports include
+the ones the module's test files bring, so read the path before acting on the
+label.
 
-JSON (`--json`) emits `module`, `version`, `partial`, `caveat`, `capabilities`
-(the sorted set) and `findings` (each with `capability`, `weakest_confidence`,
-`sink_package`, `sink_symbol`, `path`).
+JSON (`--json`) emits `module`, `version`, `test_roots` (`excluded` or
+`included`), `partial`, `caveat`, `capabilities` (the sorted set) and `findings`
+(each with `capability`, `weakest_confidence`, `sink_package`, `sink_symbol`,
+`path`).
 
 ## Diff
 
@@ -113,6 +131,7 @@ neither version witnessing anything:
 ```
 $ kanonarion capability github.com/spf13/cobra@v1.4.0 --against github.com/spf13/cobra@v1.8.1
 capability diff github.com/spf13/cobra@v1.4.0 → github.com/spf13/cobra@v1.8.1:
+  roots: exported API and package init; test functions excluded (widen with --include-tests)
   no capability change: both versions witness the same 12 capabilities (ARBITRARY_EXECUTION,
   CGO, EXEC, FILES, MODIFY_SYSTEM_STATE, NETWORK, OPERATING_SYSTEM, READ_SYSTEM_STATE,
   REFLECT, RUNTIME, SYSTEM_CALLS, UNSAFE_POINTER)

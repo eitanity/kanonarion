@@ -100,7 +100,12 @@ func (r CapabilityReport) Capabilities() []Capability {
 // code however the function is entered), a library roots its exported API plus
 // package init. Delegates to the shared callgraph-domain selector so it can
 // never drift from vuln reachability.
-func SelectRoots(rec cgdomain.CallGraphRecord) []string {
+//
+// scope decides whether test declarations may root the traversal. The command
+// answers what a dependency can do inside the build that consumes it, and a
+// consumer compiles none of the dependency's _test.go files, so the caller
+// passes RootScopeProduction unless the reader asked otherwise.
+func SelectRoots(rec cgdomain.CallGraphRecord, scope cgdomain.RootScope) []string {
 	candidates := make([]cgdomain.RootCandidate, 0, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		candidates = append(candidates, cgdomain.RootCandidate{
@@ -108,9 +113,10 @@ func SelectRoots(rec cgdomain.CallGraphRecord) []string {
 			Symbol:        n.Symbol,
 			IsExternal:    n.IsExternal,
 			IsExportedAPI: n.IsExportedAPI,
+			IsTest:        n.IsTest,
 		})
 	}
-	return cgdomain.SelectReachabilityRoots(candidates, rec.ArtifactKind)
+	return cgdomain.SelectReachabilityRoots(candidates, rec.ArtifactKind, scope)
 }
 
 // Analyse computes the capability report for rec, treating the given node IDs

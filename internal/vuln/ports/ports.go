@@ -774,6 +774,10 @@ type CallGraphNode struct {
 	Receiver      string
 	IsExternal    bool
 	IsExportedAPI bool
+	// IsTest is the graph's test axis for the node. It is projected so the root
+	// selection is fed the fact rather than a zero value that reads as "not a
+	// test", leaving the scope the only thing that decides.
+	IsTest bool
 }
 
 // CallGraphEdge is a directed call edge between two node IDs.

@@ -3,6 +3,7 @@ package reachability_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -53,6 +54,9 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 		Nodes: []callgraphdomain.CallNode{{
 			ID: "github.com/foo/bar.Fn", Module: "github.com/foo/bar",
 			Package: "github.com/foo/bar", Symbol: "Fn", Receiver: "T", IsExportedAPI: true,
+		}, {
+			ID: "github.com/foo/bar_test.TestFn", Module: "github.com/foo/bar",
+			Package: "github.com/foo/bar_test", Symbol: "TestFn", IsExportedAPI: true, IsTest: true,
 		}},
 		Edges: []callgraphdomain.CallEdge{{FromID: "github.com/foo/bar.Fn", ToID: "net/http.Get"}},
 	}
@@ -74,12 +78,18 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 	if proj.Algorithm != string(callgraphdomain.AlgorithmCHA) {
 		t.Errorf("Algorithm = %q", proj.Algorithm)
 	}
-	want := ports.CallGraphNode{
+	// IsTest must survive the projection too: the root selection reads it here,
+	// and a dropped axis would reach the selector as "not a test" rather than as
+	// the fact the graph recorded.
+	want := []ports.CallGraphNode{{
 		ID: "github.com/foo/bar.Fn", Module: "github.com/foo/bar",
 		Package: "github.com/foo/bar", Symbol: "Fn", Receiver: "T", IsExportedAPI: true,
-	}
-	if len(proj.Nodes) != 1 || proj.Nodes[0] != want {
-		t.Errorf("Nodes = %+v, want [%+v]", proj.Nodes, want)
+	}, {
+		ID: "github.com/foo/bar_test.TestFn", Module: "github.com/foo/bar",
+		Package: "github.com/foo/bar_test", Symbol: "TestFn", IsExportedAPI: true, IsTest: true,
+	}}
+	if !slices.Equal(proj.Nodes, want) {
+		t.Errorf("Nodes = %+v, want %+v", proj.Nodes, want)
 	}
 	if len(proj.Edges) != 1 || proj.Edges[0].FromID != "github.com/foo/bar.Fn" || proj.Edges[0].ToID != "net/http.Get" {
 		t.Errorf("Edges = %+v", proj.Edges)

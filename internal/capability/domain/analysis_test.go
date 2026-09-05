@@ -85,7 +85,7 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 		},
 	}
 
-	report := Analyse(rec, SelectRoots(rec))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 
 	up, ok := findingFor(report, CapabilityUnsafePointer)
 	if !ok {
@@ -110,7 +110,7 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 	// they are witnessed only by the facts, never by callee identity.
 	rec.Nodes[1].UsesUnsafePointer = false
 	rec.Nodes[2].IsAssemblyOrLinkname = false
-	if got := Analyse(rec, SelectRoots(rec)); len(got.Findings) != 0 {
+	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
 		t.Errorf("without body facts the non-sink leaves witness nothing, got %v", got.Capabilities())
 	}
 }
@@ -141,7 +141,7 @@ func TestAnalyseReaches12of12WithBodyFacts(t *testing.T) {
 		rec.Edges = append(rec.Edges, edge("m.Root", n.ID, cgdomain.ConfidenceDirect))
 	}
 
-	report := Analyse(rec, SelectRoots(rec))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 	got := report.Capabilities()
 	if len(got) != 12 {
 		t.Fatalf("got %d capabilities, want 12: %v", len(got), got)
@@ -155,7 +155,7 @@ func TestAnalyseReaches12of12WithBodyFacts(t *testing.T) {
 
 func TestAnalyseWitnessesCapabilitiesWithWeakestEdge(t *testing.T) {
 	rec := richGraph()
-	report := Analyse(rec, SelectRoots(rec))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 
 	if report.Partial {
 		t.Error("Extracted graph should not be Partial")
@@ -186,7 +186,7 @@ func TestAnalyseKeepsStrongestWitnessPerCapability(t *testing.T) {
 	// NETWORK is witnessed by a Direct path (net/http.Get) and an Unknown path
 	// (net.Dial); the Direct one must win.
 	rec := richGraph()
-	report := Analyse(rec, SelectRoots(rec))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 	f, ok := findingFor(report, CapabilityNetwork)
 	if !ok {
 		t.Fatal("NETWORK not found")
@@ -230,7 +230,7 @@ func TestAnalyseSkipsMissingRoot(t *testing.T) {
 func TestAnalysePartialGraphIsCaveated(t *testing.T) {
 	rec := richGraph()
 	rec.OverallStatus = cgdomain.CallGraphStatusPartial
-	report := Analyse(rec, SelectRoots(rec))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 	if !report.Partial {
 		t.Fatal("Partial status should set Partial")
 	}
@@ -270,7 +270,7 @@ func TestAnalyseWitnessesInitOnlyCapability(t *testing.T) {
 		},
 	}
 
-	report := Analyse(rec, SelectRoots(rec))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 	f, ok := findingFor(report, CapabilityNetwork)
 	if !ok {
 		t.Fatalf("NETWORK not witnessed via init root; got %v", report.Capabilities())
@@ -282,7 +282,7 @@ func TestAnalyseWitnessesInitOnlyCapability(t *testing.T) {
 	// Control: with the init edge removed, the exported API reaches nothing, so
 	// the capability vanishes — proving init roots are what witness it.
 	rec.Edges = nil
-	if got := Analyse(rec, SelectRoots(rec)); len(got.Findings) != 0 {
+	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
 		t.Errorf("without the init edge nothing is witnessed, got %v", got.Capabilities())
 	}
 }
@@ -310,7 +310,7 @@ func TestAnalyseWitnessesDynamicallyDispatchedSinkInApplication(t *testing.T) {
 	rec := dynamicSinkGraph()
 	rec.ArtifactKind = cgdomain.ArtifactApplication
 
-	report := Analyse(rec, SelectRoots(rec))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 
 	f, ok := findingFor(report, CapabilityExec)
 	if !ok {
@@ -328,7 +328,7 @@ func TestAnalyseSkipsDynamicallyDispatchedSinkInLibrary(t *testing.T) {
 	rec := dynamicSinkGraph()
 	rec.ArtifactKind = cgdomain.ArtifactLibrary
 
-	if got := Analyse(rec, SelectRoots(rec)); len(got.Findings) != 0 {
+	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
 		t.Errorf("library artifact witnessed %v, want none", got.Capabilities())
 	}
 }
@@ -337,7 +337,7 @@ func TestSelectRootsApplicationIncludesUnexportedNonInit(t *testing.T) {
 	rec := dynamicSinkGraph()
 	rec.ArtifactKind = cgdomain.ArtifactApplication
 
-	got := SelectRoots(rec)
+	got := SelectRoots(rec, cgdomain.RootScopeProduction)
 	if want := []string{"m.Exported", "m.handler"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("SelectRoots = %v, want %v", got, want)
 	}
@@ -350,7 +350,7 @@ func TestSelectRootsIncludesInit(t *testing.T) {
 		node("m.internal", "m", "internal", false, false),
 		node("ext.init", "ext", "init", true, false),
 	}}
-	got := SelectRoots(rec)
+	got := SelectRoots(rec, cgdomain.RootScopeProduction)
 	if !reflect.DeepEqual(got, []string{"m.Exported", "m.init"}) {
 		t.Errorf("SelectRoots = %v, want [m.Exported m.init]", got)
 	}
@@ -362,7 +362,7 @@ func TestSelectRootsPrefersExported(t *testing.T) {
 		node("m.internal", "m", "internal", false, false),
 		node("ext.Fn", "ext", "Fn", true, true),
 	}}
-	got := SelectRoots(rec)
+	got := SelectRoots(rec, cgdomain.RootScopeProduction)
 	if !reflect.DeepEqual(got, []string{"m.Exported"}) {
 		t.Errorf("SelectRoots = %v, want [m.Exported]", got)
 	}
@@ -374,7 +374,7 @@ func TestSelectRootsFallsBackToOwned(t *testing.T) {
 		node("m.a", "m", "a", false, false),
 		node("ext.Fn", "ext", "Fn", true, false),
 	}}
-	got := SelectRoots(rec)
+	got := SelectRoots(rec, cgdomain.RootScopeProduction)
 	if !reflect.DeepEqual(got, []string{"m.a", "m.b"}) {
 		t.Errorf("SelectRoots = %v, want [m.a m.b]", got)
 	}
@@ -384,7 +384,7 @@ func TestSelectRootsAllExternal(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Nodes: []cgdomain.CallNode{
 		node("ext.Fn", "ext", "Fn", true, true),
 	}}
-	if got := SelectRoots(rec); len(got) != 0 {
+	if got := SelectRoots(rec, cgdomain.RootScopeProduction); len(got) != 0 {
 		t.Errorf("SelectRoots = %v, want empty", got)
 	}
 }
@@ -479,7 +479,7 @@ func TestAnalyseRelaxesToSettledNode(t *testing.T) {
 			edge("m.RootB", "m.F", cgdomain.ConfidenceDirect),
 		},
 	}
-	report := Analyse(rec, SelectRoots(rec))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 	f, ok := findingFor(report, CapabilityNetwork)
 	if !ok {
 		t.Fatal("NETWORK not witnessed")
@@ -487,5 +487,99 @@ func TestAnalyseRelaxesToSettledNode(t *testing.T) {
 	// The Direct path from RootA must win over the Unknown path via C.
 	if f.WeakestConfidence != cgdomain.ConfidenceDirect {
 		t.Errorf("weakest = %q, want Direct", f.WeakestConfidence)
+	}
+}
+
+// testNode is a declaration in a _test.go file or an external test package. It
+// is exported and owned like any other node, which is what made it a root.
+func testNode(id, pkg, sym string) cgdomain.CallNode {
+	n := node(id, pkg, sym, false, true)
+	n.IsTest = true
+	return n
+}
+
+// bothRootsReachOneSink is the case no real module in the store proves: one
+// sink reached from an exported function and from a test, so excluding the test
+// root must not remove the capability, only re-witness it.
+func bothRootsReachOneSink() cgdomain.CallGraphRecord {
+	return cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		Nodes: []cgdomain.CallNode{
+			node("m.Exported", "m", "Exported", false, true),
+			testNode("m_test.TestExported", "m_test", "TestExported"),
+			node("os/exec.Command", "os/exec", "Command", true, false),
+		},
+		Edges: []cgdomain.CallEdge{
+			edge("m.Exported", "os/exec.Command", cgdomain.ConfidenceDirect),
+			edge("m_test.TestExported", "os/exec.Command", cgdomain.ConfidenceDirect),
+		},
+	}
+}
+
+func TestAnalyseKeepsCapabilityReachedFromBothRootsAndWitnessesTheProductionPath(t *testing.T) {
+	rec := bothRootsReachOneSink()
+
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+	f, ok := findingFor(report, CapabilityExec)
+	if !ok {
+		t.Fatalf("EXEC lost when the test root was excluded; got %v", report.Capabilities())
+	}
+	if want := []string{"m.Exported", "os/exec.Command"}; !reflect.DeepEqual(f.Path, want) {
+		t.Errorf("witness = %v, want the production path %v", f.Path, want)
+	}
+}
+
+func TestAnalyseDropsCapabilityWitnessedOnlyByATestRoot(t *testing.T) {
+	// The same graph with the production edge removed: the sink is now reachable
+	// only from the test, so the production scope witnesses nothing and the
+	// widened scope still witnesses EXEC. The pair is what shows the exclusion
+	// is doing the work.
+	rec := bothRootsReachOneSink()
+	rec.Edges = rec.Edges[1:]
+
+	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
+		t.Errorf("test-only sink witnessed under the production scope: %v", got.Capabilities())
+	}
+	withTests := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeWithTests))
+	if _, ok := findingFor(withTests, CapabilityExec); !ok {
+		t.Errorf("EXEC not witnessed with tests included; got %v", withTests.Capabilities())
+	}
+}
+
+func TestAnalyseKeepsAnInitOnlyCapabilityUnderTheProductionScope(t *testing.T) {
+	// Package init runs unconditionally at package load, so an init-only sink is
+	// reachable in any real execution. Excluding test roots must not narrow that.
+	rec := cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		Nodes: []cgdomain.CallNode{
+			node("m.init", "m", "init", false, false),
+			node("m.helper", "m", "helper", false, false),
+			testNode("m_test.TestHelper", "m_test", "TestHelper"),
+			node("net/http.Get", "net/http", "Get", true, false),
+		},
+		Edges: []cgdomain.CallEdge{
+			edge("m.init", "m.helper", cgdomain.ConfidenceDirect),
+			edge("m.helper", "net/http.Get", cgdomain.ConfidenceDirect),
+		},
+	}
+
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+	f, ok := findingFor(report, CapabilityNetwork)
+	if !ok {
+		t.Fatalf("init-rooted NETWORK lost; got %v", report.Capabilities())
+	}
+	if want := []string{"m.init", "m.helper", "net/http.Get"}; !reflect.DeepEqual(f.Path, want) {
+		t.Errorf("witness = %v, want %v", f.Path, want)
+	}
+}
+
+func TestSelectRootsProductionScopeExcludesTestNodes(t *testing.T) {
+	rec := bothRootsReachOneSink()
+	if got, want := SelectRoots(rec, cgdomain.RootScopeProduction), []string{"m.Exported"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SelectRoots = %v, want %v", got, want)
+	}
+	if got, want := SelectRoots(rec, cgdomain.RootScopeWithTests),
+		[]string{"m.Exported", "m_test.TestExported"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SelectRoots with tests = %v, want %v", got, want)
 	}
 }

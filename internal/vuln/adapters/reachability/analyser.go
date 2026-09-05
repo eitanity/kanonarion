@@ -144,7 +144,13 @@ func buildTargetSet(cg ports.CallGraphProjection, targets []ports.SymbolReferenc
 // conditioned on the projection's artifact kind: all owned nodes for an
 // application, the exported API plus package init for a library. It delegates to
 // the shared callgraph-domain selector so vuln reachability and capability
-// analysis root traversal identically and can never drift.
+// analysis apply one root-selection rule and can never drift.
+//
+// Test declarations stay in the root set here, unlike capability analysis. A
+// route names its own root and ClassifyRouteRoot marks a test-scope one RootTest
+// with the reason printed beside the verdict, so the reader is told; dropping
+// the root instead would turn a disclosed test-only reach into a silent "not
+// reachable", which is the false-negative direction.
 func collectEntryPoints(cg ports.CallGraphProjection) []string {
 	candidates := make([]callgraphdomain.RootCandidate, 0, len(cg.Nodes))
 	for _, node := range cg.Nodes {
@@ -153,9 +159,11 @@ func collectEntryPoints(cg ports.CallGraphProjection) []string {
 			Symbol:        node.Symbol,
 			IsExternal:    node.IsExternal,
 			IsExportedAPI: node.IsExportedAPI,
+			IsTest:        node.IsTest,
 		})
 	}
-	return callgraphdomain.SelectReachabilityRoots(candidates, callgraphdomain.ArtifactKind(cg.ArtifactKind))
+	return callgraphdomain.SelectReachabilityRoots(
+		candidates, callgraphdomain.ArtifactKind(cg.ArtifactKind), callgraphdomain.RootScopeWithTests)
 }
 
 // bfsPath performs a BFS from entryPoints following call edges and returns the

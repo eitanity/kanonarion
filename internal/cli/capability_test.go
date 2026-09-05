@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
 )
 
@@ -21,11 +22,11 @@ type fakeCapAnalyser struct {
 	err        error
 }
 
-func (f fakeCapAnalyser) Analyse(context.Context, coordinate.ModuleCoordinate, string) (capdomain.CapabilityReport, error) {
+func (f fakeCapAnalyser) Analyse(context.Context, coordinate.ModuleCoordinate, string, cgdomain.RootScope) (capdomain.CapabilityReport, error) {
 	return f.report, f.err
 }
 
-func (f fakeCapAnalyser) Diff(context.Context, coordinate.ModuleCoordinate, coordinate.ModuleCoordinate, string) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error) {
+func (f fakeCapAnalyser) Diff(context.Context, coordinate.ModuleCoordinate, coordinate.ModuleCoordinate, string, cgdomain.RootScope) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error) {
 	return f.fromReport, f.toReport, f.diff, f.err
 }
 
@@ -46,7 +47,7 @@ func sampleReport() capdomain.CapabilityReport {
 func TestRunCapabilityText(t *testing.T) {
 	var buf bytes.Buffer
 	uc := fakeCapAnalyser{report: sampleReport()}
-	if err := runCapability(context.Background(), "m@v1.0.0", uc, false, &buf); err != nil {
+	if err := runCapability(context.Background(), "m@v1.0.0", uc, cgdomain.RootScopeProduction, false, &buf); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -66,7 +67,7 @@ func TestRunCapabilityPartialCaveat(t *testing.T) {
 	rep := sampleReport()
 	rep.Partial = true
 	rep.Caveat = "graph did not resolve"
-	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{report: rep}, false, &buf); err != nil {
+	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{report: rep}, cgdomain.RootScopeProduction, false, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "graph did not resolve") {
@@ -76,7 +77,7 @@ func TestRunCapabilityPartialCaveat(t *testing.T) {
 
 func TestRunCapabilityEmpty(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{}, false, &buf); err != nil {
+	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{}, cgdomain.RootScopeProduction, false, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "no sensitive capabilities") {
@@ -86,7 +87,7 @@ func TestRunCapabilityEmpty(t *testing.T) {
 
 func TestRunCapabilityJSON(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{report: sampleReport()}, true, &buf); err != nil {
+	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{report: sampleReport()}, cgdomain.RootScopeProduction, true, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var got capabilityReportJSON
@@ -106,7 +107,7 @@ func TestRunCapabilityJSON(t *testing.T) {
 
 func TestRunCapabilityInvalidCoordinate(t *testing.T) {
 	var buf bytes.Buffer
-	err := runCapability(context.Background(), "not-a-coordinate", fakeCapAnalyser{}, false, &buf)
+	err := runCapability(context.Background(), "not-a-coordinate", fakeCapAnalyser{}, cgdomain.RootScopeProduction, false, &buf)
 	if err == nil {
 		t.Fatal("expected error for bad coordinate")
 	}
@@ -114,7 +115,7 @@ func TestRunCapabilityInvalidCoordinate(t *testing.T) {
 
 func TestRunCapabilityAnalyseError(t *testing.T) {
 	var buf bytes.Buffer
-	err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{err: errors.New("boom")}, false, &buf)
+	err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{err: errors.New("boom")}, cgdomain.RootScopeProduction, false, &buf)
 	if err == nil {
 		t.Fatal("expected propagated error")
 	}
@@ -129,7 +130,7 @@ func TestRunCapabilityDiffText(t *testing.T) {
 			Removed:  []capdomain.Capability{capdomain.CapabilityNetwork},
 		},
 	}
-	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, false, &buf); err != nil {
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, cgdomain.RootScopeProduction, false, &buf); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -143,7 +144,7 @@ func TestRunCapabilityDiffNoChangeAndCaveat(t *testing.T) {
 	uc := fakeCapAnalyser{
 		diff: capdomain.CapabilityDiff{ParityOK: false, Caveat: "not valid"},
 	}
-	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, false, &buf); err != nil {
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, cgdomain.RootScopeProduction, false, &buf); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -170,7 +171,7 @@ func TestRunCapabilityDiffNoChangeNamesTheCommonSet(t *testing.T) {
 			Common:   []capdomain.Capability{capdomain.CapabilityNetwork, capdomain.CapabilityExec},
 		},
 	}
-	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, false, &buf); err != nil {
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, cgdomain.RootScopeProduction, false, &buf); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -191,7 +192,7 @@ func TestRunCapabilityDiffJSON(t *testing.T) {
 			Common:   []capdomain.Capability{capdomain.CapabilityNetwork},
 		},
 	}
-	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, true, &buf); err != nil {
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, cgdomain.RootScopeProduction, true, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var got capabilityDiffJSON
@@ -208,18 +209,79 @@ func TestRunCapabilityDiffJSON(t *testing.T) {
 
 func TestRunCapabilityDiffInvalidCoordinates(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runCapabilityDiff(context.Background(), "bad", "m@v1.1.0", fakeCapAnalyser{}, false, &buf); err == nil {
+	if err := runCapabilityDiff(context.Background(), "bad", "m@v1.1.0", fakeCapAnalyser{}, cgdomain.RootScopeProduction, false, &buf); err == nil {
 		t.Error("expected error for bad 'from'")
 	}
-	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "bad", fakeCapAnalyser{}, false, &buf); err == nil {
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "bad", fakeCapAnalyser{}, cgdomain.RootScopeProduction, false, &buf); err == nil {
 		t.Error("expected error for bad 'to'")
 	}
 }
 
 func TestRunCapabilityDiffError(t *testing.T) {
 	var buf bytes.Buffer
-	err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", fakeCapAnalyser{err: errors.New("boom")}, false, &buf)
+	err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", fakeCapAnalyser{err: errors.New("boom")}, cgdomain.RootScopeProduction, false, &buf)
 	if err == nil {
 		t.Fatal("expected propagated error")
+	}
+}
+
+// TestCapabilityRootScopeIsStatedOnEveryReport pins the disclosure. The default
+// root set here is the narrow one, so an unstated axis would leave a reader
+// assuming the whole test surface was searched.
+func TestCapabilityRootScopeIsStatedOnEveryReport(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope cgdomain.RootScope
+		want  string
+	}{
+		{"production", cgdomain.RootScopeProduction, "test functions excluded"},
+		{"with tests", cgdomain.RootScopeWithTests, "--include-tests was given"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			uc := fakeCapAnalyser{report: sampleReport()}
+			if err := runCapability(context.Background(), "m@v1.0.0", uc, tc.scope, false, &buf); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(buf.String(), tc.want) {
+				t.Errorf("root scope not stated: %q", buf.String())
+			}
+			buf.Reset()
+			if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, tc.scope, false, &buf); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(buf.String(), tc.want) {
+				t.Errorf("root scope not stated on the diff: %q", buf.String())
+			}
+		})
+	}
+}
+
+func TestCapabilityJSONCarriesTheRootScope(t *testing.T) {
+	for scope, want := range map[cgdomain.RootScope]string{
+		cgdomain.RootScopeProduction: "excluded",
+		cgdomain.RootScopeWithTests:  "included",
+	} {
+		var buf bytes.Buffer
+		uc := fakeCapAnalyser{report: sampleReport()}
+		if err := runCapability(context.Background(), "m@v1.0.0", uc, scope, true, &buf); err != nil {
+			t.Fatal(err)
+		}
+		var got capabilityReportJSON
+		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+			t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+		}
+		if got.TestRoots != want {
+			t.Errorf("test_roots = %q, want %q", got.TestRoots, want)
+		}
+	}
+}
+
+func TestCapabilityRootScopeFromFlag(t *testing.T) {
+	if got := capabilityRootScope(false); got != cgdomain.RootScopeProduction {
+		t.Errorf("default scope = %v, want production", got)
+	}
+	if got := capabilityRootScope(true); got != cgdomain.RootScopeWithTests {
+		t.Errorf("--include-tests scope = %v, want with-tests", got)
 	}
 }

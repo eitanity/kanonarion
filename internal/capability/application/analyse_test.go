@@ -51,7 +51,7 @@ func TestAnalyseReturnsReport(t *testing.T) {
 		"m@v1.0.0": recordWithHTTP(),
 	}}
 	uc := NewAnalyseCapabilitiesUseCase(src)
-	report, err := uc.Analyse(context.Background(), coord(t, "m", "v1.0.0"), "0.1.0")
+	report, err := uc.Analyse(context.Background(), coord(t, "m", "v1.0.0"), "0.1.0", cgdomain.RootScopeProduction)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestAnalyseReturnsReport(t *testing.T) {
 
 func TestAnalyseNotFound(t *testing.T) {
 	uc := NewAnalyseCapabilitiesUseCase(fakeSource{records: map[string]cgdomain.CallGraphRecord{}})
-	_, err := uc.Analyse(context.Background(), coord(t, "m", "v1.0.0"), "0.1.0")
+	_, err := uc.Analyse(context.Background(), coord(t, "m", "v1.0.0"), "0.1.0", cgdomain.RootScopeProduction)
 	if !errors.Is(err, ErrNoCallGraph) {
 		t.Errorf("err = %v, want ErrNoCallGraph", err)
 	}
@@ -72,7 +72,7 @@ func TestAnalyseNotFound(t *testing.T) {
 func TestAnalyseStoreError(t *testing.T) {
 	sentinel := errors.New("boom")
 	uc := NewAnalyseCapabilitiesUseCase(fakeSource{err: sentinel})
-	_, err := uc.Analyse(context.Background(), coord(t, "m", "v1.0.0"), "0.1.0")
+	_, err := uc.Analyse(context.Background(), coord(t, "m", "v1.0.0"), "0.1.0", cgdomain.RootScopeProduction)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want sentinel", err)
 	}
@@ -88,7 +88,7 @@ func TestDiffTwoVersions(t *testing.T) {
 		"m@v1.1.0": withExec,
 	}}
 	uc := NewAnalyseCapabilitiesUseCase(src)
-	_, _, diff, err := uc.Diff(context.Background(), coord(t, "m", "v1.0.0"), coord(t, "m", "v1.1.0"), "0.1.0")
+	_, _, diff, err := uc.Diff(context.Background(), coord(t, "m", "v1.0.0"), coord(t, "m", "v1.1.0"), "0.1.0", cgdomain.RootScopeProduction)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestDiffFromError(t *testing.T) {
 	uc := NewAnalyseCapabilitiesUseCase(fakeSource{records: map[string]cgdomain.CallGraphRecord{
 		"m@v1.1.0": recordWithHTTP(),
 	}})
-	_, _, _, err := uc.Diff(context.Background(), coord(t, "m", "v1.0.0"), coord(t, "m", "v1.1.0"), "0.1.0")
+	_, _, _, err := uc.Diff(context.Background(), coord(t, "m", "v1.0.0"), coord(t, "m", "v1.1.0"), "0.1.0", cgdomain.RootScopeProduction)
 	if !errors.Is(err, ErrNoCallGraph) {
 		t.Errorf("err = %v, want ErrNoCallGraph for missing 'from'", err)
 	}
@@ -114,7 +114,7 @@ func TestDiffToError(t *testing.T) {
 	uc := NewAnalyseCapabilitiesUseCase(fakeSource{records: map[string]cgdomain.CallGraphRecord{
 		"m@v1.0.0": recordWithHTTP(),
 	}})
-	_, _, _, err := uc.Diff(context.Background(), coord(t, "m", "v1.0.0"), coord(t, "m", "v1.1.0"), "0.1.0")
+	_, _, _, err := uc.Diff(context.Background(), coord(t, "m", "v1.0.0"), coord(t, "m", "v1.1.0"), "0.1.0", cgdomain.RootScopeProduction)
 	if !errors.Is(err, ErrNoCallGraph) {
 		t.Errorf("err = %v, want ErrNoCallGraph for missing 'to'", err)
 	}

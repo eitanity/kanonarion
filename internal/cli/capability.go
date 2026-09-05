@@ -12,12 +12,21 @@ import (
 	"github.com/spf13/cobra"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	capapp "github.com/eitanity/kanonarion/internal/capability/application"
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
 )
 
+// capabilityTestRootFlagName is the opt-in that puts test declarations back in
+// the capability root set. The polarity is the reverse of the edge queries'
+// --exclude-tests because the questions differ: an edge query enumerates the
+// graph, while this command answers what a dependency can do inside the build
+// that consumes it, and a consumer compiles none of its _test.go files.
+const capabilityTestRootFlagName = "include-tests"
+
 func newCapabilityCmd(stdout, stderr io.Writer) *cobra.Command {
 	var against string
+	var includeTests bool
 
 	cmd := &cobra.Command{
 		Use: "capability <module>@<version>",
@@ -32,6 +41,11 @@ code can exercise. Each capability is reported with an example witnessing path
 and that path's weakest edge confidence, so a capability confirmed by a resolved
 direct call is distinguishable from one reached only through interface fanout.
 
+Roots are the module's exported API and its package init functions. Test
+declarations do not root the traversal: a consumer compiles none of the
+module's _test.go files, so a sink only its test suite reaches is not in the
+consuming build. --include-tests widens the roots to them.
+
 With --against, it diffs the capability set of two versions (update-validity):
 did the bump add NETWORK/EXEC/UNSAFE? The diff is only valid when both versions
 were analysed at equal completeness.
@@ -39,6 +53,7 @@ were analysed at equal completeness.
 It reads stored call graphs; run 'kanonarion callgraph <module>@<version>' first.`,
 		Example: `  kanonarion capability github.com/spf13/cobra@v1.8.1
   kanonarion capability github.com/spf13/cobra@v1.8.1 --json
+  kanonarion capability github.com/spf13/cobra@v1.8.1 --include-tests
   kanonarion capability github.com/spf13/cobra@v1.8.0 --against github.com/spf13/cobra@v1.8.1`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -53,40 +68,70 @@ It reads stored call graphs; run 'kanonarion callgraph <module>@<version>' first
 			defer func() { _ = cleanup() }()
 
 			uc := capapp.NewAnalyseCapabilitiesUseCase(ctr.QueryCallGraph)
+			scope := capabilityRootScope(includeTests)
 			if against != "" {
-				return runCapabilityDiff(cmd.Context(), args[0], against, uc, jsonOut, stdout)
+				return runCapabilityDiff(cmd.Context(), args[0], against, uc, scope, jsonOut, stdout)
 			}
-			return runCapability(cmd.Context(), args[0], uc, jsonOut, stdout)
+			return runCapability(cmd.Context(), args[0], uc, scope, jsonOut, stdout)
 		},
 	}
 
 	cmd.Flags().StringVar(&against, "against", "", "second <module>@<version> to diff the capability set against")
+	cmd.Flags().BoolVar(&includeTests, capabilityTestRootFlagName, false,
+		"also root the traversal at test functions, which a consumer of the module does not compile")
 	return cmd
+}
+
+// capabilityRootScope maps the flag to the shared root scope.
+func capabilityRootScope(includeTests bool) cgdomain.RootScope {
+	if includeTests {
+		return cgdomain.RootScopeWithTests
+	}
+	return cgdomain.RootScopeProduction
+}
+
+// capabilityRootScopeLine states which root set produced the answer, on every
+// report rather than only on the narrowed one: the default here is the narrow
+// set, so silence would leave a reader assuming the graph's whole test surface
+// was searched.
+func capabilityRootScopeLine(scope cgdomain.RootScope) string {
+	if scope == cgdomain.RootScopeWithTests {
+		return "roots: exported API, package init and test functions (--" + capabilityTestRootFlagName + " was given)"
+	}
+	return "roots: exported API and package init; test functions excluded (widen with --" + capabilityTestRootFlagName + ")"
+}
+
+// capabilityRootScopeJSON is the machine-readable half of the same disclosure.
+func capabilityRootScopeJSON(scope cgdomain.RootScope) string {
+	if scope == cgdomain.RootScopeWithTests {
+		return "included"
+	}
+	return "excluded"
 }
 
 // capabilityAnalyser is the behaviour runCapability/runCapabilityDiff need,
 // extracted so the commands are unit-testable with a fake.
 type capabilityAnalyser interface {
-	Analyse(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (capdomain.CapabilityReport, error)
-	Diff(ctx context.Context, from, to coordinate.ModuleCoordinate, pipelineVersion string) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error)
+	Analyse(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, scope cgdomain.RootScope) (capdomain.CapabilityReport, error)
+	Diff(ctx context.Context, from, to coordinate.ModuleCoordinate, pipelineVersion string, scope cgdomain.RootScope) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error)
 }
 
-func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, jsonOut bool, stdout io.Writer) error {
+func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, scope cgdomain.RootScope, jsonOut bool, stdout io.Writer) error {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
 	}
-	report, err := uc.Analyse(ctx, coord, cgapp.PipelineVersion)
+	report, err := uc.Analyse(ctx, coord, cgapp.PipelineVersion, scope)
 	if err != nil {
 		return fmt.Errorf("analysing capabilities: %w", err)
 	}
 	if jsonOut {
-		return encodeJSON(stdout, capabilityReportToJSON(coord, report))
+		return encodeJSON(stdout, capabilityReportToJSON(coord, report, scope))
 	}
-	return printCapabilityReport(stdout, coord, report)
+	return printCapabilityReport(stdout, coord, report, scope)
 }
 
-func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capabilityAnalyser, jsonOut bool, stdout io.Writer) error {
+func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capabilityAnalyser, scope cgdomain.RootScope, jsonOut bool, stdout io.Writer) error {
 	from, err := parseCoordinate(fromArg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", fromArg, err)
@@ -95,14 +140,14 @@ func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capability
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", toArg, err)
 	}
-	fromReport, toReport, diff, err := uc.Diff(ctx, from, to, cgapp.PipelineVersion)
+	fromReport, toReport, diff, err := uc.Diff(ctx, from, to, cgapp.PipelineVersion, scope)
 	if err != nil {
 		return fmt.Errorf("diffing capabilities: %w", err)
 	}
 	if jsonOut {
-		return encodeJSON(stdout, capabilityDiffToJSON(from, to, fromReport, toReport, diff))
+		return encodeJSON(stdout, capabilityDiffToJSON(from, to, fromReport, toReport, diff, scope))
 	}
-	return printCapabilityDiff(stdout, from, to, diff)
+	return printCapabilityDiff(stdout, from, to, diff, scope)
 }
 
 func encodeJSON(stdout io.Writer, v any) error {
@@ -125,8 +170,12 @@ type capabilityFindingJSON struct {
 }
 
 type capabilityReportJSON struct {
-	Module       string                  `json:"module"`
-	Version      string                  `json:"version"`
+	Module  string `json:"module"`
+	Version string `json:"version"`
+	// TestRoots is "excluded" or "included": which root set produced the
+	// answer. It is always populated, so a consumer cannot mistake an unstated
+	// axis for a missing one.
+	TestRoots    string                  `json:"test_roots"`
 	Partial      bool                    `json:"partial"`
 	Caveat       string                  `json:"caveat,omitempty"`
 	Capabilities []string                `json:"capabilities"`
@@ -143,7 +192,7 @@ type capabilityDiffJSON struct {
 	Common   []string             `json:"common"`
 }
 
-func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport) capabilityReportJSON {
+func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport, scope cgdomain.RootScope) capabilityReportJSON {
 	findings := make([]capabilityFindingJSON, 0, len(r.Findings))
 	for _, f := range r.Findings {
 		findings = append(findings, capabilityFindingJSON{
@@ -157,6 +206,7 @@ func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.Capab
 	return capabilityReportJSON{
 		Module:       coord.Path(),
 		Version:      coord.Version(),
+		TestRoots:    capabilityRootScopeJSON(scope),
 		Partial:      r.Partial,
 		Caveat:       r.Caveat,
 		Capabilities: capsToStrings(r.Capabilities()),
@@ -164,10 +214,10 @@ func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.Capab
 	}
 }
 
-func capabilityDiffToJSON(from, to coordinate.ModuleCoordinate, fromReport, toReport capdomain.CapabilityReport, diff capdomain.CapabilityDiff) capabilityDiffJSON {
+func capabilityDiffToJSON(from, to coordinate.ModuleCoordinate, fromReport, toReport capdomain.CapabilityReport, diff capdomain.CapabilityDiff, scope cgdomain.RootScope) capabilityDiffJSON {
 	return capabilityDiffJSON{
-		From:     capabilityReportToJSON(from, fromReport),
-		To:       capabilityReportToJSON(to, toReport),
+		From:     capabilityReportToJSON(from, fromReport, scope),
+		To:       capabilityReportToJSON(to, toReport, scope),
 		ParityOK: diff.ParityOK,
 		Caveat:   diff.Caveat,
 		Added:    capsToStrings(diff.Added),
@@ -186,9 +236,12 @@ func capsToStrings(caps []capdomain.Capability) []string {
 
 // -- text rendering --
 
-func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport) error {
+func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport, scope cgdomain.RootScope) error {
 	if _, err := fmt.Fprintf(stdout, "%s@%s capabilities:\n", coord.Path(), coord.Version()); err != nil {
 		return fmt.Errorf("writing header: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "  %s\n", capabilityRootScopeLine(scope)); err != nil {
+		return fmt.Errorf("writing root scope: %w", err)
 	}
 	if r.Partial {
 		if _, err := fmt.Fprintf(stdout, "  ⚠ %s\n", r.Caveat); err != nil {
@@ -213,10 +266,13 @@ func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, 
 	return nil
 }
 
-func printCapabilityDiff(stdout io.Writer, from, to coordinate.ModuleCoordinate, diff capdomain.CapabilityDiff) error {
+func printCapabilityDiff(stdout io.Writer, from, to coordinate.ModuleCoordinate, diff capdomain.CapabilityDiff, scope cgdomain.RootScope) error {
 	if _, err := fmt.Fprintf(stdout, "capability diff %s@%s → %s@%s:\n",
 		from.Path(), from.Version(), to.Path(), to.Version()); err != nil {
 		return fmt.Errorf("writing header: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "  %s\n", capabilityRootScopeLine(scope)); err != nil {
+		return fmt.Errorf("writing root scope: %w", err)
 	}
 	if !diff.ParityOK {
 		if _, err := fmt.Fprintf(stdout, "  ⚠ %s\n", diff.Caveat); err != nil {
