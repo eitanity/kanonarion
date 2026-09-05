@@ -58,3 +58,42 @@ func AllCapabilities() []Capability {
 func (c Capability) Valid() bool {
 	return slices.Contains(AllCapabilities(), c)
 }
+
+// CapabilityBasis says what a witnessing path actually established. It is
+// emitted on every finding: only BasisUse is a capability of the analysed
+// module, and the other two name the weaker thing the path proved instead of
+// leaving the reader to infer it from the sink.
+type CapabilityBasis string
+
+const (
+	// BasisUse is a capability of the analysed module: its code calls into a
+	// sink, or the body fact is recorded on a node the module owns.
+	BasisUse CapabilityBasis = "use"
+	// BasisLinkageOnly is a path whose sink is another package's init. The
+	// package is linked and its initialiser ran; nothing in it was called, so
+	// the package's capability is not the analysed module's.
+	BasisLinkageOnly CapabilityBasis = "linkage_only"
+	// BasisCalleeBodyFact is a body fact (unsafe.Pointer use, an
+	// assembly/linkname body) recorded on an external callee. The fact is true
+	// of that function, not of the code that calls it.
+	BasisCalleeBodyFact CapabilityBasis = "callee_body_fact"
+)
+
+// AllCapabilityBases returns the basis vocabulary in a stable order.
+func AllCapabilityBases() []CapabilityBasis {
+	return []CapabilityBasis{BasisUse, BasisLinkageOnly, BasisCalleeBodyFact}
+}
+
+// Explanation is the one-line reason a reader is shown beside a finding that is
+// not a capability of the analysed module. BasisUse has none: it needs no
+// qualification.
+func (b CapabilityBasis) Explanation() string {
+	switch b {
+	case BasisLinkageOnly:
+		return "linkage only: the package is linked and its initialiser ran; nothing in it was called"
+	case BasisCalleeBodyFact:
+		return "callee body fact: the fact is recorded on that external function, not on this module's code"
+	default:
+		return ""
+	}
+}

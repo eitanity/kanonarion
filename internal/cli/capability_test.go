@@ -39,8 +39,123 @@ func sampleReport() capdomain.CapabilityReport {
 				SinkPackage:       "net/http",
 				SinkSymbol:        "Get",
 				WeakestConfidence: "Direct",
+				Basis:             capdomain.BasisUse,
 			},
 		},
+	}
+}
+
+// observedReport is a report whose only EXEC and UNSAFE_POINTER paths establish
+// something weaker than a capability of the module.
+func observedReport() capdomain.CapabilityReport {
+	r := sampleReport()
+	r.Observations = []capdomain.CapabilityFinding{
+		{
+			Capability:        capdomain.CapabilityExec,
+			Path:              []string{"m.init", "os/exec.init"},
+			SinkPackage:       "os/exec",
+			SinkSymbol:        "init",
+			WeakestConfidence: "Direct",
+			Basis:             capdomain.BasisLinkageOnly,
+		},
+		{
+			Capability:        capdomain.CapabilityUnsafePointer,
+			Path:              []string{"m.Root", "sync.(*RWMutex).Lock"},
+			SinkPackage:       "sync",
+			SinkSymbol:        "Lock",
+			WeakestConfidence: "Direct",
+			Basis:             capdomain.BasisCalleeBodyFact,
+		},
+	}
+	return r
+}
+
+// TestRunCapabilityObservationsAreStatedNotDropped: an observation is out of the
+// capability set but on the page, under a heading that says what it is.
+func TestRunCapabilityObservationsAreStatedNotDropped(t *testing.T) {
+	var buf bytes.Buffer
+	uc := fakeCapAnalyser{report: observedReport()}
+	if err := runCapability(context.Background(), "m@v1.0.0", uc, cgdomain.RootScopeProduction, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "not capabilities of this module") {
+		t.Errorf("observations heading missing: %q", out)
+	}
+	for _, want := range []string{
+		"EXEC", "os/exec.init", "linkage only",
+		"UNSAFE_POINTER", "sync.Lock", "callee body fact",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("observation detail %q missing: %q", want, out)
+		}
+	}
+	// A capability line is indented two spaces; an observation four. Matching the
+	// bare label would match both, so anchor on the line start.
+	if strings.Contains(out, "\n  EXEC") {
+		t.Errorf("EXEC must not be rendered as a capability: %q", out)
+	}
+}
+
+// TestRunCapabilityObservationsWithNoCapability: a report with nothing witnessed
+// still says so AND still shows what it did find.
+func TestRunCapabilityObservationsWithNoCapability(t *testing.T) {
+	var buf bytes.Buffer
+	rep := observedReport()
+	rep.Findings = nil
+	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{report: rep}, cgdomain.RootScopeProduction, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "no sensitive capabilities") {
+		t.Errorf("empty message missing: %q", out)
+	}
+	if !strings.Contains(out, "os/exec.init") {
+		t.Errorf("observations still belong on an otherwise empty report: %q", out)
+	}
+}
+
+func TestRunCapabilityJSONCarriesObservationsAndBasis(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{report: observedReport()}, cgdomain.RootScopeProduction, true, &buf); err != nil {
+		t.Fatal(err)
+	}
+	var got capabilityReportJSON
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	if len(got.Capabilities) != 1 || got.Capabilities[0] != "NETWORK" {
+		t.Errorf("an observation must not enter the capability set: %v", got.Capabilities)
+	}
+	if len(got.Findings) != 1 || got.Findings[0].Basis != "use" {
+		t.Errorf("findings = %+v", got.Findings)
+	}
+	if got.Findings[0].BasisNote != "" {
+		t.Errorf("a used capability needs no qualification, got %q", got.Findings[0].BasisNote)
+	}
+	if len(got.Observations) != 2 {
+		t.Fatalf("observations = %+v", got.Observations)
+	}
+	wantBasis := []string{"linkage_only", "callee_body_fact"}
+	for i, o := range got.Observations {
+		if o.Basis != wantBasis[i] {
+			t.Errorf("observation %d basis = %q, want %q", i, o.Basis, wantBasis[i])
+		}
+		if o.BasisNote == "" {
+			t.Errorf("observation %d carries no note", i)
+		}
+	}
+}
+
+// TestRunCapabilityJSONAlwaysCarriesObservations: the key is present even when
+// empty, so its absence can never be read as "none found".
+func TestRunCapabilityJSONAlwaysCarriesObservations(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runCapability(context.Background(), "m@v1.0.0", fakeCapAnalyser{report: sampleReport()}, cgdomain.RootScopeProduction, true, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "\"observations\": []") {
+		t.Errorf("observations key missing from JSON: %s", buf.String())
 	}
 }
 

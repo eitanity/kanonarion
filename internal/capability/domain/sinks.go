@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"slices"
 	"strings"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -158,29 +157,64 @@ func SinkCapability(pkg, receiver, symbol string) (Capability, bool) {
 	return "", false
 }
 
-// NodeCapabilities returns every capability witnessed by reaching node n. It
-// combines the callee-identity classification (SinkCapability over the node's
-// package, receiver, and symbol) with the node's body-level facts:
-// UsesUnsafePointer witnesses UNSAFE_POINTER and IsAssemblyOrLinkname witnesses
-// ARBITRARY_EXECUTION. The body-level facts close the under-approximation gap
-// where a sink is a property of a function's body rather than its identity —
-// the unsafe package exposes no callable functions, and assembly/linkname
-// leaves have no call edges into them, so neither can be caught by the sink map
-// alone. The returned slice has no duplicate capabilities.
-func NodeCapabilities(n cgdomain.CallNode) []Capability {
-	var caps []Capability
+// NodeCapability is one capability a node can witness together with what
+// reaching that node actually established — see CapabilityBasis.
+type NodeCapability struct {
+	Capability Capability
+	Basis      CapabilityBasis
+}
+
+// NodeCapabilities returns every capability reaching node n could witness, each
+// with the basis on which it does. It combines the callee-identity
+// classification (SinkCapability over the node's package, receiver, and symbol)
+// with the node's body-level facts: UsesUnsafePointer witnesses UNSAFE_POINTER
+// and IsAssemblyOrLinkname witnesses ARBITRARY_EXECUTION. The body-level facts
+// close the under-approximation gap where a sink is a property of a function's
+// body rather than its identity — the unsafe package exposes no callable
+// functions, and assembly/linkname leaves have no call edges into them, so
+// neither can be caught by the sink map alone.
+//
+// Two shapes are classified but are NOT the analysed module's capability, so
+// each carries its own basis rather than being dropped:
+//
+//   - An external package's init as the sink. Reaching an initialiser says the
+//     package is linked, not that anything in it was called.
+//   - A body fact on an external node. The fact classifies the function it is
+//     recorded on; a caller of sync.(*RWMutex).Lock does no pointer arithmetic
+//     of its own.
+//
+// The returned slice has no duplicate capabilities.
+func NodeCapabilities(n cgdomain.CallNode) []NodeCapability {
+	var caps []NodeCapability
 	if c, ok := SinkCapability(n.Package, n.Receiver, n.Symbol); ok {
-		caps = append(caps, c)
+		basis := BasisUse
+		if n.IsExternal && cgdomain.IsInitSymbol(n.Symbol) {
+			basis = BasisLinkageOnly
+		}
+		caps = addCapability(caps, c, basis)
 	}
-	if n.UsesUnsafePointer && !containsCapability(caps, CapabilityUnsafePointer) {
-		caps = append(caps, CapabilityUnsafePointer)
+	bodyBasis := BasisUse
+	if n.IsExternal {
+		bodyBasis = BasisCalleeBodyFact
 	}
-	if n.IsAssemblyOrLinkname && !containsCapability(caps, CapabilityArbitraryExecution) {
-		caps = append(caps, CapabilityArbitraryExecution)
+	if n.UsesUnsafePointer {
+		caps = addCapability(caps, CapabilityUnsafePointer, bodyBasis)
+	}
+	if n.IsAssemblyOrLinkname {
+		caps = addCapability(caps, CapabilityArbitraryExecution, bodyBasis)
 	}
 	return caps
 }
 
-func containsCapability(caps []Capability, c Capability) bool {
-	return slices.Contains(caps, c)
+// addCapability appends c unless the capability is already present. The first
+// classification stands because identity is evaluated first and a body fact can
+// never be the stronger claim of the two: both weaken on the same node fact,
+// IsExternal.
+func addCapability(caps []NodeCapability, c Capability, basis CapabilityBasis) []NodeCapability {
+	for _, existing := range caps {
+		if existing.Capability == c {
+			return caps
+		}
+	}
+	return append(caps, NodeCapability{Capability: c, Basis: basis})
 }

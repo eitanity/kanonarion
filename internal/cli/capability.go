@@ -41,6 +41,11 @@ code can exercise. Each capability is reported with an example witnessing path
 and that path's weakest edge confidence, so a capability confirmed by a resolved
 direct call is distinguishable from one reached only through interface fanout.
 
+A path that reaches another package's init, or an external callee carrying a
+body-level fact, is reported below the capability set instead of in it: it shows
+the package is linked, or classifies the callee, rather than naming something
+this module does.
+
 Roots are the module's exported API and its package init functions. Test
 declarations do not root the traversal: a consumer compiles none of the
 module's _test.go files, so a sink only its test suite reaches is not in the
@@ -162,11 +167,17 @@ func encodeJSON(stdout io.Writer, v any) error {
 // -- JSON shapes --
 
 type capabilityFindingJSON struct {
-	Capability        string   `json:"capability"`
-	WeakestConfidence string   `json:"weakest_confidence"`
-	SinkPackage       string   `json:"sink_package"`
-	SinkSymbol        string   `json:"sink_symbol"`
-	Path              []string `json:"path"`
+	Capability        string `json:"capability"`
+	WeakestConfidence string `json:"weakest_confidence"`
+	// Basis is what the path established: "use", "linkage_only" or
+	// "callee_body_fact". Emitted on every entry in both arrays so a consumer
+	// that merges them cannot lose the distinction.
+	Basis string `json:"basis"`
+	// BasisNote is the one-line reason, empty for "use".
+	BasisNote   string   `json:"basis_note,omitempty"`
+	SinkPackage string   `json:"sink_package"`
+	SinkSymbol  string   `json:"sink_symbol"`
+	Path        []string `json:"path"`
 }
 
 type capabilityReportJSON struct {
@@ -180,6 +191,10 @@ type capabilityReportJSON struct {
 	Caveat       string                  `json:"caveat,omitempty"`
 	Capabilities []string                `json:"capabilities"`
 	Findings     []capabilityFindingJSON `json:"findings"`
+	// Observations are paths that reach a classified node but establish
+	// something weaker than a capability of this module. Always present (empty
+	// array when there are none) so its absence cannot be read as "none found".
+	Observations []capabilityFindingJSON `json:"observations"`
 }
 
 type capabilityDiffJSON struct {
@@ -193,16 +208,6 @@ type capabilityDiffJSON struct {
 }
 
 func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport, scope cgdomain.RootScope) capabilityReportJSON {
-	findings := make([]capabilityFindingJSON, 0, len(r.Findings))
-	for _, f := range r.Findings {
-		findings = append(findings, capabilityFindingJSON{
-			Capability:        string(f.Capability),
-			WeakestConfidence: string(f.WeakestConfidence),
-			SinkPackage:       f.SinkPackage,
-			SinkSymbol:        f.SinkSymbol,
-			Path:              f.Path,
-		})
-	}
 	return capabilityReportJSON{
 		Module:       coord.Path(),
 		Version:      coord.Version(),
@@ -210,8 +215,25 @@ func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.Capab
 		Partial:      r.Partial,
 		Caveat:       r.Caveat,
 		Capabilities: capsToStrings(r.Capabilities()),
-		Findings:     findings,
+		Findings:     capabilityFindingsToJSON(r.Findings),
+		Observations: capabilityFindingsToJSON(r.Observations),
 	}
+}
+
+func capabilityFindingsToJSON(fs []capdomain.CapabilityFinding) []capabilityFindingJSON {
+	out := make([]capabilityFindingJSON, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, capabilityFindingJSON{
+			Capability:        string(f.Capability),
+			WeakestConfidence: string(f.WeakestConfidence),
+			Basis:             string(f.Basis),
+			BasisNote:         f.Basis.Explanation(),
+			SinkPackage:       f.SinkPackage,
+			SinkSymbol:        f.SinkSymbol,
+			Path:              f.Path,
+		})
+	}
+	return out
 }
 
 func capabilityDiffToJSON(from, to coordinate.ModuleCoordinate, fromReport, toReport capdomain.CapabilityReport, diff capdomain.CapabilityDiff, scope cgdomain.RootScope) capabilityDiffJSON {
@@ -252,16 +274,41 @@ func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, 
 		if _, err := fmt.Fprintln(stdout, "  (no sensitive capabilities witnessed)"); err != nil {
 			return fmt.Errorf("writing empty result: %w", err)
 		}
-		return nil
 	}
 	for _, f := range r.Findings {
-		if _, err := fmt.Fprintf(stdout, "  %-20s [%s]  via %s.%s\n",
-			string(f.Capability), string(f.WeakestConfidence), f.SinkPackage, f.SinkSymbol); err != nil {
-			return fmt.Errorf("writing finding: %w", err)
+		if err := printCapabilityFinding(stdout, f, "  "); err != nil {
+			return err
 		}
-		if _, err := fmt.Fprintf(stdout, "    path: %s\n", strings.Join(f.Path, " → ")); err != nil {
-			return fmt.Errorf("writing path: %w", err)
+	}
+	if len(r.Observations) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(stdout,
+		"  not capabilities of this module — what the path establishes instead:"); err != nil {
+		return fmt.Errorf("writing observations header: %w", err)
+	}
+	for _, f := range r.Observations {
+		if err := printCapabilityFinding(stdout, f, "    "); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// printCapabilityFinding renders one finding; a basis other than use adds the
+// line saying what the path proved instead, so the label is never read alone.
+func printCapabilityFinding(stdout io.Writer, f capdomain.CapabilityFinding, indent string) error {
+	if _, err := fmt.Fprintf(stdout, "%s%-20s [%s]  via %s.%s\n",
+		indent, string(f.Capability), string(f.WeakestConfidence), f.SinkPackage, f.SinkSymbol); err != nil {
+		return fmt.Errorf("writing finding: %w", err)
+	}
+	if note := f.Basis.Explanation(); note != "" {
+		if _, err := fmt.Fprintf(stdout, "%s  %s\n", indent, note); err != nil {
+			return fmt.Errorf("writing basis: %w", err)
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "%s  path: %s\n", indent, strings.Join(f.Path, " → ")); err != nil {
+		return fmt.Errorf("writing path: %w", err)
 	}
 	return nil
 }

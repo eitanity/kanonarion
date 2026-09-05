@@ -103,47 +103,88 @@ func TestNodeCapabilitiesBodyFacts(t *testing.T) {
 	cases := []struct {
 		name string
 		node cgdomain.CallNode
-		want []Capability
+		want []NodeCapability
 	}{
 		{
 			name: "plain sink from package identity",
-			node: cgdomain.CallNode{Package: "net/http", Symbol: "Get"},
-			want: []Capability{CapabilityNetwork},
+			node: cgdomain.CallNode{Package: "net/http", Symbol: "Get", IsExternal: true},
+			want: []NodeCapability{{CapabilityNetwork, BasisUse}},
 		},
 		{
-			name: "unsafe.Pointer body fact on a non-sink node",
-			node: cgdomain.CallNode{Package: "goja/unistring", Symbol: "AsUtf16", UsesUnsafePointer: true},
-			want: []Capability{CapabilityUnsafePointer},
+			name: "unsafe.Pointer body fact on the module's own node",
+			node: cgdomain.CallNode{Package: "m/internal", Symbol: "toBytes", UsesUnsafePointer: true},
+			want: []NodeCapability{{CapabilityUnsafePointer, BasisUse}},
 		},
 		{
-			name: "assembly/linkname body fact on a non-sink node",
-			node: cgdomain.CallNode{Package: "internal/cpuinfo", Symbol: "x86extensions", IsAssemblyOrLinkname: true},
-			want: []Capability{CapabilityArbitraryExecution},
+			name: "assembly/linkname body fact on the module's own node",
+			node: cgdomain.CallNode{Package: "m/internal", Symbol: "asmRound", IsAssemblyOrLinkname: true},
+			want: []NodeCapability{{CapabilityArbitraryExecution, BasisUse}},
 		},
 		{
-			name: "both body facts on one node",
-			node: cgdomain.CallNode{Package: "x", Symbol: "F", UsesUnsafePointer: true, IsAssemblyOrLinkname: true},
-			want: []Capability{CapabilityUnsafePointer, CapabilityArbitraryExecution},
+			name: "both body facts on one owned node",
+			node: cgdomain.CallNode{Package: "m", Symbol: "F", UsesUnsafePointer: true, IsAssemblyOrLinkname: true},
+			want: []NodeCapability{
+				{CapabilityUnsafePointer, BasisUse},
+				{CapabilityArbitraryExecution, BasisUse},
+			},
 		},
 		{
 			name: "sink identity plus a body fact",
-			node: cgdomain.CallNode{Package: "reflect", Symbol: "ValueOf", UsesUnsafePointer: true},
-			want: []Capability{CapabilityReflect, CapabilityUnsafePointer},
+			node: cgdomain.CallNode{Package: "reflect", Symbol: "ValueOf", IsExternal: true, UsesUnsafePointer: true},
+			want: []NodeCapability{
+				{CapabilityReflect, BasisUse},
+				{CapabilityUnsafePointer, BasisCalleeBodyFact},
+			},
 		},
 		{
 			name: "no sink and no facts",
-			node: cgdomain.CallNode{Package: "strings", Symbol: "Split"},
+			node: cgdomain.CallNode{Package: "strings", Symbol: "Split", IsExternal: true},
 			want: nil,
 		},
 		{
 			name: "unsafe package identity and unsafe body fact do not duplicate",
-			node: cgdomain.CallNode{Package: "unsafe", Symbol: "Pointer", UsesUnsafePointer: true},
-			want: []Capability{CapabilityUnsafePointer},
+			node: cgdomain.CallNode{Package: "unsafe", Symbol: "Pointer", IsExternal: true, UsesUnsafePointer: true},
+			want: []NodeCapability{{CapabilityUnsafePointer, BasisUse}},
 		},
 		{
 			name: "plugin identity and assembly fact do not duplicate ARBITRARY_EXECUTION",
-			node: cgdomain.CallNode{Package: "plugin", Symbol: "Open", IsAssemblyOrLinkname: true},
-			want: []Capability{CapabilityArbitraryExecution},
+			node: cgdomain.CallNode{Package: "plugin", Symbol: "Open", IsExternal: true, IsAssemblyOrLinkname: true},
+			want: []NodeCapability{{CapabilityArbitraryExecution, BasisUse}},
+		},
+		{
+			name: "unsafe.Pointer body fact on an external callee classifies the callee",
+			node: cgdomain.CallNode{
+				Package: "sync", Receiver: "*RWMutex", Symbol: "Lock",
+				IsExternal: true, UsesUnsafePointer: true,
+			},
+			want: []NodeCapability{{CapabilityUnsafePointer, BasisCalleeBodyFact}},
+		},
+		{
+			name: "linkname body fact on an external callee classifies the callee",
+			node: cgdomain.CallNode{
+				Package: "time", Symbol: "Sleep", IsExternal: true, IsAssemblyOrLinkname: true,
+			},
+			want: []NodeCapability{{CapabilityArbitraryExecution, BasisCalleeBodyFact}},
+		},
+		{
+			name: "an external package init is linkage, not use",
+			node: cgdomain.CallNode{Package: "os/exec", Symbol: "init", IsExternal: true},
+			want: []NodeCapability{{CapabilityExec, BasisLinkageOnly}},
+		},
+		{
+			name: "a generated init#N is linkage too",
+			node: cgdomain.CallNode{Package: "io/ioutil", Symbol: "init#1", IsExternal: true},
+			want: []NodeCapability{{CapabilityFiles, BasisLinkageOnly}},
+		},
+		{
+			name: "an owned init in a sink-named package is the module's own code",
+			node: cgdomain.CallNode{Package: "os", Symbol: "init"},
+			want: []NodeCapability{{CapabilityFiles, BasisUse}},
+		},
+		{
+			name: "a real call into the init's package is unaffected",
+			node: cgdomain.CallNode{Package: "os/exec", Symbol: "Command", IsExternal: true},
+			want: []NodeCapability{{CapabilityExec, BasisUse}},
 		},
 	}
 	for _, tc := range cases {
@@ -153,5 +194,24 @@ func TestNodeCapabilitiesBodyFacts(t *testing.T) {
 				t.Errorf("NodeCapabilities = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestCapabilityBasisExplanation pins the reader-facing line for each basis:
+// only "use" is silent, because only "use" needs no qualification.
+func TestCapabilityBasisExplanation(t *testing.T) {
+	if got := BasisUse.Explanation(); got != "" {
+		t.Errorf("BasisUse explanation = %q, want empty", got)
+	}
+	for _, b := range []CapabilityBasis{BasisLinkageOnly, BasisCalleeBodyFact} {
+		if BasisLinkageOnly.Explanation() == BasisCalleeBodyFact.Explanation() {
+			t.Fatal("the two qualified bases must not share one explanation")
+		}
+		if got := b.Explanation(); got == "" {
+			t.Errorf("%s has no explanation", b)
+		}
+	}
+	if want := []CapabilityBasis{BasisUse, BasisLinkageOnly, BasisCalleeBodyFact}; !reflect.DeepEqual(AllCapabilityBases(), want) {
+		t.Errorf("AllCapabilityBases = %v, want %v", AllCapabilityBases(), want)
 	}
 }

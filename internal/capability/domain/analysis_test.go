@@ -57,20 +57,30 @@ func findingFor(r CapabilityReport, c Capability) (CapabilityFinding, bool) {
 	return CapabilityFinding{}, false
 }
 
-// TestAnalyseWitnessesBodyLevelCapabilities is the body-level capability regression: two
-// capabilities are properties of a reachable function's body, not its callee
-// identity, so the sink map alone cannot witness them. UNSAFE_POINTER comes
-// from a dependency leaf that converts through unsafe.Pointer; ARBITRARY_EXECUTION
-// from an assembly/linkname leaf with no Go body. Both are non-sink packages,
-// so without the body facts neither would appear.
+func observationFor(r CapabilityReport, c Capability) (CapabilityFinding, bool) {
+	for _, f := range r.Observations {
+		if f.Capability == c {
+			return f, true
+		}
+	}
+	return CapabilityFinding{}, false
+}
+
+// TestAnalyseWitnessesBodyLevelCapabilities is the body-level capability
+// regression: two capabilities are properties of the module's OWN function
+// bodies, not of any callee identity, so the sink map alone cannot witness them.
+// UNSAFE_POINTER comes from an owned helper that converts through
+// unsafe.Pointer; ARBITRARY_EXECUTION from an owned assembly/linkname leaf with
+// no Go body. Both are in non-sink packages, so without the body facts neither
+// would appear.
 func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 	unsafeLeaf := cgdomain.CallNode{
-		ID: "goja/unistring.(String).AsUtf16", Package: "goja/unistring",
-		Symbol: "AsUtf16", IsExternal: true, UsesUnsafePointer: true,
+		ID: "m/internal.toBytes", Package: "m/internal", Module: "m",
+		Symbol: "toBytes", UsesUnsafePointer: true,
 	}
 	asmLeaf := cgdomain.CallNode{
-		ID: "xxhash.writeBlocks", Package: "klauspost/compress/zstd/internal/xxhash",
-		Symbol: "writeBlocks", IsExternal: true, IsAssemblyOrLinkname: true,
+		ID: "m/internal.asmRound", Package: "m/internal", Module: "m",
+		Symbol: "asmRound", IsAssemblyOrLinkname: true,
 	}
 	rec := cgdomain.CallGraphRecord{
 		OverallStatus: cgdomain.CallGraphStatusExtracted,
@@ -80,8 +90,8 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 			asmLeaf,
 		},
 		Edges: []cgdomain.CallEdge{
-			edge("m.Root", "goja/unistring.(String).AsUtf16", cgdomain.ConfidenceDirect),
-			edge("m.Root", "xxhash.writeBlocks", cgdomain.ConfidenceCHAOverapprox),
+			edge("m.Root", "m/internal.toBytes", cgdomain.ConfidenceDirect),
+			edge("m.Root", "m/internal.asmRound", cgdomain.ConfidenceCHAOverapprox),
 		},
 	}
 
@@ -91,16 +101,22 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 	if !ok {
 		t.Fatalf("UNSAFE_POINTER not witnessed; got %v", report.Capabilities())
 	}
+	if up.Basis != BasisUse {
+		t.Errorf("UNSAFE_POINTER basis = %q, want use", up.Basis)
+	}
 	if up.WeakestConfidence != cgdomain.ConfidenceDirect {
 		t.Errorf("UNSAFE_POINTER weakest = %q, want Direct", up.WeakestConfidence)
 	}
-	if up.SinkPackage != "goja/unistring" || up.SinkSymbol != "AsUtf16" {
-		t.Errorf("UNSAFE_POINTER sink = %s.%s, want goja/unistring.AsUtf16", up.SinkPackage, up.SinkSymbol)
+	if up.SinkPackage != "m/internal" || up.SinkSymbol != "toBytes" {
+		t.Errorf("UNSAFE_POINTER sink = %s.%s, want m/internal.toBytes", up.SinkPackage, up.SinkSymbol)
 	}
 
 	ae, ok := findingFor(report, CapabilityArbitraryExecution)
 	if !ok {
 		t.Fatalf("ARBITRARY_EXECUTION not witnessed; got %v", report.Capabilities())
+	}
+	if ae.Basis != BasisUse {
+		t.Errorf("ARBITRARY_EXECUTION basis = %q, want use", ae.Basis)
 	}
 	if ae.WeakestConfidence != cgdomain.ConfidenceCHAOverapprox {
 		t.Errorf("ARBITRARY_EXECUTION weakest = %q, want CHA-overapprox", ae.WeakestConfidence)
@@ -112,6 +128,88 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 	rec.Nodes[2].IsAssemblyOrLinkname = false
 	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
 		t.Errorf("without body facts the non-sink leaves witness nothing, got %v", got.Capabilities())
+	}
+}
+
+// TestAnalyseDoesNotWitnessExternalBodyFacts is the same graph with the two
+// body-fact leaves owned by somebody else. Taking a mutex is not this module's
+// unsafe pointer arithmetic and sleeping is not its arbitrary execution, so
+// neither is a capability — and neither is silently dropped either.
+func TestAnalyseDoesNotWitnessExternalBodyFacts(t *testing.T) {
+	rec := cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		Nodes: []cgdomain.CallNode{
+			node("m.Root", "m", "Root", false, true),
+			{
+				ID: "sync.(*RWMutex).Lock", Package: "sync", Receiver: "*RWMutex", Symbol: "Lock",
+				IsExternal: true, UsesUnsafePointer: true,
+			},
+			{
+				ID: "time.Sleep", Package: "time", Symbol: "Sleep",
+				IsExternal: true, IsAssemblyOrLinkname: true,
+			},
+		},
+		Edges: []cgdomain.CallEdge{
+			edge("m.Root", "sync.(*RWMutex).Lock", cgdomain.ConfidenceDirect),
+			edge("m.Root", "time.Sleep", cgdomain.ConfidenceDirect),
+		},
+	}
+
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+	if len(report.Findings) != 0 {
+		t.Errorf("external body facts are not capabilities, got %v", report.Capabilities())
+	}
+	for _, c := range []Capability{CapabilityUnsafePointer, CapabilityArbitraryExecution} {
+		obs, ok := observationFor(report, c)
+		if !ok {
+			t.Fatalf("%s should be reported as an observation, not dropped", c)
+		}
+		if obs.Basis != BasisCalleeBodyFact {
+			t.Errorf("%s observation basis = %q, want callee_body_fact", c, obs.Basis)
+		}
+	}
+}
+
+// TestAnalyseTreatsExternalInitAsLinkage covers the other half: reaching a
+// package's initialiser says the package is linked, and a real call into the
+// same package still witnesses the capability outright.
+func TestAnalyseTreatsExternalInitAsLinkage(t *testing.T) {
+	rec := cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		Nodes: []cgdomain.CallNode{
+			node("m.Root", "m", "Root", false, true),
+			node("m.init", "m", "init", false, false),
+			node("os/exec.init", "os/exec", "init", true, false),
+			node("net/http.init", "net/http", "init", true, false),
+			node("net/http.Get", "net/http", "Get", true, false),
+		},
+		Edges: []cgdomain.CallEdge{
+			edge("m.init", "os/exec.init", cgdomain.ConfidenceDirect),
+			edge("m.init", "net/http.init", cgdomain.ConfidenceDirect),
+			edge("m.Root", "net/http.Get", cgdomain.ConfidenceDirect),
+		},
+	}
+
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+
+	if _, ok := findingFor(report, CapabilityExec); ok {
+		t.Error("reaching os/exec.init must not witness EXEC")
+	}
+	obs, ok := observationFor(report, CapabilityExec)
+	if !ok {
+		t.Fatal("EXEC should be reported as a linkage observation")
+	}
+	if obs.Basis != BasisLinkageOnly {
+		t.Errorf("EXEC observation basis = %q, want linkage_only", obs.Basis)
+	}
+	// The init root itself still works, and the real call outranks the linkage:
+	// NETWORK is a capability and carries no observation beside it.
+	net, ok := findingFor(report, CapabilityNetwork)
+	if !ok || net.SinkSymbol != "Get" {
+		t.Fatalf("NETWORK should be witnessed by net/http.Get, got %+v", net)
+	}
+	if _, ok := observationFor(report, CapabilityNetwork); ok {
+		t.Error("a capability with a real witness must not also carry an observation")
 	}
 }
 
@@ -130,8 +228,8 @@ func TestAnalyseReaches12of12WithBodyFacts(t *testing.T) {
 			node("os.Getenv", "os", "Getenv", true, false),
 			node("os/signal.Notify", "os/signal", "Notify", true, false),
 			node("os.Getpid", "os", "Getpid", true, false),
-			{ID: "dep.unsafeFn", Package: "dep", Symbol: "unsafeFn", IsExternal: true, UsesUnsafePointer: true},
-			{ID: "dep.asmFn", Package: "dep", Symbol: "asmFn", IsExternal: true, IsAssemblyOrLinkname: true},
+			{ID: "m/internal.unsafeFn", Package: "m/internal", Symbol: "unsafeFn", UsesUnsafePointer: true},
+			{ID: "m/internal.asmFn", Package: "m/internal", Symbol: "asmFn", IsAssemblyOrLinkname: true},
 		},
 	}
 	for _, n := range rec.Nodes {
@@ -150,6 +248,9 @@ func TestAnalyseReaches12of12WithBodyFacts(t *testing.T) {
 		if _, ok := findingFor(report, want); !ok {
 			t.Errorf("missing capability %s", want)
 		}
+	}
+	if len(report.Observations) != 0 {
+		t.Errorf("no observation expected, got %+v", report.Observations)
 	}
 }
 
