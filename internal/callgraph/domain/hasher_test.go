@@ -165,6 +165,50 @@ func TestHasherRoundTripArtifactKind(t *testing.T) {
 	}
 }
 
+// TestHasherArtifactKind_StoredFormsAreUnmoved pins what a record already in a
+// store says. A stored record carries the kind in one of two forms — the key
+// absent, or "Application" — and adding a third value must re-map neither: the
+// bytes do not move, so what they say must not move either. The seal is the
+// check: the hash is recomputed from the decoded record, so a form that decoded
+// or re-marshalled differently would fail here rather than answer differently
+// in the field.
+func TestHasherArtifactKind_StoredFormsAreUnmoved(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	for _, tc := range []struct {
+		name string
+		kind domain2.ArtifactKind
+	}{
+		{"the key absent", domain2.ArtifactLibrary},
+		{"Application", domain2.ArtifactApplication},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := makeTestRecord()
+			r.ArtifactKind = tc.kind
+			sealed, err := h.SetContentHash(r)
+			if err != nil {
+				t.Fatalf("SetContentHash: %v", err)
+			}
+			blob, err := h.Marshal(sealed)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			restored, err := h.Unmarshal(blob)
+			if err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if restored.ArtifactKind != tc.kind {
+				t.Errorf("ArtifactKind = %q, want %q", restored.ArtifactKind, tc.kind)
+			}
+			if err := h.VerifyContentHash(restored); err != nil {
+				t.Errorf("VerifyContentHash: %v", err)
+			}
+			if got := domain2.RootSelectionCaveat(restored.ArtifactKind); got != "" {
+				t.Errorf("a stored record acquired a rooting caveat it never had: %q", got)
+			}
+		})
+	}
+}
+
 func TestHasherRoundTripUsesPlugin(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
 	r := makeTestRecord()

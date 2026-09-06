@@ -481,6 +481,11 @@ type vulnReachabilityQuery struct {
 	// as a property of the module, and it is a property of one build.
 	Fidelity string `json:"fidelity,omitempty"`
 	Rooting  string `json:"rooting,omitempty"`
+	// RootSelection names the rule that chose the traversal's entry points, and
+	// is present only where that rule was a fallback: the call graph did not say
+	// whether the module builds a command, so the narrow consumer surface was
+	// rooted by default. Absent otherwise.
+	RootSelection string `json:"root_selection,omitempty"`
 	// Soundness states how thorough the search behind a NEGATIVE was, and
 	// SoundnessReason names the basis for that rung in the producing analyser's
 	// own terms. Both are absent on a reachable verdict: a route is its own
@@ -804,6 +809,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		Method:            f.Reachable.DerivedBy.Analyser.String(),
 		Fidelity:          f.Reachable.DerivedBy.Fidelity,
 		Rooting:           f.Reachable.DerivedBy.Rooting.String(),
+		RootSelection:     f.Reachable.DerivedBy.RootSelection,
 		Soundness:         soundness,
 		SoundnessReason:   soundnessReason,
 		Routes:            routes,
@@ -894,6 +900,12 @@ func derivationLine(res vulnReachabilityQuery) string {
 	}
 	if res.Rooting != "" {
 		parts = append(parts, "rooted at: "+res.Rooting)
+	}
+	// Last, and in full. It is labelled because the line already says "rooted at",
+	// which is the analysis FRAME; this is which functions the traversal started
+	// from, and the two must not read as one clause.
+	if res.RootSelection != "" {
+		parts = append(parts, "root selection: "+res.RootSelection)
 	}
 	return strings.Join(parts, ", ")
 }

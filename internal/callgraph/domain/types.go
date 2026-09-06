@@ -147,16 +147,28 @@ func (t TestScope) IsMeasured() bool { return t == TestScopeAnalysed }
 // points the analysis cannot enumerate (framework dispatch, registered
 // callbacks, goroutine entries), so every owned function is a root; a library is
 // only exercised through what a consumer can call.
+//
+// The three values are two findings and an absence. A vocabulary of only
+// "application" and "library" had no way to say a load resolved nothing, so a
+// failed measurement was stored as the positive claim that the module is a
+// library.
 type ArtifactKind string
 
 const (
 	// ArtifactLibrary is a module with no command: it is reached only through
-	// its exported API and package init. It is the zero value, so a record
-	// persisted before this field existed keeps the pre-existing behaviour.
+	// its exported API and package init. It is a positive finding — every
+	// package the module owns loaded and none of them builds a command. It is
+	// also the zero value, so a record persisted before ArtifactNotEstablished
+	// existed reads exactly as it did before.
 	ArtifactLibrary ArtifactKind = ""
 	// ArtifactApplication is a module that builds a command — it contains a
 	// package main defining func main.
 	ArtifactApplication ArtifactKind = "Application"
+	// ArtifactNotEstablished is the analysis stating it could not tell: no
+	// package of the module loaded, or some did not, so a command may sit in the
+	// part that never resolved. Rooting treats it as a library and says so, so
+	// the default is not read as a measurement.
+	ArtifactNotEstablished ArtifactKind = "NotEstablished"
 )
 
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
@@ -463,11 +475,13 @@ type CallGraphRecord struct {
 	// caveat keys off, so neither has to infer fidelity from node/edge totals.
 	Completeness CompletenessLevel
 	// ArtifactKind is what the analysed module is — an application that builds a
-	// command, or a library. Reachability roots are conditioned on it: an
-	// application roots every owned node, because code the runtime dispatches to
-	// dynamically is still the application's own code and its capabilities are
-	// really exercised. Empty means library, so pre-v10 records keep their
-	// original rooting.
+	// command, a library, or not established. Reachability roots are conditioned
+	// on it: an application roots every owned node, because code the runtime
+	// dispatches to dynamically is still the application's own code and its
+	// capabilities are really exercised. Empty means library, so pre-v10 records
+	// keep their original rooting. A record whose analysis did not resolve the
+	// module's whole package set says ArtifactNotEstablished rather than
+	// claiming the library it was never in a position to observe.
 	ArtifactKind ArtifactKind
 	Nodes        []CallNode
 	Edges        []CallEdge

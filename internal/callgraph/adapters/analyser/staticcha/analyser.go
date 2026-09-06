@@ -682,8 +682,10 @@ func (a *Analyser) analyseDirOnce(
 		Algorithm:     domain.AlgorithmCHA,
 		Completeness:  buildCompleteness(build),
 		// Only production packages decide the artifact kind: the test binary main
-		// go/packages synthesises is not a command this module ships.
-		ArtifactKind:    artifactKind(build.TargetPkgs),
+		// go/packages synthesises is not a command this module ships. The set is
+		// complete on the same terms the Partial downgrade above uses, so a graph
+		// that reports library is one whose whole package set was seen.
+		ArtifactKind:    artifactKind(build.TargetPkgs, len(allLoadErrs) == 0 && len(failedPkgs) == 0),
 		Nodes:           nodes,
 		Edges:           edges,
 		Interfaces:      ifaces,
@@ -796,19 +798,29 @@ func buildCompleteness(build ssaBuildResult) domain.CompletenessLevel {
 	return domain.CompletenessBuiltWithBodies
 }
 
-// artifactKind classifies the analysed module from the packages it owns: it is
-// an application as soon as one of them is a package main defining func main,
-// otherwise a library. The distinction cannot be recovered from an import path,
-// so it is captured here, at load time, and carried on the record — reachability
-// rooting depends on it.
-func artifactKind(targetPkgs []*ssa.Package) domain.ArtifactKind {
+// artifactKind classifies the analysed module from the production packages it
+// owns. The distinction cannot be recovered from an import path, so it is
+// captured here, at load time, and carried on the record — reachability rooting
+// depends on it.
+//
+// Application needs one witness: a package main defining func main. Library
+// needs the whole set, because it is the claim that no such package exists, and
+// complete is what says the set is whole. Without it a command may sit in a
+// package that did not resolve, so the answer is that the kind was not
+// established rather than the library the load was never in a position to see.
+func artifactKind(targetPkgs []*ssa.Package, complete bool) domain.ArtifactKind {
 	for _, p := range targetPkgs {
 		if p == nil || p.Pkg == nil {
+			// A package the classifier cannot read is one it cannot rule out.
+			complete = false
 			continue
 		}
 		if p.Pkg.Name() == "main" && p.Func("main") != nil {
 			return domain.ArtifactApplication
 		}
+	}
+	if !complete || len(targetPkgs) == 0 {
+		return domain.ArtifactNotEstablished
 	}
 	return domain.ArtifactLibrary
 }
@@ -829,11 +841,14 @@ func (a *Analyser) failRecord(
 	detail string,
 ) domain.CallGraphRecord {
 	return domain.CallGraphRecord{
-		SchemaVersion:   domain.CallGraphSchemaVersion,
-		Ecosystem:       fetchdomain.EcosystemGo,
-		Coordinate:      coord,
-		Algorithm:       domain.AlgorithmCHA,
-		Completeness:    completeness,
+		SchemaVersion: domain.CallGraphSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    coord,
+		Algorithm:     domain.AlgorithmCHA,
+		Completeness:  completeness,
+		// Nothing was classified, so the kind is stated as unestablished. The zero
+		// value would say "library", which is the failure reported as a finding.
+		ArtifactKind:    domain.ArtifactNotEstablished,
 		OverallStatus:   status,
 		FailureCause:    cause,
 		FailureDetail:   detail,

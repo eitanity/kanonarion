@@ -132,6 +132,11 @@ func SelectOwnedRoots(candidates []RootCandidate, scope RootScope) []string {
 // qualifies it falls back to every owned node so the analysis still reasons
 // about the analysed code.
 //
+// A kind of ArtifactNotEstablished takes the library rule. A module that MIGHT
+// build a command is not evidence that it does, so the narrower set is the safe
+// default — but it is a default and not a finding, and RootSelectionCaveat is
+// what says so on the answer.
+//
 // A RootScopeProduction scope drops test-declared candidates first, so the
 // exclusion holds for the application rule and the owned-node fallback too: a
 // consumer compiles none of those files whatever the analysed module is.
@@ -158,6 +163,22 @@ func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind, scop
 		return roots
 	}
 	return SelectOwnedRoots(candidates, scope)
+}
+
+// RootSelectionCaveat states the root set SelectReachabilityRoots applied when
+// the record does not say what the analysed module is, and "" for a kind that
+// was established, where the rule reads off the kind itself.
+//
+// An analysis that fell back to the narrow set and did not say so publishes a
+// default as though it were a measurement, and a reader has no way to tell the
+// two apart afterwards.
+func RootSelectionCaveat(kind ArtifactKind) string {
+	if kind != ArtifactNotEstablished {
+		return ""
+	}
+	return "the analysis did not establish whether this module builds a command, so the traversal was " +
+		"rooted at its exported API and package init — the library rule, applied as the default rather " +
+		"than because the module was measured to be one"
 }
 
 // ConfidenceRank orders the edge-confidence vocabulary from most to least

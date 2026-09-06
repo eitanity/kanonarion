@@ -213,6 +213,12 @@ type ReachabilityDerivation struct {
 	// record for the reason given on the type. Empty when the writer did not
 	// state one.
 	Rooting Rooting `json:"rooting,omitzero"`
+	// RootSelection names the rule that chose the traversal's entry points, and
+	// is stated only where that rule was a fallback rather than a finding — an
+	// analysis that could not establish whether the module builds a command
+	// roots at the narrow consumer surface by default. Empty otherwise, so it
+	// carries a caveat and never restates what the answer already implies.
+	RootSelection string `json:"root_selection,omitzero"`
 }
 
 // IsRecorded reports whether the derivation says anything at all.
@@ -230,6 +236,11 @@ func (d ReachabilityDerivation) String() string {
 	}
 	if d.Rooting.IsRecorded() {
 		parts = append(parts, "rooted at "+d.Rooting.String())
+	}
+	// Labelled, because "rooted at" above is the analysis frame and this is which
+	// functions the traversal started from.
+	if d.RootSelection != "" {
+		parts = append(parts, "root selection: "+d.RootSelection)
 	}
 	return strings.Join(parts, ", ")
 }

@@ -402,6 +402,14 @@ carries no `soundness_reason`. A negative names its rung and its basis, and drop
 ```
 
 
+### `root_selection`
+
+A call-graph answer carries `root_selection` when the stored graph does not say
+whether the module builds a command. The traversal is rooted at the module's
+exported API and package init — the library rule — and the key says that was the
+default rather than a measured choice. It is absent whenever the graph did state
+the kind.
+
 Every route carries its own `root`; `route_root` repeats the first route's, so a
 consumer asking "is this a test-only reach" does not have to index into the list.
 Both are absent when the answer records no route — an absent route on a

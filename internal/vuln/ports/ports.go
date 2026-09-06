@@ -748,10 +748,12 @@ type CallGraphProjection struct {
 	// verdict and checks completeness parity before trusting a green result.
 	Completeness string
 	Algorithm    string
-	// ArtifactKind is what the analysed module is (application or library), as an
-	// opaque string for the same reason. Reachability roots are conditioned on
-	// it: an application's own code is all reachable, because functions the
-	// runtime dispatches to dynamically are still shipped code.
+	// ArtifactKind is what the analysed module is (application, library, or not
+	// established), as an opaque string for the same reason. Reachability roots
+	// are conditioned on it: an application's own code is all reachable, because
+	// functions the runtime dispatches to dynamically are still shipped code. A
+	// kind the analysis could not establish takes the library roots, and the
+	// answer states that it did.
 	ArtifactKind string
 	// ServableAsCacheHit reports whether the stored graph this projection came
 	// from may stand in for a fresh analysis, or whether the coordinate must be

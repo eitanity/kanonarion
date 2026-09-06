@@ -127,6 +127,29 @@ func TestSelectReachabilityRoots_UnsetKindIsLibrary(t *testing.T) {
 	}
 }
 
+// TestSelectReachabilityRoots_UnestablishedKindRootsAsALibraryAndSaysSo pins the
+// two halves separately: the roots must not move, and the caveat must be there
+// to say the narrow set was a default rather than a measurement.
+func TestSelectReachabilityRoots_UnestablishedKindRootsAsALibraryAndSaysSo(t *testing.T) {
+	candidates := []domain.RootCandidate{
+		{ID: "m.Exported", Symbol: "Exported", IsExportedAPI: true},
+		{ID: "m.handler", Symbol: "handler"},
+	}
+	got := domain.SelectReachabilityRoots(candidates, domain.ArtifactNotEstablished, domain.RootScopeProduction)
+	want := domain.SelectReachabilityRoots(candidates, domain.ArtifactLibrary, domain.RootScopeProduction)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unestablished kind = %v, want the library roots %v", got, want)
+	}
+	if domain.RootSelectionCaveat(domain.ArtifactNotEstablished) == "" {
+		t.Error("an unestablished kind rooted at the library set and disclosed nothing about it")
+	}
+	for _, kind := range []domain.ArtifactKind{domain.ArtifactLibrary, domain.ArtifactApplication} {
+		if c := domain.RootSelectionCaveat(kind); c != "" {
+			t.Errorf("RootSelectionCaveat(%q) = %q, want empty: the kind decides the rule and needs no caveat", kind, c)
+		}
+	}
+}
+
 func TestSelectReachabilityRoots_AllExternal(t *testing.T) {
 	got := domain.SelectReachabilityRoots([]domain.RootCandidate{
 		{ID: "ext.Fn", Symbol: "Fn", IsExternal: true, IsExportedAPI: true},

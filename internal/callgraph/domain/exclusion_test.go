@@ -67,6 +67,11 @@ func TestNewExcludedRecord(t *testing.T) {
 	if len(r.Nodes) != 0 || len(r.Edges) != 0 {
 		t.Error("excluded record must carry no nodes/edges")
 	}
+	// The module was never loaded, so the record classifies nothing. The zero
+	// value would read as the positive claim that it is a library.
+	if r.ArtifactKind != ArtifactNotEstablished {
+		t.Errorf("ArtifactKind = %q, want %q", r.ArtifactKind, ArtifactNotEstablished)
+	}
 }
 
 func TestExcludedRecord_HashRoundTrip(t *testing.T) {
