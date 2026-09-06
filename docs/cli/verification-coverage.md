@@ -147,6 +147,7 @@ speak to it at all.
 | `inherited` | Carried forward from an earlier measurement of the same artefact, which the record names. The module **is** backed by cross-verification evidence; this run simply did not re-establish it. |
 | `never` | The record was written under the ledger, could have recorded a VCS leg, and has none. The only class where no cross-verification evidence exists. |
 | `not_measured` | The record predates the ledger and carries no legs at all. **Not** the same as `never`: the check may well have run, the record simply cannot say. A gate that treats the two alike calls an unmigrated store a collapse. |
+| `unavailable` | The check was attempted and could not run because the host that fetched the module had no `git`. That is a fault of the measuring machine, not an absence of anchor for the module. Install `git` and re-run: such a record is not served from cache, so the answer is re-established without `--force`. |
 
 ## JSON output
 
@@ -184,7 +185,8 @@ kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD --json
     "rechecked": 0,
     "inherited": 0,
     "never": 400,
-    "not_measured": 0
+    "not_measured": 0,
+    "unavailable": 0
   },
   "build": {
     "vendoring_known": true,

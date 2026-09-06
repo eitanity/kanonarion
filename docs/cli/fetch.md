@@ -24,7 +24,11 @@ Verification has two independent checks:
   source repository. Skippable with `--skip-vcs-verify`; the checksum check
   still runs. **Requires a `git` binary on `PATH`.** If `git` is absent the
   fetch does not fail: the checksum check still runs and the record is written
-  with an unverified VCS status whose detail names `--skip-vcs-verify`.
+  with an unverified VCS status whose detail names `--skip-vcs-verify`. The
+  record also marks the VCS leg as one that could not run, which is a fact about
+  the host rather than about the module, so it is never served from cache -
+  install `git` and the next ordinary run re-establishes the answer with no
+  `--force`.
 
   Because `--skip-vcs-verify` means the git leg never ran, a module the
   checksum database attests resolves to `VerifiedBySumDBOnly`, **never** the
@@ -159,7 +163,7 @@ subprocess:
 | Advisory snapshot download (`vuln-scan`, `audit`, `inspect`) | Refuses the download | A snapshot the store already holds - see [`vuln`](vuln.md#air-gapped-scanning) |
 | Checksum database (`sum.golang.org`) | Treated as `GOSUMDB=off`: modules record `UnverifiedNoSumDB`, or `VerifiedByGoSum` where a project `go.sum` anchors them | The local `go.sum` anchor |
 | Standard-library `go.dev/dl` acquisition | Not used; the local-toolchain anchor is selected instead, as under `--from-modcache` | `$GOROOT/src` + `$GOROOT/LICENSE`, recorded `VerifiedLocalToolchain` |
-| `git` cross-verification (`ls-remote`, shallow fetch) | Refuses to spawn; counted as a missing VCS leg, exactly as `--skip-vcs-verify` is | Checksum-database or `go.sum` verification, landing on `VerifiedBySumDBOnly` |
+| `git` cross-verification (`ls-remote`, shallow fetch) | Refuses to spawn; the record marks the VCS leg as one that could not run | Checksum-database or `go.sum` verification, landing on `VerifiedBySumDBOnly` |
 
 `GOSUMDB=off`, `--from-modcache` and `--skip-vcs-verify` remain the ways to
 withdraw those paths individually. `GOPROXY=off` withdraws all of them at once,

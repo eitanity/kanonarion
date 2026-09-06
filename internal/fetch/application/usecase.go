@@ -231,9 +231,10 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	// Step 1: cache check. A go.mod-only record does not satisfy the full path —
 	// this call needs the zip, so re-fetch over it and let PutFetchRecord upgrade
 	// the record in place. Any record with a zip is a hit, unless its verification
-	// rests on a checksum-database lookup that failed rather than answered
-	// (domain.RecordIsCacheable): re-verify that one instead of serving a downgrade
-	// a single bad network moment produced.
+	// rests on a check that could not run rather than one that answered — a
+	// checksum-database lookup that failed, or a git leg the measuring host had no
+	// git for (domain.RecordIsCacheable). Re-verify that one instead of serving
+	// back a downgrade that describes a moment or a machine, not the module.
 	if !req.Force {
 		existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
 		if err != nil {
@@ -241,8 +242,10 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		}
 		switch {
 		case ok && !domain2.RecordIsCacheable(existing.FactRecord):
-			log.InfoContext(ctx, "cache_reverify_sumdb_lookup_failed",
+			log.InfoContext(ctx, "cache_reverify_check_did_not_run",
 				slog.String("cached_verification_status", existing.VerificationStatus),
+				slog.Bool("sumdb_lookup_failed", existing.SumDBLookupFailed),
+				slog.String("vcs_check", existing.VCSCheck),
 			)
 		case ok && !uc.cachedArtefactsReadable(ctx, log, existing.FactRecord):
 			// Re-fetch rather than hand the caller a record whose blobs this run
@@ -344,7 +347,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	}
 
 	// Step 5: run verification pipeline, accumulating status.
-	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumAnchoredUnder, req.VCSHosts)
+	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumAnchoredUnder, req.VCSHosts)
 
 	// Sign-on-process call site 1: fetch-receive. Sign the received blob over
 	// its canonical content digest, after verification.
@@ -371,7 +374,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		AcquisitionMode:    domain2.AcquisitionProxy,
 		MeasurementKind:    measurementKind(revalidated != nil),
 		SumDBCheck:         domain2.LegRechecked,
-		VCSCheck:           vcsLeg(req.SkipVCSVerify),
+		VCSCheck:           vcsLeg(req.SkipVCSVerify, vcsToolUnavailable),
 	}
 
 	// Step 7: seal and append. Sealing computes the content hash at construction,
@@ -424,11 +427,13 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 		}
 		switch {
 		case ok && !domain2.RecordIsCacheable(existing.FactRecord):
-			// Same rule as the full path: a record whose sumdb lookup failed is not
-			// eligible as a cache hit, so this path re-verifies rather than inheriting
-			// a downgrade produced by a failed measurement.
-			log.InfoContext(ctx, "cache_reverify_sumdb_lookup_failed",
+			// Same rule as the full path: a record resting on a check that could not
+			// run is not eligible as a cache hit, so this path re-verifies rather
+			// than inheriting a downgrade produced by a failed measurement.
+			log.InfoContext(ctx, "cache_reverify_check_did_not_run",
 				slog.String("cached_verification_status", existing.VerificationStatus),
+				slog.Bool("sumdb_lookup_failed", existing.SumDBLookupFailed),
+				slog.String("vcs_check", existing.VCSCheck),
 			)
 		case ok && !uc.cachedArtefactsReadable(ctx, log, existing.FactRecord):
 			// Re-fetch rather than hand the caller a record whose blobs this run
@@ -590,11 +595,21 @@ func measurementKind(revalidated bool) domain2.MeasurementKind {
 // run that skipped the check records no leg at all rather than a negative one:
 // "not checked" and "checked and could not confirm" are different claims, and
 // collapsing them would let a --skip-vcs run look like a failed verification.
-func vcsLeg(skipped bool) domain2.LegProvenance {
-	if skipped {
+//
+// A run whose git binary was missing records a third claim again. It attempted
+// the check and the host could not run it, which is a fault of the machine and
+// not a fact about the module, so it is neither a recheck nor an absence. An
+// operator who asked for no VCS leg gets the absence they asked for, missing git
+// or not.
+func vcsLeg(skipped, toolUnavailable bool) domain2.LegProvenance {
+	switch {
+	case skipped:
 		return domain2.LegAbsent
+	case toolUnavailable:
+		return domain2.LegUnavailable
+	default:
+		return domain2.LegRechecked
 	}
-	return domain2.LegRechecked
 }
 
 // verifyGoModOnly verifies a go.mod-only fetch's h1 against the checksum
@@ -769,7 +784,7 @@ func (uc *FetchModuleUseCase) verify(
 	// rather than having to trust that the right spelling was looked up.
 	goSumAnchoredUnder string,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.VerificationStatus, string, domain2.GitReference, bool, bool) {
+) (domain2.VerificationStatus, string, domain2.GitReference, bool, bool, bool) {
 
 	var earlyStatus domain2.VerificationStatus
 	var earlyDetail string
@@ -777,6 +792,9 @@ func (uc *FetchModuleUseCase) verify(
 	// than answered, so the caller can mark the record un-cacheable and re-verify
 	// on the next fetch instead of making one bad network moment permanent.
 	var sumdbLookupFailed bool
+	// vcsToolUnavailable records that the git leg could not run on this host, for
+	// the same purpose on the other leg.
+	var vcsToolUnavailable bool
 
 	// Insecure transport forces unverified (T4).
 	if dl.InsecureTransport {
@@ -862,6 +880,15 @@ func (uc *FetchModuleUseCase) verify(
 		log.InfoContext(ctx, "vcs_cross_verify", slog.String("status", string(vcsStatus)))
 	}
 
+	// The git leg could not run on this host. The final status below is the same
+	// as for a module with no VCS anchor at all, so the distinction has to be
+	// carried out separately or it is lost: the record would then state a host
+	// fault as a property of the module and serve it back on every later run.
+	vcsToolUnavailable = !skipVCSVerify && vcsStatus == domain2.UnverifiedVCSToolMissing
+	if vcsToolUnavailable {
+		log.InfoContext(ctx, "vcs_tool_unavailable", slog.String("detail", vcsDetail))
+	}
+
 	// VCS reproduction failure downgrades to VerifiedBySumDBOnly when sumdb has
 	// already verified the proxy zip against the transparency log. Independently
 	// reproducing a zip from git is a weaker signal than transparency-log
@@ -879,7 +906,7 @@ func (uc *FetchModuleUseCase) verify(
 		if vcsDetail != "" {
 			detail += "; vcs: " + vcsDetail
 		}
-		return earlyStatus, withOriginRefusal(detail, originRefusal), gitRef, retracted, sumdbLookupFailed
+		return earlyStatus, withOriginRefusal(detail, originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable
 	}
 
 	// sumdb passed; combine with VCS result. A refused Origin is recorded even
@@ -887,10 +914,10 @@ func (uc *FetchModuleUseCase) verify(
 	// inferred URL, and the fact that the proxy claimed a different source and
 	// was refused is exactly what an auditor needs afterwards.
 	if vcsStatus == domain2.Verified {
-		return domain2.Verified, withOriginRefusal("", originRefusal), gitRef, retracted, sumdbLookupFailed
+		return domain2.Verified, withOriginRefusal("", originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable
 	}
 	// sumdb passed but VCS was not available or missing.
-	return domain2.VerifiedBySumDBOnly, withOriginRefusal(vcsDetail, originRefusal), gitRef, retracted, sumdbLookupFailed
+	return domain2.VerifiedBySumDBOnly, withOriginRefusal(vcsDetail, originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable
 }
 
 // withOriginRefusal puts a refused proxy Origin at the FRONT of the detail.

@@ -73,10 +73,11 @@ renamed or is dropped, so a consumer reading it today reads the same values.
 The section carries the figures the run also prints to stderr, under the field
 names [`verification-coverage --json`](verification-coverage.md) publishes:
 `cross_verified`, `cross_verifiable`, `collapsed`, the per-bucket counts, the
-per-module rows under `modules`, and the fetch ledger's four VCS-evidence counts
-under `vcs`. Those four are kept apart - `rechecked`, `inherited`, `never`,
-`not_measured` - because a module that was never cross-verified is a different
-fact from one whose record cannot say.
+per-module rows under `modules`, and the fetch ledger's five VCS-evidence counts
+under `vcs`. Those five are kept apart - `rechecked`, `inherited`, `never`,
+`not_measured`, `unavailable` - because a module that was never cross-verified is
+a different fact from one whose record cannot say, and both differ again from one
+whose check could not run because the measuring host had no `git`.
 
 Two keys state the measurement itself. `measured` is `false` when this run took
 none, and `statement` is the sentence the reader is shown, carried verbatim. A
@@ -91,7 +92,7 @@ report.
     "cross_verified": 7,
     "cross_verifiable": 7,
     "collapsed": false,
-    "vcs": { "rechecked": 7, "inherited": 0, "never": 0, "not_measured": 0 },
+    "vcs": { "rechecked": 7, "inherited": 0, "never": 0, "not_measured": 0, "unavailable": 0 },
     "measured": true,
     "statement": "verification coverage over 7 module(s): …"
   }

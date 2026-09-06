@@ -115,6 +115,14 @@ const (
 	// class where no cross-verification evidence exists at all, and the one that
 	// matters most.
 	VCSNever
+
+	// VCSUnavailable means the check was attempted and could not run: the host
+	// that measured had no git. It is a fault of that machine, not an absence of
+	// VCS anchor for the module, and counting it as either an establishment or a
+	// measured absence would report a property of the measuring host as a
+	// property of the graph. The remedy is to install git and re-run, which the
+	// ledger does without --force because such a record is not cache-eligible.
+	VCSUnavailable
 )
 
 // VCSEvidenceOf reads a record's validation legs. A record with no legs at all
@@ -133,6 +141,8 @@ func VCSEvidenceOf(legs []ValidationLeg) VCSEvidence {
 			return VCSRechecked
 		case LegInherited:
 			return VCSInherited
+		case LegUnavailable:
+			return VCSUnavailable
 		case LegAbsent:
 			// RecordLegs never emits one, but a composed or hand-built set
 			// might; an absent leg is the same claim as no leg at all.
@@ -185,6 +195,7 @@ type VerificationCoverage struct {
 	VCSInherited   int
 	VCSNever       int
 	VCSNotMeasured int
+	VCSUnavailable int
 }
 
 // VerificationCoverageOf aggregates observations. It names no host and judges no
@@ -235,6 +246,8 @@ func VerificationCoverageOf(obs []CoverageObservation) VerificationCoverage {
 			c.VCSNever++
 		case VCSNotMeasured:
 			c.VCSNotMeasured++
+		case VCSUnavailable:
+			c.VCSUnavailable++
 		}
 	}
 	return c

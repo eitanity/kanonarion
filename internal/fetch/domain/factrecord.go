@@ -87,7 +87,9 @@ type FactRecord struct {
 	// leg, and VCSCheckSource names the content hash of the record it was
 	// inherited from when it was not rechecked here. A --skip-vcs run leaves both
 	// empty: the leg is absent, which is a different claim from a negative
-	// result. See ValidationLeg.
+	// result. LegUnavailable is a third claim again — the check was attempted and
+	// the host had no git — and it is what keeps a host fault from being stored
+	// as a property of the module. See ValidationLeg.
 	VCSCheck       string `json:"vcs_check,omitempty"`
 	VCSCheckSource string `json:"vcs_check_source,omitempty"`
 }
@@ -136,14 +138,22 @@ func NewFactRecord(m FetchedModule) FactRecord {
 // Re-verifying costs one lookup on a run that would otherwise have skipped it,
 // and it is the only way the downgrade can ever be undone on its own.
 //
+// A record whose VCS leg is LegUnavailable is not cacheable for the same reason
+// on the other leg: the host had no git, so the check could not run, and the
+// resulting status describes the machine rather than the module. A later run on
+// a host that has git must re-establish the answer without being forced.
+//
 // Every other record — including one whose sumdb answer was a settled policy
-// answer (GOSUMDB=off, GOPRIVATE, no hash line) — is cacheable exactly as before.
+// answer (GOSUMDB=off, GOPRIVATE, no hash line), one whose VCS check ran and
+// disagreed, and one for which no VCS anchor could be found at all — is
+// cacheable exactly as before. A record written before the value existed carries
+// no unavailable leg and is unchanged.
 //
 // It is a free function rather than a method, on the same terms as RecordDigests:
 // cache eligibility is fetch-pipeline policy, not the read-shape plumbing a
 // graduated result alias is allowed to carry, so it must not reach the public API.
 func RecordIsCacheable(r FactRecord) bool {
-	return !r.SumDBLookupFailed
+	return !r.SumDBLookupFailed && LegProvenance(r.VCSCheck) != LegUnavailable
 }
 
 // Coordinate returns the ModuleCoordinate this record describes.

@@ -294,6 +294,11 @@ type coverageVCSJSON struct {
 	// cannot say, and a gate that treats the two alike calls an unmigrated
 	// store a collapse.
 	NotMeasured int `json:"not_measured"`
+	// Unavailable is a record whose VCS check was attempted and could not run
+	// because the measuring host had no git. It is a fault of that machine, not
+	// an absence of anchor for the module, and it clears by installing git and
+	// re-running — no --force, because such a record is not cache-eligible.
+	Unavailable int `json:"unavailable"`
 }
 
 func verificationCoverageJSON(
@@ -336,6 +341,7 @@ func verificationCoverageJSON(
 			Inherited:   c.VCSInherited,
 			Never:       c.VCSNever,
 			NotMeasured: c.VCSNotMeasured,
+			Unavailable: c.VCSUnavailable,
 		},
 	}
 }
