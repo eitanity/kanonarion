@@ -7,54 +7,30 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
-// LocalDirPlaceholder is the token a remedy must never contain.
-//
-// No builder emits it. It is named here so the guard that refuses it, and the
-// tests that assert its absence, share one spelling with the thing they forbid:
-// a reader cannot run a line with "<dir>" in it, and a remedy that cannot be run
-// is not a remedy.
+// LocalDirPlaceholder is the token a remedy must never contain. No builder
+// emits it; it is named here so the guards that forbid it share one spelling.
 const LocalDirPlaceholder = "<dir>"
 
 // UnnamedWorkingTreeLead opens the instruction given when a local coordinate's
-// working tree is not recorded anywhere. It is exported so a guard can
-// recognise that answer without re-spelling it, and so the two forms of the
-// sentence cannot drift apart.
+// working tree is not recorded anywhere. Exported so the guards recognise it
+// without re-spelling it.
 const UnnamedWorkingTreeLead = "no stored record names the working tree"
 
 // ReanalysisInstruction names the one thing that re-derives coord's call graph,
-// as a line a reader can act on.
+// as a line a reader can act on. The answer is a property of the coordinate:
+// 'callgraph' fetches a published module and refuses a local one, so every
+// refusal routes through here rather than choosing per site.
 //
-// The answer is a property of the COORDINATE, not of the site asking. A
-// published module is fetched and analysed by 'callgraph <module>@<version>'. A
-// project's own module carries the synthetic 'local' version, which names no
-// published artefact: 'callgraph' cannot fetch it and refuses, and 'fetch'
-// cannot satisfy it either, so a remedy built by concatenating the coordinate
-// onto "kanonarion callgraph " is an instruction that exits non-zero for every
-// project coordinate it is handed. 'local <dir>' is the command that re-derives
-// that graph.
-//
-// Every refusal that tells a reader to re-derive a graph goes through here, so
-// the decision is made once and a new refusal cannot get it wrong on its own.
-//
-// dir is the working tree behind a local coordinate, when the caller knows it.
-// When it does not, the line says so rather than printing a template: there is
-// no argument the reader could be expected to fill in, and a bare
-// "kanonarion local" is worse still — it is a valid invocation that analyses
-// whatever directory the reader happens to be standing in. dir is ignored for a
-// published coordinate, which has no working tree.
+// dir is the working tree behind a local coordinate; when the caller does not
+// know it the line says so, because a bare 'kanonarion local' would silently
+// analyse whatever directory the reader is standing in. Ignored when published.
 func ReanalysisInstruction(coord coordinate.ModuleCoordinate, dir string) string {
 	return reanalysis(coord, dir, "")
 }
 
-// ForcedReanalysisInstruction names what re-derives coord's call graph even
-// though the store already holds one, for a refusal raised BY a stored record:
-// without bypassing the cache the run is served the very record the refusal was
-// about, and reads as the remedy having been tried and failed.
-//
-// Both forms take --force, and 'local' has one for the same reason 'callgraph'
-// does: it no longer analyses the tree it is pointed at every time. It serves
-// the record it already holds of an unchanged tree, so a remedy that omitted the
-// flag would hand back the record the refusal was raised about.
+// ForcedReanalysisInstruction is ReanalysisInstruction for a refusal raised BY a
+// stored record. Both commands serve a held record for an unchanged input, so
+// without --force the re-run returns the record the refusal was about.
 func ForcedReanalysisInstruction(coord coordinate.ModuleCoordinate, dir string) string {
 	return reanalysis(coord, dir, " --force")
 }
@@ -98,10 +74,8 @@ const (
 )
 
 // IsMissingChecksumEntry reports whether a failure detail is the go command
-// refusing a module the tree's go.sum does not cover. Asked at the boundary, to
-// put that sentence on the record, and again by the remedy, because this files
-// under the same cause as a package that does not compile and needs the
-// opposite advice.
+// refusing a module the tree's go.sum does not cover. It files under the same
+// cause as a package that does not compile but needs the opposite advice.
 func IsMissingChecksumEntry(detail string) bool {
 	return strings.Contains(detail, missingChecksumPhrase) &&
 		strings.Contains(detail, missingChecksumRemedy)
@@ -111,23 +85,13 @@ func IsMissingChecksumEntry(detail string) bool {
 const MissingChecksumRemedy = "go mod tidy"
 
 // IncompleteGraphRemedy states what to do about a call graph that came back
-// incomplete, for a reader looking at an answer computed from it.
+// incomplete. cause decides both halves: a module that does not typecheck is
+// fixed in its source, a graph cut short by a cold cache is fixed by warming it,
+// and sending the second reader after a compile error wastes their time.
 //
-// cause decides both halves of the answer, and getting it wrong is worse than
-// saying nothing. A module whose own sources do not typecheck is fixed by fixing
-// them; a graph cut short because this host's module cache did not hold a
-// dependency is fixed by warming the cache, and telling that reader to go and
-// find a compile error sends them looking for a fault that is not there.
-//
-// The re-derivation command carries --force exactly when the stored record would
-// otherwise answer the re-run — which is the same question RecordIsCacheable
-// decides, asked here so the printed remedy and the reuse gate can never
-// disagree. An incompleteness this host caused is not served back, so the plain
-// command re-derives; a module fault is served back, so the flag is owed. For a
-// working tree the source fix moves the tree's digest, which is itself enough to
-// make the plain command re-analyse.
-//
-// dir is the working tree behind a local coordinate when the caller knows it.
+// --force is owed exactly when the stored record would otherwise answer the
+// re-run, the same question RecordIsCacheable decides, so remedy and reuse gate
+// cannot disagree. dir is the working tree when the caller knows it.
 func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause, detail, dir string) string {
 	rerun := ReanalysisInstruction(coord, dir)
 	if cause == FailureCauseModule && !coord.IsLocal() {

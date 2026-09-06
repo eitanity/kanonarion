@@ -21,15 +21,17 @@ body does pointer arithmetic — neither makes cobra a program-launcher or a
 pointer-arithmetic library, so both are **observations**. They are listed
 separately, kept out of the capability set, and ignored by `--against`.
 
-Roots are the module's exported API and its package `init` functions (init runs
-unconditionally at package load). **Test declarations are not roots**: a
-consumer compiles none of the module's `_test.go` files, so a sink only its test
-suite reaches is not in the consuming build. `--include-tests` widens the roots
-to them. When nothing qualifies, roots fall back to every node the module owns,
-under the same test scope.
+**Roots are every function the module owns**, exported or not. A module's code
+is entered through more than its exported API — registered handlers, cgo
+callback trampolines, closures, goroutine entries — and none of those entries
+can be enumerated statically, so rooting only the exported API leaves their code
+dark. Rooting everything owned reaches it with no framework knowledge.
 
-Every report states which root set produced it, in text and in JSON
-(`test_roots`).
+**Test declarations are not roots**: a consumer compiles none of the module's
+`_test.go` files, so a sink only its test suite reaches is not in the consuming
+build. `--include-tests` widens the roots to them. That is the only axis that
+narrows the root set, and every report states which of the two produced it, in
+text and in JSON (`test_roots`).
 
 From those roots a widest-path search finds, for each reachable sink, the
 witnessing path with the strongest minimum edge confidence. Each capability is
@@ -128,15 +130,18 @@ capability set is a lower bound, never presented as clean.
 ```
 $ kanonarion capability github.com/spf13/cobra@v1.8.1
 github.com/spf13/cobra@v1.8.1 capabilities:
-  roots: exported API and package init; test functions excluded (widen with --include-tests)
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
   FILES                [Direct]  via os.Close
-    path: github.com/spf13/cobra/doc.GenManTreeFromOpts → os.(*File).Close
+    path: github.com/spf13/cobra/doc.GenMarkdownTreeCustom → os.(*File).Close
   READ_SYSTEM_STATE    [Direct]  via os.Getenv
-    path: github.com/spf13/cobra.GetActiveHelpConfig → os.Getenv
+    path: github.com/spf13/cobra/doc.fillHeader → os.Getenv
   SYSTEM_CALLS         [Unknown]  via syscall.Clearenv
-    path: …(*Command).ExecuteC → …(*Command).execute → …(*Command).preRun → syscall.Clearenv
+    path: github.com/spf13/cobra.(*Command).postRun → syscall.Clearenv
   …
   not capabilities of this module — what the path establishes instead:
+    ARBITRARY_EXECUTION  [Unknown]  via crypto/fips140.setBypass
+      callee body fact: the fact is recorded on that external function, not on this module's code
+      path: github.com/spf13/cobra.(*Command).preRun → crypto/fips140.setBypass
     EXEC                 [Direct]  via os/exec.init
       linkage only: the package is linked and its initialiser ran; nothing in it was called
       path: github.com/spf13/cobra.init → os/exec.init
@@ -167,7 +172,7 @@ neither version witnessing anything:
 ```
 $ kanonarion capability github.com/spf13/cobra@v1.4.0 --against github.com/spf13/cobra@v1.8.1
 capability diff github.com/spf13/cobra@v1.4.0 → github.com/spf13/cobra@v1.8.1:
-  roots: exported API and package init; test functions excluded (widen with --include-tests)
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
   no capability change: both versions witness the same 9 capabilities (CGO, FILES,
   MODIFY_SYSTEM_STATE, NETWORK, OPERATING_SYSTEM, READ_SYSTEM_STATE, REFLECT, RUNTIME,
   SYSTEM_CALLS)

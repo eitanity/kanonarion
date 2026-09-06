@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// RootCandidate is the minimal node view SelectReachabilityRoots needs to
-// classify a node as a reachability root. It is deliberately decoupled from
+// RootCandidate is the minimal node view the selectors below need to classify a
+// node as a reachability root. It is deliberately decoupled from
 // CallNode (and from any adapter's projection type) so every reachability
 // analysis can feed the shared selector its own node representation and the
 // root-selection rule can never drift between them.
@@ -31,9 +31,9 @@ type RootCandidate struct {
 type RootScope int
 
 const (
-	// RootScopeProduction drops test-declared candidates before the artifact
-	// kind's rule is applied — the consumer's question, and the zero value so a
-	// caller that says nothing gets the narrower root set rather than the wider.
+	// RootScopeProduction drops test-declared candidates before any further rule
+	// is applied — the consumer's question, and the zero value so a caller that
+	// says nothing gets the narrower root set rather than the wider.
 	RootScopeProduction RootScope = iota
 	// RootScopeWithTests keeps them, for a surface whose answer states that the
 	// root it found is a test declaration.
@@ -93,15 +93,36 @@ func ExternalEntryPointReason(symbol, receiver string) string {
 	return ""
 }
 
-// SelectReachabilityRoots returns the reachability roots for an analysis over a
-// call graph, conditioned on what the analysed module is.
+// SelectOwnedRoots roots the traversal at every module-owned (non-external)
+// node, dropping test declarations under RootScopeProduction.
 //
-// For an application (kind ArtifactApplication) every module-owned (non-external)
-// node is a root. An application's functions are entered in ways no static
-// analysis can enumerate — framework dispatch, registered callbacks, goroutine
-// entry functions — so rooting only the exported API would leave those subgraphs
-// dark and under-report the capabilities the shipped code really exercises.
-// Whole-graph rooting witnesses them with zero framework knowledge.
+// It is the whole-graph rule: a module's code is entered through more than its
+// exported API — framework dispatch, registered callbacks, cgo trampolines,
+// closures, goroutine entries — and no static analysis can enumerate those, so
+// rooting only the exported API leaves their subgraphs dark.
+//
+// Results are sorted for determinism.
+func SelectOwnedRoots(candidates []RootCandidate, scope RootScope) []string {
+	var owned []string
+	for _, c := range candidates {
+		if c.IsExternal {
+			continue
+		}
+		if c.IsTest && scope == RootScopeProduction {
+			continue
+		}
+		owned = append(owned, c.ID)
+	}
+	sort.Strings(owned)
+	return owned
+}
+
+// SelectReachabilityRoots returns the reachability roots for an analysis that
+// asks what a CONSUMER's build can trigger, conditioned on what the analysed
+// module is.
+//
+// For an application (kind ArtifactApplication) it is every owned node, by
+// SelectOwnedRoots: the shipped code's own entry points are not enumerable.
 //
 // For a library it is every owned node that is either part of the public API or
 // a package init function: a library only runs what its consumer can reach.
@@ -117,7 +138,10 @@ func ExternalEntryPointReason(symbol, receiver string) string {
 //
 // Results are sorted for determinism.
 func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind, scope RootScope) []string {
-	var roots, owned []string
+	if kind == ArtifactApplication {
+		return SelectOwnedRoots(candidates, scope)
+	}
+	var roots []string
 	for _, c := range candidates {
 		if c.IsExternal {
 			continue
@@ -125,21 +149,15 @@ func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind, scop
 		if c.IsTest && scope == RootScopeProduction {
 			continue
 		}
-		owned = append(owned, c.ID)
 		if c.IsExportedAPI || IsInitSymbol(c.Symbol) {
 			roots = append(roots, c.ID)
 		}
-	}
-	if kind == ArtifactApplication {
-		sort.Strings(owned)
-		return owned
 	}
 	if len(roots) > 0 {
 		sort.Strings(roots)
 		return roots
 	}
-	sort.Strings(owned)
-	return owned
+	return SelectOwnedRoots(candidates, scope)
 }
 
 // ConfidenceRank orders the edge-confidence vocabulary from most to least

@@ -46,10 +46,13 @@ body-level fact, is reported below the capability set instead of in it: it shows
 the package is linked, or classifies the callee, rather than naming something
 this module does.
 
-Roots are the module's exported API and its package init functions. Test
-declarations do not root the traversal: a consumer compiles none of the
-module's _test.go files, so a sink only its test suite reaches is not in the
-consuming build. --include-tests widens the roots to them.
+Roots are every function the module owns, exported or not. A module is entered
+through more than its exported API — registered handlers, cgo callbacks,
+closures, goroutine entries — and none of those are enumerable, so rooting only
+the exported API would leave their code dark. Test declarations do not root the
+traversal: a consumer compiles none of the module's _test.go files, so a sink
+only its test suite reaches is not in the consuming build. --include-tests
+widens the roots to them.
 
 With --against, it diffs the capability set of two versions (update-validity):
 did the bump add NETWORK/EXEC/UNSAFE? The diff is only valid when both versions
@@ -96,14 +99,14 @@ func capabilityRootScope(includeTests bool) cgdomain.RootScope {
 }
 
 // capabilityRootScopeLine states which root set produced the answer, on every
-// report rather than only on the narrowed one: the default here is the narrow
-// set, so silence would leave a reader assuming the graph's whole test surface
-// was searched.
+// report and not only the narrowed one: the default is narrow, so silence would
+// leave a reader assuming the whole test surface was searched. The test axis is
+// the only one that narrows it — every owned node roots the traversal either way.
 func capabilityRootScopeLine(scope cgdomain.RootScope) string {
 	if scope == cgdomain.RootScopeWithTests {
-		return "roots: exported API, package init and test functions (--" + capabilityTestRootFlagName + " was given)"
+		return "roots: all of this module's own code, test functions included (--" + capabilityTestRootFlagName + " was given)"
 	}
-	return "roots: exported API and package init; test functions excluded (widen with --" + capabilityTestRootFlagName + ")"
+	return "roots: all of this module's own code; test functions excluded (widen with --" + capabilityTestRootFlagName + ")"
 }
 
 // capabilityRootScopeJSON is the machine-readable half of the same disclosure.

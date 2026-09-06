@@ -118,8 +118,11 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 	if ae.Basis != BasisUse {
 		t.Errorf("ARBITRARY_EXECUTION basis = %q, want use", ae.Basis)
 	}
-	if ae.WeakestConfidence != cgdomain.ConfidenceCHAOverapprox {
-		t.Errorf("ARBITRARY_EXECUTION weakest = %q, want CHA-overapprox", ae.WeakestConfidence)
+	// The leaf is owned, so it is itself a root and the CHA edge above it is not
+	// on the witnessing path. Weakest-edge propagation is pinned on external
+	// sinks instead, which are never roots.
+	if ae.WeakestConfidence != cgdomain.ConfidenceDirect {
+		t.Errorf("ARBITRARY_EXECUTION weakest = %q, want Direct", ae.WeakestConfidence)
 	}
 
 	// Control: strip the body facts and the two capabilities vanish — proving
@@ -295,7 +298,8 @@ func TestAnalyseKeepsStrongestWitnessPerCapability(t *testing.T) {
 	if f.WeakestConfidence != cgdomain.ConfidenceDirect {
 		t.Errorf("NETWORK weakest = %q, want Direct", f.WeakestConfidence)
 	}
-	wantPath := []string{"m.Root", "m.Mid", "net/http.Get"}
+	// m.Mid is owned, so it roots the traversal too and the shorter witness wins.
+	wantPath := []string{"m.Mid", "net/http.Get"}
 	if !reflect.DeepEqual(f.Path, wantPath) {
 		t.Errorf("NETWORK path = %v, want %v", f.Path, wantPath)
 	}
@@ -407,40 +411,37 @@ func dynamicSinkGraph() cgdomain.CallGraphRecord {
 	}
 }
 
-func TestAnalyseWitnessesDynamicallyDispatchedSinkInApplication(t *testing.T) {
-	rec := dynamicSinkGraph()
-	rec.ArtifactKind = cgdomain.ArtifactApplication
+func TestAnalyseWitnessesDynamicallyDispatchedSink(t *testing.T) {
+	// The artifact kind must not decide this: the sink is reachable only from an
+	// unexported function, and rooting the whole owned graph witnesses it either
+	// way. A library classification used to hide it.
+	for _, kind := range []cgdomain.ArtifactKind{cgdomain.ArtifactApplication, cgdomain.ArtifactLibrary} {
+		t.Run(string(kind), func(t *testing.T) {
+			rec := dynamicSinkGraph()
+			rec.ArtifactKind = kind
 
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+			report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
 
-	f, ok := findingFor(report, CapabilityExec)
-	if !ok {
-		t.Fatalf("EXEC not witnessed in application artifact; got %v", report.Capabilities())
-	}
-	if f.SinkSymbol != "Command" {
-		t.Errorf("EXEC sink symbol = %q, want Command", f.SinkSymbol)
-	}
-}
-
-func TestAnalyseSkipsDynamicallyDispatchedSinkInLibrary(t *testing.T) {
-	// The same graph as a library: a consumer can only call the exported API, and
-	// nothing exported reaches the sink, so it is correctly not reported. This
-	// pins the library side of the switch — dependency rooting is unchanged.
-	rec := dynamicSinkGraph()
-	rec.ArtifactKind = cgdomain.ArtifactLibrary
-
-	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
-		t.Errorf("library artifact witnessed %v, want none", got.Capabilities())
+			f, ok := findingFor(report, CapabilityExec)
+			if !ok {
+				t.Fatalf("EXEC not witnessed; got %v", report.Capabilities())
+			}
+			if f.SinkSymbol != "Command" {
+				t.Errorf("EXEC sink symbol = %q, want Command", f.SinkSymbol)
+			}
+		})
 	}
 }
 
-func TestSelectRootsApplicationIncludesUnexportedNonInit(t *testing.T) {
-	rec := dynamicSinkGraph()
-	rec.ArtifactKind = cgdomain.ArtifactApplication
+func TestSelectRootsIncludesUnexportedNonInitWhateverTheKind(t *testing.T) {
+	for _, kind := range []cgdomain.ArtifactKind{cgdomain.ArtifactApplication, cgdomain.ArtifactLibrary} {
+		rec := dynamicSinkGraph()
+		rec.ArtifactKind = kind
 
-	got := SelectRoots(rec, cgdomain.RootScopeProduction)
-	if want := []string{"m.Exported", "m.handler"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("SelectRoots = %v, want %v", got, want)
+		got := SelectRoots(rec, cgdomain.RootScopeProduction)
+		if want := []string{"m.Exported", "m.handler"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("SelectRoots(%s) = %v, want %v", kind, got, want)
+		}
 	}
 }
 
@@ -452,24 +453,24 @@ func TestSelectRootsIncludesInit(t *testing.T) {
 		node("ext.init", "ext", "init", true, false),
 	}}
 	got := SelectRoots(rec, cgdomain.RootScopeProduction)
-	if !reflect.DeepEqual(got, []string{"m.Exported", "m.init"}) {
-		t.Errorf("SelectRoots = %v, want [m.Exported m.init]", got)
+	if !reflect.DeepEqual(got, []string{"m.Exported", "m.init", "m.internal"}) {
+		t.Errorf("SelectRoots = %v, want [m.Exported m.init m.internal]", got)
 	}
 }
 
-func TestSelectRootsPrefersExported(t *testing.T) {
+func TestSelectRootsKeepsUnexportedBesideExported(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Nodes: []cgdomain.CallNode{
 		node("m.Exported", "m", "Exported", false, true),
 		node("m.internal", "m", "internal", false, false),
 		node("ext.Fn", "ext", "Fn", true, true),
 	}}
 	got := SelectRoots(rec, cgdomain.RootScopeProduction)
-	if !reflect.DeepEqual(got, []string{"m.Exported"}) {
-		t.Errorf("SelectRoots = %v, want [m.Exported]", got)
+	if !reflect.DeepEqual(got, []string{"m.Exported", "m.internal"}) {
+		t.Errorf("SelectRoots = %v, want [m.Exported m.internal]", got)
 	}
 }
 
-func TestSelectRootsFallsBackToOwned(t *testing.T) {
+func TestSelectRootsExcludesExternalNodes(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Nodes: []cgdomain.CallNode{
 		node("m.b", "m", "b", false, false),
 		node("m.a", "m", "a", false, false),
@@ -669,7 +670,9 @@ func TestAnalyseKeepsAnInitOnlyCapabilityUnderTheProductionScope(t *testing.T) {
 	if !ok {
 		t.Fatalf("init-rooted NETWORK lost; got %v", report.Capabilities())
 	}
-	if want := []string{"m.init", "m.helper", "net/http.Get"}; !reflect.DeepEqual(f.Path, want) {
+	// m.helper is owned, so it roots the traversal and gives the shorter witness;
+	// what this pins is that excluding test roots does not lose the capability.
+	if want := []string{"m.helper", "net/http.Get"}; !reflect.DeepEqual(f.Path, want) {
 		t.Errorf("witness = %v, want %v", f.Path, want)
 	}
 }

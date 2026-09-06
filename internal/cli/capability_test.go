@@ -400,3 +400,126 @@ func TestCapabilityRootScopeFromFlag(t *testing.T) {
 		t.Errorf("--include-tests scope = %v, want with-tests", got)
 	}
 }
+
+// unexportedSinkRecord is a module whose only path to a sink starts at an
+// unexported, non-init function — the shape entered through a registered
+// handler or a callback, which the exported-API rule would never root. The
+// record is classified a library, so it also pins that the kind decides
+// nothing.
+func unexportedSinkRecord() cgdomain.CallGraphRecord {
+	return cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		ArtifactKind:  cgdomain.ArtifactLibrary,
+		Nodes: []cgdomain.CallNode{
+			{ID: "m.Exported", Package: "m", Symbol: "Exported", IsExportedAPI: true},
+			{ID: "m.loadData", Package: "m", Symbol: "loadData"},
+			{ID: "os.ReadFile", Package: "os", Symbol: "ReadFile", IsExternal: true},
+		},
+		Edges: []cgdomain.CallEdge{
+			{FromID: "m.loadData", ToID: "os.ReadFile", Confidence: cgdomain.ConfidenceDirect},
+		},
+	}
+}
+
+// TestCapabilityRootsLineMatchesTheRootsUsed drives a record through the real
+// selector and analysis, then checks the disclosure against the roots that were
+// actually used: the line must not describe a narrower set than the traversal
+// ran on.
+func TestCapabilityRootsLineMatchesTheRootsUsed(t *testing.T) {
+	rec := unexportedSinkRecord()
+	for _, tc := range []struct {
+		name  string
+		scope cgdomain.RootScope
+		want  []string
+	}{
+		{"production", cgdomain.RootScopeProduction, []string{"all of this module's own code", "test functions excluded"}},
+		{"with tests", cgdomain.RootScopeWithTests, []string{"all of this module's own code", "--include-tests was given"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			roots := capdomain.SelectRoots(rec, tc.scope)
+			exported := map[string]bool{}
+			for _, n := range rec.Nodes {
+				exported[n.ID] = n.IsExportedAPI || cgdomain.IsInitSymbol(n.Symbol)
+			}
+			widerThanExportedAPI := false
+			for _, r := range roots {
+				if !exported[r] {
+					widerThanExportedAPI = true
+				}
+			}
+			if !widerThanExportedAPI {
+				t.Fatalf("fixture no longer roots a non-exported node: roots = %v", roots)
+			}
+
+			var buf bytes.Buffer
+			uc := fakeCapAnalyser{report: capdomain.Analyse(rec, roots)}
+			if err := runCapability(context.Background(), "m@v1.0.0", uc, tc.scope, false, &buf); err != nil {
+				t.Fatal(err)
+			}
+			got := buf.String()
+			if strings.Contains(got, "exported API") {
+				t.Errorf("roots line claims exported-API rooting, but %v rooted the traversal:\n%s", roots, got)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("roots line does not state %q:\n%s", want, got)
+				}
+			}
+		})
+	}
+}
+
+// TestCapabilityJSONOmitsTheArtifactKind pins the removal: the report does not
+// consult the record's kind, so publishing it would invite a machine reader to
+// rely on a fact this answer never used.
+func TestCapabilityJSONOmitsTheArtifactKind(t *testing.T) {
+	rec := unexportedSinkRecord()
+	var buf bytes.Buffer
+	uc := fakeCapAnalyser{report: capdomain.Analyse(rec, capdomain.SelectRoots(rec, cgdomain.RootScopeProduction))}
+	if err := runCapability(context.Background(), "m@v1.0.0", uc, cgdomain.RootScopeProduction, true, &buf); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	if _, present := got["artifact_kind"]; present {
+		t.Errorf("artifact_kind is published but no longer governs the answer:\n%s", buf.String())
+	}
+}
+
+// TestCapabilityDiffDisclosesOneSharedRootSet pins that both sides of --against
+// are rooted by one rule: a version that gains a command is no longer rooted
+// differently from the one it is diffed against, so the sets are comparable and
+// one line describes both.
+func TestCapabilityDiffDisclosesOneSharedRootSet(t *testing.T) {
+	uc := fakeCapAnalyser{
+		fromReport: capdomain.CapabilityReport{},
+		toReport:   capdomain.CapabilityReport{},
+		diff:       capdomain.CapabilityDiff{ParityOK: true},
+	}
+	var buf bytes.Buffer
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, cgdomain.RootScopeProduction, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	if n := strings.Count(got, "roots: "); n != 1 {
+		t.Errorf("diff printed %d roots lines, want one shared line:\n%s", n, got)
+	}
+	if !strings.Contains(got, capabilityRootScopeLine(cgdomain.RootScopeProduction)) {
+		t.Errorf("diff does not disclose the shared root set:\n%s", got)
+	}
+}
+
+// TestCapabilityRootsLineWording pins both lines byte for byte, so a reword
+// that drifts from what SelectRoots does has to be deliberate.
+func TestCapabilityRootsLineWording(t *testing.T) {
+	for scope, want := range map[cgdomain.RootScope]string{
+		cgdomain.RootScopeProduction: "roots: all of this module's own code; test functions excluded (widen with --include-tests)",
+		cgdomain.RootScopeWithTests:  "roots: all of this module's own code, test functions included (--include-tests was given)",
+	} {
+		if got := capabilityRootScopeLine(scope); got != want {
+			t.Errorf("roots line = %q, want %q", got, want)
+		}
+	}
+}
