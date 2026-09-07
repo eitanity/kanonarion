@@ -265,6 +265,13 @@ kanonarion reachability --local .
 
 ### Root classification
 
+**A source scan searches the whole tree.** govulncheck is run over `./...`, so
+examples, tools and test packages are in scope, and "reachable" means reachable
+from somewhere this tree builds — not from the binary you ship. That is
+deliberate: narrowing the search would discard evidence. What tells you which
+you have is the root classification below, so read a route's root before acting
+on it, and split a count by root before reporting one.
+
 A route says a path exists. It does not say what starts the path, and a route
 rooted at an HTTP handler, at a test helper, and at an exported function nothing
 in the project calls were all reported the same way. Every route now reports what

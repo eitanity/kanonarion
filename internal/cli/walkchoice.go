@@ -347,6 +347,11 @@ func (c walkChoice) stalenessNote() string {
 			c.manifestPath, driftSample(c.disagreements), c.manifestPath)
 	case walkChosenSole, walkChosenRecencyUnchecked:
 	}
+	// A caller who named a walk named no manifest, so there is no manifest this
+	// read failed to re-resolve and nothing to say about one.
+	if c.manifestPath == "" {
+		return ""
+	}
 	return manifestStalenessNote(c.manifestPath)
 }
 

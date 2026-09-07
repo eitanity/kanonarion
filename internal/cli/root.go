@@ -121,6 +121,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newCallersCmd(stdout, stderr),
 		newCalleesCmd(stdout, stderr),
 		newImplementersCmd(stdout, stderr),
+		newUsageCmd(stdout, stderr),
 		newCapabilityCmd(stdout, stderr),
 		newDependentsCmd(stdout, stderr),
 		NewExtractCmd(stdout, stderr),

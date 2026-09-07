@@ -6,19 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // interfaceDiffCoverageNote is the standing statement of what this comparison
@@ -28,15 +25,6 @@ import (
 const interfaceDiffCoverageNote = "coverage: exported Go declarations and their signatures, compared between two " +
 	"stored interface records. Behaviour, string-keyed registries, struct-tag semantics and " +
 	"anything decided at run time are outside this comparison; source positions are not compared."
-
-// usedByCoverageNote states the limit of the call-graph join. A symbol reported
-// as not reached is not a symbol proved unused: the graph records call edges, so
-// a reference that is not a call is not in it to be found.
-const usedByCoverageNote = "coverage: reached/not-reached is measured over recorded CALL EDGES in the stored " +
-	"call graph. Method values (a method referenced as a value rather than called) are not " +
-	"recorded as edges, so a symbol shown as not reached may still be referenced that way. " +
-	"Types, constants and variables have no call-graph node at all and are reported as " +
-	"unmeasured rather than as unreached."
 
 // zeroBreakingBehaviourNote is what the output says when it found no breaking
 // change over a delta that is not empty.
@@ -232,30 +220,11 @@ type usedCaller struct {
 	Line int
 }
 
-// usedByResult is the join of a delta against one project's stored call graph.
+// usedByResult is the join of a delta against one project's stored call graph:
+// the shared binding that resolves the project, plus what this delta does inside
+// it.
 type usedByResult struct {
-	GoMod  string
-	WalkID string
-	// choice is how WalkID was arrived at: which rule picked it out of the store's
-	// walks of this project, and what that rule could compare against. --used-by
-	// names a manifest, not a walk, so the walk is always chosen for the caller
-	// and the choice is always stated, on both surfaces.
-	choice walkChoice
-	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, carrying the
-	// basis that says which: "platform", "not_platform_scoped" for a
-	// module-rooted walk (no platform applies, and re-walking never produces
-	// one), or "unrecorded" (the platform is not known). Where a
-	// platform IS resolved, GOOS gates which files build, so the scope this
-	// answer is filtered against is that one platform's build list.
-	WalkFrame walkdomain.WalkFrame
-	// WalkScope is the dependency scope the answering walk covered. --used-by
-	// asks what the consumer's own code calls, so it selects a code-scope walk;
-	// the scope is carried so the answer names the build it came from rather
-	// than leaving the reader to assume it.
-	WalkScope walkdomain.WalkScope
-	Consumer  coordinate.ModuleCoordinate
-	// ScopeSize is how many module versions the walk pins.
-	ScopeSize int
+	consumerBinding
 	// Symbols covers every breaking delta, reached or not, in delta order.
 	Symbols []usedSymbol
 	// Touched covers the declarations a zero-breaking delta moved without
@@ -268,19 +237,6 @@ type usedByResult struct {
 	// reads it and a large respelt surface would otherwise cost one call-graph
 	// query per declaration for no reader.
 	Touched []usedSymbol
-	// CallGraphFound is false when the consumer module has no stored call graph
-	// at all — in which case every "not reached" below is an absence of
-	// evidence, not evidence of absence, and the command says so.
-	CallGraphFound bool
-	// DroppedPackages are the consumer's own packages that failed to typecheck,
-	// whose edges were therefore dropped.
-	//
-	// It is disclosed for the same reason 'callers' discloses it: the reach
-	// counts here are a join against the consumer's graph, and a call site in a
-	// package that produced no SSA cannot appear in it. Without this line the two
-	// commands disagree in the worst direction — one states the gap and the other
-	// prints a bare "not reached" over the same missing edges.
-	DroppedPackages []string
 }
 
 // Reached returns the symbols the consumer's own code actually calls.
@@ -306,47 +262,20 @@ func (r *usedByResult) TouchedReach() (decls, sites int) {
 	return decls, sites
 }
 
-// joinUsedBy resolves a go.mod to the latest succeeded code-scope project walk
-// for the module it declares — the same resolution `callers --gomod` performs —
-// and asks the stored call graph which of the breaking deltas that project's own
-// code calls.
-//
-// The code scope is the question: this asks what the consumer's OWN code calls,
-// so the build it is answered in is the one that code compiles into. There is no
-// flag to widen it, and a tool- or project-scope walk that happened to be walked
-// more recently is not allowed to stand in for one.
+// joinUsedBy asks the stored call graph of the project bindConsumer resolved
+// which of the breaking deltas that project's own code calls.
 //
 // It never parses the consumer's source. The answer is a read of what was
 // already measured and recorded, so it is reproducible and it cannot disagree
 // with what `callers` would say about the same symbol.
 func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string, toolchain gotoolchain.Version) (*usedByResult, error) {
-	choice, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod, scopeCode)
+	bound, err := bindConsumer(ctx, ctr.QueryWalks, ctr.QueryCallGraph,
+		consumerSelector{gomod: gomod, toolchain: toolchain})
 	if err != nil {
 		return nil, err
 	}
-	walkID := choice.summary.ID
-	rec, err := choice.walkRecord(ctx, ctr.QueryWalks)
-	if err != nil {
-		return nil, err
-	}
-	scope := walkModuleSet(rec)
-
-	res := &usedByResult{
-		GoMod:     choice.manifestPath,
-		choice:    choice,
-		WalkID:    walkID,
-		WalkScope: rec.Scope,
-		WalkFrame: rec.Graph.Frame(),
-		Consumer:  rec.Target,
-		ScopeSize: scope.Len(),
-	}
-
-	positions, dropped, found, err := consumerNodePositions(ctx, ctr.QueryCallGraph, rec.Target, toolchain)
-	if err != nil {
-		return nil, err
-	}
-	res.CallGraphFound = found
-	res.DroppedPackages = dropped
+	res := &usedByResult{consumerBinding: *bound}
+	scope := bound.Scope
 
 	join := func(sym breakingDelta) (usedSymbol, error) {
 		entry := usedSymbol{Symbol: sym.Symbol, Removed: sym.Removed}
@@ -360,7 +289,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		if ferr != nil {
 			return usedSymbol{}, fmt.Errorf("finding callers of %s: %w", nodeID, ferr)
 		}
-		entry.Sites, entry.Callers = consumerCallers(refs, rec.Target, positions)
+		entry.Sites, entry.Callers = consumerCallers(refs, bound.Consumer, bound.Positions)
 		return entry, nil
 	}
 
@@ -449,83 +378,6 @@ func callGraphNodeID(id ifacedomain.SymbolID, ptrReceiver bool) (string, bool) {
 		return "", false
 	}
 	return "", false
-}
-
-// writeUsedByDroppedPackages discloses that some of the consumer's own packages
-// failed to typecheck, so the reach counts joined against its graph cannot see
-// call sites declared in them.
-//
-// It exists so this command and 'callers' say the same thing about the same
-// condition. A silent "not reached" over a package that produced no SSA is the
-// same false negative the edge queries refuse to print bare.
-func writeUsedByDroppedPackages(stdout io.Writer, used *usedByResult) error {
-	if len(used.DroppedPackages) == 0 {
-		return nil
-	}
-	if _, err := fmt.Fprintf(stdout,
-		"  %d of %s own package(s) did not typecheck when it was analysed, so their edges were "+
-			"dropped: %s. A call site declared in one of them cannot appear in any count above — "+
-			"those declarations are unmeasured, not unreached.\n",
-		len(used.DroppedPackages), used.Consumer.Path(), strings.Join(used.DroppedPackages, ", ")); err != nil {
-		return fmt.Errorf("writing used-by dropped packages: %w", err)
-	}
-	return nil
-}
-
-// consumerNodePositions loads the consumer module's own call graph and indexes
-// its nodes by ID, so a caller can be reported with the file and line it is
-// declared at. It also returns the consumer's own packages whose typecheck
-// failed, because a call site in one of them produced no SSA and so cannot join.
-// Returns found=false when the project has no stored graph.
-func consumerNodePositions(ctx context.Context, uc QueryCallGraphUseCase, consumer coordinate.ModuleCoordinate, toolchain gotoolchain.Version) (map[string]cgdomain.SourcePosition, []string, bool, error) {
-	rec, found, err := uc.GetCallGraphRecordFrom(ctx, consumer, cgapp.PipelineVersion, cgdomain.ComposeRequest{ToolchainPreference: toolchain})
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("loading call graph for %s: %w", consumer, err)
-	}
-	if !found {
-		return nil, nil, false, nil
-	}
-	positions := make(map[string]cgdomain.SourcePosition, len(rec.Nodes))
-	for _, n := range rec.Nodes {
-		positions[n.ID] = n.Position
-	}
-	var dropped []string
-	if rec.OverallStatus == cgdomain.CallGraphStatusPartial {
-		dropped = append(dropped, rec.FailedPackages...)
-		sort.Strings(dropped)
-	}
-	return positions, dropped, found, nil
-}
-
-// consumerCallers keeps the edges owned by the consumer's own module and
-// summarises them: how many call sites, and which of its functions they are in.
-//
-// The filter is what makes the answer "your code", not "some code in your
-// build": an edge owned by another dependency is a call the consumer did not
-// write and cannot fix.
-func consumerCallers(refs []cgports.CallEdgeRef, consumer coordinate.ModuleCoordinate, positions map[string]cgdomain.SourcePosition) (int, []usedCaller) {
-	sites := 0
-	byID := map[string]struct{}{}
-	for _, r := range refs {
-		if r.ModulePath != consumer.Path() {
-			continue
-		}
-		sites++
-		byID[r.FromID] = struct{}{}
-	}
-	callers := make([]usedCaller, 0, len(byID))
-	for id := range byID {
-		c := usedCaller{ID: id}
-		if pos, ok := positions[id]; ok {
-			c.File, c.Line = pos.File, pos.Line
-		}
-		callers = append(callers, c)
-	}
-	sort.Slice(callers, func(i, j int) bool { return callers[i].ID < callers[j].ID })
-	if len(callers) == 0 {
-		return sites, nil
-	}
-	return sites, callers
 }
 
 // usedSetBreakingErr is the gate --used-by was asked for: the command ran to
@@ -861,7 +713,7 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 			return fmt.Errorf("writing used-by absence: %w", err)
 		}
 	}
-	if err := writeUsedByDroppedPackages(stdout, used); err != nil {
+	if err := writeConsumerDroppedPackages(stdout, &used.consumerBinding); err != nil {
 		return err
 	}
 	if len(used.Symbols) == 0 {

@@ -105,6 +105,12 @@ const (
 	// production code only — and saying so is worth more than a clean-looking
 	// absent that quietly means something narrower than it reads.
 	SinkTestScopeUnmeasured SinkKind = "test-scope-unmeasured"
+	// SinkModuleSurfaceUnenumerated is a module the store holds no call graph
+	// for at any version. Its public API was never listed, so a zero reach into
+	// it is an absence from a population nobody drew: a misspelt module path
+	// produces the same clean-looking zero as a dependency genuinely migrated
+	// off, and only the second is a measurement.
+	SinkModuleSurfaceUnenumerated SinkKind = "module-surface-unenumerated"
 )
 
 // SoundnessSink is a single reason an empty verdict was downgraded to

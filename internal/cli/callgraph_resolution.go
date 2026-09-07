@@ -204,11 +204,21 @@ func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphU
 	inBuild := sc.modules.VersionsOf(modulePath)
 	switch {
 	case len(inBuild) == 0:
+		// The refusal names `usage` because the divergence between the two
+		// commands is deliberate and must not be silent. This is a symbol query
+		// scoped to a walk, and a module the walk does not contain is outside
+		// what it may answer over; `usage` asks what the project's own code does
+		// with a module across every stored version, which is the same data and a
+		// question a migration has to be able to ask about a module it has not
+		// adopted yet.
 		return fmt.Errorf(
 			"symbol %q belongs to module %q, which %s does not contain; "+
 				"analysed versions in the store are %s. Drop the scope flag to query "+
-				"across every stored version",
-			symbolID, modulePath, sc.source, strings.Join(versions, ", "))
+				"across every stored version, or ask what this project's own code uses "+
+				"from the module, which is answered across stored versions:\n"+
+				"  kanonarion usage %s@%s",
+			symbolID, modulePath, sc.source, strings.Join(versions, ", "),
+			modulePath, versions[0])
 	default:
 		return fmt.Errorf(
 			"symbol %q belongs to module %q, which %s resolves to %s — a version that "+
@@ -655,13 +665,22 @@ type worktreeRouter interface {
 // they got before any of this existed — and being told so is the difference
 // between a stale answer and a stale answer they can act on.
 func writeWorktreeNotice(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, stdout io.Writer, scope coordinate.ModuleSet) error {
-	router, ok := uc.(worktreeRouter)
-	if !ok {
-		return nil
-	}
 	coord, ok, err := localCoordinateOwning(ctx, symbolID, uc, scope)
 	if err != nil || !ok {
 		return err
+	}
+	return writeWorktreeNoticeFor(ctx, coord, uc, stdout)
+}
+
+// writeWorktreeNoticeFor is the same disclosure for a caller that already knows
+// which coordinate answered, rather than one holding a symbol to resolve it
+// from. A command whose whole answer is about one project must say which
+// checkout of it replied, for the reason above: the choice is invisible and it
+// changes the answer.
+func writeWorktreeNoticeFor(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, stdout io.Writer) error {
+	router, ok := uc.(worktreeRouter)
+	if !ok {
+		return nil
 	}
 	r, found, err := router.WorktreeRouting(ctx, coord, cgapp.PipelineVersion)
 	if err != nil {
