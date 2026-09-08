@@ -32,10 +32,54 @@ const usageConfidenceNote = "established use is a Direct call edge: one that nam
 	"so it names every type-compatible function in the module rather than the one that runs. " +
 	"Those are reported below as their own class and are in no count above."
 
-// usageUnmeasuredKindsNote names the declarations this report cannot see at all.
+// usageUnmeasuredKindsLead names the declarations this report cannot see at all.
 // Their absence from the lists above is an absence of measurement, not of use.
-const usageUnmeasuredKindsNote = "unmeasured: types, constants and variables have no call-graph node, so no use of " +
-	"one appears anywhere in this report. List them with: kanonarion interface-show "
+const usageUnmeasuredKindsLead = "unmeasured: types, constants and variables have no call-graph node, so no use of " +
+	"one appears anywhere in this report. List them with: "
+
+// usageUnmeasuredKindsNote is the lead with the invocation that carries it out.
+//
+// interface-show reads a stored interface record and refuses a module that has
+// none, naming 'kanonarion interface'; that command in turn reads fetched bytes
+// and refuses a module the store has not fetched. Naming only the last step
+// therefore costs the reader two round trips, so the whole chain is named — see
+// usageMeasureRemedy for the rule.
+func usageUnmeasuredKindsNote(coord coordinate.ModuleCoordinate) string {
+	line := "kanonarion interface-show " + coord.String()
+	if cgdomain.IsReFetchable(coord) {
+		line = "kanonarion fetch " + coord.String() +
+			" && kanonarion interface " + coord.String() + " && " + line
+	}
+	return usageUnmeasuredKindsLead + line
+}
+
+// usageMeasureRemedy names the commands that put a stored call graph for coord
+// in the store, as one line a reader can paste.
+//
+// Both commands are named because the first creates what the second resolves.
+// 'kanonarion callgraph' reads bytes the store already holds: handed a module
+// it has not fetched it exits 20 with "module not fetched: run 'kanonarion
+// fetch <coord>' first", so a remedy naming it alone costs the reader exactly
+// the round trip the remedy existed to save. Fetching a module the store
+// already holds returns its verified record immediately, so the pair is right
+// whether or not the bytes are there — the same reasoning, and the same shape,
+// as the licence-record remedy in provenance_basis.go.
+//
+// force is owed exactly when a stored record would otherwise answer the re-run,
+// which is what RecordIsCacheable decides. A caller holding no record passes
+// false: there is nothing for the re-run to be served.
+func usageMeasureRemedy(coord coordinate.ModuleCoordinate, force bool) string {
+	reanalyse := cgdomain.ReanalysisInstruction(coord, "")
+	if force {
+		reanalyse = cgdomain.ForcedReanalysisInstruction(coord, "")
+	}
+	// A project coordinate names a working tree rather than a published artefact,
+	// so there is nothing to fetch and no fetch can ever satisfy it.
+	if !cgdomain.IsReFetchable(coord) {
+		return reanalyse
+	}
+	return "kanonarion fetch " + coord.String() + " && " + reanalyse
+}
 
 // usageSatisfactionNote states the one axis of a migration inventory this report
 // cannot measure, and what does measure it.
@@ -90,8 +134,9 @@ your code already does with a module you have not adopted is what a migration
 needs. 'kanonarion callers' refuses that coordinate, being scoped to the walk.
 
 It reads the project's stored call graph; run 'kanonarion local .' first, and
-'kanonarion callgraph <module>@<version>' for the module whose surface is being
-compared against.`,
+'kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>'
+for the module whose surface is being compared against — callgraph reads bytes
+the store already holds and refuses a module it has not fetched.`,
 		Example: `  kanonarion usage github.com/spf13/cast@v1.7.0
   kanonarion usage github.com/spf13/cast@v1.7.0 --gomod ./go.mod
   kanonarion usage github.com/spf13/cast@v1.7.0 --json
@@ -228,9 +273,16 @@ type usageReport struct {
 	BuildVersions []string
 	// ModuleGraphFound reports whether a call graph was served for the module at
 	// any version. Without it the public-API population is unknown, so Unreached
-	// is unmeasured rather than empty — and nothing about the module was
-	// enumerated, so no absence of use may be claimed of it either.
+	// is unmeasured rather than empty.
+	//
+	// It is not on its own what licenses a claim of absence: a served record can
+	// enumerate nothing at all. surfaceEnumerated is that question.
 	ModuleGraphFound bool
+	// ModuleRecord is the module's own stored call graph, zero when none was
+	// served. The verdict reads its status to say WHY a public API of zero is not
+	// a module with no public API, and its cause to say whether a re-measure
+	// would be served the same record back.
+	ModuleRecord cgdomain.CallGraphRecord
 
 	// Used are the symbols reached by a Direct edge, sorted by node ID.
 	Used []usageSymbol
@@ -288,6 +340,7 @@ func joinUsage(
 		ModulePathInBuild: bound.Scope.HasPath(module.Path()),
 		BuildVersions:     bound.Scope.VersionsOf(module.Path()),
 		ModuleGraphFound:  res.Found,
+		ModuleRecord:      res.Record,
 	}
 
 	owners := usageModulePaths(bound.Scope, stored, bound.Record, module)
@@ -653,26 +706,76 @@ func usageTotals(syms []usageSymbol) (production, test, sites int) {
 
 // -- the verdict --
 
+// surfaceEnumerated reports whether the module's public API was actually listed.
+//
+// A served record is not that listing. A LoadFailed record carries zero nodes,
+// and a Partial one carries dozens without a single exported-API node among
+// them when the package declaring the API is exactly the one that failed to
+// typecheck. Both satisfy "a call graph exists" while enumerating nothing, so
+// the population is the test and the record's existence is not.
+func (r *usageReport) surfaceEnumerated() bool { return r.ModuleGraphFound && r.PublicAPI > 0 }
+
+// unenumeratedSurfaceSink is the condition RESOLVED-ABSENT may not be claimed
+// over: an absence is an absence FROM a population, so the population has to
+// have been drawn.
+//
+// Measured on this store: a module with no record answers UNRESOLVED, and
+// following the remedy that answer printed — fetch it, then extract its call
+// graph — produced a LoadFailed record of zero nodes and turned the honest
+// UNRESOLVED into RESOLVED-ABSENT. The remedy made the answer worse while the
+// module stayed exactly as unmeasured as before.
+//
+// A module whose complete graph genuinely declares no exported API falls under
+// the same rule, and correctly: there is nothing there for this project to have
+// called, and a stated reason is worth more than a zero that reads as a
+// finished migration.
+func (r *usageReport) unenumeratedSurfaceSink() (cgdomain.SoundnessSink, bool) {
+	if r.surfaceEnumerated() {
+		return cgdomain.SoundnessSink{}, false
+	}
+	return cgdomain.SoundnessSink{
+		Kind:   cgdomain.SinkModuleSurfaceUnenumerated,
+		Site:   r.Module.Path(),
+		Detail: r.surfaceUnenumeratedReason(),
+	}, true
+}
+
+// surfaceUnenumeratedReason says which of the three ways the population came
+// back undrawn, and what — if anything — changes it. They need different
+// sentences because they need different advice: a module nobody analysed is
+// fixed by analysing it, one whose analysis fell short is fixed by removing
+// what stopped it, and one that exports nothing is not fixed at all.
+func (r *usageReport) surfaceUnenumeratedReason() string {
+	if !r.ModuleGraphFound {
+		return fmt.Sprintf("the store holds no call graph for any version of %s, so its public "+
+			"API was never enumerated and nothing about the module was measured; check the module "+
+			"path, then run: %s", r.Module.Path(), usageMeasureRemedy(r.Requested, false))
+	}
+	rec := r.ModuleRecord
+	if cgdomain.RecordIsFailure(rec) || cgdomain.RecordIsIncomplete(rec) {
+		return fmt.Sprintf("the stored call graph for %s is %s and enumerated none of its public API "+
+			"(%s, cause: %s), so its surface is unlisted and there is no population for an absence to be "+
+			"an absence of; re-measure it: %s",
+			r.Module, rec.OverallStatus, countOf(len(rec.Nodes), "nodes"), rec.FailureCause,
+			usageMeasureRemedy(r.Module, cgdomain.RecordIsCacheable(rec)))
+	}
+	return fmt.Sprintf("the stored call graph for %s is %s and declares no exported API at all, so "+
+		"there is nothing in it for this project to call and no absence to claim; see it: "+
+		"kanonarion callgraph-show %s", r.Module, rec.OverallStatus, r.Module)
+}
+
 // usageVerdict classifies the answer with the same three values the edge queries
 // use. Presence is never downgraded: a Direct edge is a call anyone can look up.
 // An empty Used set is a measurement only when nothing about the project's
 // analysis leaves room for a missing edge.
-func (r *usageReport) usageVerdict() cgdomain.Verdict {
+func (r *usageReport) usageVerdict() cgdomain.Answer {
 	if len(r.Used) > 0 {
-		return cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedPresent}
+		return cgdomain.Answer{Outcome: cgdomain.AnswerResolvedPresent}
 	}
 	site := r.Consumer.Path()
 	var sinks []cgdomain.SoundnessSink
-	if !r.ModuleGraphFound {
-		// A module nothing was ever enumerated for has no population for a zero
-		// to be a zero of. Claiming absence here would let a misspelt module path
-		// pass the same check that proves a migration finished.
-		sinks = append(sinks, cgdomain.SoundnessSink{
-			Kind: cgdomain.SinkModuleSurfaceUnenumerated, Site: r.Module.Path(),
-			Detail: fmt.Sprintf("the store holds no call graph for any version of %s, so its public "+
-				"API was never enumerated and nothing about the module was measured; check the module "+
-				"path, then run: kanonarion callgraph %s", r.Module.Path(), r.Requested),
-		})
+	if sink, ok := r.unenumeratedSurfaceSink(); ok {
+		sinks = append(sinks, sink)
 	}
 	if len(r.DroppedPackages) > 0 {
 		sinks = append(sinks, cgdomain.SoundnessSink{
@@ -707,9 +810,9 @@ func (r *usageReport) usageVerdict() cgdomain.Verdict {
 		})
 	}
 	if len(sinks) == 0 {
-		return cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedAbsent}
+		return cgdomain.Answer{Outcome: cgdomain.AnswerResolvedAbsent}
 	}
-	return cgdomain.Verdict{Outcome: cgdomain.VerdictUnresolved, Sinks: sinks}
+	return cgdomain.Answer{Outcome: cgdomain.AnswerUnresolved, Sinks: sinks}
 }
 
 // usageVerdictExit maps the verdict onto the exit taxonomy.
@@ -721,7 +824,7 @@ func (r *usageReport) usageVerdict() cgdomain.Verdict {
 // off `answer`, which is the field every sibling command states it on.
 func usageVerdictExit(r *usageReport) error {
 	v := r.usageVerdict()
-	if v.Outcome != cgdomain.VerdictUnresolved {
+	if v.Outcome != cgdomain.AnswerUnresolved {
 		return nil
 	}
 	return &exitError{code: ExitPartial, msg: fmt.Sprintf(
@@ -810,8 +913,8 @@ func printUsageReport(stdout io.Writer, r *usageReport) error {
 	if err := printUsageInterfaces(stdout, r); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(stdout, "\n%s%s\n%s\n",
-		usageUnmeasuredKindsNote, r.Module, usedByCoverageNote); err != nil {
+	if _, err := fmt.Fprintf(stdout, "\n%s\n%s\n",
+		usageUnmeasuredKindsNote(r.Module), usedByCoverageNote); err != nil {
 		return fmt.Errorf("writing usage coverage: %w", err)
 	}
 	return printUsageVerdict(stdout, r)
@@ -829,8 +932,8 @@ func printUsageVersionBasis(stdout io.Writer, r *usageReport) error {
 	}
 	if _, err := fmt.Fprintf(stdout,
 		"version: %s has no stored call graph, so nothing below was measured against it. This report "+
-			"measures %s — %s. To measure the version you asked for, run: kanonarion callgraph %s\n",
-		r.Requested, r.Module, why, r.Requested); err != nil {
+			"measures %s — %s. To measure the version you asked for, run: %s\n",
+		r.Requested, r.Module, why, usageMeasureRemedy(r.Requested, false)); err != nil {
 		return fmt.Errorf("writing version basis: %w", err)
 	}
 	return nil
@@ -968,12 +1071,12 @@ func printUsageLinkage(stdout io.Writer, r *usageReport) error {
 }
 
 func printUsageUnreached(stdout io.Writer, r *usageReport) error {
-	if !r.ModuleGraphFound {
+	// An unlisted surface is printed as unmeasured whether the store held no
+	// record or held one that enumerated nothing. "0 of 0" reads as a module with
+	// no public API, which is the misreading this whole section turns on.
+	if !r.surfaceEnumerated() {
 		if _, err := fmt.Fprintf(stdout,
-			"\nUnreached — unmeasured: the store holds no call graph for any version of %s, so its "+
-				"public API was never enumerated and nothing here is a claim about it; run: "+
-				"kanonarion callgraph %s\n",
-			r.Module.Path(), r.Requested); err != nil {
+			"\nUnreached — unmeasured: %s\n", r.surfaceUnenumeratedReason()); err != nil {
 			return fmt.Errorf("writing unreached absence: %w", err)
 		}
 		return nil
@@ -1028,14 +1131,14 @@ func printUsageVerdict(stdout io.Writer, r *usageReport) error {
 	v := r.usageVerdict()
 	prod, test, total := usageTotals(r.Used)
 	switch v.Outcome {
-	case cgdomain.VerdictResolvedPresent:
+	case cgdomain.AnswerResolvedPresent:
 		if _, err := fmt.Fprintf(stdout,
 			"answer: RESOLVED-PRESENT — %s own code reaches %s of %s at %s (%d production, %d test)%s\n",
 			r.Consumer.Path(), countOf(len(r.Used), "symbols"), r.Module,
 			countOf(total, "sites"), prod, test, r.requestedNotMeasuredClause()); err != nil {
 			return fmt.Errorf("writing usage answer: %w", err)
 		}
-	case cgdomain.VerdictUnresolved:
+	case cgdomain.AnswerUnresolved:
 		if _, err := fmt.Fprintf(stdout,
 			"answer: UNRESOLVED — no Direct edge from %s reaches %s, and the absence is not proven: %s\n",
 			r.Consumer.Path(), r.Module, v.Reason()); err != nil {
@@ -1122,8 +1225,11 @@ type usageJSON struct {
 	ModulePathInBuild bool `json:"module_path_in_build"`
 	// ModuleCallGraphFound says whether a graph was served for the module at any
 	// version. False means unreached_public_api and declared_interfaces were
-	// never enumerated, their emptiness is not a measurement, and `answer` is
-	// UNRESOLVED rather than a zero nobody measured.
+	// never enumerated and their emptiness is not a measurement.
+	//
+	// True is not the converse: a served record can enumerate nothing, and
+	// public_api_count is what says whether it did. `answer` reads that count,
+	// not this flag — a consumer checking a migration finished reads `answer`.
 	ModuleCallGraphFound bool     `json:"module_call_graph_found"`
 	DroppedPackages      []string `json:"dropped_packages,omitempty"`
 	// The project's own graph, named so a reader can tell which of several

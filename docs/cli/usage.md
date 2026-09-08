@@ -13,8 +13,10 @@ which symbols, at how many sites, in which files, and which of the module's
 public API it never calls.
 
 It answers from two stored call graphs - the project's and the module's - and
-parses no source. Run [`local`](local.md) for the project and
-[`callgraph`](callgraph.md) for the module first.
+parses no source. Run [`local`](local.md) for the project, and for the module
+`kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>`
+- [`callgraph`](callgraph.md) reads bytes the store already holds and refuses a
+module it has not fetched.
 
 The project is named the way [`context`](context.md) names it: `--gomod` for a
 manifest, `--walk-id` for a walk. With neither, `./go.mod` in the working
@@ -73,34 +75,59 @@ Every run ends on the same three-valued line the edge queries use:
 | Answer | Meaning |
 |---|---|
 | `RESOLVED-PRESENT` | At least one `Direct` edge reaches the module |
-| `RESOLVED-ABSENT` | No recorded call edge does, the module's public API **was** enumerated, and nothing about the project's analysis leaves room for a missing one. The line names the edge population it was measured over |
-| `UNRESOLVED` | No `Direct` edge, and the absence is not proven. The line names what blocked it: an unresolved dispatch into the module, a package that did not typecheck, an axis the project's analysis never measured, or no stored call graph for the module at any version |
+| `RESOLVED-ABSENT` | No recorded call edge does, the module's public API **was** enumerated and is non-empty, and nothing about the project's analysis leaves room for a missing one. The line names the edge population it was measured over |
+| `UNRESOLVED` | No `Direct` edge, and the absence is not proven. The line names what blocked it: an unresolved dispatch into the module, a package that did not typecheck, an axis the project's analysis never measured, or a module surface that was never enumerated |
 
 A site the graph could not resolve is always named, never dropped.
 
-**`RESOLVED-ABSENT` requires that the module was enumerable.** With no stored
-call graph for the path at any version, nothing about the module was measured -
-its public API was never listed - so the answer is `UNRESOLVED` and the exit is
-`1`. A misspelt module path lands here rather than passing as a clean zero:
+**`RESOLVED-ABSENT` requires that the module's public API was actually
+enumerated.** An absence is an absence *from* a population, so the population
+has to have been drawn. Where it was not, the answer is `UNRESOLVED`, the line
+names the blocker, and the exit is `1`.
+
+A stored call graph existing is not the same thing as a surface enumerated, and
+`public_api_count` is what tells the two apart. There are three ways the
+population comes back undrawn, and each gets its own sentence because each needs
+different advice:
+
+| What happened | What the line says |
+|---|---|
+| No call graph for the path at any version | Check the module path, then fetch and analyse the module. A misspelt path lands here rather than passing as a clean zero |
+| A call graph that failed, or came back partial, with no exported-API node in it | Names the record's status, its node count and its cause, then re-measures it - with `--force` where the stored record would otherwise answer the re-run |
+| A complete call graph of a module that exports nothing importable | Says so, and names `callgraph-show` rather than a re-measure that cannot change the answer |
 
 ```
 $ kanonarion usage github.com/spf13/corba@v1.10.2 --gomod ./go.mod
 answer: UNRESOLVED — … module-surface-unenumerated at github.com/spf13/corba
         (the store holds no call graph for any version of github.com/spf13/corba,
          so its public API was never enumerated and nothing about the module was
-         measured; check the module path, then run: kanonarion callgraph …)
+         measured; check the module path, then run: kanonarion fetch … && kanonarion
+         callgraph …)
+
+$ kanonarion usage github.com/rs/zerolog@v1.32.0 --gomod ./go.mod
+answer: UNRESOLVED — … module-surface-unenumerated at github.com/rs/zerolog
+        (the stored call graph for github.com/rs/zerolog@v1.32.0 is LoadFailed and
+         enumerated none of its public API (0 nodes, cause: environment), so its
+         surface is unlisted and there is no population for an absence to be an
+         absence of; re-measure it: kanonarion fetch … && kanonarion callgraph …)
 ```
 
-So a migration is finished when the module you migrated off is still enumerable
-and reaches nothing:
+The second case is the one that catches people, because it is what *following
+the first case's advice* can produce: fetch the module, analyse it, watch the
+load fail on a module the cache does not hold, and the store now holds a record
+of zero nodes. The module is exactly as unmeasured as before, and the answer
+says so.
+
+So a migration is finished when the module you migrated off still has an
+enumerated public API and reaches nothing:
 
 ```
 kanonarion usage <module>@<version> --json | jq -e '.answer == "RESOLVED-ABSENT"'
 ```
 
-That predicate now fails on a typo. It keeps working for the real case, because
-a module you have stopped calling still has the stored call graph you analysed
-it with.
+That predicate fails on a typo, and on a module whose analysis enumerated
+nothing. It keeps working for the real case, because a module you have stopped
+calling still has the stored call graph you analysed it with.
 
 ## Which version was measured
 
@@ -119,6 +146,10 @@ version of the same path and says so on its own line and in the answer sentence:
 | `highest_stored` | Neither of those has a stored graph; the newest version of the path the store holds |
 | `none_stored` | No version has one, so nothing was measured and the answer is `UNRESOLVED` |
 
+Every remedy the report prints is runnable as printed. Where two commands are
+needed the line names both, joined with `&&`, because the first creates what the
+second resolves.
+
 `requested_version` appears in JSON only when it differs from `version`. Reading
 `version` alone always reads a version that was measured.
 
@@ -128,7 +159,8 @@ usage of github.com/spf13/cobra@v1.4.0 by example.com/app@local
 version: github.com/spf13/cobra@v9.9.9 has no stored call graph, so nothing below
   was measured against it. This report measures github.com/spf13/cobra@v1.4.0 — the
   version the build above resolves … To measure the version you asked for, run:
-  kanonarion callgraph github.com/spf13/cobra@v9.9.9
+  kanonarion fetch github.com/spf13/cobra@v9.9.9 && kanonarion callgraph
+  github.com/spf13/cobra@v9.9.9
 …
 answer: RESOLVED-PRESENT — … reaches 11 symbols of github.com/spf13/cobra@v1.4.0 at
   136 sites (136 production, 0 test); the version asked for, v9.9.9, has no stored
@@ -262,15 +294,15 @@ zero, and every array is an array at every count - see
 
 `0` for `RESOLVED-PRESENT` and for `RESOLVED-ABSENT`: both are completed
 measurements, and the polarity is read off `answer`. `1` for `UNRESOLVED` - the
-report is printed in full and is known-incomplete. `1` also for a module with no stored call
-graph at any version, which is `UNRESOLVED`. `4` when the PROJECT has no stored
-call graph; the message names `kanonarion local .`. See the
+report is printed in full and is known-incomplete. `1` also for a module whose
+public API was never enumerated, which is `UNRESOLVED`. `4` when the PROJECT has
+no stored call graph; the message names `kanonarion local .`. See the
 [exit-code table](conventions.md#exit-codes).
 
 ## Relation to other stages
 
 - **Requires:** [`local`](local.md) for the project's call graph, and
-  [`callgraph`](callgraph.md) for the module's.
+  [`fetch`](fetch.md) then [`callgraph`](callgraph.md) for the module's.
 - **See also:** [`interface-diff --used-by`](interface-diff.md) joins the same
   project graph against a version delta rather than a whole surface;
   [`callers`](callgraph.md) answers for one symbol;

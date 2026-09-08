@@ -70,6 +70,11 @@ type usageFixtureOpts struct {
 	moduleNodes      []cgdomain.CallNode
 	moduleInterfaces []cgdomain.InterfaceType
 	moduleMissing    bool
+	// moduleStatus and moduleCause are the dependency record's own outcome axes.
+	// They are what separates a surface nobody enumerated from one a complete
+	// analysis found empty, and what decides whether a re-measure is owed --force.
+	moduleStatus cgdomain.CallGraphStatus
+	moduleCause  cgdomain.FailureCause
 	// v3Nodes, when non-empty, adds the nested major-version module.
 	v3Nodes []cgdomain.CallNode
 	// walkModules are the coordinates the walk resolves. Empty means the project
@@ -140,9 +145,11 @@ func newUsageFixture(t *testing.T, o usageFixtureOpts) usageFixture {
 	}
 	if !o.moduleMissing {
 		cg.AddRecord(usageModCoord(), cgapp.PipelineVersion, cgdomain.CallGraphRecord{
-			Coordinate: usageModCoord(),
-			Nodes:      o.moduleNodes,
-			Interfaces: o.moduleInterfaces,
+			Coordinate:    usageModCoord(),
+			Nodes:         o.moduleNodes,
+			Interfaces:    o.moduleInterfaces,
+			OverallStatus: o.moduleStatus,
+			FailureCause:  o.moduleCause,
 		})
 	}
 	if len(o.v3Nodes) > 0 {
@@ -246,6 +253,16 @@ func runUsageJSON(t *testing.T, fx usageFixture, coord coordinate.ModuleCoordina
 		t.Fatalf("stdout is not one JSON document: %v\n%s", derr, out.String())
 	}
 	return doc, out.Bytes(), err
+}
+
+// assertUsageExit is the exit-taxonomy half of an answer: the report is printed
+// in full either way, and the code is what a script reads.
+func assertUsageExit(t *testing.T, err error, want int) {
+	t.Helper()
+	var ex *exitError
+	if !errors.As(err, &ex) || ex.code != want {
+		t.Fatalf("want exit %d, got: %v", want, err)
+	}
 }
 
 func defaultUsageFixture(t *testing.T) usageFixture {
@@ -454,15 +471,14 @@ func TestUsage_ModuleNeverEnumeratedIsUnresolvedNotAbsent(t *testing.T) {
 		projectNodes: usageNodes(), moduleMissing: true,
 	})
 	got, err := runUsageText(t, fx, usageModCoord())
-	var ex *exitError
-	if !errors.As(err, &ex) || ex.code != ExitPartial {
-		t.Fatalf("a module nothing enumerated must not exit 0: %v", err)
-	}
+	assertUsageExit(t, err, ExitPartial)
 	for _, want := range []string{
 		"answer: UNRESOLVED",
 		"module-surface-unenumerated at example.com/mod",
 		"the store holds no call graph for any version of example.com/mod",
-		"kanonarion callgraph example.com/mod@v1.0.0",
+		// The pair, not the second half of it: callgraph refuses a module the
+		// store has not fetched, which is every module this line is printed for.
+		"kanonarion fetch example.com/mod@v1.0.0 && kanonarion callgraph example.com/mod@v1.0.0",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -494,6 +510,100 @@ func TestUsage_EnumerableModuleWithNoEdgesStaysResolvedAbsent(t *testing.T) {
 	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
 	if doc["answer"] != "RESOLVED-ABSENT" || doc["module_call_graph_found"] != true {
 		t.Errorf("answer=%v graph_found=%v", doc["answer"], doc["module_call_graph_found"])
+	}
+}
+
+// A record satisfies "a call graph exists" while enumerating nothing, and the
+// remedy printed for a module with no record at all is what produces one: fetch
+// the module, extract its graph, watch the load fail on a cold cache, and the
+// store now holds a LoadFailed record of zero nodes. Following the advice must
+// not turn an honest UNRESOLVED into an absence asserted over a population
+// nobody drew.
+func TestUsage_AFailedModuleGraphEnumeratesNoSurfaceAndIsNotAnAbsence(t *testing.T) {
+	fx := newUsageFixture(t, usageFixtureOpts{
+		projectNodes: usageNodes(),
+		moduleNodes:  nil,
+		moduleStatus: cgdomain.CallGraphStatusLoadFailed,
+		moduleCause:  cgdomain.FailureCauseEnvironment,
+	})
+	got, err := runUsageText(t, fx, usageModCoord())
+	assertUsageExit(t, err, ExitPartial)
+	for _, want := range []string{
+		"answer: UNRESOLVED",
+		"is LoadFailed and enumerated none of its public API",
+		"no population for an absence to be an absence of",
+		"Unreached — unmeasured:",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	// The population is zero and so is the module's own node count, but neither
+	// may be printed as a measured surface.
+	if strings.Contains(got, "with no Direct edge from this project (0 of 0)") {
+		t.Errorf("an unlisted surface was printed as an enumerated empty one:\n%s", got)
+	}
+	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	if doc["answer"] != "UNRESOLVED" {
+		t.Errorf("answer = %v, want UNRESOLVED", doc["answer"])
+	}
+	// The flag a consumer might reach for says a record was served, which is true
+	// and is exactly why it cannot be the completion check.
+	if doc["module_call_graph_found"] != true || doc["public_api_count"] != float64(0) {
+		t.Errorf("graph_found=%v api=%v", doc["module_call_graph_found"], doc["public_api_count"])
+	}
+}
+
+// The partial case, which the failed one does not cover: a graph with dozens of
+// nodes and not one exported-API node among them, because the package declaring
+// the module's API is exactly the package that failed to typecheck. A stored
+// record whose failure is the module's own answers a re-run from cache, so this
+// one is owed --force where the environment-limited case above is not.
+func TestUsage_APartialModuleGraphWithNoExportedAPIIsNotAnAbsence(t *testing.T) {
+	fx := newUsageFixture(t, usageFixtureOpts{
+		projectNodes: usageNodes(),
+		moduleNodes: []cgdomain.CallNode{
+			{ID: usageModPath + "/internal/ini.parse", Module: usageModPath, Package: usageModPath + "/internal/ini", Symbol: "parse"},
+			{ID: usageModPath + ".init", Module: usageModPath, Package: usageModPath, Symbol: "init"},
+		},
+		moduleStatus: cgdomain.CallGraphStatusPartial,
+		moduleCause:  cgdomain.FailureCauseModule,
+	})
+	got, err := runUsageText(t, fx, usageModCoord())
+	assertUsageExit(t, err, ExitPartial)
+	for _, want := range []string{
+		"answer: UNRESOLVED",
+		"is Partial and enumerated none of its public API",
+		"kanonarion fetch " + usageModPath + "@v1.0.0 && kanonarion callgraph " + usageModPath + "@v1.0.0 --force",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// The third way the population comes back undrawn is not a failure at all: a
+// complete graph of a module that exports nothing importable. It is still not an
+// absence — there is nothing there to have called — but no re-measure changes
+// it, so the line must not tell the reader to run one.
+func TestUsage_ACompleteGraphWithNoExportedAPINamesNoReMeasure(t *testing.T) {
+	fx := newUsageFixture(t, usageFixtureOpts{
+		projectNodes: usageNodes(),
+		moduleNodes: []cgdomain.CallNode{
+			{ID: usageModPath + ".hidden", Module: usageModPath, Package: usageModPath, Symbol: "hidden"},
+		},
+		moduleStatus: cgdomain.CallGraphStatusExtracted,
+	})
+	got, err := runUsageText(t, fx, usageModCoord())
+	assertUsageExit(t, err, ExitPartial)
+	if !strings.Contains(got, "declares no exported API at all") {
+		t.Errorf("the complete-but-empty case was not named:\n%s", got)
+	}
+	if strings.Contains(got, "kanonarion callgraph "+usageModPath) {
+		t.Errorf("a re-measure that cannot change the answer was advised:\n%s", got)
+	}
+	if !strings.Contains(got, "kanonarion callgraph-show "+usageModPath+"@v1.0.0") {
+		t.Errorf("the reader was left without a command to see the graph:\n%s", got)
 	}
 }
 
@@ -856,7 +966,7 @@ func TestUsage_NoDeclaredInterfaceCarriesNoSatisfactionCaveat(t *testing.T) {
 // meets the numbers and fielded for a machine.
 func TestUsage_UnmeasuredKindsAreNamedOnBothSurfaces(t *testing.T) {
 	got, _ := runUsageText(t, defaultUsageFixture(t), usageModCoord())
-	if !strings.Contains(got, usageUnmeasuredKindsNote+"example.com/mod@v1.0.0") {
+	if !strings.Contains(got, usageUnmeasuredKindsNote(usageModCoord())) {
 		t.Errorf("the unmeasured kinds are not named beside the counts:\n%s", got)
 	}
 	doc, _, _ := runUsageJSON(t, defaultUsageFixture(t), usageModCoord())

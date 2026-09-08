@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// VerdictOutcome is the three-valued soundness verdict for a callers/callees/
+// AnswerOutcome is the three-valued soundness answer for a callers/callees/
 // reachability query. It replaces the implicit two-valued "some edges" vs
 // "empty" answer, which silently conflated a proven absence with an absence
 // caused by an unresolved dispatch on the path. An empty answer is a confident
@@ -15,36 +15,36 @@ import (
 // missing, not proven absent.
 //
 // This composes with, and sits above, the module-level resolution gate
-// (ResolveSymbolModule) and the failed-package caveat: a verdict is a confident
+// (ResolveSymbolModule) and the failed-package caveat: a answer is a confident
 // negative only when the module gate resolves, no failed-package caveat fires,
 // and this dispatch gate reports RESOLVED-ABSENT.
-type VerdictOutcome string
+type AnswerOutcome string
 
 const (
-	// VerdictResolvedPresent is a query that found at least one edge: the
+	// AnswerResolvedPresent is a query that found at least one edge: the
 	// relationship is present. Presence is never downgraded — an over-approximated
 	// edge only ever adds callers/callees, so a non-empty answer stands.
-	VerdictResolvedPresent VerdictOutcome = "RESOLVED-PRESENT"
-	// VerdictResolvedAbsent is an empty answer across a fully-built path with no
+	AnswerResolvedPresent AnswerOutcome = "RESOLVED-PRESENT"
+	// AnswerResolvedAbsent is an empty answer across a fully-built path with no
 	// soundness sink: a provably-absent edge. This is the only outcome that may be
 	// reported as a confident "not reachable" / "no callers".
-	VerdictResolvedAbsent VerdictOutcome = "RESOLVED-ABSENT"
-	// VerdictUnresolved is an empty answer with a soundness sink on the queried
+	AnswerResolvedAbsent AnswerOutcome = "RESOLVED-ABSENT"
+	// AnswerUnresolved is an empty answer with a soundness sink on the queried
 	// node or an examined path: an unresolved interface dispatch, an edge into a
 	// module not built with bodies, an unresolved/reflect edge, or a leaf carrying
 	// a documented soundness sink. The absence is not proven — an edge may simply
 	// be missing.
-	VerdictUnresolved VerdictOutcome = "UNRESOLVED"
+	AnswerUnresolved AnswerOutcome = "UNRESOLVED"
 )
 
 // IsConfidentNegative reports whether the outcome may be presented as a
 // trustworthy "no edge" answer. Only RESOLVED-ABSENT qualifies.
-func (o VerdictOutcome) IsConfidentNegative() bool {
-	return o == VerdictResolvedAbsent
+func (o AnswerOutcome) IsConfidentNegative() bool {
+	return o == AnswerResolvedAbsent
 }
 
 // SinkKind names a specific dispatch/edge-level reason a negative call-graph
-// verdict cannot be trusted.
+// answer cannot be trusted.
 type SinkKind string
 
 const (
@@ -113,7 +113,7 @@ const (
 	SinkModuleSurfaceUnenumerated SinkKind = "module-surface-unenumerated"
 )
 
-// SoundnessSink is a single reason an empty verdict was downgraded to
+// SoundnessSink is a single reason an empty answer was downgraded to
 // UNRESOLVED, with enough provenance for a reviewer to act on it.
 type SoundnessSink struct {
 	// Kind is the category of sink.
@@ -136,17 +136,17 @@ func (s SoundnessSink) Describe() string {
 	return line
 }
 
-// Verdict bundles the outcome with the sinks that justify it. For a
-// RESOLVED-PRESENT or RESOLVED-ABSENT verdict Sinks is empty.
-type Verdict struct {
-	Outcome VerdictOutcome
+// Answer bundles the outcome with the sinks that justify it. For a
+// RESOLVED-PRESENT or RESOLVED-ABSENT answer Sinks is empty.
+type Answer struct {
+	Outcome AnswerOutcome
 	Sinks   []SoundnessSink
 }
 
-// Reason renders a deterministic, human-readable justification for the verdict:
+// Reason renders a deterministic, human-readable justification for the answer:
 // empty for a confident present/absent answer, and the semicolon-joined sink
 // descriptions for an UNRESOLVED one.
-func (v Verdict) Reason() string {
+func (v Answer) Reason() string {
 	if len(v.Sinks) == 0 {
 		return ""
 	}
@@ -168,9 +168,9 @@ func SymbolMethodName(symbolID string) string {
 	return symbolID[i+1:]
 }
 
-// NegativeVerdictInputs carries the soundness signals gathered about an empty
+// NegativeAnswerInputs carries the soundness signals gathered about an empty
 // callers/callees answer so the queried node's absence can be classified.
-type NegativeVerdictInputs struct {
+type NegativeAnswerInputs struct {
 	// MethodName is the short name of the queried symbol's method/function, used
 	// to match interface invoke sites that dispatch on the same name.
 	MethodName string
@@ -211,14 +211,14 @@ type NegativeVerdictInputs struct {
 	// TestsExcludedByRequest is set when the caller asked for the test surface
 	// to be dropped. It is not a soundness sink — the scope was chosen, not
 	// missed — but it still narrows what an empty answer means, so it is named
-	// on the verdict line rather than left implicit.
+	// on the answer line rather than left implicit.
 	TestsExcludedByRequest bool
 }
 
-// ClassifyNegativeVerdict classifies an empty callers/callees answer into
+// ClassifyNegativeAnswer classifies an empty callers/callees answer into
 // RESOLVED-ABSENT or UNRESOLVED, collecting the sinks that force a downgrade.
 // The sinks are deterministically ordered and de-duplicated.
-func ClassifyNegativeVerdict(in NegativeVerdictInputs) Verdict {
+func ClassifyNegativeAnswer(in NegativeAnswerInputs) Answer {
 	var sinks []SoundnessSink
 
 	// The queried module was built below full fidelity: dispatch edges out of it
@@ -307,9 +307,9 @@ func ClassifyNegativeVerdict(in NegativeVerdictInputs) Verdict {
 
 	sinks = dedupeSinks(sinks)
 	if len(sinks) == 0 {
-		return Verdict{Outcome: VerdictResolvedAbsent}
+		return Answer{Outcome: AnswerResolvedAbsent}
 	}
-	return Verdict{Outcome: VerdictUnresolved, Sinks: sinks}
+	return Answer{Outcome: AnswerUnresolved, Sinks: sinks}
 }
 
 // leafSinks returns the documented leaf sinks a node carries in its body.
@@ -391,7 +391,7 @@ func dedupeSinks(sinks []SoundnessSink) []SoundnessSink {
 // command synthesises a main package that calls every one of them, and that
 // package is deliberately not analysed — it is generated build output, not the
 // module's code. The consequence is that every test function looks exactly like
-// dead code to an edge query, and the three-valued verdict must say so rather
+// dead code to an edge query, and the three-valued answer must say so rather
 // than report a confident absence for a function that runs on every `go test`.
 //
 // The name test is the whole test, which is what the go command itself uses, and

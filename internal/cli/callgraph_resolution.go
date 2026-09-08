@@ -424,9 +424,9 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 	return "", nil
 }
 
-// negativeCallVerdict classifies an empty callers/callees answer for symbolID
+// negativeCallAnswer classifies an empty callers/callees answer for symbolID
 // into RESOLVED-ABSENT or UNRESOLVED, per the dispatch/edge-level soundness gate
-// (see domain.ClassifyNegativeVerdict). It loads the owning module's record(s) to
+// (see domain.ClassifyNegativeAnswer). It loads the owning module's record(s) to
 // read the queried node's leaf facts, the module's completeness level, and — for
 // a callers query (scanDispatch) — the module edges scanned for unresolved
 // interface invoke sites that dispatch on the queried method's name.
@@ -437,16 +437,16 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 // droppedPkg: a symbol whose own package failed to typecheck is not a node in any
 // graph, so classifyEmptyEdgeResult is deliberately skipped for it and the
 // dropped package carried here is what keeps the verdict off ABSENT.
-func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, sc buildScope, opts ports.EdgeQueryOptions, droppedPkg string) (domain.Verdict, error) {
+func negativeCallAnswer(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, sc buildScope, opts ports.EdgeQueryOptions, droppedPkg string) (domain.Answer, error) {
 	coords, err := listScopedCoordinates(ctx, uc, sc.modules)
 	if err != nil {
-		return domain.Verdict{}, err
+		return domain.Answer{}, err
 	}
 	modulePath, ok := domain.ResolveSymbolModule(symbolID, coordinatePaths(coords))
 	if !ok {
 		// Unreachable in practice (the caller resolves the module first); a
 		// module we cannot resolve carries no dispatch signal, so it is absent.
-		return domain.Verdict{Outcome: domain.VerdictResolvedAbsent}, nil
+		return domain.Answer{Outcome: domain.AnswerResolvedAbsent}, nil
 	}
 
 	owning := make([]ports.CallGraphCoordinate, 0, len(coords))
@@ -457,7 +457,7 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	}
 	sort.Slice(owning, func(i, j int) bool { return owning[i].ModuleVersion < owning[j].ModuleVersion })
 
-	in := domain.NegativeVerdictInputs{
+	in := domain.NegativeAnswerInputs{
 		MethodName:             domain.SymbolMethodName(symbolID),
 		NodesByID:              map[string]domain.CallNode{},
 		ScanDispatch:           scanDispatch,
@@ -476,11 +476,11 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	for _, s := range owning {
 		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
 		if cErr != nil {
-			return domain.Verdict{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+			return domain.Answer{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
 		rec, found, gerr := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: sc.toolchain})
 		if gerr != nil {
-			return domain.Verdict{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
+			return domain.Answer{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
 		}
 		if !found {
 			continue
@@ -520,14 +520,14 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 		in.ReferenceScope = domain.ReferenceScopeUnknown
 	}
 
-	return domain.ClassifyNegativeVerdict(in), nil
+	return domain.ClassifyNegativeAnswer(in), nil
 }
 
-// writeCallVerdict prints, in text mode, the three-valued verdict for an empty
+// writeCallAnswer prints, in text mode, the three-valued verdict for an empty
 // callers/callees answer: a confident RESOLVED-ABSENT, or an UNRESOLVED verdict
 // with the soundness sinks named so a reviewer can act on them. kind is
 // "callers", "callees", or the transitive variants.
-func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict, opts ports.EdgeQueryOptions) error {
+func writeCallAnswer(stdout io.Writer, kind, symbolID string, v domain.Answer, opts ports.EdgeQueryOptions) error {
 	// A scope the caller chose is stated on the verdict line, not folded into
 	// the outcome: --exclude-tests narrows what "none" covers, and a reader who
 	// cannot see that narrowing will read the answer as wider than it is.
@@ -536,7 +536,7 @@ func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict,
 		scope = " (production only; --" + testScopeFlagName + " was given)"
 	}
 	switch v.Outcome {
-	case domain.VerdictUnresolved:
+	case domain.AnswerUnresolved:
 		if _, err := fmt.Fprintf(stdout,
 			"answer: UNRESOLVED — %s of %s cannot be confirmed absent%s: %s\n",
 			kind, symbolID, scope, v.Reason()); err != nil {

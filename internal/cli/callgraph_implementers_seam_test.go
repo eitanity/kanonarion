@@ -60,7 +60,7 @@ func TestWriteImplementersText_ReportsEveryFailedWrite(t *testing.T) {
 		},
 		modulePath: implModule, moduleVersion: "v1.0.0",
 	}}
-	v := cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedPresent}
+	v := cgdomain.Answer{Outcome: cgdomain.AnswerResolvedPresent}
 	scope := implementersScopeLine(implModule, cgports.EdgeQueryOptions{})
 
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
@@ -69,8 +69,8 @@ func TestWriteImplementersText_ReportsEveryFailedWrite(t *testing.T) {
 }
 
 func TestWriteImplementersText_ReportsFailedWritesOnEmptyAndUnresolved(t *testing.T) {
-	v := cgdomain.Verdict{
-		Outcome: cgdomain.VerdictUnresolved,
+	v := cgdomain.Answer{
+		Outcome: cgdomain.AnswerUnresolved,
 		Sinks:   []cgdomain.SoundnessSink{{Kind: cgdomain.SinkTestScopeUnmeasured, Site: implPortID}},
 	}
 	scope := implementersScopeLine(implModule, cgports.EdgeQueryOptions{})
@@ -80,7 +80,7 @@ func TestWriteImplementersText_ReportsFailedWritesOnEmptyAndUnresolved(t *testin
 }
 
 func TestWriteImplementersText_ReportsFailedWritesOnAbsent(t *testing.T) {
-	v := cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedAbsent}
+	v := cgdomain.Answer{Outcome: cgdomain.AnswerResolvedAbsent}
 	scope := implementersScopeLine(implModule, cgports.EdgeQueryOptions{})
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
 		return writeImplementersText(w, implPortID, "", false, nil, v, scope, buildScope{}, foreignDraw{})
@@ -89,7 +89,7 @@ func TestWriteImplementersText_ReportsFailedWritesOnAbsent(t *testing.T) {
 
 func TestWriteImplementersJSON_ReportsFailedWrite(t *testing.T) {
 	err := writeImplementersJSON(&stallingWriter{}, implPortID, "Put", true, nil,
-		cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedAbsent}, "scope", implModule, cgports.EdgeQueryOptions{}, foreignDraw{})
+		cgdomain.Answer{Outcome: cgdomain.AnswerResolvedAbsent}, "scope", implModule, cgports.EdgeQueryOptions{}, foreignDraw{})
 	if err == nil {
 		t.Fatal("a failed JSON write was swallowed")
 	}

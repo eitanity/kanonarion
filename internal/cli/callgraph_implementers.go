@@ -210,9 +210,9 @@ func (l implementerLookup) hasMethod(method string) bool {
 // found is a type-level fact go/types decided exactly. An empty answer is a
 // measurement only when nothing about the analysis leaves room for a missing
 // one.
-func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) domain.Verdict {
+func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) domain.Answer {
 	if present {
-		return domain.Verdict{Outcome: domain.VerdictResolvedPresent}
+		return domain.Answer{Outcome: domain.AnswerResolvedPresent}
 	}
 	var sinks []domain.SoundnessSink
 	if l.partialPkg != "" {
@@ -245,9 +245,9 @@ func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) do
 		})
 	}
 	if len(sinks) == 0 {
-		return domain.Verdict{Outcome: domain.VerdictResolvedAbsent}
+		return domain.Answer{Outcome: domain.AnswerResolvedAbsent}
 	}
-	return domain.Verdict{Outcome: domain.VerdictUnresolved, Sinks: sinks}
+	return domain.Answer{Outcome: domain.AnswerUnresolved, Sinks: sinks}
 }
 
 // gatherImplementers searches every in-scope analysed record of the module
@@ -385,7 +385,7 @@ func implementersScopeLine(modulePath string, opts ports.EdgeQueryOptions) strin
 	return line
 }
 
-func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMethod bool, impls []scopedImplementer, v domain.Verdict, scopeLine, searchedModule string, opts ports.EdgeQueryOptions, foreign foreignDraw) error {
+func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMethod bool, impls []scopedImplementer, v domain.Answer, scopeLine, searchedModule string, opts ports.EdgeQueryOptions, foreign foreignDraw) error {
 	out := make([]implementerJSON, 0, len(impls))
 	for _, im := range impls {
 		entry := implementerJSON{
@@ -429,7 +429,7 @@ func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMeth
 	return nil
 }
 
-func writeImplementersText(stdout io.Writer, queryID, method string, perMethod bool, impls []scopedImplementer, v domain.Verdict, scopeLine string, sc buildScope, foreign foreignDraw) error {
+func writeImplementersText(stdout io.Writer, queryID, method string, perMethod bool, impls []scopedImplementer, v domain.Answer, scopeLine string, sc buildScope, foreign foreignDraw) error {
 	if err := writeScopeNotice(stdout, sc); err != nil {
 		return err
 	}
@@ -472,14 +472,14 @@ func writeImplementersText(stdout io.Writer, queryID, method string, perMethod b
 		}
 	}
 	switch v.Outcome {
-	case domain.VerdictResolvedPresent:
+	case domain.AnswerResolvedPresent:
 		if _, err := fmt.Fprintf(stdout,
 			"answer: RESOLVED-PRESENT — %s %s %s%s\n",
 			countConcreteTypes(len(impls)), satisfyVerb(len(impls)), queryID,
 			foreign.clause("implementers")); err != nil {
 			return fmt.Errorf("writing answer: %w", err)
 		}
-	case domain.VerdictUnresolved:
+	case domain.AnswerUnresolved:
 		if _, err := fmt.Fprintf(stdout,
 			"answer: UNRESOLVED — implementers of %s cannot be confirmed absent: %s\n",
 			queryID, v.Reason()); err != nil {

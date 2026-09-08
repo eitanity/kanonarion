@@ -7,11 +7,11 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 )
 
-func TestVerdictOutcome_IsConfidentNegative(t *testing.T) {
-	cases := map[domain.VerdictOutcome]bool{
-		domain.VerdictResolvedPresent: false,
-		domain.VerdictResolvedAbsent:  true,
-		domain.VerdictUnresolved:      false,
+func TestAnswerOutcome_IsConfidentNegative(t *testing.T) {
+	cases := map[domain.AnswerOutcome]bool{
+		domain.AnswerResolvedPresent: false,
+		domain.AnswerResolvedAbsent:  true,
+		domain.AnswerUnresolved:      false,
 	}
 	for outcome, want := range cases {
 		if got := outcome.IsConfidentNegative(); got != want {
@@ -31,13 +31,13 @@ func TestSoundnessSink_Describe(t *testing.T) {
 	}
 }
 
-func TestVerdict_Reason(t *testing.T) {
+func TestAnswer_Reason(t *testing.T) {
 	// No sinks: empty reason.
-	if r := (domain.Verdict{Outcome: domain.VerdictResolvedAbsent}).Reason(); r != "" {
+	if r := (domain.Answer{Outcome: domain.AnswerResolvedAbsent}).Reason(); r != "" {
 		t.Errorf("expected empty reason, got %q", r)
 	}
-	v := domain.Verdict{
-		Outcome: domain.VerdictUnresolved,
+	v := domain.Answer{
+		Outcome: domain.AnswerUnresolved,
 		Sinks: []domain.SoundnessSink{
 			{Kind: domain.SinkReflectDispatch, Site: "a.F"},
 			{Kind: domain.SinkUnsafePointerLeaf, Site: "b.G"},
@@ -67,10 +67,10 @@ func TestSymbolMethodName(t *testing.T) {
 	}
 }
 
-// TestClassifyNegativeVerdict_GenuineAbsence: a fully-built module, node found,
+// TestClassifyNegativeAnswer_GenuineAbsence: a fully-built module, node found,
 // no leaf sink, no unresolved dispatch — a confident RESOLVED-ABSENT.
-func TestClassifyNegativeVerdict_GenuineAbsence(t *testing.T) {
-	in := domain.NegativeVerdictInputs{
+func TestClassifyNegativeAnswer_GenuineAbsence(t *testing.T) {
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Root",
@@ -78,8 +78,8 @@ func TestClassifyNegativeVerdict_GenuineAbsence(t *testing.T) {
 		Found:          true,
 		ModuleLevel:    domain.CompletenessBuiltWithBodies,
 	}
-	v := domain.ClassifyNegativeVerdict(in)
-	if v.Outcome != domain.VerdictResolvedAbsent {
+	v := domain.ClassifyNegativeAnswer(in)
+	if v.Outcome != domain.AnswerResolvedAbsent {
 		t.Fatalf("outcome=%s, want RESOLVED-ABSENT", v.Outcome)
 	}
 	if len(v.Sinks) != 0 || v.Reason() != "" {
@@ -90,10 +90,10 @@ func TestClassifyNegativeVerdict_GenuineAbsence(t *testing.T) {
 	}
 }
 
-// TestClassifyNegativeVerdict_UnknownLevelIsNotDowngraded: a legacy record with
+// TestClassifyNegativeAnswer_UnknownLevelIsNotDowngraded: a legacy record with
 // no completeness level does not by itself force UNRESOLVED.
-func TestClassifyNegativeVerdict_UnknownLevelIsNotDowngraded(t *testing.T) {
-	in := domain.NegativeVerdictInputs{
+func TestClassifyNegativeAnswer_UnknownLevelIsNotDowngraded(t *testing.T) {
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Root",
@@ -101,15 +101,15 @@ func TestClassifyNegativeVerdict_UnknownLevelIsNotDowngraded(t *testing.T) {
 		Found:          true,
 		ModuleLevel:    domain.CompletenessUnknown,
 	}
-	if got := domain.ClassifyNegativeVerdict(in).Outcome; got != domain.VerdictResolvedAbsent {
+	if got := domain.ClassifyNegativeAnswer(in).Outcome; got != domain.AnswerResolvedAbsent {
 		t.Errorf("unknown level should stay RESOLVED-ABSENT, got %s", got)
 	}
 }
 
-// TestClassifyNegativeVerdict_TypeOnlyModule: a module built below full fidelity
+// TestClassifyNegativeAnswer_TypeOnlyModule: a module built below full fidelity
 // downgrades to UNRESOLVED, using the node ID as the site when found.
-func TestClassifyNegativeVerdict_TypeOnlyModule(t *testing.T) {
-	in := domain.NegativeVerdictInputs{
+func TestClassifyNegativeAnswer_TypeOnlyModule(t *testing.T) {
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Root",
@@ -117,8 +117,8 @@ func TestClassifyNegativeVerdict_TypeOnlyModule(t *testing.T) {
 		Found:          true,
 		ModuleLevel:    domain.CompletenessTypeOnly,
 	}
-	v := domain.ClassifyNegativeVerdict(in)
-	if v.Outcome != domain.VerdictUnresolved {
+	v := domain.ClassifyNegativeAnswer(in)
+	if v.Outcome != domain.AnswerUnresolved {
 		t.Fatalf("outcome=%s, want UNRESOLVED", v.Outcome)
 	}
 	if len(v.Sinks) != 1 || v.Sinks[0].Kind != domain.SinkTypeOnlyCallee || v.Sinks[0].Site != "m.Root" {
@@ -129,19 +129,19 @@ func TestClassifyNegativeVerdict_TypeOnlyModule(t *testing.T) {
 	}
 }
 
-// TestClassifyNegativeVerdict_TypeOnlyModuleNodeAbsent: the queried symbol never
+// TestClassifyNegativeAnswer_TypeOnlyModuleNodeAbsent: the queried symbol never
 // became a node (its package was type-only), so the sink site falls back to the
 // method name.
-func TestClassifyNegativeVerdict_TypeOnlyModuleNodeAbsent(t *testing.T) {
-	in := domain.NegativeVerdictInputs{
+func TestClassifyNegativeAnswer_TypeOnlyModuleNodeAbsent(t *testing.T) {
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Ghost",
 		Found:          false,
 		ModuleLevel:    domain.CompletenessMetadataOnly,
 	}
-	v := domain.ClassifyNegativeVerdict(in)
-	if v.Outcome != domain.VerdictUnresolved {
+	v := domain.ClassifyNegativeAnswer(in)
+	if v.Outcome != domain.AnswerUnresolved {
 		t.Fatalf("outcome=%s, want UNRESOLVED", v.Outcome)
 	}
 	if v.Sinks[0].Site != "Ghost" {
@@ -149,10 +149,10 @@ func TestClassifyNegativeVerdict_TypeOnlyModuleNodeAbsent(t *testing.T) {
 	}
 }
 
-// TestClassifyNegativeVerdict_LeafSinks: a found node carrying unsafe.Pointer
+// TestClassifyNegativeAnswer_LeafSinks: a found node carrying unsafe.Pointer
 // and/or asm/linkname leaf facts downgrades, and only a found node is inspected.
-func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
-	in := domain.NegativeVerdictInputs{
+func TestClassifyNegativeAnswer_LeafSinks(t *testing.T) {
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Leaf",
@@ -165,8 +165,8 @@ func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
 		Found:       true,
 		ModuleLevel: domain.CompletenessBuiltWithBodies,
 	}
-	v := domain.ClassifyNegativeVerdict(in)
-	if v.Outcome != domain.VerdictUnresolved {
+	v := domain.ClassifyNegativeAnswer(in)
+	if v.Outcome != domain.AnswerUnresolved {
 		t.Fatalf("outcome=%s, want UNRESOLVED", v.Outcome)
 	}
 	kinds := map[domain.SinkKind]bool{}
@@ -179,16 +179,16 @@ func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
 
 	// The same facts on a not-found node are ignored (there is no node to inspect).
 	in.Found = false
-	if got := domain.ClassifyNegativeVerdict(in).Outcome; got != domain.VerdictResolvedAbsent {
+	if got := domain.ClassifyNegativeAnswer(in).Outcome; got != domain.AnswerResolvedAbsent {
 		t.Errorf("leaf facts on absent node must be ignored, got %s", got)
 	}
 }
 
-// TestClassifyNegativeVerdict_PluginLeafSink covers a node whose only sink is a
-// plugin-load boundary: an empty verdict over it must be UNRESOLVED with the
+// TestClassifyNegativeAnswer_PluginLeafSink covers a node whose only sink is a
+// plugin-load boundary: an empty answer over it must be UNRESOLVED with the
 // plugin site named, since the loaded targets are absent from the static graph.
-func TestClassifyNegativeVerdict_PluginLeafSink(t *testing.T) {
-	in := domain.NegativeVerdictInputs{
+func TestClassifyNegativeAnswer_PluginLeafSink(t *testing.T) {
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Load",
@@ -199,8 +199,8 @@ func TestClassifyNegativeVerdict_PluginLeafSink(t *testing.T) {
 		Found:       true,
 		ModuleLevel: domain.CompletenessBuiltWithBodies,
 	}
-	v := domain.ClassifyNegativeVerdict(in)
-	if v.Outcome != domain.VerdictUnresolved {
+	v := domain.ClassifyNegativeAnswer(in)
+	if v.Outcome != domain.AnswerUnresolved {
 		t.Fatalf("outcome=%s, want UNRESOLVED", v.Outcome)
 	}
 	found := false
@@ -217,11 +217,11 @@ func TestClassifyNegativeVerdict_PluginLeafSink(t *testing.T) {
 	}
 }
 
-// TestClassifyNegativeVerdict_InterfaceDispatchScan reproduces the zenbpm hop: an
+// TestClassifyNegativeAnswer_InterfaceDispatchScan reproduces the zenbpm hop: an
 // over-approximated invoke site dispatches on the queried method name while the
 // queried method received no caller edge. A callers query (ScanDispatch) must
 // report UNRESOLVED naming the invoke site; a callees query must not scan.
-func TestClassifyNegativeVerdict_InterfaceDispatchScan(t *testing.T) {
+func TestClassifyNegativeAnswer_InterfaceDispatchScan(t *testing.T) {
 	edges := []domain.CallEdge{
 		// An interface dispatch that CHA over-approximated to another implementer.
 		{FromID: "m.Client", ToID: "m.(*OtherImpl).Do", Confidence: domain.ConfidenceCHAOverapprox},
@@ -235,7 +235,7 @@ func TestClassifyNegativeVerdict_InterfaceDispatchScan(t *testing.T) {
 		"m.(*Bound).Do":     {ID: "m.(*Bound).Do", Symbol: "Do"},
 		"m.(*X).Nope":       {ID: "m.(*X).Nope", Symbol: "Nope"},
 	}
-	base := domain.NegativeVerdictInputs{
+	base := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Do",
@@ -249,8 +249,8 @@ func TestClassifyNegativeVerdict_InterfaceDispatchScan(t *testing.T) {
 	// callers query: scans dispatch, finds the over-approx site.
 	callers := base
 	callers.ScanDispatch = true
-	v := domain.ClassifyNegativeVerdict(callers)
-	if v.Outcome != domain.VerdictUnresolved {
+	v := domain.ClassifyNegativeAnswer(callers)
+	if v.Outcome != domain.AnswerUnresolved {
 		t.Fatalf("callers outcome=%s, want UNRESOLVED", v.Outcome)
 	}
 	if len(v.Sinks) != 1 || v.Sinks[0].Kind != domain.SinkInterfaceDispatch || v.Sinks[0].Site != "m.Client" {
@@ -260,16 +260,16 @@ func TestClassifyNegativeVerdict_InterfaceDispatchScan(t *testing.T) {
 	// callees query: no dispatch scan, so a genuine absence.
 	callees := base
 	callees.ScanDispatch = false
-	if got := domain.ClassifyNegativeVerdict(callees).Outcome; got != domain.VerdictResolvedAbsent {
+	if got := domain.ClassifyNegativeAnswer(callees).Outcome; got != domain.AnswerResolvedAbsent {
 		t.Errorf("callees must not scan dispatch, got %s", got)
 	}
 }
 
-// TestClassifyNegativeVerdict_UnknownEdgeUnindexedCallee: an unresolved edge whose
+// TestClassifyNegativeAnswer_UnknownEdgeUnindexedCallee: an unresolved edge whose
 // callee is not in the node index cannot be confirmed to dispatch on the method,
 // so it contributes no sink.
-func TestClassifyNegativeVerdict_UnknownEdgeUnindexedCallee(t *testing.T) {
-	in := domain.NegativeVerdictInputs{
+func TestClassifyNegativeAnswer_UnknownEdgeUnindexedCallee(t *testing.T) {
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Do",
@@ -280,15 +280,15 @@ func TestClassifyNegativeVerdict_UnknownEdgeUnindexedCallee(t *testing.T) {
 		Edges:          []domain.CallEdge{{FromID: "m.C", ToID: "m.Missing", Confidence: domain.ConfidenceUnknown}},
 		NodesByID:      map[string]domain.CallNode{}, // callee not indexed
 	}
-	if got := domain.ClassifyNegativeVerdict(in).Outcome; got != domain.VerdictResolvedAbsent {
+	if got := domain.ClassifyNegativeAnswer(in).Outcome; got != domain.AnswerResolvedAbsent {
 		t.Errorf("unindexed callee must not produce a sink, got %s", got)
 	}
 }
 
-// TestClassifyNegativeVerdict_EmptyMethodNameNoScan: an empty method name yields
+// TestClassifyNegativeAnswer_EmptyMethodNameNoScan: an empty method name yields
 // no interface-dispatch sinks even with ScanDispatch set.
-func TestClassifyNegativeVerdict_EmptyMethodNameNoScan(t *testing.T) {
-	in := domain.NegativeVerdictInputs{
+func TestClassifyNegativeAnswer_EmptyMethodNameNoScan(t *testing.T) {
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "",
@@ -299,14 +299,14 @@ func TestClassifyNegativeVerdict_EmptyMethodNameNoScan(t *testing.T) {
 		Edges:          []domain.CallEdge{{FromID: "m.C", ToID: "m.T", Confidence: domain.ConfidenceCHAOverapprox}},
 		NodesByID:      map[string]domain.CallNode{"m.T": {ID: "m.T", Symbol: ""}},
 	}
-	if got := domain.ClassifyNegativeVerdict(in).Outcome; got != domain.VerdictResolvedAbsent {
+	if got := domain.ClassifyNegativeAnswer(in).Outcome; got != domain.AnswerResolvedAbsent {
 		t.Errorf("empty method name must not scan, got %s", got)
 	}
 }
 
-// TestClassifyNegativeVerdict_DedupeAndOrder: duplicate sinks (same kind+site)
+// TestClassifyNegativeAnswer_DedupeAndOrder: duplicate sinks (same kind+site)
 // collapse and the result is deterministically ordered by kind then site.
-func TestClassifyNegativeVerdict_DedupeAndOrder(t *testing.T) {
+func TestClassifyNegativeAnswer_DedupeAndOrder(t *testing.T) {
 	edges := []domain.CallEdge{
 		{FromID: "m.Client", ToID: "m.(*A).Do", Confidence: domain.ConfidenceCHAOverapprox},
 		{FromID: "m.Client", ToID: "m.(*B).Do", Confidence: domain.ConfidenceUnknown}, // same site, deduped
@@ -317,7 +317,7 @@ func TestClassifyNegativeVerdict_DedupeAndOrder(t *testing.T) {
 		"m.(*B).Do": {Symbol: "Do"},
 		"m.(*C).Do": {Symbol: "Do"},
 	}
-	in := domain.NegativeVerdictInputs{
+	in := domain.NegativeAnswerInputs{
 		TestScope:      domain.TestScopeAnalysed,
 		ReferenceScope: domain.ReferenceScopeAnalysed,
 		MethodName:     "Do",
@@ -328,7 +328,7 @@ func TestClassifyNegativeVerdict_DedupeAndOrder(t *testing.T) {
 		Edges:          edges,
 		NodesByID:      nodes,
 	}
-	v := domain.ClassifyNegativeVerdict(in)
+	v := domain.ClassifyNegativeAnswer(in)
 	// Two interface-dispatch sites (m.Aaa, m.Client) + one unsafe-pointer leaf.
 	if len(v.Sinks) != 3 {
 		t.Fatalf("expected 3 sinks after dedupe, got %d: %+v", len(v.Sinks), v.Sinks)
