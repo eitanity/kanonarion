@@ -100,7 +100,10 @@ func (e *unresolvableImportsError) Unwrap() error { return errNeedsDependencyRes
 // one and still fail to load are failing for their own reasons — an unresolvable
 // require, a directive the toolchain rejects — and overwriting the published file
 // would replace a real diagnosis with a fabricated tree. Refusing is what keeps
-// this change from masking them.
+// this change from masking them. (dropLocalReplaces does edit a shipped go.mod,
+// and the exemption is narrow and argued there: a replace pointing outside the
+// extracted tree applies to no consumer's build, so removing it takes nothing
+// away from the diagnosis.)
 //
 // The module path written is coord.Path() verbatim. It is never derived from the
 // version: a +incompatible module publishes a v2-or-later version under a path

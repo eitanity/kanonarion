@@ -307,6 +307,7 @@ it. The causes that recur:
 | `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
 | `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
+| `this host could not supply N module(s) the analysed module needs … : <path> <version>, …` | The module's own `go.mod` requires modules this host does not hold, and the load runs offline. The cause is `environment`, so the record is never served as a cache hit and a later run on a host that has them re-establishes the answer. `go mod download all` in a tree that requires them |
 
 Package membership is decided by the module path the analysed tree **declares**,
 not by the coordinate it was published under. A fork republished at a new path
@@ -540,9 +541,11 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
   it the toolchain loads the complete, unpruned module graph and the load fails
   on a version nothing in the build compiles, and at 1.22 loop-variable scoping
   changes the SSA and with it the call graph;
-* a zip that ships its own `go.mod` is **never** touched. Modules that publish
-  one and still fail to load are failing for their own reasons, and overwriting
-  the published file would hide that;
+* a zip that ships its own `go.mod` is **never** synthesised over. Modules that
+  publish one and still fail to load are failing for their own reasons, and
+  overwriting the published file would hide that. The one edit made to a shipped
+  `go.mod` is dropping `replace` directives that point outside the extracted
+  tree, which apply to no consumer's build either and are described below;
 * if the module also ships a `vendor/` directory, vendor mode is explicitly
   disabled for the load, so the graph describes the module rather than vendored
   copies of its dependencies;
@@ -601,6 +604,37 @@ digests, while identical pins from two different walks do not. The analysis is o
 published bytes **plus a file kanonarion invented**, and a record that did not
 state that would be claiming to describe the artefact it was sealed against. The
 field is absent — not empty — on every graph analysed as published.
+
+##### `replace` directives that point at a directory
+
+A module published from a monorepo carries `replace` directives naming its
+sibling directories — `replace example.com/mod => ../`, `replace
+example.com/mod/creds => ../creds/`. They apply to nobody: the go command ignores
+a `replace` in any module that is not the **main** module, so no consumer's build
+has ever used one. This analysis is the first build in which the module *is* the
+main module, and the zip contains no siblings, so every requirement so replaced
+dangles and every package importing it fails to type-check.
+
+**Every `replace` whose target is a directory outside the extracted tree is
+dropped before the load**, whether or not that directory happens to exist on this
+host. It cannot mean what it says here, and the extraction directory sits under
+the system temp root — so `../` names that root, and a stray `go.mod` there would
+otherwise be pulled into an unrelated module's analysis.
+
+Two forms are left exactly as published. A target **inside** the tree — a nested
+module the zip carries, `replace example.com/mod/dep => ./dep` — resolves as the
+publisher intended; and if that directory is absent the go command says
+`replacement directory ./dep does not exist`, which is a true statement about the
+published bytes and is recorded as the module's own fault. A target naming a
+**module version** resolves with no filesystem involved at all.
+
+The record says so. `fidelity:` gains a `[N replace directives dropped …]` note
+naming each one as the module wrote it, `--history` appends it to the artefact
+the generation was computed from, and `--json` carries a `dropped_replaces` array
+of `path` / `version` / `target` / `directive`. Two analyses of the same bytes
+that dropped different directives resolved different dependency versions and are
+two different graphs, so the field is inside the graph digest. It is absent — not
+empty — on every graph whose published directives were all in force.
 
 #### Generations
 

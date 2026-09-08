@@ -25,6 +25,7 @@ const determinismShuffles = 50
 // of them, and fails when the record grows one it does not shuffle, so a
 // collection cannot join the seal without a decision about its order.
 var sealedCallGraphCollections = map[string]bool{
+	"DroppedReplaces":           true,
 	"Edges":                     true,
 	"ForeignModulesBuilt":       true,
 	"ExclusionList":             true,
@@ -122,6 +123,12 @@ func makeTiedCallGraphRecord() domain.CallGraphRecord {
 			{Path: "example.com/mod/nested", Version: "v1.0.0"},
 			{Path: "example.com/mod/nested", Version: "v1.1.0"},
 		},
+		// Two directives tying on the path, so the comparator's leading key cannot
+		// decide them alone.
+		DroppedReplaces: []domain.DroppedReplace{
+			{Path: "example.com/dep", Version: "v1.0.0", Target: "../dep/"},
+			{Path: "example.com/dep", Target: "../dep/"},
+		},
 		SynthesisedGoMod: domain.SynthesisedGoMod{
 			ModulePath: "example.com/mod",
 			Requires: []domain.SynthesisedRequire{
@@ -161,6 +168,9 @@ func shuffleCallGraphRecord(rng *rand.Rand, r *domain.CallGraphRecord) {
 	})
 	rng.Shuffle(len(r.ForeignModulesBuilt), func(i, j int) {
 		r.ForeignModulesBuilt[i], r.ForeignModulesBuilt[j] = r.ForeignModulesBuilt[j], r.ForeignModulesBuilt[i]
+	})
+	rng.Shuffle(len(r.DroppedReplaces), func(i, j int) {
+		r.DroppedReplaces[i], r.DroppedReplaces[j] = r.DroppedReplaces[j], r.DroppedReplaces[i]
 	})
 	req := r.SynthesisedGoMod.Requires
 	rng.Shuffle(len(req), func(i, j int) { req[i], req[j] = req[j], req[i] })
@@ -209,6 +219,34 @@ func TestSynthesisedRequireLess_IsKeyedOnEveryField(t *testing.T) {
 	}
 	if domain.SynthesisedRequireLess(domain.SynthesisedRequire{Path: "a"}, domain.SynthesisedRequire{Path: "a"}) {
 		t.Error("the comparator reports a require less than itself")
+	}
+}
+
+// TestDroppedReplaceLess_IsKeyedOnEveryField pins the comparator over every
+// field a dropped directive carries. Two directives on one path differing only
+// in the version they replace are two directives, and a comparator keyed on the
+// path alone would let the sort decide them by input order.
+func TestDroppedReplaceLess_IsKeyedOnEveryField(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		key          string
+		lower, upper domain.DroppedReplace
+	}{
+		{"path", domain.DroppedReplace{Path: "a"}, domain.DroppedReplace{Path: "b"}},
+		{"version", domain.DroppedReplace{Path: "a", Version: "v1"}, domain.DroppedReplace{Path: "a", Version: "v2"}},
+		{"target", domain.DroppedReplace{Path: "a", Target: "../a"}, domain.DroppedReplace{Path: "a", Target: "../b"}},
+	}
+	for _, tc := range cases {
+		if !domain.DroppedReplaceLess(tc.lower, tc.upper) {
+			t.Errorf("%s: the comparator does not order two directives differing only in this field", tc.key)
+		}
+		if domain.DroppedReplaceLess(tc.upper, tc.lower) {
+			t.Errorf("%s: the comparator is not antisymmetric", tc.key)
+		}
+		if domain.DroppedReplaceLess(tc.lower, tc.lower) {
+			t.Errorf("%s: the comparator reports a directive less than itself", tc.key)
+		}
 	}
 }
 

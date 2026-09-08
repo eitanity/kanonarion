@@ -672,6 +672,15 @@ type CallGraphRecord struct {
 	// The zero value means the published bytes were analysed as published. See
 	// SynthesisedGoMod for why that is a statement and not merely an absence.
 	SynthesisedGoMod SynthesisedGoMod
+	// DroppedReplaces names every replace directive this analysis removed from the
+	// extracted module's own go.mod before loading it, sorted. Like
+	// SynthesisedGoMod it says the analysed tree is not the published tree, and
+	// exactly how.
+	//
+	// Empty means nothing was dropped. That is the truth about every record
+	// written before the field existed — nothing dropped a directive then — so
+	// there is no unrecorded third state to ladder against. See DroppedReplace.
+	DroppedReplaces []DroppedReplace
 	// BuildListSource names the walk whose resolved build list was OFFERED to this
 	// analysis, whether or not anything was pinned from it.
 	//

@@ -665,6 +665,66 @@ value is a node with ZERO in-edges in a record whose `ReferenceScope` is
 `Analysed`, so `callers` answers `RESOLVED-ABSENT` — a measured "nothing calls
 this" — for a method every request runs. Re-extract to correct it.
 
+## Call graph record: pipeline `0.5.0` → `0.6.0`
+
+**Behaviour change in what gets analysed, plus one additive record field; no
+schema bump, no store migration.** Records are keyed `(module, version,
+pipeline_version)`, so the bump is the migration: `0.5.0` rows stay, become
+unreachable, and are never served for a `0.6.0` request. Cost is one
+re-extraction per coordinate on its next `callgraph` run — and unlike a `--force`
+re-run, no flag is needed, because no record exists at the new version.
+
+Ingested working trees are stranded on the same terms and are not re-derived by
+`callgraph`: run `kanonarion local .` in each tree whose `callers`, `callees`,
+`implementers` or `usage` answers you rely on.
+
+Two changes, one misattribution.
+
+**A published module's `replace` directives pointing outside the extracted tree
+are dropped before the load.** A module published from a monorepo names its
+sibling checkouts, `=> ../credentials/`. No consumer's build has ever applied
+them — the go command ignores a `replace` in any module that is not the main
+module — but the analysis is the one build in which the extracted module IS the
+main module, and a zip holds one module, so every one of them dangled. Measured
+on this store: 43 coordinates. `github.com/aws/aws-sdk-go-v2/config@v1.32.25`
+went from `Partial`, 86 nodes, **zero** exported-API nodes, to `Extracted`, 1342
+nodes.
+
+A `replace` pointing INSIDE the tree — a nested module the zip carries — and one
+naming a module version are both left exactly as published.
+
+**A module the load could not obtain is the environment, and is named.** Where a
+dependency is absent from this host's module cache, the go command records its
+own "module lookup disabled by `GOPROXY=off`" on the DEPENDENCY it failed to
+obtain; the analysed module's own package gets only the type-checker's
+consequence, `could not import X (invalid package name: "")`. The record was
+classified from the latter and filed against the module. The load's whole
+dependency graph is now read for that sentence — which is also the only reading
+that catches a TEST-ONLY dependency, since the metadata load runs with tests off
+— and the record states cause `environment` and names the module and version its
+own `go.mod` requires.
+
+**Record shape.** `CallGraphRecord` gains `dropped_replaces`, omitted from the
+canonical encoding when empty, so every stored record marshals to exactly the
+bytes it was sealed over and keeps its stored content hash verifiable. An absent
+list is not an unrecorded third state: nothing dropped a directive before the
+field existed. It is INSIDE the seal and inside `GraphDigest`, because dropping a
+directive changes which dependency versions the build resolves.
+
+**Why the bump, when the field alone did not need one.** A stored `0.5.0` record
+of an affected coordinate says the module's own root package does not type-check
+and states cause `module`, which makes it CACHEABLE — so `callgraph` serves it
+back and nothing re-derives it. Forcing past that lands the corrected graph beside
+the old one at the same completeness, and composition then correctly reports two
+graphs of one artefact as non-determinism in the analyser: measured, **39 of 124
+re-derived coordinates refused to compose at all** (exit 10). The bump is what
+tells the ledger the analyser changed rather than wavered.
+
+**What an old record can get wrong.** It claims a fetched dependency's own
+sources do not compile, and carries no public API for it, so `usage` reports
+`public_api_count: 0` and asserts absence over a population that was never
+enumerated.
+
 ## Vulnerability records: canonical collection order, no migration and no bump
 
 A `VulnerabilityRecord` is put into canonical order at the moment it is sealed:

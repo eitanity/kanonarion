@@ -336,6 +336,12 @@ func historyOrigin(r domain.CallGraphRecord) string {
 	if !r.SynthesisedGoMod.IsZero() {
 		origin += " + " + r.SynthesisedGoMod.String()
 	}
+	// Same claim, the other direction: the analysis read those bytes MINUS the
+	// replace directives it dropped, and a graph built against a different build
+	// list is a different graph.
+	if summary := domain.DroppedReplacesSummary(r.DroppedReplaces); summary != "" {
+		origin += " minus " + summary
+	}
 	return origin
 }
 
@@ -459,10 +465,15 @@ type callGraphRecordJSON struct {
 	// extracted tree, which is the case in which the graph does not describe the
 	// published bytes alone. Absent means the tree was analysed as published.
 	SynthesisedGoMod *synthesisedGoModJSON `json:"synthesised_go_mod,omitempty"`
-	Nodes            []callNodeJSON        `json:"nodes"`
-	Edges            []callEdgeJSON        `json:"edges"`
-	OverallStatus    string                `json:"overall_status"`
-	FailureDetail    string                `json:"failure_detail,omitempty"`
+	// DroppedReplaces is present only when kanonarion removed replace directives
+	// from the extracted module's own go.mod before loading it — the other way the
+	// analysed tree can differ from the published one. Absent means every directive
+	// the module published was in force.
+	DroppedReplaces []droppedReplaceJSON `json:"dropped_replaces,omitempty"`
+	Nodes           []callNodeJSON       `json:"nodes"`
+	Edges           []callEdgeJSON       `json:"edges"`
+	OverallStatus   string               `json:"overall_status"`
+	FailureDetail   string               `json:"failure_detail,omitempty"`
 	// FailureCause says what the status is a statement about — the module, or the
 	// run that tried to analyse it — and it is the axis that decides whether this
 	// record answers a later extraction. A consumer reading only the detail reads
@@ -582,6 +593,31 @@ type synthesisedGoModJSON struct {
 	BuildListSource string `json:"build_list_source,omitempty"`
 }
 
+// droppedReplaceJSON is one replace directive the analysis removed, rendered as
+// the module wrote it plus its parts, so a consumer can match on either.
+type droppedReplaceJSON struct {
+	Path      string `json:"path"`
+	Version   string `json:"version,omitempty"`
+	Target    string `json:"target"`
+	Directive string `json:"directive"`
+}
+
+func droppedReplacesToJSON(ds []domain.DroppedReplace) []droppedReplaceJSON {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]droppedReplaceJSON, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, droppedReplaceJSON{
+			Path:      d.Path,
+			Version:   d.Version,
+			Target:    d.Target,
+			Directive: d.String(),
+		})
+	}
+	return out
+}
+
 // synthesisedRequireJSON is one pinned require directive.
 type synthesisedRequireJSON struct {
 	Path    string `json:"path"`
@@ -688,6 +724,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		WorktreeScanDigest: r.WorktreeScanDigest,
 
 		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod, r.BuildListSource),
+		DroppedReplaces:  droppedReplacesToJSON(r.DroppedReplaces),
 
 		Nodes:           nodes,
 		Edges:           edges,
@@ -739,6 +776,12 @@ func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
 	// record read as a description of the artefact it was sealed against.
 	if !r.SynthesisedGoMod.IsZero() {
 		line += "  [" + r.SynthesisedGoMod.String() + "]"
+	}
+	// And a dropped replace directive means the analysed tree is the published
+	// bytes with a directive of the module's own removed. Same reason, same line:
+	// the record must not read as a description of the artefact as published.
+	if summary := domain.DroppedReplacesSummary(r.DroppedReplaces); summary != "" {
+		line += "\n  [" + summary + "]"
 	}
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing fidelity: %w", err)

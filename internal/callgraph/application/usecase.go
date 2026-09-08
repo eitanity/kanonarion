@@ -57,7 +57,35 @@ import (
 // what they say, correctly. Re-extraction under the fixed rule is what corrects
 // an older record, and a bump would have stranded every served graph to correct
 // nothing.
-const PipelineVersion = "0.5.0"
+//
+// Bumped to "0.6.0" when the load stopped applying a published module's own
+// replace directives to directories the zip does not contain. A module published
+// out of a monorepo names its sibling checkouts — "=> ../credentials/" — and no
+// consumer's build has ever applied them, because a replace is ignored outside
+// the main module. This analysis is the only build in which the module IS the
+// main module, so it was the only build in which they applied, and every one of
+// them dangled. The record then said the module's own root package failed to
+// type-check, filed the cause as the MODULE, and carried zero exported-API nodes
+// — over which 'usage' asserted absence. Measured on this store: 43 coordinates,
+// and github.com/aws/aws-sdk-go-v2/config@v1.32.25 went from a Partial of 86
+// nodes with no public API to Extracted with 1342.
+//
+// The same bump carries the other half of that misattribution: a load that could
+// not obtain a module the analysed module's own go.mod requires now states the
+// ENVIRONMENT and names the module and version, where before it was classified
+// from the type-checker's downstream "invalid package name" complaint and filed
+// against the module — which made it cacheable, so no later run on a host that
+// held the module could correct it.
+//
+// Both make a stored record say something FALSE about the artefact, and neither
+// is distinguishable from a real finding once written: the record claims the
+// module's sources do not compile. That is the criterion at the top of this
+// comment, and it is also what the ledger measured. Without the bump, a
+// re-derivation lands beside the old generation at the same completeness, and
+// composition — correctly — reports two graphs of one artefact as
+// non-determinism in the analyser: 39 of 124 re-derived coordinates refused to
+// compose at all. The bump is what tells the ledger the analyser changed.
+const PipelineVersion = "0.6.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

@@ -164,6 +164,27 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		}
 	}
 
+	// Every import the loader could not resolve because the module providing it is
+	// not on this host and the analysis is not permitted to fetch one. It is read
+	// from the WHOLE loaded graph, dependencies included, and that is the point:
+	// the go command attaches its own sentence — the one that names its offline
+	// posture — to the package it could not obtain, while the target package that
+	// imports it gets only the type-checker's consequence, "could not import X
+	// (invalid package name: \"\")". The consequence is what LoadErrs carries and
+	// what the record used to be classified from, so a cold cache read as the
+	// module's own source failing to compile.
+	//
+	// The metadata load catches most of these already. It cannot catch the
+	// test-only ones: it runs with Tests off, so a dependency imported solely from
+	// _test.go files never appears in its graph at all, and every module whose only
+	// missing requirement was a test framework was filed against the module.
+	//
+	// It is kept OUT of LoadErrs deliberately. LoadErrs decides the Partial
+	// downgrade and the failure detail, and folding a dependency's errors into it
+	// would change what a complete extraction reports. This is a separate reading
+	// of the same load, consulted only where a cause is being decided.
+	res.UnobtainableImports = unobtainableImports(loaded)
+
 	// Pass 2: register the transitive dependencies that are not targets. They
 	// carry no syntax, so their method bodies are absent by design; the
 	// single-implementer devirtualisation pass recovers the dispatch edges CHA
@@ -255,6 +276,12 @@ type ssaBuildResult struct {
 	// resolved. See domain.ForeignModule for why a record that holds them must
 	// say so.
 	ForeignModulesBuilt []domain.ForeignModule
+	// UnobtainableImports are the import paths of packages the load could not
+	// obtain because the module providing them is absent from this host and the
+	// analysis runs offline, sorted and deduplicated. They are what separates a
+	// module whose sources do not compile from a host that could not assemble the
+	// build — see unobtainableImports.
+	UnobtainableImports []string
 	// SourceFiles are the absolute paths the LOADER resolved for the packages it
 	// returned: compiled Go files, the Go files as written, and the non-Go source
 	// (assembly, cgo) that goes into the same packages. They are what the worktree
@@ -268,6 +295,36 @@ type ssaBuildResult struct {
 // joined the SSA program; it does not mean its bodies were built — see
 // BodiesBuilt.
 func (r ssaBuildResult) Registered() int { return len(r.TargetPkgs) + len(r.TestPkgs) }
+
+// unobtainableImports lists the import paths in the loaded graph whose own error
+// is the go command reporting that it could not look the module up, sorted and
+// deduplicated.
+//
+// The whole graph is visited, not just the roots. A dependency the module cache
+// does not hold is a leaf the loader reached and failed on, and the failure is
+// recorded THERE; the module's own package records only the type-checker's
+// downstream complaint about an import with no package name in it. Reading only
+// the roots is why a cold cache was indistinguishable from a module that does not
+// compile.
+func unobtainableImports(pkgs []*packages.Package) []string {
+	seen := map[string]bool{}
+	var out []string
+	packages.Visit(pkgs, nil, func(p *packages.Package) {
+		if p.PkgPath == "" || seen[p.PkgPath] {
+			return
+		}
+		for _, e := range p.Errors {
+			if !isOfflineCacheMiss(e.Error()) {
+				continue
+			}
+			seen[p.PkgPath] = true
+			out = append(out, p.PkgPath)
+			return
+		}
+	})
+	sort.Strings(out)
+	return out
+}
 
 // loadedSourceFiles lists every file the loader resolved for the packages it
 // was asked to load, absolute, in no particular order and with duplicates.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -142,6 +143,98 @@ func describeEmptyTargetSet(target coordinate.ModuleCoordinate, pkgs []*packages
 		b.WriteString("; the loader reported: " + joinFirst(loadErrs, 3))
 	}
 	return b.String()
+}
+
+// describeUnobtainableModules says which modules this host could not supply.
+//
+// It names MODULES AND VERSIONS, not the import paths the loader failed on,
+// because that is what a reader can act on: "could not import
+// google.golang.org/genproto/googleapis/api/annotations" does not say which
+// module to make available, and the module's own go.mod does. The version is the
+// one the analysed module REQUIRES, which is the version this analysis would have
+// used — a walk resolved something else for the consumer's build, and quoting
+// that here would name a version this run never asked for.
+//
+// An import no require directive covers is reported as itself. That happens when
+// a module imports a package from outside its own declared requirements, and the
+// honest answer is the import path plus the fact that the go.mod does not account
+// for it.
+func describeUnobtainableModules(dir string, imports []string) string {
+	if len(imports) == 0 {
+		return ""
+	}
+	named := requiredModulesFor(dir, imports)
+	var b strings.Builder
+	fmt.Fprintf(&b, "this host could not supply %d module(s) the analysed module needs, "+
+		"and the analysis is not permitted to fetch one (%s): ", len(named), offlineLookupMarker)
+	if len(named) > maxNamedPackages {
+		fmt.Fprintf(&b, "%s, +%d more", strings.Join(named[:maxNamedPackages], ", "), len(named)-maxNamedPackages)
+	} else {
+		b.WriteString(strings.Join(named, ", "))
+	}
+	return b.String()
+}
+
+// requiredModulesFor maps import paths onto the module and version the tree's
+// own go.mod requires for them, sorted and deduplicated.
+//
+// The match is the longest require path that prefixes the import path, on module
+// path boundaries. That is the go command's own rule for deciding which module
+// provides a package, restricted to the requirements the file states — which is
+// as far as this can go without a module graph the load has already failed to
+// build.
+func requiredModulesFor(dir string, imports []string) []string {
+	requires := declaredRequirements(dir)
+	seen := map[string]bool{}
+	var out []string
+	for _, imp := range imports {
+		name := imp + " (no require directive in the module's go.mod covers it)"
+		if best := longestRequirePrefix(requires, imp); best.Path != "" {
+			name = best.Path + " " + best.Version
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// longestRequirePrefix returns the requirement whose path is the longest prefix
+// of importPath on a path boundary, or the zero value when none is.
+func longestRequirePrefix(requires []module.Version, importPath string) module.Version {
+	var best module.Version
+	for _, r := range requires {
+		if importPath != r.Path && !strings.HasPrefix(importPath, r.Path+"/") {
+			continue
+		}
+		if len(r.Path) > len(best.Path) {
+			best = r
+		}
+	}
+	return best
+}
+
+// declaredRequirements reads the require directives of the tree about to be
+// analysed. A go.mod that is absent or does not parse yields none: the load
+// reports that in its own terms, and this is a naming aid rather than a gate.
+func declaredRequirements(dir string) []module.Version {
+	path := filepath.Join(dir, "go.mod")
+	data, err := os.ReadFile(path) /* #nosec G304 -- dir is an extraction directory this process created and owns */
+	if err != nil {
+		return nil
+	}
+	f := parsedGoModOrNil(path, data)
+	if f == nil {
+		return nil
+	}
+	out := make([]module.Version, 0, len(f.Require))
+	for _, r := range f.Require {
+		out = append(out, r.Mod)
+	}
+	return out
 }
 
 // platformFrame names the target platform the load resolved build constraints

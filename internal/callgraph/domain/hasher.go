@@ -225,7 +225,43 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			VendorTreePresent: c.SynthesisedGoMod.VendorTreePresent,
 			Requires:          domainRequires(c.SynthesisedGoMod.Requires),
 		},
+		DroppedReplaces: domainDroppedReplaces(c.DroppedReplaces),
 	}, nil
+}
+
+// canonicalDroppedReplaces renders the dropped replace directives onto the wire,
+// keeping nil as nil so a record that dropped none marshals to the bytes it
+// always did.
+func canonicalDroppedReplaces(ds []DroppedReplace) []canonicalDroppedReplace {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]canonicalDroppedReplace, 0, len(ds))
+	for _, d := range ds {
+		// The wire and domain shapes are deliberately separate types; the conversion
+		// is legal only while their fields coincide, so a field added to either stops
+		// compiling here rather than silently changing what stored records hash over.
+		out = append(out, canonicalDroppedReplace{Path: d.Path, Target: d.Target, Version: d.Version})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return DroppedReplaceLess(
+			DroppedReplace{Path: out[i].Path, Version: out[i].Version, Target: out[i].Target},
+			DroppedReplace{Path: out[j].Path, Version: out[j].Version, Target: out[j].Target},
+		)
+	})
+	return out
+}
+
+// domainDroppedReplaces reads the dropped replace directives back off the wire.
+func domainDroppedReplaces(ds []canonicalDroppedReplace) []DroppedReplace {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]DroppedReplace, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, DroppedReplace{Path: d.Path, Version: d.Version, Target: d.Target})
+	}
+	return out
 }
 
 // canonicalForeignModules renders the foreign modules this analysis built onto
@@ -440,6 +476,18 @@ type canonicalRecord struct {
 	// go.mod before this field, so absent means the published tree was analysed
 	// as published.
 	SynthesisedGoMod canonicalSynthesisedGoMod `json:"synthesised_go_mod,omitzero"`
+	// DroppedReplaces is omitted when empty, on the terms every additive field on
+	// this shape has used: every record sealed before it marshals to exactly the
+	// bytes it always did and keeps its stored content hash verifiable, so the
+	// axis lands with no PipelineVersion bump and no migration. An absent list is
+	// not "unrecorded" — no analysis dropped a directive before this field, so
+	// absent means the module's own go.mod was loaded as published.
+	//
+	// It is INSIDE the seal because it changes what the graph is. A build with a
+	// dangling replace resolves a different set of dependency versions from one
+	// without it, so two analyses of the same bytes that dropped different
+	// directives are two different graphs and the digest has to say so.
+	DroppedReplaces []canonicalDroppedReplace `json:"dropped_replaces,omitzero"`
 	// ReferenceScope is omitted when unmeasured, which is the truth about every
 	// record sealed before reference edges were extracted.
 	ReferenceScope  string `json:"reference_scope,omitempty"`
@@ -482,6 +530,15 @@ type canonicalSynthesisedGoMod struct {
 	// sealed over. An absent list means the module needed none.
 	Requires          []canonicalRequire `json:"requires,omitzero"`
 	VendorTreePresent bool               `json:"vendor_tree_present"`
+}
+
+// canonicalDroppedReplace is the wire shape of domain.DroppedReplace, pinned
+// separately from the domain type so a field added there does not silently
+// change what every stored record hashes over.
+type canonicalDroppedReplace struct {
+	Path    string `json:"path"`
+	Target  string `json:"target"`
+	Version string `json:"version,omitempty"`
 }
 
 // canonicalDerivation is the wire shape of domain.GenerationDerivation, pinned
@@ -660,6 +717,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			Requires:          canonicalRequires(r.SynthesisedGoMod.Requires),
 			VendorTreePresent: r.SynthesisedGoMod.VendorTreePresent,
 		},
+		DroppedReplaces:    canonicalDroppedReplaces(r.DroppedReplaces),
 		ReferenceScope:     string(r.ReferenceScope),
 		TestScope:          string(r.TestScope),
 		TestScopeDetail:    r.TestScopeDetail,
