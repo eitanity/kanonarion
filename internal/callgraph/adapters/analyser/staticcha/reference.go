@@ -49,7 +49,7 @@ func (a *Analyser) collectReferenceEdges(
 	funcs []*ssa.Function,
 	mem moduleMembership,
 	fset *token.FileSet,
-	tempDir string,
+	roots sourceRoots,
 	nodes []domain.CallNode,
 	edges []domain.CallEdge,
 ) ([]domain.CallNode, []domain.CallEdge) {
@@ -74,7 +74,7 @@ func (a *Analyser) collectReferenceEdges(
 		if n, ok := nodeCache[fn]; ok {
 			return n
 		}
-		n := buildNode(fn, mem, fset, tempDir)
+		n := buildNode(fn, mem, fset, roots)
 		nodeCache[fn] = n
 		return n
 	}
@@ -98,7 +98,7 @@ func (a *Analyser) collectReferenceEdges(
 					}
 					from := nodeFor(fn)
 					to := nodeFor(resolved)
-					file, line := sitePosition(instr, fset, tempDir)
+					file, line := sitePosition(instr, fset, roots)
 					key := edgeKey(from.ID, to.ID, file, line)
 					if _, dup := seenEdges[key]; dup {
 						continue

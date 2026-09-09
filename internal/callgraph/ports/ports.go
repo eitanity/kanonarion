@@ -590,3 +590,66 @@ type CallGraphForeignModuleReader interface {
 type CallGraphWorktreeRouter interface {
 	WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (WorktreeRouting, bool, error)
 }
+
+// ModuleCacheReport accounts for one materialisation: how many coordinates were
+// asked for, how many reached the cache, and the reason for each one that did
+// not. Requested is carried beside Written because the two are only equal when
+// nothing failed, and a caller must be able to tell a cache that holds the whole
+// closure from one that holds part of it.
+type ModuleCacheReport struct {
+	Requested int
+	Written   int
+	// Failures renders the coordinates that were not written and why, bounded for
+	// a log line. Empty when every one of them was.
+	Failures string
+}
+
+// Complete reports whether the whole requested closure reached the cache.
+func (r ModuleCacheReport) Complete() bool { return r.Failures == "" }
+
+// MainModule describes the module an isolated analysis is about to load as its
+// own main module: the requirements its go.mod declares, and the language
+// version that decides how much of the module graph the toolchain reads for
+// them.
+//
+// The version is not decoration. From go1.17 the module graph is PRUNED: the
+// main module's own require block names every module providing a package the
+// build imports, and nothing below it is read. Before 1.17 the complete,
+// unpruned graph is loaded instead, and the go.mod of every version minimal
+// version selection walks past has to be readable. Populating for the second
+// shape when the first applies reaches thousands of versions no toolchain would
+// ever open.
+type MainModule struct {
+	// GoVersion is the go directive, empty when the module declares none — which
+	// is treated as pre-pruning, because a module that states no version does not
+	// record its full requirements either.
+	GoVersion string
+	// Requires are the module's require directives, direct and indirect alike:
+	// the toolchain reads every line of the block regardless of which one it sits
+	// in.
+	Requires []coordinate.ModuleCoordinate
+}
+
+// ModuleCache materialises the GOMODCACHE an isolated analysis reads.
+//
+// It exists because the analysis of a fetched module runs offline. Minimal
+// version selection reads the go.mod of every module in the transitive
+// requirement graph and the type checker reads the source of every module the
+// build imports, and under GOPROXY=off both come from a module cache or from
+// nowhere. Left to the host's own cache, whether a module could be analysed
+// depended on what unrelated go commands had happened to leave on the machine —
+// while the bytes that answer the question sit in kanonarion's own store.
+//
+// main names what the toolchain will read: the source of every requirement,
+// because a pruned main module's require block names every module providing a
+// package the build imports; and, where the graph is not pruned, the go.mod of
+// the versions minimal version selection walks past, which appear on no edge of
+// any walk.
+//
+// It is best-effort by construction — a coordinate whose bytes cannot be
+// obtained leaves one hole rather than failing the analysis — and the report is
+// how that hole is stated rather than discovered later as an unexplained offline
+// resolution failure.
+type ModuleCache interface {
+	Materialise(ctx context.Context, dir string, main MainModule) ModuleCacheReport
+}

@@ -151,7 +151,8 @@ func TestLoadProducersMatchTheStatedPostures(t *testing.T) {
 	base := os.Environ()
 
 	checkPosture(t, "extracted-module", base, isolatedModuleEnv())
-	checkPosture(t, "extracted-module-analysis", base, analysisEnv())
+	checkPosture(t, "extracted-module-analysis", base, analysisEnv(""))
+	checkPosture(t, "extracted-module-analysis-modcache", base, analysisEnv(goenv.ModCache))
 }
 
 // TestAnalyseDir_WorkingTreeUnderAWorkspaceKeepsIt is the other direction of the

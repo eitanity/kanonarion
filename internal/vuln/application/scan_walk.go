@@ -1109,7 +1109,7 @@ func (uc *ScanWalkUseCase) populatePrePruningGoMods(ctx context.Context, graph w
 	seeds = append(seeds, roots...)
 	seeds = append(seeds, edgeSeeds...)
 
-	report := modcache.PopulateGoModClosure(
+	report, _ := modcache.PopulateGoModClosure(
 		ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir,
 		seeds,
 		func(ctx context.Context, batch []coordinate.ModuleCoordinate) { uc.prefetchGoModOnly(ctx, batch) },

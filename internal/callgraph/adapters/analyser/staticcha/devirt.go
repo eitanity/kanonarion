@@ -43,7 +43,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 	funcs []*ssa.Function,
 	mem moduleMembership,
 	fset *token.FileSet,
-	tempDir string,
+	roots sourceRoots,
 	nodes []domain.CallNode,
 	edges []domain.CallEdge,
 ) ([]domain.CallNode, []domain.CallEdge) {
@@ -108,7 +108,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 				if methodObj == nil {
 					continue
 				}
-				target := a.devirtTargetNode(prog, methodObj, mem, fset, tempDir)
+				target := a.devirtTargetNode(prog, methodObj, mem, fset, roots)
 				if target.ID == "" {
 					continue
 				}
@@ -116,11 +116,11 @@ func (a *Analyser) devirtualizeSingleImplementer(
 				// Build the caller node lazily so functions with no
 				// devirtualizable site cost nothing.
 				if !callerBuilt {
-					callerNode = buildNode(fn, mem, fset, tempDir)
+					callerNode = buildNode(fn, mem, fset, roots)
 					callerBuilt = true
 				}
 
-				siteFile, siteLine := sitePosition(instr, fset, tempDir)
+				siteFile, siteLine := sitePosition(instr, fset, roots)
 				ek := edgeKey(callerNode.ID, target.ID, siteFile, siteLine)
 				if _, dup := existingEdges[ek]; dup {
 					continue
@@ -288,12 +288,12 @@ func (a *Analyser) devirtTargetNode(
 	methodObj *types.Func,
 	mem moduleMembership,
 	fset *token.FileSet,
-	tempDir string,
+	roots sourceRoots,
 ) domain.CallNode {
 	if fn := prog.FuncValue(methodObj); fn != nil {
-		return buildNode(fn, mem, fset, tempDir)
+		return buildNode(fn, mem, fset, roots)
 	}
-	return leafNodeFromFunc(methodObj, mem, fset, tempDir)
+	return leafNodeFromFunc(methodObj, mem, fset, roots)
 }
 
 // leafNodeFromFunc builds a CallNode for a method whose SSA function was never
@@ -303,7 +303,7 @@ func leafNodeFromFunc(
 	methodObj *types.Func,
 	mem moduleMembership,
 	fset *token.FileSet,
-	tempDir string,
+	roots sourceRoots,
 ) domain.CallNode {
 	sig, ok := methodObj.Type().(*types.Signature)
 	if !ok || sig.Recv() == nil || methodObj.Pkg() == nil {
@@ -320,7 +320,7 @@ func leafNodeFromFunc(
 	if methodObj.Pos() != token.NoPos && fset != nil {
 		if p := fset.Position(methodObj.Pos()); p.IsValid() {
 			pos = domain.SourcePosition{
-				File: relativePath(p.Filename, tempDir),
+				File: roots.rel(p.Filename),
 				Line: p.Line,
 			}
 		}
@@ -373,7 +373,7 @@ func fnInModule(fn *ssa.Function, mem moduleMembership) bool {
 
 // sitePosition returns the module-relative file and line of a call
 // instruction's source position, empty/zero when it has none.
-func sitePosition(instr ssa.Instruction, fset *token.FileSet, tempDir string) (string, int) {
+func sitePosition(instr ssa.Instruction, fset *token.FileSet, roots sourceRoots) (string, int) {
 	if fset == nil || instr.Pos() == token.NoPos {
 		return "", 0
 	}
@@ -381,7 +381,7 @@ func sitePosition(instr ssa.Instruction, fset *token.FileSet, tempDir string) (s
 	if !p.IsValid() {
 		return "", 0
 	}
-	return relativePath(p.Filename, tempDir), p.Line
+	return roots.rel(p.Filename), p.Line
 }
 
 // edgeKey is the deduplication key for a call edge: caller, callee, and call

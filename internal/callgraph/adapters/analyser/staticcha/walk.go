@@ -142,7 +142,7 @@ func (a *Analyser) walkGraph(
 	recordedCallers map[*callgraph.Node]bool,
 	mem moduleMembership,
 	fset *token.FileSet,
-	tempDir string,
+	roots sourceRoots,
 ) ([]domain.CallNode, []domain.CallEdge, domain.CallGraphStatus) {
 	seenNodes := make(map[string]domain.CallNode)
 	seenEdges := make(map[string]struct{})
@@ -170,13 +170,13 @@ func (a *Analyser) walkGraph(
 
 		callerNode, ok := nodeCache[callerFunc]
 		if !ok {
-			callerNode = buildNode(callerFunc, mem, fset, tempDir)
+			callerNode = buildNode(callerFunc, mem, fset, roots)
 			nodeCache[callerFunc] = callerNode
 		}
 
 		calleeNode, ok := nodeCache[calleeFunc]
 		if !ok {
-			calleeNode = buildNode(calleeFunc, mem, fset, tempDir)
+			calleeNode = buildNode(calleeFunc, mem, fset, roots)
 			nodeCache[calleeFunc] = calleeNode
 		}
 
@@ -185,7 +185,7 @@ func (a *Analyser) walkGraph(
 		if edge.Site != nil {
 			p := fset.Position(edge.Site.Pos())
 			if p.IsValid() {
-				sitePosFile = relativePath(p.Filename, tempDir)
+				sitePosFile = roots.rel(p.Filename)
 				sitePosLine = p.Line
 			}
 		}

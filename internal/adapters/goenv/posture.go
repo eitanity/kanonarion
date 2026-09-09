@@ -35,6 +35,18 @@ var postures = map[string]Posture{
 		},
 		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED"},
 	},
+	// The same analysis pointed at a module cache the run decided on: one
+	// materialised from the store for this module, or the operator's own under
+	// --from-modcache. It is the posture above with GOMODCACHE named, and naming
+	// it is what makes the offline resolution a property of what kanonarion holds
+	// rather than of what unrelated go commands left on the host.
+	"extracted-module-analysis-modcache": {
+		Require: map[string]string{
+			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
+			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod", "GOMODCACHE": ModCache,
+		},
+		Forbid: []string{"GOGC", "CGO_ENABLED"},
+	},
 	// -mod=readonly on both worktree postures. The tree belongs to the developer,
 	// and -mod=mod lets the go command close a missing go.sum entry from the
 	// module cache rather than report it.

@@ -35,13 +35,13 @@ func (a *Analyser) extractInterfaces(
 	prog *ssa.Program,
 	mem moduleMembership,
 	fset *token.FileSet,
-	tempDir string,
+	roots sourceRoots,
 ) ([]domain.InterfaceType, []domain.InterfaceImplementation) {
-	ifaces := collectModuleInterfaces(prog, mem, fset, tempDir)
+	ifaces := collectModuleInterfaces(prog, mem, fset, roots)
 	if len(ifaces) == 0 {
 		return nil, nil
 	}
-	concretes := collectModuleConcreteTypes(prog, mem, fset, tempDir)
+	concretes := collectModuleConcreteTypes(prog, mem, fset, roots)
 	if len(concretes) == 0 {
 		return interfaceTypes(ifaces), nil
 	}
@@ -73,7 +73,7 @@ func (a *Analyser) extractInterfaces(
 			if !cand.declaresAll(it.methods) {
 				continue
 			}
-			impl, ok := buildImplementation(it, cand, fset, tempDir)
+			impl, ok := buildImplementation(it, cand, fset, roots)
 			if !ok {
 				continue
 			}
@@ -150,7 +150,7 @@ func interfaceTypes(ifaces []*moduleInterface) []domain.InterfaceType {
 // The empty interface and its aliases are skipped: every type satisfies them,
 // so recording their implementers would answer "which types exist", not "what
 // must change together".
-func collectModuleInterfaces(prog *ssa.Program, mem moduleMembership, fset *token.FileSet, tempDir string) []*moduleInterface {
+func collectModuleInterfaces(prog *ssa.Program, mem moduleMembership, fset *token.FileSet, roots sourceRoots) []*moduleInterface {
 	byID := make(map[string]*moduleInterface)
 	var order []string
 	forEachModuleTypeName(prog, mem, func(pkgPath string, tn *types.TypeName, named *types.Named) {
@@ -171,7 +171,7 @@ func collectModuleInterfaces(prog *ssa.Program, mem moduleMembership, fset *toke
 				pkg:     pkgPath,
 				name:    tn.Name(),
 				methods: methods,
-				pos:     declPosition(tn.Pos(), fset, tempDir),
+				pos:     declPosition(tn.Pos(), fset, roots),
 				isTest:  isTestDeclaration(tn.Pos(), fset, pkgPath),
 			}
 			byID[id] = entry
@@ -188,7 +188,7 @@ func collectModuleInterfaces(prog *ssa.Program, mem moduleMembership, fset *toke
 
 // collectModuleConcreteTypes returns the module's named non-interface types,
 // keyed by ID for the same reason collectModuleInterfaces is.
-func collectModuleConcreteTypes(prog *ssa.Program, mem moduleMembership, fset *token.FileSet, tempDir string) []*concreteType {
+func collectModuleConcreteTypes(prog *ssa.Program, mem moduleMembership, fset *token.FileSet, roots sourceRoots) []*concreteType {
 	byID := make(map[string]*concreteType)
 	var order []string
 	forEachModuleTypeName(prog, mem, func(pkgPath string, tn *types.TypeName, named *types.Named) {
@@ -202,7 +202,7 @@ func collectModuleConcreteTypes(prog *ssa.Program, mem moduleMembership, fset *t
 				id:          id,
 				pkg:         pkgPath,
 				name:        tn.Name(),
-				pos:         declPosition(tn.Pos(), fset, tempDir),
+				pos:         declPosition(tn.Pos(), fset, roots),
 				isTest:      isTestDeclaration(tn.Pos(), fset, pkgPath),
 				methodNames: map[string]struct{}{},
 			}
@@ -256,7 +256,7 @@ func forEachModuleTypeName(prog *ssa.Program, mem moduleMembership, fn func(pkgP
 // interface method to the concrete node that implements it. It reports false
 // when no instance pair satisfies the interface, which is the common case after
 // the method-name prefilter admits a candidate by coincidence of naming.
-func buildImplementation(it *moduleInterface, c *concreteType, _ *token.FileSet, _ string) (domain.InterfaceImplementation, bool) {
+func buildImplementation(it *moduleInterface, c *concreteType, _ *token.FileSet, _ sourceRoots) (domain.InterfaceImplementation, bool) {
 	var matched *types.Named
 	pointerOnly := false
 	for _, named := range c.instances {
@@ -334,7 +334,7 @@ func lookupConcreteMethod(named *types.Named, method string) *types.Func {
 }
 
 // declPosition renders a declaration's module-relative source position.
-func declPosition(pos token.Pos, fset *token.FileSet, tempDir string) domain.SourcePosition {
+func declPosition(pos token.Pos, fset *token.FileSet, roots sourceRoots) domain.SourcePosition {
 	if pos == token.NoPos || fset == nil {
 		return domain.SourcePosition{}
 	}
@@ -342,5 +342,5 @@ func declPosition(pos token.Pos, fset *token.FileSet, tempDir string) domain.Sou
 	if !p.IsValid() {
 		return domain.SourcePosition{}
 	}
-	return domain.SourcePosition{File: relativePath(p.Filename, tempDir), Line: p.Line}
+	return domain.SourcePosition{File: roots.rel(p.Filename), Line: p.Line}
 }

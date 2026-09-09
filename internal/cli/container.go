@@ -24,6 +24,7 @@ import (
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	cgmodulecache "github.com/eitanity/kanonarion/internal/callgraph/adapters/modulecache"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -480,6 +481,21 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}).WithAudit(factStore)
 	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
 	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger)
+	// A module analysed in isolation is its own main module, and the load runs
+	// with the network off, so every go.mod minimal version selection reads and
+	// every dependency the type checker compiles has to be in a module cache
+	// already. Reading the host's own made that a property of what unrelated go
+	// commands had left on the machine; the cache is built here instead, from the
+	// bytes the store holds, fetching what it is missing.
+	if modcacheMode {
+		// --from-modcache: the operator's cache is already populated, and the walk
+		// scan takes it as it stands for the same reason.
+		cgAnalyser = cgAnalyser.WithRealModcache(modcacheDir)
+	} else {
+		cgAnalyser = cgAnalyser.WithModuleCache(
+			cgmodulecache.New(factStore, blobs, logger).
+				WithFetcher(vulnfetch.NewFetchModuleAdapter(fetchUC)))
+	}
 	cgExtractUC := cgapp.NewExtractCallGraphUseCase(cgapp.Config{
 		Facts: factStore, Blobs: blobs, Store: cgStore,
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,

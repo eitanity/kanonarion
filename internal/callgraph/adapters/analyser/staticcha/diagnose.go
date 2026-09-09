@@ -237,6 +237,27 @@ func declaredRequirements(dir string) []module.Version {
 	return out
 }
 
+// declaredGoVersion reads the go directive of the tree about to be analysed, or
+// the empty string when there is none to read.
+//
+// It decides how much of the module graph the toolchain will open, which is why
+// it is read rather than assumed: from go1.17 the graph is pruned to what the
+// main module's own require block names, and before it the complete transitive
+// requirement graph is loaded. Assuming the second populates for versions
+// nothing opens; assuming the first leaves a load unable to resolve offline.
+func declaredGoVersion(dir string) string {
+	path := filepath.Join(dir, "go.mod")
+	data, err := os.ReadFile(path) /* #nosec G304 -- dir is an extraction directory this process created and owns */
+	if err != nil {
+		return ""
+	}
+	f := parsedGoModOrNil(path, data)
+	if f == nil || f.Go == nil {
+		return ""
+	}
+	return f.Go.Version
+}
+
 // platformFrame names the target platform the load resolved build constraints
 // against.
 //

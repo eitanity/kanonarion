@@ -307,7 +307,35 @@ it. The causes that recur:
 | `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
 | `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
-| `this host could not supply N module(s) the analysed module needs … : <path> <version>, …` | The module's own `go.mod` requires modules this host does not hold, and the load runs offline. The cause is `environment`, so the record is never served as a cache hit and a later run on a host that has them re-establishes the answer. `go mod download all` in a tree that requires them |
+| `this host could not supply N module(s) the analysed module needs … : <path> <version>, …` | The module's dependency closure could not be assembled — the store does not hold those versions and the fetch for them failed (no network, a withdrawn version, a private module). The cause is `environment`, so the record is never served as a cache hit and a later run re-establishes the answer |
+
+#### What the load resolves against
+
+A fetched module is analysed as its own main module with the network off, so
+every version it needs has to be in a module cache before the load starts. The
+command builds that cache itself, out of the bytes the store already holds:
+
+* the **source** of every module the analysed `go.mod` requires, because the type
+  checker compiles it;
+* the **`go.mod`** of the versions minimal version selection reads on the way
+  there, where the module graph is not pruned — under a `go` directive below
+  1.17, or beneath a requirement that declares one.
+
+Anything the store is missing is **fetched**, which is what makes this cost
+network time and store space the first time a module is analysed: a walk fetches
+what the *consumer's* build resolved, and a module's own requirements are a
+different set. `cloud.google.com/go/iam@v1.11.0` requires 39 modules; the walk
+that reached it selected other versions of some of them, and until they were
+fetched the module could not be analysed at all. The second analysis of anything
+in the same family is served from the store.
+
+`--from-modcache` reads the module cache the operator named instead, and builds
+nothing: a populated cache has already answered the question.
+
+An incomplete population is reported rather than tolerated — the log names what
+was written against what was requested, and which coordinates failed — because
+with the network off a missing version is the difference between a module that
+resolves and one that records an environment failure.
 
 Package membership is decided by the module path the analysed tree **declares**,
 not by the coordinate it was published under. A fork republished at a new path
@@ -552,8 +580,8 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
 * if the module's own packages import third-party code, the `require` directives
   are taken from the resolved build list of the walk named by `--from-walk` —
   the versions that build actually selected. The load then runs with
-  `GOPROXY=off` against the local module cache, so a version nobody chose can
-  never enter the graph. Without `--from-walk`, or when the build list does not
+  `GOPROXY=off` against the module cache the command materialised, so a version
+  nobody chose can never enter the graph. Without `--from-walk`, or when the build list does not
   provide *every* one of those imports, synthesis is refused outright and the
   module is left failing: a file naming some dependencies still sends the loader
   hunting for the rest. The refusal is on **the record**, naming the imports
@@ -713,11 +741,11 @@ A read returns one answer composed from the generations, on a stated ordering:
 Recency is never the authority. A `METADATA_ONLY` graph appended after a
 `BUILT_WITH_BODIES` one analysed less of the same module, so it is a weaker
 measurement rather than a newer answer, and it does not displace its better. A
-graph cut short by a cold module cache is weaker at one level too, because
-`BUILT_WITH_BODIES` says how the loaded packages were analysed and not how much
-of the module was reached. It ranks below a complete analysis of the same
-artefact and never conflicts with one, so warming the cache and re-running is
-enough. Where no graph was produced the rung decides nothing and the newest
+graph cut short by a dependency the run could not obtain is weaker at one level
+too, because `BUILT_WITH_BODIES` says how the loaded packages were analysed and
+not how much of the module was reached. It ranks below a complete analysis of the
+same artefact and never conflicts with one, so re-running once the missing
+versions can be fetched is enough. Where no graph was produced the rung decides nothing and the newest
 account of the failure answers.
 
 The **Go toolchain is not on that ladder either**. A graph carries the
@@ -1175,7 +1203,9 @@ re-extracting, so it appends nothing.
 ## Relation to other stages
 
 - **Requires:** `kanonarion fetch` — the module zip must exist in the blob store.
-  `kanonarion local` bypasses this for a working tree.
+  The module's own dependency closure does not: the analysis assembles that
+  itself and fetches what the store lacks. `kanonarion local` bypasses both for a
+  working tree, which resolves against the developer's own module cache.
 - **Feeds:** [`capability`](capability.md), [`reachability`](reachability.md),
   and the vulnerability reachability tier.
 

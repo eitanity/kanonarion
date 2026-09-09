@@ -424,7 +424,7 @@ func TestPopulateGoModClosure_FollowsRequirementsTransitively(t *testing.T) {
 	seed := newCoord(t, "example.com/seed", "v1.0.0")
 
 	var ensured []coordinate.ModuleCoordinate
-	report := modcache.PopulateGoModClosure(
+	report, _ := modcache.PopulateGoModClosure(
 		context.Background(), facts, blobs, cacheDir,
 		[]coordinate.ModuleCoordinate{seed},
 		func(_ context.Context, batch []coordinate.ModuleCoordinate) { ensured = append(ensured, batch...) },
@@ -462,7 +462,7 @@ func TestPopulateGoModClosure_TerminatesOnRequirementCycle(t *testing.T) {
 	goModFact(t, "example.com/b", "v1.0.0",
 		"module example.com/b\n\ngo 1.16\n\nrequire example.com/a v1.0.0\n", facts, blobs)
 
-	report := modcache.PopulateGoModClosure(
+	report, _ := modcache.PopulateGoModClosure(
 		context.Background(), facts, blobs, t.TempDir(),
 		[]coordinate.ModuleCoordinate{newCoord(t, "example.com/a", "v1.0.0")}, nil,
 	)
@@ -481,7 +481,7 @@ func TestPopulateGoModClosure_ReportsUnreachableLevel(t *testing.T) {
 	goModFact(t, "example.com/seed", "v1.0.0",
 		"module example.com/seed\n\ngo 1.16\n\nrequire example.com/absent v1.9.9\n", facts, blobs)
 
-	report := modcache.PopulateGoModClosure(
+	report, _ := modcache.PopulateGoModClosure(
 		context.Background(), facts, blobs, t.TempDir(),
 		[]coordinate.ModuleCoordinate{newCoord(t, "example.com/seed", "v1.0.0")}, nil,
 	)

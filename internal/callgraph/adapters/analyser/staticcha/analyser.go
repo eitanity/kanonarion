@@ -27,11 +27,39 @@ type Analyser struct {
 	pipelineVersion string
 	goBinary        string
 	logger          *slog.Logger
+	// moduleCache builds the GOMODCACHE an isolated analysis resolves from. Nil
+	// leaves the host's own cache in force, which is what a composition root that
+	// wires no store can offer.
+	moduleCache cgports.ModuleCache
+	// realModcacheDir is --from-modcache: an existing module cache the operator
+	// named. It wins over moduleCache and nothing is materialised.
+	realModcacheDir string
 }
 
 // New constructs an Analyser.
 func New(pipelineVersion string, goBinary string, logger *slog.Logger) *Analyser {
 	return &Analyser{pipelineVersion: pipelineVersion, goBinary: goBinary, logger: logger}
+}
+
+// WithModuleCache gives the analyser a materialiser for the module cache each
+// isolated analysis reads. Without one the analysis resolves against whatever
+// the host's own cache happens to hold, which under GOPROXY=off decides whether
+// a module can be analysed at all.
+func (a *Analyser) WithModuleCache(mc cgports.ModuleCache) *Analyser {
+	a.moduleCache = mc
+	return a
+}
+
+// WithRealModcache points the analysis at an existing module cache — the
+// operator's own, named by --from-modcache — instead of one built per analysis.
+//
+// It materialises nothing, on the vuln scan's precedent: an operator who has
+// pointed at a populated cache has already answered the question materialisation
+// exists to answer, and duplicating that cache per module would be work with
+// nothing to show for it.
+func (a *Analyser) WithRealModcache(dir string) *Analyser {
+	a.realModcacheDir = dir
+	return a
 }
 
 // AnalyserMetadata returns the algorithm and version of this implementation.
@@ -172,7 +200,10 @@ func (a *Analyser) Analyse(
 			domain.FailureCauseEnvironment, "cancelled before load"), synth, dropped, inputs.Source, tempDir), nil
 	}
 
-	rec, err = a.analyseDir(ctx, tempDir, coord, synth, nil, false)
+	goModCache, cleanupCache := a.prepareModuleCache(ctx, tempDir, coord)
+	defer cleanupCache()
+
+	rec, err = a.analyseDir(ctx, tempDir, coord, synth, nil, false, goModCache)
 	if err != nil {
 		return rec, err
 	}
@@ -280,7 +311,10 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	// module and already declares itself, so nothing is synthesised into it and
 	// the record carries the zero value.
 	var read []string
-	rec, err = a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true)
+	// A working tree resolves from the developer's own module cache: it is their
+	// build being described, and a cache materialised from the store would be a
+	// different one. See loadenv.go for the same split on the workspace.
+	rec, err = a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true, "")
 	if err != nil {
 		return rec, err
 	}
@@ -392,6 +426,7 @@ func (a *Analyser) analyseDir(
 	synth domain.SynthesisedGoMod,
 	read *[]string,
 	worktree bool,
+	goModCache string,
 ) (domain.CallGraphRecord, error) {
 	toolchains := goenv.NewToolchains()
 	defer func() {
@@ -400,7 +435,7 @@ func (a *Analyser) analyseDir(
 		}
 	}()
 
-	rec, err := a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, toolchains)
+	rec, err := a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, goModCache, toolchains)
 	if err != nil {
 		return rec, err
 	}
@@ -417,7 +452,7 @@ func (a *Analyser) analyseDir(
 		slog.String("version", coord.Version()),
 		slog.String("toolchain", toolchains.Selected()),
 	)
-	return a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, toolchains)
+	return a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, goModCache, toolchains)
 }
 
 // analyseDirOnce holds the shared post-extraction analysis pipeline: load
@@ -449,6 +484,7 @@ func (a *Analyser) analyseDirOnce(
 	synth domain.SynthesisedGoMod,
 	read *[]string,
 	worktree bool,
+	goModCache string,
 	toolchains *goenv.Toolchains,
 ) (rec domain.CallGraphRecord, err error) {
 	fset := token.NewFileSet()
@@ -504,7 +540,7 @@ func (a *Analyser) analyseDirOnce(
 	if worktree {
 		env = goenv.Worktree(os.Environ(), tempDir)
 	} else {
-		env = analysisEnv()
+		env = analysisEnv(goModCache)
 	}
 	env = toolchains.Apply(env)
 
@@ -678,7 +714,13 @@ func (a *Analyser) analyseDirOnce(
 	// Ensure GC can reclaim memory before starting walk
 	runtime.GC()
 
-	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, tempDir)
+	// How a resolved file path is written into the record. The extracted module's
+	// own files stay module-relative; a dependency's are written relative to the
+	// cache this run materialised, so nothing about where this process put it
+	// reaches the record. See sourceRoots.
+	roots := newSourceRoots(tempDir, goModCache)
+
+	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, roots)
 
 	// Attach body-level capability facts. These are properties of a
 	// function's own body — unsafe.Pointer conversions, assembly/linkname
@@ -691,21 +733,21 @@ func (a *Analyser) analyseDirOnce(
 	// implementer's body was never built into SSA (type-only dep / unbuilt
 	// package). Runs after body facts so those only scan built module bodies;
 	// devirtualized leaf targets carry no onward edges.
-	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, ordered, mem, fset, tempDir, nodes, edges)
+	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, ordered, mem, fset, roots, nodes, edges)
 
 	// Record the function values the code takes but does not call. A method
 	// registered with a router is passed, never called, so CHA sees nothing —
 	// and a handler an HTTP request drives on every hit ends up with no in-edge.
 	// Runs after devirtualisation so an edge a call already witnesses keeps the
 	// call's key rather than being recorded twice under two kinds.
-	nodes, edges = a.collectReferenceEdges(ctx, prog, ordered, mem, fset, tempDir, nodes, edges)
+	nodes, edges = a.collectReferenceEdges(ctx, prog, ordered, mem, fset, roots, nodes, edges)
 
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
 	// go to implementations — so the edge collections cannot answer "what must
 	// change with this port", and a grep for the method name cannot tell an
 	// implementation from a call.
-	ifaces, impls := a.extractInterfaces(ctx, prog, mem, fset, tempDir)
+	ifaces, impls := a.extractInterfaces(ctx, prog, mem, fset, roots)
 
 	// A failed package (or any load error) means the graph is incomplete;
 	// never report Extracted when some target package did not resolve. Keeping
