@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -391,7 +392,9 @@ func (f *fakeVulnStore) ListVulnerabilityRecordGenerationsForModule(_ context.Co
 		})
 		out = append(out, *g)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].PipelineVersion < out[j].PipelineVersion })
+	sort.SliceStable(out, func(i, j int) bool {
+		return versionorder.ComparePipelineVersions(out[i].PipelineVersion, out[j].PipelineVersion) < 0
+	})
 	return out, nil
 }
 

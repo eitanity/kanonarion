@@ -7,7 +7,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"time"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -260,7 +259,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		}
 		if _, werr := fmt.Fprintf(stdout,
 			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n",
-			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
+			marker, ledgerStamp(r.ExtractedAt), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
 			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), r.Analyser.String(),
 			historyOrigin(r), historyDerivation(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
@@ -739,7 +738,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 
 		NodeCount:       r.NodeCount,
 		EdgeCount:       r.EdgeCount,
-		ExtractedAt:     isoTime(r.ExtractedAt),
+		ExtractedAt:     ledgerStamp(r.ExtractedAt),
 		PipelineVersion: r.PipelineVersion,
 		ContentHash:     r.ContentHash,
 

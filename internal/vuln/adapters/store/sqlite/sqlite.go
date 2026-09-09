@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
@@ -813,8 +816,8 @@ DO NOTHING`
 		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
 		string(rooting), record.WalkID,
 		string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
-		record.ScannedAt.UTC().Format(time.RFC3339),
-		record.FirstScannedAt.UTC().Format(time.RFC3339),
+		recordstamp.Format(record.ScannedAt),
+		recordstamp.Format(record.FirstScannedAt),
 		record.ContentHash, serialised,
 	); err != nil {
 		return fmt.Errorf("inserting vulnerability record: %w", err)
@@ -923,16 +926,17 @@ func (s *Store) listGenerations(
 	q querier,
 	path, version, pipelineVersion, snapshotSource, snapshotVersion string,
 ) ([]domain.VulnerabilityRecord, error) {
-	// rowid, not content_hash, is the secondary sort: scanned_at persists at
-	// second precision — the precision the canonical hash covers, so widening the
-	// column would put the stored hashes and the stored time out of step — and two
-	// scans within one second carry the same timestamp. The ledger is append-only,
-	// so insertion order is the sequence it actually has.
+	// rowid, not content_hash, is the secondary sort: two scans can share a
+	// timestamp, at whole seconds on every row written before the column was
+	// widened and at any precision when two land inside one tick. The ledger is
+	// append-only, so insertion order is the sequence it actually has. The order
+	// reads the PARSED time, because a whole second and a fixed-width fraction
+	// invert against each other as text.
 	const stmt = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND snapshot_source = ? AND snapshot_version = ?
-ORDER BY scanned_at ASC, rowid ASC`
+ORDER BY julianday(scanned_at) ASC, rowid ASC`
 
 	rows, err := q.QueryContext(ctx, stmt, path, version, pipelineVersion, snapshotSource, snapshotVersion)
 	if err != nil {
@@ -976,8 +980,11 @@ ORDER BY scanned_at ASC, rowid ASC`
 // connection, so a query on the store's own handle would block on the
 // transaction that is about to write the row it is reading.
 func (s *Store) firstScannedAt(ctx context.Context, q querier, record domain.VulnerabilityRecord) (time.Time, bool, error) {
-	const stmt = `
-SELECT MIN(first_scanned_at) FROM vulnerability_records
+	// The aggregate reads the column at fixed width. A bare MIN over TEXT would
+	// return the LATER of two spellings of one second, and the anchor this query
+	// exists to hold still would move forward — see sqlitestore.SortableStamp.
+	stmt := `
+SELECT MIN(` + sqlitestore.SortableStamp("first_scanned_at") + `) FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND snapshot_source = ? AND snapshot_version = ?
   AND first_scanned_at != ''`
@@ -1173,7 +1180,7 @@ func (s *Store) GetLatestVulnerabilityRecord(
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY scanned_at ASC, rowid ASC`
+ORDER BY julianday(scanned_at) ASC, rowid ASC`
 
 	records, err := s.queryRecords(ctx, "latest vulnerability record", q,
 		coord.Path(), coord.Version(), pipelineVersion)
@@ -1241,7 +1248,7 @@ WHERE vr.module_path      = ?
   AND vr.module_version   = ?
   AND vr.pipeline_version = ?
   AND wsr.walk_id = ?
-ORDER BY vr.scanned_at ASC, vr.rowid ASC`
+ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion, walkID)
 	if err != nil {
@@ -1349,8 +1356,8 @@ ON CONFLICT (id) DO UPDATE SET
 
 	if _, err = tx.ExecContext(ctx, q,
 		run.ID, run.WalkID, run.Snapshot.Source(), run.Snapshot.Version(),
-		run.StartedAt.UTC().Format(time.RFC3339),
-		run.CompletedAt.UTC().Format(time.RFC3339),
+		recordstamp.Format(run.StartedAt),
+		recordstamp.Format(run.CompletedAt),
 		string(run.OverallStatus),
 		string(run.CoverageStatus), string(run.FindingsStatus),
 		run.Counts.Total, run.Counts.Analysed, run.Counts.Affected,
@@ -1421,7 +1428,7 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 
 // ListWalkScanRuns lists scan runs for a walk.
 func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error) {
-	const q = `SELECT serialised FROM walk_scan_runs WHERE walk_id = ? ORDER BY started_at DESC, id DESC`
+	const q = `SELECT serialised FROM walk_scan_runs WHERE walk_id = ? ORDER BY julianday(started_at) DESC, id DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, walkID)
 	if err != nil {
@@ -1442,7 +1449,7 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 // listing in memory, and a page is only the rows the previous page did not show
 // if two calls order the population identically.
 func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, error) {
-	const q = `SELECT serialised FROM walk_scan_runs ORDER BY started_at DESC, id DESC`
+	const q = `SELECT serialised FROM walk_scan_runs ORDER BY julianday(started_at) DESC, id DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q)
 	if err != nil {
@@ -1798,7 +1805,7 @@ SELECT serialised, scanned_at FROM (
   WHERE fi.finding_id = ?
 )
 WHERE rn = 1
-ORDER BY scanned_at DESC`
+ORDER BY julianday(scanned_at) DESC`
 
 	// The partition also absorbs the duplicate rows a walk with several scan
 	// runs over one module would otherwise produce.
@@ -1823,7 +1830,7 @@ SELECT serialised, scanned_at FROM (
   WHERE fi.finding_id = ? AND wsr.walk_id = ?
 )
 WHERE rn = 1
-ORDER BY scanned_at DESC`
+ORDER BY julianday(scanned_at) DESC`
 
 	rank := []any{
 		string(domain.FindingsRecordAffected),
@@ -1912,7 +1919,7 @@ JOIN walk_scan_run_modules m
  AND m.snapshot_source  = vr.snapshot_source
  AND m.snapshot_version = vr.snapshot_version
 WHERE m.walk_scan_run_id = ?
-ORDER BY vr.module_path, vr.module_version, vr.scanned_at ASC, vr.rowid ASC`
+ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, walkScanRunID)
 	if err != nil {
@@ -1973,10 +1980,9 @@ ORDER BY vr.module_path, vr.module_version, vr.scanned_at ASC, vr.rowid ASC`
 // served record, the earlier one is still here, stating the snapshot, the
 // call-graph completeness and the frame it was reached in.
 //
-// The secondary sort is the row id, not the content hash. scanned_at persists at
-// second precision — the precision the canonical hash covers, so widening the
-// column would put the stored hashes and the stored time out of step — and two
-// scans within one second carry the same timestamp. The ledger is append-only,
+// The secondary sort is the row id, not the content hash. Two scans can share a
+// timestamp, at whole seconds on every row written before the column was widened
+// and at any precision when two land inside one tick. The ledger is append-only,
 // so insertion order is the sequence it actually has.
 func (s *Store) ListVulnerabilityRecordsForModule(
 	ctx context.Context,
@@ -1992,7 +1998,7 @@ func (s *Store) ListVulnerabilityRecordsForModule(
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY scanned_at DESC, rowid DESC`
+ORDER BY julianday(scanned_at) DESC, rowid DESC`
 
 	return s.queryRecords(ctx, "vulnerability records for module", q,
 		coord.Path(), coord.Version(), pipelineVersion)
@@ -2007,9 +2013,9 @@ ORDER BY scanned_at DESC, rowid DESC`
 // pipeline bump those are different questions with different answers — the
 // second is the one a history listing asks.
 //
-// Ordering and its tie-break are the keyed read's, for its reasons: scanned_at
-// persists at second precision, so the row id carries the sequence the
-// append-only ledger actually has. Across generations that matters more, not
+// Ordering and its tie-break are the keyed read's, for its reasons: two scans
+// can share a timestamp, so the row id carries the sequence the append-only
+// ledger actually has. Across generations that matters more, not
 // less: a re-scan under new logic lands after the record it supersedes.
 func (s *Store) ListVulnerabilityRecordsForModuleAllGenerations(
 	ctx context.Context,
@@ -2023,7 +2029,7 @@ func (s *Store) ListVulnerabilityRecordsForModuleAllGenerations(
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ?
-ORDER BY scanned_at DESC, rowid DESC`
+ORDER BY julianday(scanned_at) DESC, rowid DESC`
 
 	return s.queryRecords(ctx, "vulnerability records for module across generations", q,
 		coord.Path(), coord.Version())
@@ -2054,13 +2060,24 @@ func (s *Store) ListVulnerabilityRecordGenerationsForModule(
 	// Grouped by walk as well as by generation, and folded back into one row per
 	// generation below. The walk is what a re-scan is named by, so a census that
 	// dropped it forced every refusal built on it to guess a command.
-	const q = `
+	// The generation is NOT ordered in SQL. A pipeline version is a number
+	// written as text, and text order inverts at every digit-count boundary — v9
+	// after v19, v99 after v100 — so the ordering happens in Go, against the
+	// comparison that reads the number. The recency ordering stays here because
+	// the fold below relies on it: the first row of a generation sets its
+	// recency, so the rows of each generation must arrive newest first.
+	//
+	// One expression for the recency, selected and ordered by. The value a
+	// generation REPORTS as its latest scan and the value the rows are ordered on
+	// are the same aggregate, so they cannot disagree about which scan was last.
+	latest := "MAX(" + sqlitestore.SortableStamp("scanned_at") + ")"
+	q := `
 SELECT pipeline_version, COALESCE(walk_id, ''), COUNT(*), COALESCE(SUM(finding_count), 0),
-       MAX(scanned_at)
+       ` + latest + `
 FROM vulnerability_records
 WHERE module_path = ? AND module_version = ?
 GROUP BY pipeline_version, walk_id
-ORDER BY pipeline_version, MAX(scanned_at) DESC, walk_id`
+ORDER BY ` + latest + ` DESC, walk_id`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version())
 	if err != nil {
@@ -2103,6 +2120,12 @@ ORDER BY pipeline_version, MAX(scanned_at) DESC, walk_id`
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability record generations: %w", err)
 	}
+	// The census reads oldest generation first. Ordering it here rather than in
+	// SQL is the point: v9 is an older generation than v19 and sorts before it,
+	// which is not what a TEXT column would have said.
+	sort.SliceStable(out, func(i, j int) bool {
+		return versionorder.ComparePipelineVersions(out[i].PipelineVersion, out[j].PipelineVersion) < 0
+	})
 	return out, nil
 }
 

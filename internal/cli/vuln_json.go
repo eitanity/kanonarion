@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -139,6 +140,27 @@ type vulnRecordJSON struct {
 	// empty included: absent would be indistinguishable from a producer that does
 	// not state it, and "not recorded" is itself the answer.
 	Toolchain string `json:"toolchain"`
+	// ScannedAt and FirstScannedAt shadow the embedded time.Time fields so the
+	// stamps a consumer reads have ONE width.
+	//
+	// encoding/json renders a time.Time through RFC3339Nano, which strips
+	// trailing zeros — so the same instant went out as ".05377068Z" here and as a
+	// whole second on the text surface, and neither matched what the ledger holds.
+	// A reader lining a rendered answer up against a record or a log line had to
+	// reconcile three spellings first. These are the ledger's own encoding.
+	//
+	// Shadowing rather than changing the domain type, because the domain type's
+	// JSON IS the seal: re-spelling ScannedAt there would change the bytes 734
+	// stored records hash to and darken every one of them for a rendering
+	// concern. The value is the same instant either way.
+	//
+	// Each shadow keeps the PRESENCE the field it hides had, because a consumer
+	// decodes this document back into the record type. ScannedAt is always on the
+	// wire, so a zero one renders as the zero instant rather than as the empty
+	// string, which is not a time any decoder accepts. FirstScannedAt is omitzero
+	// on the record — the anchor is absent until a re-scan — so it stays absent.
+	ScannedAt      string `json:"scanned_at"`
+	FirstScannedAt string `json:"first_scanned_at,omitempty"`
 }
 
 // toVulnRecordJSON projects one record, classifying its routes against the
@@ -152,6 +174,8 @@ func toVulnRecordJSON(rec vuldomain.VulnerabilityRecord, bind recordRootFunc) vu
 		Toolchain:           string(rec.Toolchain),
 		Findings:            toVulnFindingsJSON(rec.Findings, bind(rec)),
 		Superseded:          rec.PipelineVersion != vulnPipelineVersion,
+		ScannedAt:           recordstamp.Format(rec.ScannedAt),
+		FirstScannedAt:      ledgerStamp(rec.FirstScannedAt),
 	}
 }
 

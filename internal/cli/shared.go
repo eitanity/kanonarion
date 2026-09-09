@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
@@ -87,11 +89,58 @@ func buildLogger(level string, stderr io.Writer) *slog.Logger {
 	default:
 		lvl = slog.LevelInfo
 	}
-	opts := &slog.HandlerOptions{Level: lvl}
+	opts := &slog.HandlerOptions{Level: lvl, ReplaceAttr: canonicalTimeAttr}
 	if jsonOut {
 		return slog.New(slog.NewJSONHandler(stderr, opts))
 	}
 	return slog.New(slog.NewTextHandler(stderr, opts))
+}
+
+// canonicalTimeAttr rewrites a log line's time into the encoding the ledgers
+// write, so a line and a record can be laid beside each other directly.
+//
+// slog's default is the local offset at millisecond precision, and every record
+// in the store is UTC at nanosecond precision. Correlating the two then costs a
+// timezone conversion and a precision reconciliation before the comparison even
+// starts, which is exactly the work a shared encoding exists to remove.
+func canonicalTimeAttr(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) != 0 || a.Key != slog.TimeKey || a.Value.Kind() != slog.KindTime {
+		return a
+	}
+	return slog.String(slog.TimeKey, recordstamp.Format(a.Value.Time()))
+}
+
+// ledgerStamp renders a STORED RECORD's own timestamp, in the encoding the
+// ledger seals it with. A zero time renders as the empty string, so an absent
+// stamp is omitted rather than printed as year one.
+//
+// It exists because a rendered stamp is read against a stored one. A reader
+// holding a record, a log line and a rendered answer has to be able to line the
+// three up, and they can only do that if all three spell one instant the same
+// way — so this is recordstamp.Format, the same function the ledgers and the
+// logger use.
+//
+// It is NOT for every time the CLI prints. isoTime is, and the difference is
+// which side of the seal the value came from:
+//
+//   - a stamp on a ledger whose seal carries the canonical encoding — fetch,
+//     callgraph, licence, walks, vulnerability records, walk scan runs — is a
+//     ledgerStamp, and printing it at second precision would show a reader less
+//     than the record holds;
+//   - a stamp on a ledger still sealed at whole seconds, an advisory's own
+//     publication or withdrawal date, or an advisory-database snapshot label is
+//     an isoTime. Widening those would print a fraction the record itself does
+//     not carry, which is a stamp a reader cannot find anywhere.
+//
+// It empties a zero time, so it is for a field that is ABSENT when unset. A
+// field that is always on the wire — one a consumer decodes back into the record
+// type — takes recordstamp.Format directly, because "" is not a time any decoder
+// accepts.
+func ledgerStamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return recordstamp.Format(t)
 }
 
 // loadPolicy resolves and loads the effective DepthPolicy for an invocation.

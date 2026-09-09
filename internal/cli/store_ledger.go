@@ -12,6 +12,7 @@ import (
 
 	factsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 )
 
 // storeLedgerFlags are the query shapes the assurance log is asked in. They are
@@ -507,13 +508,19 @@ func parseLedgerTime(flag, value string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// formatLedgerTime renders a timestamp, or the empty string for a zero time so
-// an absent bound is omitted rather than printed as year one.
+// formatLedgerTime renders a timestamp in the encoding the ledgers write, or
+// the empty string for a zero time so an absent bound is omitted rather than
+// printed as year one.
+//
+// The canonical encoding rather than RFC3339Nano, because a rendered stamp is
+// compared against a stored one: RFC3339Nano strips trailing zeros, so it prints
+// one instant at whichever width its digits happen to end at, and a reader
+// matching it against a record has to normalise before they can.
 func formatLedgerTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return recordstamp.Format(t)
 }
 
 // writeLedgerText renders the human form: the log's coverage first, the events

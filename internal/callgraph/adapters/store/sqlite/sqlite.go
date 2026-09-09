@@ -12,6 +12,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -962,7 +963,7 @@ DO NOTHING`
 		// and the sealed record cannot diverge on any row this leg writes.
 		domain2.ForeignModulesColumn(r.ForeignModulesBuilt),
 		r.NodeCount, r.EdgeCount,
-		r.ExtractedAt.UTC().Format(time.RFC3339),
+		recordstamp.Format(r.ExtractedAt),
 		r.ContentHash, blob,
 	)
 	if err != nil {
@@ -1266,12 +1267,14 @@ type generationRow struct {
 // restricted to one analysis root. An empty root imposes no restriction, which
 // is what a read that names no tree means.
 //
-// "Newest" is by insertion order, because extracted_at persists at second
-// precision — the precision the canonical hash covers — and two runs within one
-// second share it.
+// "Newest" falls to insertion order when the timestamps tie, which they do
+// whenever two runs land inside the resolution extracted_at was written at: a
+// fast-fail analysis takes well under a second, and the column held whole
+// seconds before it was widened. The ledger is append-only, so the later append
+// is the later run.
 func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root string) (generationRow, bool, error) {
 	q := `SELECT serialised, content_hash, analysis_root, worktree_scan_digest,
-                 overall_status, completeness, failure_cause, extracted_at, analyser
+                 overall_status, completeness, failure_cause, extracted_at, analyser, rowid
           FROM callgraph_records
           WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	args := []any{coord.Path(), coord.Version(), pipelineVersion}
@@ -1279,23 +1282,27 @@ func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate
 		q += " AND analysis_root = ?"
 		args = append(args, root)
 	}
+	// Ordered on the PARSED time: the column holds a whole second on generations
+	// written before it was widened and a fixed-width fraction after, and TEXT
+	// order puts "…09.5Z" before "…09Z" because '.' precedes 'Z'.
 	q += `
-ORDER BY extracted_at DESC, rowid DESC
+ORDER BY julianday(extracted_at) DESC, rowid DESC
 LIMIT 1`
 
 	var row generationRow
 	var overallStatus int
 	var completeness, failureCause, extractedAt string
+	var rowID int64
 	serr := s.db.DB().QueryRowContext(ctx, q, args...).Scan(
 		&row.blob, &row.hash, &row.root, &row.scanDigest,
-		&overallStatus, &completeness, &failureCause, &extractedAt, &row.analyser)
+		&overallStatus, &completeness, &failureCause, &extractedAt, &row.analyser, &rowID)
 	switch {
 	case errors.Is(serr, sql.ErrNoRows):
 		return generationRow{}, false, nil
 	case serr != nil:
 		return generationRow{}, false, fmt.Errorf("querying latest generation for %s: %w", coord, serr)
 	}
-	rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
+	rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt, rowID)
 	if perr != nil {
 		return generationRow{}, false, perr
 	}
@@ -1321,7 +1328,7 @@ func (s *Store) bestGenerationOfTreeState(ctx context.Context, coord coordinate.
 	if newest.scanDigest == "" {
 		return newest, nil
 	}
-	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser
+	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_root = ? AND worktree_scan_digest = ?`
@@ -1335,12 +1342,13 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		candidate := generationRow{root: newest.root, scanDigest: newest.scanDigest}
 		var overallStatus int
 		var completeness, failureCause, extractedAt string
+		var rowID int64
 		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness,
-			&failureCause, &extractedAt, &candidate.analyser); serr != nil {
+			&failureCause, &extractedAt, &candidate.analyser, &rowID); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return generationRow{}, fmt.Errorf("scanning generation of %s: %w", coord, serr)
 		}
-		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
+		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt, rowID)
 		if perr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the parse error
 			return generationRow{}, perr
@@ -1365,10 +1373,10 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 // it. An unparsable timestamp stops the read: a generation whose time
 // cannot be read cannot be ordered, and defaulting it to the zero time would
 // silently sort it last.
-func rankOfColumns(overallStatus int, completeness, failureCause, extractedAt string) (domain2.GenerationRank, error) {
-	t, err := time.Parse(time.RFC3339, extractedAt)
+func rankOfColumns(overallStatus int, completeness, failureCause, extractedAt string, rowID int64) (domain2.GenerationRank, error) {
+	t, err := recordstamp.Parse(extractedAt)
 	if err != nil {
-		return domain2.GenerationRank{}, fmt.Errorf("parsing extracted_at %q: %w", extractedAt, err)
+		return domain2.GenerationRank{}, fmt.Errorf("parsing extracted_at: %w", err)
 	}
 	return domain2.GenerationRank{
 		Completeness: domain2.CompletenessLevel(completeness),
@@ -1377,7 +1385,10 @@ func rankOfColumns(overallStatus int, completeness, failureCause, extractedAt st
 		// second statement of it.
 		EnvironmentLimited: domain2.EnvironmentLimitedGraph(
 			domain2.CallGraphStatus(overallStatus), domain2.FailureCause(failureCause)),
-		ExtractedAt: t.UTC(),
+		ExtractedAt: t,
+		// The row id is the ledger's append order, which is what decides recency
+		// when two generations share a timestamp.
+		AppendOrder: rowID,
 	}, nil
 }
 
@@ -1395,7 +1406,7 @@ func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleC
 	if root == "" || scanDigest == "" {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser
+	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_root = ? AND worktree_scan_digest = ? AND analysis_source = ?`
@@ -1411,12 +1422,13 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		candidate := generationRow{root: root, scanDigest: scanDigest}
 		var overallStatus int
 		var completeness, failureCause, extractedAt string
+		var rowID int64
 		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness,
-			&failureCause, &extractedAt, &candidate.analyser); serr != nil {
+			&failureCause, &extractedAt, &candidate.analyser, &rowID); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return domain2.CallGraphRecord{}, false, fmt.Errorf("scanning generation of %s: %w", coord, serr)
 		}
-		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
+		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt, rowID)
 		if perr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the parse error
 			return domain2.CallGraphRecord{}, false, perr
@@ -1484,7 +1496,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_source = ? AND worktree_digest = ? AND analysis_root = ?
   AND worktree_scan_digest = ? AND failure_cause = ? AND analyser = ?
   AND node_count = ? AND edge_count = ?
-ORDER BY extracted_at DESC, content_hash DESC`
+ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 	rows, err := s.db.DB().QueryContext(ctx, q,
 		rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
 		string(rec.Algorithm), int(rec.OverallStatus), string(rec.Completeness),
@@ -1610,11 +1622,12 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ? AND analys
 // are both still here, each naming the artefact or the working tree it was
 // computed from.
 //
-// The secondary sort is the row id, not the content hash. extracted_at persists
-// at second precision — that is the precision the canonical hash covers — and
-// two extractions within one second carry the same timestamp. The ledger is
-// append-only, so insertion order is the sequence it actually has, and
-// composition relies on it for a mutating working tree.
+// The secondary sort is the row id, not the content hash. Two extractions can
+// share a timestamp — at whole seconds on every generation written before the
+// column was widened, and at any precision when two runs land inside one tick —
+// and a timestamp sort cannot order those. The ledger is append-only, so
+// insertion order is the sequence it actually has, and composition relies on it
+// both for a mutating working tree and for the ladder's own recency tiebreak.
 func (s *Store) ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.CallGraphRecord, error) {
 	// The zero coordinate names no module, so this is a question about nothing.
 	// Answering it with absence would report "no record here" for a module that
@@ -1624,7 +1637,7 @@ func (s *Store) ListCallGraphRecordsFor(ctx context.Context, coord coordinate.Mo
 	}
 	const q = `SELECT serialised, content_hash, analyser FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY extracted_at ASC, rowid ASC`
+ORDER BY julianday(extracted_at) ASC, rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	if err != nil {
@@ -1816,7 +1829,7 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " ORDER BY extracted_at DESC, rowid DESC"
+	q += " ORDER BY julianday(extracted_at) DESC, rowid DESC"
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
@@ -1955,7 +1968,7 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 	}
 	// The same order ListCallGraphRecords uses, so a caller that swaps one listing
 	// for the other sees the coordinates in the same sequence.
-	q += " ORDER BY extracted_at DESC, rowid DESC"
+	q += " ORDER BY julianday(extracted_at) DESC, rowid DESC"
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {

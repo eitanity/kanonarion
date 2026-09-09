@@ -283,7 +283,7 @@ func printDeclinedIsolatedFrame(stdout io.Writer, rec vuldomain.VulnerabilityRec
 	}
 	_, _ = fmt.Fprintf(stdout,
 		"  Isolated frame (a different question — the module built alone, not the build that consumes it), scanned %s:\n",
-		rec.ScannedAt.UTC().Format(time.RFC3339))
+		ledgerStamp(rec.ScannedAt))
 	for _, l := range lines {
 		_, _ = fmt.Fprintln(stdout, l)
 	}
@@ -494,7 +494,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		// and snapshot may be answers to two different questions rather than a
 		// revision of one, and the dates alone cannot say which.
 		_, _ = fmt.Fprintf(stdout, "  %s  walk=%-26s  snap=%-24s  frame=%-13s  %-26s  %-8s  %s\n",
-			rec.ScannedAt.UTC().Format(time.RFC3339),
+			ledgerStamp(rec.ScannedAt),
 			rec.WalkID,
 			rec.DatabaseSnapshot.Version(),
 			vuldomain.RecordRooting(rec),
@@ -684,7 +684,7 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 			rec.Coordinate.Path()+"@"+rec.Coordinate.Version(),
 			rec.OverallStatus,
 			rec.DatabaseSnapshot.Version(),
-			rec.ScannedAt.UTC().Format(time.RFC3339),
+			ledgerStamp(rec.ScannedAt),
 			generation)
 	}
 	if note := supersededByIDNote(records); note != "" {

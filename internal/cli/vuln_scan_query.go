@@ -110,7 +110,7 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 		}
 		out := make([]entry, 0, len(runs)+len(unreadable))
 		for _, r := range runs {
-			e := entry{ID: r.ID, WalkID: r.WalkID, Status: string(r.OverallStatus), CompletedAt: isoTime(r.CompletedAt)}
+			e := entry{ID: r.ID, WalkID: r.WalkID, Status: string(r.OverallStatus), CompletedAt: ledgerStamp(r.CompletedAt)}
 			if unresolved[r.WalkID] {
 				e.InputsUnresolvable = unresolvableInputsNote(r.WalkID)
 			}
@@ -141,7 +141,7 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 	}
 	for _, r := range runs {
 		line := fmt.Sprintf("%-26s  walk=%-26s  status=%-12s  %s",
-			r.ID, r.WalkID, string(r.OverallStatus), r.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"))
+			r.ID, r.WalkID, string(r.OverallStatus), ledgerStamp(r.CompletedAt))
 		if unresolved[r.WalkID] {
 			line += "  " + unresolvableInputsShort
 		}
@@ -423,8 +423,8 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	}
 	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", run.OverallStatus)
 	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
-	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", run.StartedAt.UTC().Format(time.RFC3339))
-	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", run.CompletedAt.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", ledgerStamp(run.StartedAt))
+	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", ledgerStamp(run.CompletedAt))
 	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
 	_, _ = fmt.Fprintf(stdout, "Advisories:  %s\n", advisoryCountLine(run.Snapshot))
 	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
@@ -805,7 +805,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 			r.ID,
 			string(r.OverallStatus),
 			snap,
-			r.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			ledgerStamp(r.CompletedAt),
 		)
 	}
 	writeUnreadableRuns(stdout, unreadable)

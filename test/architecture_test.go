@@ -464,6 +464,8 @@ func TestApplicationMayImportSharedAdapters(t *testing.T) {
 var sharedValueTypesImportableFromDomain = []string{
 	"internal/coordinate",
 	"internal/gotoolchain",
+	"internal/recordstamp",
+	"internal/versionorder",
 }
 
 // TestDomainMayImportSharedValueTypes is the control on the other side of the
@@ -535,6 +537,12 @@ var sharedInternalExemptions = map[string]string{
 	"gotoolchain": "shared value type: names a fact about a record, shared so that three " +
 		"ledgers render \"not recorded\" the same way; imported from the vuln, iface and " +
 		"callgraph domains, which must not reach an adapter",
+	"recordstamp": "shared value type: the one encoding a record's timestamp takes, shared so that a " +
+		"log line and a stored record carry the same bytes; imported from the fetch, callgraph, licence " +
+		"and walk domains, which must not reach an adapter",
+	"versionorder": "shared value type: the numeric order of a version string, shared so that a version " +
+		"is never ordered as text; imported from the directive, vendortree and local domains, which must " +
+		"not reach an adapter",
 	"audit": "its own documented section: the context-neutral audit-event vocabulary, pure and " +
 		"placed by docs/ARCHITECTURE.md (\"Audit Log\"); the JSONL adapter that persists it is " +
 		"already under internal/adapters",

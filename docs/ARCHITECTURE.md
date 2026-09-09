@@ -391,7 +391,12 @@ enforcing test does not belong in this section.
   `time.Now` and `time.Since`. The context set it walks is derived from the
   tree, so a context added later is covered without editing the test.
 - **Canonical serialisation** uses sorted JSON keys, RFC3339 UTC timestamps,
-  and fixed field ordering. Maps that must serialise (e.g. per-node results)
+  and fixed field ordering. A timestamp is encoded by `internal/recordstamp`:
+  UTC, with a fixed-width nine-digit fraction when the value carries one and a
+  whole second when it does not. Fixed width because a stamp is also a sort key
+  and `time.RFC3339Nano` trims trailing zeros; precision that follows the value
+  because that is what lets records sealed before the widening recompute their
+  own hashes unchanged. Maps that must serialise (e.g. per-node results)
   are emitted as sorted arrays of `(key, value)` pairs, since maps have no
   canonical JSON order. Enforced by `TestCanonicalShape_IsPinned`, which every
   record domain runs against a golden file of the exact bytes it seals, so a

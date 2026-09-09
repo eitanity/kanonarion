@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
@@ -248,7 +249,7 @@ DO NOTHING`
 	_, err = s.db.DB().ExecContext(ctx, q,
 		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		r.PrimarySPDX, r.Expression, int(r.OverallStatus), int(r.CopyrightStatus), int(r.Provenance.Confidence),
-		r.ExtractedAt.UTC().Format(time.RFC3339),
+		recordstamp.Format(r.ExtractedAt),
 		r.ContentHash, blob,
 	)
 	if err != nil {
@@ -292,12 +293,11 @@ func (s *Store) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoo
 // naming the artefact it was computed from, after a later extraction has changed
 // the served answer.
 //
-// The secondary sort is the row id, not the content hash. extracted_at persists
-// at second precision — that is the precision the canonical hash covers, so
-// widening the column would put the stored hashes and the stored time out of
-// step — and two extractions within one second carry the same timestamp. The
-// ledger is append-only, so insertion order is the sequence it actually has, and
-// composition relies on it for local coordinates.
+// The secondary sort is the row id, not the content hash. Two extractions can
+// share a timestamp, at whole seconds on every row written before the column and
+// the seal were widened together and at any precision when two land inside one
+// tick. The ledger is append-only, so insertion order is the sequence it actually
+// has, and composition relies on it for local coordinates.
 func (s *Store) ListLicenseRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.LicenseRecord, error) {
 	// The zero coordinate names no module, so this is a question about nothing.
 	// Answering it with absence would report "no record here" for a module that
@@ -307,7 +307,7 @@ func (s *Store) ListLicenseRecordsFor(ctx context.Context, coord coordinate.Modu
 	}
 	const q = `SELECT serialised FROM licence_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY extracted_at ASC, rowid ASC`
+ORDER BY julianday(extracted_at) ASC, rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	if err != nil {
@@ -392,7 +392,7 @@ func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.LicenseReco
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND primary_spdx = ? AND spdx_expression = ? AND overall_status = ?
   AND copyright_status = ? AND provenance_confidence = ?
-ORDER BY extracted_at DESC, content_hash DESC`
+ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 	rows, err := s.db.DB().QueryContext(ctx, q,
 		rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
 		rec.PrimarySPDX, rec.Expression, int(rec.OverallStatus),
@@ -578,7 +578,7 @@ func buildListQuery(f ports.LicenseFilter) (string, []any) {
 	}
 	// No LIMIT or OFFSET here: paging happens after the collapse, on modules
 	// rather than rows.
-	q += " ORDER BY extracted_at DESC, rowid DESC"
+	q += " ORDER BY julianday(extracted_at) DESC, rowid DESC"
 	return q, args
 }
 

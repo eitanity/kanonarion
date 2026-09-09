@@ -456,7 +456,7 @@ func isolatedAsideFor(rec vuldomain.VulnerabilityRecord, has bool, vulnID string
 		Fidelity:          f.Reachable.DerivedBy.Fidelity,
 		Soundness:         soundness,
 		SoundnessReason:   soundnessReason,
-		ScannedAt:         rec.ScannedAt.UTC().Format(time.RFC3339),
+		ScannedAt:         ledgerStamp(rec.ScannedAt),
 	}
 }
 
@@ -735,7 +735,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 			// output of a reachability analyser. Naming one would attribute an
 			// answer to an instrument that was never consulted.
 			Method:    reachabilityMethodNone,
-			ScannedAt: rec.ScannedAt.UTC().Format(time.RFC3339),
+			ScannedAt: ledgerStamp(rec.ScannedAt),
 		}, nil
 	}
 
@@ -760,7 +760,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 			// retraction is read off the advisory, not computed.
 			Method:      reachabilityMethodNone,
 			WithdrawnAt: f.WithdrawnAt.UTC().Format(time.RFC3339),
-			ScannedAt:   rec.ScannedAt.UTC().Format(time.RFC3339),
+			ScannedAt:   ledgerStamp(rec.ScannedAt),
 		}, nil
 	}
 
@@ -814,7 +814,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		SoundnessReason:   soundnessReason,
 		Routes:            routes,
 		RouteRoot:         firstRouteRoot(routes),
-		ScannedAt:         rec.ScannedAt.UTC().Format(time.RFC3339),
+		ScannedAt:         ledgerStamp(rec.ScannedAt),
 	}, nil
 }
 

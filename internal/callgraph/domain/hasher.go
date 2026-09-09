@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -696,7 +697,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		Edges:                    cEdges,
 		ExclusionList:            exclusions,
 		ExclusionReason:          r.ExclusionReason,
-		ExtractedAt:              r.ExtractedAt.UTC().Format(time.RFC3339),
+		ExtractedAt:              recordstamp.Format(r.ExtractedAt),
 		FailedPackages:           failedPkgs,
 		FailureCause:             string(r.FailureCause),
 		FailureDetail:            r.FailureDetail,

@@ -397,10 +397,29 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 		candidates = resolved
 	}
 
-	ordered := make([]CallGraphRecord, len(candidates))
-	copy(ordered, candidates)
-	sort.SliceStable(ordered, func(i, j int) bool { return servesBefore(ordered[i], ordered[j]) })
-	return ordered[0], nil
+	// Ranked by position rather than sorted, because the position IS one of the
+	// ranking keys: candidates arrive in append order and every filter above
+	// preserves it, so index i is generation i of this coordinate.
+	ranks := ranksInAppendOrder(candidates)
+	best := 0
+	for i := 1; i < len(candidates); i++ {
+		if ranks[i].ServesBefore(ranks[best]) {
+			best = i
+		}
+	}
+	return candidates[best], nil
+}
+
+// ranksInAppendOrder projects each record onto its ordering key, taking its
+// position in the slice as its append order. Callers must pass records in the
+// order the ledger appended them — see GenerationRank.AppendOrder.
+func ranksInAppendOrder(records []CallGraphRecord) []GenerationRank {
+	out := make([]GenerationRank, len(records))
+	for i, r := range records {
+		out[i] = RankOf(r)
+		out[i].AppendOrder = int64(i)
+	}
+	return out
 }
 
 // LatestObservation returns the record that describes a working tree as it is
@@ -437,8 +456,9 @@ func LatestObservation(records []CallGraphRecord) CallGraphRecord {
 	if last.WorktreeScanDigest == "" {
 		return last
 	}
-	best := last
-	for _, r := range records {
+	ranks := ranksInAppendOrder(records)
+	best := len(records) - 1
+	for i, r := range records {
 		if r.WorktreeScanDigest != last.WorktreeScanDigest {
 			continue
 		}
@@ -449,11 +469,11 @@ func LatestObservation(records []CallGraphRecord) CallGraphRecord {
 		if r.AnalysisRoot != last.AnalysisRoot {
 			continue
 		}
-		if RankOf(r).ServesBefore(RankOf(best)) {
-			best = r
+		if ranks[i].ServesBefore(ranks[best]) {
+			best = i
 		}
 	}
-	return best
+	return records[best]
 }
 
 // GenerationRank is the ordering key of one generation: completeness first, then
@@ -485,6 +505,20 @@ type GenerationRank struct {
 	// failed — see EnvironmentLimitedGraph.
 	EnvironmentLimited bool
 	ExtractedAt        time.Time
+	// AppendOrder is the generation's position in the ledger, and it is what
+	// decides recency below the resolution the timestamp has.
+	//
+	// Two generations of one coordinate can share extracted_at: a fast-fail
+	// analysis writes in well under a second, so a retry loop or a scripted
+	// re-analysis lands both inside one tick of whatever precision the column
+	// was written at. "Newest" then had no answer and the rank fell through to
+	// the content hash, which orders by an arbitrary digest rather than by time.
+	// The ledger is append-only, so insertion order IS the sequence, and the
+	// later append is the later run.
+	//
+	// A caller that has no append order leaves it zero, and the content hash
+	// still decides. That is not authority either — see ContentHash.
+	AppendOrder int64
 	// ContentHash is the last resort. It is not authority and is not claimed to be
 	// — it is here so the served record does not depend on the order rows happen
 	// to come back in.
@@ -523,6 +557,9 @@ func (g GenerationRank) ServesBefore(o GenerationRank) bool {
 	}
 	if !g.ExtractedAt.Equal(o.ExtractedAt) {
 		return g.ExtractedAt.After(o.ExtractedAt)
+	}
+	if g.AppendOrder != o.AppendOrder {
+		return g.AppendOrder > o.AppendOrder
 	}
 	return g.ContentHash < o.ContentHash
 }
@@ -646,9 +683,9 @@ func analysedIn(records []CallGraphRecord, root string) bool {
 //
 // Order is not cosmetic here: composition serves the LAST observation of a
 // mutating working tree, and that is by position rather than by timestamp
-// because extracted_at persists at second precision. Rebuilding a group by
-// concatenating subsets would put a legacy record after a newer one and hand
-// back a graph the tree no longer has.
+// because two extractions can share one. Rebuilding a group by concatenating
+// subsets would put a legacy record after a newer one and hand back a graph the
+// tree no longer has.
 func inAppendOrder(all, a, b []CallGraphRecord) []CallGraphRecord {
 	keep := make(map[string]bool, len(a)+len(b))
 	for _, r := range a {
@@ -1407,11 +1444,6 @@ func claimsTheModulesGraph(r CallGraphRecord) bool {
 		return false
 	}
 	return statesAGraph(r)
-}
-
-// servesBefore orders two records by which should be served first.
-func servesBefore(a, b CallGraphRecord) bool {
-	return RankOf(a).ServesBefore(RankOf(b))
 }
 
 // preferredToolchain narrows a refused group to the toolchain a reader named,

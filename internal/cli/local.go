@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -165,7 +164,7 @@ func localDerivation(result cgapp.ExtractResult) derivationJSON {
 // reusedRecordDate is when the served record was taken, in the one spelling the
 // line and the field both use.
 func reusedRecordDate(result cgapp.ExtractResult) string {
-	return result.Record.ExtractedAt.UTC().Format(time.RFC3339)
+	return ledgerStamp(result.Record.ExtractedAt)
 }
 
 const (

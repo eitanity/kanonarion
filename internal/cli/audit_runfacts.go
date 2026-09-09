@@ -157,7 +157,7 @@ func auditWalkOf(d auditDerivation) auditWalkJSON {
 		Resolved:    true,
 		ID:          d.walkRecord.ID,
 		Reused:      d.walkReused,
-		CompletedAt: d.walkRecord.CompletedAt.UTC().Format(time.RFC3339),
+		CompletedAt: ledgerStamp(d.walkRecord.CompletedAt),
 	}
 }
 

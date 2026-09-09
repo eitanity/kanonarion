@@ -102,9 +102,9 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 	// first established versus the run that last re-confirmed it. The reader, not
 	// kanonarion, judges whether that is acceptably fresh.
 	if !rec.FirstScannedAt.IsZero() {
-		_, _ = fmt.Fprintf(stdout, "  First validated: %s\n", rec.FirstScannedAt.UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(stdout, "  First validated: %s\n", ledgerStamp(rec.FirstScannedAt))
 	}
-	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", rec.ScannedAt.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", ledgerStamp(rec.ScannedAt))
 	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version())
 	_, _ = fmt.Fprintf(stdout, "  Advisories:      %s\n", advisoryCountLine(rec.DatabaseSnapshot))
 	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {

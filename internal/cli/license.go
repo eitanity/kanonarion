@@ -365,7 +365,7 @@ func runLicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, u
 			spdx = "-"
 		}
 		if _, werr := fmt.Fprintf(stdout, "%s %s  %-20s conf=%.2f  %s\n    artefact: %s\n    record:   %s\n",
-			marker, r.ExtractedAt.UTC().Format(time.RFC3339), spdx, r.PrimaryConfidence,
+			marker, ledgerStamp(r.ExtractedAt), spdx, r.PrimaryConfidence,
 			r.OverallStatus.String(), artefact, r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	application2 "github.com/eitanity/kanonarion/internal/vuln/application"
@@ -940,8 +941,11 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(vulnScanRunDocument{
-			vulnScanDocument: vulnScanDocument{WalkScanRun: run, Reachability: reach},
-			Toolchain:        toolchain,
+			vulnScanDocument: vulnScanDocument{
+				WalkScanRun: run, Reachability: reach,
+				StartedAt: recordstamp.Format(run.StartedAt), CompletedAt: recordstamp.Format(run.CompletedAt),
+			},
+			Toolchain: toolchain,
 		}); err != nil {
 			return fmt.Errorf("encoding JSON output: %w", err)
 		}

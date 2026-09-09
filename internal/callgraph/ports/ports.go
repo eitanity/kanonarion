@@ -7,6 +7,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -549,8 +550,21 @@ func CallEdgeRefLess(a, b CallEdgeRef) bool {
 	if a.ModulePath != b.ModulePath {
 		return a.ModulePath < b.ModulePath
 	}
+	// Both version legs are read as versions, not as text. This comparator is not
+	// only a serialisation tiebreak — it orders the transitive traversal
+	// `callers`/`callees --transitive` renders — and a reader shown "v10" above
+	// "v9" is being shown the wrong order. The raw comparison stays behind each
+	// as the fallback that keeps the order total: two versions that state the
+	// same number, or neither of which states one, still have to be separated,
+	// which is this comparator's documented contract.
+	if c := versionorder.CompareModuleVersions(a.ModuleVersion, b.ModuleVersion); c != 0 {
+		return c < 0
+	}
 	if a.ModuleVersion != b.ModuleVersion {
 		return a.ModuleVersion < b.ModuleVersion
+	}
+	if c := versionorder.ComparePipelineVersions(a.PipelineVersion, b.PipelineVersion); c != 0 {
+		return c < 0
 	}
 	if a.PipelineVersion != b.PipelineVersion {
 		return a.PipelineVersion < b.PipelineVersion

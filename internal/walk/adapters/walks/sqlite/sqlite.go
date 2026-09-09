@@ -15,6 +15,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -297,8 +298,8 @@ ON CONFLICT (id) DO UPDATE SET
 
 	_, err = s.db.DB().ExecContext(ctx, q,
 		rec.ID, rec.Target.Path(), rec.Target.Version(),
-		rec.StartedAt.UTC().Format(time.RFC3339),
-		rec.CompletedAt.UTC().Format(time.RFC3339),
+		recordstamp.Format(rec.StartedAt),
+		recordstamp.Format(rec.CompletedAt),
 		int(rec.OverallStatus),
 		rec.PipelineVersion, rec.Operator, rec.ContentHash,
 		nodeCount, failureCount, scope, depth, rec.ProjectDir, rec.IdentityHash,
@@ -493,12 +494,18 @@ func (s *Store) ListWalks(ctx context.Context, filter walkports.WalkFilter) ([]w
 func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	var q string
 	if f.LatestOnly {
+		// Both sides read the column at fixed width. It holds a whole second on
+		// walks recorded before the stamp was widened and a fraction after, and a
+		// bare MAX over TEXT returns the EARLIER of two spellings of one second —
+		// so "the latest walk of this target" would name an older one. Comparing
+		// the padded strings is exact, where a numeric conversion would make two
+		// walks microseconds apart indistinguishable.
 		q = `SELECT id, target_path, target_version, started_at, completed_at,
 	             overall_status, node_count, failure_count, scope, depth, identity_hash,
 	             goos, goarch, go_version
 	      FROM walks w1
-	      WHERE started_at = (
-	          SELECT MAX(started_at) FROM walks w2
+	      WHERE ` + sqlitestore.SortableStamp("w1.started_at") + ` = (
+	          SELECT MAX(` + sqlitestore.SortableStamp("w2.started_at") + `) FROM walks w2
 	          WHERE w2.target_path = w1.target_path AND w2.target_version = w1.target_version
 	          AND w2.scope = w1.scope
 	          AND w2.goos = w1.goos AND w2.goarch = w1.goarch
@@ -517,13 +524,17 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 		conditions = append(conditions, "target_path = ? AND target_version = ?")
 		args = append(args, f.Target.Path(), f.Target.Version())
 	}
+	// Compared as PARSED times, not as text. The column holds a whole second on
+	// walks recorded before it was widened and a fixed-width fraction after, and
+	// "…00.5Z" sorts before "…00Z" as text — so a text bound drops a walk that is
+	// inside the window in the second the bound names.
 	if f.Since != nil {
-		conditions = append(conditions, "started_at >= ?")
-		args = append(args, f.Since.UTC().Format(time.RFC3339))
+		conditions = append(conditions, "julianday(started_at) >= julianday(?)")
+		args = append(args, recordstamp.Format(*f.Since))
 	}
 	if f.Until != nil {
-		conditions = append(conditions, "started_at <= ?")
-		args = append(args, f.Until.UTC().Format(time.RFC3339))
+		conditions = append(conditions, "julianday(started_at) <= julianday(?)")
+		args = append(args, recordstamp.Format(*f.Until))
 	}
 	if f.OverallStatus != nil {
 		conditions = append(conditions, "overall_status = ?")
@@ -573,7 +584,7 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	// walks can share it; without a tiebreak the row order within a second is
 	// whatever the query plan produced, and a page boundary falling inside one
 	// can repeat a row or drop it.
-	q += " ORDER BY started_at DESC, id DESC"
+	q += " ORDER BY julianday(started_at) DESC, id DESC"
 	if f.Limit > 0 {
 		q += " LIMIT ?"
 		args = append(args, f.Limit)

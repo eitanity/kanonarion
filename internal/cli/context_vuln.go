@@ -490,19 +490,19 @@ func walkCoverageCaveat(run vuldomain.WalkScanRun) string {
 
 func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCoverage string) contextVulnerabilities {
 	out := contextVulnerabilities{
-		ExtractedAt:     isoTime(rec.ScannedAt),
+		ExtractedAt:     ledgerStamp(rec.ScannedAt),
 		Status:          string(rec.OverallStatus),
 		WalkStatus:      walkStatus,
 		WalkCoverage:    walkCoverage,
 		Reason:          rec.UnscannableReason,
 		WalkID:          rec.WalkID,
 		Frame:           string(vuldomain.RecordRooting(*rec)),
-		LastValidatedAt: isoTime(rec.ScannedAt),
+		LastValidatedAt: ledgerStamp(rec.ScannedAt),
 		SnapshotVersion: rec.DatabaseSnapshot.Version(),
 		PipelineVersion: rec.PipelineVersion,
 	}
 	if !rec.FirstScannedAt.IsZero() {
-		out.FirstValidatedAt = isoTime(rec.FirstScannedAt)
+		out.FirstValidatedAt = ledgerStamp(rec.FirstScannedAt)
 	}
 	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
 		out.SnapshotRetrievedAt = isoTime(rec.DatabaseSnapshot.RetrievedAt())

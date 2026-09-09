@@ -11,34 +11,34 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
-// fetchedAtFormat is how a measurement's time is PERSISTED: RFC3339 in UTC with
-// a fixed-width nanosecond fraction, matching domain.CanonicalTimeFormat.
+// fetchedAtFormat is how a measurement's time is PERSISTED: the canonical
+// encoding recordstamp owns, written at full width unconditionally.
+//
+// Unconditionally, unlike the sealed record's own encoding, because this column
+// is part of the row's primary key. A row already in the store was keyed on the
+// nine-digit form, and a writer that spelled a whole second differently would
+// key a re-put of that record somewhere else and append a duplicate instead of
+// colliding with it.
 //
 // Sub-second resolution is for forensics. A second-precision timestamp cannot
 // order two measurements taken within one second, and correlating the ledger
 // against the assurance log or an external trace is exactly the situation where
 // that ordering is the question being asked.
 //
-// The fraction is FIXED WIDTH — nine digits always — because SQLite orders a
-// TEXT column lexicographically and time.RFC3339Nano strips trailing zeros. With
-// a variable-width fraction "…T12:00:00Z" sorts AFTER "…T12:00:00.123Z" ('Z' is
-// 0x5A, '.' is 0x2E), so the ledger's own sequence would come back reversed
-// within a second.
-//
 // Records written before sub-second measurement existed are NOT rewritten into
 // this form. Their stored hashes cover a second-precision time, so rewriting the
-// column would be a rehash of the whole store; the canonical encoding follows
-// the value instead, and those records keep verifying untouched. The two
-// generations differ in width, so a legacy row and a new row sharing one second
-// would sort by width rather than by time — reachable only in the second that
-// spans the upgrade, and rowid is the tiebreaker the sequence actually relies on.
-const fetchedAtFormat = "2006-01-02T15:04:05.000000000Z07:00"
+// column would be a rehash of the whole store; the encoding follows the value
+// instead, and those records keep verifying untouched. Reads order on the parsed
+// time so the two generations cannot invert against each other — see
+// listFetchRecords.
+const fetchedAtFormat = recordstamp.Layout
 
 // Store is the SQLite-backed fact store.
 type Store struct {
@@ -359,11 +359,12 @@ const (
 // ListFetchRecords returns every measurement held for the coordinate and
 // pipeline version, in the order they were appended.
 //
-// The secondary sort is the row id, not the content hash. fetched_at persists at
-// second precision, so two measurements taken within one second carry the same
-// timestamp and a timestamp sort cannot order them; insertion order is what an
-// append-only ledger actually has, and composition relies on it for coordinates
-// whose content is not pinned. It satisfies the optional
+// The secondary sort is the row id, not the content hash. Two measurements can
+// share a timestamp — at second precision because the column once held one, and
+// at any precision because two writes can land inside the resolution the read
+// can resolve — and a timestamp sort cannot order those; insertion order is what
+// an append-only ledger actually has, and composition relies on it for
+// coordinates whose content is not pinned. It satisfies the optional
 // ports.FactRecordLister capability, which the write path needs in order to
 // inherit validation legs from earlier measurements of the same artefact.
 func (s *Store) ListFetchRecords(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.FactRecord, error) {
@@ -392,8 +393,14 @@ WHERE module_path = ? AND module_version = ?`
 		q += ` AND pipeline_version = ?`
 		args = append(args, pipelineVersion)
 	}
+	// Ordered on the PARSED time, not on the text. The column holds two
+	// generations of encoding — a whole second before sub-second measurement
+	// existed, a fixed-width fraction after — and TEXT order puts "…52.801Z"
+	// before "…52Z" because '.' precedes 'Z'. julianday reads both, and rowid
+	// carries the sub-microsecond order it cannot resolve: the ledger is
+	// append-only, so insertion order IS the sequence.
 	q += `
-ORDER BY fetched_at ASC, rowid ASC`
+ORDER BY julianday(fetched_at) ASC, rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {

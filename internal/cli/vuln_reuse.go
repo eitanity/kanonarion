@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"time"
 
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -62,7 +61,7 @@ func recordReachabilityVerdicts(rec vulndomain.VulnerabilityRecord) int {
 // because there is then no answer for it to qualify.
 func reusedScanLine(run vulndomain.WalkScanRun, verdicts int) string {
 	line := fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s@%s; nothing was re-scanned",
-		run.ID, run.CompletedAt.UTC().Format(time.RFC3339),
+		run.ID, ledgerStamp(run.CompletedAt),
 		run.Snapshot.Source(), run.Snapshot.Version())
 	if verdicts > 0 {
 		line += fmt.Sprintf(", and its %d reachability answer%s came from the source that run read, which this run did not re-read",
@@ -102,4 +101,15 @@ type vulnScanReachability struct {
 type vulnScanDocument struct {
 	vulndomain.WalkScanRun
 	Reachability vulnScanReachability `json:"reachability_basis"`
+	// StartedAt and CompletedAt shadow the embedded time.Time fields so the run's
+	// stamps go out in the ledger's own encoding rather than through
+	// encoding/json's RFC3339Nano, which strips trailing zeros and so spells one
+	// instant at whichever width its digits happen to end at. Same instant, one
+	// width, and the stored record is untouched — see vulnRecordJSON.
+	//
+	// Both are always on the wire, as they are on the run, so a zero one renders
+	// as the zero instant and not as the empty string: a consumer decodes this
+	// document back into WalkScanRun, and "" is not a time any decoder accepts.
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at"`
 }

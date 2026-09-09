@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/spf13/cobra"
@@ -160,7 +159,7 @@ func writeCallGraphListRow(stdout io.Writer, c ports.CallGraphCoordinate) error 
 		head.OverallStatus.String(), head.NodeCount, head.EdgeCount)
 	if len(c.Generations) > 1 {
 		line += fmt.Sprintf("  [%d generations; counts from %s]",
-			len(c.Generations), head.ExtractedAt.Format(time.RFC3339))
+			len(c.Generations), ledgerStamp(head.ExtractedAt))
 	}
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing summary: %w", err)
@@ -239,11 +238,11 @@ func callGraphListJSON(c ports.CallGraphCoordinate) callGraphListEntry {
 		return e
 	}
 	if !c.GenerationsDiffer {
-		e.CountsFrom = head.ExtractedAt.Format(time.RFC3339)
+		e.CountsFrom = ledgerStamp(head.ExtractedAt)
 	}
 	for _, g := range c.Generations {
 		e.Generations = append(e.Generations, callGraphGenerationJSON{
-			ExtractedAt: g.ExtractedAt.Format(time.RFC3339),
+			ExtractedAt: ledgerStamp(g.ExtractedAt),
 			Status:      g.OverallStatus.String(),
 			NodeCount:   g.NodeCount,
 			EdgeCount:   g.EdgeCount,
