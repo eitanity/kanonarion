@@ -33,11 +33,16 @@ type ToolchainConflict struct {
 // Error renders the conflict as a message. ToolchainConflict satisfies error so
 // the store can return it directly.
 func (c ToolchainConflict) Error() string {
+	// 'vuln-scan-rescan' takes a walk id, which a conflict between two records
+	// does not hold; naming it bare printed a line that exits 20. The history
+	// read takes the coordinate this conflict is about and names the walk each
+	// record was measured in, which is what the rescan then needs.
 	return fmt.Sprintf(
 		"conflicting vulnerability records for %s: two Go toolchains scanned it (%v; records %v). "+
-			"A scan's reachable set is the toolchain's, so neither answer supersedes the other — "+
-			"re-scan under the toolchain you are using:\n  kanonarion vuln-scan-rescan",
-		c.Coordinate, c.Values, c.ContentHashes)
+			"A scan's reachable set is the toolchain's, so neither answer supersedes the other. "+
+			"Each record names the walk it was measured in; re-scan that walk under the toolchain "+
+			"you are using with 'kanonarion vuln-scan-rescan':\n  kanonarion vuln-show %s --history",
+		c.Coordinate, c.Values, c.ContentHashes, c.Coordinate)
 }
 
 // findToolchainConflict reports two toolchains that reached DIFFERENT verdicts

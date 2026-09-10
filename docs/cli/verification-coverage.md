@@ -40,9 +40,14 @@ anything.
 
 ```
 kanonarion verification-coverage <walk-id> [--detail] [--json]
+kanonarion verification-coverage --walk-id <id> [--detail] [--json]
 ```
 
-The walk id is one `kanonarion walk-list` prints. An `audit` run leaves its
+The walk id is one `kanonarion walk-list` prints. It goes in the positional slot
+or on `--walk-id`, whichever you reach for - `vuln-by-id`, `reachability` and
+`vuln-show` spell it as a flag, and both spellings answer identically here.
+Giving both is refused rather than resolved by precedence, because the two
+values may name different walks. An `audit` run leaves its
 project walk behind, so the walk this command reports on is the same graph the
 audit reported on.
 

@@ -104,9 +104,18 @@ func resolveLicenceBasis(
 	// identity IS reported, rather than a remedy that would leave this answer
 	// exactly where it is on the next run.
 	if isStdlibPath(path) {
+		// The chain of custody is keyed by toolchain version, so the line that
+		// reports it needs one. A version named on the command line is in hand and
+		// goes into the line; with none there is nothing to put there, so the
+		// sentence names the command instead of printing a line that exits 20.
+		if version == "" {
+			return licenceBasis{}, false, "the standard library holds no licence record — " +
+				"its licence identity comes from the recorded chain of custody, which " +
+				"'kanonarion license' reports one toolchain version at a time; no version was named here"
+		}
 		return licenceBasis{}, false, "the standard library holds no licence record — " +
 			"its licence identity comes from the recorded chain of custody, reported by: " +
-			"kanonarion license " + path + "@<version>"
+			"kanonarion license " + path + "@" + version
 	}
 	if version != "" {
 		coord, cerr := coordinate.NewModuleCoordinate(path, version)

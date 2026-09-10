@@ -86,6 +86,19 @@ that is tight on memory.`,
 			if (f.tool || f.project) && len(args) > 0 {
 				return fmt.Errorf("--tool and --project apply to a go.mod scan, not a positional module argument")
 			}
+			// A walk id has a decidable shape, so it is refused as one rather than
+			// parsed as a module path — which produced "use <id>@latest", advice
+			// whose second failure was the reader following it. inspect is the
+			// command that PRODUCES a walk; the stages that consume one are named
+			// instead.
+			if len(args) == 1 && looksLikeWalkID(args[0]) {
+				return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+					"%q is a walk id, and inspect takes a module coordinate or a go.mod: it RUNS the walk "+
+						"that produces one. To run the remaining stages over a walk that already exists:"+
+						"\n  kanonarion extract %s\n  kanonarion vuln-scan %s\nor read it with:"+
+						"\n  kanonarion walk-show %s",
+					args[0], args[0], args[0], args[0])}
+			}
 			// With no positional module, default to a go.mod scan; --gomod
 			// defaults to ./go.mod via resolveGoModPath.
 			if f.gomodPath != "" || len(args) == 0 {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -199,7 +200,11 @@ func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphU
 	for v := range analysed {
 		versions = append(versions, v)
 	}
-	sort.Strings(versions)
+	// Newest first, semantically: a text sort puts v1.10.0 below v1.9.0 and then
+	// names it as the version to use.
+	sort.Slice(versions, func(i, j int) bool {
+		return versionorder.CompareModuleVersions(versions[i], versions[j]) > 0
+	})
 
 	inBuild := sc.modules.VersionsOf(modulePath)
 	switch {
@@ -267,7 +272,14 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 	if known {
 		return nil // analysed, genuinely zero edges
 	}
-	return errors.New(unknownNodeMessage(symbolID, modulePath))
+	versions := analysedVersionsOf(modulePath, coords)
+	if len(versions) == 0 {
+		// moduleServedAtThisPipeline reported the module served, so there is a
+		// version; with none there is no coordinate to name, and the
+		// never-analysed refusal is the one that stays runnable.
+		return unresolvedSymbolError(symbolID)
+	}
+	return errors.New(unknownNodeMessage(symbolID, modulePath, versions))
 }
 
 // partialRoot is how a Partial call graph bears on a query rooted at one symbol.
@@ -810,13 +822,39 @@ func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, 
 // but which is not a node in the stored call graph: distinct from
 // the module-never-analysed case so the user knows analysis ran and the symbol
 // itself is the problem.
-func unknownNodeMessage(symbolID, modulePath string) string {
+//
+// versions are the analysed versions of the module, newest first. They are
+// carried because callgraph-show takes a coordinate: naming the path alone
+// prints a line that exits 20, and where the store holds several versions the
+// reader also has to be told which ones exist to pick between them.
+func unknownNodeMessage(symbolID, modulePath string, versions []string) string {
+	held := ""
+	if len(versions) > 1 {
+		held = fmt.Sprintf("; analysed versions in the store are %s", strings.Join(versions, ", "))
+	}
 	return fmt.Sprintf(
 		"symbol %q is not a node in the analysed call graph of module %q: "+
-			"it may be a typo, or unexported/unreachable code. Verify the "+
+			"it may be a typo, or unexported/unreachable code%s. Verify the "+
 			"symbol, or list the module's known symbols:\n"+
-			"  kanonarion callgraph-show %s",
-		symbolID, modulePath, modulePath)
+			"  kanonarion callgraph-show %s@%s",
+		symbolID, modulePath, held, modulePath, versions[0])
+}
+
+// analysedVersionsOf are the versions of modulePath among coords, newest first.
+func analysedVersionsOf(modulePath string, coords []ports.CallGraphCoordinate) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, c := range coords {
+		if c.ModulePath != modulePath || seen[c.ModuleVersion] {
+			continue
+		}
+		seen[c.ModuleVersion] = true
+		out = append(out, c.ModuleVersion)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return versionorder.CompareModuleVersions(out[i], out[j]) > 0
+	})
+	return out
 }
 
 // unresolvedSymbolError builds the intent-aware diagnostic for a symbol whose

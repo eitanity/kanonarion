@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -47,6 +48,16 @@ func resolveDependentsRoot(
 		if err := refuseInapplicableFlags("dependents --any-build", dependentsScopeFlags(f)); err != nil {
 			return walkContainment{}, walkdomain.WalkRecord{}, err
 		}
+		if !coord.HasVersion() {
+			// --any-build searches for the build holding ONE coordinate. A bare path
+			// is answered across the versions a build resolved, which needs the
+			// build named first: there is no frame here to read them out of.
+			return walkContainment{}, walkdomain.WalkRecord{}, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--any-build searches for a build holding one coordinate, and %q names a path: "+
+					"give the version to search for, or name the build and let it resolve the versions:"+
+					"\n  kanonarion dependents %s --gomod %s",
+				coord.Path(), coord.Path(), defaultGoModPath)}
+		}
 		found, err := findWalkContaining(ctx, walks, coord,
 			fmt.Sprintf("kanonarion dependents %s --walk-id <walk of that build>", coord))
 		if err != nil {
@@ -83,7 +94,7 @@ func resolveDependentsRoot(
 		return walkContainment{}, walkdomain.WalkRecord{}, err
 	}
 	containment := gomodContainment(choice, rec, scope)
-	if !graphHolds(rec.Graph, coord) {
+	if !graphHoldsTarget(rec.Graph, coord) {
 		return walkContainment{}, walkdomain.WalkRecord{},
 			buildLacksModule(ctx, walks, rec, coord, containment.build, gomodPath)
 	}
@@ -122,7 +133,7 @@ func noDependentsRoot(coord coordinate.ModuleCoordinate) error {
 			"\n  --gomod %s    answer from the latest project walk for that go.mod (add --tool or --project for another scope)"+
 			"\n  --walk-id <id>      answer from one stored walk (kanonarion walk-list lists them)"+
 			"\n  --any-build         search this store for a build that holds %s",
-		defaultGoModPath, coord)}
+		defaultGoModPath, dependentsTargetText(coord))}
 }
 
 // buildLacksModule is the refusal for a rooted question whose build does not
@@ -145,7 +156,8 @@ func buildLacksModule(
 	coord coordinate.ModuleCoordinate,
 	build, gomodPath string,
 ) error {
-	msg := fmt.Sprintf("%s, rooted at %s, does not contain %s", build, rec.Target, coord)
+	target := dependentsTargetText(coord)
+	msg := fmt.Sprintf("%s, rooted at %s, does not contain %s", build, rec.Target, target)
 	if versions := graphVersionsOf(rec.Graph, coord.Path()); len(versions) > 0 {
 		msg += fmt.Sprintf("; it resolved %s at %s", coord.Path(), strings.Join(versions, ", "))
 	}
@@ -153,11 +165,16 @@ func buildLacksModule(
 	switch {
 	case len(holding) > 0:
 		msg += fmt.Sprintf("; the store holds it in the %s of %s — ask there:\n  kanonarion dependents %s --gomod %s%s",
-			joinHoldingBuilds(holding), rec.Target, coord, gomodPath, holding[0].flag)
-	default:
+			joinHoldingBuilds(holding), rec.Target, target, gomodPath, holding[0].flag)
+	case coord.HasVersion():
 		msg += fmt.Sprintf("; no current build of %s holds it either — the newest walk of each scope and "+
 			"platform was checked, and an older one still may, so search them all with:"+
-			"\n  kanonarion dependents %s --any-build", rec.Target, coord)
+			"\n  kanonarion dependents %s --any-build", rec.Target, target)
+	default:
+		// --any-build takes a coordinate, so a bare path cannot be offered it.
+		msg += fmt.Sprintf("; no current build of %s holds any version of it either — the newest walk of "+
+			"each scope and platform was checked, and an older one still may:"+
+			"\n  kanonarion walk-list --limit 0", rec.Target)
 	}
 	return &exitError{code: ExitConfig, msg: msg}
 }
@@ -270,6 +287,10 @@ func graphVersionsOf(g walkdomain.Graph, path string) []string {
 		seen[n.Coordinate.Version()] = struct{}{}
 		out = append(out, n.Coordinate.Version())
 	}
-	sort.Strings(out)
+	// Newest first, semantically: a text sort puts v1.10.0 below v1.9.0, and this
+	// list is both read by a caller and used to pick the version a remedy names.
+	sort.Slice(out, func(i, j int) bool {
+		return versionorder.CompareModuleVersions(out[i], out[j]) > 0
+	})
 	return out
 }

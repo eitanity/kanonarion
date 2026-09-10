@@ -140,7 +140,7 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 		return err
 	}
 	if !found.declared {
-		return implementersUnknownError(interfaceID, found.modulePath, found.moduleAnalysed)
+		return implementersUnknownError(interfaceID, found.modulePath, found.moduleAnalysed, found.analysedVersions)
 	}
 	if perMethod && !found.hasMethod(method) {
 		return fmt.Errorf(
@@ -191,15 +191,18 @@ type scopedImplementer struct {
 // interface, the implementations found, and the soundness signals bearing on an
 // empty answer.
 type implementerLookup struct {
-	iface           domain.InterfaceType
-	declared        bool
-	modulePath      string
-	moduleAnalysed  bool
-	implementations []scopedImplementer
-	belowFull       domain.CompletenessLevel
-	testScope       domain.TestScope
-	testScopeDetail string
-	partialPkg      string
+	iface          domain.InterfaceType
+	declared       bool
+	modulePath     string
+	moduleAnalysed bool
+	// analysedVersions are the module's analysed versions, newest first, so a
+	// refusal can name a coordinate rather than the bare path.
+	analysedVersions []string
+	implementations  []scopedImplementer
+	belowFull        domain.CompletenessLevel
+	testScope        domain.TestScope
+	testScopeDetail  string
+	partialPkg       string
 }
 
 func (l implementerLookup) hasMethod(method string) bool {
@@ -280,6 +283,7 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 	}
 	out.modulePath = modulePath
 	out.moduleAnalysed = true
+	out.analysedVersions = analysedVersionsOf(modulePath, coords)
 
 	seen := make(map[string]struct{})
 	for _, s := range coords {
@@ -546,14 +550,22 @@ func methodNodeID(impl domain.InterfaceImplementation, method string) string {
 // implementersUnknownError distinguishes the three ways an interface ID can
 // fail to resolve, so the caller learns which one applies rather than reading
 // an empty list.
-func implementersUnknownError(interfaceID, modulePath string, moduleAnalysed bool) error {
-	if !moduleAnalysed {
+//
+// versions are the analysed versions of the module, newest first: callgraph-show
+// takes a coordinate, so the line needs one, and where several were analysed the
+// reader is told which.
+func implementersUnknownError(interfaceID, modulePath string, moduleAnalysed bool, versions []string) error {
+	if !moduleAnalysed || len(versions) == 0 {
 		return unresolvedSymbolError(interfaceID)
+	}
+	held := ""
+	if len(versions) > 1 {
+		held = fmt.Sprintf(" (analysed versions in the store are %s)", strings.Join(versions, ", "))
 	}
 	return fmt.Errorf(
 		"%q is not an interface declared by the analysed module %q: it may be a typo, "+
 			"a concrete type, or an interface declared in a dependency (only the "+
-			"analysed module's own interfaces are measured). List what was analysed:\n"+
-			"  kanonarion callgraph-show %s",
-		interfaceID, modulePath, modulePath)
+			"analysed module's own interfaces are measured)%s. List what was analysed:\n"+
+			"  kanonarion callgraph-show %s@%s",
+		interfaceID, modulePath, held, modulePath, versions[0])
 }

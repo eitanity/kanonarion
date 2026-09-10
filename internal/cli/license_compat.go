@@ -10,8 +10,6 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
-	"github.com/oklog/ulid/v2"
-
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -84,7 +82,7 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX, walkID string, stdou
 		// with the wrong grammar, and "expected module@version" does not tell
 		// them that; every sibling command that takes a walk id takes it
 		// positionally, so the mistake is the natural one.
-		if _, uerr := ulid.ParseStrict(arg); uerr == nil {
+		if looksLikeWalkID(arg) {
 			return &exitError{
 				code: ExitConfig,
 				msg:  fmt.Sprintf("%q is a walk id, and license-compat takes a coordinate here: kanonarion license-compat <module>@<version> --walk-id %s", arg, arg),

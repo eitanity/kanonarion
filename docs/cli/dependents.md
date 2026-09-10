@@ -3,8 +3,8 @@
 ## Synopsis
 
 ```
-kanonarion dependents <module>@<version> [--gomod <path>] [--tool|--project] [flags]
-kanonarion dependents <module>@<version> --walk-id <id> [flags]
+kanonarion dependents <module>[@<version>] [--gomod <path>] [--tool|--project] [flags]
+kanonarion dependents <module>[@<version>] --walk-id <id> [flags]
 kanonarion dependents <module>@<version> --any-build [flags]
 ```
 
@@ -23,6 +23,20 @@ What a coordinate is surrounded by is a property of **one build**, so the build
 is part of the question. Run inside a project and the answer is about that
 project, with no flag. See [rooting the question](#rooting-the-question).
 
+## Naming the target
+
+The target is a coordinate or a bare module path.
+
+A bare path is answered across **every version of it the answering build
+resolved**, and the answer names those versions: a `notice:` line above the rows
+on the text path, and the `target_versions` field under `--json`. "Who depends on
+`jwt/v4`" is a question about a path, and having to learn which version the build
+resolved before you can ask it has the answer-ordering backwards.
+
+`--any-build` is the exception: it searches the store for the build holding **one
+coordinate**, so there is no frame to read versions out of and it takes a
+coordinate. It refuses a bare path and names the flag that gives it a build.
+
 The walk root module (typically your own module) is excluded by default. It is
 the subject of the walk, not a dependent in the usual sense, and including it
 unconditionally produces noise on every query. Pass `--include-root` to include
@@ -39,6 +53,12 @@ N module(s) in walk <id> (frame linux/amd64) depend on <target>:
   cloud.google.com/go/auth@v0.18.1             [direct]
   github.com/google/s2a-go@v0.1.9
   ...
+```
+
+A bare-path question prints its scope above the rows:
+
+```
+notice: no version was named; walk <id> resolves github.com/spf13/cobra at v1.10.2, and the answer below covers it
 ```
 
 `frame` is the `GOOS/GOARCH` the answering walk resolved for, or
@@ -279,7 +299,8 @@ absence.
 | `walk_selection.gomod` | string | The manifest that named the build. `gomod-rooted` only |
 | `walk_selection.scope` | string | The dependency scope it was projected into: `code`, `tool` or `complete`. `gomod-rooted` only |
 | `walk_selection.choice` | object | The selector's account of which of the project's walks answered - `rule`, `candidates`, `candidate_set`, `manifest_path`, and where they apply `disagreements`, `reason` and `toolchain_divergence`. Same object the other `--gomod` reads publish. `gomod-rooted` only |
-| `target` | string | The queried coordinate (`module@version`) |
+| `target` | string | The module that was queried: the coordinate (`module@version`) where one was named, the bare path where it was not |
+| `target_versions` | array | The versions of `target` this answer covers. Present **only** where the question named no version; absent means one was named and `target` carries it |
 | `dependents` | array | All modules with an edge to the target, sorted by path |
 | `dependents[].module` | string | Module import path |
 | `dependents[].version` | string | MVS-selected version in this walk |

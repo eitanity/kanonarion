@@ -11,6 +11,11 @@ With no positional module, `inspect` defaults to `--gomod ./go.mod` and runs the
 pipeline over a single project-rooted walk (see
 [`inspect --gomod <path>`](#inspect---gomod-path)).
 
+The positional slot is a module coordinate, never a walk id: `inspect` is the
+command that **produces** a walk. Handed one, it says so and names the commands
+that consume an existing walk - `extract`, `vuln-scan` and `walk-show` - rather
+than reading the id as a module path.
+
 ## Description
 
 `inspect` runs the full kanonarion pipeline for a module in a single command:

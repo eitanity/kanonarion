@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
+
+	"golang.org/x/mod/module"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -36,17 +39,24 @@ func newDependentsCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f dependentsFlags
 
 	cmd := &cobra.Command{
-		Use: "dependents <module>@<version>",
+		Use: "dependents <module>[@<version>]",
 		Annotations: map[string]string{
 			annotationStoreIntent: StoreIntentRead,
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "Find which modules in a build depend on a given module",
-		Long: `Find which modules in one build depend on the given <module>@<version>.
+		Long: `Find which modules in one build depend on the given module.
 
 Scans the stored walk graph for every module with a direct import edge to the
 target and prints them sorted lexicographically. The walk root (your own module)
 is excluded by default; pass --include-root to include it.
+
+The target may be a coordinate or a bare module path. A bare path is answered
+across every version of it the answering build resolved, and the answer names
+those versions — on the text path as a notice above the rows, under --json as
+the "target_versions" field. "Who depends on jwt/v4" is a question about a path,
+and having to learn which version the build resolved before it can be asked has
+the answer-ordering backwards.
 
 Which build answers:
   --walk-id <id>   one stored walk, queried as named
@@ -83,6 +93,9 @@ Flag combinations:
 		Example: `  # What in this project's build depends on x/net
   kanonarion dependents golang.org/x/net@v0.51.0
 
+  # The same question about whatever version this build resolved
+  kanonarion dependents golang.org/x/net
+
   # A linter is in the tooling closure, not the code build
   kanonarion dependents 4d63.com/gochecknoglobals@v0.2.2 --tool
 
@@ -118,9 +131,9 @@ Flag combinations:
 }
 
 func runDependents(ctx context.Context, moduleArg, storeRoot string, f dependentsFlags, jsonOut bool, stdout, stderr io.Writer) error {
-	coord, err := parseCoordinate(moduleArg)
+	coord, err := parseDependentsTarget(moduleArg)
 	if err != nil {
-		return fmt.Errorf("invalid module coordinate %q: %w", moduleArg, err)
+		return err
 	}
 
 	logger := buildLogger(logLevel, stderr)
@@ -131,6 +144,94 @@ func runDependents(ctx context.Context, moduleArg, storeRoot string, f dependent
 	defer func() { _ = cleanup() }()
 
 	return dependentsWith(ctx, ctr, coord, f, jsonOut, stdout, stderr)
+}
+
+// parseDependentsTarget reads the module a question is about. A coordinate pins
+// one version; a bare path names the module and leaves the versions to the
+// build, and is carried as a version-less coordinate so one value describes both
+// forms.
+func parseDependentsTarget(arg string) (coordinate.ModuleCoordinate, error) {
+	if strings.Contains(arg, "@") {
+		coord, err := parseCoordinate(arg)
+		if err != nil {
+			return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid module coordinate %q: %w", arg, err)
+		}
+		return coord, nil
+	}
+	// A walk id is named by shape, not read as a malformed module path: the walk
+	// goes on --walk-id here, and "missing dot in first path element" does not say
+	// so. Same refusal license-compat gives for the same mistake.
+	if looksLikeWalkID(arg) {
+		return coordinate.ModuleCoordinate{}, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+			"%q is a walk id, and dependents takes a module here; the walk it is answered in goes "+
+				"on --walk-id:\n  kanonarion dependents <module> --walk-id %s", arg, arg)}
+	}
+	// The path is checked before it is answered over: a string that cannot be a
+	// module path has no versions in any build, and reporting that as "no modules
+	// depend on it" is an absence presented as a measurement.
+	if err := module.CheckPath(arg); err != nil {
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid module path %q: %w", arg, err)
+	}
+	coord, err := coordinate.NewPathOnlyCoordinate(arg)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid module path %q: %w", arg, err)
+	}
+	return coord, nil
+}
+
+// dependentsTargetText is how the target is written back to the caller: the
+// coordinate where one was named, the bare path where it was not. A version-less
+// ModuleCoordinate renders with a trailing "@", which is not what was typed.
+func dependentsTargetText(coord coordinate.ModuleCoordinate) string {
+	if coord.HasVersion() {
+		return coord.String()
+	}
+	return coord.Path()
+}
+
+// graphHoldsTarget reports whether g holds the target: the exact coordinate
+// where one was named, any version of the path where it was not.
+func graphHoldsTarget(g walkdomain.Graph, coord coordinate.ModuleCoordinate) bool {
+	if coord.HasVersion() {
+		return graphHolds(g, coord)
+	}
+	return len(graphVersionsOf(g, coord.Path())) > 0
+}
+
+// dependentsTargets are the coordinates one question is answered over, newest
+// version first: the one that was named, or every version of the path the
+// answering build resolved.
+func dependentsTargets(g walkdomain.Graph, coord coordinate.ModuleCoordinate) ([]coordinate.ModuleCoordinate, []string) {
+	if coord.HasVersion() {
+		return []coordinate.ModuleCoordinate{coord}, nil
+	}
+	versions := graphVersionsOf(g, coord.Path())
+	out := make([]coordinate.ModuleCoordinate, 0, len(versions))
+	for _, v := range versions {
+		c, err := coordinate.NewModuleCoordinate(coord.Path(), v)
+		if err != nil {
+			// The version came off a stored graph node, so it is one this store
+			// already accepted; a rejection here would drop a real row silently.
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, versions
+}
+
+// dependentsVersionNotice says which versions a bare-path answer covers. It
+// stands above the rows for the same reason every other selection notice does:
+// a reader who has read them has already decided what they were about.
+func dependentsVersionNotice(path, walkID string, versions []string) string {
+	if len(versions) == 0 {
+		return ""
+	}
+	if len(versions) == 1 {
+		return fmt.Sprintf("notice: no version was named; walk %s resolves %s at %s, and the answer below covers it\n",
+			walkID, path, versions[0])
+	}
+	return fmt.Sprintf("notice: no version was named; walk %s resolves %s at %d versions (%s), and the answer below covers all of them\n",
+		walkID, path, len(versions), strings.Join(versions, ", "))
 }
 
 // dependentsWith holds the query over an injected Container, so the rooting —
@@ -146,7 +247,11 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 	}
 	walkID := containment.walkID
 
-	deps, rootScope := walkDependents(rec, coord, f.includeRoot)
+	// A bare path is several questions with one answer: each version the build
+	// resolved is asked separately and the rows are unioned, because "who depends
+	// on this module" is one list however many versions sit behind it.
+	targets, coveredVersions := dependentsTargets(rec.Graph, coord)
+	deps, rootScope := walkDependentsOver(rec, targets, f.includeRoot)
 	if f.directOnly {
 		filtered := deps[:0]
 		for _, d := range deps {
@@ -169,9 +274,10 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 	// it. Naming the coordinates responsible is what stops an absence being read
 	// as a measurement.
 	preModules := preModulesNodesIn(rec.Graph)
+	target := dependentsTargetText(coord)
 	if jsonOut {
-		return writeDependentsJSON(stdout, walkID, walkFrame, containment.selection(), coord.String(), deps, rootScope,
-			preModulesCaveatFor(append(preModules, coord)...))
+		return writeDependentsJSON(stdout, walkID, walkFrame, containment.selection(), target, coveredVersions,
+			deps, rootScope, preModulesCaveatFor(append(preModules, targets...)...))
 	}
 	// Above the answer, not after it: it says which build the rows below describe,
 	// and a reader who has read the rows has already decided what they are about.
@@ -180,11 +286,47 @@ func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.Module
 			return fmt.Errorf("writing walk selection notice: %w", werr)
 		}
 	}
-	if err := writeDependentsText(stdout, walkID, walkFrame, coord.String(), deps, f.directOnly,
+	if note := dependentsVersionNotice(target, walkID, coveredVersions); note != "" {
+		if _, werr := fmt.Fprint(stdout, note); werr != nil {
+			return fmt.Errorf("writing version notice: %w", werr)
+		}
+	}
+	if err := writeDependentsText(stdout, walkID, walkFrame, target, deps, f.directOnly,
 		rootScope.withheld(), f.includeRoot); err != nil {
 		return err
 	}
 	return writeWalkPreModulesCaveat(stdout, rec.Graph)
+}
+
+// walkDependentsOver unions the answers for every target coordinate, which is
+// one for a pinned question and one per resolved version for a bare path. A
+// module that depends on two versions of the target is one row, and its
+// annotations are the strongest of the ones it earned.
+func walkDependentsOver(rec walkdomain.WalkRecord, targets []coordinate.ModuleCoordinate, includeRoot bool,
+) ([]dependentResult, dependentsRootScope) {
+	var out []dependentResult
+	var scope dependentsRootScope
+	at := make(map[coordinate.ModuleCoordinate]int)
+	for i, t := range targets {
+		deps, sc := walkDependents(rec, t, includeRoot)
+		if i == 0 {
+			scope = sc
+		} else {
+			scope.DependsOnTarget = scope.DependsOnTarget || sc.DependsOnTarget
+		}
+		for _, d := range deps {
+			j, seen := at[d.Coord]
+			if !seen {
+				at[d.Coord] = len(out)
+				out = append(out, d)
+				continue
+			}
+			out[j].Direct = out[j].Direct || d.Direct
+			out[j].Root = out[j].Root || d.Root
+		}
+	}
+	sortDependents(out)
+	return out, scope
 }
 
 // dependentResult holds a single module that depends on the queried target.
@@ -257,6 +399,13 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 		})
 	}
 
+	sortDependents(out)
+	return out, scope
+}
+
+// sortDependents is the answer's order, shared by the single-coordinate read and
+// the union a bare path produces so the two cannot come to disagree.
+func sortDependents(out []dependentResult) {
 	sort.Slice(out, func(i, j int) bool {
 		// Root sorts first so it stands out at the top.
 		if out[i].Root != out[j].Root {
@@ -267,7 +416,6 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 		}
 		return out[i].Coord.Version() < out[j].Coord.Version()
 	})
-	return out, scope
 }
 
 type dependentsJSON struct {
@@ -284,9 +432,14 @@ type dependentsJSON struct {
 	// because the only walks holding the target are rooted at the target itself.
 	// The last of those answers a different question and the field is what says
 	// so on a stream that carries no prose.
-	WalkSelection walkSelectionJSON    `json:"walk_selection"`
-	Target        string               `json:"target"`
-	Dependents    []dependentEntryJSON `json:"dependents"`
+	WalkSelection walkSelectionJSON `json:"walk_selection"`
+	Target        string            `json:"target"`
+	// TargetVersions are the versions of the target path this answer covers,
+	// present only where the question named none. A machine consumer cannot infer
+	// the scope of a bare-path answer from the rows, and the absence is not
+	// ambiguous: no field means one version was named and "target" carries it.
+	TargetVersions []string             `json:"target_versions,omitempty"`
+	Dependents     []dependentEntryJSON `json:"dependents"`
 	// RootScope states what the search left out. It is emitted on every answer,
 	// not only when something was withheld: a field that appears only when it
 	// would be alarming is one no consumer can rely on reading, and the reader
@@ -326,6 +479,7 @@ func writeDependentsJSON(
 	walkFrame walkdomain.WalkFrame,
 	selection walkSelectionJSON,
 	target string,
+	targetVersions []string,
 	deps []dependentResult,
 	rootScope dependentsRootScope,
 	caveat *preModulesCaveatJSON,
@@ -345,6 +499,7 @@ func writeDependentsJSON(
 		WalkFrameBasis: string(walkFrame.Basis),
 		WalkSelection:  selection,
 		Target:         target,
+		TargetVersions: targetVersions,
 		Dependents:     entries,
 		RootScope: dependentsRootScopeJSON{
 			Root:            rootScope.Root.String(),
