@@ -9,6 +9,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 )
 
 // AuditSink appends an audit event to the assurance log. The shared JSONL
@@ -71,9 +72,14 @@ type StageRegistry interface {
 }
 
 type StageResult struct {
-	RecordID   string
-	Status     domain.StageStatus
-	Error      string
+	RecordID string
+	Status   domain.StageStatus
+	Error    string
+	// Cause says what a failed stage is a statement about: the module, or this
+	// host. Only the second is repaired by changing something and running again,
+	// and a reader who cannot tell them apart re-runs a module that will fail
+	// identically or gives up on one that would now succeed.
+	Cause      failurecause.Cause
 	DurationMs int64
 }
 

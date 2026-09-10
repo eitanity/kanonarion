@@ -113,11 +113,10 @@ status it reprints.
 ## Callgraph Subprocess Isolation
 
 The `callgraph` stage spawns a child process (`kanonarion callgraph <coord>
-[--force]`) for each module with a 10-minute per-module timeout. This bounds
-the blast radius of OOM conditions: if a module's SSA closure exhausts RAM the
-kernel kills only the child process; the parent captures the exit code and
-stderr, records `StageFailed` with `error_detail`, and continues to the next
-module.
+[--force]`) for each module. This contains OOM conditions: if
+a module's SSA closure exhausts RAM the kernel kills only the child process; the
+parent captures the exit code and stderr, records `StageFailed` with
+`error_detail`, and continues to the next module.
 
 A child exiting `1` is the exception: that is the child saying it built a graph
 and knows it to be incomplete ([`callgraph` exit codes](callgraph.md#exit-codes)).
@@ -135,9 +134,60 @@ this multiplies. On memory-constrained hosts, lower this to 1 or 2:
 kanonarion extract 01J1Z... --stages callgraph --workers 1
 ```
 
-A timed-out subprocess produces a `StageFailed` record with
-`error_detail: subprocess timed out after 10m0s`. A module can be retried via
+### How long a subprocess may run
+
+The child is bounded by the progress it reports, not by how long it has been
+working. It writes one `callgraph progress:` line to stderr each time the
+analysis enters a phase - unpacking, materialising the module cache, loading
+metadata, loading syntax, building SSA, building and walking the call graph -
+and the parent ends it only when **10 minutes pass with no such line**.
+
+That is the condition a stalled subprocess actually has. A wall-clock deadline could not
+tell one apart from a healthy analysis of a large module: under `--workers`
+concurrency a subprocess competes with its siblings for CPU while its own clock
+keeps running, so the same module, on the same host, from the same walk, could
+be analysed or dropped depending on what else the pool happened to be doing. A
+child descheduled by contention still reports the next phase when it resumes; a
+wedged one never does.
+
+A wall-clock **ceiling** remains as a backstop, defaulting to 2 h and settable
+with `--callgraph-timeout`:
+
+```bash
+kanonarion extract 01J1Z... --stages callgraph --callgraph-timeout 4h
+```
+
+A module lost to either deadline is a `StageFailed` naming which one, and
+carries `cause=environment` - the module was not measured, this host is why, and
+running again (or raising the ceiling) is what repairs it:
+
+```
+Failed stages (1):
+  example.com/mod@v1.2.3  stage=callgraph  cause=environment  error=callgraph stage
+    status=ExtractionFailed: the analysis reported no progress for 10m0s and was stopped
+```
+
+In `--json` the same fact is the `cause` field on each stage of
+`per_module_results`, and on each entry of `extract_failures` in
+[`inspect --json`](inspect.md). A stage that states no cause is one whose failure
+this classification does not recognise; it is never read as the module's fault. A module can be retried via
 `extract <walk-id> --stages callgraph --force`.
+
+### If a write loses the store lock
+
+The store has a single writer, and concurrent children contend for it. A write
+refused with `SQLITE_BUSY` is retried with bounded exponential backoff rather
+than abandoned - the work at stake is a completed analysis, and the condition is
+transient. A run that waited says so on stderr as it finishes:
+
+```
+kanonarion: store writes retried for lock contention: 48
+```
+
+An uncontended run prints nothing. A write that still cannot take the lock after
+its whole budget fails with a message naming lock contention, and the stage it
+belongs to is recorded `cause=environment` for the same reason a deadline is:
+running again stores it.
 
 ## Progress output
 

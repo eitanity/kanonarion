@@ -94,14 +94,14 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	}
 	defer dbCleanup()
 
-	govulncheckBin, err := lookupGovulncheck()
+	tool, err := resolveGovulncheck(ctx)
 	if err != nil {
 		return domain.ProjectScanResult{}, err
 	}
 
 	s.logger.Info("vuln-scan: running project-rooted govulncheck source mode",
 		"dir", projectDir, "db", dbArg, "analysis_surface", string(surface))
-	cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+	cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 	cmd.Dir = projectDir
 	cmd.Env = env
 
@@ -133,12 +133,13 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	if waitErr != nil {
 		stderrStr := stderr.String()
 		s.logger.Debug("vuln-scan: project-rooted govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
-		status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(waitErr, stderrStr)
+		f := classifyScanFailure(waitErr, stderrStr, tool)
 		return domain.ProjectScanResult{
-			Status:            status,
-			UnscanReason:      unscanReason,
-			ErrorDetail:       errorDetail,
-			UnscannableReason: unscannableReason,
+			Status:            f.status,
+			UnscanReason:      f.unscanReason,
+			ErrorDetail:       f.errorDetail,
+			UnscannableReason: f.unscannableReason,
+			FailureCause:      f.cause,
 			// A failure is still a failure of a named surface. Which one it was is
 			// the first thing a reader needs — a build break under -mod=vendor says
 			// the vendored tree does not compile, which is a different fact from the

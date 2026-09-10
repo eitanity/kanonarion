@@ -43,6 +43,10 @@ func TestNoProgressFlag_RegisteredOnEveryProgressEmittingCommand(t *testing.T) {
 		"vuln-scan-rescan": newVulnScanRescanCmd(io.Discard, io.Discard),
 		// Both: audit drives a walk and a scan beneath its own stage narration.
 		"audit": newAuditCmd(io.Discard, io.Discard),
+		// One line per phase the analysis enters. It is the same stream a parent
+		// reads to tell a working subprocess from a stalled one, which is why it is
+		// told to narrate explicitly rather than left to this flag.
+		"callgraph": newCallGraphCmd(io.Discard, io.Discard),
 	}
 
 	var usage string

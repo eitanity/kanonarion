@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -754,8 +755,19 @@ type VulnerabilityRecord struct {
 	UnscanReason      UnscanReason         `json:"unscan_reason,omitempty"`
 	UnscannableReason string               `json:"unscannable_reason,omitempty"`
 	ErrorDetail       string               `json:"error_detail,omitempty"`
-	DatabaseSnapshot  DatabaseSnapshot     `json:"database_snapshot"`
-	ScannedAt         time.Time            `json:"scanned_at"`
+	// FailureCause says what a coverage gap is a statement about: the module, or
+	// this environment. It is the same axis the call-graph ledger carries, and it
+	// is here for the same reason — a scanner too old to parse the project, a
+	// toolchain that could not be resolved and a module whose source does not
+	// build are three different facts, and only the first two are repaired by
+	// changing something on this host and running again.
+	//
+	// It is omitempty and absent from every record written before it existed, so
+	// those records seal to the bytes they always did; an absent cause is read as
+	// "not stated", never as the module's fault.
+	FailureCause     failurecause.Cause `json:"failure_cause,omitempty"`
+	DatabaseSnapshot DatabaseSnapshot   `json:"database_snapshot"`
+	ScannedAt        time.Time          `json:"scanned_at"`
 	// FirstScannedAt anchors when this verdict was first established for the
 	// (module, version, pipeline, snapshot) tuple. Unlike ScannedAt — which
 	// moves forward to the run that last validated the verdict — it is set once
@@ -892,6 +904,9 @@ type ProjectScanResult struct {
 	UnscanReason      UnscanReason
 	UnscannableReason string
 	ErrorDetail       string
+	// FailureCause mirrors the record's, so a project-rooted failure carries the
+	// same axis a module-rooted one does.
+	FailureCause failurecause.Cause
 	// AnalysisSurface is the surface the scan actually resolved from, reported
 	// by the adapter that ran it rather than assumed by the caller. The caller
 	// asks for a vendored analysis; only the scanner knows whether the project

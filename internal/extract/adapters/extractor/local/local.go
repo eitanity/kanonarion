@@ -7,9 +7,9 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/extract/domain"
@@ -19,16 +19,12 @@ import (
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 )
-
-// callgraphSubprocessTimeout is the per-module timeout for callgraph subprocess
-// invocations. SSA closure construction for large modules can take many minutes;
-// 10 minutes provides headroom while bounding the blast radius of a hung child.
-const callgraphSubprocessTimeout = 10 * time.Minute
 
 type LicenseUseCase interface {
 	Execute(ctx context.Context, req licapp.ExtractRequest) (licapp.ExtractResult, error)
@@ -203,10 +199,11 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleC
 // process. The child runs the full callgraph extraction and persists the record
 // to the store. The parent reads the record back on success.
 func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord coordinate.ModuleCoordinate, force bool, walkID string) (ports.StageResult, error) {
-	cgCtx, cancel := context.WithTimeout(ctx, callgraphSubprocessTimeout)
-	defer cancel()
-
-	args := []string{"callgraph", coord.String()}
+	// The subprocess reports each phase it enters and the executor ends it when those
+	// reports stop, so the instruction is explicit rather than left to the store's
+	// progress preference — a config file must not be able to disable the stall
+	// detector.
+	args := []string{"callgraph", coord.String(), "--narrate-progress"}
 	args = append(args, a.cgExtraArgs...)
 	if force {
 		args = append(args, "--force")
@@ -219,14 +216,18 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 		args = append(args, "--from-walk", walkID)
 	}
 
-	stderr, execErr := a.cgExec.Execute(cgCtx, args)
+	stderr, execErr := a.cgExec.Execute(ctx, args)
+	// The child's writes are this run's writes. Without folding its count in, a
+	// run whose children waited repeatedly for the store lock reports none.
+	sqlitestore.AddRetries(sqlitestore.ContentionNoticeIn(string(stderr)))
 	// A child that exited Partial wrote its graph; the record read below is what
 	// classifies it. Reading that exit as a fault made every incompletely
 	// analysable module a failed stage.
 	if execErr != nil && !childproc.ExitedPartial(execErr) {
-		detail := buildSubprocessErrorDetail(cgCtx, execErr, stderr)
+		detail, cause := buildSubprocessErrorDetail(execErr, stderr, walkID)
 		return ports.StageResult{
 			Status: domain.StageFailed,
+			Cause:  cause,
 			Error:  fmt.Sprintf("callgraph stage status=ExtractionFailed: %s", detail),
 		}, nil
 	}
@@ -264,7 +265,10 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	return ports.StageResult{
 		RecordID: rec.ContentHash,
 		Status:   status,
-		Error:    failureReason("callgraph", status, rec.OverallStatus.String(), rec.FailureDetail),
+		// The record already decided what its failure is a statement about; the
+		// stage repeats the record's own answer rather than reaching a second one.
+		Cause: rec.FailureCause,
+		Error: failureReason("callgraph", status, rec.OverallStatus.String(), rec.FailureDetail),
 	}, nil
 }
 
@@ -285,22 +289,67 @@ func (a *AdapterExtractor) measuredGeneration(ctx context.Context, coord coordin
 }
 
 // buildSubprocessErrorDetail formats the error_detail for a failed callgraph
-// subprocess. The context is checked first so timeout failures are labelled
-// clearly regardless of what the OS-level kill returns.
-func buildSubprocessErrorDetail(ctx context.Context, execErr error, stderr []byte) string {
+// subprocess and says what the failure is a statement about.
+//
+// The two deadlines are named separately because a reader acts on them
+// differently: a subprocess stopped for reporting nothing had halted, while one
+// killed at the ceiling was still working and needs a larger number. Both are
+// this host rather than the module — the same module on an idle box, or with the
+// ceiling raised, may well produce a complete graph — so neither may be cached
+// as a property of the published bytes.
+func buildSubprocessErrorDetail(execErr error, stderr []byte, walkID string) (string, failurecause.Cause) {
 	stderrStr := strings.TrimSpace(string(stderr))
+	suffix := ""
+	if stderrStr != "" {
+		suffix = ": " + stderrStr
+	}
 
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		if stderrStr != "" {
-			return fmt.Sprintf("subprocess timed out after %s: %s", callgraphSubprocessTimeout, stderrStr)
-		}
-		return fmt.Sprintf("subprocess timed out after %s", callgraphSubprocessTimeout)
+	switch {
+	case strings.Contains(stderrStr, sqlitestore.ContentionMarker):
+		// The analysis ran; only its write lost. That is this host at this moment,
+		// never the module, and running again is what repairs it — which is exactly
+		// what a reader must not have to guess from "database is locked".
+		return "the analysis finished and its record could not be stored: another writer held the " +
+			"store lock for the whole retry budget; running the stage again stores it" + suffix, failurecause.Environment
+	case errors.Is(execErr, childproc.ErrStalled):
+		return fmt.Sprintf("the analysis reported no progress for %s and was stopped%s",
+			cgports.DefaultStallWindow, suffix), failurecause.Environment
+	case errors.Is(execErr, childproc.ErrCeiling):
+		return "the analysis was still working when the wall-clock ceiling was reached; " +
+			raiseCeilingRemedy(walkID) + suffix, failurecause.Environment
+	case errors.Is(execErr, context.Canceled):
+		return "the run was cancelled before the analysis finished" + suffix, failurecause.Environment
+	case killedBySignal(execErr):
+		// Neither deadline fired, so something outside this process ended the child
+		// — the OOM killer in every case observed. That is the host's memory, not
+		// the module's source: the same module analysed alone, or with fewer
+		// workers, may well produce a complete graph.
+		return "the analysis was killed by the operating system before it finished, which is " +
+			"usually memory: reduce --workers, or analyse this module on its own" + suffix, failurecause.Environment
 	}
 
 	if stderrStr != "" {
-		return fmt.Sprintf("subprocess failed (%v): %s", execErr, stderrStr)
+		return fmt.Sprintf("subprocess failed (%v): %s", execErr, stderrStr), failurecause.Unrecorded
 	}
-	return fmt.Sprintf("subprocess failed: %v", execErr)
+	return fmt.Sprintf("subprocess failed: %v", execErr), failurecause.Unrecorded
+}
+
+// killedBySignal reports whether a child was ended by a signal rather than by
+// exiting. exec renders that as "signal: killed"; 137 is the shell's spelling of
+// the same thing, and both reach this from different places.
+func killedBySignal(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "signal: killed") || strings.Contains(msg, "exit status 137")
+}
+
+// raiseCeilingRemedy names the invocation that gives this module more time. The
+// walk is named when the stage has one, because a reader copying the line should
+// not have to go and find the id of the run they are already inside.
+func raiseCeilingRemedy(walkID string) string {
+	if walkID == "" {
+		return "give it longer with --callgraph-timeout"
+	}
+	return fmt.Sprintf("give it longer with: kanonarion extract %s --stages callgraph --callgraph-timeout 4h", walkID)
 }
 
 // failureReason builds the diagnostic string surfaced via StageResult.Error

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 )
 
 // ExtractionRunStatus summarises the overall outcome of an ExtractionRun.
@@ -117,10 +118,15 @@ type ModuleExtractionResult struct {
 
 // StageResult captures the outcome and record ID of a single stage.
 type StageResult struct {
-	Status     StageStatus `json:"status"`
-	RecordID   string      `json:"record_id,omitzero"`
-	Error      string      `json:"error,omitzero"`
-	DurationMs int64       `json:"duration_ms"`
+	Status   StageStatus `json:"status"`
+	RecordID string      `json:"record_id,omitzero"`
+	Error    string      `json:"error,omitzero"`
+	// Cause says what a failed stage is a statement about: the module, or this
+	// host. It is omitzero and absent from every stage recorded before it
+	// existed, so those records seal to the bytes they always did — and an
+	// absent cause is read as "not stated", never as the module's fault.
+	Cause      failurecause.Cause `json:"cause,omitzero"`
+	DurationMs int64              `json:"duration_ms"`
 }
 
 // ExtractionRunSchemaVersion is the schema version for ExtractionRun JSON.

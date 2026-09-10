@@ -249,15 +249,18 @@ func (s *Store) PutInterfaceRecord(ctx context.Context, r domain2.InterfaceRecor
 	}
 	blob := blobcodec.Encode(raw)
 
-	tx, err := s.db.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback() //nolint:errcheck
-	}()
+	// Retried when another writer holds the single-writer lock: the condition is
+	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	if err := sqlitestore.RetryOnBusy(ctx, "interface record for "+r.Coordinate.String(), func(ctx context.Context) error {
+		tx, err := s.db.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("beginning transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback() //nolint:errcheck
+		}()
 
-	const qRecord = `
+		const qRecord = `
 INSERT INTO interface_records (
     module_path, module_version, pipeline_version,
     overall_status, package_count,
@@ -266,79 +269,83 @@ INSERT INTO interface_records (
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
-	_, err = tx.ExecContext(ctx, qRecord,
-		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-		int(r.OverallStatus), len(r.Packages),
-		r.ExtractedAt.UTC().Format(time.RFC3339),
-		r.ContentHash, blob,
-	)
-	if err != nil {
-		return fmt.Errorf("inserting interface record: %w", err)
-	}
+		_, err = tx.ExecContext(ctx, qRecord,
+			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+			int(r.OverallStatus), len(r.Packages),
+			r.ExtractedAt.UTC().Format(time.RFC3339),
+			r.ContentHash, blob,
+		)
+		if err != nil {
+			return fmt.Errorf("inserting interface record: %w", err)
+		}
 
-	const qSym = `
+		const qSym = `
 INSERT OR IGNORE INTO interface_symbols (
     record_content_hash,
     module_path, module_version, pipeline_version,
     package_path, symbol_kind, symbol_name, parent_type, signature
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	stmtSym, err := tx.PrepareContext(ctx, qSym)
-	if err != nil {
-		return fmt.Errorf("preparing interface symbol statement: %w", err)
-	}
-	defer func() { _ = stmtSym.Close() }()
+		stmtSym, err := tx.PrepareContext(ctx, qSym)
+		if err != nil {
+			return fmt.Errorf("preparing interface symbol statement: %w", err)
+		}
+		defer func() { _ = stmtSym.Close() }()
 
-	for _, pkg := range r.Packages {
-		for _, t := range pkg.Types {
-			if _, err := stmtSym.ExecContext(ctx,
-				r.ContentHash,
-				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-				pkg.ImportPath, "type", t.Name, "", t.Signature,
-			); err != nil {
-				return fmt.Errorf("inserting type symbol %s: %w", t.Name, err)
-			}
-			for _, m := range t.Methods {
+		for _, pkg := range r.Packages {
+			for _, t := range pkg.Types {
 				if _, err := stmtSym.ExecContext(ctx,
 					r.ContentHash,
 					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-					pkg.ImportPath, "method", m.Name, t.Name, m.Signature,
+					pkg.ImportPath, "type", t.Name, "", t.Signature,
 				); err != nil {
-					return fmt.Errorf("inserting method symbol %s.%s: %w", t.Name, m.Name, err)
+					return fmt.Errorf("inserting type symbol %s: %w", t.Name, err)
+				}
+				for _, m := range t.Methods {
+					if _, err := stmtSym.ExecContext(ctx,
+						r.ContentHash,
+						r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+						pkg.ImportPath, "method", m.Name, t.Name, m.Signature,
+					); err != nil {
+						return fmt.Errorf("inserting method symbol %s.%s: %w", t.Name, m.Name, err)
+					}
+				}
+			}
+			for _, f := range pkg.Funcs {
+				if _, err := stmtSym.ExecContext(ctx,
+					r.ContentHash,
+					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+					pkg.ImportPath, "func", f.Name, "", f.Signature,
+				); err != nil {
+					return fmt.Errorf("inserting func symbol %s: %w", f.Name, err)
+				}
+			}
+			for _, c := range pkg.Consts {
+				if _, err := stmtSym.ExecContext(ctx,
+					r.ContentHash,
+					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+					pkg.ImportPath, "const", c.Name, "", c.Type,
+				); err != nil {
+					return fmt.Errorf("inserting const symbol %s: %w", c.Name, err)
+				}
+			}
+			for _, v := range pkg.Vars {
+				if _, err := stmtSym.ExecContext(ctx,
+					r.ContentHash,
+					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+					pkg.ImportPath, "var", v.Name, "", v.Type,
+				); err != nil {
+					return fmt.Errorf("inserting var symbol %s: %w", v.Name, err)
 				}
 			}
 		}
-		for _, f := range pkg.Funcs {
-			if _, err := stmtSym.ExecContext(ctx,
-				r.ContentHash,
-				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-				pkg.ImportPath, "func", f.Name, "", f.Signature,
-			); err != nil {
-				return fmt.Errorf("inserting func symbol %s: %w", f.Name, err)
-			}
-		}
-		for _, c := range pkg.Consts {
-			if _, err := stmtSym.ExecContext(ctx,
-				r.ContentHash,
-				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-				pkg.ImportPath, "const", c.Name, "", c.Type,
-			); err != nil {
-				return fmt.Errorf("inserting const symbol %s: %w", c.Name, err)
-			}
-		}
-		for _, v := range pkg.Vars {
-			if _, err := stmtSym.ExecContext(ctx,
-				r.ContentHash,
-				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-				pkg.ImportPath, "var", v.Name, "", v.Type,
-			); err != nil {
-				return fmt.Errorf("inserting var symbol %s: %w", v.Name, err)
-			}
-		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing interface record: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing interface record: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	_, _ = s.db.DB().ExecContext(ctx, `PRAGMA optimize`) //nolint:errcheck
 	return nil

@@ -108,6 +108,7 @@ it. It is reported on its own and counted in no roll-up.`,
 	cmd.Flags().BoolVar(&f.noVendor, "no-vendor", false,
 		"analyse the fetched artefacts even when the project is vendored (default: analyse vendor/, the source the project compiles)")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerCallgraphTimeoutFlag(cmd)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
 	return cmd
@@ -543,6 +544,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		}
 	}
 
+	callgraphNarration = callgraphNarrationFor(stderr, noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, "", goBinary, false, activeConfig, logger)
 	if err != nil {
 		return vulnScanRunFacts{}, fmt.Errorf("initialising store: %w", err)
@@ -1205,6 +1207,7 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 	cmd.Flags().StringVar(&f.snapshotVersion, "snapshot-version", "", "pin to a specific snapshot version (requires --snapshot-source)")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerCallgraphTimeoutFlag(cmd)
 
 	return cmd
 }
@@ -1260,6 +1263,7 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 		return fmt.Errorf("--snapshot-source and --snapshot-version must be provided together")
 	}
 
+	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)

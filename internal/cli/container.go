@@ -480,7 +480,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
 	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
-	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger)
+	// The analyser narrates its phases to the same place the spawners copy a
+	// child's to. This process is one or the other, never both: as a child it
+	// writes the lines its parent's stall detector reads, and as a parent it
+	// forwards what its children wrote.
+	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger).WithProgress(callgraphNarration)
 	// A module analysed in isolation is its own main module, and the load runs
 	// with the network off, so every go.mod minimal version selection reads and
 	// every dependency the type checker compiles has to be in a module cache
@@ -517,7 +521,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		_ = dbHandle.Close()
 		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
-	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary)
+	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary, callgraphCeiling, callgraphNarration)
 	// The callgraph stage runs as a fresh subprocess (see NewAdapterExtractor),
 	// which does not inherit this process's --store-root/--from-modcache
 	// state. Without these the child falls back to the default store root and
@@ -574,7 +578,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
 
-	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary)
+	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary, callgraphCeiling, callgraphNarration)
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,
 		scanner, database, reach,

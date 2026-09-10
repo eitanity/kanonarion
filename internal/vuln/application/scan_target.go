@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -150,7 +151,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 			// checked. Recording it Clean would be a false negative, so it carries
 			// the fault instead.
 			uc.logger.Error("target-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot)
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), failurecause.Unrecorded, domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot)
 			if perr != nil {
 				return false, perr
 			}
@@ -163,7 +164,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		status := domain.DetermineRecordOverallStatus(
 			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
 		)
-		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot)
+		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", failurecause.Unrecorded, domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot)
 		if perr != nil {
 			return false, perr
 		}
@@ -211,7 +212,7 @@ func (uc *ScanWalkUseCase) recordTargetFrameGap(
 	// Unscannable, is what carries that distinction.
 	rec, err := uc.persistProjectRecord(
 		ctx, root, root, nil, domain.StatusUnscannable,
-		reason, note, result.ErrorDetail,
+		reason, note, result.ErrorDetail, result.FailureCause,
 		domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot,
 	)
 	if err != nil {

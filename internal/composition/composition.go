@@ -276,7 +276,7 @@ func NewDriver(storeRoot string) (*Driver, func() error, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
-	return newDriver(storeRoot, extextractor.NewOsSubprocessExecutor(kanonarionBinary))
+	return newDriver(storeRoot, extextractor.NewOsSubprocessExecutor(kanonarionBinary, 0, nil))
 }
 
 // newDriver is NewDriver with the callgraph child's executor injected. The

@@ -856,7 +856,23 @@ func resetInvocationState() {
 	// ~/.kanonarion would be read, written and migrated in silence. A real
 	// invocation never sees this value; registration assigns the default next.
 	storeRoot = ""
+	// The call-graph subprocess bounds, in the state a command that was passed no
+	// flag is entitled to: the default ceiling and no narration.
+	callgraphCeiling = cgports.DefaultCeiling
+	callgraphNarration = nil
 }
+
+// callgraphCeiling is the wall-clock backstop for one call-graph subprocess.
+// Bound to --callgraph-timeout on every command that spawns one. It is a
+// backstop, not the working deadline: a child is normally ended by the stall
+// window, which measures silence rather than elapsed time.
+var callgraphCeiling time.Duration
+
+// callgraphNarration is where call-graph phase transitions go for this
+// invocation: the analyser writes them when this process IS the child, and the
+// spawner copies the child's own lines there when it is the parent. Nil narrates
+// nothing.
+var callgraphNarration io.Writer
 
 // storeRoot is the effective store directory for the current invocation.
 // Bound to --store-root on the root command; the env-var override

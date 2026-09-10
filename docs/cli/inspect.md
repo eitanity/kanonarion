@@ -41,6 +41,13 @@ If the binary is missing, the scan fails with a descriptive error naming the
 install command, and the summary reports `Partial` with a scan-failure count
 instead of a clean status.
 
+govulncheck type-checks the project's source with the `go/types` compiled into
+it, so the Go release it was **built with** must be at least the one the
+project's `go` directive names - the `go` on `PATH` and `GOTOOLCHAIN` do not
+change it. A scan that meets that gap names the tool, both versions, and the
+command that rebuilds it; see
+[vuln-scan prerequisites](vuln.md#prerequisites).
+
 ## Commands
 
 The two modes scan from **different roots**, and their vuln legs differ to match:

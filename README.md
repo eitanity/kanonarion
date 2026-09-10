@@ -227,7 +227,7 @@ tools. Have these on `PATH`:
 |---|---|---|
 | **Go 1.26+** | Install *and* runtime - kanonarion drives the `go` toolchain (`go list`, `go mod download`, `go test -c`, `go tool nm`) to resolve build lists and analyse binaries. | [go.dev/dl](https://go.dev/dl/) |
 | **git** | Runtime - VCS cross-verification (the `fetch` stage compares the proxy zip against the upstream source repository). Optional: without git, fetches still verify against the Go checksum database but record an unverified VCS status; pass `--skip-vcs-verify` to skip explicitly. | system package manager |
-| **govulncheck** | Runtime - required by `vuln-scan` / `inspect`. The scan fails fast with an actionable error if it's missing. | `go install golang.org/x/vuln/cmd/govulncheck@latest` |
+| **govulncheck** | Runtime - required by `vuln-scan` / `inspect`. The scan fails fast with an actionable error if it's missing. It type-checks source in-process, so the Go release it was **built with** must be at least the one your project's `go` directive names; a scan that meets that gap names the tool and the command that rebuilds it. | `go install golang.org/x/vuln/cmd/govulncheck@latest` |
 | **jq** | Optional - only the shell snippets in this README use it to pull a walk id out of `--json` output. | system package manager |
 
 Network access is needed for the **first** run of a given module set only

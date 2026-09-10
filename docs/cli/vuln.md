@@ -82,6 +82,29 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 If the binary is not found, `vuln-scan` returns a descriptive error with the
 install command rather than a generic failure.
 
+**The Go release that built it decides which projects it can read.** govulncheck
+type-checks the project's source in-process, with the `go/types` compiled into
+it, so a binary built with go1.26 cannot parse go1.27 source however new the `go`
+on `PATH` is. `GOTOOLCHAIN` does not change this - the type checker is inside the
+binary - and only rebuilding the tool does.
+
+kanonarion reads the tool's build version when it resolves the binary, so a scan
+that fails this way names the tool rather than the project's files:
+
+```
+reason: govulncheck cannot read this project's source: /home/op/.local/bin/govulncheck
+was built with go1.26.5 and the project requires go1.27. govulncheck type-checks the
+source with the go/types compiled into it, so the go on PATH and GOTOOLCHAIN cannot
+change this - only rebuilding the tool can. Rebuild it with:
+GOTOOLCHAIN=go1.27.1 GOBIN=/home/op/.local/bin go install golang.org/x/vuln/cmd/govulncheck@latest
+```
+
+The record carries `failure_cause: environment` beside its `ScanFailed`, which is
+what tells "this box cannot analyse it" from "this module cannot be analysed":
+only the first is repaired by rebuilding the tool and scanning again. The
+`GOTOOLCHAIN` named is a release already unpacked on this host where there is
+one, so the rebuild needs no upgrade to the installed Go.
+
 ### Air-gapped scanning
 
 Under `GOPROXY=off` - read as the go command reads it, so `go env -w
@@ -244,13 +267,18 @@ When `--reachability` is enabled, kanonarion checks the callgraph store before
 running reachability analysis for each module that has `StatusAffected` findings
 with symbol-level detail (`AffectedSymbols` non-empty). If no callgraph record
 exists, it automatically spawns `kanonarion callgraph <module@version>` as a
-child process (same binary, 10-minute timeout) to populate the store on demand.
-This limits expensive SSA work to the modules that actually need it.
+child process (same binary) to populate the store on demand. This limits
+expensive SSA work to the modules that actually need it.
 
 - At most `--callgraph-workers` (default `1`) subprocesses run concurrently.
   SSA builds are memory-heavy; keep this value low.
-- If the subprocess fails or times out, the finding's `Reachable` is left as
-  `null` and a `reachability_note` is set describing the failure. The overall
+- The subprocess is bounded by the progress it reports: it is stopped when 10 minutes
+  pass with no `callgraph progress:` line, not after a fixed span of work. A
+  wall-clock ceiling (default 2 h, `--callgraph-timeout`) remains as a backstop.
+  See [extract](extract.md#how-long-a-subprocess-may-run).
+- If the subprocess fails or is killed, the finding's `Reachable` is left as
+  `null` and a `reachability_note` is set describing the failure, naming which
+  deadline ended it or that the record's write lost the store lock. The overall
   status (`StatusAffected`) is not changed - the uncertainty is traceable.
 - `--force` re-runs callgraph extraction even when a cached record exists.
 - Modules with `StatusClean`, `StatusUnscannable`, or findings without

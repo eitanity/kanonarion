@@ -84,6 +84,32 @@ consumer nowhere.
 
 The rows themselves are unchanged.
 
+## Coverage gaps say what they are a statement about: no migration and no bump
+
+Three record shapes gain an axis that already existed on one of them, spelled the
+same way in all three (`internal/failurecause`: `module`, `environment`, or
+unstated):
+
+- `VulnerabilityRecord` gains `failure_cause`. A `ScanFailed` caused by a
+  govulncheck too old to parse the project is `environment`; one caused by the
+  module is `module`.
+- `StageResult`, inside an `ExtractionRun`, gains `cause`. A call-graph child
+  killed for making no progress, killed at the wall-clock ceiling, or whose write
+  lost the store lock is `environment`.
+- `CallGraphRecord`'s existing `failure_cause` is unchanged on the wire; its Go
+  type is now an alias of the shared one so the three cannot drift apart.
+
+**No migration, no purge, no pipeline bump, no schema-version bump.** Both new
+fields are `omitempty`/`omitzero` and absent from every record already written,
+so stored hashes still verify. An absent cause reads as "not stated" and is never
+read as the module's fault.
+
+The distinction is what a reader acts on. "This environment could not analyse it"
+is repaired by changing something on this host and running again; "this module
+cannot be analysed" is not. Before the axis reached the scan and the stage, a
+module dropped because a subprocess was killed on a wall clock, or because its
+write lost a lock, was indistinguishable from one that genuinely does not build.
+
 ## Call graph records: why a generation exists, no migration and no bump
 
 A `CallGraphRecord` gains `derived_by`: which reuse gate governed the run that

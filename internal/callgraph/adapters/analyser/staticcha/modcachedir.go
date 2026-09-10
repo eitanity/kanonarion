@@ -2,6 +2,7 @@ package staticcha
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -77,7 +78,9 @@ func (a *Analyser) prepareModuleCache(
 		}
 	}
 
+	a.step(coord, "materialising the module cache")
 	report := a.moduleCache.Materialise(ctx, cacheDir, main)
+	a.step(coord, fmt.Sprintf("module cache materialised (%d of %d)", report.Written, report.Requested))
 	a.logger.InfoContext(ctx, "callgraph_modcache_materialised",
 		slog.String("module", coord.Path()),
 		slog.String("version", coord.Version()),

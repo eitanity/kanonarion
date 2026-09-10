@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/spf13/cobra"
@@ -317,7 +318,11 @@ type scanShowJSON struct {
 // audit.go's vulnAuditStatus removes, and it must not reappear here.
 type scanRecordFault struct {
 	Coordinate string `json:"coordinate"`
-	Error      string `json:"error"`
+	// Cause says whether the gap is this host's or the module's. A store read
+	// error states none — the read failed, which says nothing about either — so
+	// the field is omitted rather than guessed.
+	Cause failurecause.Cause `json:"cause,omitempty"`
+	Error string             `json:"error"`
 }
 
 // scanShowSummary is the per-module read-back of a scan run for display: the
@@ -597,6 +602,7 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		case vuldomain.CoverageFailedScan:
 			summary.scanFailed = append(summary.scanFailed, scanRecordFault{
 				Coordinate: coord.String(),
+				Cause:      rec.FailureCause,
 				Error:      rec.ErrorDetail,
 			})
 		case vuldomain.CoverageAnalysed:
@@ -664,11 +670,15 @@ func writeScanFailures(faults []scanRecordFault, w io.Writer) {
 	}
 	_, _ = fmt.Fprintf(w, "Scan failed (%d): the scan of these modules failed — no status was reached\n", len(faults))
 	for _, f := range faults {
+		cause := ""
+		if f.Cause != failurecause.Unrecorded {
+			cause = " [cause=" + string(f.Cause) + "]"
+		}
 		if f.Error == "" {
-			_, _ = fmt.Fprintf(w, "  %s\n", f.Coordinate)
+			_, _ = fmt.Fprintf(w, "  %s%s\n", f.Coordinate, cause)
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "  %s: %s\n", f.Coordinate, f.Error)
+		_, _ = fmt.Fprintf(w, "  %s%s: %s\n", f.Coordinate, cause, f.Error)
 	}
 }
 

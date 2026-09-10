@@ -129,6 +129,7 @@ that is tight on memory.`,
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerCallgraphTimeoutFlag(cmd)
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
@@ -159,6 +160,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	}
 
 	logger := buildLogger(logLevel, stderr)
+	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, f.goBinary, f.skipVCS, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
@@ -611,6 +613,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	resolveProjectGoSum(f.gomodPath)
 
 	logger := buildLogger(logLevel, stderr)
+	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, f.goBinary, f.skipVCS, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)

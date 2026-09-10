@@ -17,6 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
@@ -97,24 +98,29 @@ func TestScanner_ClassifyScanFailure(t *testing.T) {
 	// field vuln-show and audit read for ScanFailed), not UnscannableReason —
 	// otherwise the reason is dropped and the user sees "unknown reason".
 	t.Run("scan failure puts reason in ErrorDetail with stderr", func(t *testing.T) {
-		status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(
+		f := classifyScanFailure(
 			errors.New("exit status 1"),
 			"govulncheck: loading packages: invalid array length",
+			resolvedTool{bin: "/usr/bin/govulncheck", builtWith: "go1.26.5"},
 		)
-		if status != domain.StatusScanFailed {
-			t.Fatalf("status = %s, want %s", status, domain.StatusScanFailed)
+		if f.status != domain.StatusScanFailed {
+			t.Fatalf("status = %s, want %s", f.status, domain.StatusScanFailed)
 		}
-		if errorDetail == "" {
+		if f.errorDetail == "" {
 			t.Error("ErrorDetail must carry the failure reason for ScanFailed")
 		}
-		if !strings.Contains(errorDetail, "invalid array length") {
-			t.Errorf("ErrorDetail %q must include the govulncheck stderr", errorDetail)
+		if !strings.Contains(f.errorDetail, "invalid array length") {
+			t.Errorf("ErrorDetail %q must include the govulncheck stderr", f.errorDetail)
 		}
-		if unscannableReason != "" {
-			t.Errorf("UnscannableReason must be empty for ScanFailed, got %q", unscannableReason)
+		if f.unscannableReason != "" {
+			t.Errorf("UnscannableReason must be empty for ScanFailed, got %q", f.unscannableReason)
 		}
-		if unscanReason != "" {
-			t.Errorf("UnscanReason must be empty for ScanFailed, got %q", unscanReason)
+		if f.unscanReason != "" {
+			t.Errorf("UnscanReason must be empty for ScanFailed, got %q", f.unscanReason)
+		}
+		if f.cause != failurecause.Unrecorded {
+			t.Errorf("cause = %q: a failure this classification does not recognise says nothing "+
+				"about whether the module or the host is at fault", f.cause)
 		}
 	})
 
@@ -122,18 +128,22 @@ func TestScanner_ClassifyScanFailure(t *testing.T) {
 	oomCases := []string{"signal: killed", "killed", "Killed", "exit status 137"}
 	for _, errStr := range oomCases {
 		t.Run("OOM: "+errStr, func(t *testing.T) {
-			status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(errors.New(errStr), "")
-			if status != domain.StatusUnscannable {
-				t.Errorf("status = %s, want %s", status, domain.StatusUnscannable)
+			f := classifyScanFailure(errors.New(errStr), "", resolvedTool{})
+			if f.status != domain.StatusUnscannable {
+				t.Errorf("status = %s, want %s", f.status, domain.StatusUnscannable)
 			}
-			if unscannableReason == "" {
+			if f.unscannableReason == "" {
 				t.Error("UnscannableReason must carry the reason for Unscannable")
 			}
-			if errorDetail != "" {
-				t.Errorf("ErrorDetail must be empty for Unscannable, got %q", errorDetail)
+			if f.errorDetail != "" {
+				t.Errorf("ErrorDetail must be empty for Unscannable, got %q", f.errorDetail)
 			}
-			if unscanReason != domain.UnscanReasonOOMKilled {
-				t.Errorf("UnscanReason = %q, want %q", unscanReason, domain.UnscanReasonOOMKilled)
+			if f.unscanReason != domain.UnscanReasonOOMKilled {
+				t.Errorf("UnscanReason = %q, want %q", f.unscanReason, domain.UnscanReasonOOMKilled)
+			}
+			if f.cause != failurecause.Environment {
+				t.Errorf("cause = %q, want environment: the box ran out of memory, the module did not "+
+					"become unanalysable", f.cause)
 			}
 		})
 	}

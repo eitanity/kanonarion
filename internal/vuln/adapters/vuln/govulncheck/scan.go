@@ -17,6 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/vulndbdir"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -95,7 +96,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		return domain.VulnerabilityRecord{}, err
 	}
 
-	govulncheckBin, err := lookupGovulncheck()
+	tool, err := resolveGovulncheck(ctx)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, err
 	}
@@ -127,7 +128,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		default:
 			s.logger.Info("vuln-scan: test binary built, running govulncheck -mode=binary", "binary", tmpBin)
 			build = func(childEnv []string) *exec.Cmd {
-				cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
+				cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
 				cmd.Env = childEnv
 				return cmd
 			}
@@ -151,7 +152,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		s.logMem(ctx, "deps_downloaded")
 		s.logger.Info("vuln-scan: running govulncheck source mode", "dir", scanDir, "db", dbArg)
 		build = func(childEnv []string) *exec.Cmd {
-			cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+			cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 			cmd.Dir = scanDir
 			cmd.Env = childEnv
 			return cmd
@@ -184,14 +185,15 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		// govulncheck's stderr for every expected out-of-toolchain module,
 		// contradicting that classification. The stderr stays available at debug.
 		s.logger.Debug("vuln-scan: govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
-		status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(waitErr, stderrStr)
+		f := classifyScanFailure(waitErr, stderrStr, tool)
 		return domain.VulnerabilityRecord{
 			Coordinate:        coord,
 			Findings:          nil,
-			OverallStatus:     status,
-			UnscanReason:      unscanReason,
-			ErrorDetail:       errorDetail,
-			UnscannableReason: unscannableReason,
+			OverallStatus:     f.status,
+			UnscanReason:      f.unscanReason,
+			ErrorDetail:       f.errorDetail,
+			UnscannableReason: f.unscannableReason,
+			FailureCause:      f.cause,
 			DatabaseSnapshot:  snapshot,
 			ScannedAt:         time.Now(),
 			PipelineVersion:   s.pipelineVersion,
@@ -613,6 +615,20 @@ func withCgoDisabled(env []string) []string {
 	return append(out, "CGO_ENABLED=0")
 }
 
+// scanFailure is one govulncheck non-zero exit, classified: the status it
+// records, the diagnostic field that status is read from, and what the failure
+// is a statement about.
+//
+// It is a struct rather than five returns because the fifth was the one that
+// mattered and a fifth unnamed result is where a caller starts mixing them up.
+type scanFailure struct {
+	status            domain.VulnerabilityStatus
+	errorDetail       string
+	unscannableReason string
+	unscanReason      domain.UnscanReason
+	cause             failurecause.Cause
+}
+
 // classifyScanFailure maps a govulncheck non-zero exit to a status and the
 // matching diagnostic field. OOM-style kills (SIGKILL / exit 137) are
 // Unscannable — resource-bound and retryable; any other non-zero exit is a
@@ -620,14 +636,39 @@ func withCgoDisabled(env []string) []string {
 // presentation layers read for that status — ErrorDetail for ScanFailed,
 // UnscannableReason for Unscannable — so a failed scan never surfaces as an
 // "unknown reason".
-func classifyScanFailure(waitErr error, stderr string) (status domain.VulnerabilityStatus, errorDetail, unscannableReason string, unscanReason domain.UnscanReason) {
+//
+// A tool too old to parse the project is separated out first, and it is the case
+// this exists to name: the go command's own message is nine lines about the
+// project's files and one parenthetical about the binary, so a reader concludes
+// their project is at fault. It is an environment failure — the same project on
+// the same host scans once the tool is rebuilt — and the refusal says so along
+// with the command that rebuilds it.
+func classifyScanFailure(waitErr error, stderr string, tool resolvedTool) scanFailure {
 	errStr := strings.ToLower(waitErr.Error())
 	if strings.Contains(errStr, "killed") || strings.Contains(errStr, "exit status 137") {
-		return domain.StatusUnscannable, "", "govulncheck was killed (likely OOM)", domain.UnscanReasonOOMKilled
+		return scanFailure{
+			status:            domain.StatusUnscannable,
+			unscannableReason: "govulncheck was killed (likely OOM)",
+			unscanReason:      domain.UnscanReasonOOMKilled,
+			cause:             failurecause.Environment,
+		}
+	}
+	if required, built, ok := scannerTooOld(stderr); ok {
+		if tool.builtWith != "" {
+			built = tool.builtWith
+		}
+		return scanFailure{
+			status:      domain.StatusScanFailed,
+			errorDetail: scannerTooOldRefusal(tool.bin, built, required),
+			cause:       failurecause.Environment,
+		}
 	}
 	reason := "govulncheck exited with error: " + waitErr.Error()
 	if stderr != "" {
 		reason += "; stderr: " + stderr
 	}
-	return domain.StatusScanFailed, reason, "", ""
+	// The cause is left unstated rather than guessed: a non-zero exit this
+	// classification does not recognise says nothing about whether the module or
+	// the host is at fault, and "unrecorded" is the honest word for that.
+	return scanFailure{status: domain.StatusScanFailed, errorDetail: reason}
 }

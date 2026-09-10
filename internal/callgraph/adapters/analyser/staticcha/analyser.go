@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"go/token"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -34,6 +35,10 @@ type Analyser struct {
 	// realModcacheDir is --from-modcache: an existing module cache the operator
 	// named. It wins over moduleCache and nothing is materialised.
 	realModcacheDir string
+	// progress receives one line each time the analysis moves on. A parent that
+	// spawned this process reads those lines to tell a working subprocess from a stalled
+	// one, and shows them to the operator; nil narrates nothing.
+	progress io.Writer
 }
 
 // New constructs an Analyser.
@@ -60,6 +65,25 @@ func (a *Analyser) WithModuleCache(mc cgports.ModuleCache) *Analyser {
 func (a *Analyser) WithRealModcache(dir string) *Analyser {
 	a.realModcacheDir = dir
 	return a
+}
+
+// WithProgress narrates the analysis's phase transitions to w.
+//
+// It is the child half of the subprocess stall detector — see
+// cgports.ProgressPrefix — and the same lines are what an operator running this
+// by hand sees, because "which phase is it in" is one question with one answer.
+func (a *Analyser) WithProgress(w io.Writer) *Analyser {
+	a.progress = w
+	return a
+}
+
+// step reports that the analysis has moved on, naming the module so a parent
+// running several children can tell them apart.
+func (a *Analyser) step(coord coordinate.ModuleCoordinate, text string) {
+	if a.progress == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(a.progress, "%s%s: %s\n", cgports.ProgressPrefix, coord, text)
 }
 
 // AnalyserMetadata returns the algorithm and version of this implementation.
@@ -99,6 +123,7 @@ func (a *Analyser) Analyse(
 	// this axis exists to explain.
 	defer func() { rec.Analyser = observedAnalyser() }()
 	a.logMem(ctx, "start")
+	a.step(coord, "unpacking the module")
 	tempDir, err := os.MkdirTemp("", "kanonarion-cg-*")
 	if err != nil {
 		return domain.CallGraphRecord{}, fmt.Errorf("creating temp dir: %w", err)
@@ -565,6 +590,7 @@ func (a *Analyser) analyseDirOnce(
 		Tests:   false,
 	}
 
+	a.step(coord, "loading package metadata")
 	pkgsMeta, err := packages.Load(cfgMeta, "./...")
 	if err != nil {
 		// A Load error is the driver failing, and the driver is the go command. It
@@ -575,6 +601,7 @@ func (a *Analyser) analyseDirOnce(
 			classifyLoad(err.Error()), "meta load: "+err.Error()), nil
 	}
 	a.logMem(ctx, "meta_loaded")
+	a.step(coord, fmt.Sprintf("package metadata loaded (%d packages)", len(pkgsMeta)))
 
 	// Every error the driver attached to a package rather than returning. A load
 	// that resolved nothing still returns a nil error when the go command reported
@@ -697,9 +724,11 @@ func (a *Analyser) analyseDirOnce(
 	// pass that enumerates for itself analyses a different program from the one
 	// before it. See functionset.go.
 	a.logMem(ctx, "pre_cha")
+	a.step(coord, "closing the function set")
 	funcs := closedFunctionSet(prog)
 	ordered := orderedFunctions(funcs)
 	a.logger.InfoContext(ctx, "callgraph_function_set_closed", slog.Int("function_count", len(ordered)))
+	a.step(coord, fmt.Sprintf("building the call graph (%d functions)", len(ordered)))
 	cg := chaCallGraph(funcs)
 	a.logMem(ctx, "post_cha")
 
@@ -720,6 +749,7 @@ func (a *Analyser) analyseDirOnce(
 	// reaches the record. See sourceRoots.
 	roots := newSourceRoots(tempDir, goModCache)
 
+	a.step(coord, fmt.Sprintf("walking the call graph (%d caller nodes)", len(recordedCallers)))
 	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, roots)
 
 	// Attach body-level capability facts. These are properties of a
@@ -727,6 +757,7 @@ func (a *Analyser) analyseDirOnce(
 	// leaves — that the call graph and package sink map cannot witness. Scan
 	// only the packages that appear as graph nodes so the extra syntax load is
 	// bounded by the graph rather than the full dependency set.
+	a.step(coord, fmt.Sprintf("attaching body facts (%d nodes)", len(nodes)))
 	a.attachBodyFacts(ctx, nodes, tempDir, env)
 
 	// Recover client-side interface-dispatch edges CHA drops when the sole
@@ -747,6 +778,7 @@ func (a *Analyser) analyseDirOnce(
 	// go to implementations — so the edge collections cannot answer "what must
 	// change with this port", and a grep for the method name cannot tell an
 	// implementation from a call.
+	a.step(coord, "extracting the interface relation")
 	ifaces, impls := a.extractInterfaces(ctx, prog, mem, fset, roots)
 
 	// A failed package (or any load error) means the graph is incomplete;
@@ -813,6 +845,11 @@ func (a *Analyser) analyseDirOnce(
 	// is what stops BUILT_WITH_BODIES being claimed uniformly over code belonging
 	// to modules the record does not name.
 	rec.ForeignModulesBuilt = build.ForeignModulesBuilt
+	// The last thing the analysis says. What follows is the caller sealing and
+	// storing the record, which on a large graph is the longest stretch after this
+	// point; a reader watching a run should see where it got to before it goes
+	// quiet.
+	a.step(coord, fmt.Sprintf("graph assembled (%d nodes, %d edges); storing", len(nodes), len(edges)))
 	return rec, nil
 }
 

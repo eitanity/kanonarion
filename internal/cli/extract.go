@@ -12,6 +12,7 @@ import (
 	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
 	domain "github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/spf13/cobra"
 )
 
@@ -43,6 +44,7 @@ func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
 	cmd.Flags().IntVar(&f.workers, "workers", 0, "parallel module extraction workers (0 = number of CPUs; each concurrent callgraph subprocess holds its own module's SSA closure, so the run's peak is roughly this many times the largest module's peak — reduce to limit memory use)")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerCallgraphTimeoutFlag(cmd)
 
 	cmd.AddCommand(newExtractShowCmd(stdout, stderr))
 	cmd.AddCommand(newExtractListCmd(stdout, stderr))
@@ -83,6 +85,7 @@ func renderExtraction(run domain.ExtractionRun, asJSON bool, stdout io.Writer) e
 // that needs its failures must read the record rather than a returned error.
 func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.Writer) (domain.ExtractionRun, error) {
 	logger := buildLogger(logLevel, stderr)
+	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
@@ -139,7 +142,11 @@ func extractionExit(run domain.ExtractionRun) error {
 type extractStageFailure struct {
 	Module string `json:"module"`
 	Stage  string `json:"stage"`
-	Error  string `json:"error,omitempty"`
+	// Cause says whether the gap is this host's or the module's. Only the first
+	// is repaired by changing something and running again, and a run that names
+	// no cause leaves a reader unable to tell which they are looking at.
+	Cause failurecause.Cause `json:"cause,omitempty"`
+	Error string             `json:"error,omitempty"`
 }
 
 // extractionFailures lists the run's failed stages, ordered so two readings of
@@ -152,6 +159,7 @@ func extractionFailures(run domain.ExtractionRun) []extractStageFailure {
 				failures = append(failures, extractStageFailure{
 					Module: coord.String(),
 					Stage:  stageName,
+					Cause:  stageResult.Cause,
 					Error:  stageResult.Error,
 				})
 			}
@@ -175,10 +183,14 @@ func printExtractionFailures(w io.Writer, run domain.ExtractionRun) {
 	}
 	_, _ = fmt.Fprintf(w, "Failed stages (%d):\n", len(failures))
 	for _, f := range failures {
+		cause := ""
+		if f.Cause != failurecause.Unrecorded {
+			cause = "  cause=" + string(f.Cause)
+		}
 		if f.Error != "" {
-			_, _ = fmt.Fprintf(w, "  %s  stage=%s  error=%s\n", f.Module, f.Stage, f.Error)
+			_, _ = fmt.Fprintf(w, "  %s  stage=%s%s  error=%s\n", f.Module, f.Stage, cause, f.Error)
 		} else {
-			_, _ = fmt.Fprintf(w, "  %s  stage=%s\n", f.Module, f.Stage)
+			_, _ = fmt.Fprintf(w, "  %s  stage=%s%s\n", f.Module, f.Stage, cause)
 		}
 	}
 }

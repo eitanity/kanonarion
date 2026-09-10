@@ -90,6 +90,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		return pkgs, nil
 	}
 
+	a.step(coord, "loading package syntax")
 	loaded, lErr := load(true)
 	if lErr != nil {
 		// Loading with tests is not viable for this module. Retry without them
@@ -109,6 +110,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		}
 	}
 	a.logMem(ctx, "syntax_loaded")
+	a.step(coord, fmt.Sprintf("syntax loaded (%d packages)", len(loaded)))
 	res.SourceFiles = loadedSourceFiles(loaded)
 	// Taken here, while the loader's own answer is still in hand: p.Syntax and
 	// p.TypesInfo are dropped further down, and the module a package belongs to is
@@ -197,6 +199,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		})
 	}
 	a.logMem(ctx, "packages_registered")
+	a.step(coord, fmt.Sprintf("packages registered (%d)", len(built)))
 
 	// Pass 3: build. Every package the builder can reach is registered now, so
 	// no build resolves a callee through a placeholder.
@@ -207,7 +210,13 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// packages and no built bodies is indistinguishable from one built from
 	// metadata. Recording it is what gives CompletenessTypeOnly a producer.
 	var builtPaths []string
-	for _, ssaPkg := range built {
+	for i, ssaPkg := range built {
+		// Progress inside the phase, not only at its end: SSA construction over a
+		// large closure is the longest stretch this analysis can spend without
+		// saying anything, and a parent bounding a stalled subprocess needs the difference.
+		if i%ssaBuildProgressStride == 0 {
+			a.step(coord, fmt.Sprintf("building SSA (%d of %d packages)", i, len(built)))
+		}
 		if berr := buildSSAPackageSafe(ssaPkg); berr != nil {
 			path := ""
 			if ssaPkg.Pkg != nil {
@@ -235,6 +244,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	}
 	runtime.GC()
 	a.logMem(ctx, "ssa_built")
+	a.step(coord, fmt.Sprintf("SSA built (%d packages with bodies)", res.BodiesBuilt))
 
 	if len(failedSet) > 0 {
 		res.FailedPkgs = make([]string, 0, len(failedSet))
@@ -246,6 +256,11 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 
 	return res, nil
 }
+
+// ssaBuildProgressStride is how often the build loop reports. Sized so a
+// several-hundred-package closure narrates a handful of times rather than once
+// per package.
+const ssaBuildProgressStride = 25
 
 // ssaBuildResult is the outcome of loading and building a module's packages.
 type ssaBuildResult struct {

@@ -776,24 +776,27 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 	// including the first-seen lookup — must run on the transaction's handle. A
 	// query issued against s.db.DB() while this transaction is open would wait
 	// for a connection the transaction is holding, and deadlock.
-	tx, err := s.db.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	// Retried when another writer holds the single-writer lock: the condition is
+	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	if err := sqlitestore.RetryOnBusy(ctx, "vulnerability record for "+record.Coordinate.String(), func(ctx context.Context) error {
+		tx, err := s.db.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("beginning transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
 
-	if existing, ok, ferr := s.firstScannedAt(ctx, tx, record); ferr != nil {
-		return ferr
-	} else if ok {
-		record.FirstScannedAt = existing
-	}
+		if existing, ok, ferr := s.firstScannedAt(ctx, tx, record); ferr != nil {
+			return ferr
+		} else if ok {
+			record.FirstScannedAt = existing
+		}
 
-	serialised, err := h.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("marshalling vulnerability record: %w", err)
-	}
+		serialised, err := h.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("marshalling vulnerability record: %w", err)
+		}
 
-	const q = `
+		const q = `
 INSERT INTO vulnerability_records (
     module_path, module_version, pipeline_version,
     snapshot_source, snapshot_version, rooting, walk_id,
@@ -805,30 +808,34 @@ ON CONFLICT (module_path, module_version, pipeline_version,
              snapshot_source, snapshot_version, scanned_at, content_hash)
 DO NOTHING`
 
-	// The columns come from RecordAxes rather than from the fields directly, so a
-	// record that reached here without the seal step's derivation still indexes
-	// under a real axis instead of the empty string.
-	coverage, findings := domain.RecordAxes(record)
-	rooting := domain.RecordRooting(record)
+		// The columns come from RecordAxes rather than from the fields directly, so a
+		// record that reached here without the seal step's derivation still indexes
+		// under a real axis instead of the empty string.
+		coverage, findings := domain.RecordAxes(record)
+		rooting := domain.RecordRooting(record)
 
-	if _, err = tx.ExecContext(ctx, q,
-		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
-		string(rooting), record.WalkID,
-		string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
-		recordstamp.Format(record.ScannedAt),
-		recordstamp.Format(record.FirstScannedAt),
-		record.ContentHash, serialised,
-	); err != nil {
-		return fmt.Errorf("inserting vulnerability record: %w", err)
-	}
+		if _, err = tx.ExecContext(ctx, q,
+			record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
+			record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
+			string(rooting), record.WalkID,
+			string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
+			recordstamp.Format(record.ScannedAt),
+			recordstamp.Format(record.FirstScannedAt),
+			record.ContentHash, serialised,
+		); err != nil {
+			return fmt.Errorf("inserting vulnerability record: %w", err)
+		}
 
-	if err = s.reconcileFindingsIndex(ctx, tx, record, rooting); err != nil {
-		return err
-	}
+		if err = s.reconcileFindingsIndex(ctx, tx, record, rooting); err != nil {
+			return err
+		}
 
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("committing vulnerability record: %w", err)
+		if err = tx.Commit(); err != nil {
+			return fmt.Errorf("committing vulnerability record: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	return nil
 }
@@ -1329,13 +1336,16 @@ func (s *Store) PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) erro
 		return fmt.Errorf("marshalling walk scan run: %w", err)
 	}
 
-	tx, err := s.db.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	// Retried when another writer holds the single-writer lock: the condition is
+	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	if err := sqlitestore.RetryOnBusy(ctx, "walk scan run "+run.ID, func(ctx context.Context) error {
+		tx, err := s.db.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("beginning transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
 
-	const q = `
+		const q = `
 INSERT INTO walk_scan_runs (
     id, walk_id, snapshot_source, snapshot_version,
     started_at, completed_at, overall_status,
@@ -1362,25 +1372,25 @@ ON CONFLICT (id) DO UPDATE SET
     content_hash        = excluded.content_hash,
     serialised          = excluded.serialised`
 
-	if _, err = tx.ExecContext(ctx, q,
-		run.ID, run.WalkID, run.Snapshot.Source(), run.Snapshot.Version(),
-		recordstamp.Format(run.StartedAt),
-		recordstamp.Format(run.CompletedAt),
-		string(run.OverallStatus),
-		string(run.CoverageStatus), string(run.FindingsStatus),
-		run.Counts.Total, run.Counts.Analysed, run.Counts.Affected,
-		run.Counts.Unscannable, run.Counts.Failed,
-		run.Operator, run.ContentHash, serialised,
-	); err != nil {
-		return fmt.Errorf("inserting walk scan run: %w", err)
-	}
+		if _, err = tx.ExecContext(ctx, q,
+			run.ID, run.WalkID, run.Snapshot.Source(), run.Snapshot.Version(),
+			recordstamp.Format(run.StartedAt),
+			recordstamp.Format(run.CompletedAt),
+			string(run.OverallStatus),
+			string(run.CoverageStatus), string(run.FindingsStatus),
+			run.Counts.Total, run.Counts.Analysed, run.Counts.Affected,
+			run.Counts.Unscannable, run.Counts.Failed,
+			run.Operator, run.ContentHash, serialised,
+		); err != nil {
+			return fmt.Errorf("inserting walk scan run: %w", err)
+		}
 
-	// record_content_hash names the exact generation this run scanned. Since the
-	// record table became a ledger a coordinate resolves to several, so a
-	// membership row that named only the coordinate would let a run be read back
-	// against a record written after it finished. PerModuleResults already holds
-	// the hash; this carries it into the index the joins actually use.
-	const modQ = `
+		// record_content_hash names the exact generation this run scanned. Since the
+		// record table became a ledger a coordinate resolves to several, so a
+		// membership row that named only the coordinate would let a run be read back
+		// against a record written after it finished. PerModuleResults already holds
+		// the hash; this carries it into the index the joins actually use.
+		const modQ = `
 INSERT INTO walk_scan_run_modules (
     walk_scan_run_id, module_path, module_version,
     pipeline_version, snapshot_source, snapshot_version, walk_id,
@@ -1388,21 +1398,25 @@ INSERT INTO walk_scan_run_modules (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (walk_scan_run_id, module_path, module_version) DO NOTHING`
 
-	// The row set, not a winner: each coordinate is a distinct key and the
-	// conflict clause makes a repeat a no-op, and every read of this table
-	// orders on the record columns rather than on insertion.
-	for coord, contentHash := range run.PerModuleResults {
-		if _, err = tx.ExecContext(ctx, modQ,
-			run.ID, coord.Path(), coord.Version(),
-			run.PipelineVersion, run.Snapshot.Source(), run.Snapshot.Version(), run.WalkID,
-			contentHash,
-		); err != nil {
-			return fmt.Errorf("inserting walk scan run module %s: %w", coord, err)
+		// The row set, not a winner: each coordinate is a distinct key and the
+		// conflict clause makes a repeat a no-op, and every read of this table
+		// orders on the record columns rather than on insertion.
+		for coord, contentHash := range run.PerModuleResults {
+			if _, err = tx.ExecContext(ctx, modQ,
+				run.ID, coord.Path(), coord.Version(),
+				run.PipelineVersion, run.Snapshot.Source(), run.Snapshot.Version(), run.WalkID,
+				contentHash,
+			); err != nil {
+				return fmt.Errorf("inserting walk scan run module %s: %w", coord, err)
+			}
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing walk scan run: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing walk scan run: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	return nil
 }

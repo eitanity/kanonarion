@@ -230,6 +230,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 						Status:     res.Status,
 						RecordID:   res.RecordID,
 						Error:      res.Error,
+						Cause:      res.Cause,
 						DurationMs: duration,
 					}
 					if extractErr != nil && stageRes.Error == "" {

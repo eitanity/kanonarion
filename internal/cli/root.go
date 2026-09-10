@@ -10,6 +10,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
 
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -215,6 +217,19 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	// function directly, which is how a --json run made the next direct call
 	// answer in JSON.
 	defer resetInvocationState()
+
+	// The store's own writes, and those of any child this run spawned, are
+	// counted for the whole invocation. It is reported here rather than per
+	// command because contention is a property of the run: a run that waited for
+	// the lock forty-eight times said so nowhere at all before this, and a reader
+	// comparing two runs of one command had no way to see the difference between
+	// them.
+	sqlitestore.ResetRetries()
+	defer func() {
+		if notice := sqlitestore.ContentionNotice(sqlitestore.Retries()); notice != "" {
+			_, _ = fmt.Fprint(stderr, notice)
+		}
+	}()
 
 	root := newRootCmd(stdout, stderr)
 	installDefaultSubcommands(root)

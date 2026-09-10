@@ -255,17 +255,25 @@ INSERT INTO fetch_records (
 ON CONFLICT (module_path, module_version, pipeline_version, module_hash, fetched_at, content_hash)
 DO NOTHING`
 
-	_, err := s.db.DB().ExecContext(ctx, q,
-		r.ModulePath, r.ModuleVersion, r.PipelineVersion,
-		r.SchemaVersion, r.Ecosystem, r.ModuleHash, r.GoModHash,
-		r.GitURL, r.GitRef, r.GitCommitHash,
-		r.VerificationStatus, r.VerificationDetail,
-		r.FetchedAt.UTC().Format(fetchedAtFormat),
-		r.ContentLocation, r.GoModLocation, r.ContentHash, r.Retracted,
-		r.ZipSHA256, r.ZipSHA384, r.ZipSHA512, r.SumDBLookupFailed, r.AcquisitionMode,
-		r.MeasurementKind, r.SumDBCheck, r.SumDBCheckSource, r.VCSCheck, r.VCSCheckSource,
-	)
-	if err != nil {
+	// Retried when another writer holds the single-writer lock. The insert is a
+	// no-op on conflict, so re-running it is exactly the same measurement — and
+	// the alternative was measured: a child that lost this race left the module
+	// cache short, and the analysis that read it recorded a load failure against
+	// the module.
+	if err := sqlitestore.RetryOnBusy(ctx, "fetch record for "+r.ModulePath+"@"+r.ModuleVersion,
+		func(ctx context.Context) error {
+			_, err := s.db.DB().ExecContext(ctx, q,
+				r.ModulePath, r.ModuleVersion, r.PipelineVersion,
+				r.SchemaVersion, r.Ecosystem, r.ModuleHash, r.GoModHash,
+				r.GitURL, r.GitRef, r.GitCommitHash,
+				r.VerificationStatus, r.VerificationDetail,
+				r.FetchedAt.UTC().Format(fetchedAtFormat),
+				r.ContentLocation, r.GoModLocation, r.ContentHash, r.Retracted,
+				r.ZipSHA256, r.ZipSHA384, r.ZipSHA512, r.SumDBLookupFailed, r.AcquisitionMode,
+				r.MeasurementKind, r.SumDBCheck, r.SumDBCheckSource, r.VCSCheck, r.VCSCheckSource,
+			)
+			return err //nolint:wrapcheck // the retry classifies the driver's own error; the caller below names the step
+		}); err != nil {
 		return fmt.Errorf("appending fetch record: %w", err)
 	}
 	return nil
@@ -474,12 +482,16 @@ DO UPDATE SET
     bundle            = excluded.bundle,
     signed_at         = excluded.signed_at`
 
-	_, err := s.db.DB().ExecContext(ctx, q,
-		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-		string(r.SubjectKind), r.SubjectAlgorithm, r.SubjectDigest, r.Bundle,
-		r.SignedAt.UTC().Format(time.RFC3339),
-	)
-	if err != nil {
+	// Retried on a lost lock, for the reason PutFetchRecord states.
+	if err := sqlitestore.RetryOnBusy(ctx, "attestation for "+r.Coordinate.String(),
+		func(ctx context.Context) error {
+			_, err := s.db.DB().ExecContext(ctx, q,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+				string(r.SubjectKind), r.SubjectAlgorithm, r.SubjectDigest, r.Bundle,
+				r.SignedAt.UTC().Format(time.RFC3339),
+			)
+			return err //nolint:wrapcheck // as above
+		}); err != nil {
 		return fmt.Errorf("inserting attestation: %w", err)
 	}
 	return nil

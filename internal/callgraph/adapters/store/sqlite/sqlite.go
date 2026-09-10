@@ -928,15 +928,18 @@ func (s *Store) PutCallGraphRecord(ctx context.Context, r domain2.CallGraphRecor
 	}
 	blob := blobcodec.Encode(raw)
 
-	tx, err := s.db.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback() //nolint:errcheck
-	}()
+	// Retried when another writer holds the single-writer lock: the condition is
+	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	if err := sqlitestore.RetryOnBusy(ctx, "callgraph record for "+r.Coordinate.String(), func(ctx context.Context) error {
+		tx, err := s.db.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("beginning transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback() //nolint:errcheck
+		}()
 
-	const qRecord = `
+		const qRecord = `
 INSERT INTO callgraph_records (
     module_path, module_version, pipeline_version,
     algorithm, overall_status, completeness, analysis_source, worktree_digest,
@@ -948,29 +951,29 @@ INSERT INTO callgraph_records (
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
-	// The analyser is written as the record states it and is never invented here.
-	// A record produced by something that could not read its own build info states
-	// none, and the honest column for it is the empty one: the back-fill's
-	// inference is for rows written before the axis existed, not for rows written
-	// now by a binary that declined to say.
-	_, err = tx.ExecContext(ctx, qRecord,
-		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-		string(r.Algorithm), int(r.OverallStatus),
-		string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
-		r.AnalysisRoot, r.WorktreeScanDigest,
-		string(r.FailureCause), r.Analyser.Column(),
-		// Written in the same statement as the blob it copies, so the derived column
-		// and the sealed record cannot diverge on any row this leg writes.
-		domain2.ForeignModulesColumn(r.ForeignModulesBuilt),
-		r.NodeCount, r.EdgeCount,
-		recordstamp.Format(r.ExtractedAt),
-		r.ContentHash, blob,
-	)
-	if err != nil {
-		return fmt.Errorf("inserting callgraph record: %w", err)
-	}
+		// The analyser is written as the record states it and is never invented here.
+		// A record produced by something that could not read its own build info states
+		// none, and the honest column for it is the empty one: the back-fill's
+		// inference is for rows written before the axis existed, not for rows written
+		// now by a binary that declined to say.
+		_, err = tx.ExecContext(ctx, qRecord,
+			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+			string(r.Algorithm), int(r.OverallStatus),
+			string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
+			r.AnalysisRoot, r.WorktreeScanDigest,
+			string(r.FailureCause), r.Analyser.Column(),
+			// Written in the same statement as the blob it copies, so the derived column
+			// and the sealed record cannot diverge on any row this leg writes.
+			domain2.ForeignModulesColumn(r.ForeignModulesBuilt),
+			r.NodeCount, r.EdgeCount,
+			recordstamp.Format(r.ExtractedAt),
+			r.ContentHash, blob,
+		)
+		if err != nil {
+			return fmt.Errorf("inserting callgraph record: %w", err)
+		}
 
-	const qEdge = `
+		const qEdge = `
 INSERT OR IGNORE INTO callgraph_edges (
     record_content_hash,
     from_module, from_version, pipeline_version,
@@ -978,39 +981,43 @@ INSERT OR IGNORE INTO callgraph_edges (
     call_site_file, call_site_line, reflect_dispatch, is_test, kind
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	stmtEdge, err := tx.PrepareContext(ctx, qEdge)
-	if err != nil {
-		return fmt.Errorf("preparing callgraph edge statement: %w", err)
-	}
-	defer func() { _ = stmtEdge.Close() }()
-
-	// An edge is test-scope when either end is: a production function calling a
-	// test fake, and a test calling production code, are both part of the test
-	// surface a query may want to set aside. The role is denormalised onto the
-	// edge because the edge queries are answered from this table alone — they
-	// never load the record the node roles live in.
-	testNode := make(map[string]bool, len(r.Nodes))
-	for _, n := range r.Nodes {
-		if n.IsTest {
-			testNode[n.ID] = true
+		stmtEdge, err := tx.PrepareContext(ctx, qEdge)
+		if err != nil {
+			return fmt.Errorf("preparing callgraph edge statement: %w", err)
 		}
-	}
+		defer func() { _ = stmtEdge.Close() }()
 
-	for _, e := range r.Edges {
-		if _, err := stmtEdge.ExecContext(ctx,
-			r.ContentHash,
-			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-			e.FromID, e.ToID, string(e.Confidence),
-			e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
-			testNode[e.FromID] || testNode[e.ToID],
-			string(e.Kind),
-		); err != nil {
-			return fmt.Errorf("inserting callgraph edge %s→%s: %w", e.FromID, e.ToID, err)
+		// An edge is test-scope when either end is: a production function calling a
+		// test fake, and a test calling production code, are both part of the test
+		// surface a query may want to set aside. The role is denormalised onto the
+		// edge because the edge queries are answered from this table alone — they
+		// never load the record the node roles live in.
+		testNode := make(map[string]bool, len(r.Nodes))
+		for _, n := range r.Nodes {
+			if n.IsTest {
+				testNode[n.ID] = true
+			}
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing callgraph record: %w", err)
+		for _, e := range r.Edges {
+			if _, err := stmtEdge.ExecContext(ctx,
+				r.ContentHash,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+				e.FromID, e.ToID, string(e.Confidence),
+				e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
+				testNode[e.FromID] || testNode[e.ToID],
+				string(e.Kind),
+			); err != nil {
+				return fmt.Errorf("inserting callgraph edge %s→%s: %w", e.FromID, e.ToID, err)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing callgraph record: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	_, _ = s.db.DB().ExecContext(ctx, `PRAGMA optimize`) //nolint:errcheck
 	return nil

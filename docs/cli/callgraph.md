@@ -263,12 +263,27 @@ kanonarion callgraph <module>@<version> [flags]
 | `--force` | `false` | Re-extract even if a cached record exists |
 | `--from-walk` | _(auto-discovered)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. Unset, the walk of a build that consumes the module is used; where the store holds it in more than one build, no build list is discovered and the builds are named on stderr so you can pin one. See [Modules published before Go modules](#modules-published-before-go-modules). |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
+| `--no-progress` | `false` | Suppress the per-phase narration on stderr |
 | `--json` | `false` | Emit the record as JSON to stdout |
 
 ```
 $ kanonarion callgraph golang.org/x/mod@v0.30.0
 golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
 ```
+
+The analysis narrates the phase it is in on stderr, so a run that takes minutes
+is visibly working rather than apparently wedged:
+
+```
+callgraph progress: golang.org/x/mod@v0.30.0: loading package metadata
+callgraph progress: golang.org/x/mod@v0.30.0: syntax loaded (34 packages)
+callgraph progress: golang.org/x/mod@v0.30.0: building SSA (25 of 34 packages)
+```
+
+The same lines are what a parent process reads to tell a working child from a
+stalled one - see [extract](extract.md#how-long-a-subprocess-may-run) - so a spawned
+child always writes them whatever this store's `preferences.progress` says. The
+flag silences them for a run you started by hand.
 
 ### Exit codes
 
