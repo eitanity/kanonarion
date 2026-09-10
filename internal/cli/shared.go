@@ -1620,43 +1620,87 @@ func divergenceMessage(err error) (string, bool) {
 		" which appends an authoritative measurement and erases nothing", true
 }
 
-// unreadableRunEntry is one stored scan run a survey listed but could not
-// verify: the row's identity and why it could not be read, kept apart so text
-// and JSON output can each present them their own way.
-type unreadableRunEntry struct {
-	ID     string `json:"id"`
-	Reason string `json:"reason"`
+// unreadableRowEntry is one stored row a survey listed but could not verify —
+// a scan run or a vulnerability record — holding what the store recovered about
+// it and why it could not be read.
+//
+// The facts are kept APART rather than pre-rendered, because the two surfaces
+// want different forms of the same row: a text listing wants prose, and a JSON
+// listing must put the coordinate under the key its readable siblings use so a
+// consumer never has to pull an identity back out of a display string. label()
+// composes the prose; the JSON surfaces read the fields.
+type unreadableRowEntry struct {
+	// ID is the row's bare identity — a run's id, a record's coordinate — or
+	// empty when the stored bytes would not yield one.
+	ID   string
+	Kind vulnports.RowKind
+	// PipelineVersion, SnapshotSource and SnapshotVersion place a record row in
+	// the ledger. Each is empty where the head did not carry it; all three are
+	// empty for a run.
+	PipelineVersion string
+	SnapshotSource  string
+	SnapshotVersion string
+	Reason          string
 }
 
-// unreadableRunReport turns a scan-run listing error into one operator-facing
-// entry per row the store could not verify, reporting whether it was that kind
-// of failure at all.
+// label renders one row for a text listing, where prose is the right form: the
+// identity, or a stand-in for bytes that named none, with the generation that
+// tells one row of a coordinate's history from another.
+func (e unreadableRowEntry) label() string {
+	id := e.ID
+	if id == "" {
+		kind := string(e.Kind)
+		if kind == "" {
+			kind = "row"
+		}
+		id = "(unidentified " + kind + ")"
+	}
+	if gen := (vulnports.RowGeneration{
+		PipelineVersion: e.PipelineVersion,
+		SnapshotVersion: e.SnapshotVersion,
+	}).String(); gen != "" {
+		id += " " + gen
+	}
+	return id
+}
+
+// unreadableRowReport turns a listing error into one operator-facing entry per
+// row the store could not verify, reporting whether it was that kind of failure
+// at all.
 //
-// It is divergenceMessage's counterpart for the scan-run listings, and it is
-// there for the same reason: a survey command reports what it could not read
-// and exits 0, while a consuming command takes the other branch and fails
-// closed. Any other error is not this one and is returned as not-handled, so a
-// database that fell over still aborts the listing.
-func unreadableRunReport(err error) ([]unreadableRunEntry, bool) {
-	var unreadable *vulnports.UnreadableRuns
+// It is divergenceMessage's counterpart for the store listings, and it is there
+// for the same reason: a survey command reports what it could not read and
+// exits 0, while a consuming command takes the other branch and fails closed.
+// Any other error is not this one and is returned as not-handled, so a database
+// that fell over still aborts the listing.
+//
+// Runs and records come through it alike. The fact is the same fact and the
+// commands that render it are the same commands, so a second reporter for
+// records would be a second place for this rule to be got wrong.
+func unreadableRowReport(err error) ([]unreadableRowEntry, bool) {
+	var unreadable *vulnports.UnreadableRows
 	if !errors.As(err, &unreadable) {
 		return nil, false
 	}
-	entries := make([]unreadableRunEntry, 0, len(unreadable.Runs))
-	for _, r := range unreadable.Runs {
-		id := r.ID
-		if id == "" {
-			id = "(unidentified run)"
-		}
-		entries = append(entries, unreadableRunEntry{ID: id, Reason: unreadableRunReason(r)})
+	entries := make([]unreadableRowEntry, 0, len(unreadable.Rows))
+	for _, r := range unreadable.Rows {
+		entries = append(entries, unreadableRowEntry{
+			ID:              r.ID,
+			Kind:            r.Kind,
+			PipelineVersion: r.Generation.PipelineVersion,
+			SnapshotSource:  r.Generation.SnapshotSource,
+			SnapshotVersion: r.Generation.SnapshotVersion,
+			Reason:          unreadableRowReason(r),
+		})
 	}
 	return entries, true
 }
 
-// scanRunStatusUnreadable is the status a survey reports for a row it listed
-// but could not verify. It is deliberately not one of the domain's scan
-// statuses: the run's status is exactly what is not known about it.
-const scanRunStatusUnreadable = "unreadable"
+// statusUnreadable is the status a survey reports for a row it listed but could
+// not verify. It is deliberately not one of the domain's statuses — for a run or
+// for a record: the row's status is exactly what is not known about it, and a
+// consumer decoding this value into a status enum gets a value no verdict has.
+const statusUnreadable = "unreadable"
 
 // writeUnreadableRun reports a single run an inspection command was asked for
 // and could not verify, and returns nil: naming what is wrong with the row is
@@ -1665,7 +1709,7 @@ const scanRunStatusUnreadable = "unreadable"
 // It reports the id the CALLER asked for. The stored bytes may not name
 // themselves, and echoing an empty id back at someone who just typed one would
 // lose the only identity in the exchange.
-func writeUnreadableRun(stdout io.Writer, runID string, entries []unreadableRunEntry, asJSON bool) error {
+func writeUnreadableRun(stdout io.Writer, runID string, entries []unreadableRowEntry, asJSON bool) error {
 	reason := "could not be verified"
 	if len(entries) > 0 {
 		reason = entries[0].Reason
@@ -1677,28 +1721,32 @@ func writeUnreadableRun(stdout io.Writer, runID string, entries []unreadableRunE
 			ID     string `json:"id"`
 			Status string `json:"status"`
 			Reason string `json:"reason"`
-		}{ID: runID, Status: scanRunStatusUnreadable, Reason: reason}); err != nil {
+		}{ID: runID, Status: statusUnreadable, Reason: reason}); err != nil {
 			return fmt.Errorf("encoding unreadable scan run: %w", err)
 		}
 		return nil
 	}
 	_, _ = fmt.Fprintf(stdout, "ID:          %s\n", runID)
-	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", scanRunStatusUnreadable)
+	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", statusUnreadable)
 	_, _ = fmt.Fprintf(stdout, "Reason:      %s\n", reason)
 	return nil
 }
 
-// writeUnreadableRuns prints one line per row the store could not verify, in
+// writeUnreadableRows prints one line per row the store could not verify, in
 // the listing itself. Silence here would be the one answer that is not honest:
 // an omitted row and a row reported as unreadable say different things about
 // the store, and only the second is true of it.
-func writeUnreadableRuns(stdout io.Writer, entries []unreadableRunEntry) {
+//
+// idWidth is the listing's own first column, so the unreadable rows line up
+// with the rows beside them rather than announcing themselves as a different
+// kind of output.
+func writeUnreadableRows(stdout io.Writer, entries []unreadableRowEntry, idWidth int) {
 	for _, e := range entries {
-		_, _ = fmt.Fprintf(stdout, "%-26s  status=%-12s  %s\n", e.ID, scanRunStatusUnreadable, e.Reason)
+		_, _ = fmt.Fprintf(stdout, "%-*s  status=%-12s  %s\n", idWidth, e.label(), statusUnreadable, e.Reason)
 	}
 }
 
-// unreadableRunReason says why a row could not be verified, in words a reader
+// unreadableRowReason says why a row could not be verified, in words a reader
 // can act on.
 //
 // The two cases are not interchangeable and must not be reported alike. A
@@ -1707,7 +1755,7 @@ func writeUnreadableRuns(stdout io.Writer, entries []unreadableRunEntry) {
 // earlier canonical shape — the remedy is a re-scan. Where that cannot be
 // established the wording stays neutral: an unverified record is reported as
 // unverified, and nothing is insinuated about how it got that way.
-func unreadableRunReason(r vulnports.UnreadableRun) string {
+func unreadableRowReason(r vulnports.UnreadableRow) string {
 	if errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
 		return "sealed by an earlier record generation; re-scan to reseal"
 	}

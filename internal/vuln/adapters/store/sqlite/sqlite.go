@@ -1258,7 +1258,10 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
 	}()
 
-	var records []domain.VulnerabilityRecord
+	var (
+		records    []domain.VulnerabilityRecord
+		unreadable []ports.UnreadableRow
+	)
 	for rows.Next() {
 		var serialised []byte
 		var scannedAt string // ordering keys only; the record carries its own timestamp.
@@ -1266,16 +1269,17 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 		if serr := rows.Scan(&serialised, &scannedAt, &rowID); serr != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", serr)
 		}
-		rec, derr := decodeRecord(serialised)
-		if derr != nil {
-			return nil, derr
+		rec, bad := recordRow(serialised)
+		if bad != nil {
+			unreadable = append(unreadable, *bad)
+			continue
 		}
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records for walk: %w", err)
 	}
-	return records, nil
+	return records, unreadableRowsErr(unreadable)
 }
 
 // queryRecords runs a query selecting only the serialised column and decodes
@@ -1290,22 +1294,26 @@ func (s *Store) queryRecords(ctx context.Context, what, query string, args ...an
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
 	}()
 
-	var out []domain.VulnerabilityRecord
+	var (
+		out        []domain.VulnerabilityRecord
+		unreadable []ports.UnreadableRow
+	)
 	for rows.Next() {
 		var serialised []byte
 		if serr := rows.Scan(&serialised); serr != nil {
 			return nil, fmt.Errorf("scanning %s: %w", what, serr)
 		}
-		rec, derr := decodeRecord(serialised)
-		if derr != nil {
-			return nil, derr
+		rec, bad := recordRow(serialised)
+		if bad != nil {
+			unreadable = append(unreadable, *bad)
+			continue
 		}
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating %s: %w", what, err)
 	}
-	return out, nil
+	return out, unreadableRowsErr(unreadable)
 }
 
 // PutWalkScanRun persists a walk scan run and its per-module membership index.
@@ -1419,8 +1427,8 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 		// is the next thing they do, so the two must speak the same language:
 		// an inspection command can name the row and carry on, and a consuming
 		// caller still matches the integrity sentinel and still fails closed.
-		return domain.WalkScanRun{}, false, unreadableRunsErr([]ports.UnreadableRun{
-			{ID: runIDFrom(serialised), Reason: derr},
+		return domain.WalkScanRun{}, false, unreadableRowsErr([]ports.UnreadableRow{
+			{Kind: ports.RowKindRun, ID: runIDFrom(serialised), Reason: derr},
 		})
 	}
 	return run, true, nil
@@ -1440,7 +1448,7 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 	if err != nil {
 		return nil, err
 	}
-	return runs, unreadableRunsErr(unreadable)
+	return runs, unreadableRowsErr(unreadable)
 }
 
 // ListAllWalkScanRuns lists all scan runs across all walks, most recent first.
@@ -1461,7 +1469,7 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 	if err != nil {
 		return nil, err
 	}
-	return runs, unreadableRunsErr(unreadable)
+	return runs, unreadableRowsErr(unreadable)
 }
 
 // collectRuns reads every scan run in rows, keeping the ones that verify and
@@ -1473,10 +1481,10 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 // Only a seal failure is survivable here. A database that cannot hand over the
 // row at all is a different fault: nothing is known about what was skipped, not
 // even that it exists, so there is no honest partial answer to give.
-func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRun, error) {
+func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRow, error) {
 	var (
 		runs       []domain.WalkScanRun
-		unreadable []ports.UnreadableRun
+		unreadable []ports.UnreadableRow
 	)
 	for rows.Next() {
 		var serialised []byte
@@ -1485,7 +1493,7 @@ func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRun, e
 		}
 		run, derr := decodeRun(serialised)
 		if derr != nil {
-			unreadable = append(unreadable, ports.UnreadableRun{ID: runIDFrom(serialised), Reason: derr})
+			unreadable = append(unreadable, ports.UnreadableRow{Kind: ports.RowKindRun, ID: runIDFrom(serialised), Reason: derr})
 			continue
 		}
 		runs = append(runs, run)
@@ -1496,13 +1504,15 @@ func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRun, e
 	return runs, unreadable, nil
 }
 
-// unreadableRunsErr wraps the unreadable rows for the caller, or returns nil
-// when there were none.
-func unreadableRunsErr(unreadable []ports.UnreadableRun) error {
+// unreadableRowsErr wraps the unreadable rows for the caller, or returns nil
+// when there were none. Runs and records share it: one unreadable stored row is
+// one fact, and two error types for it would let a fix reach one listing and
+// miss the other.
+func unreadableRowsErr(unreadable []ports.UnreadableRow) error {
 	if len(unreadable) == 0 {
 		return nil
 	}
-	return &ports.UnreadableRuns{Runs: unreadable}
+	return &ports.UnreadableRows{Rows: unreadable}
 }
 
 // runIDFrom recovers a run's identifier from stored bytes the seal check
@@ -1859,23 +1869,27 @@ ORDER BY julianday(scanned_at) DESC`
 	}
 	defer func() { _ = rows.Close() }()
 
-	var records []domain.VulnerabilityRecord
+	var (
+		records    []domain.VulnerabilityRecord
+		unreadable []ports.UnreadableRow
+	)
 	for rows.Next() {
 		var serialised []byte
 		var scannedAt string // ordering key only; the record carries its own timestamp.
 		if err := rows.Scan(&serialised, &scannedAt); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		rec, derr := decodeRecord(serialised)
-		if derr != nil {
-			return nil, derr
+		rec, bad := recordRow(serialised)
+		if bad != nil {
+			unreadable = append(unreadable, *bad)
+			continue
 		}
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
 	}
-	return records, nil
+	return records, unreadableRowsErr(unreadable)
 }
 
 // walkHasScanRun reports whether any vulnerability scan run was recorded for
@@ -2139,6 +2153,18 @@ ORDER BY ` + latest + ` DESC, walk_id`
 // detected tamper reported as "nothing here" becomes a silent re-scan that
 // overwrites the evidence of the tamper.
 func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
+	rec, cerr := classifyRecord(serialised)
+	if cerr != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w", ports.ErrVulnIntegrity, rec.Coordinate, cerr)
+	}
+	return rec, nil
+}
+
+// classifyRecord parses a stored record and says why it cannot be trusted,
+// without naming it: the coordinate comes back on the record, so a caller that
+// already names the row — an unreadable-row report does — does not have to
+// print the identity twice to state one fault.
+func classifyRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 	var h domain.VulnerabilityRecordHasher
 	rec, err := h.Unmarshal(serialised)
 	if err != nil {
@@ -2154,11 +2180,77 @@ func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 		// sealed bytes are not the same set of fields: a record that has been
 		// re-scanned carries a first-seen anchor the seal never covered, and a
 		// verifier that did not know would report every one of them as altered.
-		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w",
-			ports.ErrVulnIntegrity, rec.Coordinate,
-			recordseal.Excluding(h.SealExcludes()...).Classify(serialised, rec.ContentHash, verr))
+		// Returned unwrapped on purpose: both callers wrap it, one with the
+		// integrity sentinel and one with the row's identity, and a sentence here
+		// would sit between those two and repeat them.
+		//nolint:wrapcheck // recordseal is this module's own classifier; the callers supply the framing
+		return rec, recordseal.Excluding(h.SealExcludes()...).Classify(serialised, rec.ContentHash, verr)
 	}
 	return rec, nil
+}
+
+// recordRow decodes one stored record, or names it as a row this build cannot
+// verify.
+//
+// It is the seam every record LISTING goes through, so the rule for an
+// unreadable row cannot be applied to one listing and missed by another: the
+// record reads fan out over four store methods and reach vuln-by-id, vuln-show
+// and its history alike. The single-record reads deliberately do not come
+// through here — see listGenerations.
+func recordRow(serialised []byte) (domain.VulnerabilityRecord, *ports.UnreadableRow) {
+	rec, derr := classifyRecord(serialised)
+	if derr != nil {
+		id, generation := recordIdentityFrom(serialised)
+		return domain.VulnerabilityRecord{}, &ports.UnreadableRow{
+			Kind:       ports.RowKindRecord,
+			ID:         id,
+			Generation: generation,
+			Reason:     derr,
+		}
+	}
+	return rec, nil
+}
+
+// recordIdentityFrom recovers a record's identity from stored bytes the seal
+// check rejected, so the row can be named in a report.
+//
+// The coordinate and the generation come back apart rather than spliced into one
+// string: a machine surface renders the coordinate under the key its readable
+// siblings use, and a consumer must not have to pull it back out of prose. The
+// prose form is composed where prose is wanted.
+//
+// Only a head is read, and nothing is asserted about the rest: the bytes are
+// under suspicion, which is precisely why they must not be interpreted as a
+// record. Anything that cannot be read comes back empty and the row is reported
+// without it.
+func recordIdentityFrom(serialised []byte) (string, ports.RowGeneration) {
+	var head struct {
+		Coordinate       json.RawMessage `json:"coordinate"`
+		PipelineVersion  string          `json:"pipeline_version"`
+		DatabaseSnapshot struct {
+			Source  string `json:"source"`
+			Version string `json:"version"`
+		} `json:"database_snapshot"`
+	}
+	if err := json.Unmarshal(serialised, &head); err != nil {
+		return "", ports.RowGeneration{}
+	}
+	generation := ports.RowGeneration{
+		PipelineVersion: head.PipelineVersion,
+		SnapshotSource:  head.DatabaseSnapshot.Source,
+		SnapshotVersion: head.DatabaseSnapshot.Version,
+	}
+	var coord coordinate.ModuleCoordinate
+	if err := json.Unmarshal(head.Coordinate, &coord); err != nil {
+		return "", generation
+	}
+	// The zero coordinate renders as "@", which names nothing and reads as an
+	// identity. A row that will not say which module it is is reported without
+	// one.
+	if coord.IsZero() {
+		return "", generation
+	}
+	return coord.String(), generation
 }
 
 // decodeRun parses a stored walk scan run and checks its seal, on the same

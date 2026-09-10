@@ -23,7 +23,8 @@ exit 0
     "superseded": false,
     "toolchain": "",
     "scanned_at": "2026-02-20T09:00:00Z",
-    "first_scanned_at": "2026-02-20T09:00:00Z"
+    "first_scanned_at": "2026-02-20T09:00:00Z",
+    "first_scanned_at_anchor": "anchored per (module, version, pipeline_version, snapshot): first validation against this advisory snapshot at this pipeline version, not first awareness — a new snapshot starts a new anchor. For the first observation across snapshots and generations run: kanonarion store ledger --event-type vuln_finding_observed --module example.com/shallow@v1.0.0"
   }
 ]
 --- stderr ---

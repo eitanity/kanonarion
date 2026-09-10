@@ -350,7 +350,8 @@ github.com/spf13/cobra@v1.8.1 — Clean
   Walk:            01KZWK6GHN7CK9Y54YTHMTNRKJ
   Analysis frame:  target-rooted:github.com/spf13/cobra@v1.8.1
   Toolchain:       go1.26.5
-  First validated: 2026-08-27T01:09:38Z
+  First validated: 2026-08-27T01:09:38Z  (against this snapshot at pipeline v25, not first awareness)
+                   first observation: kanonarion store ledger --event-type vuln_finding_observed --module github.com/spf13/cobra@v1.8.1
   Last validated:  2026-08-27T01:09:38Z
   Snapshot:        vuln.go.dev@2026-08-21T20:38:00Z
   Advisories:      4291 in the snapshot scanned against

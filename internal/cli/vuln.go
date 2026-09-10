@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/spf13/cobra"
 )
@@ -101,8 +102,17 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 	// First and last validated are stated as distinct facts: when the verdict was
 	// first established versus the run that last re-confirmed it. The reader, not
 	// kanonarion, judges whether that is acceptably fresh.
+	//
+	// The grain is printed beside the stamp because the stamp's stored name,
+	// first_scanned_at, reads as "first ever" and is not: it is anchored per
+	// (module, version, pipeline version, snapshot), so a new advisory snapshot
+	// starts a new anchor and the value legitimately moves forward. The ledger is
+	// what answers the historical question, and it is named here rather than left
+	// for the reader to know about.
 	if !rec.FirstScannedAt.IsZero() {
-		_, _ = fmt.Fprintf(stdout, "  First validated: %s\n", ledgerStamp(rec.FirstScannedAt))
+		_, _ = fmt.Fprintf(stdout, "  First validated: %s  (against this snapshot at pipeline %s, not first awareness)\n",
+			ledgerStamp(rec.FirstScannedAt), rec.PipelineVersion)
+		_, _ = fmt.Fprintf(stdout, "                   first observation: %s\n", firstObservationCommand(rec.Coordinate))
 	}
 	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", ledgerStamp(rec.ScannedAt))
 	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version())
@@ -311,4 +321,30 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 			_, _ = fmt.Fprintf(stdout, "      reachability: %s\n", f.ReachabilityNote)
 		}
 	}
+}
+
+// firstObservationCommand names the reader that answers "when did we first
+// become aware", which the first-validated stamp does not.
+//
+// The stamp is anchored per (module, version, pipeline version, snapshot) by
+// design, so it resets whenever a new advisory snapshot rolls — measured across
+// this project's own store, every coordinate scanned against more than one
+// snapshot reset, most of them with no pipeline change at all. The value is
+// correct for the question it answers; the name is what invites the other one,
+// and every surface that shows the stamp shows this beside it.
+func firstObservationCommand(coord coordinate.ModuleCoordinate) string {
+	return fmt.Sprintf("kanonarion store ledger --event-type vuln_finding_observed --module %s", coord)
+}
+
+// firstScannedAtAnchorNote is firstObservationCommand's statement for a machine
+// consumer: what the stamp is anchored to, and where the historical answer is.
+//
+// It is a sibling key rather than a rename. The key name first_scanned_at is a
+// stability contract and the value under it is correct, so renaming would break
+// consumers to fix a documentation problem; what was missing is any statement of
+// the grain on the surface a machine reads.
+func firstScannedAtAnchorNote(coord coordinate.ModuleCoordinate) string {
+	return "anchored per (module, version, pipeline_version, snapshot): first validation against this " +
+		"advisory snapshot at this pipeline version, not first awareness — a new snapshot starts a new " +
+		"anchor. For the first observation across snapshots and generations run: " + firstObservationCommand(coord)
 }

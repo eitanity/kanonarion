@@ -65,6 +65,10 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
+// scanRunIDColumn is the width of the run-id column both scan-run listings
+// print, so an unreadable row lines up with the rows beside it.
+const scanRunIDColumn = 26
+
 func runScanList(ctx context.Context, walkID string, limit, offset int, uc QueryScanRunsUseCase, stdout, stderr io.Writer) error {
 	var (
 		runs []vuldomain.WalkScanRun
@@ -77,7 +81,7 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 	}
 	// This command surveys the store, so a row it cannot verify is part of the
 	// answer rather than a reason to withhold it. Any other error still aborts.
-	unreadable, survivable := unreadableRunReport(err)
+	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
@@ -120,7 +124,9 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 		// own: a caller that reads this output as "the runs in the store" must
 		// not be able to miss them, and one that filters on status still can.
 		for _, u := range unreadable {
-			out = append(out, entry{ID: u.ID, Status: scanRunStatusUnreadable, Reason: u.Reason})
+			// A run's identity is its id and it has no generation, so the label is
+			// the bare id — the same value, under the same key the readable rows use.
+			out = append(out, entry{ID: u.label(), Status: statusUnreadable, Reason: u.Reason})
 		}
 		var zero *listZeroScope
 		if len(out) == 0 {
@@ -147,7 +153,7 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 		}
 		_, _ = fmt.Fprintln(stdout, line)
 	}
-	writeUnreadableRuns(stdout, unreadable)
+	writeUnreadableRows(stdout, unreadable, scanRunIDColumn)
 	return writeListTruncationNotice(stdout, trunc)
 }
 
@@ -159,7 +165,7 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 	// A store that cannot be surveyed still answers the question the listing was
 	// asked; what it cannot do is size the corpus, and a count of zero would
 	// assert exactly the thing it failed to measure.
-	if _, survivable := unreadableRunReport(err); err != nil && !survivable {
+	if _, survivable := unreadableRowReport(err); err != nil && !survivable {
 		return listZeroScope{}, fmt.Errorf("counting scan runs for the zero-result notice: %w", err)
 	}
 	scope := listZeroScope{
@@ -198,7 +204,7 @@ func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jso
 	// A store with unreadable rows can still be counted; one that cannot be read
 	// at all has nothing honest to say, and a zero substituted for a failed count
 	// would assert exactly the thing it failed to measure.
-	if _, survivable := unreadableRunReport(err); err != nil && !survivable {
+	if _, survivable := unreadableRowReport(err); err != nil && !survivable {
 		return fmt.Errorf("counting scan runs for the not-found notice: %w", err)
 	}
 	scope := listZeroScope{
@@ -339,7 +345,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	// an operator runs next against one of those names. Refusing here would send
 	// them from a listing that reports the fault to the one tool that will not
 	// discuss it, which is the same dead end one step along.
-	if unreadable, survivable := unreadableRunReport(err); survivable {
+	if unreadable, survivable := unreadableRowReport(err); survivable {
 		return writeUnreadableRun(stdout, runID, unreadable, jsonOut)
 	}
 	if err != nil {
@@ -743,7 +749,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	// A history of a walk is a survey of the same rows vuln-scan-list surveys,
 	// and reaches them through the same store seam, so it answers the same way:
 	// every run it can read, plus the ones it cannot, named.
-	unreadable, survivable := unreadableRunReport(err)
+	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
@@ -773,7 +779,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		if len(unreadable) > 0 || !walkPresent {
 			payload := struct {
 				Runs               []vuldomain.WalkScanRun `json:"runs"`
-				Unreadable         []unreadableRunEntry    `json:"unreadable,omitempty"`
+				Unreadable         []unreadableRowEntry    `json:"unreadable,omitempty"`
 				InputsUnresolvable string                  `json:"inputs_unresolvable,omitempty"`
 			}{Runs: runs, Unreadable: unreadable}
 			if !walkPresent {
@@ -808,7 +814,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 			ledgerStamp(r.CompletedAt),
 		)
 	}
-	writeUnreadableRuns(stdout, unreadable)
+	writeUnreadableRows(stdout, unreadable, scanRunIDColumn)
 	return nil
 }
 

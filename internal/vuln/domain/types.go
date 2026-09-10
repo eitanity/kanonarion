@@ -759,10 +759,23 @@ type VulnerabilityRecord struct {
 	// FirstScannedAt anchors when this verdict was first established for the
 	// (module, version, pipeline, snapshot) tuple. Unlike ScannedAt — which
 	// moves forward to the run that last validated the verdict — it is set once
-	// on first insert and never overwritten on reuse/re-attribution, so it
-	// answers "when did we first find this out" for triage and audit. It is
+	// on first insert and never overwritten on reuse/re-attribution. It is
 	// provenance, not verdict, so it is excluded from ContentHash to keep
 	// identity deterministic across re-validation.
+	//
+	// The snapshot is HALF THE KEY, so this is not "when did we first become
+	// aware" and must not be read as it: a new advisory snapshot is a new tuple
+	// and therefore a new anchor, and the stamp legitimately moves forward with
+	// no pipeline change at all. Measured on this project's store, every
+	// coordinate ever scanned against more than one snapshot reset. What it
+	// answers is when this coordinate was first validated against THIS snapshot
+	// at THIS pipeline version — which is what the freshness block on a rendered
+	// record needs, and what its stored name does not say.
+	//
+	// The question the name invites is answered by the assurance ledger, which
+	// spans snapshots and generations:
+	//
+	//	kanonarion store ledger --event-type vuln_finding_observed --module <path>@<version>
 	FirstScannedAt  time.Time `json:"first_scanned_at,omitzero"`
 	PipelineVersion string    `json:"pipeline_version"`
 	// CallGraphCompleteness records the per-module call-graph fidelity level that

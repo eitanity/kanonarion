@@ -42,6 +42,14 @@ func resolveDependentsRoot(
 		if err != nil {
 			return walkContainment{}, walkdomain.WalkRecord{}, err
 		}
+		if !graphHoldsTarget(rec.Graph, coord) {
+			// The same check the --gomod path makes, for the same reason. Without
+			// it a pinned question about a version the walk does not hold answered
+			// "no modules depend on it" at exit 0: an absence asserted over a
+			// population that was never enumerated, because nothing was searched.
+			return walkContainment{}, walkdomain.WalkRecord{},
+				walkLacksModule(ctx, walks, rec, coord, f.walkID)
+		}
 		return pinnedContainment(rec), rec, nil
 
 	case f.anyBuild:
@@ -156,6 +164,44 @@ func buildLacksModule(
 	coord coordinate.ModuleCoordinate,
 	build, gomodPath string,
 ) error {
+	return lacksModuleRefusal(ctx, walks, rec, coord, build, func(h holdingBuild) string {
+		return fmt.Sprintf("kanonarion dependents %s --gomod %s%s", dependentsTargetText(coord), gomodPath, h.flag)
+	})
+}
+
+// walkLacksModule is buildLacksModule for a question pinned with --walk-id.
+//
+// The pinned path had no such refusal and answered "no modules depend on X" at
+// exit 0 for a coordinate the walk had never resolved. Its sibling path already
+// held the rule: an empty dependent list and "that build does not hold this
+// module" are different facts, and only the first is a measurement.
+//
+// The remedy names --walk-id rather than --gomod, because a caller who pinned a
+// walk is asking about stored builds and a manifest path is not what they have
+// in hand.
+func walkLacksModule(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	rec walkdomain.WalkRecord,
+	coord coordinate.ModuleCoordinate,
+	walkID string,
+) error {
+	build := fmt.Sprintf("walk %s (%s, frame %s)", walkID, walkScopeLabel(rec.Scope), rec.Graph.Frame())
+	return lacksModuleRefusal(ctx, walks, rec, coord, build, func(h holdingBuild) string {
+		return fmt.Sprintf("kanonarion dependents %s --walk-id %s", dependentsTargetText(coord), h.walkID)
+	})
+}
+
+// lacksModuleRefusal is the refusal both rooted paths give, differing only in
+// how a caller would ask the build that does hold the coordinate.
+func lacksModuleRefusal(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	rec walkdomain.WalkRecord,
+	coord coordinate.ModuleCoordinate,
+	build string,
+	askElsewhere func(holdingBuild) string,
+) error {
 	target := dependentsTargetText(coord)
 	msg := fmt.Sprintf("%s, rooted at %s, does not contain %s", build, rec.Target, target)
 	if versions := graphVersionsOf(rec.Graph, coord.Path()); len(versions) > 0 {
@@ -164,8 +210,8 @@ func buildLacksModule(
 	holding := buildsHolding(ctx, walks, rec, coord)
 	switch {
 	case len(holding) > 0:
-		msg += fmt.Sprintf("; the store holds it in the %s of %s — ask there:\n  kanonarion dependents %s --gomod %s%s",
-			joinHoldingBuilds(holding), rec.Target, target, gomodPath, holding[0].flag)
+		msg += fmt.Sprintf("; the store holds it in the %s of %s — ask there:\n  %s",
+			joinHoldingBuilds(holding), rec.Target, askElsewhere(holding[0]))
 	case coord.HasVersion():
 		msg += fmt.Sprintf("; no current build of %s holds it either — the newest walk of each scope and "+
 			"platform was checked, and an older one still may, so search them all with:"+

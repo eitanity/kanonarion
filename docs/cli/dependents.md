@@ -412,9 +412,17 @@ kanonarion dependents golang.org/x/crypto@v0.48.0 --json \
 ## Notes
 
 - The target version must match exactly the MVS-selected version recorded in the
-  walk. A rooted read refuses and names the version the build did resolve; under
-  `--walk-id` a version the walk does not hold gives zero results, which is the
-  correct answer for that walk.
+  walk. A read whose build does not hold the coordinate **refuses** (exit 20) and
+  names the version the build did resolve — on every rooting, `--walk-id`
+  included. It used to answer `No modules depend on <coord>` at exit 0 there,
+  which asserts an absence over a population nothing searched: "not in this
+  build" and "in this build and nothing points at it" are different facts, and
+  only the second is a measurement.
+
+  ```
+  error: walk 01M1E9940J18X1VEW03GS5P1DX (code scope, frame linux/amd64), rooted at github.com/eitanity/kanonarion@local, does not contain golang.org/x/sys@v0.38.0; it resolved golang.org/x/sys at v0.47.0; no current build of github.com/eitanity/kanonarion@local holds it either — the newest walk of each scope and platform was checked, and an older one still may, so search them all with:
+    kanonarion dependents golang.org/x/sys@v0.38.0 --any-build
+  ```
 - A zero-result response is not an error (exit 0). It means the module is in the
   build but nothing in it has an edge to the module, or the only thing that does
   is the walk root (which is excluded by default). "Not in this build" is a

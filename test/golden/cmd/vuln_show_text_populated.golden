@@ -6,7 +6,8 @@ example.com/mod@v1.2.0 — Affected
   Walk:            01ARZ3NDEKTSV4RRFFQ69G5FAV
   Analysis frame:  target-rooted
   Toolchain:       not recorded
-  First validated: 2026-01-15T09:00:00Z
+  First validated: 2026-01-15T09:00:00Z  (against this snapshot at pipeline v25, not first awareness)
+                   first observation: kanonarion store ledger --event-type vuln_finding_observed --module example.com/mod@v1.2.0
   Last validated:  2026-02-20T09:00:00Z
   Snapshot:        govulndb@v2026-02-14T00-00-00
   Advisories:      not recorded (this record predates the advisory count)

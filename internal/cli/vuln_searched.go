@@ -79,40 +79,51 @@ func (q *searchedVulnQuery) ListRecordsForModuleInWalk(
 	ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, walkID string,
 ) ([]vulndomain.VulnerabilityRecord, error) {
 	recs, err := q.inner.ListRecordsForModuleInWalk(ctx, coord, pipelineVersion, walkID)
+	// The records the store could verify come back even when it also reports rows
+	// it could not, so they must survive this decorator too — this is the second
+	// route each record read reaches its store by, and a partial answer dropped
+	// here is a partial answer no survey can ever print.
+	recs = q.searchAll(ctx, recs)
 	if err != nil {
-		return nil, fmt.Errorf("listing records in walk: %w", err)
+		return recs, fmt.Errorf("listing records in walk: %w", err)
 	}
-	return q.searchAll(ctx, recs), nil
+	return recs, nil
 }
 
 func (q *searchedVulnQuery) ListRecordsForModule(
 	ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string,
 ) ([]vulndomain.VulnerabilityRecord, error) {
 	recs, err := q.inner.ListRecordsForModule(ctx, coord, pipelineVersion)
+	// Partial results survive, as above.
+	recs = q.searchAll(ctx, recs)
 	if err != nil {
-		return nil, fmt.Errorf("listing records for module: %w", err)
+		return recs, fmt.Errorf("listing records for module: %w", err)
 	}
-	return q.searchAll(ctx, recs), nil
+	return recs, nil
 }
 
 func (q *searchedVulnQuery) ListRecordsForModuleAllGenerations(
 	ctx context.Context, coord coordinate.ModuleCoordinate,
 ) ([]vulndomain.VulnerabilityRecord, error) {
 	recs, err := q.inner.ListRecordsForModuleAllGenerations(ctx, coord)
+	// Partial results survive, as above.
+	recs = q.searchAll(ctx, recs)
 	if err != nil {
-		return nil, fmt.Errorf("listing every generation for module: %w", err)
+		return recs, fmt.Errorf("listing every generation for module: %w", err)
 	}
-	return q.searchAll(ctx, recs), nil
+	return recs, nil
 }
 
 func (q *searchedVulnQuery) ListRecordsByFindingID(
 	ctx context.Context, findingID, walkID string,
 ) ([]vulndomain.VulnerabilityRecord, error) {
 	recs, err := q.inner.ListRecordsByFindingID(ctx, findingID, walkID)
+	// Partial results survive, as above.
+	recs = q.searchAll(ctx, recs)
 	if err != nil {
-		return nil, fmt.Errorf("listing records by finding id: %w", err)
+		return recs, fmt.Errorf("listing records by finding id: %w", err)
 	}
-	return q.searchAll(ctx, recs), nil
+	return recs, nil
 }
 
 func (q *searchedVulnQuery) ListRecordsForRun(

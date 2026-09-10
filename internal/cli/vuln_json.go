@@ -161,6 +161,11 @@ type vulnRecordJSON struct {
 	// on the record — the anchor is absent until a re-scan — so it stays absent.
 	ScannedAt      string `json:"scanned_at"`
 	FirstScannedAt string `json:"first_scanned_at,omitempty"`
+	// FirstScannedAtAnchor says what the stamp above is anchored to and names the
+	// reader that answers the question its name invites. It rides beside the
+	// stamp and is absent whenever the stamp is, so a consumer that never reads
+	// the stamp sees no change. See firstScannedAtAnchorNote.
+	FirstScannedAtAnchor string `json:"first_scanned_at_anchor,omitempty"`
 }
 
 // toVulnRecordJSON projects one record, classifying its routes against the
@@ -169,7 +174,7 @@ func toVulnRecordJSON(rec vuldomain.VulnerabilityRecord, bind recordRootFunc) vu
 	if bind == nil {
 		bind = unclassifiedRecords
 	}
-	return vulnRecordJSON{
+	out := vulnRecordJSON{
 		VulnerabilityRecord: rec,
 		Toolchain:           string(rec.Toolchain),
 		Findings:            toVulnFindingsJSON(rec.Findings, bind(rec)),
@@ -177,6 +182,10 @@ func toVulnRecordJSON(rec vuldomain.VulnerabilityRecord, bind recordRootFunc) vu
 		ScannedAt:           recordstamp.Format(rec.ScannedAt),
 		FirstScannedAt:      ledgerStamp(rec.FirstScannedAt),
 	}
+	if out.FirstScannedAt != "" {
+		out.FirstScannedAtAnchor = firstScannedAtAnchorNote(rec.Coordinate)
+	}
+	return out
 }
 
 // toVulnRecordsJSON projects a record list, preserving order. An empty input
@@ -190,6 +199,72 @@ func toVulnRecordsJSON(recs []vuldomain.VulnerabilityRecord, bind recordRootFunc
 	out := make([]vulnRecordJSON, 0, len(recs))
 	for _, rec := range recs {
 		out = append(out, toVulnRecordJSON(rec, bind))
+	}
+	return out
+}
+
+// unreadableRecordJSON is one stored record a record listing could not verify,
+// on the wire beside the records it could.
+//
+// It joins the same array rather than a section of its own, for the reason the
+// scan-run listing puts its unreadable rows in the same array: a consumer that
+// reads this output as "the records the store holds" must not be able to miss
+// them, and one that filters on status still can. It carries overall_status —
+// the key every record row states its verdict in — with a value no verdict has,
+// so a filter sees it and a decoder cannot mistake it for one.
+//
+// Every other field is under the key its READABLE siblings use, and carries what
+// the store recovered from the head of the suspect bytes — nothing composed, and
+// nothing inferred. A consumer asking "which coordinate" reads `coordinate`,
+// exactly as it does on a record; it does not pull one out of a display string.
+// Each is omitted where the head did not yield it, absence included: a row that
+// will not say which module it is is reported with no coordinate rather than
+// with a guess.
+type unreadableRecordJSON struct {
+	Coordinate       string                  `json:"coordinate,omitempty"`
+	PipelineVersion  string                  `json:"pipeline_version,omitempty"`
+	DatabaseSnapshot *unreadableSnapshotJSON `json:"database_snapshot,omitempty"`
+	OverallStatus    string                  `json:"overall_status"`
+	Reason           string                  `json:"reason"`
+}
+
+// unreadableSnapshotJSON is the advisory snapshot a suspect record named, under
+// the key and in the shape a readable record states its own. Only the two fields
+// the head yields are on it: the rest of a snapshot — its content hash, when it
+// was retrieved — is sealed content this row's bytes cannot be trusted for.
+type unreadableSnapshotJSON struct {
+	Source  string `json:"source,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
+// toUnreadableRecordJSON projects one unreadable row for a record listing.
+func toUnreadableRecordJSON(e unreadableRowEntry) unreadableRecordJSON {
+	out := unreadableRecordJSON{
+		Coordinate:      e.ID,
+		PipelineVersion: e.PipelineVersion,
+		OverallStatus:   statusUnreadable,
+		Reason:          e.Reason,
+	}
+	if e.SnapshotSource != "" || e.SnapshotVersion != "" {
+		out.DatabaseSnapshot = &unreadableSnapshotJSON{Source: e.SnapshotSource, Version: e.SnapshotVersion}
+	}
+	return out
+}
+
+// vulnRecordListJSON renders a record listing that may be partial: the records
+// that verified, then the rows that did not.
+//
+// The result is []any because the two are different documents and pretending
+// otherwise would mean giving an unreadable row a verdict's fields. An empty
+// input yields an empty slice, so a command that promises a JSON array still
+// emits "[]".
+func vulnRecordListJSON(recs []vuldomain.VulnerabilityRecord, unreadable []unreadableRowEntry, bind recordRootFunc) []any {
+	out := make([]any, 0, len(recs)+len(unreadable))
+	for _, rec := range toVulnRecordsJSON(recs, bind) {
+		out = append(out, rec)
+	}
+	for _, u := range unreadable {
+		out = append(out, toUnreadableRecordJSON(u))
 	}
 	return out
 }

@@ -324,3 +324,79 @@ func TestDependents_BuildWithAnotherVersionNamesTheOneItResolved(t *testing.T) {
 		}
 	}
 }
+
+// A pinned walk that does not hold the coordinate answered "No modules depend
+// on it" at exit 0, over a graph that was never searched for it. The --gomod
+// path already refused; the pin did not, so an absence was asserted about a
+// population that was never enumerated. Both directions are pinned here: the
+// version the walk resolved differently, and the module it has never heard of.
+func TestDependents_PinnedWalkRefusesAModuleTheWalkDoesNotHold(t *testing.T) {
+	const modulePath = "example.com/app"
+	dir := rootedProject(t, modulePath)
+	held := mustCoord(t, "example.com/lib", "v1.0.0")
+	otherVersion := mustCoord(t, "example.com/lib", "v0.9.0")
+	unknown := mustCoord(t, "example.com/never-heard-of", "v1.0.0")
+
+	code := rootedWalk(t, "W-code", modulePath, dir, walkdomain.WalkScopeCode, held)
+	walks := selectionStore(code)
+
+	for name, target := range map[string]coordinate.ModuleCoordinate{
+		"a version the walk resolved differently": otherVersion,
+		"a module the walk never held":            unknown,
+	} {
+		t.Run(name, func(t *testing.T) {
+			stdout, _, err := runDependentsIn(t, dir, walks, target, dependentsFlags{walkID: "W-code"}, false)
+			if err == nil {
+				t.Fatalf("a pinned question about a coordinate the walk does not hold answered:\n%s", stdout)
+			}
+			if strings.Contains(stdout, "No modules") {
+				t.Errorf("an absence was asserted over a population that was never searched:\n%s", stdout)
+			}
+			if !strings.Contains(err.Error(), "does not contain") {
+				t.Errorf("the refusal does not say the build lacks the module:\n%v", err)
+			}
+			if !strings.Contains(err.Error(), "W-code") {
+				t.Errorf("the refusal does not name the walk that was pinned:\n%v", err)
+			}
+		})
+	}
+
+	// The version the build DID resolve is named, because that is what the caller
+	// asking about v0.9.0 wants.
+	_, _, err := runDependentsIn(t, dir, walks, otherVersion, dependentsFlags{walkID: "W-code"}, false)
+	if err == nil || !strings.Contains(err.Error(), "v1.0.0") {
+		t.Errorf("the refusal does not name the version the walk resolved:\n%v", err)
+	}
+
+	// The control: a coordinate the walk does hold still answers.
+	stdout, _, err := runDependentsIn(t, dir, walks, held, dependentsFlags{walkID: "W-code"}, false)
+	if err != nil {
+		t.Fatalf("a pinned question about a coordinate the walk holds = %v, want an answer:\n%s", err, stdout)
+	}
+}
+
+// Where another build of the same project DOES hold the coordinate, the pinned
+// refusal names it and hands over an invocation that reaches it. The remedy is
+// spelled with --walk-id rather than --gomod: a caller who pinned a walk is
+// asking about stored builds, and a manifest path is not what they have in hand.
+func TestDependents_PinnedRefusalSendsTheCallerToTheBuildThatHoldsIt(t *testing.T) {
+	const modulePath = "example.com/app"
+	dir := rootedProject(t, modulePath)
+	linter := mustCoord(t, "example.com/linter", "v1.0.0")
+	lib := mustCoord(t, "example.com/lib", "v1.0.0")
+
+	code := rootedWalk(t, "W-code", modulePath, dir, walkdomain.WalkScopeCode, lib)
+	tool := rootedWalk(t, "W-tool", modulePath, dir, walkdomain.WalkScopeTool, linter)
+	walks := selectionStore(code, tool)
+
+	_, _, err := runDependentsIn(t, dir, walks, linter, dependentsFlags{walkID: "W-code"}, false)
+	if err == nil {
+		t.Fatal("the code walk answered about a module only the tool walk holds")
+	}
+	if !strings.Contains(err.Error(), "W-tool") {
+		t.Errorf("the refusal does not name the build that holds it:\n%v", err)
+	}
+	if !strings.Contains(err.Error(), "kanonarion dependents example.com/linter@v1.0.0 --walk-id W-tool") {
+		t.Errorf("the refusal does not hand over an invocation that reaches that build:\n%v", err)
+	}
+}

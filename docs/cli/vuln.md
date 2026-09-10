@@ -328,7 +328,10 @@ scan-run id, snapshot source/version, overall status, and the
 `affected`/`clean`/`unscannable`/`failed` module-count breakdown), plus one
 `vuln_finding_observed` per finding (module, version, vulnerability id, overall
 status). This anchors *when* a module was first observed affected in the
-append-only assurance log, independent of the mutable vuln DB's `first_scanned_at`.
+append-only assurance log, and it is the reader for that question:
+`first_scanned_at` on a record is anchored per advisory snapshot, so it resets
+whenever a new snapshot rolls (see **When the record was validated** under
+`vuln-show`).
 `vuln-scan-rescan` emits the same events for its fresh run.
 
 A run that **downloads and stores an advisory database snapshot** appends one
@@ -1075,6 +1078,35 @@ version bump fix it?* and *which symbol is at risk?* - directly in the output:
 | `symbols:` | The at-risk symbols named by the advisory, surfaced even for metadata-only (Unscannable) modules where reachability could not be computed |
 | `fix refs:` | The advisory's own `FIX` links - the commit or CL that remediates the vulnerability. Printed only when the advisory publishes one |
 
+**When the record was validated**
+
+Two stamps, answering two questions:
+
+| Line | Meaning |
+|---|---|
+| `First validated:` | When this coordinate was first validated **against this advisory snapshot, at this pipeline version**. `--json` carries it as `first_scanned_at` |
+| `Last validated:` | The run that most recently re-confirmed the same verdict. `--json` carries it as `scanned_at` |
+
+`first_scanned_at` is anchored per (module, version, pipeline version, snapshot),
+so **a new advisory snapshot starts a new anchor** and the stamp legitimately
+moves forward even when nothing about the module changed and the pipeline version
+did not move. It is not "when did we first become aware", and reading it that way
+gives an answer later than the truth.
+
+The question it does not answer is answered by the assurance ledger, which spans
+snapshots and generations:
+
+```
+$ kanonarion store ledger --event-type vuln_finding_observed --module github.com/golang-jwt/jwt@v3.2.2+incompatible
+2026-08-14T01:16:55.907225128Z  vuln_finding_observed  module=github.com/golang-jwt/jwt overall_status=Affected version=v3.2.2+incompatible vuln_id=GO-2025-3553
+```
+
+The text output prints that command under `First validated:`, and `--json` carries
+the same statement on `first_scanned_at_anchor` beside the stamp. The key
+`first_scanned_at` itself does not change: the value under it is correct for the
+question it answers, and renaming it would break consumers to fix a wording
+problem.
+
 **Advisory references**
 
 A finding carries every reference the advisory publishes, as a `{type, url}`
@@ -1103,7 +1135,8 @@ an older pipeline version and are replaced by a re-scan.
 $ kanonarion vuln-show github.com/gorilla/csrf@v1.7.3
 github.com/gorilla/csrf@v1.7.3 - Affected
   Walk:            01KWA68CG1PT0R1PTT1X75HFAW
-  First validated: 2026-06-29T17:19:15Z
+  First validated: 2026-06-29T17:19:15Z  (against this snapshot at pipeline v25, not first awareness)
+                   first observation: kanonarion store ledger --event-type vuln_finding_observed --module github.com/gorilla/csrf@v1.7.3
   Last validated:  2026-06-29T17:19:15Z
   Snapshot:        vuln.go.dev@2026-06-16T23:55:18Z
   Advisories:      6027 in the snapshot scanned against
@@ -1124,7 +1157,8 @@ github.com/gin-gonic/gin@v1.6.2 - Affected
 $ kanonarion vuln-show go.etcd.io/bbolt@v1.4.3
 go.etcd.io/bbolt@v1.4.3 — Withdrawn
   Walk:            01KYKDXSM74WQ9FBSN7WX0S97P
-  First validated: 2026-07-28T06:06:20Z
+  First validated: 2026-07-28T06:06:20Z  (against this snapshot at pipeline v25, not first awareness)
+                   first observation: kanonarion store ledger --event-type vuln_finding_observed --module go.etcd.io/bbolt@v1.4.3
   Last validated:  2026-07-28T06:06:20Z
   Snapshot:        vuln.go.dev@2026-07-27T16:28:49Z
   Advisories:      6027 in the snapshot scanned against
@@ -1389,6 +1423,62 @@ project-rooted path. The coarse index is still used as a cheap pre-filter - it
 only ever over-includes, never wrongly excludes - and when a candidate
 advisory's record cannot be fetched the finding falls back to the conservative
 index answer rather than being dropped.
+
+---
+
+### A stored record this build cannot verify
+
+A record is sealed by the build that wrote it. A later build with a different
+canonical shape cannot always reproduce that seal — the bytes are intact and hash
+to the seal they carry, but this binary cannot rebuild them — and the row is then
+**unreadable** rather than wrong.
+
+The surveys list every record they can verify and **name the ones they cannot, in
+place**, exiting `0`:
+
+```
+$ kanonarion vuln-by-id GO-2026-9001
+example.com/charlie@v3.0.0            Affected  vuln-db=v2026-01-01  scanned=2026-02-01T02:00:00Z  pipeline=v25
+example.com/alpha@v1.0.0              Affected  vuln-db=v2026-01-01  scanned=2026-02-01T00:00:00Z  pipeline=v25
+example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01)  status=unreadable  sealed by an earlier record generation; re-scan to reseal
+```
+
+An omitted row and a row reported as unreadable say different things about the
+store, and only the second is true of it — so the all-clear (`no modules affected
+by <id>`) is **withheld** whenever any row could not be read. `vuln-show
+--history` does the same, and counts what it could not verify in its header.
+
+Under `--json` the unreadable row joins the same array the records are in,
+carrying `overall_status: "unreadable"` — a value no verdict has, so a consumer
+filtering on status sees it and cannot mistake it for one:
+
+```json
+{
+  "coordinate": "example.com/bravo@v2.0.0",
+  "pipeline_version": "v25",
+  "database_snapshot": { "source": "govulndb", "version": "v2026-01-01" },
+  "overall_status": "unreadable",
+  "reason": "sealed by an earlier record generation; re-scan to reseal"
+}
+```
+
+Every key on it is one a readable record also states, so "which coordinate" is
+answered by reading `coordinate` — the same field, in the same place. The row
+carries only what the store recovered from the head of the suspect bytes: a
+field the head did not yield is **absent** rather than guessed at, so a row that
+will not say which module it is has no `coordinate` at all and is still
+reported. The text listing composes those same facts into one label, because
+prose is the right form there.
+
+`vuln-scan-list` and `vuln-scan-show` report unreadable **scan runs** the same
+way.
+
+The reads that serve **one** verdict do not relax: plain `vuln-show`,
+`reachability` and the report a stored run is rebuilt into keep failing closed at
+exit `10`, because a verdict chosen from a candidate set with a row missing can be
+a `Clean` standing where a finding was. `vuln-show`'s refusal names the history
+as the survey that does list the row. The remedy for a drifted row is a re-scan,
+never an investigation: nothing has been altered.
 
 ---
 

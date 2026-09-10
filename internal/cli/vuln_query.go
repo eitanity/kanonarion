@@ -129,7 +129,7 @@ func runVulnShow(
 		// vulnerable symbol. Same read as reachability uses, so the two agree.
 		recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
 		if err != nil {
-			return fmt.Errorf("getting vulnerability record: %w", err)
+			return vulnShowReadRefusal(coord, err)
 		}
 		// More than one consumer frame and no flag naming one: the question has
 		// several true answers and no way to tell which was asked.
@@ -165,7 +165,7 @@ func runVulnShow(
 		// from a different walk without saying so.
 		candidates, err := uc.ListRecordsForModuleInWalk(ctx, coord, vulnPipelineVersion, anchor.walkID)
 		if err != nil {
-			return fmt.Errorf("getting vulnerability record: %w", err)
+			return vulnShowReadRefusal(coord, err)
 		}
 		if len(candidates) == 0 {
 			return explainWalkRecordAbsence(ctx, runs, walks, coord, anchor.walkID)
@@ -214,6 +214,22 @@ func runVulnShow(
 	printVulnRecord(stdout, rec, newRouteRootFunc(ctx, graphs, rec))
 	printDeclinedIsolatedFrame(stdout, isolated, hasIsolated)
 	return nil
+}
+
+// vulnShowReadRefusal is how this command reports a failed record read.
+//
+// It keeps failing closed on a row the store could not verify, unlike the
+// listings: vuln-show serves ONE verdict selected from the coordinate's records,
+// and a verdict chosen out of a set that is missing a row can be a Clean
+// standing where a finding was. What it adds is the survey that does list the
+// row, so the refusal ends at a command rather than at a wall.
+func vulnShowReadRefusal(coord coordinate.ModuleCoordinate, err error) error {
+	if _, unreadable := unreadableRowReport(err); !unreadable {
+		return fmt.Errorf("getting vulnerability record: %w", err)
+	}
+	return fmt.Errorf("getting vulnerability record: %w\n"+
+		"the history lists every record stored for this coordinate, the unreadable ones included:\n"+
+		"  kanonarion vuln-show %s --history", err, coord)
 }
 
 // frameRecordAbsence refuses a pinned read the walk's own frame cannot answer,
@@ -460,10 +476,15 @@ func walkAge(t time.Time) string {
 // the current answer.
 func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
 	recs, err := uc.ListRecordsForModuleAllGenerations(ctx, coord)
-	if err != nil {
+	// A history is a survey of what the ledger holds, so a row it cannot verify
+	// belongs in the listing: this is the command an operator reaches for after a
+	// point-in-time read has refused, and refusing here too would leave them
+	// nothing that describes the coordinate.
+	unreadable, survivable := unreadableRowReport(err)
+	if err != nil && !survivable {
 		return fmt.Errorf("listing vulnerability history: %w", err)
 	}
-	if len(recs) == 0 {
+	if len(recs) == 0 && len(unreadable) == 0 {
 		// Nothing at any generation, so there is no supersession to report and
 		// this is the genuine absence it reads as. The superseded branch the keyed
 		// reads carry is unreachable from here by construction — the read above
@@ -474,13 +495,14 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordsJSON(recs, newRecordRootFunc(ctx, graphs))); err != nil {
+		if err := enc.Encode(vulnRecordListJSON(recs, unreadable, newRecordRootFunc(ctx, graphs))); err != nil {
 			return fmt.Errorf("encoding vulnerability history: %w", err)
 		}
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(stdout, "%s@%s — %d scan record(s)\n\n", coord.Path(), coord.Version(), len(recs))
+	_, _ = fmt.Fprintf(stdout, "%s@%s — %d scan record(s)%s\n\n",
+		coord.Path(), coord.Version(), len(recs), unreadableCountSuffix(unreadable))
 	for _, rec := range recs {
 		findingIDs := make([]string, 0, len(rec.Findings))
 		for _, f := range rec.Findings {
@@ -503,10 +525,21 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 			findingSummary,
 		)
 	}
+	writeUnreadableRows(stdout, unreadable, vulnRecordIDColumn)
 	if note := supersededHistoryNote(recs, supersededHistoryRemedy(ctx, walks, recs)); note != "" {
 		_, _ = fmt.Fprint(stdout, note)
 	}
 	return nil
+}
+
+// unreadableCountSuffix states in the header how much of a listing could not be
+// read, so a reader who takes the count as the coordinate's whole history is
+// told otherwise before the rows start.
+func unreadableCountSuffix(unreadable []unreadableRowEntry) string {
+	if len(unreadable) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" and %d this build cannot verify", len(unreadable))
 }
 
 // vulnGenerationLabel names the generation one row was written under, marking it
@@ -627,7 +660,12 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 	// operation: the use case already says "listing vulnerability records by
 	// finding ID", and repeating that here tells the reader nothing new.
 	records, err := uc.ListRecordsByFindingID(ctx, findingID, walkID)
-	if err != nil {
+	// This command surveys the store, so a record it cannot verify is part of
+	// the answer rather than a reason to withhold it: one drifted row used to
+	// take out every other module this advisory touches. Any other error still
+	// aborts.
+	unreadable, survivable := unreadableRowReport(err)
+	if err != nil && !survivable {
 		return fmt.Errorf("vuln-by-id: %w", err)
 	}
 	if jsonOut {
@@ -637,7 +675,7 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 		// an unqualified negative here is the whole failure mode.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordsJSON(records, newRecordRootFunc(ctx, graphs))); err != nil {
+		if err := enc.Encode(vulnRecordListJSON(records, unreadable, newRecordRootFunc(ctx, graphs))); err != nil {
 			return fmt.Errorf("encoding vulnerability records: %w", err)
 		}
 		return nil
@@ -650,7 +688,10 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 		_, _ = fmt.Fprintf(stdout, "notice: results restricted to the modules scanned under walk %q\n", walkID)
 	}
 
-	if len(records) == 0 {
+	// The zero statement is withheld while any row could not be read: "no modules
+	// affected" over a store that was not wholly readable is an absence asserted
+	// over a population that was never enumerated.
+	if len(records) == 0 && len(unreadable) == 0 {
 		if walkID != "" {
 			_, _ = fmt.Fprintf(stdout, "no modules in walk %s affected by %s\n", walkID, findingID)
 			return nil
@@ -687,11 +728,16 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 			ledgerStamp(rec.ScannedAt),
 			generation)
 	}
+	writeUnreadableRows(stdout, unreadable, vulnRecordIDColumn)
 	if note := supersededByIDNote(records); note != "" {
 		_, _ = fmt.Fprint(stdout, note)
 	}
 	return nil
 }
+
+// vulnRecordIDColumn is the width of the coordinate column the record listings
+// print, so an unreadable row lines up with the rows beside it.
+const vulnRecordIDColumn = 60
 
 // supersededByIDNote states, once under the listing, that some of the rows above
 // come from generations this build serves nowhere else — so a reader who takes

@@ -179,7 +179,11 @@ persisting per-module `VulnerabilityRecord`s and a `WalkScanRun`. Optional
 call-graph reachability (`adapters/reachability`, reading the callgraph and
 fetch contexts through their ports) triages findings the code cannot actually
 reach. Scan runs are append-only, and each record carries an immutable
-`first_scanned_at`.
+`first_scanned_at`, anchored per (module, version, pipeline version, snapshot) —
+a new advisory snapshot starts a new anchor, so it states first validation
+against that snapshot rather than first awareness. The assurance ledger answers
+the historical question: `kanonarion store ledger --event-type
+vuln_finding_observed --module <path>@<version>`.
 
 **sbom** - generates a deterministic CycloneDX software bill of materials
 (`SBOMRecord`) from any walk. *Adapter:* `generator/cyclonedx`.

@@ -1331,6 +1331,13 @@ type FakeQueryVuln struct {
 	byIDForWalk  map[string][]vulndomain.VulnerabilityRecord
 	byIDWalkSeen string
 	Err          error
+	// PartialErr is returned ALONGSIDE the records a listing found, the way a
+	// store reports rows it could not verify while still handing back the ones it
+	// could. Err aborts instead, returning nothing: the two are different
+	// failures, and a fake that could only express one could not test the
+	// difference between a listing that withholds its answer and one that names
+	// what is missing from it.
+	PartialErr error
 	// ForceLatestRecordForWalkNotFound empties the walk-scoped candidate read
 	// regardless of the records map. Use this to exercise the fallback path that
 	// checks GetLatestRecord for a ScanFailed status.
@@ -1412,12 +1419,12 @@ func (f *FakeQueryVuln) ListRecordsForModuleInWalk(_ context.Context, coord coor
 		return nil, nil
 	}
 	if recs, ok := f.recordLedger[coord.String()]; ok {
-		return recs, nil
+		return recs, f.PartialErr
 	}
 	if rec, ok := f.records[coord.String()]; ok {
-		return []vulndomain.VulnerabilityRecord{rec}, nil
+		return []vulndomain.VulnerabilityRecord{rec}, f.PartialErr
 	}
-	return nil, nil
+	return nil, f.PartialErr
 }
 
 // AddRecords seeds every generation the ledger holds for one coordinate, which
@@ -1443,12 +1450,12 @@ func (f *FakeQueryVuln) ListRecordsForModule(_ context.Context, coord coordinate
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if recs, ok := f.recordLedger[coord.String()]; ok {
-		return recs, nil
+		return recs, f.PartialErr
 	}
 	if rec, ok := f.records[coord.String()]; ok {
-		return []vulndomain.VulnerabilityRecord{rec}, nil
+		return []vulndomain.VulnerabilityRecord{rec}, f.PartialErr
 	}
-	return nil, nil
+	return nil, f.PartialErr
 }
 
 // ListRecordsForModuleAllGenerations returns what the keyed read returns plus
@@ -1458,12 +1465,12 @@ func (f *FakeQueryVuln) ListRecordsForModule(_ context.Context, coord coordinate
 // would fail.
 func (f *FakeQueryVuln) ListRecordsForModuleAllGenerations(ctx context.Context, coord coordinate.ModuleCoordinate) ([]vulndomain.VulnerabilityRecord, error) {
 	served, err := f.ListRecordsForModule(ctx, coord, "")
-	if err != nil {
+	if err != nil && err != f.PartialErr { //nolint:errorlint // identity, not chain: this fake distinguishes its two seeded failures
 		return nil, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append(served, f.supersededLedger[coord.String()]...), nil
+	return append(served, f.supersededLedger[coord.String()]...), err
 }
 
 // AddSupersededRecords seeds records the store holds at a generation this build
@@ -1532,7 +1539,7 @@ func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _, walkID stri
 	defer f.mu.Unlock()
 	f.byIDWalkSeen = walkID
 	if walkID == "" {
-		return f.byID, nil
+		return f.byID, f.PartialErr
 	}
 	recs, ok := f.byIDForWalk[walkID]
 	if !ok {
