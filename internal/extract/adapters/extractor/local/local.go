@@ -78,6 +78,12 @@ type AdapterExtractor struct {
 	example     ExampleUseCase
 	// logger is optional; a nil one discards. See WithLogger.
 	logger *slog.Logger
+	// cgSem admits one call-graph subprocess per slot. It bounds the two costs
+	// that scale with the number of children rather than with the pool: the SSA
+	// closures held at once, and the writers queueing on the store's single
+	// writer. A nil channel means unbounded and is reachable only from a struct
+	// literal; the constructor always fills it.
+	cgSem chan struct{}
 }
 
 // WithLogger wires a logger so the stage can say when it reported the
@@ -134,6 +140,33 @@ func NewAdapterExtractor(
 		cgPipelineVersion: cgPipelineVersion,
 		cgExtraArgs:       cgExtraArgs,
 		example:           ex,
+		cgSem:             make(chan struct{}, ResolveCallgraphConcurrency(0, nil, nil)),
+	}
+}
+
+// WithCallgraphConcurrency bounds how many call-graph subprocesses this adapter
+// runs at once. A value below one restores the CPU-derived default, so a
+// composition root that has no operator value to pass still gets a bound.
+func (a *AdapterExtractor) WithCallgraphConcurrency(n int) *AdapterExtractor {
+	if n < 1 {
+		n = ResolveCallgraphConcurrency(0, nil, nil)
+	}
+	a.cgSem = make(chan struct{}, n)
+	return a
+}
+
+// acquireCallgraphSlot waits for a subprocess slot and returns the release. A
+// second return of false means the run ended while waiting, and the caller
+// records that rather than starting an analysis nothing will read.
+func (a *AdapterExtractor) acquireCallgraphSlot(ctx context.Context) (func(), bool) {
+	if a.cgSem == nil {
+		return func() {}, true
+	}
+	select {
+	case a.cgSem <- struct{}{}:
+		return func() { <-a.cgSem }, true
+	case <-ctx.Done():
+		return func() {}, false
 	}
 }
 
@@ -215,6 +248,19 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	if walkID != "" {
 		args = append(args, "--from-walk", walkID)
 	}
+
+	// The subprocesses carry their own bound, however wide the module pool is:
+	// one worker runs every stage for its module, and the cheap in-process stages
+	// must not be slowed to bound this one.
+	release, admitted := a.acquireCallgraphSlot(ctx)
+	if !admitted {
+		return ports.StageResult{
+			Status: domain.StageFailed,
+			Cause:  failurecause.Environment,
+			Error:  "callgraph stage status=ExtractionFailed: the run ended before the analysis could start",
+		}, nil
+	}
+	defer release()
 
 	stderr, execErr := a.cgExec.Execute(ctx, args)
 	// The child's writes are this run's writes. Without folding its count in, a
@@ -320,12 +366,14 @@ func buildSubprocessErrorDetail(execErr error, stderr []byte, walkID string) (st
 	case errors.Is(execErr, context.Canceled):
 		return "the run was cancelled before the analysis finished" + suffix, failurecause.Environment
 	case killedBySignal(execErr):
-		// Neither deadline fired, so something outside this process ended the child
-		// — the OOM killer in every case observed. That is the host's memory, not
-		// the module's source: the same module analysed alone, or with fewer
-		// workers, may well produce a complete graph.
-		return "the analysis was killed by the operating system before it finished, which is " +
-			"usually memory: reduce --workers, or analyse this module on its own" + suffix, failurecause.Environment
+		// Neither deadline fired, so something outside this process ended the
+		// subprocess — the operating system reclaiming memory in every case
+		// observed. That is the host's memory, not the module's source: the same
+		// module analysed on its own, or with fewer concurrent subprocesses, may
+		// well produce a complete graph. --workers is not the control: it sizes
+		// the module pool, and the concurrent analyses are bounded separately.
+		return "the analysis was ended by the operating system before it finished, which is " +
+			"usually memory: lower --callgraph-workers, or analyse this module on its own" + suffix, failurecause.Environment
 	}
 
 	if stderrStr != "" {

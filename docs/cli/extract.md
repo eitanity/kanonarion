@@ -30,16 +30,18 @@ kanonarion extract 01J1Z... --force
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--stages` | `license,interface,example` | Comma-separated list of stages to run |
 | `--force` | false | Re-extract even if cached records exist for current pipeline versions |
-| `--workers` | `runtime.NumCPU()` | Number of modules to process concurrently |
+| `--workers` | `runtime.NumCPU()` | Number of modules to process concurrently. It sizes the pool that runs the cheap in-process stages; it does **not** bound the callgraph subprocesses |
+| `--callgraph-workers` | `0` (host-sized: `min(NumCPU, 4, available memory / 4 GiB)`) | How many callgraph subprocesses may run at once |
 | `--json` | false | Output extraction run record as JSON |
 | `--go-binary` | | Path to `go` binary (used for callgraph stage) |
 | `--no-progress` | false | Suppress stderr progress output (the throttled extraction heartbeat); results and warnings are unaffected |
 
 > **Note:** `callgraph` is not run by default. It loads each module's full
-> transitive dependency closure into SSA and will exhaust available RAM on
-> large walks. Pass it explicitly when needed:
+> transitive dependency closure into SSA, which costs far more than the other
+> stages even with `--callgraph-workers` bounding how many run at once. Pass it
+> explicitly when needed:
 > ```bash
-> kanonarion extract 01J1Z... --stages callgraph --workers 2
+> kanonarion extract 01J1Z... --stages callgraph
 > ```
 
 ### `kanonarion extract list`
@@ -104,7 +106,9 @@ status it reprints.
 1.  **Walk Loading**: The orchestrator loads the module graph from the specified `walk-id`.
 2.  **Parallel Execution**: Modules are processed concurrently using a bounded worker
     pool (`--workers`, default `runtime.NumCPU()`). Stages within each module execute
-    sequentially.
+    sequentially, so one worker runs every stage for its module. The callgraph
+    stage carries its own bound on top of that pool (`--callgraph-workers`), because
+    the cheap in-process stages have no reason to queue behind an SSA build.
 3.  **Stage Dispatch**: For each module, requested stages are executed in canonical
     order. The `callgraph` stage is special (see below).
 4.  **Result Aggregation**: A single `ExtractionRun` record is persisted, linking
@@ -124,15 +128,56 @@ The record is in the store, so the parent classifies the record — `Partial`
 counts as a stage that ran — rather than the exit status. Only an exit saying no
 graph was produced makes the stage failed.
 
-The `--workers` flag controls how many callgraph subprocesses run concurrently.
-Each one holds its own module's SSA closure, so the run's peak is roughly
-`--workers` times the largest module's peak — see
+### How many subprocesses run at once
+
+`--callgraph-workers` controls how many callgraph subprocesses run at once. It
+is separate from `--workers`, which sizes the module pool: one worker runs every
+stage for its module, and the licence, interface and example stages are cheap
+and in-process, so bounding the pool would slow those to fix a problem neither
+causes.
+
+Each subprocess holds its own module's SSA closure, so the run's peak is roughly
+`--callgraph-workers` times the largest module's peak — see
 [what one run costs](callgraph.md#what-one-run-costs) for the per-module figure
-this multiplies. On memory-constrained hosts, lower this to 1 or 2:
+this multiplies. The tail is far above the typical module: on a 172-module walk
+measured here, most subprocesses held under 3 GiB and one, given the host to
+itself, held **over 50 GiB**. No bound saves a run from a module larger than the
+host; the bound is what stops several ordinary ones adding up to the same thing.
+
+The bound also protects the store. Every subprocess writes its record through
+one SQLite writer, and a walk that admits one subprocess per CPU puts that many
+writers on it at once. The write retry recovers a queue of a few; it does not
+recover a queue of thirty-two, and a record lost to the lock is a module left
+with no call graph.
+
+The default, `0`, sizes the bound from the host:
+
+```
+callgraph-workers = max(1, min(NumCPU, 4, floor(available memory / 4 GiB)))
+```
+
+Available memory is read once, when the extractor is built (on Linux,
+`MemAvailable` from `/proc/meminfo`). When the memory term lowers the bound it is
+logged at info with the available bytes, the per-subprocess budget and the
+result; when the reading cannot be taken at all, which is the normal case off
+Linux, the bound falls back to `min(NumCPU, 4)` and says so at debug. A missing
+reading never fails a run.
+
+**The budget is a budget, not a limit.** Nothing enforces 4 GiB on a
+subprocess, and the largest modules go far past it. Its only job is to stop the
+run admitting more concurrent analyses than the host can hold. A subprocess the
+operating system ends anyway is recorded as a failed stage naming memory as the
+cause, and the remedy it prints is to lower this flag.
+
+Raise it only on a host with memory to spare, and expect the peak to rise by
+about one more module's worth per step:
 
 ```bash
-kanonarion extract 01J1Z... --stages callgraph --workers 1
+kanonarion extract 01J1Z... --stages callgraph --callgraph-workers 8
 ```
+
+[`inspect`](inspect.md), which runs this stage over a whole walk as one step,
+takes the same flag and the same default.
 
 ### How long a subprocess may run
 
@@ -143,8 +188,8 @@ metadata, loading syntax, building SSA, building and walking the call graph -
 and the parent ends it only when **10 minutes pass with no such line**.
 
 That is the condition a stalled subprocess actually has. A wall-clock deadline could not
-tell one apart from a healthy analysis of a large module: under `--workers`
-concurrency a subprocess competes with its siblings for CPU while its own clock
+tell one apart from a healthy analysis of a large module: under
+`--callgraph-workers` concurrency a subprocess competes with its siblings for CPU while its own clock
 keeps running, so the same module, on the same host, from the same walk, could
 be analysed or dropped depending on what else the pool happened to be doing. A
 child descheduled by contention still reports the next phase when it resumes; a

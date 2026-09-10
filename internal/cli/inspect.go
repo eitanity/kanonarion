@@ -130,6 +130,7 @@ that is tight on memory.`,
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerCallgraphTimeoutFlag(cmd)
+	registerCallgraphWorkersFlag(cmd)
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 

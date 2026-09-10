@@ -532,8 +532,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		cgModcacheDir = modcacheDir
 	}
 	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
+	// One worker runs every stage for its module, so the pool cannot bound the
+	// call-graph subprocesses without also slowing the cheap in-process stages.
+	// The subprocesses carry their own bound, sized from this host.
 	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
-		WithLogger(logger)
+		WithLogger(logger).
+		WithCallgraphConcurrency(extextractor.ResolveCallgraphConcurrency(callgraphWorkers, meminfo.New(), logger))
 	pipelineVersions := map[string]string{
 		"license":   "0.1.0",
 		"interface": "0.1.0",

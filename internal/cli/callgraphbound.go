@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	extextractor "github.com/eitanity/kanonarion/internal/extract/adapters/extractor/local"
 )
 
 // callgraphTimeoutUsage is the one help string every --callgraph-timeout
@@ -30,6 +31,25 @@ var callgraphTimeoutUsage = fmt.Sprintf(
 // however much time the operator was willing to give it.
 func registerCallgraphTimeoutFlag(cmd *cobra.Command) {
 	cmd.Flags().DurationVar(&callgraphCeiling, "callgraph-timeout", cgports.DefaultCeiling, callgraphTimeoutUsage)
+}
+
+// callgraphWorkersUsage states the cost of raising the bound, because the flag
+// that admits another subprocess is the flag that adds another module's SSA
+// closure to the run's peak. The figures come from the code so help and
+// behaviour cannot drift.
+var callgraphWorkersUsage = fmt.Sprintf(
+	"how many call-graph subprocesses may run at once. It is separate from the "+
+		"module pool, which it does not resize and is not resized by. "+
+		"0 sizes it from the host: min(NumCPU, %d, available memory / %d GiB). Each "+
+		"subprocess holds one module's whole dependency closure in SSA — tens of GB "+
+		"for the largest — so every step up raises the run's peak memory by about "+
+		"one more module's worth",
+	extextractor.CallgraphCPUCap, extextractor.CallgraphBudgetBytes>>30)
+
+// registerCallgraphWorkersFlag registers --callgraph-workers on cmd, bound to
+// the invocation-wide subprocess bound.
+func registerCallgraphWorkersFlag(cmd *cobra.Command) {
+	cmd.Flags().IntVar(&callgraphWorkers, "callgraph-workers", 0, callgraphWorkersUsage)
 }
 
 // callgraphNarrationFor returns where a PARENT's copy of its children's progress

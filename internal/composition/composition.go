@@ -18,6 +18,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
@@ -430,8 +431,13 @@ func newLocalWalkExtract(
 		// composition roots cannot drift. The driver passes no modcache
 		// directory: it has no --from-modcache concept and always reads bytes
 		// through the content-addressed blob store.
+		//
+		// The subprocesses are bounded separately from the module pool, and sized
+		// from this host: the driver takes no operator value, so it asks for the
+		// host-derived default rather than leaving the memory term unread.
 		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion,
-			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC).WithLogger(logger),
+			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC).WithLogger(logger).
+			WithCallgraphConcurrency(extextractor.ResolveCallgraphConcurrency(0, meminfo.New(), logger)),
 		Stages:    stages,
 		Clock:     clk,
 		Stopwatch: stopwatch,

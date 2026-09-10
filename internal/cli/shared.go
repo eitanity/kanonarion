@@ -857,8 +857,10 @@ func resetInvocationState() {
 	// invocation never sees this value; registration assigns the default next.
 	storeRoot = ""
 	// The call-graph subprocess bounds, in the state a command that was passed no
-	// flag is entitled to: the default ceiling and no narration.
+	// flag is entitled to: the default ceiling, the host-sized subprocess bound,
+	// and no narration.
 	callgraphCeiling = cgports.DefaultCeiling
+	callgraphWorkers = 0
 	callgraphNarration = nil
 }
 
@@ -867,6 +869,11 @@ func resetInvocationState() {
 // backstop, not the working deadline: a child is normally ended by the stall
 // window, which measures silence rather than elapsed time.
 var callgraphCeiling time.Duration
+
+// callgraphWorkers is how many call-graph subprocesses this invocation may run
+// at once. Bound to --callgraph-workers where the command offers it; zero means
+// the bound is sized from the host's CPU count and available memory.
+var callgraphWorkers int
 
 // callgraphNarration is where call-graph phase transitions go for this
 // invocation: the analyser writes them when this process IS the child, and the

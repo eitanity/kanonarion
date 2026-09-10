@@ -76,10 +76,11 @@ constants, because a different toolchain or a changed closure moves them.
 
 The whole-walk figure is a different question with a different answer.
 [`extract --stages callgraph`](extract.md#callgraph-subprocess-isolation) runs
-this analysis in `--workers` concurrent subprocesses, so its peak is roughly
-`--workers` times the largest module's peak, and that is where the
-out-of-memory risk lives. `--workers` is the control: lowering it lowers the
-peak proportionally.
+this analysis in concurrent subprocesses, so its peak is roughly the number
+running at once times the largest module's peak, and that is where the
+out-of-memory risk lives. `--callgraph-workers` is the control - **not**
+`--workers`, which sizes the module pool and leaves the subprocess bound alone.
+It defaults to at most 4 and lowering it lowers the peak proportionally.
 
 ## Calls and references
 
