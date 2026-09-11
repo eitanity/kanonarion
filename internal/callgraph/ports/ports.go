@@ -283,6 +283,56 @@ type CallGraphRecordLister interface {
 	ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.CallGraphRecord, error)
 }
 
+// CallGraphOutcomeReader is the optional narrow read: what ONE generation SAYS
+// about itself, without reconstructing the graph it says it about.
+//
+// It exists because a composed read is not a cheap way to learn a status. Every
+// generation at the coordinate is decoded, its whole edge set is rebuilt from
+// the satellite, and the reconstructed record is re-marshalled to check its
+// seal — so the cost is the SUM over the coordinate's history, and every
+// re-analysis makes it larger. Measured on this project's own store, one
+// coordinate holding 4.3M edges cost 12.85 GB of resident memory to read, and
+// one holding twelve generations of 3.2M edges could not be read on a 61 GB
+// host at all.
+//
+// A caller that wants the served answer still asks GetCallGraphRecord and pays
+// for it. This is for the caller that wants what a generation states — a
+// status, a cause, the seal it was written under — and reads no edge.
+//
+// A store that does not offer it is still a usable call graph store; callers
+// type-assert for it.
+type CallGraphOutcomeReader interface {
+	// LatestCallGraphOutcome returns what the NEWEST generation at the coordinate
+	// states, in append order, or (zero, false, nil) when the ledger holds none
+	// at the current record schema.
+	//
+	// Newest in append order, not the composed winner: this answers "what was
+	// just written here", which is the question a stage asks about the analysis
+	// it has this moment finished. Composition answers the different question of
+	// which generation should be SERVED, and may name an older one.
+	LatestCallGraphOutcome(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (CallGraphOutcome, bool, error)
+}
+
+// CallGraphOutcome is what one generation states about itself: the seal it was
+// written under and what it says the analysis came to.
+//
+// It carries no nodes and no edges, and that is its point — see
+// CallGraphOutcomeReader. A reader that needs the graph asks for the record.
+type CallGraphOutcome struct {
+	ContentHash   string
+	OverallStatus domain.CallGraphStatus
+	// FailureCause says what a failing OverallStatus is a statement about;
+	// FailureDetail is the prose beside it. Both are empty on a generation that
+	// did not fail.
+	FailureCause  domain.FailureCause
+	FailureDetail string
+	// NodeCount and EdgeCount are what the generation says it measured, read
+	// from the ledger's columns. Nothing is reconstructed to produce them.
+	NodeCount   int
+	EdgeCount   int
+	ExtractedAt time.Time
+}
+
 // CallGraphCoordinate is one analysed (module, version, pipeline version)
 // triple as the ledger's COLUMNS state it.
 //

@@ -1,11 +1,9 @@
 package local
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -85,27 +83,18 @@ func (f fakeExitStatus) ExitCode() int { return f.code }
 
 // fakeCallGraphReader is a controllable CallGraphReader for tests.
 type fakeCallGraphReader struct {
-	rec   cgdomain.CallGraphRecord
+	out   cgports.CallGraphOutcome
 	found bool
 	err   error
-	// held is every generation the ledger holds, oldest first, and listErr the
-	// failure the listing read reports. listCalls counts it, so a test can tell
-	// which of the two reads produced the answer.
-	held      []cgdomain.CallGraphRecord
-	listErr   error
-	listCalls int
+	// reads counts the narrow read, so a test can tell whether the stage read
+	// the ledger at all. Atomic because concurrency tests share one reader
+	// across a pool.
+	reads atomic.Int64
 }
 
-func (f *fakeCallGraphReader) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
-	return f.rec, f.found, f.err
-}
-
-func (f *fakeCallGraphReader) ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]cgdomain.CallGraphRecord, error) {
-	f.listCalls++
-	if f.listErr != nil {
-		return nil, f.listErr
-	}
-	return f.held, nil
+func (f *fakeCallGraphReader) LatestCallGraphOutcome(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgports.CallGraphOutcome, bool, error) {
+	f.reads.Add(1)
+	return f.out, f.found, f.err
 }
 
 func newCallgraphAdapter(exec SubprocessExecutor, reader CallGraphReader) *AdapterExtractor {
@@ -297,7 +286,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec: cgdomain.CallGraphRecord{
+			out: cgports.CallGraphOutcome{
 				ContentHash:   "hash-cg",
 				OverallStatus: cgdomain.CallGraphStatusExtracted,
 			},
@@ -323,7 +312,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 
 	t.Run("force flag is forwarded to subprocess", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 		adapter := newCallgraphAdapter(exec, reader)
 		_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
 		if err != nil {
@@ -343,7 +332,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 
 	t.Run("extra args are forwarded ahead of --force", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 		adapter := NewAdapterExtractor(nil, nil, exec, reader, "0.1.0", []string{"--store-root=/tmp/store", "--from-modcache=/tmp/modcache"}, nil)
 		_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
 		if err != nil {
@@ -389,7 +378,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec:   cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusPartial},
+			out:   cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusPartial},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
 		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
@@ -405,7 +394,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec:   cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusUnknown},
+			out:   cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusUnknown},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
 		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
@@ -445,81 +434,43 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 
 }
 
-// TestAdapterExtractor_CallGraph_ConflictingLedger covers the read-back after
-// the subprocess writes. The stage confirms its own write, which is not the
-// question composition answers, so a refusal there must not fail a stage that
-// did its work.
-func TestAdapterExtractor_CallGraph_ConflictingLedger(t *testing.T) {
+// TestAdapterExtractor_CallGraph_ReadsWhatWasJustWritten pins the question the
+// stage asks the ledger.
+//
+// It asks what the child it just ran wrote, which the narrow read answers from
+// one generation's columns. It does NOT ask which generation should be served —
+// that read composes every generation the coordinate holds, rebuilds each one's
+// whole edge set and re-marshals it to check the seal, and it is what made this
+// stage the largest consumer of memory in an extraction run.
+func TestAdapterExtractor_CallGraph_ReadsWhatWasJustWritten(t *testing.T) {
 	ctx := t.Context()
 	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 
-	// The composed read stays the path a run without a disagreement takes; the
-	// listing is the exception, not the new normal.
-	t.Run("a ledger that composes cleanly is never listed", func(t *testing.T) {
+	t.Run("the stage reports the generation the narrow read names", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec:   cgdomain.CallGraphRecord{ContentHash: "hash-cg", OverallStatus: cgdomain.CallGraphStatusExtracted},
+			out:   cgports.CallGraphOutcome{ContentHash: "hash-just-written", OverallStatus: cgdomain.CallGraphStatusExtracted},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
 		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
-		if res.RecordID != "hash-cg" {
-			t.Errorf("RecordID = %s, want hash-cg", res.RecordID)
-		}
-		if reader.listCalls != 0 {
-			t.Errorf("the listing read ran %d times on a store that composed cleanly, want 0", reader.listCalls)
-		}
-	})
-
-	// The child appended a generation that disagrees with an older one, so the
-	// composed read refuses to name which answers the coordinate. The stage is
-	// not asking that question: it is confirming its own write, and the
-	// generation it just measured is the one it reports.
-	t.Run("a conflicting ledger reports the generation just measured", func(t *testing.T) {
-		var logged bytes.Buffer
-		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{
-			err: fmt.Errorf("%w: toolchain disagrees", cgports.ErrCallGraphConflict),
-			held: []cgdomain.CallGraphRecord{
-				{ContentHash: "hash-older", OverallStatus: cgdomain.CallGraphStatusLoadFailed},
-				{ContentHash: "hash-old", OverallStatus: cgdomain.CallGraphStatusExtractionFailed},
-				{ContentHash: "hash-just-written", OverallStatus: cgdomain.CallGraphStatusExtracted, NodeCount: 42, EdgeCount: 99},
-			},
-		}
-		adapter := newCallgraphAdapter(exec, reader).
-			WithLogger(slog.New(slog.NewTextHandler(&logged, nil)))
-
-		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
-		if err != nil {
-			t.Fatalf("a composition refusal failed a stage that did its work: %v", err)
-		}
 		if res.RecordID != "hash-just-written" {
 			t.Errorf("RecordID = %s, want hash-just-written: the stage must report its own write", res.RecordID)
 		}
 		if res.Status != domain.StageSucceeded {
-			t.Errorf("Status = %v, want Succeeded: an older generation decided the status", res.Status)
+			t.Errorf("Status = %v, want Succeeded", res.Status)
 		}
-		if res.Error != "" {
-			t.Errorf("Error = %q, want empty", res.Error)
-		}
-		if reader.listCalls != 1 {
-			t.Errorf("the listing read ran %d times, want 1", reader.listCalls)
-		}
-		if !strings.Contains(logged.String(), "callgraph_stage_reports_measured_generation") {
-			t.Error("the stage reported a measured generation without saying why")
+		if got := reader.reads.Load(); got != 1 {
+			t.Errorf("the ledger was read %d times, want exactly 1", got)
 		}
 	})
 
-	// The control the conflict branch must not weaken: a child that wrote
-	// nothing is still a failed stage, with the same explanation.
-	t.Run("a conflicting ledger holding no generation still reports no record", func(t *testing.T) {
+	t.Run("a child that wrote nothing is still a failed stage", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{
-			err: fmt.Errorf("%w: toolchain disagrees", cgports.ErrCallGraphConflict),
-		}
+		reader := &fakeCallGraphReader{}
 		adapter := newCallgraphAdapter(exec, reader)
 
 		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
@@ -534,15 +485,12 @@ func TestAdapterExtractor_CallGraph_ConflictingLedger(t *testing.T) {
 		}
 	})
 
-	t.Run("a listing that fails is still an error", func(t *testing.T) {
+	t.Run("a read that fails is still an error", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{
-			err:     fmt.Errorf("%w: toolchain disagrees", cgports.ErrCallGraphConflict),
-			listErr: errors.New("db locked"),
-		}
+		reader := &fakeCallGraphReader{err: errors.New("db locked")}
 		adapter := newCallgraphAdapter(exec, reader)
 		if _, err := adapter.Extract(ctx, coord, "callgraph", false, ""); err == nil {
-			t.Fatal("expected an error when the ledger cannot be listed, got nil")
+			t.Fatal("expected an error when the ledger cannot be read, got nil")
 		}
 	})
 }
@@ -577,7 +525,7 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 
 	reader := &fakeCallGraphReader{
 		found: true,
-		rec:   cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted},
+		out:   cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted},
 	}
 
 	adapter := newCallgraphAdapter(exec, reader)
@@ -720,7 +668,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec: cgdomain.CallGraphRecord{
+			out: cgports.CallGraphOutcome{
 				OverallStatus: cgdomain.CallGraphStatusLoadFailed,
 				// FailureDetail intentionally empty
 			},
@@ -795,7 +743,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 		})
 		t.Run("callgraph", func(t *testing.T) {
 			exec := &fakeSubprocessExecutor{}
-			reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+			reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 			res, _ := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false, "")
 			if res.Error != "" {
 				t.Errorf("succeeded callgraph Error = %q, want empty", res.Error)
@@ -820,7 +768,7 @@ func TestBuildSubprocessErrorDetail(t *testing.T) {
 
 	t.Run("stalled names the window and the environment", func(t *testing.T) {
 		err := fmt.Errorf("%w for 10m0s: %w", childproc.ErrStalled, baseErr)
-		detail, cause := buildSubprocessErrorDetail(err, []byte("  oom  "), "01M0VG1267S1XDJGDFZTVRPM84")
+		detail, cause, _ := buildSubprocessErrorDetail(err, []byte("  oom  "), "01M0VG1267S1XDJGDFZTVRPM84")
 		if !strings.Contains(detail, "no progress") {
 			t.Errorf("expected the stall to be named, got %q", detail)
 		}
@@ -834,7 +782,7 @@ func TestBuildSubprocessErrorDetail(t *testing.T) {
 
 	t.Run("ceiling names the flag that raises it", func(t *testing.T) {
 		err := fmt.Errorf("%w of 2h0m0s: %w", childproc.ErrCeiling, baseErr)
-		detail, cause := buildSubprocessErrorDetail(err, nil, "01M0VG1267S1XDJGDFZTVRPM84")
+		detail, cause, _ := buildSubprocessErrorDetail(err, nil, "01M0VG1267S1XDJGDFZTVRPM84")
 		if !strings.Contains(detail, "--callgraph-timeout") {
 			t.Errorf("expected the remedy flag, got %q", detail)
 		}
@@ -848,7 +796,7 @@ func TestBuildSubprocessErrorDetail(t *testing.T) {
 
 	t.Run("ceiling without a walk names the flag alone", func(t *testing.T) {
 		err := fmt.Errorf("%w of 2h0m0s: %w", childproc.ErrCeiling, baseErr)
-		detail, _ := buildSubprocessErrorDetail(err, nil, "")
+		detail, _, _ := buildSubprocessErrorDetail(err, nil, "")
 		if !strings.Contains(detail, "--callgraph-timeout") {
 			t.Errorf("expected the remedy flag, got %q", detail)
 		}
@@ -859,7 +807,7 @@ func TestBuildSubprocessErrorDetail(t *testing.T) {
 
 	t.Run("lost lock is the environment, and says running again stores it", func(t *testing.T) {
 		stderr := []byte("persisting callgraph record: " + sqlitestore.ContentionMarker + " for the whole retry budget")
-		detail, cause := buildSubprocessErrorDetail(baseErr, stderr, "")
+		detail, cause, _ := buildSubprocessErrorDetail(baseErr, stderr, "")
 		if !strings.Contains(detail, "store lock") {
 			t.Errorf("expected contention to be named, got %q", detail)
 		}
@@ -869,7 +817,7 @@ func TestBuildSubprocessErrorDetail(t *testing.T) {
 	})
 
 	t.Run("an unrecognised exit states no cause", func(t *testing.T) {
-		detail, cause := buildSubprocessErrorDetail(baseErr, []byte("panic: nil pointer"), "")
+		detail, cause, _ := buildSubprocessErrorDetail(baseErr, []byte("panic: nil pointer"), "")
 		if !strings.Contains(detail, "subprocess failed") {
 			t.Errorf("expected 'subprocess failed', got %q", detail)
 		}
@@ -883,7 +831,7 @@ func TestBuildSubprocessErrorDetail(t *testing.T) {
 	})
 
 	t.Run("without stderr", func(t *testing.T) {
-		detail, _ := buildSubprocessErrorDetail(baseErr, nil, "")
+		detail, _, _ := buildSubprocessErrorDetail(baseErr, nil, "")
 		if !strings.Contains(detail, "subprocess failed") {
 			t.Errorf("expected 'subprocess failed', got %q", detail)
 		}
@@ -967,7 +915,7 @@ func TestAdapterExtractor_CallGraph_PartialChildExit(t *testing.T) {
 		}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec: cgdomain.CallGraphRecord{
+			out: cgports.CallGraphOutcome{
 				ContentHash:   "hash-cg-partial",
 				OverallStatus: cgdomain.CallGraphStatusPartial,
 			},
@@ -1040,7 +988,7 @@ func TestAdapterExtractor_CallGraph_NamesWhatAGapIsAStatementAbout(t *testing.T)
 
 	t.Run("a record's own cause is what the stage reports", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{
+		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{
 			OverallStatus: cgdomain.CallGraphStatusLoadFailed,
 			FailureCause:  cgdomain.FailureCauseModule,
 			FailureDetail: "no packages found",

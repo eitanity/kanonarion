@@ -1691,6 +1691,66 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 	return out, nil
 }
 
+// LatestCallGraphOutcome returns what the newest generation at the coordinate
+// STATES, without reconstructing the graph it states it about.
+//
+// It reads one row and decodes one blob. The blob omits edges at the current
+// schema, so nothing here touches callgraph_edges and nothing re-marshals a
+// reconstructed record — which is the whole difference between this and
+// GetCallGraphRecord, and the difference is measured in tens of gigabytes on a
+// coordinate with a large graph or a long history.
+//
+// Newest in APPEND ORDER, so this is what was written here last, not what
+// composition would serve. The two differ whenever an older generation outranks
+// the newest, and a caller reporting an analysis it has just finished wants the
+// one it wrote — see ports.CallGraphOutcomeReader.
+//
+// A generation written at an older record schema reports (zero, false, nil), the
+// same absence ListCallGraphRecordsFor renders by skipping it: a stale shape
+// decodes with every later field at its zero value, and reporting those zeros as
+// a measurement is the failure the schema gate exists to prevent.
+func (s *Store) LatestCallGraphOutcome(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ports.CallGraphOutcome, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	if coord.IsZero() {
+		return ports.CallGraphOutcome{}, false, coordinate.ErrZeroCoordinate
+	}
+	row, found, err := s.newestRow(ctx, coord, pipelineVersion, "")
+	if err != nil || !found {
+		return ports.CallGraphOutcome{}, false, err
+	}
+
+	raw, decErr := blobcodec.Decode(row.blob)
+	if decErr != nil {
+		return ports.CallGraphOutcome{}, false, fmt.Errorf("decompressing callgraph record: %w", decErr)
+	}
+	var h domain2.CallGraphRecordHasher
+	rec, uerr := h.Unmarshal(raw)
+	if uerr != nil {
+		return ports.CallGraphOutcome{}, false, fmt.Errorf("unmarshalling callgraph record: %w", uerr)
+	}
+	if rec.SchemaVersion != domain2.CallGraphSchemaVersion {
+		return ports.CallGraphOutcome{}, false, nil
+	}
+	// The seal cannot be recomputed without the edges, so this checks the half
+	// that does not need them: that the blob's own hash is the one the ledger
+	// filed it under. A row whose blob disagrees with its key is a tampered or
+	// mis-written row whatever its edges say, and reading a status off it would
+	// attribute one generation's outcome to another's seal.
+	if rec.ContentHash != row.hash {
+		return ports.CallGraphOutcome{}, false, fmt.Errorf("%w: embedded hash %q does not match stored %q",
+			ports.ErrCallGraphIntegrity, rec.ContentHash, row.hash)
+	}
+	return ports.CallGraphOutcome{
+		ContentHash:   rec.ContentHash,
+		OverallStatus: rec.OverallStatus,
+		FailureCause:  rec.FailureCause,
+		FailureDetail: rec.FailureDetail,
+		NodeCount:     rec.NodeCount,
+		EdgeCount:     rec.EdgeCount,
+		ExtractedAt:   rec.ExtractedAt.UTC(),
+	}, true, nil
+}
+
 // decodeRecord turns one stored row into a verified record, reconstructing its
 // edges from the satellite. The bool is false when the row was written at an
 // older canonical shape.

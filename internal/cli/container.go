@@ -138,6 +138,13 @@ type Container struct {
 	Extract      ExtractUseCase
 	QueryExtract QueryExtractionUseCase
 
+	// CallgraphBound is the subprocess bound this invocation adopted and what
+	// decided it. It is on the container because it is resolved when the
+	// extractor is built and a command that reports it must report the value the
+	// run is actually using — resolving it a second time reads the host again and
+	// can produce a different number from the one in force.
+	CallgraphBound extextractor.CallgraphBound
+
 	// license
 	ExtractLicense     ExtractLicenseUseCase
 	QueryLicense       QueryLicenseUseCase
@@ -535,9 +542,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// One worker runs every stage for its module, so the pool cannot bound the
 	// call-graph subprocesses without also slowing the cheap in-process stages.
 	// The subprocesses carry their own bound, sized from this host.
+	hostMemory := meminfo.New()
+	callgraphBound := extextractor.ResolveCallgraphBound(callgraphWorkers, hostMemory, logger)
 	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
 		WithLogger(logger).
-		WithCallgraphConcurrency(extextractor.ResolveCallgraphConcurrency(callgraphWorkers, meminfo.New(), logger))
+		WithCallgraphConcurrency(callgraphBound.Workers).
+		// The bound is sized once; the host is re-read before each analysis
+		// starts, because the module in front of a worker later in the run may be
+		// the one that holds fifty gigabytes on its own.
+		WithHostMemory(hostMemory)
 	pipelineVersions := map[string]string{
 		"license":   "0.1.0",
 		"interface": "0.1.0",
@@ -728,6 +741,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		Extract:      extractUC,
 		QueryExtract: queryExtractUC,
+
+		CallgraphBound: callgraphBound,
 
 		ExtractLicense:     licExtractUC,
 		QueryLicense:       queryLicenseUC,

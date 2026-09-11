@@ -111,16 +111,35 @@ status it reprints.
     the cheap in-process stages have no reason to queue behind an SSA build.
 3.  **Stage Dispatch**: For each module, requested stages are executed in canonical
     order. The `callgraph` stage is special (see below).
-4.  **Result Aggregation**: A single `ExtractionRun` record is persisted, linking
-    all module-level results.
+4.  **Result Aggregation**: One `ExtractionRun` record links all module-level
+    results. It is written before the first module is touched, re-written every
+    30 seconds while the run proceeds, and sealed when the run ends. A run whose
+    process is ended by the operating system therefore still leaves a run,
+    carrying status `in_progress`, a zero `completed_at`, and the modules it had
+    finished. `extract show <run-id>` reads it.
 
 ## Callgraph Subprocess Isolation
 
 The `callgraph` stage spawns a child process (`kanonarion callgraph <coord>
-[--force]`) for each module. This contains OOM conditions: if
-a module's SSA closure exhausts RAM the kernel kills only the child process; the
-parent captures the exit code and stderr, records `StageFailed` with
-`error_detail`, and continues to the next module.
+[--force]`) for each module, so the module's SSA closure is held outside the
+run's own process and released when the child exits.
+
+**The kernel chooses its own victim, and it is not always the child.** When it
+takes the child, the parent captures the exit code and stderr, records
+`StageFailed` with `status=OutOfMemory` and `cause=environment`, and continues to
+the next module. When it takes the parent, the run ends there and no further
+module is attempted; what the run had completed is in its checkpointed
+`ExtractionRun` record (see [Orchestration Logic](#orchestration-logic)), which
+still says `in_progress`.
+
+Two things keep the parent out of the kernel's way. It reads back only what the
+child's record *states* — its hash, status and failure cause — and never the
+graph itself, so finishing a module costs the parent nothing that scales with the
+module. And it re-reads the host before starting each analysis: while an analysis
+is already running and the host reports less than the per-subprocess budget free,
+the next one waits rather than starting beside it. At least one analysis always
+runs, so a host permanently short of memory runs the walk one module at a time
+instead of hanging.
 
 A child exiting `1` is the exception: that is the child saying it built a graph
 and knows it to be incomplete ([`callgraph` exit codes](callgraph.md#exit-codes)).
@@ -137,12 +156,25 @@ and in-process, so bounding the pool would slow those to fix a problem neither
 causes.
 
 Each subprocess holds its own module's SSA closure, so the run's peak is roughly
-`--callgraph-workers` times the largest module's peak — see
+`--callgraph-workers` times the largest module's peak, plus the parent — see
 [what one run costs](callgraph.md#what-one-run-costs) for the per-module figure
 this multiplies. The tail is far above the typical module: on a 172-module walk
 measured here, most subprocesses held under 3 GiB and one, given the host to
 itself, held **over 50 GiB**. No bound saves a run from a module larger than the
 host; the bound is what stops several ordinary ones adding up to the same thing.
+
+The parent term is small and does not grow with the walk: it holds the module
+graph, the run record it is building, and one child's stderr per running
+analysis. It is written down here because it used to be the largest term of the
+three — the stage read each child's whole call graph back out of the store to
+learn four fields from it, so the parent's memory grew with every heavy module
+that *finished*, and on the 172-module walk it reached tens of gigabytes before
+the kernel ended it.
+
+Because the bound is sized once, from the host as it was when the extractor was
+built, it cannot know which module a worker will reach twenty minutes later. The
+headroom check above is what covers that: the bound decides how many analyses the
+run will ever admit, and the check decides whether now is the moment.
 
 The bound also protects the store. Every subprocess writes its record through
 one SQLite writer, and a walk that admits one subprocess per CPU puts that many
@@ -166,8 +198,18 @@ reading never fails a run.
 **The budget is a budget, not a limit.** Nothing enforces 4 GiB on a
 subprocess, and the largest modules go far past it. Its only job is to stop the
 run admitting more concurrent analyses than the host can hold. A subprocess the
-operating system ends anyway is recorded as a failed stage naming memory as the
-cause, and the remedy it prints is to lower this flag.
+operating system ends anyway is recorded as a failed stage with
+`status=OutOfMemory` and `cause=environment`, and the remedy it prints is to
+lower this flag.
+
+The run states the bound it adopted and what decided it, on stderr, before it
+starts:
+
+```
+Call-graph subprocesses: 4 at once (55.1 GiB available, 4.0 GiB budgeted each, CPU cap 4)
+```
+
+`--no-progress` silences that line along with the rest of the narration.
 
 Raise it only on a host with memory to spare, and expect the peak to rise by
 about one more module's worth per step:
@@ -210,6 +252,17 @@ running again (or raising the ceiling) is what repairs it:
 Failed stages (1):
   example.com/mod@v1.2.3  stage=callgraph  cause=environment  error=callgraph stage
     status=ExtractionFailed: the analysis reported no progress for 10m0s and was stopped
+```
+
+A module ended by the operating system rather than by either deadline reads the
+same way, naming the status the run concluded:
+
+```
+Failed stages (1):
+  example.com/mod@v1.2.3  stage=callgraph  cause=environment  error=callgraph stage
+    status=OutOfMemory: the analysis was ended by the operating system before it
+    finished, which is usually memory: lower --callgraph-workers, or analyse this
+    module on its own
 ```
 
 In `--json` the same fact is the `cause` field on each stage of

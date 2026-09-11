@@ -28,30 +28,60 @@ const CallgraphBudgetBytes uint64 = 4 << 30 // 4 GiB
 // contends for the store's single writer.
 const CallgraphCPUCap = 4
 
+// CallgraphBound is the bound a run adopted and what decided it.
+//
+// It is a value rather than a bare count because the count on its own is not
+// reportable: "four subprocesses" says nothing about whether four was the CPU
+// cap, an operator's instruction, or all the memory this host could fund. A run
+// that states the bound without stating what produced it leaves a reader unable
+// to tell a healthy default from a host in trouble.
+type CallgraphBound struct {
+	// Workers is how many call-graph subprocesses may run at once.
+	Workers int
+	// Requested is true when Workers came from the operator rather than the host.
+	Requested bool
+	// BudgetBytes is the memory one subprocess was budgeted when the host sized
+	// the bound. Zero when the operator named the bound.
+	BudgetBytes uint64
+	// AvailableBytes is the reading the sizing used, and AvailableKnown whether
+	// there was one. A host that could not answer is bounded by CPU alone, and
+	// saying so is different from reporting zero bytes available.
+	AvailableBytes uint64
+	AvailableKnown bool
+	// CPUCap is the ceiling the CPU side imposed, whatever the memory said.
+	CPUCap int
+}
+
 // ResolveCallgraphConcurrency returns how many call-graph subprocesses may run
-// at once. A non-zero requested value is an operator override and is taken as
+// at once. See ResolveCallgraphBound, whose count this is.
+func ResolveCallgraphConcurrency(requested int, mem HostMemory, logger *slog.Logger) int {
+	return ResolveCallgraphBound(requested, mem, logger).Workers
+}
+
+// ResolveCallgraphBound sizes the call-graph subprocess bound and says what
+// sized it. A non-zero requested value is an operator override and is taken as
 // given. Zero is sized from the host: the CPU cap, lowered when the available
 // memory cannot fund that many budgets, and never below one — an unreadable
 // reading is "unknown", not a budget of zero.
-func ResolveCallgraphConcurrency(requested int, mem HostMemory, logger *slog.Logger) int {
+func ResolveCallgraphBound(requested int, mem HostMemory, logger *slog.Logger) CallgraphBound {
+	cpuCap := min(runtime.NumCPU(), CallgraphCPUCap)
 	if requested > 0 {
-		return requested
+		return CallgraphBound{Workers: requested, Requested: true, CPUCap: cpuCap}
 	}
 	log := logger
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	cpuCap := min(runtime.NumCPU(), CallgraphCPUCap)
 	if mem == nil {
 		log.Debug("no host-memory reporter wired; bounding call-graph subprocesses by CPU alone",
 			"callgraph_workers", cpuCap)
-		return cpuCap
+		return CallgraphBound{Workers: cpuCap, BudgetBytes: CallgraphBudgetBytes, CPUCap: cpuCap}
 	}
 	available, err := mem.AvailableBytes()
 	if err != nil {
 		log.Debug("available memory unreadable; bounding call-graph subprocesses by CPU alone",
 			"callgraph_workers", cpuCap, "error", err)
-		return cpuCap
+		return CallgraphBound{Workers: cpuCap, BudgetBytes: CallgraphBudgetBytes, CPUCap: cpuCap}
 	}
 	// uint64 division, then a bounded conversion: min caps the quotient at
 	// cpuCap (at most CallgraphCPUCap) before it is narrowed, so the result fits
@@ -65,5 +95,11 @@ func ResolveCallgraphConcurrency(requested int, mem HostMemory, logger *slog.Log
 			"callgraph_workers", workers,
 			"cpu_cap", cpuCap)
 	}
-	return workers
+	return CallgraphBound{
+		Workers:        workers,
+		BudgetBytes:    CallgraphBudgetBytes,
+		AvailableBytes: available,
+		AvailableKnown: true,
+		CPUCap:         cpuCap,
+	}
 }

@@ -420,6 +420,9 @@ func newLocalWalkExtract(
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
 	stages := extstages.New()
+	// One reporter for both uses: the bound is sized from it once, and the
+	// headroom gate re-reads it before each analysis starts.
+	driverHostMemory := meminfo.New()
 	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:  extStore,
 		Walks: walkStore,
@@ -437,7 +440,8 @@ func newLocalWalkExtract(
 		// host-derived default rather than leaving the memory term unread.
 		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion,
 			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC).WithLogger(logger).
-			WithCallgraphConcurrency(extextractor.ResolveCallgraphConcurrency(0, meminfo.New(), logger)),
+			WithCallgraphConcurrency(extextractor.ResolveCallgraphConcurrency(0, driverHostMemory, logger)).
+			WithHostMemory(driverHostMemory),
 		Stages:    stages,
 		Clock:     clk,
 		Stopwatch: stopwatch,

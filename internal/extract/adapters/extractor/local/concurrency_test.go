@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
@@ -132,17 +133,13 @@ func (c *countingExecutor) Execute(ctx context.Context, args []string) ([]byte, 
 	return nil, nil
 }
 
-// staticCallGraphReader answers every read with one stored record. Unlike the
+// staticCallGraphReader answers every read with one stored outcome. Unlike the
 // counting fake beside it, it holds no mutable state, so a hundred concurrent
 // stages can share one.
-type staticCallGraphReader struct{ rec cgdomain.CallGraphRecord }
+type staticCallGraphReader struct{ out cgports.CallGraphOutcome }
 
-func (s staticCallGraphReader) GetCallGraphRecord(context.Context, coordinate.ModuleCoordinate, string) (cgdomain.CallGraphRecord, bool, error) {
-	return s.rec, true, nil
-}
-
-func (s staticCallGraphReader) ListCallGraphRecordsFor(context.Context, coordinate.ModuleCoordinate, string) ([]cgdomain.CallGraphRecord, error) {
-	return []cgdomain.CallGraphRecord{s.rec}, nil
+func (s staticCallGraphReader) LatestCallGraphOutcome(context.Context, coordinate.ModuleCoordinate, string) (cgports.CallGraphOutcome, bool, error) {
+	return s.out, true, nil
 }
 
 // peakConcurrency runs stages call-graph extractions against adapter and
@@ -176,7 +173,7 @@ func peakConcurrency(t *testing.T, adapter *AdapterExtractor, exec *countingExec
 
 func newBoundedTestAdapter(bound int) (*AdapterExtractor, *countingExecutor) {
 	exec := &countingExecutor{release: make(chan struct{})}
-	reader := staticCallGraphReader{rec: cgdomain.CallGraphRecord{
+	reader := staticCallGraphReader{out: cgports.CallGraphOutcome{
 		OverallStatus: cgdomain.CallGraphStatusExtracted,
 		ContentHash:   "hash",
 	}}
@@ -199,7 +196,7 @@ func TestCallgraphConcurrency_WithoutTheBoundEveryStageRunsAtOnce(t *testing.T) 
 	exec := &countingExecutor{release: make(chan struct{})}
 	adapter := &AdapterExtractor{
 		cgExec: exec,
-		cgReader: staticCallGraphReader{rec: cgdomain.CallGraphRecord{
+		cgReader: staticCallGraphReader{out: cgports.CallGraphOutcome{
 			OverallStatus: cgdomain.CallGraphStatusExtracted,
 			ContentHash:   "hash",
 		}},
@@ -230,7 +227,7 @@ func TestCallgraphConcurrency_ConstructorBoundsWithoutAnExplicitCall(t *testing.
 func TestCallgraphConcurrency_ARunThatEndsWhileWaitingRecordsTheHost(t *testing.T) {
 	exec := &countingExecutor{release: make(chan struct{})}
 	defer close(exec.release)
-	reader := staticCallGraphReader{rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+	reader := staticCallGraphReader{out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 	adapter := newCallgraphAdapter(exec, reader).WithCallgraphConcurrency(1)
 
 	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
@@ -267,7 +264,7 @@ func TestCallgraphConcurrency_ARunThatEndsWhileWaitingRecordsTheHost(t *testing.
 func TestCallgraphConcurrency_CheapStagesAreNotBoundedByIt(t *testing.T) {
 	exec := &countingExecutor{release: make(chan struct{})}
 	defer close(exec.release)
-	reader := staticCallGraphReader{rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+	reader := staticCallGraphReader{out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 	lic := &mockLicenseUseCase{res: licapp.ExtractResult{Record: licdomain.LicenseRecord{OverallStatus: licdomain.LicenseStatusDetected}}}
 	iface := &mockInterfaceUseCase{res: ifaceapp.ExtractResult{Record: ifacedomain.InterfaceRecord{OverallStatus: ifacedomain.InterfaceStatusExtracted}}}
 	ex := &mockExampleUseCase{res: exapp.ExtractResult{Record: exdomain.ExampleRecord{OverallStatus: exdomain.ExampleStatusFound}}}

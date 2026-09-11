@@ -52,6 +52,29 @@ func registerCallgraphWorkersFlag(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&callgraphWorkers, "callgraph-workers", 0, callgraphWorkersUsage)
 }
 
+// describeCallgraphBound renders the bound a run adopted and what decided it.
+//
+// A run states this because the number on its own is not readable: four
+// subprocesses is the healthy default on a large host and is also what a host
+// with sixteen gigabytes free gets, and only the budget beside it says which
+// one a reader is looking at. It is the answer to "how many workers did it
+// actually use", which a reader previously could get only by turning the log
+// level up and hoping the memory term had lowered the bound.
+func describeCallgraphBound(b extextractor.CallgraphBound) string {
+	if b.Requested {
+		return fmt.Sprintf("Call-graph subprocesses: %d at once (--callgraph-workers)", b.Workers)
+	}
+	if !b.AvailableKnown {
+		return fmt.Sprintf("Call-graph subprocesses: %d at once (from %d CPUs; this host does not report available memory)",
+			b.Workers, b.CPUCap)
+	}
+	return fmt.Sprintf("Call-graph subprocesses: %d at once (%.1f GiB available, %.1f GiB budgeted each, CPU cap %d)",
+		b.Workers,
+		float64(b.AvailableBytes)/float64(1<<30),
+		float64(b.BudgetBytes)/float64(1<<30),
+		b.CPUCap)
+}
+
 // callgraphNarrationFor returns where a PARENT's copy of its children's progress
 // lines should go, gated exactly as every other stderr narration is.
 //

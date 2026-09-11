@@ -103,7 +103,14 @@ func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.W
 	// to silence it along with the heartbeat it introduces. Writing it directly
 	// left `extract --no-progress` narrating anyway, while `vuln-scan
 	// --no-progress` — whose equivalent line already routes here — did not.
-	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "Starting extraction for walk %s...\n", walkID)
+	preamble := progressWriter(stderr, f.noProgress)
+	_, _ = fmt.Fprintf(preamble, "Starting extraction for walk %s...\n", walkID)
+	// Only when the stage that has a bound is one of the ones being run: a
+	// licence-and-interface run never spawns a subprocess, and stating a bound it
+	// will not reach describes a different run.
+	if slices.Contains(f.stages, "callgraph") {
+		_, _ = fmt.Fprintln(preamble, describeCallgraphBound(ctr.CallgraphBound))
+	}
 	run, err := ctr.Extract.Execute(ctx, extractapp.ExtractRequest{
 		WalkID:   walkID,
 		Stages:   f.stages,
@@ -131,6 +138,13 @@ func extractionExit(run domain.ExtractionRun) error {
 	case domain.ExtractionRunCancelled:
 		return &exitError{code: ExitCancelled, msg: fmt.Sprintf(
 			"extraction cancelled: run %s did not reach every module", run.ID)}
+	case domain.ExtractionRunInProgress:
+		// A run still saying this is one whose process is gone: the record is the
+		// checkpoint it wrote before it ended. It shares Cancelled's exit because
+		// it shares Cancelled's meaning for a caller — the run did not reach every
+		// module, and nothing in it is a finding about the ones it missed.
+		return &exitError{code: ExitCancelled, msg: fmt.Sprintf(
+			"extraction incomplete: run %s never finished; it records the modules it had completed", run.ID)}
 	default:
 		return &exitError{code: ExitPartial, msg: fmt.Sprintf(
 			"extraction %s: %d stage(s) failed; run %s records which modules and stages",
@@ -231,7 +245,14 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			_, _ = fmt.Fprintf(stdout, "Walk ID:        %s\n", run.WalkID)
 			_, _ = fmt.Fprintf(stdout, "Status:         %s\n", run.OverallStatus)
 			_, _ = fmt.Fprintf(stdout, "Started:        %s\n", run.StartedAt.Format(time.RFC3339))
-			_, _ = fmt.Fprintf(stdout, "Completed:      %s\n", run.CompletedAt.Format(time.RFC3339))
+			// A run whose process was ended leaves a checkpoint with no completion
+			// time. Rendering the zero instant prints a date in year one, which
+			// reads as a corrupt record rather than as a run that never finished.
+			completed := "never (the run did not finish)"
+			if !run.CompletedAt.IsZero() {
+				completed = run.CompletedAt.Format(time.RFC3339)
+			}
+			_, _ = fmt.Fprintf(stdout, "Completed:      %s\n", completed)
 			_, _ = fmt.Fprintf(stdout, "Stages:         %s\n", strings.Join(run.RequestedStages, ", "))
 			_, _ = fmt.Fprintf(stdout, "Module Results: %d\n", len(run.PerModuleResults))
 

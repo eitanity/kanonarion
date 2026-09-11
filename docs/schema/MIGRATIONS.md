@@ -110,6 +110,50 @@ cannot be analysed" is not. Before the axis reached the scan and the stage, a
 module dropped because a subprocess was killed on a wall clock, or because its
 write lost a lock, was indistinguishable from one that genuinely does not build.
 
+## The extraction run states itself while it is still running: no migration and no bump
+
+`ExtractionRunStatus` gains `in_progress`, and the run record is now written
+before the first module is touched and re-written every 30 seconds, not only when
+the run ends.
+
+**No migration and no schema-version bump.** The value is appended to the
+enumeration, so every stored `overall_status` keeps the number it had, and the
+canonical form has always carried the status as an integer. `extraction_runs`
+already upserted on `id`, so a run re-stating itself writes to the row it
+already owns.
+
+A run carrying `in_progress` once its process is gone did not finish. Its
+`completed_at` is the zero instant and `extract show` renders that as "never (the
+run did not finish)" rather than a date in year one. `PerModuleResults` holds what
+it had completed, and every entry there is as true as it would have been in a
+sealed run. The exit code is `3` — the same one a cancelled run earns, because it
+says the same thing to a caller: the run did not reach every module.
+
+Persisting only on completion meant the failure with the worst consequence
+recorded nothing about itself. A 172-module walk ended by the operating system at
+module 132 wrote 141 call-graph records and no run at all, so `extract list` ran
+straight past it and the 40 modules never attempted were indistinguishable from
+modules that do not exist.
+
+`StageResult.cause`, documented above as additive, now actually reaches the
+store: the canonical form did not carry it, so a run printed the axis and then
+dropped it, and `extract show` on a stored run could say a module failed without
+saying whether running again would repair it. The field is `omitzero` and is
+absent from every stage that states no cause, so every stored run still verifies.
+
+## Call-graph status `OutOfMemory` gets a producer: no migration and no bump
+
+`CallGraphStatusOutOfMemory` has existed since the type did, with nothing writing
+it. It is now stated by the extraction stage, in the parent, about a child the
+operating system ended for a reason neither of the parent's own deadlines
+explains. Its documented meaning changes with it: it never described "terminated
+cleanly at a configured budget", because a process the kernel ends writes nothing
+and no such budget exists.
+
+**No migration and no bump.** It is an existing value of an existing field
+reaching records for the first time; no record changes shape, and the value was
+already mapped to exit `2` and to `failurecause.Environment`.
+
 ## Call graph records: why a generation exists, no migration and no bump
 
 A `CallGraphRecord` gains `derived_by`: which reuse gate governed the run that

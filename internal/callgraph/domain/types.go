@@ -190,8 +190,20 @@ const (
 	// CallGraphStatusLoadFailed means package loading failed fatally; no graph
 	// was produced.
 	CallGraphStatusLoadFailed
-	// CallGraphStatusOutOfMemory means the extraction hit the configured memory
-	// budget and was terminated cleanly.
+	// CallGraphStatusOutOfMemory means the analysis ran out of memory: the host
+	// could not hold the module's SSA closure and the operating system ended the
+	// process doing the holding.
+	//
+	// It is stated by the RUN, not by the analysis. An analysis the kernel ends
+	// gets no chance to write anything, so a status it had to record itself would
+	// only ever exist for failures mild enough not to need it — which is why this
+	// value sat in the type for a year with nothing producing it. The extraction
+	// stage produces it in the parent, about a child it saw ended by a signal
+	// that neither of its own deadlines explains.
+	//
+	// It is always FailureCauseEnvironment: it describes what this host could
+	// carry at one moment, never the published bytes. The same module on an idle
+	// machine, or beside fewer concurrent analyses, may come back complete.
 	CallGraphStatusOutOfMemory
 	// CallGraphStatusCancelled means extraction was interrupted by context
 	// cancellation.
