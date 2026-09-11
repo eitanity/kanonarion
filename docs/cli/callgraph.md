@@ -49,9 +49,20 @@ answer: UNRESOLVED — callers of pkg.(*T).Do cannot be confirmed absent:
 ## What one run costs
 
 One `callgraph` run loads the module's **full transitive dependency closure**
-into SSA in a single process. That closure is what the run costs, not the
-module's own source size: a small module that pulls a large one in costs what
-the large one costs.
+into SSA in a single process. For most modules that is a gigabyte-scale,
+seconds-scale operation — the figures below are all between 0.23 and 1.22 GB.
+
+A small number of modules cost far more, and **you cannot predict which from
+their size**: the most expensive one measured here holds about 54 GB while being
+smaller, on every size axis, than one that holds 11 GB. The one axis on which the
+two differ by orders of magnitude is how many types satisfy an interface.
+
+Two practical consequences. A whole-walk run bounds this for you:
+[`extract`](extract.md#how-large-one-analysis-may-get) gives each analysis a
+memory ceiling derived from the host, so a module that will not fit records
+`OutOfMemory` and the run carries on. A single `callgraph` run has no such
+ceiling, so for an unfamiliar module on a small machine, run it on its own before
+running it beside anything you mind losing.
 
 The figures below come from one developer machine — 32 cores, 61 GiB of RAM —
 over this project's own dependency set, each module fetched first and then
@@ -77,10 +88,11 @@ constants, because a different toolchain or a changed closure moves them.
 The whole-walk figure is a different question with a different answer.
 [`extract --stages callgraph`](extract.md#callgraph-subprocess-isolation) runs
 this analysis in concurrent subprocesses, so its peak is roughly the number
-running at once times the largest module's peak, and that is where the
-out-of-memory risk lives. `--callgraph-workers` is the control - **not**
+running at once times the peak of the most expensive module it reaches — which is
+not necessarily the largest one. `--callgraph-workers` is the control - **not**
 `--workers`, which sizes the module pool and leaves the subprocess bound alone.
-It defaults to at most 4 and lowering it lowers the peak proportionally.
+It defaults to at most 4 and lowering it lowers the peak proportionally, and each
+analysis carries its own ceiling on top of that.
 
 ## Calls and references
 

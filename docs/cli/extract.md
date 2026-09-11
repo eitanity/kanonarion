@@ -162,9 +162,11 @@ Each subprocess holds its own module's SSA closure, so the run's peak is roughly
 [what one run costs](callgraph.md#what-one-run-costs) for the per-module figure
 this multiplies. The tail is far above the typical module: on a 172-module walk
 measured here, most subprocesses held under 3 GiB and one, given the host to
-itself, held **over 50 GiB**. The bound is what stops several ordinary modules
-adding up to more than the host has; the ceiling is what stops one extraordinary
-one doing it alone.
+itself, held **over 50 GiB** — and that module is not the largest in the walk,
+which costs about a fifth as much. Cost does not track size; see
+[what one run costs](callgraph.md#what-one-run-costs). The bound is what stops
+several ordinary modules adding up to more than the host has; the ceiling is what
+stops one expensive module doing it alone.
 
 The parent term is small and does not grow with the walk: it holds the module
 graph, the run record it is building, and one child's stderr per running
@@ -201,7 +203,7 @@ reading never fails a run.
 **The budget prices admission; the ceiling is what an analysis enforces on
 itself.** The 4 GiB budget decides how many analyses may run at once and whether
 now is the moment to start one. It does not bound a running analysis, and the
-largest modules go far past it — so a second number does.
+most expensive modules go far past it — so a second number does.
 
 The run states the bound it adopted, what decided it, and the ceiling it shared
 out, on stderr, before it starts:

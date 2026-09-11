@@ -1178,7 +1178,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	if qerr != nil {
 		return domain2.CallGraphRecord{}, false, qerr
 	}
-	rec, ok, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser)
+	rec, ok, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser, newIdentifierPool())
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -1456,7 +1456,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	if !found {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	rec, ok, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser)
+	rec, ok, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser, newIdentifierPool())
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -1519,8 +1519,9 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 		return domain2.CallGraphRecord{}, false, err
 	}
 
+	pool := newIdentifierPool()
 	for _, c := range candidates {
-		held, ok, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser)
+		held, ok, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser, pool)
 		if derr != nil {
 			return domain2.CallGraphRecord{}, false, derr
 		}
@@ -1676,8 +1677,12 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 	// the store is opened on a single connection, so a second query issued while
 	// the first result set is still open deadlocks.
 	out := make([]domain2.CallGraphRecord, 0, len(raw))
+	// One pool for the whole history: see identifierPool. The generations at a
+	// coordinate are repeated analyses of the same code, so each one's
+	// identifiers are very nearly the previous one's.
+	pool := newIdentifierPool()
 	for _, st := range raw {
-		rec, ok, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser)
+		rec, ok, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser, pool)
 		if derr != nil {
 			return nil, derr
 		}
@@ -1766,7 +1771,7 @@ func (s *Store) LatestCallGraphOutcome(ctx context.Context, coord coordinate.Mod
 // This gate is also why the ledger does not need a purge on every analyser shape
 // change: the stale generation stays in the table, readable as history, and
 // answers nothing.
-func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string) (domain2.CallGraphRecord, bool, error) {
+func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string, pool *identifierPool) (domain2.CallGraphRecord, bool, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("decompressing callgraph record: %w", decErr)
@@ -1787,7 +1792,7 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analy
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: embedded hash %q does not match stored %q",
 			ports.ErrCallGraphIntegrity, rec.ContentHash, storedHash)
 	}
-	edges, fetchErr := s.fetchEdges(ctx, storedHash)
+	edges, fetchErr := s.fetchEdges(ctx, storedHash, rec.EdgeCount, pool)
 	if fetchErr != nil {
 		return domain2.CallGraphRecord{}, false, fetchErr
 	}
@@ -1822,7 +1827,7 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analy
 // coordinate-keyed fetch would hand a record the union of its own edges and
 // every other generation's — and the hash verification over the reconstructed
 // record would then fail on a record nothing had tampered with.
-func (s *Store) fetchEdges(ctx context.Context, recordContentHash string) ([]domain2.CallEdge, error) {
+func (s *Store) fetchEdges(ctx context.Context, recordContentHash string, expected int, pool *identifierPool) ([]domain2.CallEdge, error) {
 	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind
 	    FROM callgraph_edges
 	    WHERE record_content_hash = ?
@@ -1836,18 +1841,32 @@ func (s *Store) fetchEdges(ctx context.Context, recordContentHash string) ([]dom
 		_ = rows.Close() //nolint:errcheck
 	}()
 
-	var edges []domain2.CallEdge
+	edges := make([]domain2.CallEdge, 0, edgeCapacity(expected))
+	// The scan targets are declared once rather than per row: Scan takes their
+	// addresses, so a fresh set each iteration is an allocation per edge for
+	// values that are overwritten immediately.
+	var (
+		fromID, toID, file, conf, kind sql.RawBytes
+		line                           int
+		reflectDispatch                bool
+	)
 	for rows.Next() {
-		var e domain2.CallEdge
-		var conf, kind string
-		var reflectDispatch bool
-		if serr := rows.Scan(&e.FromID, &e.ToID, &conf, &e.CallSite.File, &e.CallSite.Line, &reflectDispatch, &kind); serr != nil {
+		// RawBytes rather than string: the driver's own buffer is handed over
+		// without a copy, and the copy that IS kept is the interned one. Every
+		// value must be interned before the next Next, which is the only point at
+		// which the bytes are still valid.
+		if serr := rows.Scan(&fromID, &toID, &conf, &file, &line, &reflectDispatch, &kind); serr != nil {
 			return nil, fmt.Errorf("scanning callgraph edge: %w", serr)
 		}
-		e.Kind = domain2.EdgeKind(kind)
+		e := domain2.CallEdge{
+			FromID:   pool.intern(fromID),
+			ToID:     pool.intern(toID),
+			CallSite: domain2.SourcePosition{File: pool.intern(file), Line: line},
+			Kind:     domain2.EdgeKind(pool.intern(kind)),
+		}
 		// Normalise any legacy vocabulary lingering in the table; a stored
 		// Reflection string also implies the reflect origin.
-		e.Confidence, e.ReflectDispatch = domain2.MigrateConfidence(conf)
+		e.Confidence, e.ReflectDispatch = domain2.MigrateConfidence(pool.intern(conf))
 		e.ReflectDispatch = e.ReflectDispatch || reflectDispatch
 		edges = append(edges, e)
 	}
@@ -1855,6 +1874,54 @@ func (s *Store) fetchEdges(ctx context.Context, recordContentHash string) ([]dom
 		return nil, fmt.Errorf("iterating callgraph edges: %w", err)
 	}
 	return edges, nil
+}
+
+// maxEdgeCapacityHint bounds what a record's own edge_count may reserve. The
+// count is sealed and is trusted for what it is — a hint that saves the
+// regrowth — but a tampered count would otherwise ask for an allocation the host
+// cannot serve, before the seal check that catches it runs. Beyond the bound the
+// slice grows as it did before.
+const maxEdgeCapacityHint = 1 << 24
+
+func edgeCapacity(expected int) int {
+	if expected < 0 || expected > maxEdgeCapacityHint {
+		return 0
+	}
+	return expected
+}
+
+// identifierPool collapses the identifier strings a read materialises onto one
+// copy each.
+//
+// A record's node identifiers are a small set repeated across its edges — tens
+// of endpoints per distinct identifier — and the file paths repeat harder still.
+// Scanning each row into its own string keeps every one of those copies alive
+// for as long as the record is; interning keeps one.
+//
+// It is shared across the generations of ONE read rather than one record,
+// because a coordinate's generations are repeated analyses of the same code and
+// each restates almost exactly the previous one's identifiers.
+//
+// It holds no lock and must not be shared between goroutines; a read is
+// sequential and each read makes its own.
+type identifierPool struct {
+	seen map[string]string
+}
+
+func newIdentifierPool() *identifierPool {
+	return &identifierPool{seen: make(map[string]string)}
+}
+
+// intern returns the pool's single copy of b's contents. The bytes are not
+// retained: a miss copies them, and a hit copies nothing at all, because a map
+// lookup keyed on string(b) is compiled without an allocation.
+func (p *identifierPool) intern(b []byte) string {
+	if s, ok := p.seen[string(b)]; ok {
+		return s
+	}
+	s := string(b)
+	p.seen[s] = s
+	return s
 }
 
 // ListCallGraphRecords returns one summary per module, pipeline version pair —

@@ -1,10 +1,12 @@
 package domain
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"sort"
 	"time"
 
@@ -29,12 +31,11 @@ func (CallGraphRecordHasher) SetContentHash(r CallGraphRecord) (CallGraphRecord,
 	// hash does not stand behind.
 	r = canonicalOrder(r)
 	r.ContentHash = ""
-	data, err := marshalCanonical(r)
+	sum, err := hashCanonical(r)
 	if err != nil {
 		return CallGraphRecord{}, fmt.Errorf("marshalling for hash: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	r.ContentHash = "sha256:" + hex.EncodeToString(sum[:])
+	r.ContentHash = sum
 	return r, nil
 }
 
@@ -83,12 +84,10 @@ func canonicalOrder(r CallGraphRecord) CallGraphRecord {
 func (CallGraphRecordHasher) VerifyContentHash(r CallGraphRecord) error {
 	saved := r.ContentHash
 	r.ContentHash = ""
-	data, err := marshalCanonical(r)
+	expected, err := hashCanonical(r)
 	if err != nil {
 		return fmt.Errorf("marshalling for verification: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	expected := "sha256:" + hex.EncodeToString(sum[:])
 	if saved != expected {
 		return fmt.Errorf("content hash mismatch: stored %q, computed %q", saved, expected)
 	}
@@ -564,17 +563,16 @@ type canonicalForeignModule struct {
 	Version string `json:"version"`
 }
 
-func marshalCanonical(r CallGraphRecord) ([]byte, error) {
-	// marshalCanonical owns the canonical ordering. It sorts copies, so hashing
-	// never mutates the caller's record, and no caller has to remember to put a
-	// record in order before it is sealed.
-	nodes := make([]CallNode, len(r.Nodes))
-	copy(nodes, r.Nodes)
-	sort.Slice(nodes, func(i, j int) bool { return CallNodeLess(nodes[i], nodes[j]) })
-
-	edges := make([]CallEdge, len(r.Edges))
-	copy(edges, r.Edges)
-	sort.Slice(edges, func(i, j int) bool { return CallEdgeLess(edges[i], edges[j]) })
+// canonicalShell builds the canonical form of every part of r EXCEPT its edges,
+// leaving Edges nil so the shape marshals with a "edges":null placeholder. The
+// two callers fill that placeholder differently — marshalCanonical with the
+// whole array, hashCanonical by streaming it — and share this so neither can
+// drift into hashing a different record from the one the other marshals.
+func canonicalShell(r CallGraphRecord) canonicalRecord {
+	// The canonical ordering is owned here. Ordering never mutates the caller's
+	// record, and no caller has to remember to put a record in order before it is
+	// sealed.
+	nodes := canonicalNodeOrder(r.Nodes)
 
 	cNodes := make([]canonicalNode, len(nodes))
 	for i, n := range nodes {
@@ -593,18 +591,6 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			UsesUnsafePointer:    n.UsesUnsafePointer,
 		}
 	}
-	cEdges := make([]canonicalEdge, len(edges))
-	for i, e := range edges {
-		cEdges[i] = canonicalEdge{
-			CallSite:        canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
-			Confidence:      string(e.Confidence),
-			FromID:          e.FromID,
-			Kind:            string(e.Kind),
-			ReflectDispatch: e.ReflectDispatch,
-			ToID:            e.ToID,
-		}
-	}
-
 	var cIfaces []canonicalInterface
 	if len(r.Interfaces) > 0 {
 		ifaces := make([]InterfaceType, len(r.Interfaces))
@@ -694,7 +680,6 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		},
 		Ecosystem:                r.Ecosystem,
 		EdgeCount:                r.EdgeCount,
-		Edges:                    cEdges,
 		ExclusionList:            exclusions,
 		ExclusionReason:          r.ExclusionReason,
 		ExtractedAt:              recordstamp.Format(r.ExtractedAt),
@@ -727,6 +712,16 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		AnalysisRoot:       r.AnalysisRoot,
 		Toolchain:          string(r.Toolchain),
 	}
+	return c
+}
+
+func marshalCanonical(r CallGraphRecord) ([]byte, error) {
+	edges := canonicalEdgeOrder(r.Edges)
+	c := canonicalShell(r)
+	c.Edges = make([]canonicalEdge, len(edges))
+	for i := range edges {
+		c.Edges[i] = canonicalEdgeOf(edges[i])
+	}
 	b, err := canonicalMarshal(c)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling canonical callgraph record: %w", err)
@@ -741,3 +736,131 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 // correct, not that the guard is reachable with a real value today — it
 // exists for the never-silent-failure invariant, not a known failure mode.
 var canonicalMarshal = json.Marshal
+
+// canonicalEdgeChunk is how many edges are encoded at a time while streaming a
+// record into its digest. One at a time costs an allocation per edge; the whole
+// array at once is the copy the streaming exists to avoid.
+const canonicalEdgeChunk = 4096
+
+// edgesPlaceholder is what canonicalShell's nil Edges marshals to. Streaming
+// replaces this one span with the array; see hashCanonical for why it cannot
+// collide with anything else in the bytes.
+const edgesPlaceholder = `"edges":null`
+
+// hashCanonical computes the content hash over exactly the bytes
+// marshalCanonical produces, without ever holding them. A verified read
+// re-marshals the whole edge set, and that materialised JSON was the largest
+// single term in what such a read cost.
+//
+// It is byte-for-byte the same digest, not an equivalent one: this may reduce
+// what a verification costs and may not change what it verifies. The test
+// asserts the equality against marshalCanonical directly.
+//
+// The split is by the "edges":null placeholder canonicalShell leaves, which
+// cannot appear anywhere else: the key is unique on the shape, and a string
+// value containing it would have its quotes escaped. A count other than one is
+// a failure rather than a guess — guessing which span to replace would seal a
+// record over bytes nobody chose.
+func hashCanonical(r CallGraphRecord) (string, error) {
+	edges := canonicalEdgeOrder(r.Edges)
+	shell, err := canonicalMarshal(canonicalShell(r))
+	if err != nil {
+		return "", fmt.Errorf("marshalling canonical callgraph record: %w", err)
+	}
+	at := bytes.Index(shell, []byte(edgesPlaceholder))
+	if at < 0 || bytes.Contains(shell[at+len(edgesPlaceholder):], []byte(edgesPlaceholder)) {
+		return "", fmt.Errorf("locating the edge array in the canonical callgraph record: want exactly one %s", edgesPlaceholder)
+	}
+	tail := at + len(edgesPlaceholder)
+
+	h := sha256.New()
+	hashWrite(h, shell[:at])
+	hashWrite(h, []byte(`"edges":[`))
+
+	// One buffer and one encoder for every chunk: json.Marshal would hand back a
+	// fresh slice per chunk, which is the same copy a chunk at a time.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	chunk := make([]canonicalEdge, 0, canonicalEdgeChunk)
+	for start := 0; start < len(edges); start += canonicalEdgeChunk {
+		stop := min(start+canonicalEdgeChunk, len(edges))
+		chunk = chunk[:0]
+		for i := start; i < stop; i++ {
+			chunk = append(chunk, canonicalEdgeOf(edges[i]))
+		}
+		buf.Reset()
+		if cerr := enc.Encode(chunk); cerr != nil {
+			return "", fmt.Errorf("marshalling canonical callgraph edges: %w", cerr)
+		}
+		// Encode writes the chunk's own array and a trailing newline. The
+		// brackets and the newline are dropped, and the chunks are joined by the
+		// comma the whole array would have carried anyway.
+		b := buf.Bytes()
+		if start > 0 {
+			hashWrite(h, []byte{','})
+		}
+		hashWrite(h, b[1:len(b)-2])
+	}
+	hashWrite(h, []byte{']'})
+	hashWrite(h, shell[tail:])
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashWrite writes b to h. hash.Hash documents that Write never returns an
+// error, so there is nothing here for a caller to handle.
+func hashWrite(h hash.Hash, b []byte) {
+	_, _ = h.Write(b) //nolint:errcheck // #nosec G104 -- hash.Hash.Write never errors
+}
+
+func canonicalEdgeOf(e CallEdge) canonicalEdge {
+	return canonicalEdge{
+		CallSite:        canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
+		Confidence:      string(e.Confidence),
+		FromID:          e.FromID,
+		Kind:            string(e.Kind),
+		ReflectDispatch: e.ReflectDispatch,
+		ToID:            e.ToID,
+	}
+}
+
+// canonicalEdgeOrder returns the edges in canonical order, copying only when
+// they are not in it already. The copy was never the point — not mutating the
+// caller's slice is — and edges read back from the store arrive sorted, under
+// the same ORDER BY the canonical form uses.
+func canonicalEdgeOrder(edges []CallEdge) []CallEdge {
+	if edgesInCanonicalOrder(edges) {
+		return edges
+	}
+	out := make([]CallEdge, len(edges))
+	copy(out, edges)
+	sort.Slice(out, func(i, j int) bool { return CallEdgeLess(out[i], out[j]) })
+	return out
+}
+
+func edgesInCanonicalOrder(edges []CallEdge) bool {
+	for i := 1; i < len(edges); i++ {
+		if CallEdgeLess(edges[i], edges[i-1]) {
+			return false
+		}
+	}
+	return true
+}
+
+// canonicalNodeOrder is canonicalEdgeOrder's counterpart for nodes, on the same
+// terms and for the same reason.
+func canonicalNodeOrder(nodes []CallNode) []CallNode {
+	sorted := true
+	for i := 1; i < len(nodes); i++ {
+		if CallNodeLess(nodes[i], nodes[i-1]) {
+			sorted = false
+			break
+		}
+	}
+	if sorted {
+		return nodes
+	}
+	out := make([]CallNode, len(nodes))
+	copy(out, nodes)
+	sort.Slice(out, func(i, j int) bool { return CallNodeLess(out[i], out[j]) })
+	return out
+}

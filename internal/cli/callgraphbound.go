@@ -42,8 +42,8 @@ var callgraphWorkersUsage = fmt.Sprintf(
 		"module pool, which it does not resize and is not resized by. "+
 		"0 sizes it from the host: min(NumCPU, %d, available memory / %d GiB). Each "+
 		"subprocess holds one module's whole dependency closure in SSA — tens of GB "+
-		"for the largest — so every step up raises the run's peak memory by about "+
-		"one more module's worth",
+		"for the most expensive, which is not the largest — so every step up raises "+
+		"the run's peak memory by about one more module's worth",
 	extextractor.CallgraphCPUCap, extextractor.CallgraphBudgetBytes>>30)
 
 // registerCallgraphWorkersFlag registers --callgraph-workers on cmd, bound to

@@ -1199,15 +1199,17 @@ func hashesForSources(records []CallGraphRecord) []string {
 // marshal, so it changes only when the hashed shape does, and no stored record's
 // own hash depends on it.
 func GraphDigest(r CallGraphRecord) string {
-	data, err := marshalCanonical(forGraphComparison(r))
+	// Streamed rather than marshalled: the digest is over exactly the canonical
+	// bytes, and --history takes one per generation, so materialising them would
+	// hold a second full copy of every generation's graph to hash it.
+	digest, err := hashCanonical(forGraphComparison(r))
 	if err != nil {
-		// marshalCanonical fails only on a value json.Marshal cannot encode, which
-		// this shape has none of. Returning a distinct marker rather than a
+		// The canonical encoding fails only on a value json.Marshal cannot encode,
+		// which this shape has none of. Returning a distinct marker rather than a
 		// plausible digest keeps a failure from reading as agreement.
 		return "unhashable:" + err.Error()
 	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return digest
 }
 
 // MeasurementDigest is a hash of everything a record states except when it was
@@ -1220,12 +1222,11 @@ func GraphDigest(r CallGraphRecord) string {
 // comparison needs the second question, or the input that separated them is the
 // one thing the comparison cannot show.
 func MeasurementDigest(r CallGraphRecord) string {
-	data, err := marshalCanonical(withoutRunCircumstance(r))
+	digest, err := hashCanonical(withoutRunCircumstance(r))
 	if err != nil {
 		return "unhashable:" + err.Error()
 	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return digest
 }
 
 // SameMeasurement reports whether two records state the identical measurement,
