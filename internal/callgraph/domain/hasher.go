@@ -775,8 +775,20 @@ func hashCanonical(r CallGraphRecord) (string, error) {
 
 	h := sha256.New()
 	hashWrite(h, shell[:at])
-	hashWrite(h, []byte(`"edges":[`))
+	hashWrite(h, []byte(`"edges":`))
+	if err := writeCanonicalEdges(h, edges); err != nil {
+		return "", err
+	}
+	hashWrite(h, shell[tail:])
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
 
+// writeCanonicalEdges writes the canonical JSON array of edges into h without
+// holding it. Two digests are taken over a record's edges — the seal and the
+// one conflict detection compares generations by — and both stream through
+// here, so neither can drift into hashing a different array from the other.
+func writeCanonicalEdges(h hash.Hash, edges []CallEdge) error {
+	hashWrite(h, []byte{'['})
 	// One buffer and one encoder for every chunk: json.Marshal would hand back a
 	// fresh slice per chunk, which is the same copy a chunk at a time.
 	var buf bytes.Buffer
@@ -789,8 +801,8 @@ func hashCanonical(r CallGraphRecord) (string, error) {
 			chunk = append(chunk, canonicalEdgeOf(edges[i]))
 		}
 		buf.Reset()
-		if cerr := enc.Encode(chunk); cerr != nil {
-			return "", fmt.Errorf("marshalling canonical callgraph edges: %w", cerr)
+		if err := enc.Encode(chunk); err != nil {
+			return fmt.Errorf("marshalling canonical callgraph edges: %w", err)
 		}
 		// Encode writes the chunk's own array and a trailing newline. The
 		// brackets and the newline are dropped, and the chunks are joined by the
@@ -802,8 +814,7 @@ func hashCanonical(r CallGraphRecord) (string, error) {
 		hashWrite(h, b[1:len(b)-2])
 	}
 	hashWrite(h, []byte{']'})
-	hashWrite(h, shell[tail:])
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return nil
 }
 
 // hashWrite writes b to h. hash.Hash documents that Write never returns an

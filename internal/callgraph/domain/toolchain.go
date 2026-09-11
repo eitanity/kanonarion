@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
@@ -192,9 +191,9 @@ func toolchainExplainedGraphDifference(records []CallGraphRecord) *CallGraphConf
 	if len(records) < 2 {
 		return nil
 	}
-	stated := make([]map[string]json.RawMessage, len(records))
+	stated := make([]map[string]bool, len(records))
 	for i, r := range records {
-		fields, err := graphFields(r)
+		names, err := graphFieldNames(r)
 		if err != nil {
 			// Which fields each record states could not be read, so whether they agree
 			// was never measured. The per-build-list comparison reports that as its own
@@ -203,13 +202,17 @@ func toolchainExplainedGraphDifference(records []CallGraphRecord) *CallGraphConf
 			// nothing observed. Standing aside is deliberate, not a swallowed error.
 			return nil //nolint:nilerr // the failure is reported by graphDisagreement, which runs next
 		}
-		stated[i] = fields
+		stated[i] = names
 	}
 	shared := sharedFieldsAmong(stated, GraphClaimFields())
 	digests := make([]string, len(records))
 	evidence := make([]string, len(records))
 	for i := range records {
-		digests[i] = digestOfFields(stated[i], shared)
+		digest, err := graphClaimDigest(records[i], shared)
+		if err != nil {
+			return nil //nolint:nilerr // the failure is reported by graphDisagreement, which runs next
+		}
+		digests[i] = digest
 		evidence[i] = RecordToolchain(records[i]).rootEvidence()
 	}
 

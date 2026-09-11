@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -886,9 +887,9 @@ func graphDisagreement(records []CallGraphRecord) *CallGraphConflict {
 		return nil
 	}
 
-	stated := make([]map[string]json.RawMessage, len(records))
+	stated := make([]map[string]bool, len(records))
 	for i, r := range records {
-		fields, err := graphFields(r)
+		names, err := graphFieldNames(r)
 		if err != nil {
 			// Which fields each record states could not be read, so whether they agree
 			// was never measured. Composing them anyway would serve one graph on the
@@ -897,13 +898,17 @@ func graphDisagreement(records []CallGraphRecord) *CallGraphConflict {
 			// a plausible digest.
 			return unmeasurableGraphs(records, err)
 		}
-		stated[i] = fields
+		stated[i] = names
 	}
 
 	shared := sharedFieldsAmong(stated, GraphClaimFields())
 	values := make([]string, len(records))
-	for i := range records {
-		values[i] = digestOfFields(stated[i], shared)
+	for i, r := range records {
+		value, err := graphClaimDigest(r, shared)
+		if err != nil {
+			return unmeasurableGraphs(records, err)
+		}
+		values[i] = value
 	}
 	c := disagreementOf(records, ConflictFieldCallGraph, values)
 	if c == nil {
@@ -1036,22 +1041,29 @@ func unmeasurableGraphs(records []CallGraphRecord, err error) *CallGraphConflict
 	}
 }
 
-// graphFields is GraphDigest's input rather than its output: everything a record
-// says about the call graph, keyed by the canonical field name that says it.
+// graphFieldNames names the canonical fields a record states.
 //
-// A field absent from the map is one the record states nothing for — either
+// A name absent from the set is one the record states nothing for — either
 // because it predates the field or because the canonical encoding omits its zero
 // value, which for this purpose are the same thing: neither is a claim.
-func graphFields(r CallGraphRecord) (map[string]json.RawMessage, error) {
-	data, err := marshalCanonical(forGraphComparison(r))
+//
+// It reads the NAMES and not the values on purpose. Which fields two records
+// share has to be settled before either can be hashed over them, and holding
+// every record's field bytes to answer that kept three copies of every
+// generation's edges live at once — the largest resident term in a deep
+// coordinate's composed read. Nothing here outlives the walk.
+func graphFieldNames(r CallGraphRecord) (map[string]bool, error) {
+	shell, err := canonicalMarshal(canonicalShell(forGraphComparison(fieldPresenceProbe(r))))
 	if err != nil {
 		return nil, fmt.Errorf("marshal record for graph comparison: %w", err)
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+	names := make(map[string]bool, 32)
+	if err := canonicalFields(shell, func(name string, _ []byte) {
+		names[name] = true
+	}); err != nil {
 		return nil, fmt.Errorf("read canonical record as fields: %w", err)
 	}
-	return fields, nil
+	return names, nil
 }
 
 // sharedFieldsAmong names which of candidates every record states, sorted, so a
@@ -1060,12 +1072,12 @@ func graphFields(r CallGraphRecord) (map[string]json.RawMessage, error) {
 // The candidate list is what scopes the digest to one question. Passing every
 // field name that appears would make the digest answer "are these records the
 // same", which is not what any caller of it asks.
-func sharedFieldsAmong(stated []map[string]json.RawMessage, candidates []string) []string {
+func sharedFieldsAmong(stated []map[string]bool, candidates []string) []string {
 	shared := make([]string, 0, len(candidates))
 	for _, name := range candidates {
 		inAll := true
-		for _, fields := range stated {
-			if _, ok := fields[name]; !ok {
+		for _, names := range stated {
+			if !names[name] {
 				inAll = false
 				break
 			}
@@ -1078,25 +1090,151 @@ func sharedFieldsAmong(stated []map[string]json.RawMessage, candidates []string)
 	return shared
 }
 
-// digestOfFields hashes one record's values for the named fields.
+// graphClaimDigest hashes one record's values for the named fields.
 //
-// It rebuilds a JSON object rather than hashing the values alone so that a value
-// moving between fields cannot go unnoticed, and it walks the names in the order
-// given so two records are hashed over the same fields in the same order.
-func digestOfFields(fields map[string]json.RawMessage, names []string) string {
-	var b bytes.Buffer
-	b.WriteByte('{')
+// It hashes a JSON object rather than the values alone so that a value moving
+// between fields cannot go unnoticed, and it walks the names in the order given
+// so two records are hashed over the same fields in the same order. Those are
+// the terms digestOfFields set and this keeps: the bytes hashed are exactly the
+// bytes the canonical marshal of the record would carry for those fields, in
+// that order, and TestGraphClaimDigest_MatchesMaterialisedFields asserts it
+// against a materialised marshal directly.
+//
+// What changed is that they are never held. The edge array is streamed into the
+// hash the way the seal is, and every other field's value is a span of the
+// shell's own bytes rather than a copy of it, so a record's digest costs the
+// shell and no multiple of the edge set.
+func graphClaimDigest(r CallGraphRecord, names []string) (string, error) {
+	g := forGraphComparison(r)
+	edges := canonicalEdgeOrder(g.Edges)
+	shell, err := canonicalMarshal(canonicalShell(g))
+	if err != nil {
+		return "", fmt.Errorf("marshal record for graph comparison: %w", err)
+	}
+	wanted := make(map[string]bool, len(names))
+	for _, name := range names {
+		wanted[name] = true
+	}
+	values := make(map[string][]byte, len(names))
+	if err := canonicalFields(shell, func(name string, value []byte) {
+		if wanted[name] {
+			values[name] = value
+		}
+	}); err != nil {
+		return "", fmt.Errorf("read canonical record as fields: %w", err)
+	}
+
+	h := sha256.New()
+	hashWrite(h, []byte{'{'})
 	for i, name := range names {
 		if i > 0 {
-			b.WriteByte(',')
+			hashWrite(h, []byte{','})
 		}
-		b.WriteString(strconv.Quote(name))
-		b.WriteByte(':')
-		b.Write(fields[name])
+		hashWrite(h, []byte(strconv.Quote(name)))
+		hashWrite(h, []byte{':'})
+		if name == edgesFieldName {
+			// The shell carries the placeholder here, not the array, so the edges
+			// are the one field written from the record rather than from the shell.
+			if err := writeCanonicalEdges(h, edges); err != nil {
+				return "", err
+			}
+			continue
+		}
+		// A name the record does not state contributes nothing, which is what a
+		// materialised field map would have done with a missing key. Callers pass
+		// only shared names, so this is a property of the encoding rather than a
+		// case that arises.
+		hashWrite(h, values[name])
 	}
-	b.WriteByte('}')
-	sum := sha256.Sum256(b.Bytes())
-	return "sha256:" + hex.EncodeToString(sum[:])
+	hashWrite(h, []byte{'}'})
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// fieldPresenceProbe is r with every collection cut to one element.
+//
+// Which fields a record STATES turns on whether its collections are empty and
+// never on what is in them, so a one-element stand-in states exactly the fields
+// the record does. Encoding the whole record to read its key names walked every
+// node and edge to answer a question none of them bear on.
+//
+// A collection this misses is encoded in full: slower, never a different answer.
+// TestGraphFieldNames_MatchesMaterialisedFieldKeys asserts the names against the
+// record's own untruncated encoding.
+func fieldPresenceProbe(r CallGraphRecord) CallGraphRecord {
+	v := reflect.ValueOf(&r).Elem()
+	for i := range v.NumField() {
+		f := v.Field(i)
+		if f.Kind() == reflect.Slice && f.CanSet() && f.Len() > 1 {
+			f.SetLen(1)
+		}
+	}
+	return r
+}
+
+// edgesFieldName is the canonical field carrying the edge array, which is the
+// one field graphClaimDigest writes from the record rather than from the shell.
+const edgesFieldName = "edges"
+
+// canonicalFields walks the top-level fields of a canonical record encoding and
+// calls visit with each field's name and the exact bytes of its value.
+//
+// The value handed over is a span of data, not a copy: the caller is hashing it
+// and the whole point is that a record's fields are never materialised a second
+// time. A caller that needs a value to outlive the walk must copy it.
+func canonicalFields(data []byte, visit func(name string, value []byte)) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	open, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("reading the canonical record: %w", err)
+	}
+	if delim, ok := open.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("reading the canonical record: want a JSON object, got %v", open)
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("reading a canonical field name: %w", err)
+		}
+		name, ok := key.(string)
+		if !ok {
+			return fmt.Errorf("reading a canonical field name: want a string, got %v", key)
+		}
+		// The canonical encoding carries no whitespace, so the value starts one
+		// byte past the name — the colon — and ends where its last token does.
+		start := dec.InputOffset() + 1
+		if err := skipCanonicalValue(dec); err != nil {
+			return fmt.Errorf("reading the value of canonical field %q: %w", name, err)
+		}
+		stop := dec.InputOffset()
+		if start > stop || stop > int64(len(data)) {
+			return fmt.Errorf("reading the value of canonical field %q: bytes [%d,%d) are outside the %d-byte record", name, start, stop, len(data))
+		}
+		visit(name, data[start:stop])
+	}
+	return nil
+}
+
+// skipCanonicalValue advances dec past one value, however deeply nested, without
+// decoding it into anything.
+func skipCanonicalValue(dec *json.Decoder) error {
+	depth := 0
+	for {
+		token, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("reading a canonical value: %w", err)
+		}
+		if delim, ok := token.(json.Delim); ok {
+			switch delim {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+			}
+		}
+		if depth == 0 {
+			return nil
+		}
+	}
 }
 
 // disagreement reports the distinct values of one field across records, as a
