@@ -150,6 +150,9 @@ var postures = map[string]Posture{
 // A new one is a new posture nothing states, which is the shape all three prior
 // defects had.
 var EnvBuilders = map[string]string{
+	"internal/adapters/childproc RunBounded": "not a go-command child: the child is this same binary, and the " +
+		"environment reaches it unchanged but for its own memory ceiling, which no posture governs " +
+		"because it decides nothing about how a build resolves",
 	"internal/callgraph/adapters/analyser/staticcha isolatedModuleEnv": "extracted-module",
 	"internal/adapters/proxy/modcache download":                        "not an analysis child: populates a module cache",
 	"internal/staleness/adapters/golist childEnv":                      "not an analysis child: an update probe that must reach a proxy",

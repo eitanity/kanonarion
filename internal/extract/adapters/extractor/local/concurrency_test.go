@@ -291,3 +291,75 @@ func TestCallgraphConcurrency_CheapStagesAreNotBoundedByIt(t *testing.T) {
 		}
 	}
 }
+
+// TestCallgraphCeiling_SharesTheHostBetweenTheAnalysesItAdmits is the derivation
+// itself. The bound decides how many analyses run; the ceiling decides how large
+// any one of them may get, and the two together are what bounds the host.
+func TestCallgraphCeiling_SharesTheHostBetweenTheAnalysesItAdmits(t *testing.T) {
+	available := uint64(CallgraphCPUCap+4) * CallgraphBudgetBytes
+	b := ResolveCallgraphBound(4, 0, stubHostMemory{available: available}, nil)
+	want := (available - CallgraphBudgetBytes) / 4
+	if b.CeilingBytes != want {
+		t.Fatalf("CeilingBytes = %d, want (%d available - %d reserved) / 4 workers = %d",
+			b.CeilingBytes, available, CallgraphBudgetBytes, want)
+	}
+	// The whole point of the reserve: every analysis at its ceiling still leaves
+	// the host able to fund the next thing that asks.
+	if total := b.CeilingBytes * uint64(b.Workers); total > available-CallgraphBudgetBytes { // #nosec G115 -- Workers is at least one and at most CallgraphCPUCap.
+		t.Errorf("four analyses at the ceiling take %d of %d available; one budget must stay free", total, available)
+	}
+}
+
+// TestCallgraphCeiling_NeverBelowTheBudgetAdmissionIsPricedIn: a ceiling under
+// the figure the headroom gate admits on would end an analysis the gate had just
+// started, recording a memory failure for a module never given the memory.
+func TestCallgraphCeiling_NeverBelowTheBudgetAdmissionIsPricedIn(t *testing.T) {
+	for _, available := range []uint64{1, CallgraphBudgetBytes - 1, CallgraphBudgetBytes, CallgraphBudgetBytes + 1} {
+		b := ResolveCallgraphBound(0, 0, stubHostMemory{available: available}, nil)
+		if b.CeilingBytes < CallgraphBudgetBytes {
+			t.Errorf("with %d bytes available the ceiling is %d, below the %d budget admission is priced in",
+				available, b.CeilingBytes, CallgraphBudgetBytes)
+		}
+	}
+}
+
+// TestCallgraphCeiling_AnUnreadableHostGetsNoCeiling keeps the rule the bound
+// already follows: an unreadable reading is "unknown", not a budget of zero.
+// Deriving a ceiling from a number nobody could read would end analyses on every
+// host that does not report memory.
+func TestCallgraphCeiling_AnUnreadableHostGetsNoCeiling(t *testing.T) {
+	for name, mem := range map[string]HostMemory{
+		"no reporter": nil,
+		"unreadable":  stubHostMemory{err: errors.New("no /proc/meminfo here")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if b := ResolveCallgraphBound(0, 0, mem, nil); b.CeilingBytes != 0 {
+				t.Errorf("CeilingBytes = %d on a host that reports nothing, want 0", b.CeilingBytes)
+			}
+		})
+	}
+}
+
+// TestCallgraphCeiling_TheOperatorsFigureOutranksTheDerivedOne, in both
+// directions: a ceiling is raised for the module too large for its share, and
+// lowered to bound what a run may take from a host shared with other work.
+func TestCallgraphCeiling_TheOperatorsFigureOutranksTheDerivedOne(t *testing.T) {
+	available := uint64(CallgraphCPUCap+4) * CallgraphBudgetBytes
+	for _, asked := range []uint64{1 << 20, 512 << 30} {
+		b := ResolveCallgraphBound(0, asked, stubHostMemory{available: available}, nil)
+		if b.CeilingBytes != asked {
+			t.Errorf("asked for a ceiling of %d, got %d", asked, b.CeilingBytes)
+		}
+	}
+}
+
+// The bound itself must not move because a ceiling was named: they answer
+// different questions and an operator setting one has not asked about the other.
+func TestCallgraphCeiling_NamingOneDoesNotResizeTheBound(t *testing.T) {
+	mem := stubHostMemory{available: uint64(CallgraphCPUCap+4) * CallgraphBudgetBytes}
+	without := ResolveCallgraphBound(0, 0, mem, nil)
+	with := ResolveCallgraphBound(0, 1<<20, mem, nil)
+	if without.Workers != with.Workers {
+		t.Errorf("naming a ceiling moved the bound from %d to %d", without.Workers, with.Workers)
+	}
+}

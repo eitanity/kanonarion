@@ -52,6 +52,22 @@ func registerCallgraphWorkersFlag(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&callgraphWorkers, "callgraph-workers", 0, callgraphWorkersUsage)
 }
 
+// callgraphMemoryCeilingUsage names what the flag buys and what it costs, since
+// it is the one flag here that can end an analysis that would otherwise have
+// finished.
+var callgraphMemoryCeilingUsage = fmt.Sprintf(
+	"how much memory one call-graph analysis may hold, in bytes, before it stops itself and "+
+		"records OutOfMemory. 0 shares the host's available memory out between the subprocesses "+
+		"the bound admits, keeping %d GiB back. Raise it to analyse a module larger than that "+
+		"share; lower it to bound what this run can take from the host",
+	extextractor.CallgraphBudgetBytes>>30)
+
+// registerCallgraphMemoryCeilingFlag registers --callgraph-memory-ceiling on
+// cmd, bound to the invocation-wide per-analysis ceiling.
+func registerCallgraphMemoryCeilingFlag(cmd *cobra.Command) {
+	cmd.Flags().Uint64Var(&callgraphMemoryCeiling, "callgraph-memory-ceiling", 0, callgraphMemoryCeilingUsage)
+}
+
 // describeCallgraphBound renders the bound a run adopted and what decided it.
 //
 // A run states this because the number on its own is not readable: four
@@ -62,17 +78,30 @@ func registerCallgraphWorkersFlag(cmd *cobra.Command) {
 // level up and hoping the memory term had lowered the bound.
 func describeCallgraphBound(b extextractor.CallgraphBound) string {
 	if b.Requested {
-		return fmt.Sprintf("Call-graph subprocesses: %d at once (--callgraph-workers)", b.Workers)
+		return fmt.Sprintf("Call-graph subprocesses: %d at once (--callgraph-workers)%s",
+			b.Workers, describeCallgraphCeiling(b))
 	}
 	if !b.AvailableKnown {
-		return fmt.Sprintf("Call-graph subprocesses: %d at once (from %d CPUs; this host does not report available memory)",
-			b.Workers, b.CPUCap)
+		return fmt.Sprintf("Call-graph subprocesses: %d at once (from %d CPUs; this host does not report available memory)%s",
+			b.Workers, b.CPUCap, describeCallgraphCeiling(b))
 	}
-	return fmt.Sprintf("Call-graph subprocesses: %d at once (%.1f GiB available, %.1f GiB budgeted each, CPU cap %d)",
+	return fmt.Sprintf("Call-graph subprocesses: %d at once (%.1f GiB available, %.1f GiB budgeted each, CPU cap %d)%s",
 		b.Workers,
 		float64(b.AvailableBytes)/float64(1<<30),
 		float64(b.BudgetBytes)/float64(1<<30),
-		b.CPUCap)
+		b.CPUCap,
+		describeCallgraphCeiling(b))
+}
+
+// describeCallgraphCeiling renders the ceiling clause of the bound line. A run
+// states it beside the bound because the two answer one question together: how
+// many analyses may run, and how large any one of them may get. Without it a
+// reader seeing OutOfMemory on a module has no way to know what number it hit.
+func describeCallgraphCeiling(b extextractor.CallgraphBound) string {
+	if b.CeilingBytes == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %.1f GiB ceiling each", float64(b.CeilingBytes)/float64(1<<30))
 }
 
 // callgraphNarrationFor returns where a PARENT's copy of its children's progress

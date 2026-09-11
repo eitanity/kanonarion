@@ -131,6 +131,7 @@ that is tight on memory.`,
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerCallgraphTimeoutFlag(cmd)
 	registerCallgraphWorkersFlag(cmd)
+	registerCallgraphMemoryCeilingFlag(cmd)
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 

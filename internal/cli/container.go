@@ -528,7 +528,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		_ = dbHandle.Close()
 		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
-	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary, callgraphCeiling, callgraphNarration)
+	// One worker runs every stage for its module, so the pool cannot bound the
+	// call-graph subprocesses without also slowing the cheap in-process stages.
+	// The subprocesses carry their own bound, sized from this host, and each one
+	// carries the ceiling that bound shares out.
+	hostMemory := meminfo.New()
+	callgraphBound := extextractor.ResolveCallgraphBound(callgraphWorkers, callgraphMemoryCeiling, hostMemory, logger)
+	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary, callgraphCeiling, callgraphNarration).
+		WithMemoryCeiling(callgraphBound.CeilingBytes)
 	// The callgraph stage runs as a fresh subprocess (see NewAdapterExtractor),
 	// which does not inherit this process's --store-root/--from-modcache
 	// state. Without these the child falls back to the default store root and
@@ -539,11 +546,6 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		cgModcacheDir = modcacheDir
 	}
 	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
-	// One worker runs every stage for its module, so the pool cannot bound the
-	// call-graph subprocesses without also slowing the cheap in-process stages.
-	// The subprocesses carry their own bound, sized from this host.
-	hostMemory := meminfo.New()
-	callgraphBound := extextractor.ResolveCallgraphBound(callgraphWorkers, hostMemory, logger)
 	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
 		WithLogger(logger).
 		WithCallgraphConcurrency(callgraphBound.Workers).
@@ -595,7 +597,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
 
-	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary, callgraphCeiling, callgraphNarration)
+	// The same ceiling: a reachability scan spawns the same analysis of the same
+	// module, and a ceiling that applied only on the extract path would leave the
+	// heaviest module able to take the host by the other route.
+	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary, callgraphCeiling, callgraphNarration).
+		WithMemoryCeiling(callgraphBound.CeilingBytes)
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,
 		scanner, database, reach,

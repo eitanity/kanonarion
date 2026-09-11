@@ -861,6 +861,7 @@ func resetInvocationState() {
 	// and no narration.
 	callgraphCeiling = cgports.DefaultCeiling
 	callgraphWorkers = 0
+	callgraphMemoryCeiling = 0
 	callgraphNarration = nil
 }
 
@@ -874,6 +875,12 @@ var callgraphCeiling time.Duration
 // at once. Bound to --callgraph-workers where the command offers it; zero means
 // the bound is sized from the host's CPU count and available memory.
 var callgraphWorkers int
+
+// callgraphMemoryCeiling is how much memory one call-graph analysis may hold
+// before it stops itself, in bytes. Bound to --callgraph-memory-ceiling where
+// the command offers it; zero means the ceiling is shared out from the host's
+// available memory between the subprocesses the bound admits.
+var callgraphMemoryCeiling uint64
 
 // callgraphNarration is where call-graph phase transitions go for this
 // invocation: the analyser writes them when this process IS the child, and the

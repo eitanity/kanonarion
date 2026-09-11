@@ -90,6 +90,7 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 | `--tool` | `false` | Scope the `go.mod` run to the tooling supply chain. Mutually exclusive with `--project` |
 | `--project` | `false` | Scope the `go.mod` run to the complete set: code **and** tooling. Mutually exclusive with `--tool` |
 | `--callgraph-workers` | `0` (host-sized: `min(NumCPU, 4, available memory / 4 GiB)`) | How many callgraph subprocesses may run at once. See [Memory](#memory) |
+| `--callgraph-memory-ceiling` | `0` (host-sized) | How much memory one callgraph analysis may hold, in bytes, before it stops itself. See [extract](extract.md#how-large-one-analysis-may-get) |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain (project-mode `--gomod` run; refused on a positional module run). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 

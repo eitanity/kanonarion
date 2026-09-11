@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
 
@@ -210,6 +211,12 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+
+	// A ceiling handed to this process by whatever spawned it is adopted before
+	// any command runs, so an analysis that cannot fit says so and stops instead
+	// of being taken by the kernel with nothing recorded. Absent the variable this
+	// starts nothing at all, which is every invocation an operator makes by hand.
+	childproc.EnforceMemoryCeiling(os.Getenv, stderr, func() { os.Exit(ExitFailed) })
 
 	// An invocation leaves nothing behind. The reset newRootCmd makes protects
 	// the next invocation; this one protects a reader that never makes one —

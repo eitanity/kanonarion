@@ -32,6 +32,7 @@ kanonarion extract 01J1Z... --force
 | `--force` | false | Re-extract even if cached records exist for current pipeline versions |
 | `--workers` | `runtime.NumCPU()` | Number of modules to process concurrently. It sizes the pool that runs the cheap in-process stages; it does **not** bound the callgraph subprocesses |
 | `--callgraph-workers` | `0` (host-sized: `min(NumCPU, 4, available memory / 4 GiB)`) | How many callgraph subprocesses may run at once |
+| `--callgraph-memory-ceiling` | `0` (host-sized: available memory less one 4 GiB budget, shared between the subprocesses) | How much memory one callgraph analysis may hold, in bytes, before it stops itself |
 | `--json` | false | Output extraction run record as JSON |
 | `--go-binary` | | Path to `go` binary (used for callgraph stage) |
 | `--no-progress` | false | Suppress stderr progress output (the throttled extraction heartbeat); results and warnings are unaffected |
@@ -156,12 +157,14 @@ and in-process, so bounding the pool would slow those to fix a problem neither
 causes.
 
 Each subprocess holds its own module's SSA closure, so the run's peak is roughly
-`--callgraph-workers` times the largest module's peak, plus the parent — see
+`--callgraph-workers` times the smaller of the largest module's peak and
+[the ceiling](#how-large-one-analysis-may-get), plus the parent — see
 [what one run costs](callgraph.md#what-one-run-costs) for the per-module figure
 this multiplies. The tail is far above the typical module: on a 172-module walk
 measured here, most subprocesses held under 3 GiB and one, given the host to
-itself, held **over 50 GiB**. No bound saves a run from a module larger than the
-host; the bound is what stops several ordinary ones adding up to the same thing.
+itself, held **over 50 GiB**. The bound is what stops several ordinary modules
+adding up to more than the host has; the ceiling is what stops one extraordinary
+one doing it alone.
 
 The parent term is small and does not grow with the walk: it holds the module
 graph, the run record it is building, and one child's stderr per running
@@ -195,18 +198,16 @@ result; when the reading cannot be taken at all, which is the normal case off
 Linux, the bound falls back to `min(NumCPU, 4)` and says so at debug. A missing
 reading never fails a run.
 
-**The budget is a budget, not a limit.** Nothing enforces 4 GiB on a
-subprocess, and the largest modules go far past it. Its only job is to stop the
-run admitting more concurrent analyses than the host can hold. A subprocess the
-operating system ends anyway is recorded as a failed stage with
-`status=OutOfMemory` and `cause=environment`, and the remedy it prints is to
-lower this flag.
+**The budget prices admission; the ceiling is what an analysis enforces on
+itself.** The 4 GiB budget decides how many analyses may run at once and whether
+now is the moment to start one. It does not bound a running analysis, and the
+largest modules go far past it — so a second number does.
 
-The run states the bound it adopted and what decided it, on stderr, before it
-starts:
+The run states the bound it adopted, what decided it, and the ceiling it shared
+out, on stderr, before it starts:
 
 ```
-Call-graph subprocesses: 4 at once (55.1 GiB available, 4.0 GiB budgeted each, CPU cap 4)
+Call-graph subprocesses: 4 at once (55.1 GiB available, 4.0 GiB budgeted each, CPU cap 4), 12.8 GiB ceiling each
 ```
 
 `--no-progress` silences that line along with the rest of the narration.
@@ -220,6 +221,53 @@ kanonarion extract 01J1Z... --stages callgraph --callgraph-workers 8
 
 [`inspect`](inspect.md), which runs this stage over a whole walk as one step,
 takes the same flag and the same default.
+
+### How large one analysis may get
+
+`--callgraph-memory-ceiling` is how much memory one analysis may hold before it
+stops itself. The default, `0`, shares the host out between the subprocesses the
+bound admits:
+
+```
+callgraph-memory-ceiling = max(4 GiB, (available memory - 4 GiB) / callgraph-workers)
+```
+
+One budget is held back, so every analysis sitting at its ceiling still leaves
+the host able to fund the next thing that asks; and the ceiling is never below
+the budget admission is priced in, or the headroom check would start analyses
+the ceiling ended at once.
+
+A child that reaches it writes one line saying what it reached and stops. That is
+a different record from one the operating system chose, and the stage says which:
+
+```
+Failed stages (1):
+  example.com/mod@v1.2.3  stage=callgraph  cause=environment  error=callgraph stage
+    status=OutOfMemory: the analysis reached the memory ceiling this host allows
+    one analysis and stopped itself; give it more with --callgraph-memory-ceiling,
+    or analyse this module on its own: memory ceiling reached: 13478385144 bytes
+    in use against a ceiling of 13300219904
+```
+
+The ceiling is enforced by the analysis reading its own memory ten times a
+second, so it is crossed by whatever that analysis allocates between two reads:
+measured overshoots on this walk were 40-180 MB against ceilings of 1 GiB and
+12.4 GiB. The figure quoted is what the Go runtime has mapped and not returned,
+which runs somewhat above resident memory — a 12.4 GiB ceiling held the heaviest
+module in this walk to 12.1 GB resident.
+
+**A module larger than any affordable ceiling is still not analysable**, and the
+ceiling does not change that. What it changes is the cost of failing: a recorded
+`OutOfMemory` naming the number it hit, instead of a host with no memory left.
+Raise it for a module you want analysed on a host with the room:
+
+```bash
+kanonarion extract 01J1Z... --stages callgraph --callgraph-memory-ceiling 34359738368
+```
+
+A subprocess the operating system ends anyway is still recorded as a failed stage
+with `status=OutOfMemory` and `cause=environment`, and reads differently: that
+one names no number the operator chose.
 
 ### How long a subprocess may run
 
@@ -254,8 +302,9 @@ Failed stages (1):
     status=ExtractionFailed: the analysis reported no progress for 10m0s and was stopped
 ```
 
-A module ended by the operating system rather than by either deadline reads the
-same way, naming the status the run concluded:
+A module ended by the operating system rather than by either deadline, or one
+that reached [the ceiling](#how-large-one-analysis-may-get), reads the same way,
+naming the status the run concluded:
 
 ```
 Failed stages (1):

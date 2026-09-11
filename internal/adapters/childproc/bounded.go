@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,11 @@ type Bounds struct {
 	// Progress receives each progress line, unchanged, so the operator sees what
 	// the parent is deciding on. Nil discards.
 	Progress io.Writer
+	// MemoryCeiling is how much memory the child may hold before it stops itself,
+	// in bytes. Zero hands it no ceiling. It is carried to the child in
+	// MemoryCeilingEnv, which is the only route into a process that has not
+	// started yet; what the child does with it is EnforceMemoryCeiling.
+	MemoryCeiling uint64
 }
 
 // RunBounded runs name with args as a hardened child under b, capturing stderr
@@ -71,6 +77,13 @@ func RunBounded(ctx context.Context, b Bounds, name string, args ...string) ([]b
 	cmd := CommandContext(childCtx, name, args...)
 	cmd.WaitDelay = WaitDelay
 	cmd.Stderr = watch
+	if b.MemoryCeiling > 0 {
+		// Appended to this process's own environment rather than replacing it: the
+		// child needs every other variable it would have inherited, and os/exec
+		// keeps the last value for a duplicated key, so a ceiling handed to this
+		// process does not outrank the one it hands on.
+		cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%d", MemoryCeilingEnv, b.MemoryCeiling))
+	}
 
 	done := make(chan struct{})
 	if b.Stall > 0 && b.ProgressPrefix != "" {

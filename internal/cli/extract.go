@@ -46,6 +46,7 @@ func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerCallgraphTimeoutFlag(cmd)
 	registerCallgraphWorkersFlag(cmd)
+	registerCallgraphMemoryCeilingFlag(cmd)
 
 	cmd.AddCommand(newExtractShowCmd(stdout, stderr))
 	cmd.AddCommand(newExtractListCmd(stdout, stderr))

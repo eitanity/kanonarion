@@ -24,6 +24,10 @@ type OsSubprocessExecutor struct {
 // ceiling is the wall-clock backstop for one child; zero takes the default. The
 // deadline that normally ends a wedged child is the stall window, not this one —
 // see cgports.DefaultStallWindow.
+//
+// The memory ceiling is set separately, by WithMemoryCeiling, because it is
+// sized from the same reading that sizes the subprocess bound and the two are
+// resolved together.
 func NewOsSubprocessExecutor(binary string, ceiling time.Duration, progress io.Writer) OsSubprocessExecutor {
 	if ceiling <= 0 {
 		ceiling = cgports.DefaultCeiling
@@ -37,6 +41,13 @@ func NewOsSubprocessExecutor(binary string, ceiling time.Duration, progress io.W
 			Progress:       progress,
 		},
 	}
+}
+
+// WithMemoryCeiling gives each child a ceiling on the memory it may hold, in
+// bytes, which it enforces on itself. Zero leaves it unbounded.
+func (e OsSubprocessExecutor) WithMemoryCeiling(bytes uint64) OsSubprocessExecutor {
+	e.bounds.MemoryCeiling = bytes
+	return e
 }
 
 // Execute runs binary with args under ctx. It captures stderr and returns it

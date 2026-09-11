@@ -44,6 +44,13 @@ func NewOsCallGraphSpawner(binary string, ceiling time.Duration, progress io.Wri
 	}
 }
 
+// WithMemoryCeiling gives each child a ceiling on the memory it may hold, in
+// bytes, which it enforces on itself. Zero leaves it unbounded.
+func (s *OsCallGraphSpawner) WithMemoryCeiling(bytes uint64) *OsCallGraphSpawner {
+	s.bounds.MemoryCeiling = bytes
+	return s
+}
+
 // Spawn runs `<binary> callgraph <module@version> [--force] [--from-walk <id>]`
 // as a child process bounded by the progress it reports and by a wall-clock
 // backstop. It captures stderr and returns it alongside any exec error. A kill,

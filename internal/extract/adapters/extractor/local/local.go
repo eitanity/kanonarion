@@ -455,6 +455,15 @@ func buildSubprocessErrorDetail(execErr error, stderr []byte, walkID string) (st
 	case errors.Is(execErr, context.Canceled):
 		return "the run was cancelled before the analysis finished" + suffix,
 			failurecause.Environment, cgdomain.CallGraphStatusCancelled
+	case strings.Contains(stderrStr, childproc.MemoryCeilingMarker):
+		// The analysis reached the ceiling this run gives one analysis and ended
+		// itself there. Said apart from the case below because the two are different
+		// facts: this one is a number this run chose and an operator can raise,
+		// while the kernel choosing a victim is neither. Both are the host rather
+		// than the module, so neither may be cached as a property of the bytes.
+		return "the analysis reached the memory ceiling this host allows one analysis and stopped " +
+				"itself; give it more with --callgraph-memory-ceiling, or analyse this module on its own" + suffix,
+			failurecause.Environment, cgdomain.CallGraphStatusOutOfMemory
 	case killedBySignal(execErr):
 		// Neither deadline fired, so something outside this process ended the
 		// subprocess — the operating system reclaiming memory in every case
