@@ -114,22 +114,22 @@ func TestListWalkScanRuns_ReportsUnreadableRowsAndKeepsTheRest(t *testing.T) {
 				t.Fatalf("runs = %v, want only the verifiable run %s", ids(runs), good.ID)
 			}
 
-			var unreadable *ports.UnreadableRuns
+			var unreadable *ports.UnreadableRows
 			if !errors.As(err, &unreadable) {
-				t.Fatalf("error = %v, want *ports.UnreadableRuns", err)
+				t.Fatalf("error = %v, want *ports.UnreadableRows", err)
 			}
-			if len(unreadable.Runs) != 1 {
-				t.Fatalf("unreadable = %v, want exactly the one bad row", unreadable.Runs)
+			if len(unreadable.Rows) != 1 {
+				t.Fatalf("unreadable = %v, want exactly the one bad row", unreadable.Rows)
 			}
 			// Naming the row is the point: a caller told only that something is
 			// wrong cannot go and look at it.
-			if unreadable.Runs[0].ID != bad.ID {
-				t.Errorf("unreadable run ID = %q, want %q", unreadable.Runs[0].ID, bad.ID)
+			if unreadable.Rows[0].ID != bad.ID {
+				t.Errorf("unreadable run ID = %q, want %q", unreadable.Rows[0].ID, bad.ID)
 			}
 			// A generation this build no longer seals must not be reported in the
 			// words reserved for altered bytes.
-			if !errors.Is(unreadable.Runs[0].Reason, recordseal.ErrGenerationDrift) {
-				t.Errorf("reason = %v, want it to classify as generation drift", unreadable.Runs[0].Reason)
+			if !errors.Is(unreadable.Rows[0].Reason, recordseal.ErrGenerationDrift) {
+				t.Errorf("reason = %v, want it to classify as generation drift", unreadable.Rows[0].Reason)
 			}
 			// Consuming commands match this sentinel and must keep failing closed.
 			if !errors.Is(err, ports.ErrVulnIntegrity) {
@@ -193,15 +193,15 @@ func TestListWalkScanRuns_UnparseableRowIsStillReported(t *testing.T) {
 	if len(runs) != 1 || runs[0].ID != good.ID {
 		t.Fatalf("runs = %v, want only the verifiable run %s", ids(runs), good.ID)
 	}
-	var unreadable *ports.UnreadableRuns
+	var unreadable *ports.UnreadableRows
 	if !errors.As(err, &unreadable) {
-		t.Fatalf("error = %v, want *ports.UnreadableRuns", err)
+		t.Fatalf("error = %v, want *ports.UnreadableRows", err)
 	}
-	if len(unreadable.Runs) != 1 || unreadable.Runs[0].ID != "" {
-		t.Fatalf("unreadable = %v, want one row with no recoverable id", unreadable.Runs)
+	if len(unreadable.Rows) != 1 || unreadable.Rows[0].ID != "" {
+		t.Fatalf("unreadable = %v, want one row with no recoverable id", unreadable.Rows)
 	}
 	// Bytes that cannot be examined are not claimed to be merely old.
-	if errors.Is(unreadable.Runs[0].Reason, recordseal.ErrGenerationDrift) {
+	if errors.Is(unreadable.Rows[0].Reason, recordseal.ErrGenerationDrift) {
 		t.Error("an unparseable row was reported as generation drift; absence of evidence is not evidence")
 	}
 }
@@ -230,15 +230,15 @@ func TestGetWalkScanRun_ReportsUnreadableRowAsSuch(t *testing.T) {
 	if found {
 		t.Error("an unverifiable run was handed to the caller")
 	}
-	var unreadable *ports.UnreadableRuns
+	var unreadable *ports.UnreadableRows
 	if !errors.As(err, &unreadable) {
-		t.Fatalf("error = %v, want *ports.UnreadableRuns", err)
+		t.Fatalf("error = %v, want *ports.UnreadableRows", err)
 	}
-	if len(unreadable.Runs) != 1 || unreadable.Runs[0].ID != bad.ID {
-		t.Errorf("unreadable = %v, want the one row named", unreadable.Runs)
+	if len(unreadable.Rows) != 1 || unreadable.Rows[0].ID != bad.ID {
+		t.Errorf("unreadable = %v, want the one row named", unreadable.Rows)
 	}
-	if !errors.Is(unreadable.Runs[0].Reason, recordseal.ErrGenerationDrift) {
-		t.Errorf("reason = %v, want generation drift", unreadable.Runs[0].Reason)
+	if !errors.Is(unreadable.Rows[0].Reason, recordseal.ErrGenerationDrift) {
+		t.Errorf("reason = %v, want generation drift", unreadable.Rows[0].Reason)
 	}
 	// Consuming readers of this method — the SBOM generator and vuln-scan-diff —
 	// match the sentinel and must keep failing closed.

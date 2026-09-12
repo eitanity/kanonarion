@@ -7,7 +7,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"time"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -122,17 +121,20 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 				"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
 				source, coord)}
 		}
-		note, nerr := supersededGenerationsNote(ctx, coord, uc)
+		// Nothing is served: composition answers not-found only where the reading
+		// leg decoded no generation at all, since neither source nor toolchain is
+		// restricted on this path.
+		note, nerr := supersededGenerationsNote(ctx, coord, uc, nil)
 		if nerr != nil {
 			return nerr
 		}
 		if note != "" {
 			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 				"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
-				coord, cgapp.PipelineVersion, note, domain.ReanalysisCommand(coord, ""))}
+				coord, cgapp.PipelineVersion, note, domain.ReanalysisInstruction(coord, ""))}
 		}
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisCommand(coord, ""))}
+			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisInstruction(coord, ""))}
 	}
 	// Asked before --node narrows the record: the disagreement is between whole
 	// generations of this coordinate, and a filtered view of the served one says
@@ -174,13 +176,25 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	return writeNodeFilterNotice(stdout, coord, f.source, filter)
 }
 
-// analyserDisagreement reports whether the generations composed for a
+// analyserDisagreement reports whether the generations the ledger holds for a
 // coordinate were parsed by more than one x/tools, and what they were.
 //
-// It reads the history because that is where the other generations are: the
-// composed answer is ONE record, and a fact about the set it was chosen from
-// cannot be recovered from it. The cost is one extra ledger read on an
-// inspection command that has already paid for a composition.
+// It reads the other generations because the composed answer is ONE record, and
+// a fact about the set it was chosen from cannot be recovered from it. It reads
+// them from their COLUMNS: which library parsed a generation is a column, and
+// asking the composing read for it reconstructed and verified every generation's
+// whole edge set to deliver one field per generation, on top of the
+// reconstruction composition had already done.
+//
+// Nothing is verified less than before. The listing never verified anything and
+// does not claim to; the served record is composed and verified exactly as it
+// was, and this decides only where the notice's facts are read from.
+//
+// It speaks about every row at this pipeline version, where the composing read
+// dropped one written at a superseded RECORD schema — a distinction no column
+// scan can make. Such a row is a generation the ledger holds and this build will
+// not serve, and naming its analyser in a notice about which libraries parsed
+// this coordinate is the honest reading of it.
 //
 // It states nothing where there is nothing to state — a coordinate with one
 // generation, or whose generations agree, or where only one of them names an
@@ -195,11 +209,25 @@ func analyserDisagreement(
 	served domain.CallGraphRecord,
 	uc QueryCallGraphUseCase,
 ) (domain.AnalyserDisagreement, bool, error) {
-	recs, err := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
+	coords, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{
+		ModulePath:      coord.Path(),
+		PipelineVersion: cgapp.PipelineVersion,
+	})
 	if err != nil {
-		return domain.AnalyserDisagreement{}, false, fmt.Errorf("reading callgraph history: %w", err)
+		return domain.AnalyserDisagreement{}, false, fmt.Errorf("listing the generations of %s: %w", coord, err)
 	}
-	d, ok := domain.AnalyserDisagreementAmong(recs, served)
+	var stated []domain.AnalyserIdentity
+	for _, c := range coords {
+		// The filter narrows to the module path, not the version: one listing entry
+		// per (path, version, pipeline), so the version is checked here.
+		if c.ModuleVersion != coord.Version() {
+			continue
+		}
+		for _, g := range c.Generations {
+			stated = append(stated, g.Analyser)
+		}
+	}
+	d, ok := domain.AnalyserDisagreementAmong(stated, served)
 	return d, ok, nil
 }
 
@@ -222,13 +250,13 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		// The history view is where an operator lands after a bump, so it must
 		// distinguish a coordinate the store has never held from one whose every
 		// generation this build has stopped serving.
-		note, nerr := supersededGenerationsNote(ctx, coord, uc)
+		note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
 		if nerr != nil {
 			return nerr
 		}
 		line := fmt.Sprintf("no callgraph records for %s at pipeline %s", coord, cgapp.PipelineVersion)
 		if note != "" {
-			line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisCommand(coord, "")
+			line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisInstruction(coord, "")
 		}
 		if _, werr := fmt.Fprintln(stdout, line); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
@@ -260,7 +288,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		}
 		if _, werr := fmt.Fprintf(stdout,
 			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    toolchain:%s\n    analyser: %s\n    from:     %s\n%s%s    graph:    %s\n    record:   %s\n",
-			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
+			marker, ledgerStamp(r.ExtractedAt), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
 			r.AnalysisSource.String(), " "+domain.RecordToolchain(r).String(), r.Analyser.String(),
 			historyOrigin(r), historyDerivation(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
@@ -270,6 +298,22 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 	if _, werr := fmt.Fprintln(stdout,
 		"\n* served by the composed read (highest completeness, then most recent, within one analysis source)"); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
+	}
+	// The list above is every generation this build can decode, which is not
+	// always every generation the ledger holds. Saying so in the MIXED case as
+	// well as the empty one is the whole of the rule this view already states for
+	// itself: a coordinate the store has never held and one whose generations
+	// this build has stopped serving are different facts, and a list that simply
+	// omits the second states neither.
+	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
+	if nerr != nil {
+		return nerr
+	}
+	if note != "" {
+		if _, werr := fmt.Fprintf(stdout, "\nnot listed above: %s.\n  re-analyse it: %s\n",
+			note, domain.ReanalysisInstruction(coord, "")); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
 	}
 	return nil
 }
@@ -335,6 +379,12 @@ func historyOrigin(r domain.CallGraphRecord) string {
 	// line that named only the artefact would claim the graph describes it.
 	if !r.SynthesisedGoMod.IsZero() {
 		origin += " + " + r.SynthesisedGoMod.String()
+	}
+	// Same claim, the other direction: the analysis read those bytes MINUS the
+	// replace directives it dropped, and a graph built against a different build
+	// list is a different graph.
+	if summary := domain.DroppedReplacesSummary(r.DroppedReplaces); summary != "" {
+		origin += " minus " + summary
 	}
 	return origin
 }
@@ -459,10 +509,15 @@ type callGraphRecordJSON struct {
 	// extracted tree, which is the case in which the graph does not describe the
 	// published bytes alone. Absent means the tree was analysed as published.
 	SynthesisedGoMod *synthesisedGoModJSON `json:"synthesised_go_mod,omitempty"`
-	Nodes            []callNodeJSON        `json:"nodes"`
-	Edges            []callEdgeJSON        `json:"edges"`
-	OverallStatus    string                `json:"overall_status"`
-	FailureDetail    string                `json:"failure_detail,omitempty"`
+	// DroppedReplaces is present only when kanonarion removed replace directives
+	// from the extracted module's own go.mod before loading it — the other way the
+	// analysed tree can differ from the published one. Absent means every directive
+	// the module published was in force.
+	DroppedReplaces []droppedReplaceJSON `json:"dropped_replaces,omitempty"`
+	Nodes           []callNodeJSON       `json:"nodes"`
+	Edges           []callEdgeJSON       `json:"edges"`
+	OverallStatus   string               `json:"overall_status"`
+	FailureDetail   string               `json:"failure_detail,omitempty"`
 	// FailureCause says what the status is a statement about — the module, or the
 	// run that tried to analyse it — and it is the axis that decides whether this
 	// record answers a later extraction. A consumer reading only the detail reads
@@ -473,11 +528,17 @@ type callGraphRecordJSON struct {
 	FailedPackages  []string `json:"failed_packages,omitempty"`
 	ExclusionReason string   `json:"exclusion_reason,omitempty"`
 	ExclusionList   []string `json:"exclusion_list,omitempty"`
-	NodeCount       int      `json:"node_count"`
-	EdgeCount       int      `json:"edge_count"`
-	ExtractedAt     string   `json:"extracted_at"`
-	PipelineVersion string   `json:"pipeline_version"`
-	ContentHash     string   `json:"content_hash"`
+	// ForeignModulesBuilt names the modules other than this one whose packages
+	// this analysis built with bodies, with the version resolution gave each.
+	// Absent means either that none were built or that the record predates the
+	// field, and `schema_version` above is what tells those apart — see
+	// domain.ForeignModule.
+	ForeignModulesBuilt []foreignModuleJSON `json:"foreign_modules_built,omitempty"`
+	NodeCount           int                 `json:"node_count"`
+	EdgeCount           int                 `json:"edge_count"`
+	ExtractedAt         string              `json:"extracted_at"`
+	PipelineVersion     string              `json:"pipeline_version"`
+	ContentHash         string              `json:"content_hash"`
 	// TestScope says whether _test.go declarations were part of the analysis.
 	// A record that makes no claim renders the token: an empty string here is
 	// read as "no test code", which is the confusion the axis exists to remove.
@@ -576,6 +637,31 @@ type synthesisedGoModJSON struct {
 	BuildListSource string `json:"build_list_source,omitempty"`
 }
 
+// droppedReplaceJSON is one replace directive the analysis removed, rendered as
+// the module wrote it plus its parts, so a consumer can match on either.
+type droppedReplaceJSON struct {
+	Path      string `json:"path"`
+	Version   string `json:"version,omitempty"`
+	Target    string `json:"target"`
+	Directive string `json:"directive"`
+}
+
+func droppedReplacesToJSON(ds []domain.DroppedReplace) []droppedReplaceJSON {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]droppedReplaceJSON, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, droppedReplaceJSON{
+			Path:      d.Path,
+			Version:   d.Version,
+			Target:    d.Target,
+			Directive: d.String(),
+		})
+	}
+	return out
+}
+
 // synthesisedRequireJSON is one pinned require directive.
 type synthesisedRequireJSON struct {
 	Path    string `json:"path"`
@@ -600,6 +686,27 @@ func synthesisedGoModToJSON(s domain.SynthesisedGoMod, buildListSource string) *
 		VendorTreePresent: s.VendorTreePresent,
 		BuildListSource:   buildListSource,
 	}
+}
+
+// foreignModuleJSON is one module the analysis built with bodies while
+// reporting on another. The version is fielded rather than folded into the path
+// because it is the half the record could not previously state: the parent names
+// its own coordinate, and a route through a nested module's nodes was a route
+// through a version nobody stated.
+type foreignModuleJSON struct {
+	Path    string `json:"path"`
+	Version string `json:"version"`
+}
+
+func toForeignModulesJSON(mods []domain.ForeignModule) []foreignModuleJSON {
+	if len(mods) == 0 {
+		return nil
+	}
+	out := make([]foreignModuleJSON, 0, len(mods))
+	for _, m := range mods {
+		out = append(out, foreignModuleJSON{Path: m.Path, Version: m.Version})
+	}
+	return out
 }
 
 func callNodeRole(n domain.CallNode) string {
@@ -661,6 +768,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		WorktreeScanDigest: r.WorktreeScanDigest,
 
 		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod, r.BuildListSource),
+		DroppedReplaces:  droppedReplacesToJSON(r.DroppedReplaces),
 
 		Nodes:           nodes,
 		Edges:           edges,
@@ -670,9 +778,12 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		FailedPackages:  r.FailedPackages,
 		ExclusionReason: r.ExclusionReason,
 		ExclusionList:   r.ExclusionList,
+
+		ForeignModulesBuilt: toForeignModulesJSON(r.ForeignModulesBuilt),
+
 		NodeCount:       r.NodeCount,
 		EdgeCount:       r.EdgeCount,
-		ExtractedAt:     isoTime(r.ExtractedAt),
+		ExtractedAt:     ledgerStamp(r.ExtractedAt),
 		PipelineVersion: r.PipelineVersion,
 		ContentHash:     r.ContentHash,
 
@@ -709,6 +820,12 @@ func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
 	// record read as a description of the artefact it was sealed against.
 	if !r.SynthesisedGoMod.IsZero() {
 		line += "  [" + r.SynthesisedGoMod.String() + "]"
+	}
+	// And a dropped replace directive means the analysed tree is the published
+	// bytes with a directive of the module's own removed. Same reason, same line:
+	// the record must not read as a description of the artefact as published.
+	if summary := domain.DroppedReplacesSummary(r.DroppedReplaces); summary != "" {
+		line += "\n  [" + summary + "]"
 	}
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing fidelity: %w", err)
@@ -782,8 +899,8 @@ func referenceEdgeCount(r domain.CallGraphRecord) int {
 //
 // It is the axis a confident negative rests on: `callers` may only answer
 // RESOLVED-ABSENT when both calls and references were measurable, so a reader
-// who cannot see the axis on the record cannot tell whether the verdict they
-// got was entitled to be confident. The axis was stored and never printed,
+// who cannot see the axis on the record cannot tell whether the answer they got
+// was entitled to be confident. The axis was stored and never printed,
 // which is the same defect writeTestScopeLine exists to fix, on the other axis.
 func writeReferenceScopeLine(stdout io.Writer, r domain.CallGraphRecord) error {
 	var line string
@@ -816,6 +933,29 @@ func writeModuleMembershipLine(stdout io.Writer, r domain.CallGraphRecord) error
 		len(r.PrefixAttributedPackages), joinWithOverflow(r.PrefixAttributedPackages, 5))
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing module membership: %w", err)
+	}
+	return nil
+}
+
+// writeForeignModulesLine reports the modules OTHER than this one whose packages
+// this analysis built with bodies.
+//
+// It prints only when there are some, the way module membership does, and for
+// the same reason: on the great majority of records there is nothing to say and
+// a line saying so on every record would be noise. When there IS something to
+// say it is the caveat on the fidelity line directly above — BUILT_WITH_BODIES
+// is a per-module level, and a record holding a nested module's built packages
+// claims it over code belonging to a module it does not otherwise name.
+func writeForeignModulesLine(stdout io.Writer, r domain.CallGraphRecord) error {
+	if len(r.ForeignModulesBuilt) == 0 {
+		return nil
+	}
+	line := fmt.Sprintf("  foreign modules built: %d module(s) other than %s had packages built with bodies here — "+
+		"each has its own record, which is the measurement of it: %s",
+		len(r.ForeignModulesBuilt), r.Coordinate.Path(),
+		joinWithOverflow(renderedModules(r.ForeignModulesBuilt), 5))
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing foreign modules: %w", err)
 	}
 	return nil
 }
@@ -1004,6 +1144,9 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 	if err := writeReferenceScopeLine(stdout, r); err != nil {
 		return err
 	}
+	if err := writeForeignModulesLine(stdout, r); err != nil {
+		return err
+	}
 	if err := writeModuleMembershipLine(stdout, r); err != nil {
 		return err
 	}
@@ -1059,38 +1202,126 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 }
 
 // supersededGenerationsNote describes the generations the store holds for a
-// coordinate under pipeline versions this build no longer serves, or "" when it
-// holds none. It is the difference between "this was never analysed" and "this
-// was analysed by logic that has since been superseded", which are different
-// facts with different remedies.
+// coordinate that this build will not serve, or "" when it holds none. It is the
+// difference between "this was never analysed" and "this was analysed by logic
+// that has since been superseded", which are different facts with different
+// remedies.
 //
-// Which pipeline versions a coordinate exists under is a question about the
-// ledger's KEYS, so it is asked of the coordinates. Asked of the composing
-// listing it spent eight seconds reconstructing fifteen generations of one
-// module's edge set to read a version string off each — to say that a version
-// nobody analysed was not analysed.
-func supersededGenerationsNote(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase) (string, error) {
+// A generation stops being served two ways, and both belong in one note because
+// an operator reading it is asking one question. Its PIPELINE version is
+// superseded, which the ledger's KEYS say — so it is asked of the coordinates.
+// Asked of the composing listing it spent eight seconds reconstructing fifteen
+// generations of one module's edge set to read a version string off each, to say
+// that a version nobody analysed was not analysed.
+//
+// Or its RECORD SCHEMA is superseded, which no column says: schema_version lives
+// inside the blob. The only evidence available from columns is the difference
+// between the rows the listing returns and the records the reading leg handed
+// back, so the caller passes what it will serve and that difference is the set.
+// The caller is the only party that knows it, and a caller that passes nothing
+// is stating that this build serves none of them.
+//
+// The second clause names each unserved generation's analyser, and that is the
+// point of it rather than detail. The disagreement notice on a composed read
+// speaks from the same column listing, so it names generations the reading leg
+// drops; an operator it sends to --history must find every version it named,
+// with a reason, instead of a version silently missing from the list.
+func supersededGenerationsNote(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	uc QueryCallGraphUseCase,
+	servable []domain.CallGraphRecord,
+) (string, error) {
 	sums, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})
 	if err != nil {
 		return "", fmt.Errorf("listing stored generations for %s: %w", coord, err)
 	}
+	served := make(map[string]bool, len(servable))
+	for _, r := range servable {
+		served[r.ContentHash] = true
+	}
 	seen := make(map[string]bool)
 	var versions []string
+	var unserved []ports.CallGraphGeneration
 	for _, s := range sums {
-		if s.ModuleVersion != coord.Version() || s.PipelineVersion == cgapp.PipelineVersion {
+		if s.ModuleVersion != coord.Version() {
 			continue
 		}
-		if !seen[s.PipelineVersion] {
-			seen[s.PipelineVersion] = true
-			versions = append(versions, s.PipelineVersion)
+		if s.PipelineVersion != cgapp.PipelineVersion {
+			if !seen[s.PipelineVersion] {
+				seen[s.PipelineVersion] = true
+				versions = append(versions, s.PipelineVersion)
+			}
+			continue
+		}
+		for _, g := range s.Generations {
+			// Matched on the content hash, which the reading leg checks the blob's own
+			// copy against, so the two sides name the same row. A listing entry that
+			// states no hash cannot be matched at all, and calling it unserved would
+			// be a guess about a row nothing established anything about.
+			if g.ContentHash == "" || served[g.ContentHash] {
+				continue
+			}
+			unserved = append(unserved, g)
 		}
 	}
-	if len(versions) == 0 {
+	var clauses []string
+	// The pipeline clause answers "why is there no answer at all", so it is
+	// stated only where there is none. Every caller that displays generations
+	// names the pipeline version it is displaying them at, so a generation under
+	// another one is outside the question being asked rather than missing from
+	// the reply to it.
+	if len(versions) > 0 && len(served) == 0 {
+		sort.Strings(versions)
+		clauses = append(clauses, fmt.Sprintf("the store holds it at superseded pipeline %s, which this build does not serve",
+			strings.Join(versions, ", ")))
+	}
+	if len(unserved) > 0 {
+		// The pipeline version is not repeated: every framing of this note names it
+		// already, and a sentence that states it twice reads as two facts.
+		clause := fmt.Sprintf("the store holds %d generation(s) of it written at a record schema this build no longer decodes",
+			len(unserved))
+		if parsed := statedAnalysers(unserved); parsed != "" {
+			clause += ", parsed by " + parsed
+		}
+		clauses = append(clauses, clause)
+	}
+	if len(clauses) == 0 {
 		return "", nil
 	}
-	sort.Strings(versions)
-	return fmt.Sprintf("the store holds it at superseded pipeline %s, which this build does not serve",
-		strings.Join(versions, ", ")), nil
+	return strings.Join(clauses, "; "), nil
+}
+
+// statedAnalysers renders the distinct analysers a set of listed generations
+// states, or "" where not one of them states any.
+//
+// The library is named once and every version carries its strength, on
+// AnalyserIdentity.Short's own rule: an unmarked version beside a marked one
+// invites a reader to take the unmarked one as the plain fact.
+func statedAnalysers(gens []ports.CallGraphGeneration) string {
+	seen := make(map[domain.AnalyserIdentity]bool, len(gens))
+	var ids []domain.AnalyserIdentity
+	for _, g := range gens {
+		if !g.Analyser.Recorded() || seen[g.Analyser] {
+			continue
+		}
+		seen[g.Analyser] = true
+		ids = append(ids, g.Analyser)
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if ids[i].Version != ids[j].Version {
+			return ids[i].Version < ids[j].Version
+		}
+		return ids[i].Provenance < ids[j].Provenance
+	})
+	short := make([]string, 0, len(ids))
+	for _, id := range ids {
+		short = append(short, id.Short())
+	}
+	return domain.AnalyserModulePath + " " + strings.Join(short, " and ")
 }
 
 // statedToolchain is the toolchain the record itself named, or nil when it named

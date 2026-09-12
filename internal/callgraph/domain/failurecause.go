@@ -1,81 +1,30 @@
 package domain
 
-// FailureCause names what a failed call-graph extraction is a statement about:
-// the module, or the run that tried to analyse it.
+import "github.com/eitanity/kanonarion/internal/failurecause"
+
+// FailureCause is the call-graph ledger's name for the shared axis: whether a
+// failed or incomplete extraction is a statement about the module or about the
+// run that tried to analyse it. The vocabulary, and the argument for it, live in
+// internal/failurecause; the alias keeps the ledger's own spelling while the
+// scan and the extraction stage answer with the same three words.
 //
-// The distinction is the difference between a finding and a measurement that
-// never happened. A module whose source does not type-check is a real, stable
-// property of that module — re-analysing it tomorrow rediscovers it at full
-// analysis cost. A run that could not find a usable Go toolchain has measured
-// nothing at all, and the same module analysed a minute later on a repaired box
-// may well produce a complete graph.
-//
-// The fetch ledger draws the same line for the same reason, and states it as
-// "a failure is a statement about the lookup, not about the module, and a later
-// attempt may well succeed. Collapsing the two lets one network flake be
-// recorded — and cached — as a property of a dependency." Here the flake is a
-// toolchain rather than a network, and the record is a call graph rather than a
-// checksum, but the failure mode is identical: without the axis, one bad run is
-// filed as a fact about a dependency and served on every subsequent run.
-//
-// The cause is classified where the failure is still a value — at the analyser
-// boundary, from whether the environment can run the toolchain at all — and
-// never by re-reading the prose of a stored FailureDetail, on the same terms
-// x/mod/sumdb's errors are classified at ClientOps rather than recovered from a
-// flattened string.
-//
-// It is not a ladder and composition never picks between its values: it
-// qualifies a failure or an incompleteness, and a record carrying a graph
-// outranks any failure regardless of what caused it. What it decides is cache
-// eligibility — see RecordIsCacheable.
-type FailureCause string
+// What it decides here is cache eligibility — see RecordIsCacheable.
+type FailureCause = failurecause.Cause
 
 const (
-	// FailureCauseUnrecorded is the zero value. It is carried by every record
-	// that came back complete, and by the failed and partial records written
-	// before the axis reached them. It states no cause, and must never be read as
-	// one: an extraction that does not say what limited it is not evidence that
-	// the module is at fault.
-	FailureCauseUnrecorded FailureCause = ""
+	// FailureCauseUnrecorded is the zero value, carried by every record that came
+	// back complete and by the failed and partial records written before the axis
+	// reached them.
+	FailureCauseUnrecorded = failurecause.Unrecorded
 
-	// FailureCauseModule means the module is what limited the analysis: its
-	// published bytes carry no Go packages, its source does not type-check, its
-	// module graph cannot be resolved from what it ships. It qualifies a partial
-	// extraction as well as a failed one — packages of the module's own that did
-	// not typecheck are the module's property too. The finding is about the
-	// module and is stable across runs, so it is served from cache exactly as a
-	// successful analysis is.
-	FailureCauseModule FailureCause = "module"
+	// FailureCauseModule means the module is what limited the analysis, which is a
+	// stable finding about published bytes and is served from cache like any other.
+	FailureCauseModule = failurecause.Module
 
-	// FailureCauseEnvironment means the analysis environment is what limited the
-	// run: no usable go on PATH, a toolchain that is absent or unresolvable, a
-	// cancelled context, the memory cap, a module cache too cold to resolve a
-	// dependency the load needed. What the run reached says as much about this
-	// host as about the module, so the record is kept as evidence that this run
-	// ran the way it did — the ledger never goes silent — but it is not eligible
-	// as a cache hit. That holds whether the run produced no graph at all or an
-	// incomplete one: a repaired environment must get its chance to measure the
-	// rest.
-	FailureCauseEnvironment FailureCause = "environment"
+	// FailureCauseEnvironment means this host is what limited the run, so the
+	// record is kept as evidence and is never served as a cache hit.
+	FailureCauseEnvironment = failurecause.Environment
 )
-
-// IsEnvironmentLimit reports whether the cause says this HOST, rather than the
-// module, is what the analysis stopped short of.
-//
-// It is a predicate rather than a comparison written out at each site because
-// the ordering rule and the disagreement rule both read it, and a rule spelled
-// twice is one that holds in whichever copy was edited last. The store reads it
-// off a column and composition off a record; both ask this.
-func (c FailureCause) IsEnvironmentLimit() bool { return c == FailureCauseEnvironment }
-
-// String renders the cause, showing the zero value as "not recorded" rather than
-// as an empty field a reader would take for an absence of cause.
-func (c FailureCause) String() string {
-	if c == FailureCauseUnrecorded {
-		return "not recorded"
-	}
-	return string(c)
-}
 
 // RecordIsCacheable reports whether a record may satisfy a later extraction of
 // the same coordinate, or whether that extraction must re-derive instead.

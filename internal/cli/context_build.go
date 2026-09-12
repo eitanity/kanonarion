@@ -61,7 +61,7 @@ func buildVerification(ctx context.Context, coord coordinate.ModuleCoordinate, u
 	return contextVerification{
 		// First seen, not last measured: a revalidation re-establishes the anchors
 		// but does not make the artefact newer.
-		ExtractedAt: isoTime(rec.FirstFetchedAt),
+		ExtractedAt: ledgerStamp(rec.FirstFetchedAt),
 		Status:      rec.VerificationStatus,
 		GitURL:      rec.GitURL,
 		Retracted:   rec.Retracted,
@@ -233,7 +233,7 @@ func buildLicense(
 	// documentation licence, which is what `spdx` used to be able to hold.
 	covered := licdomain.ReadCoverage(rec)
 	l := contextLicense{
-		ExtractedAt:     isoTime(rec.ExtractedAt),
+		ExtractedAt:     ledgerStamp(rec.ExtractedAt),
 		SPDX:            covered.PrimarySPDX,
 		Status:          rec.OverallStatus.String(),
 		CopyrightStatus: rec.CopyrightStatus.String(),
@@ -441,7 +441,7 @@ func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 		return contextCallGraph{Status: sectionStatusNotRun}
 	}
 	out := contextCallGraph{
-		ExtractedAt: isoTime(rec.ExtractedAt),
+		ExtractedAt: ledgerStamp(rec.ExtractedAt),
 		Status:      rec.OverallStatus.String(),
 		Algorithm:   string(rec.Algorithm),
 		NodeCount:   rec.NodeCount,

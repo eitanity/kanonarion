@@ -155,8 +155,8 @@ func TestVulnReachabilityVerdict_WithdrawnIsNotAReachabilityAnswer(t *testing.T)
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}
-	if q.Verdict != verdictWithdrawn {
-		t.Errorf("verdict = %q, want %q", q.Verdict, verdictWithdrawn)
+	if q.ReachabilityState != verdictWithdrawn {
+		t.Errorf("verdict = %q, want %q", q.ReachabilityState, verdictWithdrawn)
 	}
 	if q.WithdrawnAt != "2026-04-08T13:33:56Z" {
 		t.Errorf("WithdrawnAt = %q, want the retraction date", q.WithdrawnAt)

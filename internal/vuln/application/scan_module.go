@@ -348,7 +348,41 @@ import (
 // pipeline version, and the change lives inside the serialised record (which
 // findings it carries, and the reachability verdict on each) rather than in a
 // column.
-const PipelineVersion = "v24"
+//
+// v25 stops a finding whose advisory names no symbols for the matched module
+// path from sealing two facts it cannot support.
+//
+// affected_symbols held whatever the govulncheck trace terminated at — functions
+// of the affected package this build happened to call — beside the flag saying
+// the advisory named none, so one field carried two facts and the record could
+// not say which. It now states what the advisory names and nothing else; the
+// reached symbols survive as the last hop of each route.
+//
+// reachable.is_reachable and reachable.confidence read true at High: a claim that
+// the vulnerable code executes, from an analysis that was never given a symbol to
+// look for. They now read false at Confidence Unknown, the store's existing
+// "not determined" pair. The routes are kept — a real call frame answers which
+// dependency pulls the package in, and the derived state, where this advisory
+// fact outranks both the bit and the confidence, says which question was
+// answered.
+//
+// The bump is owed because it changes what a re-derived record CONTAINS, and no
+// migration can correct it in place: all three fields are inside the hashed
+// canonical shape, so rewriting them means re-sealing a v24 record against a
+// conclusion the v24 generation did not reach — the mistake migration 10 was
+// withdrawn for. Reads pin to this constant, so under the bump those rows stop
+// being served and a re-scan states an answer it can support, while the v24 rows
+// remain readable in the ledger as what the earlier generation concluded.
+//
+// The cost is stated rather than inherited. Measured before the change, the store
+// held 3,214 records at the servable v24 and 365 at v22. v24 was taken at a
+// moment when NOTHING sat at the servable version; this darkens 3,214 records
+// that were not already awaiting a re-scan, and the store cannot answer a v25
+// question about any module until it is re-scanned. No purge is owed either:
+// reads are keyed on the pipeline version, so the v24 rows are already
+// unreachable for a v25 question, and all three fields live inside the serialised
+// record rather than in a column.
+const PipelineVersion = "v25"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {

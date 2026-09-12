@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	application2 "github.com/eitanity/kanonarion/internal/vuln/application"
@@ -107,6 +108,7 @@ it. It is reported on its own and counted in no roll-up.`,
 	cmd.Flags().BoolVar(&f.noVendor, "no-vendor", false,
 		"analyse the fetched artefacts even when the project is vendored (default: analyse vendor/, the source the project compiles)")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerCallgraphTimeoutFlag(cmd)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
 	return cmd
@@ -542,6 +544,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		}
 	}
 
+	callgraphNarration = callgraphNarrationFor(stderr, noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, "", goBinary, false, activeConfig, logger)
 	if err != nil {
 		return vulnScanRunFacts{}, fmt.Errorf("initialising store: %w", err)
@@ -628,7 +631,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 			// the roll-ups it feeds are the result, printed to stdout.
 			writeVulnScanProgress(record, coord, current, total, progressOut)
 			rollups.add(coord, record)
-			reach.Verdicts += recordReachabilityVerdicts(record)
+			reach.Answers += recordReachabilityVerdicts(record)
 		},
 	})
 	if err != nil {
@@ -772,10 +775,10 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 	// How much of this answer is a function of the project's own source, counted
 	// from the records the run wrote — the same count the statement and the JSON
 	// field both report, taken once.
-	reach := vulnScanReachability{Verdicts: reachabilityVerdicts(recs)}
+	reach := vulnScanReachability{Answers: reachabilityVerdicts(recs)}
 
 	if announce {
-		if _, werr := fmt.Fprintf(stderr, "%s\n", reusedScanLine(run, reach.Verdicts)); werr != nil {
+		if _, werr := fmt.Fprintf(stderr, "%s\n", reusedScanLine(run, reach.Answers)); werr != nil {
 			return vulnScanRunFacts{}, fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -940,8 +943,11 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(vulnScanRunDocument{
-			vulnScanDocument: vulnScanDocument{WalkScanRun: run, Reachability: reach},
-			Toolchain:        toolchain,
+			vulnScanDocument: vulnScanDocument{
+				WalkScanRun: run, Reachability: reach,
+				StartedAt: recordstamp.Format(run.StartedAt), CompletedAt: recordstamp.Format(run.CompletedAt),
+			},
+			Toolchain: toolchain,
 		}); err != nil {
 			return fmt.Errorf("encoding JSON output: %w", err)
 		}
@@ -1201,6 +1207,7 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 	cmd.Flags().StringVar(&f.snapshotVersion, "snapshot-version", "", "pin to a specific snapshot version (requires --snapshot-source)")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerCallgraphTimeoutFlag(cmd)
 
 	return cmd
 }
@@ -1256,6 +1263,7 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 		return fmt.Errorf("--snapshot-source and --snapshot-version must be provided together")
 	}
 
+	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)

@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
@@ -87,11 +89,58 @@ func buildLogger(level string, stderr io.Writer) *slog.Logger {
 	default:
 		lvl = slog.LevelInfo
 	}
-	opts := &slog.HandlerOptions{Level: lvl}
+	opts := &slog.HandlerOptions{Level: lvl, ReplaceAttr: canonicalTimeAttr}
 	if jsonOut {
 		return slog.New(slog.NewJSONHandler(stderr, opts))
 	}
 	return slog.New(slog.NewTextHandler(stderr, opts))
+}
+
+// canonicalTimeAttr rewrites a log line's time into the encoding the ledgers
+// write, so a line and a record can be laid beside each other directly.
+//
+// slog's default is the local offset at millisecond precision, and every record
+// in the store is UTC at nanosecond precision. Correlating the two then costs a
+// timezone conversion and a precision reconciliation before the comparison even
+// starts, which is exactly the work a shared encoding exists to remove.
+func canonicalTimeAttr(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) != 0 || a.Key != slog.TimeKey || a.Value.Kind() != slog.KindTime {
+		return a
+	}
+	return slog.String(slog.TimeKey, recordstamp.Format(a.Value.Time()))
+}
+
+// ledgerStamp renders a STORED RECORD's own timestamp, in the encoding the
+// ledger seals it with. A zero time renders as the empty string, so an absent
+// stamp is omitted rather than printed as year one.
+//
+// It exists because a rendered stamp is read against a stored one. A reader
+// holding a record, a log line and a rendered answer has to be able to line the
+// three up, and they can only do that if all three spell one instant the same
+// way — so this is recordstamp.Format, the same function the ledgers and the
+// logger use.
+//
+// It is NOT for every time the CLI prints. isoTime is, and the difference is
+// which side of the seal the value came from:
+//
+//   - a stamp on a ledger whose seal carries the canonical encoding — fetch,
+//     callgraph, licence, walks, vulnerability records, walk scan runs — is a
+//     ledgerStamp, and printing it at second precision would show a reader less
+//     than the record holds;
+//   - a stamp on a ledger still sealed at whole seconds, an advisory's own
+//     publication or withdrawal date, or an advisory-database snapshot label is
+//     an isoTime. Widening those would print a fraction the record itself does
+//     not carry, which is a stamp a reader cannot find anywhere.
+//
+// It empties a zero time, so it is for a field that is ABSENT when unset. A
+// field that is always on the wire — one a consumer decodes back into the record
+// type — takes recordstamp.Format directly, because "" is not a time any decoder
+// accepts.
+func ledgerStamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return recordstamp.Format(t)
 }
 
 // loadPolicy resolves and loads the effective DepthPolicy for an invocation.
@@ -807,7 +856,37 @@ func resetInvocationState() {
 	// ~/.kanonarion would be read, written and migrated in silence. A real
 	// invocation never sees this value; registration assigns the default next.
 	storeRoot = ""
+	// The call-graph subprocess bounds, in the state a command that was passed no
+	// flag is entitled to: the default ceiling, the host-sized subprocess bound,
+	// and no narration.
+	callgraphCeiling = cgports.DefaultCeiling
+	callgraphWorkers = 0
+	callgraphMemoryCeiling = 0
+	callgraphNarration = nil
 }
+
+// callgraphCeiling is the wall-clock backstop for one call-graph subprocess.
+// Bound to --callgraph-timeout on every command that spawns one. It is a
+// backstop, not the working deadline: a child is normally ended by the stall
+// window, which measures silence rather than elapsed time.
+var callgraphCeiling time.Duration
+
+// callgraphWorkers is how many call-graph subprocesses this invocation may run
+// at once. Bound to --callgraph-workers where the command offers it; zero means
+// the bound is sized from the host's CPU count and available memory.
+var callgraphWorkers int
+
+// callgraphMemoryCeiling is how much memory one call-graph analysis may hold
+// before it stops itself, in bytes. Bound to --callgraph-memory-ceiling where
+// the command offers it; zero means the ceiling is shared out from the host's
+// available memory between the subprocesses the bound admits.
+var callgraphMemoryCeiling uint64
+
+// callgraphNarration is where call-graph phase transitions go for this
+// invocation: the analyser writes them when this process IS the child, and the
+// spawner copies the child's own lines there when it is the parent. Nil narrates
+// nothing.
+var callgraphNarration io.Writer
 
 // storeRoot is the effective store directory for the current invocation.
 // Bound to --store-root on the root command; the env-var override
@@ -1571,43 +1650,87 @@ func divergenceMessage(err error) (string, bool) {
 		" which appends an authoritative measurement and erases nothing", true
 }
 
-// unreadableRunEntry is one stored scan run a survey listed but could not
-// verify: the row's identity and why it could not be read, kept apart so text
-// and JSON output can each present them their own way.
-type unreadableRunEntry struct {
-	ID     string `json:"id"`
-	Reason string `json:"reason"`
+// unreadableRowEntry is one stored row a survey listed but could not verify —
+// a scan run or a vulnerability record — holding what the store recovered about
+// it and why it could not be read.
+//
+// The facts are kept APART rather than pre-rendered, because the two surfaces
+// want different forms of the same row: a text listing wants prose, and a JSON
+// listing must put the coordinate under the key its readable siblings use so a
+// consumer never has to pull an identity back out of a display string. label()
+// composes the prose; the JSON surfaces read the fields.
+type unreadableRowEntry struct {
+	// ID is the row's bare identity — a run's id, a record's coordinate — or
+	// empty when the stored bytes would not yield one.
+	ID   string
+	Kind vulnports.RowKind
+	// PipelineVersion, SnapshotSource and SnapshotVersion place a record row in
+	// the ledger. Each is empty where the head did not carry it; all three are
+	// empty for a run.
+	PipelineVersion string
+	SnapshotSource  string
+	SnapshotVersion string
+	Reason          string
 }
 
-// unreadableRunReport turns a scan-run listing error into one operator-facing
-// entry per row the store could not verify, reporting whether it was that kind
-// of failure at all.
+// label renders one row for a text listing, where prose is the right form: the
+// identity, or a stand-in for bytes that named none, with the generation that
+// tells one row of a coordinate's history from another.
+func (e unreadableRowEntry) label() string {
+	id := e.ID
+	if id == "" {
+		kind := string(e.Kind)
+		if kind == "" {
+			kind = "row"
+		}
+		id = "(unidentified " + kind + ")"
+	}
+	if gen := (vulnports.RowGeneration{
+		PipelineVersion: e.PipelineVersion,
+		SnapshotVersion: e.SnapshotVersion,
+	}).String(); gen != "" {
+		id += " " + gen
+	}
+	return id
+}
+
+// unreadableRowReport turns a listing error into one operator-facing entry per
+// row the store could not verify, reporting whether it was that kind of failure
+// at all.
 //
-// It is divergenceMessage's counterpart for the scan-run listings, and it is
-// there for the same reason: a survey command reports what it could not read
-// and exits 0, while a consuming command takes the other branch and fails
-// closed. Any other error is not this one and is returned as not-handled, so a
-// database that fell over still aborts the listing.
-func unreadableRunReport(err error) ([]unreadableRunEntry, bool) {
-	var unreadable *vulnports.UnreadableRuns
+// It is divergenceMessage's counterpart for the store listings, and it is there
+// for the same reason: a survey command reports what it could not read and
+// exits 0, while a consuming command takes the other branch and fails closed.
+// Any other error is not this one and is returned as not-handled, so a database
+// that fell over still aborts the listing.
+//
+// Runs and records come through it alike. The fact is the same fact and the
+// commands that render it are the same commands, so a second reporter for
+// records would be a second place for this rule to be got wrong.
+func unreadableRowReport(err error) ([]unreadableRowEntry, bool) {
+	var unreadable *vulnports.UnreadableRows
 	if !errors.As(err, &unreadable) {
 		return nil, false
 	}
-	entries := make([]unreadableRunEntry, 0, len(unreadable.Runs))
-	for _, r := range unreadable.Runs {
-		id := r.ID
-		if id == "" {
-			id = "(unidentified run)"
-		}
-		entries = append(entries, unreadableRunEntry{ID: id, Reason: unreadableRunReason(r)})
+	entries := make([]unreadableRowEntry, 0, len(unreadable.Rows))
+	for _, r := range unreadable.Rows {
+		entries = append(entries, unreadableRowEntry{
+			ID:              r.ID,
+			Kind:            r.Kind,
+			PipelineVersion: r.Generation.PipelineVersion,
+			SnapshotSource:  r.Generation.SnapshotSource,
+			SnapshotVersion: r.Generation.SnapshotVersion,
+			Reason:          unreadableRowReason(r),
+		})
 	}
 	return entries, true
 }
 
-// scanRunStatusUnreadable is the status a survey reports for a row it listed
-// but could not verify. It is deliberately not one of the domain's scan
-// statuses: the run's status is exactly what is not known about it.
-const scanRunStatusUnreadable = "unreadable"
+// statusUnreadable is the status a survey reports for a row it listed but could
+// not verify. It is deliberately not one of the domain's statuses — for a run or
+// for a record: the row's status is exactly what is not known about it, and a
+// consumer decoding this value into a status enum gets a value no verdict has.
+const statusUnreadable = "unreadable"
 
 // writeUnreadableRun reports a single run an inspection command was asked for
 // and could not verify, and returns nil: naming what is wrong with the row is
@@ -1616,7 +1739,7 @@ const scanRunStatusUnreadable = "unreadable"
 // It reports the id the CALLER asked for. The stored bytes may not name
 // themselves, and echoing an empty id back at someone who just typed one would
 // lose the only identity in the exchange.
-func writeUnreadableRun(stdout io.Writer, runID string, entries []unreadableRunEntry, asJSON bool) error {
+func writeUnreadableRun(stdout io.Writer, runID string, entries []unreadableRowEntry, asJSON bool) error {
 	reason := "could not be verified"
 	if len(entries) > 0 {
 		reason = entries[0].Reason
@@ -1628,28 +1751,32 @@ func writeUnreadableRun(stdout io.Writer, runID string, entries []unreadableRunE
 			ID     string `json:"id"`
 			Status string `json:"status"`
 			Reason string `json:"reason"`
-		}{ID: runID, Status: scanRunStatusUnreadable, Reason: reason}); err != nil {
+		}{ID: runID, Status: statusUnreadable, Reason: reason}); err != nil {
 			return fmt.Errorf("encoding unreadable scan run: %w", err)
 		}
 		return nil
 	}
 	_, _ = fmt.Fprintf(stdout, "ID:          %s\n", runID)
-	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", scanRunStatusUnreadable)
+	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", statusUnreadable)
 	_, _ = fmt.Fprintf(stdout, "Reason:      %s\n", reason)
 	return nil
 }
 
-// writeUnreadableRuns prints one line per row the store could not verify, in
+// writeUnreadableRows prints one line per row the store could not verify, in
 // the listing itself. Silence here would be the one answer that is not honest:
 // an omitted row and a row reported as unreadable say different things about
 // the store, and only the second is true of it.
-func writeUnreadableRuns(stdout io.Writer, entries []unreadableRunEntry) {
+//
+// idWidth is the listing's own first column, so the unreadable rows line up
+// with the rows beside them rather than announcing themselves as a different
+// kind of output.
+func writeUnreadableRows(stdout io.Writer, entries []unreadableRowEntry, idWidth int) {
 	for _, e := range entries {
-		_, _ = fmt.Fprintf(stdout, "%-26s  status=%-12s  %s\n", e.ID, scanRunStatusUnreadable, e.Reason)
+		_, _ = fmt.Fprintf(stdout, "%-*s  status=%-12s  %s\n", idWidth, e.label(), statusUnreadable, e.Reason)
 	}
 }
 
-// unreadableRunReason says why a row could not be verified, in words a reader
+// unreadableRowReason says why a row could not be verified, in words a reader
 // can act on.
 //
 // The two cases are not interchangeable and must not be reported alike. A
@@ -1658,7 +1785,7 @@ func writeUnreadableRuns(stdout io.Writer, entries []unreadableRunEntry) {
 // earlier canonical shape — the remedy is a re-scan. Where that cannot be
 // established the wording stays neutral: an unverified record is reported as
 // unverified, and nothing is insinuated about how it got that way.
-func unreadableRunReason(r vulnports.UnreadableRun) string {
+func unreadableRowReason(r vulnports.UnreadableRow) string {
 	if errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
 		return "sealed by an earlier record generation; re-scan to reseal"
 	}

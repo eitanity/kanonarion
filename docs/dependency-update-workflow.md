@@ -90,7 +90,7 @@ rewritten as `any`, a result that stopped being named) is reported as
 `renamed-path`. `renamed-path` is not breaking but still obliges an import
 rewrite, which the output states on its own line.
 
-A zero-breaking result is not a safety verdict. The comparison reads exported
+A zero-breaking result is not a safety judgement. The comparison reads exported
 signatures, so a release that changes no signature at all can still change what
 your calls return; where the delta is non-empty the output says so where the
 zero is printed.
@@ -180,7 +180,7 @@ When a CVE *does* land on a dependency, gate on reachability rather than mere
 presence:
 
 ```bash
-# Read a stored verdict computed by 'vuln-scan --reachability':
+# Read a stored answer computed by 'vuln-scan --reachability':
 ./kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
 
 # Or probe the live working tree directly:
@@ -199,7 +199,7 @@ reflects the database as of the release, not whenever the walk was first scanned
 
 ```bash
 # Always pulls a fresh DB and bypasses the per-module cache, so the new
-# snapshot is actually consulted (a plain re-scan would reuse cached verdicts).
+# snapshot is actually consulted (a plain re-scan would reuse cached answers).
 ./kanonarion vuln-scan-rescan "$WALK_ID"
 ./kanonarion vuln-scan-show <run-id>   # confirm: 0 affected
 ```
@@ -230,4 +230,4 @@ action; version bumps for their own sake are not (see the note below).
 | Risk | `vuln-scan` + `reachability` | reachable advisory = act; `Partial` ≠ clean |
 
 Run reachability/callgraph against the **specific candidate version** you intend
-to adopt, not against "latest" as a default - the verdict is version-specific.
+to adopt, not against "latest" as a default - the evidence is version-specific.

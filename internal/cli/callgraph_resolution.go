@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -140,7 +141,7 @@ func supersededPipelineError(symbolID, modulePath string, stored []ports.CallGra
 	if cErr != nil {
 		return fmt.Errorf("naming the re-analysis of module %q: %w", modulePath, cErr)
 	}
-	remedy := "  " + domain.ReanalysisCommand(remedyCoord, "")
+	remedy := "  " + domain.ReanalysisInstruction(remedyCoord, "")
 	return fmt.Errorf(
 		"symbol %q belongs to module %q, whose every stored call graph was produced by "+
 			"superseded extraction logic: this build serves pipeline %s and the store holds "+
@@ -199,16 +200,30 @@ func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphU
 	for v := range analysed {
 		versions = append(versions, v)
 	}
-	sort.Strings(versions)
+	// Newest first, semantically: a text sort puts v1.10.0 below v1.9.0 and then
+	// names it as the version to use.
+	sort.Slice(versions, func(i, j int) bool {
+		return versionorder.CompareModuleVersions(versions[i], versions[j]) > 0
+	})
 
 	inBuild := sc.modules.VersionsOf(modulePath)
 	switch {
 	case len(inBuild) == 0:
+		// The refusal names `usage` because the divergence between the two
+		// commands is deliberate and must not be silent. This is a symbol query
+		// scoped to a walk, and a module the walk does not contain is outside
+		// what it may answer over; `usage` asks what the project's own code does
+		// with a module across every stored version, which is the same data and a
+		// question a migration has to be able to ask about a module it has not
+		// adopted yet.
 		return fmt.Errorf(
 			"symbol %q belongs to module %q, which %s does not contain; "+
 				"analysed versions in the store are %s. Drop the scope flag to query "+
-				"across every stored version",
-			symbolID, modulePath, sc.source, strings.Join(versions, ", "))
+				"across every stored version, or ask what this project's own code uses "+
+				"from the module, which is answered across stored versions:\n"+
+				"  kanonarion usage %s@%s",
+			symbolID, modulePath, sc.source, strings.Join(versions, ", "),
+			modulePath, versions[0])
 	default:
 		return fmt.Errorf(
 			"symbol %q belongs to module %q, which %s resolves to %s — a version that "+
@@ -257,7 +272,14 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 	if known {
 		return nil // analysed, genuinely zero edges
 	}
-	return errors.New(unknownNodeMessage(symbolID, modulePath))
+	versions := analysedVersionsOf(modulePath, coords)
+	if len(versions) == 0 {
+		// moduleServedAtThisPipeline reported the module served, so there is a
+		// version; with none there is no coordinate to name, and the
+		// never-analysed refusal is the one that stays runnable.
+		return unresolvedSymbolError(symbolID)
+	}
+	return errors.New(unknownNodeMessage(symbolID, modulePath, versions))
 }
 
 // partialRoot is how a Partial call graph bears on a query rooted at one symbol.
@@ -290,6 +312,10 @@ type partialRoot struct {
 	// package that does not compile from a checksum the tree does not carry, and
 	// those two need opposite remedies.
 	detail string
+	// analysisRoot is the working tree the record was analysed in, empty when it
+	// does not say. It is carried so the remedy names that directory rather than
+	// leaving the reader an invocation they cannot run.
+	analysisRoot string
 }
 
 // rootPartialStatus loads the call graph record(s) owning symbolID and reports
@@ -341,6 +367,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 			out.coord = coord
 			out.cause = rec.FailureCause
 			out.detail = rec.FailureDetail
+			out.analysisRoot = rec.AnalysisRoot
 		}
 	}
 	if len(failedSet) > 0 {
@@ -409,9 +436,9 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 	return "", nil
 }
 
-// negativeCallVerdict classifies an empty callers/callees answer for symbolID
+// negativeCallAnswer classifies an empty callers/callees answer for symbolID
 // into RESOLVED-ABSENT or UNRESOLVED, per the dispatch/edge-level soundness gate
-// (see domain.ClassifyNegativeVerdict). It loads the owning module's record(s) to
+// (see domain.ClassifyNegativeAnswer). It loads the owning module's record(s) to
 // read the queried node's leaf facts, the module's completeness level, and — for
 // a callers query (scanDispatch) — the module edges scanned for unresolved
 // interface invoke sites that dispatch on the queried method's name.
@@ -422,16 +449,16 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 // droppedPkg: a symbol whose own package failed to typecheck is not a node in any
 // graph, so classifyEmptyEdgeResult is deliberately skipped for it and the
 // dropped package carried here is what keeps the verdict off ABSENT.
-func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, sc buildScope, opts ports.EdgeQueryOptions, droppedPkg string) (domain.Verdict, error) {
+func negativeCallAnswer(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, sc buildScope, opts ports.EdgeQueryOptions, droppedPkg string) (domain.Answer, error) {
 	coords, err := listScopedCoordinates(ctx, uc, sc.modules)
 	if err != nil {
-		return domain.Verdict{}, err
+		return domain.Answer{}, err
 	}
 	modulePath, ok := domain.ResolveSymbolModule(symbolID, coordinatePaths(coords))
 	if !ok {
 		// Unreachable in practice (the caller resolves the module first); a
 		// module we cannot resolve carries no dispatch signal, so it is absent.
-		return domain.Verdict{Outcome: domain.VerdictResolvedAbsent}, nil
+		return domain.Answer{Outcome: domain.AnswerResolvedAbsent}, nil
 	}
 
 	owning := make([]ports.CallGraphCoordinate, 0, len(coords))
@@ -442,7 +469,7 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	}
 	sort.Slice(owning, func(i, j int) bool { return owning[i].ModuleVersion < owning[j].ModuleVersion })
 
-	in := domain.NegativeVerdictInputs{
+	in := domain.NegativeAnswerInputs{
 		MethodName:             domain.SymbolMethodName(symbolID),
 		NodesByID:              map[string]domain.CallNode{},
 		ScanDispatch:           scanDispatch,
@@ -461,11 +488,11 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	for _, s := range owning {
 		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
 		if cErr != nil {
-			return domain.Verdict{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+			return domain.Answer{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
 		rec, found, gerr := uc.GetCallGraphRecordFrom(ctx, coord, s.PipelineVersion, domain.ComposeRequest{ToolchainPreference: sc.toolchain})
 		if gerr != nil {
-			return domain.Verdict{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
+			return domain.Answer{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
 		}
 		if !found {
 			continue
@@ -505,14 +532,14 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 		in.ReferenceScope = domain.ReferenceScopeUnknown
 	}
 
-	return domain.ClassifyNegativeVerdict(in), nil
+	return domain.ClassifyNegativeAnswer(in), nil
 }
 
-// writeCallVerdict prints, in text mode, the three-valued verdict for an empty
+// writeCallAnswer prints, in text mode, the three-valued verdict for an empty
 // callers/callees answer: a confident RESOLVED-ABSENT, or an UNRESOLVED verdict
 // with the soundness sinks named so a reviewer can act on them. kind is
 // "callers", "callees", or the transitive variants.
-func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict, opts ports.EdgeQueryOptions) error {
+func writeCallAnswer(stdout io.Writer, kind, symbolID string, v domain.Answer, opts ports.EdgeQueryOptions) error {
 	// A scope the caller chose is stated on the verdict line, not folded into
 	// the outcome: --exclude-tests narrows what "none" covers, and a reader who
 	// cannot see that narrowing will read the answer as wider than it is.
@@ -521,17 +548,17 @@ func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict,
 		scope = " (production only; --" + testScopeFlagName + " was given)"
 	}
 	switch v.Outcome {
-	case domain.VerdictUnresolved:
+	case domain.AnswerUnresolved:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: UNRESOLVED — %s of %s cannot be confirmed absent%s: %s\n",
+			"answer: UNRESOLVED — %s of %s cannot be confirmed absent%s: %s\n",
 			kind, symbolID, scope, v.Reason()); err != nil {
-			return fmt.Errorf("writing verdict: %w", err)
+			return fmt.Errorf("writing answer: %w", err)
 		}
 	default:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: RESOLVED-ABSENT — no %s of %s across a fully-built path%s\n",
+			"answer: RESOLVED-ABSENT — no %s of %s across a fully-built path%s\n",
 			kind, symbolID, scope); err != nil {
-			return fmt.Errorf("writing verdict: %w", err)
+			return fmt.Errorf("writing answer: %w", err)
 		}
 	}
 	return nil
@@ -580,7 +607,7 @@ func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
 	// the reader's to fix, and a gap this host's cold module cache opened is not a
 	// compile error to go looking for. Naming a command that cannot run and naming
 	// one that re-serves the record complained about are the same defect.
-	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, pr.detail, "")
+	return line + ".\n" + domain.IncompleteGraphRemedy(pr.coord, pr.cause, pr.detail, pr.analysisRoot)
 }
 
 // writeDroppedEdgesNotice prints droppedEdgesNotice, in text mode only.
@@ -650,13 +677,22 @@ type worktreeRouter interface {
 // they got before any of this existed — and being told so is the difference
 // between a stale answer and a stale answer they can act on.
 func writeWorktreeNotice(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, stdout io.Writer, scope coordinate.ModuleSet) error {
-	router, ok := uc.(worktreeRouter)
-	if !ok {
-		return nil
-	}
 	coord, ok, err := localCoordinateOwning(ctx, symbolID, uc, scope)
 	if err != nil || !ok {
 		return err
+	}
+	return writeWorktreeNoticeFor(ctx, coord, uc, stdout)
+}
+
+// writeWorktreeNoticeFor is the same disclosure for a caller that already knows
+// which coordinate answered, rather than one holding a symbol to resolve it
+// from. A command whose whole answer is about one project must say which
+// checkout of it replied, for the reason above: the choice is invisible and it
+// changes the answer.
+func writeWorktreeNoticeFor(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, stdout io.Writer) error {
+	router, ok := uc.(worktreeRouter)
+	if !ok {
+		return nil
 	}
 	r, found, err := router.WorktreeRouting(ctx, coord, cgapp.PipelineVersion)
 	if err != nil {
@@ -786,13 +822,39 @@ func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, 
 // but which is not a node in the stored call graph: distinct from
 // the module-never-analysed case so the user knows analysis ran and the symbol
 // itself is the problem.
-func unknownNodeMessage(symbolID, modulePath string) string {
+//
+// versions are the analysed versions of the module, newest first. They are
+// carried because callgraph-show takes a coordinate: naming the path alone
+// prints a line that exits 20, and where the store holds several versions the
+// reader also has to be told which ones exist to pick between them.
+func unknownNodeMessage(symbolID, modulePath string, versions []string) string {
+	held := ""
+	if len(versions) > 1 {
+		held = fmt.Sprintf("; analysed versions in the store are %s", strings.Join(versions, ", "))
+	}
 	return fmt.Sprintf(
 		"symbol %q is not a node in the analysed call graph of module %q: "+
-			"it may be a typo, or unexported/unreachable code. Verify the "+
+			"it may be a typo, or unexported/unreachable code%s. Verify the "+
 			"symbol, or list the module's known symbols:\n"+
-			"  kanonarion callgraph-show %s",
-		symbolID, modulePath, modulePath)
+			"  kanonarion callgraph-show %s@%s",
+		symbolID, modulePath, held, modulePath, versions[0])
+}
+
+// analysedVersionsOf are the versions of modulePath among coords, newest first.
+func analysedVersionsOf(modulePath string, coords []ports.CallGraphCoordinate) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, c := range coords {
+		if c.ModulePath != modulePath || seen[c.ModuleVersion] {
+			continue
+		}
+		seen[c.ModuleVersion] = true
+		out = append(out, c.ModuleVersion)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return versionorder.CompareModuleVersions(out[i], out[j]) > 0
+	})
+	return out
 }
 
 // unresolvedSymbolError builds the intent-aware diagnostic for a symbol whose
@@ -814,10 +876,13 @@ func unresolvedSymbolError(symbolID string) error {
 func unresolvedSymbolMessage(symbolID, localModulePath string) string {
 	if localModulePath != "" {
 		if _, ok := domain.ResolveSymbolModule(symbolID, []string{localModulePath}); ok {
+			// The module was identified from the go.mod in the current directory, so
+			// that directory IS the tree to ingest: name it rather than print a
+			// placeholder the reader has to substitute.
 			return fmt.Sprintf(
 				"symbol %q is not in the call-graph store: it belongs to the local "+
 					"module %q (author-mode code); ingest the working tree "+
-					"first:\n  kanonarion local <dir>",
+					"first:\n  kanonarion local .",
 				symbolID, localModulePath)
 		}
 	}

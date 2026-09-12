@@ -254,6 +254,12 @@ func populateGoModOne(
 // ensure, when non-nil, is called with each newly discovered batch before it is
 // written, so a caller can fetch coordinates its fact store is missing. The
 // returned Report accounts for every coordinate the closure reached.
+//
+// The second result is that reached set itself, in discovery order. It is the
+// module graph as the toolchain would read it, and a caller that has to resolve
+// the graph — rather than merely make it readable — has no other way to obtain
+// it: an unpruned main module's build list is the maximum version per path over
+// exactly these coordinates, and none of them can be enumerated from a walk.
 func PopulateGoModClosure(
 	ctx context.Context,
 	facts fetchports.FactStore,
@@ -261,8 +267,9 @@ func PopulateGoModClosure(
 	cacheDir string,
 	seeds []coordinate.ModuleCoordinate,
 	ensure func(context.Context, []coordinate.ModuleCoordinate),
-) Report {
+) (Report, []coordinate.ModuleCoordinate) {
 	var report Report
+	var reached []coordinate.ModuleCoordinate
 	seen := make(map[coordinate.ModuleCoordinate]struct{}, len(seeds))
 	queue := make([]coordinate.ModuleCoordinate, 0, len(seeds))
 	for _, c := range seeds {
@@ -291,6 +298,7 @@ func PopulateGoModClosure(
 
 		for _, coord := range batch {
 			report.Requested++
+			reached = append(reached, coord)
 			modPath, err := writeGoModEntry(ctx, facts, blobs, cacheDir, coord)
 			if err != nil {
 				report.Failures = append(report.Failures, CoordinateFailure{Coordinate: coord, Err: err})
@@ -319,7 +327,7 @@ func PopulateGoModClosure(
 			}
 		}
 	}
-	return report
+	return report, reached
 }
 
 // writeGoModEntry writes a coordinate's go.mod (plus .info and .lock) into the

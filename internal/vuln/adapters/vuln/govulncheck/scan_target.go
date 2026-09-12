@@ -58,7 +58,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// The target of a coordinate-keyed walk is a published zip extracted into a
 	// scratch directory, not a working tree, so there is no vendor/ tree to root
 	// at and this path is fetched-surface by construction.
-	env := scanEnv(os.Environ(), req.GoModCache, domain.AnalysisSurfaceFetched)
+	env := scanEnv(os.Environ(), req.GoModCache, surfaceNormalised)
 
 	// The environment above pins the toolchain so no scan child can download one,
 	// which also refuses a toolchain already unpacked on this host. One decision
@@ -92,7 +92,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	}
 	defer dbCleanup()
 
-	govulncheckBin, err := lookupGovulncheck()
+	tool, err := resolveGovulncheck(ctx)
 	if err != nil {
 		return domain.ProjectScanResult{}, err
 	}
@@ -110,7 +110,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	s.logger.Info("vuln-scan: running target-rooted govulncheck source mode", "dir", scanDir, "db", dbArg)
 	var byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
 	run, err := runGovulncheck(toolchains, env, func(childEnv []string) *exec.Cmd {
-		cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+		cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 		cmd.Dir = scanDir
 		cmd.Env = childEnv
 		return cmd
@@ -131,12 +131,13 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	if run.waitErr != nil {
 		waitErr, stderrStr := run.waitErr, run.detail
 		s.logger.Debug("vuln-scan: target-rooted govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
-		status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(waitErr, stderrStr)
+		f := classifyScanFailure(waitErr, stderrStr, tool)
 		return domain.ProjectScanResult{
-			Status:            status,
-			UnscanReason:      unscanReason,
-			ErrorDetail:       errorDetail,
-			UnscannableReason: unscannableReason,
+			Status:            f.status,
+			UnscanReason:      f.unscanReason,
+			ErrorDetail:       f.errorDetail,
+			UnscannableReason: f.unscannableReason,
+			FailureCause:      f.cause,
 			AdvisoryCount:     advisories,
 		}, nil
 	}

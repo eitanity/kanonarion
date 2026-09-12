@@ -73,10 +73,11 @@ renamed or is dropped, so a consumer reading it today reads the same values.
 The section carries the figures the run also prints to stderr, under the field
 names [`verification-coverage --json`](verification-coverage.md) publishes:
 `cross_verified`, `cross_verifiable`, `collapsed`, the per-bucket counts, the
-per-module rows under `modules`, and the fetch ledger's four VCS-evidence counts
-under `vcs`. Those four are kept apart - `rechecked`, `inherited`, `never`,
-`not_measured` - because a module that was never cross-verified is a different
-fact from one whose record cannot say.
+per-module rows under `modules`, and the fetch ledger's five VCS-evidence counts
+under `vcs`. Those five are kept apart - `rechecked`, `inherited`, `never`,
+`not_measured`, `unavailable` - because a module that was never cross-verified is
+a different fact from one whose record cannot say, and both differ again from one
+whose check could not run because the measuring host had no `git`.
 
 Two keys state the measurement itself. `measured` is `false` when this run took
 none, and `statement` is the sentence the reader is shown, carried verbatim. A
@@ -91,7 +92,7 @@ report.
     "cross_verified": 7,
     "cross_verifiable": 7,
     "collapsed": false,
-    "vcs": { "rechecked": 7, "inherited": 0, "never": 0, "not_measured": 0 },
+    "vcs": { "rechecked": 7, "inherited": 0, "never": 0, "not_measured": 0, "unavailable": 0 },
     "measured": true,
     "statement": "verification coverage over 7 module(s): …"
   }
@@ -671,7 +672,7 @@ vendored build:
   this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
 ```
 
-It states a fact and changes no verdict: a vendored project answers exactly as
+It states a fact and changes no answer: a vendored project answers exactly as
 before, with one more line of basis. `kanonarion vendor` is the command that
 compares the shipped bytes against the published module zips.
 
@@ -715,7 +716,7 @@ Each standard-library custody measurement the walk persists appends one
 run), the verification anchors that acquisition established (`godev_checksum`,
 `googlesource_commit`, `local_toolchain_source`), the artefact identity it was
 taken over, and the record's content hash. It witnesses the write, not the
-verdict - the custody record itself carries the verification status, the
+conclusion - the custody record itself carries the verification status, the
 published checksum and the licence, and the content hash is what reaches them.
 The tarball is cached per Go version, so a re-used measurement appends nothing
 and `--force` re-acquires and appends again; a run that could not establish

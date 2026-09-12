@@ -12,7 +12,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func buildNode(fn *ssa.Function, mem moduleMembership, fset *token.FileSet, tempDir string) domain.CallNode {
+func buildNode(fn *ssa.Function, mem moduleMembership, fset *token.FileSet, roots sourceRoots) domain.CallNode {
 	pkgPath := funcPackagePath(fn)
 	isExternal := !mem.contains(pkgPath)
 
@@ -24,7 +24,7 @@ func buildNode(fn *ssa.Function, mem moduleMembership, fset *token.FileSet, temp
 		p := fset.Position(fn.Pos())
 		if p.IsValid() {
 			pos = domain.SourcePosition{
-				File: relativePath(p.Filename, tempDir),
+				File: roots.rel(p.Filename),
 				Line: p.Line,
 			}
 		}
@@ -303,6 +303,54 @@ func isMainPkg(fn *ssa.Function) bool {
 		return true
 	}
 	return pkg.Name() == "main"
+}
+
+// sourceRoots are the per-run directories a file the loader resolved may sit
+// under, and relativising against them is what keeps a directory name this
+// process invented out of the record.
+//
+// It is not cosmetic, and the reason is the one moduleRelative states for
+// failure detail: a node position is inside the record's canonical form, so a
+// random component in one means no two analyses of an unchanged module ever
+// produce the same record. Every repeat then appends a generation, for ever.
+// Foreign positions reached that shape the moment the analysis stopped reading
+// the host's module cache and started reading one it had built.
+//
+// module is the extracted module, whose own files are recorded relative to it —
+// api.go, lib/hooks.go. moduleCache is the materialised GOMODCACHE, whose files
+// are recorded relative to IT, which spells a dependency's file as
+// github.com/json-iterator/go@v1.1.9/adapter.go: the module, its version and the
+// file, and nothing about where this run put them. It is empty when the analysis
+// reads a cache this run did not create — a working tree's, or the operator's
+// under --from-modcache — where the path is a real place a reader can open.
+type sourceRoots struct {
+	module      string
+	moduleCache []string
+}
+
+// newSourceRoots states the roots for one analysis. Both spellings of the cache
+// root are held: the loader reports the path it resolved, which on a host whose
+// temporary directory is a symlink is not the path this process created.
+func newSourceRoots(module, moduleCache string) sourceRoots {
+	r := sourceRoots{module: module}
+	if moduleCache == "" {
+		return r
+	}
+	r.moduleCache = append(r.moduleCache, moduleCache)
+	if resolved, err := filepath.EvalSymlinks(moduleCache); err == nil && resolved != moduleCache {
+		r.moduleCache = append(r.moduleCache, resolved)
+	}
+	return r
+}
+
+// rel renders one resolved path as the record states it.
+func (r sourceRoots) rel(path string) string {
+	for _, root := range r.moduleCache {
+		if trimmed := strings.TrimPrefix(path, root+string(filepath.Separator)); trimmed != path && trimmed != "" {
+			return trimmed
+		}
+	}
+	return relativePath(path, r.module)
 }
 
 // relativePath strips tempDir prefix from path for cleaner output.

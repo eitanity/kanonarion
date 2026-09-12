@@ -311,6 +311,7 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"store ledger":          {},
 	"symbol-context":        {args: []string{jsonDocDepCoord, jsonDocSymbol}},
 	"symbol-find":           {args: []string{jsonDocSymbol}},
+	"usage":                 {args: []string{jsonDocDepCoord, "--walk-id", jsonDocWalkID}},
 	"use":                   {argsFn: useCopyArgs},
 	"vendor":                {argsFn: goModArgs},
 	"verification-coverage": {args: []string{jsonDocWalkID}},

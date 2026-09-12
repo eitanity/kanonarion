@@ -10,6 +10,9 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
 
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -121,6 +124,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newCallersCmd(stdout, stderr),
 		newCalleesCmd(stdout, stderr),
 		newImplementersCmd(stdout, stderr),
+		newUsageCmd(stdout, stderr),
 		newCapabilityCmd(stdout, stderr),
 		newDependentsCmd(stdout, stderr),
 		NewExtractCmd(stdout, stderr),
@@ -208,12 +212,31 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
+	// A ceiling handed to this process by whatever spawned it is adopted before
+	// any command runs, so an analysis that cannot fit says so and stops instead
+	// of being taken by the kernel with nothing recorded. Absent the variable this
+	// starts nothing at all, which is every invocation an operator makes by hand.
+	childproc.EnforceMemoryCeiling(os.Getenv, stderr, func() { os.Exit(ExitFailed) })
+
 	// An invocation leaves nothing behind. The reset newRootCmd makes protects
 	// the next invocation; this one protects a reader that never makes one —
 	// the test binary that runs a command through Run and then calls a render
 	// function directly, which is how a --json run made the next direct call
 	// answer in JSON.
 	defer resetInvocationState()
+
+	// The store's own writes, and those of any child this run spawned, are
+	// counted for the whole invocation. It is reported here rather than per
+	// command because contention is a property of the run: a run that waited for
+	// the lock forty-eight times said so nowhere at all before this, and a reader
+	// comparing two runs of one command had no way to see the difference between
+	// them.
+	sqlitestore.ResetRetries()
+	defer func() {
+		if notice := sqlitestore.ContentionNotice(sqlitestore.Retries()); notice != "" {
+			_, _ = fmt.Fprint(stderr, notice)
+		}
+	}()
 
 	root := newRootCmd(stdout, stderr)
 	installDefaultSubcommands(root)

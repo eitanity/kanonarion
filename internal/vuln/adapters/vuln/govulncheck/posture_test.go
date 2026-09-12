@@ -29,9 +29,10 @@ func checkPosture(t *testing.T, name string, base, got []string) {
 // builder that had it, which a per-builder assertion cannot see.
 func TestScanProducersMatchTheStatedPostures(t *testing.T) {
 	base := []string{"PATH=/usr/bin"}
-	checkPosture(t, "scan-vendored", base, scanEnv(base, goenv.ModCache, domain.AnalysisSurfaceVendored))
-	checkPosture(t, "scan-fetched", base, scanEnv(base, "", domain.AnalysisSurfaceFetched))
-	checkPosture(t, "scan-fetched-modcache", base, scanEnv(base, goenv.ModCache, domain.AnalysisSurfaceFetched))
+	checkPosture(t, "scan-vendored", base, scanEnv(base, goenv.ModCache, surfaceVendored))
+	checkPosture(t, "scan-fetched", base, scanEnv(base, "", surfaceNormalised))
+	checkPosture(t, "scan-fetched-modcache", base, scanEnv(base, goenv.ModCache, surfaceNormalised))
+	checkPosture(t, "scan-binary-build", base, withCgoDisabled(scanEnv(base, goenv.ModCache, surfaceNormalised)))
 
 	ambient := os.Environ()
 	vendored := writeWorkspaceVendoredFixture(t, false)
@@ -63,7 +64,7 @@ func TestPostureTableAnswersForEveryVariableOnEverySurface(t *testing.T) {
 // whole mechanism lives inside: the pin exists so no scan child can reach out,
 // and an escalation that opened it would have traded one defect for a worse one.
 func TestEscalatedScanEnvironmentChangesTheToolchainAndNothingElse(t *testing.T) {
-	base := scanEnv([]string{"PATH=/usr/bin"}, goenv.ModCache, domain.AnalysisSurfaceFetched)
+	base := scanEnv([]string{"PATH=/usr/bin"}, goenv.ModCache, surfaceNormalised)
 
 	got := goenv.WithOnDiskToolchain(base, "/toolchains")
 

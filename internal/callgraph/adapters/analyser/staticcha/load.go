@@ -90,6 +90,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		return pkgs, nil
 	}
 
+	a.step(coord, "loading package syntax")
 	loaded, lErr := load(true)
 	if lErr != nil {
 		// Loading with tests is not viable for this module. Retry without them
@@ -109,6 +110,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		}
 	}
 	a.logMem(ctx, "syntax_loaded")
+	a.step(coord, fmt.Sprintf("syntax loaded (%d packages)", len(loaded)))
 	res.SourceFiles = loadedSourceFiles(loaded)
 	// Taken here, while the loader's own answer is still in hand: p.Syntax and
 	// p.TypesInfo are dropped further down, and the module a package belongs to is
@@ -164,6 +166,27 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		}
 	}
 
+	// Every import the loader could not resolve because the module providing it is
+	// not on this host and the analysis is not permitted to fetch one. It is read
+	// from the WHOLE loaded graph, dependencies included, and that is the point:
+	// the go command attaches its own sentence — the one that names its offline
+	// posture — to the package it could not obtain, while the target package that
+	// imports it gets only the type-checker's consequence, "could not import X
+	// (invalid package name: \"\")". The consequence is what LoadErrs carries and
+	// what the record used to be classified from, so a cold cache read as the
+	// module's own source failing to compile.
+	//
+	// The metadata load catches most of these already. It cannot catch the
+	// test-only ones: it runs with Tests off, so a dependency imported solely from
+	// _test.go files never appears in its graph at all, and every module whose only
+	// missing requirement was a test framework was filed against the module.
+	//
+	// It is kept OUT of LoadErrs deliberately. LoadErrs decides the Partial
+	// downgrade and the failure detail, and folding a dependency's errors into it
+	// would change what a complete extraction reports. This is a separate reading
+	// of the same load, consulted only where a cause is being decided.
+	res.UnobtainableImports = unobtainableImports(loaded)
+
 	// Pass 2: register the transitive dependencies that are not targets. They
 	// carry no syntax, so their method bodies are absent by design; the
 	// single-implementer devirtualisation pass recovers the dispatch edges CHA
@@ -176,6 +199,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		})
 	}
 	a.logMem(ctx, "packages_registered")
+	a.step(coord, fmt.Sprintf("packages registered (%d)", len(built)))
 
 	// Pass 3: build. Every package the builder can reach is registered now, so
 	// no build resolves a callee through a placeholder.
@@ -185,7 +209,14 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// that difference is only knowable here: downstream, a program with registered
 	// packages and no built bodies is indistinguishable from one built from
 	// metadata. Recording it is what gives CompletenessTypeOnly a producer.
-	for _, ssaPkg := range built {
+	var builtPaths []string
+	for i, ssaPkg := range built {
+		// Progress inside the phase, not only at its end: SSA construction over a
+		// large closure is the longest stretch this analysis can spend without
+		// saying anything, and a parent bounding a stalled subprocess needs the difference.
+		if i%ssaBuildProgressStride == 0 {
+			a.step(coord, fmt.Sprintf("building SSA (%d of %d packages)", i, len(built)))
+		}
 		if berr := buildSSAPackageSafe(ssaPkg); berr != nil {
 			path := ""
 			if ssaPkg.Pkg != nil {
@@ -196,7 +227,15 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			continue
 		}
 		res.BodiesBuilt++
+		if ssaPkg.Pkg != nil {
+			builtPaths = append(builtPaths, ssaPkg.Pkg.Path())
+		}
 	}
+	// Which modules other than this one had their packages built here. The target
+	// set was selected by path prefix and Go module paths nest, so this is
+	// routinely non-empty; it is taken from the packages that actually BUILT,
+	// because the claim being recorded is about bodies and not about selection.
+	res.ForeignModulesBuilt = res.Membership.foreignModules(builtPaths)
 	// The ASTs and type info are held only until the packages that need them are
 	// built; ssa keeps its own references while building and drops them after.
 	for _, p := range loaded {
@@ -205,6 +244,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	}
 	runtime.GC()
 	a.logMem(ctx, "ssa_built")
+	a.step(coord, fmt.Sprintf("SSA built (%d packages with bodies)", res.BodiesBuilt))
 
 	if len(failedSet) > 0 {
 		res.FailedPkgs = make([]string, 0, len(failedSet))
@@ -216,6 +256,11 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 
 	return res, nil
 }
+
+// ssaBuildProgressStride is how often the build loop reports. Sized so a
+// several-hundred-package closure narrates a handful of times rather than once
+// per package.
+const ssaBuildProgressStride = 25
 
 // ssaBuildResult is the outcome of loading and building a module's packages.
 type ssaBuildResult struct {
@@ -241,6 +286,17 @@ type ssaBuildResult struct {
 	// moduleMembership: this is the only place the loader's answer is available,
 	// so it is captured here rather than reconstructed downstream.
 	Membership moduleMembership
+	// ForeignModulesBuilt names the modules other than the analysed one whose
+	// packages were built with bodies by this load, at the versions the loader
+	// resolved. See domain.ForeignModule for why a record that holds them must
+	// say so.
+	ForeignModulesBuilt []domain.ForeignModule
+	// UnobtainableImports are the import paths of packages the load could not
+	// obtain because the module providing them is absent from this host and the
+	// analysis runs offline, sorted and deduplicated. They are what separates a
+	// module whose sources do not compile from a host that could not assemble the
+	// build — see unobtainableImports.
+	UnobtainableImports []string
 	// SourceFiles are the absolute paths the LOADER resolved for the packages it
 	// returned: compiled Go files, the Go files as written, and the non-Go source
 	// (assembly, cgo) that goes into the same packages. They are what the worktree
@@ -254,6 +310,36 @@ type ssaBuildResult struct {
 // joined the SSA program; it does not mean its bodies were built — see
 // BodiesBuilt.
 func (r ssaBuildResult) Registered() int { return len(r.TargetPkgs) + len(r.TestPkgs) }
+
+// unobtainableImports lists the import paths in the loaded graph whose own error
+// is the go command reporting that it could not look the module up, sorted and
+// deduplicated.
+//
+// The whole graph is visited, not just the roots. A dependency the module cache
+// does not hold is a leaf the loader reached and failed on, and the failure is
+// recorded THERE; the module's own package records only the type-checker's
+// downstream complaint about an import with no package name in it. Reading only
+// the roots is why a cold cache was indistinguishable from a module that does not
+// compile.
+func unobtainableImports(pkgs []*packages.Package) []string {
+	seen := map[string]bool{}
+	var out []string
+	packages.Visit(pkgs, nil, func(p *packages.Package) {
+		if p.PkgPath == "" || seen[p.PkgPath] {
+			return
+		}
+		for _, e := range p.Errors {
+			if !isOfflineCacheMiss(e.Error()) {
+				continue
+			}
+			seen[p.PkgPath] = true
+			out = append(out, p.PkgPath)
+			return
+		}
+	})
+	sort.Strings(out)
+	return out
+}
 
 // loadedSourceFiles lists every file the loader resolved for the packages it
 // was asked to load, absolute, in no particular order and with duplicates.

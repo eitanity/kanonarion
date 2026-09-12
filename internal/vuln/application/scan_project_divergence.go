@@ -10,6 +10,7 @@ import (
 	"golang.org/x/mod/modfile"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -161,7 +162,7 @@ func (uc *ScanWalkUseCase) scanProjectDiverged(
 		findings, err := uc.mergeCoordinateFindings(ctx, coord, nil, false, *snapshot)
 		if err != nil {
 			uc.logger.Error("diverged project scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), surface, gotoolchain.Unrecorded, params, snapshot)
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), failurecause.Unrecorded, surface, gotoolchain.Unrecorded, params, snapshot)
 			if perr != nil {
 				return perr
 			}
@@ -170,7 +171,10 @@ func (uc *ScanWalkUseCase) scanProjectDiverged(
 		}
 		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings,
 			// No analysis of this build ran, so nothing establishes a toolchain.
-			domain.StatusUnscannable, domain.UnscanReasonProjectBuildDiverged, reason, "", surface, gotoolchain.Unrecorded, params, snapshot)
+			domain.StatusUnscannable, domain.UnscanReasonProjectBuildDiverged, reason, "",
+			// The project builds something other than what the walk recorded: that is a
+			// property of the tree, not of this host.
+			failurecause.Module, surface, gotoolchain.Unrecorded, params, snapshot)
 		if perr != nil {
 			return perr
 		}

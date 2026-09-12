@@ -28,11 +28,11 @@ which indexes the directory in place.
 
 ### What the answers claim
 
-Every query in this family reports a **three-valued verdict**, because an empty
-answer has two very different causes and conflating them is the failure mode the
-whole design exists to prevent:
+Every query in this family reports a **three-valued answer**, printed on a
+`answer:` line, because an empty answer has two very different causes and
+conflating them is the failure mode the whole design exists to prevent:
 
-| Verdict | Meaning |
+| `answer:` | Meaning |
 |---|---|
 | `RESOLVED-PRESENT` | Edges (or implementers) were found. |
 | `RESOLVED-ABSENT` | A measurement: nothing was found across a fully-built path, with no soundness sink in the way. |
@@ -42,16 +42,39 @@ whole design exists to prevent:
 forced the downgrade, so a reader can act on them:
 
 ```
-verdict: UNRESOLVED — callers of pkg.(*T).Do cannot be confirmed absent:
+answer: UNRESOLVED — callers of pkg.(*T).Do cannot be confirmed absent:
   test-scope-unmeasured at pkg.(*T).Do (_test.go declarations were not analysed for this module)
 ```
 
 ## What one run costs
 
 One `callgraph` run loads the module's **full transitive dependency closure**
-into SSA in a single process. That closure is what the run costs, not the
-module's own source size: a small module that pulls a large one in costs what
-the large one costs.
+into SSA in a single process. For most modules that is a gigabyte-scale,
+seconds-scale operation — the figures below are all between 0.23 and 1.22 GB.
+
+A small number of modules cost far more, and **you cannot predict which from
+their size**. What the cost tracks is the number of call edges the analysis
+resolves, which is not the module's size and not how many interfaces it declares.
+Measured on one host: `google.golang.org/api@v0.290.0`, with 344,500 functions
+and 16 interface declarations, resolves 1.1M edges and peaks at 11.6 GiB;
+`github.com/envoyproxy/go-control-plane/envoy@v1.37.0`, a fifth its size, resolves
+**29.3M** edges and peaks at **21.8 GB**. `k8s.io/client-go@v0.36.3` declares 977
+interfaces — more than either — and peaks at 1.7 GiB.
+
+Generated code is where the large edge counts come from, because generated types
+implement a shared interface in bulk and every call through it resolves to all of
+them. `github.com/felixge/httpsnoop@v1.1.0` is the clearest case: a library of a
+few hundred lines, declaring four interfaces, that resolves 3.2M edges.
+
+Three practical consequences. A whole-walk run bounds this for you:
+[`extract`](extract.md#how-large-one-analysis-may-get) gives each analysis a
+memory ceiling derived from the host, so a module that will not fit records
+`OutOfMemory` and the run carries on. A single `callgraph` run has no such
+ceiling, so for an unfamiliar module on a small machine, run it on its own before
+running it beside anything you mind losing. And **storing a large graph costs far
+more than analysing it** — that 29.3M-edge record takes about a minute to analyse
+and around twenty-five to persist, occupying roughly 31 GB of store, because every
+edge is indexed by its endpoints.
 
 The figures below come from one developer machine — 32 cores, 61 GiB of RAM —
 over this project's own dependency set, each module fetched first and then
@@ -76,10 +99,12 @@ constants, because a different toolchain or a changed closure moves them.
 
 The whole-walk figure is a different question with a different answer.
 [`extract --stages callgraph`](extract.md#callgraph-subprocess-isolation) runs
-this analysis in `--workers` concurrent subprocesses, so its peak is roughly
-`--workers` times the largest module's peak, and that is where the
-out-of-memory risk lives. `--workers` is the control: lowering it lowers the
-peak proportionally.
+this analysis in concurrent subprocesses, so its peak is roughly the number
+running at once times the peak of the most expensive module it reaches — which is
+not necessarily the largest one. `--callgraph-workers` is the control - **not**
+`--workers`, which sizes the module pool and leaves the subprocess bound alone.
+It defaults to at most 4 and lowering it lowers the peak proportionally, and each
+analysis carries its own ceiling on top of that.
 
 ## Calls and references
 
@@ -174,10 +199,10 @@ every test-only consumer.
   absence it cannot substantiate.
 
 When you pass `--exclude-tests`, the answer says so, so a narrowed answer is
-never read as a wider one. An empty answer says it on the verdict line:
+never read as a wider one. An empty answer says it on the answer line:
 
 ```
-verdict: RESOLVED-ABSENT — no callers of pkg.(*T).Do across a fully-built path (production only; --exclude-tests was given)
+answer: RESOLVED-ABSENT — no callers of pkg.(*T).Do across a fully-built path (production only; --exclude-tests was given)
 ```
 
 A non-empty answer says it on a `scope:` line under the list — "1 caller" is
@@ -200,12 +225,53 @@ analysis does not read. `callers` on one answers `UNRESOLVED` naming
 `test-harness-entry`, not a confident absence:
 
 ```
-verdict: UNRESOLVED — callers of pkg.TestThing cannot be confirmed absent:
+answer: UNRESOLVED — callers of pkg.TestThing cannot be confirmed absent:
   test-harness-entry at pkg.TestThing (the go test harness invokes it through a synthesised main package that is not part of the analysed graph)
 ```
 
 A method on a test fake is not an entry point — it is reached by dispatch or not
 at all — so its absence is still a measurement.
+
+## Answers that came from another module's code
+
+**Why this matters:** without this line you can read another module's answer as
+though it were this module's, and act on it. The rows look identical. Worse, what
+you are reading is a *partial* copy of that module, so "no callers" can mean
+"nothing calls it" or "the part that was copied here has no callers" — and those
+are opposite conclusions.
+
+Go module paths nest, but a nested path is a separate module. `example.com/mod`
+and `example.com/mod/loader` look like a package and its subdirectory. They are
+two modules, published separately, versioned separately.
+
+A call graph for `example.com/mod` can therefore hold `example.com/mod/loader`'s
+code, compiled with real function bodies. That is deliberate — those bodies are
+how calls passing through that code get resolved, and dropping them would make
+the graph worse — but they belong to a module this record is not about, at a
+version this record's coordinate does not name.
+
+So when part of an answer comes from that code, the answer says so:
+
+```
+answer: RESOLVED-PRESENT — 72 callers of fmt.Sprintf; 21 of 72 callers are nodes of a
+module the answering record is not about — example.com/mod/loader@v0.5.1, built with
+bodies inside example.com/mod@v1.15.1 — so that module's own record, not this one, is
+the measurement of it
+```
+
+Both counts appear because "21 of 72" and "72 of 72" call for different next
+steps. **Query the named module directly when the count matters** — its own
+record is the whole measurement of it; what is here is only what the parent's
+build happened to reach.
+
+No line means every row came from the queried module's own code, the same way
+the `--exclude-tests` scope line appears only when you narrowed the query. A
+record written before this axis existed also prints nothing: it makes no claim,
+and the query will not invent one by guessing from import paths.
+
+`implementers --json` carries the same statement as `answer_foreign_modules`,
+present only when non-empty. Single-hop `callers`/`callees` `--json` is a bare
+array of edges with nowhere to put it, and has never carried the answer line.
 
 ## Commands
 
@@ -222,12 +288,27 @@ kanonarion callgraph <module>@<version> [flags]
 | `--force` | `false` | Re-extract even if a cached record exists |
 | `--from-walk` | _(auto-discovered)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. Unset, the walk of a build that consumes the module is used; where the store holds it in more than one build, no build list is discovered and the builds are named on stderr so you can pin one. See [Modules published before Go modules](#modules-published-before-go-modules). |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
+| `--no-progress` | `false` | Suppress the per-phase narration on stderr |
 | `--json` | `false` | Emit the record as JSON to stdout |
 
 ```
 $ kanonarion callgraph golang.org/x/mod@v0.30.0
 golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
 ```
+
+The analysis narrates the phase it is in on stderr, so a run that takes minutes
+is visibly working rather than apparently wedged:
+
+```
+callgraph progress: golang.org/x/mod@v0.30.0: loading package metadata
+callgraph progress: golang.org/x/mod@v0.30.0: syntax loaded (34 packages)
+callgraph progress: golang.org/x/mod@v0.30.0: building SSA (25 of 34 packages)
+```
+
+The same lines are what a parent process reads to tell a working child from a
+stalled one - see [extract](extract.md#how-long-a-subprocess-may-run) - so a spawned
+child always writes them whatever this store's `preferences.progress` says. The
+flag silences them for a run you started by hand.
 
 ### Exit codes
 
@@ -266,6 +347,35 @@ it. The causes that recur:
 | `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
 | `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
+| `this host could not supply N module(s) the analysed module needs … : <path> <version>, …` | The module's dependency closure could not be assembled — the store does not hold those versions and the fetch for them failed (no network, a withdrawn version, a private module). The cause is `environment`, so the record is never served as a cache hit and a later run re-establishes the answer |
+
+#### What the load resolves against
+
+A fetched module is analysed as its own main module with the network off, so
+every version it needs has to be in a module cache before the load starts. The
+command builds that cache itself, out of the bytes the store already holds:
+
+* the **source** of every module the analysed `go.mod` requires, because the type
+  checker compiles it;
+* the **`go.mod`** of the versions minimal version selection reads on the way
+  there, where the module graph is not pruned — under a `go` directive below
+  1.17, or beneath a requirement that declares one.
+
+Anything the store is missing is **fetched**, which is what makes this cost
+network time and store space the first time a module is analysed: a walk fetches
+what the *consumer's* build resolved, and a module's own requirements are a
+different set. `cloud.google.com/go/iam@v1.11.0` requires 39 modules; the walk
+that reached it selected other versions of some of them, and until they were
+fetched the module could not be analysed at all. The second analysis of anything
+in the same family is served from the store.
+
+`--from-modcache` reads the module cache the operator named instead, and builds
+nothing: a populated cache has already answered the question.
+
+An incomplete population is reported rather than tolerated — the log names what
+was written against what was requested, and which coordinates failed — because
+with the network off a missing version is the difference between a module that
+resolves and one that records an environment failure.
 
 Package membership is decided by the module path the analysed tree **declares**,
 not by the coordinate it was published under. A fork republished at a new path
@@ -363,6 +473,46 @@ line means every in-module package was named by the build. On a record written
 before the line existed, its absence says nothing either way: those records
 decided every package by prefix and had nowhere to record it.
 
+A `foreign modules built:` line appears only when this analysis built another
+module's packages with real bodies:
+
+```
+  foreign modules built: 1 module(s) other than example.com/mod had packages built
+  with bodies here — each has its own record, which is the measurement of it:
+  example.com/mod/loader@v0.5.1
+```
+
+**Why this matters:** `BUILT_WITH_BODIES` is the label you read to decide
+whether "nothing calls this" is believable. Without this line that label quietly
+means two different things inside one record, depending which node a query landed
+on — and you have no way to tell which you got.
+
+The code is here on purpose. Which packages a record BUILDS is chosen by path
+prefix, deliberately wider than membership: a nested module built with bodies has
+its interface dispatch resolved rather than lost, and the graph is better for it.
+What the record could not previously say is that it had done so.
+
+Treat the line as a redirection. The nodes those modules contribute are a partial
+copy — the parent built whatever its own build reached, not the module — so an
+answer drawn from them is not the answer that module's own record gives. The
+version is named here because the parent's coordinate does not name it; a route
+through those nodes is otherwise a route through a version nobody stated.
+
+No line means this analysis built no foreign module's packages. On a record
+written before the line existed the absence says nothing either way, and
+`schema_version` under `--json` is what tells the two apart. In JSON the axis is
+`foreign_modules_built`, a list of `path`/`version` objects, present only when
+non-empty:
+
+```json
+{
+  "schema_version": "13",
+  "foreign_modules_built": [
+    {"path": "github.com/bytedance/sonic/loader", "version": "v0.5.1"}
+  ]
+}
+```
+
 `--node` is compared against the **fully-qualified node ID** — the package path
 plus the symbol, e.g. `example.com/mod/render.(*Engine).Render` — so a module
 path, a package path and a bare symbol name all select the nodes a reader
@@ -435,13 +585,18 @@ attributes it from when the record was written against this repository's own
 Under `--json`, `analyser` is always present and carries `module`, `version`,
 `provenance` (`observed`, `inferred`, or empty) and `inferred` as a boolean.
 
-Where the generations composed for one coordinate name more than one analyser
-VERSION, the composed read adds a `notice:` saying so, and `--json` carries it as
-`analyser_disagreement` (`analysers`, `served`). It changes nothing about which
-generation answers — the completeness ladder decides that — and it appears only
-where there is a disagreement to report: two generations at one version, or
-generations that name none, produce no line. `--history` names the analyser on
-every generation whether they agree or not.
+Where the generations the store holds for one coordinate at the served pipeline
+version name more than one analyser VERSION, the composed read adds a `notice:`
+saying so, and `--json` carries it as `analyser_disagreement` (`analysers`,
+`served`). The notice reads each generation's own analyser column, so it also
+names a generation written at a record schema this build no longer serves — such
+a row answers nothing and still says which library parsed it. `--history`
+discloses that generation too, so every version the notice names can be found
+there. It changes nothing about which generation answers — the completeness
+ladder decides that — and it appears only where there is a disagreement to
+report: two generations at one version, or generations that name none, produce
+no line. `--history` names the analyser on every generation whether they agree
+or not.
 
 ##### Modules published before Go modules
 
@@ -459,17 +614,19 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
   it the toolchain loads the complete, unpruned module graph and the load fails
   on a version nothing in the build compiles, and at 1.22 loop-variable scoping
   changes the SSA and with it the call graph;
-* a zip that ships its own `go.mod` is **never** touched. Modules that publish
-  one and still fail to load are failing for their own reasons, and overwriting
-  the published file would hide that;
+* a zip that ships its own `go.mod` is **never** synthesised over. Modules that
+  publish one and still fail to load are failing for their own reasons, and
+  overwriting the published file would hide that. The one edit made to a shipped
+  `go.mod` is dropping `replace` directives that point outside the extracted
+  tree, which apply to no consumer's build either and are described below;
 * if the module also ships a `vendor/` directory, vendor mode is explicitly
   disabled for the load, so the graph describes the module rather than vendored
   copies of its dependencies;
 * if the module's own packages import third-party code, the `require` directives
   are taken from the resolved build list of the walk named by `--from-walk` —
   the versions that build actually selected. The load then runs with
-  `GOPROXY=off` against the local module cache, so a version nobody chose can
-  never enter the graph. Without `--from-walk`, or when the build list does not
+  `GOPROXY=off` against the module cache the command materialised, so a version
+  nobody chose can never enter the graph. Without `--from-walk`, or when the build list does not
   provide *every* one of those imports, synthesis is refused outright and the
   module is left failing: a file naming some dependencies still sends the loader
   hunting for the rest. The refusal is on **the record**, naming the imports
@@ -520,6 +677,37 @@ digests, while identical pins from two different walks do not. The analysis is o
 published bytes **plus a file kanonarion invented**, and a record that did not
 state that would be claiming to describe the artefact it was sealed against. The
 field is absent — not empty — on every graph analysed as published.
+
+##### `replace` directives that point at a directory
+
+A module published from a monorepo carries `replace` directives naming its
+sibling directories — `replace example.com/mod => ../`, `replace
+example.com/mod/creds => ../creds/`. They apply to nobody: the go command ignores
+a `replace` in any module that is not the **main** module, so no consumer's build
+has ever used one. This analysis is the first build in which the module *is* the
+main module, and the zip contains no siblings, so every requirement so replaced
+dangles and every package importing it fails to type-check.
+
+**Every `replace` whose target is a directory outside the extracted tree is
+dropped before the load**, whether or not that directory happens to exist on this
+host. It cannot mean what it says here, and the extraction directory sits under
+the system temp root — so `../` names that root, and a stray `go.mod` there would
+otherwise be pulled into an unrelated module's analysis.
+
+Two forms are left exactly as published. A target **inside** the tree — a nested
+module the zip carries, `replace example.com/mod/dep => ./dep` — resolves as the
+publisher intended; and if that directory is absent the go command says
+`replacement directory ./dep does not exist`, which is a true statement about the
+published bytes and is recorded as the module's own fault. A target naming a
+**module version** resolves with no filesystem involved at all.
+
+The record says so. `fidelity:` gains a `[N replace directives dropped …]` note
+naming each one as the module wrote it, `--history` appends it to the artefact
+the generation was computed from, and `--json` carries a `dropped_replaces` array
+of `path` / `version` / `target` / `directive`. Two analyses of the same bytes
+that dropped different directives resolved different dependency versions and are
+two different graphs, so the field is inside the graph digest. It is absent — not
+empty — on every graph whose published directives were all in force.
 
 #### Generations
 
@@ -585,6 +773,29 @@ Generations that did not record a failure print no such line. Positions in a
 failure are module-relative; the directory a zip is staged in is gone by the
 time anyone reads the record.
 
+A record is written at a **record schema**, and a build serves only the current
+one: a generation at an older schema decodes with every later field at its zero
+value, so it answers nothing and is not listed. `--history` says how many such
+generations the coordinate holds and which library parsed each, because their
+columns still state that, and names the remedy:
+
+```
+* served by the composed read (highest completeness, then most recent, within one analysis source)
+
+not listed above: the store holds 1 generation(s) of it written at a record schema this build no longer decodes, parsed by golang.org/x/tools v0.47.0 (observed).
+  re-analyse it: kanonarion callgraph example.com/mod@v1.2.3
+```
+
+The same sentence appears where **no** generation at the served pipeline version
+decodes, on the line that reports the absence — there it separates a coordinate
+the store has never held from one whose every generation this build has stopped
+serving. A coordinate whose generations all decode prints no such line.
+
+The record schema is not the pipeline version, and `--history` states them
+differently. A generation under another **pipeline** version is outside the view
+entirely — the header names the pipeline version being listed — and is reported
+only when nothing at the served one answers.
+
 #### Composition
 
 A read returns one answer composed from the generations, on a stated ordering:
@@ -598,11 +809,11 @@ A read returns one answer composed from the generations, on a stated ordering:
 Recency is never the authority. A `METADATA_ONLY` graph appended after a
 `BUILT_WITH_BODIES` one analysed less of the same module, so it is a weaker
 measurement rather than a newer answer, and it does not displace its better. A
-graph cut short by a cold module cache is weaker at one level too, because
-`BUILT_WITH_BODIES` says how the loaded packages were analysed and not how much
-of the module was reached. It ranks below a complete analysis of the same
-artefact and never conflicts with one, so warming the cache and re-running is
-enough. Where no graph was produced the rung decides nothing and the newest
+graph cut short by a dependency the run could not obtain is weaker at one level
+too, because `BUILT_WITH_BODIES` says how the loaded packages were analysed and
+not how much of the module was reached. It ranks below a complete analysis of the
+same artefact and never conflicts with one, so re-running once the missing
+versions can be fetched is enough. Where no graph was produced the rung decides nothing and the newest
 account of the failure answers.
 
 The **Go toolchain is not on that ladder either**. A graph carries the
@@ -822,7 +1033,7 @@ method — an ID `callers` and `callees` also accept.
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
-| `--json` | `false` | Emit the result, verdict and scope as JSON |
+| `--json` | `false` | Emit the result, its `answer` and the scope as JSON |
 
 ```
 $ kanonarion implementers 'github.com/org/repo/internal/vuln/ports.VulnerabilityStore'
@@ -831,7 +1042,7 @@ $ kanonarion implementers 'github.com/org/repo/internal/vuln/ports.Vulnerability
   github.com/org/repo/internal/vuln/application_test.(*fakeVulnStore)  [test]  (github.com/org/repo@v0.0.0)
   ...
 scope: concrete types declared in github.com/org/repo; types in other modules that satisfy this interface are not measured
-verdict: RESOLVED-PRESENT — 7 concrete types satisfy github.com/org/repo/internal/vuln/ports.VulnerabilityStore
+answer: RESOLVED-PRESENT — 7 concrete types satisfy github.com/org/repo/internal/vuln/ports.VulnerabilityStore
 ```
 
 An implementer that satisfies the interface through an embedded type is
@@ -858,6 +1069,7 @@ one module:
 | `tests_excluded` | Whether `--exclude-tests` narrowed this answer |
 | `tests_exclude_flag` | The flag that narrows it, so a consumer can ask the other question |
 | `scope` | The sentence the text prints, kept as it was |
+| `answer_foreign_modules` | The modules other than the searched one that own implementers in this answer, `path`/`version`. Present only when non-empty — see [Answers drawn from a module the record is not about](#answers-drawn-from-a-module-the-record-is-not-about) |
 
 Three failure modes are kept distinct rather than collapsed into an empty list:
 
@@ -895,7 +1107,7 @@ constructing them by hand.
 | `uses_plugin` | The body references the Go `plugin` package |
 
 The last three are body-level facts a callee-identity map cannot witness. They
-are used by [`capability`](capability.md) analysis and by the verdict layer,
+are used by [`capability`](capability.md) analysis and by the answer layer,
 where each is a leaf soundness sink that downgrades a negative answer.
 
 ## Edge confidence
@@ -906,7 +1118,7 @@ where each is a leaf soundness sink that downgrades a negative answer.
 | `CHA-overapprox` | An unrefined Class Hierarchy Analysis over-approximation of an interface dispatch: every type-compatible method is a possible callee |
 | `VTA` | An interface dispatch narrowed to the types that actually flow to the call site |
 | `Framework` | An edge bound by a framework model or thunk rather than observed in source |
-| `Unknown` | An edge the analyser cannot resolve. A soundness sink: a verdict reaching one is `UNRESOLVED` |
+| `Unknown` | An edge the analyser cannot resolve. A soundness sink: an answer reaching one is `UNRESOLVED` |
 
 Reflect-dispatched calls carry `Unknown` plus a separate `reflect_dispatch`
 attribute, so the reflect provenance is preserved without inventing a
@@ -914,9 +1126,12 @@ confidence rank for it.
 
 Confidence answers *how was the target resolved*, a different question from
 *what kind of edge is it*. A reference edge is usually `Direct` — the analyser
-knows whose value was taken — and that is not a claim that a call happens. Read
-`kind` alongside `confidence`; a path is a chain of resolved calls only when
-every hop is `Direct` **and** no hop is a reference.
+knows whose value was taken — and that is not a claim that a call happens.
+
+**Why this matters:** read `confidence` alone and a chain of `Direct` hops looks
+like proof that the code runs, when one of those hops may only be a function
+value handed to a router that never invokes it. A path is a chain of resolved
+calls only when every hop is `Direct` **and** no hop is a reference.
 
 ## Overall status
 
@@ -935,7 +1150,7 @@ it could not measure. That package produced no SSA, so edges with an end inside
 it were dropped and the symbol is not a node in its own module's graph — but
 edges INTO it recorded in a consumer's complete graph are unaffected, and those
 are what the answer lists. The output carries a `notice: unmeasured on one
-side …` line naming the package, and an empty answer is `verdict: UNRESOLVED`
+side …` line naming the package, and an empty answer is `answer: UNRESOLVED`
 with a `dropped-package-edges` sink.
 
 The remedy the notice names depends on whose module failed: a project
@@ -1056,7 +1271,9 @@ re-extracting, so it appends nothing.
 ## Relation to other stages
 
 - **Requires:** `kanonarion fetch` — the module zip must exist in the blob store.
-  `kanonarion local` bypasses this for a working tree.
+  The module's own dependency closure does not: the analysis assembles that
+  itself and fetches what the store lacks. `kanonarion local` bypasses both for a
+  working tree, which resolves against the developer's own module cache.
 - **Feeds:** [`capability`](capability.md), [`reachability`](reachability.md),
   and the vulnerability reachability tier.
 

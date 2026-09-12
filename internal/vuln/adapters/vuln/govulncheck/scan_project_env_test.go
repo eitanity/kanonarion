@@ -60,6 +60,25 @@ func TestScanProject_ChildResolvesWithTheDevelopersOwnEnvironment(t *testing.T) 
 	}
 }
 
+// TestScanProject_ChildKeepsTheCallersCgoSetting is the guard the consolidation
+// onto scanEnv owes: project analysis loads packages with type information,
+// which runs cgo for a cgo package, so this surface must go on compiling exactly
+// what the developer's own build compiles.
+func TestScanProject_ChildKeepsTheCallersCgoSetting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the govulncheck stub is a POSIX shell script")
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/proj\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {}\n")
+	t.Setenv("CGO_ENABLED", "1")
+
+	if got := runProjectScanForChildEnv(t, dir)["CGO_ENABLED"]; got != "1" {
+		t.Errorf("the project scan child was given CGO_ENABLED=%q, want the caller's own 1: turning cgo off here "+
+			"would make a project with a cgo dependency fail to load, which is coverage lost rather than surface reduced", got)
+	}
+}
+
 // runProjectScanForChildEnv runs one project-rooted scan whose govulncheck is a
 // stub that records its own environment, and returns what the child was given.
 func runProjectScanForChildEnv(t *testing.T, projectDir string) map[string]string {

@@ -29,8 +29,9 @@ import (
 // graph this reads is the graph the audit reported on.
 func newVerificationCoverageCmd(stdout, stderr io.Writer) *cobra.Command {
 	var detail bool
+	var walkID string
 	cmd := &cobra.Command{
-		Use: "verification-coverage <walk-id>",
+		Use: "verification-coverage [<walk-id>]",
 		Annotations: map[string]string{
 			annotationStoreIntent: StoreIntentRead,
 			annotationNetworkUse:  NetworkNever,
@@ -57,15 +58,20 @@ reason says whether that was a proxy without Origin metadata, a forge that could
 not be reached, or a skip flag left set — which is the answer a tampering
 question actually needs.
 
+The walk is named in the positional slot or on --walk-id; the two are the same
+argument and giving both is refused.
+
 Where the walk was taken from a project directory that is still present, the
 report also states whether that project is vendored, because coverage describes
 the modules the manifest resolved and a vendored project compiles the bytes under
 vendor/.`,
 		Example: `  kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD
+  kanonarion verification-coverage --walk-id 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion verification-coverage <walk-id> --json | jq -e '.collapsed | not'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return usageErr(cmd)
+			id, err := oneWalkID(cmd, args, walkID)
+			if err != nil {
+				return err
 			}
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -73,10 +79,14 @@ vendor/.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVerificationCoverage(cmd.Context(), args[0], ctr.QueryWalks, ctr.QueryFetch, detail, stdout, stderr)
+			return runVerificationCoverage(cmd.Context(), id, ctr.QueryWalks, ctr.QueryFetch, detail, stdout, stderr)
 		},
 	}
 	cmd.Flags().BoolVar(&detail, "detail", false, "list every module with its verification class and the reason recorded for it")
+	// The walk goes in the positional slot or on this flag, whichever the caller
+	// reaches for: vuln-by-id, reachability and vuln-show take it as a flag, and
+	// arriving here from one of those should not cost a round trip.
+	cmd.Flags().StringVar(&walkID, "walk-id", "", "the walk to report on, in place of the positional argument")
 	return cmd
 }
 
@@ -294,6 +304,11 @@ type coverageVCSJSON struct {
 	// cannot say, and a gate that treats the two alike calls an unmigrated
 	// store a collapse.
 	NotMeasured int `json:"not_measured"`
+	// Unavailable is a record whose VCS check was attempted and could not run
+	// because the measuring host had no git. It is a fault of that machine, not
+	// an absence of anchor for the module, and it clears by installing git and
+	// re-running — no --force, because such a record is not cache-eligible.
+	Unavailable int `json:"unavailable"`
 }
 
 func verificationCoverageJSON(
@@ -336,6 +351,7 @@ func verificationCoverageJSON(
 			Inherited:   c.VCSInherited,
 			Never:       c.VCSNever,
 			NotMeasured: c.VCSNotMeasured,
+			Unavailable: c.VCSUnavailable,
 		},
 	}
 }

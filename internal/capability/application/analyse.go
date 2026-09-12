@@ -32,23 +32,34 @@ func NewAnalyseCapabilitiesUseCase(source CallGraphSource) *AnalyseCapabilitiesU
 	return &AnalyseCapabilitiesUseCase{source: source}
 }
 
-// Analyse reads the call graph for coord and returns its capability report.
-func (uc *AnalyseCapabilitiesUseCase) Analyse(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (capdomain.CapabilityReport, error) {
+// Analyse reads the call graph for coord and returns its capability report,
+// rooted at the scope the caller asked for.
+func (uc *AnalyseCapabilitiesUseCase) Analyse(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	pipelineVersion string,
+	scope cgdomain.RootScope,
+) (capdomain.CapabilityReport, error) {
 	rec, err := uc.load(ctx, coord, pipelineVersion)
 	if err != nil {
 		return capdomain.CapabilityReport{}, err
 	}
-	return capdomain.Analyse(rec, capdomain.SelectRoots(rec)), nil
+	return capdomain.Analyse(rec, capdomain.SelectRoots(rec, scope)), nil
 }
 
 // Diff reads the call graphs for two coordinates and returns their per-side
 // reports plus the capability diff between them.
-func (uc *AnalyseCapabilitiesUseCase) Diff(ctx context.Context, from, to coordinate.ModuleCoordinate, pipelineVersion string) (fromReport, toReport capdomain.CapabilityReport, diff capdomain.CapabilityDiff, err error) {
-	fromReport, err = uc.Analyse(ctx, from, pipelineVersion)
+func (uc *AnalyseCapabilitiesUseCase) Diff(
+	ctx context.Context,
+	from, to coordinate.ModuleCoordinate,
+	pipelineVersion string,
+	scope cgdomain.RootScope,
+) (fromReport, toReport capdomain.CapabilityReport, diff capdomain.CapabilityDiff, err error) {
+	fromReport, err = uc.Analyse(ctx, from, pipelineVersion, scope)
 	if err != nil {
 		return capdomain.CapabilityReport{}, capdomain.CapabilityReport{}, capdomain.CapabilityDiff{}, fmt.Errorf("analysing %s: %w", from, err)
 	}
-	toReport, err = uc.Analyse(ctx, to, pipelineVersion)
+	toReport, err = uc.Analyse(ctx, to, pipelineVersion, scope)
 	if err != nil {
 		return capdomain.CapabilityReport{}, capdomain.CapabilityReport{}, capdomain.CapabilityDiff{}, fmt.Errorf("analysing %s: %w", to, err)
 	}

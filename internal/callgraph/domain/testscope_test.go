@@ -21,14 +21,14 @@ func TestClassifyNegativeVerdict_UnmeasuredTestScopeDowngrades(t *testing.T) {
 		{"explicitly excluded", domain.TestScopeExcluded},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			v := domain.ClassifyNegativeVerdict(domain.NegativeVerdictInputs{
+			v := domain.ClassifyNegativeAnswer(domain.NegativeAnswerInputs{
 				MethodName:  "Root",
 				QueriedNode: domain.CallNode{ID: "m.Root", Symbol: "Root"},
 				Found:       true,
 				ModuleLevel: domain.CompletenessBuiltWithBodies,
 				TestScope:   tc.scope,
 			})
-			if v.Outcome != domain.VerdictUnresolved {
+			if v.Outcome != domain.AnswerUnresolved {
 				t.Fatalf("outcome = %s, want UNRESOLVED", v.Outcome)
 			}
 			var found bool
@@ -49,7 +49,7 @@ func TestClassifyNegativeVerdict_UnmeasuredTestScopeDowngrades(t *testing.T) {
 // narrows the question; it does not make the answer unsound, so the outcome
 // stays a confident absent and the narrowing is stated elsewhere.
 func TestClassifyNegativeVerdict_ExcludedByRequestIsNotASink(t *testing.T) {
-	v := domain.ClassifyNegativeVerdict(domain.NegativeVerdictInputs{
+	v := domain.ClassifyNegativeAnswer(domain.NegativeAnswerInputs{
 		MethodName:             "Root",
 		QueriedNode:            domain.CallNode{ID: "m.Root", Symbol: "Root"},
 		Found:                  true,
@@ -58,7 +58,7 @@ func TestClassifyNegativeVerdict_ExcludedByRequestIsNotASink(t *testing.T) {
 		ReferenceScope:         domain.ReferenceScopeAnalysed,
 		TestsExcludedByRequest: true,
 	})
-	if v.Outcome != domain.VerdictResolvedAbsent {
+	if v.Outcome != domain.AnswerResolvedAbsent {
 		t.Fatalf("outcome = %s (%s), want RESOLVED-ABSENT", v.Outcome, v.Reason())
 	}
 }
@@ -67,7 +67,7 @@ func TestClassifyNegativeVerdict_ExcludedByRequestIsNotASink(t *testing.T) {
 // axis went unmeasured in front of the reader: an unmeasured axis named is worth
 // more than one merely flagged.
 func TestClassifyNegativeVerdict_TestScopeDetailIsCarried(t *testing.T) {
-	v := domain.ClassifyNegativeVerdict(domain.NegativeVerdictInputs{
+	v := domain.ClassifyNegativeAnswer(domain.NegativeAnswerInputs{
 		MethodName:      "Root",
 		QueriedNode:     domain.CallNode{ID: "m.Root", Symbol: "Root"},
 		Found:           true,

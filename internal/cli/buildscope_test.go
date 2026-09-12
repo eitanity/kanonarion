@@ -215,6 +215,13 @@ func TestCheckSymbolInScope_ModuleNotInBuild(t *testing.T) {
 	if !strings.Contains(err.Error(), "does not contain") || !strings.Contains(err.Error(), "v1.0.0") {
 		t.Errorf("diagnostic does not name the build or the analysed versions: %v", err)
 	}
+	// The refusal and `usage` answering the same coordinate is a deliberate
+	// policy difference between a walk-scoped symbol query and a question about
+	// a module the build has not adopted. Naming the other command is what stops
+	// that difference from being something a reader has to discover.
+	if !strings.Contains(err.Error(), "kanonarion usage example.com/dep@v1.0.0") {
+		t.Errorf("the refusal does not name the command that answers across stored versions: %v", err)
+	}
 }
 
 // TestCheckSymbolInScope_VersionNotAnalysed distinguishes the neighbouring case:

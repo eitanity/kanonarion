@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -371,7 +372,7 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 	}
 
 	c := canonicalWalkRecord{
-		CompletedAt: r.CompletedAt.UTC().Format(time.RFC3339),
+		CompletedAt: recordstamp.Format(r.CompletedAt),
 		ContentHash: r.ContentHash,
 		Depth:       depth,
 		Ecosystem:   r.Ecosystem,
@@ -383,7 +384,7 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 			Partial:         r.Graph.Partial,
 			PartialReason:   r.Graph.PartialReason,
 			PipelineVersion: r.Graph.PipelineVersion,
-			ResolvedAt:      r.Graph.ResolvedAt.UTC().Format(time.RFC3339),
+			ResolvedAt:      recordstamp.Format(r.Graph.ResolvedAt),
 			Target:          toCanonicalCoord(r.Graph.Target),
 		},
 		ID:              r.ID,
@@ -396,7 +397,7 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 		SchemaVersion:   r.SchemaVersion,
 		Scope:           string(r.Scope),
 		StageDepths:     stageDepths,
-		StartedAt:       r.StartedAt.UTC().Format(time.RFC3339),
+		StartedAt:       recordstamp.Format(r.StartedAt),
 		Target:          toCanonicalCoord(r.Target),
 	}
 

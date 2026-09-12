@@ -112,7 +112,8 @@ func TestRunImplementers_SupersededPipelineNamesItself(t *testing.T) {
 
 // TestRunCallers_ServedRecordIsUnaffected: the diagnostic is about the serving
 // version and nothing else. A module served at this version keeps every answer
-// it had, including the reference-scope verdict where that is the real cause.
+// it had, including what the record states about reference scope where that is
+// the real cause.
 func TestRunCallers_ServedRecordIsUnaffected(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")

@@ -967,7 +967,7 @@ func TestRunCallers_RootInFailedPackage_Unmeasured(t *testing.T) {
 	if !strings.Contains(out, "example.com/app/broken") || !strings.Contains(out, "did not typecheck") {
 		t.Errorf("expected the dropped package named, got: %q", out)
 	}
-	if !strings.Contains(out, "verdict: UNRESOLVED") {
+	if !strings.Contains(out, "answer: UNRESOLVED") {
 		t.Errorf("expected the empty answer downgraded, got: %q", out)
 	}
 }

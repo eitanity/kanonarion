@@ -124,6 +124,13 @@ func TestEdgeQuery_RefusalReadsNoRecord(t *testing.T) {
 // coordinate's columns. A module no generation of which is Partial or below-full
 // warrants neither notice, so nothing is decoded to establish that.
 //
+// The foreign-module qualification on the answer line is decided the same way,
+// and had to be: it is read from the store's own column beside the record, not
+// from a composed one. Measured when it briefly composed instead — a one-row
+// answer over a 213,828-edge record went from 1,710 ms to 2,193 ms. This test is
+// the codified form of that decision, which is why it is pinned at zero rather
+// than relaxed to admit one more read.
+//
 // The implementers query is not in this set: it reads the declaring module's
 // TYPES out of the record, which is the answer itself rather than a notice
 // about it.
@@ -171,6 +178,11 @@ func TestEdgeQuery_CleanModuleNeedsNoRecordForItsNotices(t *testing.T) {
 			if uc.RecordReads != 0 {
 				t.Errorf("%d record(s) were composed for a module whose columns already prove "+
 					"neither notice applies", uc.RecordReads)
+			}
+			// And the answer WAS qualified from the column: a zero here would mean the
+			// gate passed because nothing asked, not because asking is cheap.
+			if uc.ForeignModuleReads == 0 {
+				t.Error("the foreign-module column was never read, so this gate proves nothing about it")
 			}
 			if uc.ListCalls != 0 {
 				t.Errorf("the composing summary listing was read %d time(s)", uc.ListCalls)

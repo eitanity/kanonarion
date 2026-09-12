@@ -97,7 +97,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 			return nil
 		}
 		if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
-			summary.ID, summary.Target.String(), summary.StartedAt.UTC().Format(time.RFC3339),
+			summary.ID, summary.Target.String(), ledgerStamp(summary.StartedAt),
 			summary.OverallStatus.String(), string(summary.Scope), string(summary.Depth), summary.NodeCount, summary.FailureCount,
 		); pErr != nil {
 			return fmt.Errorf("writing output: %w", pErr)
@@ -136,7 +136,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 			return nil
 		}
 		if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
-			s.ID, s.Target.String(), s.StartedAt.UTC().Format(time.RFC3339),
+			s.ID, s.Target.String(), ledgerStamp(s.StartedAt),
 			s.OverallStatus.String(), string(s.Scope), string(s.Depth), s.NodeCount, s.FailureCount,
 		); pErr != nil {
 			return fmt.Errorf("writing output: %w", pErr)
@@ -168,7 +168,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 	}
 	for _, s := range summaries {
 		if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
-			s.ID, s.Target.String(), s.StartedAt.UTC().Format(time.RFC3339),
+			s.ID, s.Target.String(), ledgerStamp(s.StartedAt),
 			s.OverallStatus.String(), string(s.Scope), string(s.Depth), s.NodeCount, s.FailureCount,
 		); pErr != nil {
 			return fmt.Errorf("writing output: %w", pErr)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -290,7 +291,7 @@ func marshalCanonicalLicense(r LicenseRecord) ([]byte, error) {
 		Ecosystem:         r.Ecosystem,
 		Expression:        r.Expression,
 		ExpressionBasis:   r.ExpressionBasis,
-		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
+		ExtractedAt:       recordstamp.Format(r.ExtractedAt),
 		FailureDetail:     r.FailureDetail,
 		LicenseFiles:      cFiles,
 		OverallStatus:     int(r.OverallStatus),

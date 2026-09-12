@@ -393,12 +393,12 @@ func TestParseInterfaceMethodID_MalformedShapes(t *testing.T) {
 // symbol is not a node at all, the sink still has to name something the reader
 // can act on, so it falls back to the method name rather than an empty site.
 func TestClassifyNegativeVerdict_TestScopeSinkWithoutANode(t *testing.T) {
-	v := domain.ClassifyNegativeVerdict(domain.NegativeVerdictInputs{
+	v := domain.ClassifyNegativeAnswer(domain.NegativeAnswerInputs{
 		MethodName: "Put",
 		Found:      false,
 		TestScope:  domain.TestScopeUnknown,
 	})
-	if v.Outcome != domain.VerdictUnresolved {
+	if v.Outcome != domain.AnswerUnresolved {
 		t.Fatalf("outcome = %s, want UNRESOLVED", v.Outcome)
 	}
 	for _, s := range v.Sinks {

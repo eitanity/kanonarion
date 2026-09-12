@@ -463,7 +463,10 @@ func TestApplicationMayImportSharedAdapters(t *testing.T) {
 // sharedInternalExemptions states.
 var sharedValueTypesImportableFromDomain = []string{
 	"internal/coordinate",
+	"internal/failurecause",
 	"internal/gotoolchain",
+	"internal/recordstamp",
+	"internal/versionorder",
 }
 
 // TestDomainMayImportSharedValueTypes is the control on the other side of the
@@ -532,9 +535,19 @@ var sharedInternalExemptions = map[string]string{
 	"adapters": "the destination itself",
 	"coordinate": "shared value type: the module coordinate every context names, " +
 		"imported from domain layers that must not reach an adapter",
+	"failurecause": "shared value type: the one axis three ledgers answer \"is this repaired by " +
+		"changing something on this box\" with, shared so the call graph, the scan and the extraction " +
+		"stage cannot spell it differently; imported from the callgraph, vuln and extract domains, " +
+		"which must not reach an adapter",
 	"gotoolchain": "shared value type: names a fact about a record, shared so that three " +
 		"ledgers render \"not recorded\" the same way; imported from the vuln, iface and " +
 		"callgraph domains, which must not reach an adapter",
+	"recordstamp": "shared value type: the one encoding a record's timestamp takes, shared so that a " +
+		"log line and a stored record carry the same bytes; imported from the fetch, callgraph, licence " +
+		"and walk domains, which must not reach an adapter",
+	"versionorder": "shared value type: the numeric order of a version string, shared so that a version " +
+		"is never ordered as text; imported from the directive, vendortree and local domains, which must " +
+		"not reach an adapter",
 	"audit": "its own documented section: the context-neutral audit-event vocabulary, pure and " +
 		"placed by docs/ARCHITECTURE.md (\"Audit Log\"); the JSONL adapter that persists it is " +
 		"already under internal/adapters",

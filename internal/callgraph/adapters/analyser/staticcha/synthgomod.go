@@ -100,7 +100,10 @@ func (e *unresolvableImportsError) Unwrap() error { return errNeedsDependencyRes
 // one and still fail to load are failing for their own reasons — an unresolvable
 // require, a directive the toolchain rejects — and overwriting the published file
 // would replace a real diagnosis with a fabricated tree. Refusing is what keeps
-// this change from masking them.
+// this change from masking them. (dropLocalReplaces does edit a shipped go.mod,
+// and the exemption is narrow and argued there: a replace pointing outside the
+// extracted tree applies to no consumer's build, so removing it takes nothing
+// away from the diagnosis.)
 //
 // The module path written is coord.Path() verbatim. It is never derived from the
 // version: a +incompatible module publishes a v2-or-later version under a path
@@ -326,8 +329,18 @@ func hasVendorTree(dir string) (bool, error) {
 // switch impossible; left at `auto` it is attempted anyway and the load fails
 // naming the checksum database instead of the version gap. Before GOFLAGS, so
 // that stays last.
-func analysisEnv() []string {
+//
+// goModCache names the module cache the load resolves from. It is the cache
+// kanonarion materialised for this one analysis out of its own store, or the
+// existing one an operator pointed at with --from-modcache. Empty leaves the
+// host's own GOMODCACHE in force, which is what every analysis read before a
+// cache could be materialised: with the network off, that made the answer a
+// property of whatever unrelated go commands had left on the machine.
+func analysisEnv(goModCache string) []string {
 	env := append(isolatedModuleEnv(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
+	if goModCache != "" {
+		env = append(env, "GOMODCACHE="+goModCache)
+	}
 	// -mod=mod on every load, not only the synthesised ones. Two reasons, and the
 	// second is why it moved out of the synthesis branch.
 	//

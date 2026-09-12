@@ -1,6 +1,10 @@
 package domain
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/eitanity/kanonarion/internal/versionorder"
+)
 
 // Reasons a module in the vendored tree is outside what a document describes.
 // They are prose because they are read by a person deciding whether the gap
@@ -99,10 +103,14 @@ func ScopeOverTree(mods []VendoredModule, covered func(VendoredModule) bool) Ven
 		})
 	}
 	sort.Slice(scope.Uncovered, func(i, j int) bool {
-		if scope.Uncovered[i].Path != scope.Uncovered[j].Path {
-			return scope.Uncovered[i].Path < scope.Uncovered[j].Path
+		a, b := scope.Uncovered[i], scope.Uncovered[j]
+		if a.Path != b.Path {
+			return a.Path < b.Path
 		}
-		return scope.Uncovered[i].Version < scope.Uncovered[j].Version
+		if c := versionorder.CompareModuleVersions(a.Version, b.Version); c != 0 {
+			return c < 0
+		}
+		return a.Version < b.Version
 	})
 	return scope
 }

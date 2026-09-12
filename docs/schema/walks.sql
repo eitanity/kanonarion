@@ -21,8 +21,12 @@ CREATE TABLE IF NOT EXISTS walks (
     target_path      TEXT NOT NULL,
     target_version   TEXT NOT NULL,
 
-    -- started_at and completed_at are RFC3339 UTC strings. They are indexed
-    -- to support time-range filtering in ListWalks.
+    -- started_at and completed_at are RFC3339 UTC strings, at a fixed-width
+    -- nine-digit fraction on walks recorded since the stamp was widened and at
+    -- a whole second before it. Both generations live here: the rows are not
+    -- rewritten. Indexed to support time-range filtering in ListWalks, which
+    -- compares the PARSED time — the two generations invert against each other
+    -- as text within a shared second.
     started_at       TEXT NOT NULL,
     completed_at     TEXT NOT NULL,
 

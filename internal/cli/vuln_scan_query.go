@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/spf13/cobra"
@@ -65,6 +66,10 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
+// scanRunIDColumn is the width of the run-id column both scan-run listings
+// print, so an unreadable row lines up with the rows beside it.
+const scanRunIDColumn = 26
+
 func runScanList(ctx context.Context, walkID string, limit, offset int, uc QueryScanRunsUseCase, stdout, stderr io.Writer) error {
 	var (
 		runs []vuldomain.WalkScanRun
@@ -77,7 +82,7 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 	}
 	// This command surveys the store, so a row it cannot verify is part of the
 	// answer rather than a reason to withhold it. Any other error still aborts.
-	unreadable, survivable := unreadableRunReport(err)
+	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
@@ -110,7 +115,7 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 		}
 		out := make([]entry, 0, len(runs)+len(unreadable))
 		for _, r := range runs {
-			e := entry{ID: r.ID, WalkID: r.WalkID, Status: string(r.OverallStatus), CompletedAt: isoTime(r.CompletedAt)}
+			e := entry{ID: r.ID, WalkID: r.WalkID, Status: string(r.OverallStatus), CompletedAt: ledgerStamp(r.CompletedAt)}
 			if unresolved[r.WalkID] {
 				e.InputsUnresolvable = unresolvableInputsNote(r.WalkID)
 			}
@@ -120,7 +125,9 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 		// own: a caller that reads this output as "the runs in the store" must
 		// not be able to miss them, and one that filters on status still can.
 		for _, u := range unreadable {
-			out = append(out, entry{ID: u.ID, Status: scanRunStatusUnreadable, Reason: u.Reason})
+			// A run's identity is its id and it has no generation, so the label is
+			// the bare id — the same value, under the same key the readable rows use.
+			out = append(out, entry{ID: u.label(), Status: statusUnreadable, Reason: u.Reason})
 		}
 		var zero *listZeroScope
 		if len(out) == 0 {
@@ -141,13 +148,13 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 	}
 	for _, r := range runs {
 		line := fmt.Sprintf("%-26s  walk=%-26s  status=%-12s  %s",
-			r.ID, r.WalkID, string(r.OverallStatus), r.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"))
+			r.ID, r.WalkID, string(r.OverallStatus), ledgerStamp(r.CompletedAt))
 		if unresolved[r.WalkID] {
 			line += "  " + unresolvableInputsShort
 		}
 		_, _ = fmt.Fprintln(stdout, line)
 	}
-	writeUnreadableRuns(stdout, unreadable)
+	writeUnreadableRows(stdout, unreadable, scanRunIDColumn)
 	return writeListTruncationNotice(stdout, trunc)
 }
 
@@ -159,7 +166,7 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 	// A store that cannot be surveyed still answers the question the listing was
 	// asked; what it cannot do is size the corpus, and a count of zero would
 	// assert exactly the thing it failed to measure.
-	if _, survivable := unreadableRunReport(err); err != nil && !survivable {
+	if _, survivable := unreadableRowReport(err); err != nil && !survivable {
 		return listZeroScope{}, fmt.Errorf("counting scan runs for the zero-result notice: %w", err)
 	}
 	scope := listZeroScope{
@@ -198,7 +205,7 @@ func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jso
 	// A store with unreadable rows can still be counted; one that cannot be read
 	// at all has nothing honest to say, and a zero substituted for a failed count
 	// would assert exactly the thing it failed to measure.
-	if _, survivable := unreadableRunReport(err); err != nil && !survivable {
+	if _, survivable := unreadableRowReport(err); err != nil && !survivable {
 		return fmt.Errorf("counting scan runs for the not-found notice: %w", err)
 	}
 	scope := listZeroScope{
@@ -311,7 +318,11 @@ type scanShowJSON struct {
 // audit.go's vulnAuditStatus removes, and it must not reappear here.
 type scanRecordFault struct {
 	Coordinate string `json:"coordinate"`
-	Error      string `json:"error"`
+	// Cause says whether the gap is this host's or the module's. A store read
+	// error states none — the read failed, which says nothing about either — so
+	// the field is omitted rather than guessed.
+	Cause failurecause.Cause `json:"cause,omitempty"`
+	Error string             `json:"error"`
 }
 
 // scanShowSummary is the per-module read-back of a scan run for display: the
@@ -339,7 +350,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	// an operator runs next against one of those names. Refusing here would send
 	// them from a listing that reports the fault to the one tool that will not
 	// discuss it, which is the same dead end one step along.
-	if unreadable, survivable := unreadableRunReport(err); survivable {
+	if unreadable, survivable := unreadableRowReport(err); survivable {
 		return writeUnreadableRun(stdout, runID, unreadable, jsonOut)
 	}
 	if err != nil {
@@ -423,8 +434,8 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	}
 	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", run.OverallStatus)
 	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
-	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", run.StartedAt.UTC().Format(time.RFC3339))
-	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", run.CompletedAt.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", ledgerStamp(run.StartedAt))
+	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", ledgerStamp(run.CompletedAt))
 	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
 	_, _ = fmt.Fprintf(stdout, "Advisories:  %s\n", advisoryCountLine(run.Snapshot))
 	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
@@ -591,6 +602,7 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		case vuldomain.CoverageFailedScan:
 			summary.scanFailed = append(summary.scanFailed, scanRecordFault{
 				Coordinate: coord.String(),
+				Cause:      rec.FailureCause,
 				Error:      rec.ErrorDetail,
 			})
 		case vuldomain.CoverageAnalysed:
@@ -656,13 +668,17 @@ func writeScanFailures(faults []scanRecordFault, w io.Writer) {
 	if len(faults) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Scan failed (%d): the scan of these modules failed — no verdict was reached\n", len(faults))
+	_, _ = fmt.Fprintf(w, "Scan failed (%d): the scan of these modules failed — no status was reached\n", len(faults))
 	for _, f := range faults {
+		cause := ""
+		if f.Cause != failurecause.Unrecorded {
+			cause = " [cause=" + string(f.Cause) + "]"
+		}
 		if f.Error == "" {
-			_, _ = fmt.Fprintf(w, "  %s\n", f.Coordinate)
+			_, _ = fmt.Fprintf(w, "  %s%s\n", f.Coordinate, cause)
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "  %s: %s\n", f.Coordinate, f.Error)
+		_, _ = fmt.Fprintf(w, "  %s%s: %s\n", f.Coordinate, cause, f.Error)
 	}
 }
 
@@ -706,7 +722,7 @@ func writeMissingScanRecords(coords []string, w io.Writer) {
 	if len(coords) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "No scan record (%d): the run reports a verdict for these modules but no record backs it\n", len(coords))
+	_, _ = fmt.Fprintf(w, "No scan record (%d): the run reports a status for these modules but no record backs it\n", len(coords))
 	for _, c := range coords {
 		_, _ = fmt.Fprintf(w, "  %s\n", c)
 	}
@@ -743,7 +759,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	// A history of a walk is a survey of the same rows vuln-scan-list surveys,
 	// and reaches them through the same store seam, so it answers the same way:
 	// every run it can read, plus the ones it cannot, named.
-	unreadable, survivable := unreadableRunReport(err)
+	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
@@ -773,7 +789,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		if len(unreadable) > 0 || !walkPresent {
 			payload := struct {
 				Runs               []vuldomain.WalkScanRun `json:"runs"`
-				Unreadable         []unreadableRunEntry    `json:"unreadable,omitempty"`
+				Unreadable         []unreadableRowEntry    `json:"unreadable,omitempty"`
 				InputsUnresolvable string                  `json:"inputs_unresolvable,omitempty"`
 			}{Runs: runs, Unreadable: unreadable}
 			if !walkPresent {
@@ -805,10 +821,10 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 			r.ID,
 			string(r.OverallStatus),
 			snap,
-			r.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			ledgerStamp(r.CompletedAt),
 		)
 	}
-	writeUnreadableRuns(stdout, unreadable)
+	writeUnreadableRows(stdout, unreadable, scanRunIDColumn)
 	return nil
 }
 
@@ -918,25 +934,24 @@ func runScanDiff(
 	if len(diff.ReachabilityChanges) > 0 {
 		_, _ = fmt.Fprintf(stdout, "REACHABILITY changes (%d):\n", len(diff.ReachabilityChanges))
 		for _, c := range diff.ReachabilityChanges {
-			was := "not reachable"
+			was := vuldomain.StateNotReachable.String()
 			if c.WasReachable {
-				was = "reachable"
+				was = vuldomain.StateReachable.String()
 			}
-			now := "not reachable"
-			if c.IsReachable {
-				now = "reachable"
-			} else if soundness, _ := vuldomain.NegativeSoundness(c.Finding); soundness != vuldomain.SoundnessNotStated {
+			// The later run's answer is the shared reading of the finding, not the
+			// bit. Read off the bit, a change INTO package_level_only rendered as
+			// "reachable" whenever the bit happened to read true and as a plain
+			// "not reachable" — a resolution — whenever it read false, and neither
+			// is what the later run measured.
+			state := vuldomain.FindingReachabilityState(c.Finding)
+			now := state.String()
+			if state == vuldomain.StateNotReachable {
 				// The transition an operator acts on is the one INTO a negative, and
 				// the rung says how thorough the search behind that negative was. A
 				// bare "not reachable" here reads as a resolution.
-				now = "not reachable — " + soundness.String()
-			}
-			if !c.IsReachable && c.Finding.AdvisoryNamesNoSymbols {
-				// The later run did not search and fail; there was no symbol for it to
-				// search for. Rendering this as "not reachable" would read as a
-				// resolution and invite the operator to stand down on a module that is
-				// still affected at package level.
-				now = "not determined at symbol level (advisory names no symbols)"
+				if soundness, _ := vuldomain.NegativeSoundness(c.Finding); soundness != vuldomain.SoundnessNotStated {
+					now += " — " + soundness.String()
+				}
 			}
 			_, _ = fmt.Fprintf(stdout, "  ~ %s  %s@%s  %s → %s\n", c.Finding.ID, c.Coordinate.Path(), c.Coordinate.Version(), was, now)
 		}
@@ -944,7 +959,7 @@ func runScanDiff(
 	}
 
 	if len(diff.UnresolvedFindings) > 0 {
-		_, _ = fmt.Fprintf(stdout, "UNRESOLVED (%d) — completeness parity mismatch, verdict withheld:\n", len(diff.UnresolvedFindings))
+		_, _ = fmt.Fprintf(stdout, "UNRESOLVED (%d) — completeness parity mismatch, answer withheld:\n", len(diff.UnresolvedFindings))
 		for _, u := range diff.UnresolvedFindings {
 			_, _ = fmt.Fprintf(stdout, "  ? %s  %s@%s  would-be %s but %s\n",
 				u.Finding.ID, u.Coordinate.Path(), u.Coordinate.Version(), u.Kind, u.Reason)

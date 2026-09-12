@@ -1,11 +1,9 @@
 package local
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,10 +14,13 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
@@ -82,27 +83,18 @@ func (f fakeExitStatus) ExitCode() int { return f.code }
 
 // fakeCallGraphReader is a controllable CallGraphReader for tests.
 type fakeCallGraphReader struct {
-	rec   cgdomain.CallGraphRecord
+	out   cgports.CallGraphOutcome
 	found bool
 	err   error
-	// held is every generation the ledger holds, oldest first, and listErr the
-	// failure the listing read reports. listCalls counts it, so a test can tell
-	// which of the two reads produced the answer.
-	held      []cgdomain.CallGraphRecord
-	listErr   error
-	listCalls int
+	// reads counts the narrow read, so a test can tell whether the stage read
+	// the ledger at all. Atomic because concurrency tests share one reader
+	// across a pool.
+	reads atomic.Int64
 }
 
-func (f *fakeCallGraphReader) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
-	return f.rec, f.found, f.err
-}
-
-func (f *fakeCallGraphReader) ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]cgdomain.CallGraphRecord, error) {
-	f.listCalls++
-	if f.listErr != nil {
-		return nil, f.listErr
-	}
-	return f.held, nil
+func (f *fakeCallGraphReader) LatestCallGraphOutcome(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgports.CallGraphOutcome, bool, error) {
+	f.reads.Add(1)
+	return f.out, f.found, f.err
 }
 
 func newCallgraphAdapter(exec SubprocessExecutor, reader CallGraphReader) *AdapterExtractor {
@@ -294,7 +286,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec: cgdomain.CallGraphRecord{
+			out: cgports.CallGraphOutcome{
 				ContentHash:   "hash-cg",
 				OverallStatus: cgdomain.CallGraphStatusExtracted,
 			},
@@ -320,7 +312,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 
 	t.Run("force flag is forwarded to subprocess", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 		adapter := newCallgraphAdapter(exec, reader)
 		_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
 		if err != nil {
@@ -340,13 +332,15 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 
 	t.Run("extra args are forwarded ahead of --force", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 		adapter := NewAdapterExtractor(nil, nil, exec, reader, "0.1.0", []string{"--store-root=/tmp/store", "--from-modcache=/tmp/modcache"}, nil)
 		_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
-		want := []string{"callgraph", coord.String(), "--store-root=/tmp/store", "--from-modcache=/tmp/modcache", "--force"}
+		// --narrate-progress leads the extra args: the child must report its phases
+		// to the process bounding it whatever the store's own preferences say.
+		want := []string{"callgraph", coord.String(), "--narrate-progress", "--store-root=/tmp/store", "--from-modcache=/tmp/modcache", "--force"}
 		got := exec.calls[0]
 		if len(got) != len(want) {
 			t.Fatalf("subprocess args = %v, want %v", got, want)
@@ -380,53 +374,11 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		}
 	})
 
-	t.Run("timeout marks StageFailed with timeout message", func(t *testing.T) {
-		// Use a context with a very short deadline so the timeout fires
-		// immediately; the fake executor honours context cancellation.
-		shortCtx, cancel := context.WithTimeout(ctx, time.Millisecond)
-		defer cancel()
-
-		blocker := make(chan struct{})
-		defer close(blocker)
-
-		exec := &fakeSubprocessExecutor{
-			err: context.DeadlineExceeded,
-		}
-		exec.onExecute = func(_ []string) {
-			// simulate the subprocess running past the deadline by waiting
-			// until the outer test cancels the blocker channel
-		}
-
-		// Override: use a deadline-exceeded context directly so we don't
-		// have to wait 10 minutes.
-		<-shortCtx.Done()
-
-		reader := &fakeCallGraphReader{}
-		adapter := &AdapterExtractor{
-			cgExec:            exec,
-			cgReader:          reader,
-			cgPipelineVersion: "0.1.0",
-		}
-
-		// Call with an already-cancelled context so the subprocess timeout
-		// path is exercised.
-		res, err := adapter.Extract(shortCtx, coord, "callgraph", false, "")
-		if err != nil {
-			t.Fatalf("Extract returned error: %v", err)
-		}
-		if res.Status != domain.StageFailed {
-			t.Errorf("Status = %v, want Failed", res.Status)
-		}
-		if !strings.Contains(res.Error, "timed out") {
-			t.Errorf("Error = %q, want timeout message", res.Error)
-		}
-	})
-
 	t.Run("callgraph partial status treated as succeeded", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec:   cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusPartial},
+			out:   cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusPartial},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
 		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
@@ -442,7 +394,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec:   cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusUnknown},
+			out:   cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusUnknown},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
 		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
@@ -482,81 +434,43 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 
 }
 
-// TestAdapterExtractor_CallGraph_ConflictingLedger covers the read-back after
-// the subprocess writes. The stage confirms its own write, which is not the
-// question composition answers, so a refusal there must not fail a stage that
-// did its work.
-func TestAdapterExtractor_CallGraph_ConflictingLedger(t *testing.T) {
+// TestAdapterExtractor_CallGraph_ReadsWhatWasJustWritten pins the question the
+// stage asks the ledger.
+//
+// It asks what the child it just ran wrote, which the narrow read answers from
+// one generation's columns. It does NOT ask which generation should be served —
+// that read composes every generation the coordinate holds, rebuilds each one's
+// whole edge set and re-marshals it to check the seal, and it is what made this
+// stage the largest consumer of memory in an extraction run.
+func TestAdapterExtractor_CallGraph_ReadsWhatWasJustWritten(t *testing.T) {
 	ctx := t.Context()
 	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 
-	// The composed read stays the path a run without a disagreement takes; the
-	// listing is the exception, not the new normal.
-	t.Run("a ledger that composes cleanly is never listed", func(t *testing.T) {
+	t.Run("the stage reports the generation the narrow read names", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec:   cgdomain.CallGraphRecord{ContentHash: "hash-cg", OverallStatus: cgdomain.CallGraphStatusExtracted},
+			out:   cgports.CallGraphOutcome{ContentHash: "hash-just-written", OverallStatus: cgdomain.CallGraphStatusExtracted},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
 		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
-		if res.RecordID != "hash-cg" {
-			t.Errorf("RecordID = %s, want hash-cg", res.RecordID)
-		}
-		if reader.listCalls != 0 {
-			t.Errorf("the listing read ran %d times on a store that composed cleanly, want 0", reader.listCalls)
-		}
-	})
-
-	// The child appended a generation that disagrees with an older one, so the
-	// composed read refuses to name which answers the coordinate. The stage is
-	// not asking that question: it is confirming its own write, and the
-	// generation it just measured is the one it reports.
-	t.Run("a conflicting ledger reports the generation just measured", func(t *testing.T) {
-		var logged bytes.Buffer
-		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{
-			err: fmt.Errorf("%w: toolchain disagrees", cgports.ErrCallGraphConflict),
-			held: []cgdomain.CallGraphRecord{
-				{ContentHash: "hash-older", OverallStatus: cgdomain.CallGraphStatusLoadFailed},
-				{ContentHash: "hash-old", OverallStatus: cgdomain.CallGraphStatusExtractionFailed},
-				{ContentHash: "hash-just-written", OverallStatus: cgdomain.CallGraphStatusExtracted, NodeCount: 42, EdgeCount: 99},
-			},
-		}
-		adapter := newCallgraphAdapter(exec, reader).
-			WithLogger(slog.New(slog.NewTextHandler(&logged, nil)))
-
-		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
-		if err != nil {
-			t.Fatalf("a composition refusal failed a stage that did its work: %v", err)
-		}
 		if res.RecordID != "hash-just-written" {
 			t.Errorf("RecordID = %s, want hash-just-written: the stage must report its own write", res.RecordID)
 		}
 		if res.Status != domain.StageSucceeded {
-			t.Errorf("Status = %v, want Succeeded: an older generation decided the status", res.Status)
+			t.Errorf("Status = %v, want Succeeded", res.Status)
 		}
-		if res.Error != "" {
-			t.Errorf("Error = %q, want empty", res.Error)
-		}
-		if reader.listCalls != 1 {
-			t.Errorf("the listing read ran %d times, want 1", reader.listCalls)
-		}
-		if !strings.Contains(logged.String(), "callgraph_stage_reports_measured_generation") {
-			t.Error("the stage reported a measured generation without saying why")
+		if got := reader.reads.Load(); got != 1 {
+			t.Errorf("the ledger was read %d times, want exactly 1", got)
 		}
 	})
 
-	// The control the conflict branch must not weaken: a child that wrote
-	// nothing is still a failed stage, with the same explanation.
-	t.Run("a conflicting ledger holding no generation still reports no record", func(t *testing.T) {
+	t.Run("a child that wrote nothing is still a failed stage", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{
-			err: fmt.Errorf("%w: toolchain disagrees", cgports.ErrCallGraphConflict),
-		}
+		reader := &fakeCallGraphReader{}
 		adapter := newCallgraphAdapter(exec, reader)
 
 		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
@@ -571,15 +485,12 @@ func TestAdapterExtractor_CallGraph_ConflictingLedger(t *testing.T) {
 		}
 	})
 
-	t.Run("a listing that fails is still an error", func(t *testing.T) {
+	t.Run("a read that fails is still an error", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{
-			err:     fmt.Errorf("%w: toolchain disagrees", cgports.ErrCallGraphConflict),
-			listErr: errors.New("db locked"),
-		}
+		reader := &fakeCallGraphReader{err: errors.New("db locked")}
 		adapter := newCallgraphAdapter(exec, reader)
 		if _, err := adapter.Extract(ctx, coord, "callgraph", false, ""); err == nil {
-			t.Fatal("expected an error when the ledger cannot be listed, got nil")
+			t.Fatal("expected an error when the ledger cannot be read, got nil")
 		}
 	})
 }
@@ -614,7 +525,7 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 
 	reader := &fakeCallGraphReader{
 		found: true,
-		rec:   cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted},
+		out:   cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted},
 	}
 
 	adapter := newCallgraphAdapter(exec, reader)
@@ -757,7 +668,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec: cgdomain.CallGraphRecord{
+			out: cgports.CallGraphOutcome{
 				OverallStatus: cgdomain.CallGraphStatusLoadFailed,
 				// FailureDetail intentionally empty
 			},
@@ -832,7 +743,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 		})
 		t.Run("callgraph", func(t *testing.T) {
 			exec := &fakeSubprocessExecutor{}
-			reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+			reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 			res, _ := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false, "")
 			if res.Error != "" {
 				t.Errorf("succeeded callgraph Error = %q, want empty", res.Error)
@@ -849,44 +760,78 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 }
 
 // TestBuildSubprocessErrorDetail exercises every branch of the helper directly.
+//
+// The two deadlines and the lost lock are the branches that matter: each is this
+// HOST rather than the module, and each names a different thing to do about it.
 func TestBuildSubprocessErrorDetail(t *testing.T) {
 	baseErr := errors.New("exit status 1")
 
-	t.Run("timeout with stderr", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
-		defer cancel()
-		<-ctx.Done()
-		detail := buildSubprocessErrorDetail(ctx, baseErr, []byte("  oom  "))
-		if !strings.Contains(detail, "timed out") {
-			t.Errorf("expected 'timed out', got %q", detail)
+	t.Run("stalled names the window and the environment", func(t *testing.T) {
+		err := fmt.Errorf("%w for 10m0s: %w", childproc.ErrStalled, baseErr)
+		detail, cause, _ := buildSubprocessErrorDetail(err, []byte("  oom  "), "01M0VG1267S1XDJGDFZTVRPM84")
+		if !strings.Contains(detail, "no progress") {
+			t.Errorf("expected the stall to be named, got %q", detail)
 		}
 		if !strings.Contains(detail, "oom") {
 			t.Errorf("expected stderr in detail, got %q", detail)
 		}
-	})
-
-	t.Run("timeout without stderr", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
-		defer cancel()
-		<-ctx.Done()
-		detail := buildSubprocessErrorDetail(ctx, baseErr, nil)
-		if !strings.Contains(detail, "timed out") {
-			t.Errorf("expected 'timed out', got %q", detail)
+		if cause != failurecause.Environment {
+			t.Errorf("cause = %q, want environment", cause)
 		}
 	})
 
-	t.Run("non-timeout with stderr", func(t *testing.T) {
-		detail := buildSubprocessErrorDetail(context.Background(), baseErr, []byte("panic: nil pointer"))
+	t.Run("ceiling names the flag that raises it", func(t *testing.T) {
+		err := fmt.Errorf("%w of 2h0m0s: %w", childproc.ErrCeiling, baseErr)
+		detail, cause, _ := buildSubprocessErrorDetail(err, nil, "01M0VG1267S1XDJGDFZTVRPM84")
+		if !strings.Contains(detail, "--callgraph-timeout") {
+			t.Errorf("expected the remedy flag, got %q", detail)
+		}
+		if !strings.Contains(detail, "01M0VG1267S1XDJGDFZTVRPM84") {
+			t.Errorf("expected the walk the reader is already inside, got %q", detail)
+		}
+		if cause != failurecause.Environment {
+			t.Errorf("cause = %q, want environment", cause)
+		}
+	})
+
+	t.Run("ceiling without a walk names the flag alone", func(t *testing.T) {
+		err := fmt.Errorf("%w of 2h0m0s: %w", childproc.ErrCeiling, baseErr)
+		detail, _, _ := buildSubprocessErrorDetail(err, nil, "")
+		if !strings.Contains(detail, "--callgraph-timeout") {
+			t.Errorf("expected the remedy flag, got %q", detail)
+		}
+		if strings.Contains(detail, "kanonarion extract ") {
+			t.Errorf("named an invocation with no walk to put in it: %q", detail)
+		}
+	})
+
+	t.Run("lost lock is the environment, and says running again stores it", func(t *testing.T) {
+		stderr := []byte("persisting callgraph record: " + sqlitestore.ContentionMarker + " for the whole retry budget")
+		detail, cause, _ := buildSubprocessErrorDetail(baseErr, stderr, "")
+		if !strings.Contains(detail, "store lock") {
+			t.Errorf("expected contention to be named, got %q", detail)
+		}
+		if cause != failurecause.Environment {
+			t.Errorf("cause = %q, want environment", cause)
+		}
+	})
+
+	t.Run("an unrecognised exit states no cause", func(t *testing.T) {
+		detail, cause, _ := buildSubprocessErrorDetail(baseErr, []byte("panic: nil pointer"), "")
 		if !strings.Contains(detail, "subprocess failed") {
 			t.Errorf("expected 'subprocess failed', got %q", detail)
 		}
 		if !strings.Contains(detail, "panic: nil pointer") {
 			t.Errorf("expected stderr, got %q", detail)
 		}
+		if cause != failurecause.Unrecorded {
+			t.Errorf("cause = %q, want unrecorded: an exit this classification does not recognise "+
+				"is not evidence the module is at fault", cause)
+		}
 	})
 
-	t.Run("non-timeout without stderr", func(t *testing.T) {
-		detail := buildSubprocessErrorDetail(context.Background(), baseErr, nil)
+	t.Run("without stderr", func(t *testing.T) {
+		detail, _, _ := buildSubprocessErrorDetail(baseErr, nil, "")
 		if !strings.Contains(detail, "subprocess failed") {
 			t.Errorf("expected 'subprocess failed', got %q", detail)
 		}
@@ -897,7 +842,7 @@ func TestBuildSubprocessErrorDetail(t *testing.T) {
 // POSIX commands so the test stays self-contained without external fixtures.
 func TestOsSubprocessExecutor(t *testing.T) {
 	t.Run("exit 0 returns nil error and empty stderr", func(t *testing.T) {
-		exec := NewOsSubprocessExecutor("/bin/true")
+		exec := NewOsSubprocessExecutor("/bin/true", 0, nil)
 		stderr, err := exec.Execute(t.Context(), nil)
 		if err != nil {
 			t.Fatalf("expected nil error, got %v", err)
@@ -908,7 +853,7 @@ func TestOsSubprocessExecutor(t *testing.T) {
 	})
 
 	t.Run("exit 1 returns non-nil error", func(t *testing.T) {
-		exec := NewOsSubprocessExecutor("/bin/false")
+		exec := NewOsSubprocessExecutor("/bin/false", 0, nil)
 		_, err := exec.Execute(t.Context(), nil)
 		if err == nil {
 			t.Fatal("expected non-nil error for exit 1")
@@ -916,7 +861,7 @@ func TestOsSubprocessExecutor(t *testing.T) {
 	})
 
 	t.Run("stderr captured on failure", func(t *testing.T) {
-		exec := NewOsSubprocessExecutor("/bin/sh")
+		exec := NewOsSubprocessExecutor("/bin/sh", 0, nil)
 		stderr, err := exec.Execute(t.Context(), []string{"-c", "echo captured >&2; exit 1"})
 		if err == nil {
 			t.Fatal("expected non-nil error")
@@ -929,7 +874,7 @@ func TestOsSubprocessExecutor(t *testing.T) {
 	t.Run("context cancellation terminates subprocess", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 		defer cancel()
-		exec := NewOsSubprocessExecutor("/bin/sleep")
+		exec := NewOsSubprocessExecutor("/bin/sleep", 0, nil)
 		_, err := exec.Execute(ctx, []string{"60"})
 		if err == nil {
 			t.Fatal("expected error from killed subprocess")
@@ -970,7 +915,7 @@ func TestAdapterExtractor_CallGraph_PartialChildExit(t *testing.T) {
 		}
 		reader := &fakeCallGraphReader{
 			found: true,
-			rec: cgdomain.CallGraphRecord{
+			out: cgports.CallGraphOutcome{
 				ContentHash:   "hash-cg-partial",
 				OverallStatus: cgdomain.CallGraphStatusPartial,
 			},
@@ -1001,6 +946,60 @@ func TestAdapterExtractor_CallGraph_PartialChildExit(t *testing.T) {
 		}
 		if res.Status != domain.StageFailed {
 			t.Errorf("Status = %v, want Failed", res.Status)
+		}
+	})
+}
+
+// TestAdapterExtractor_CallGraph_NamesWhatAGapIsAStatementAbout pins the axis
+// the three deadline and lock failures share: a module absent from coverage says
+// whether THIS HOST or the module is why, because only the first is repaired by
+// changing something and running again.
+func TestAdapterExtractor_CallGraph_NamesWhatAGapIsAStatementAbout(t *testing.T) {
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+
+	t.Run("a stalled child marks StageFailed and says the host is why", func(t *testing.T) {
+		// The executor owns both deadlines now, so what the stage classifies is the
+		// sentinel it returns rather than a context it set itself. That is the point
+		// of the change: elapsed time in the parent was never evidence of a hang.
+		exec := &fakeSubprocessExecutor{
+			err: fmt.Errorf("%w for 10m0s: signal: killed", childproc.ErrStalled),
+		}
+		reader := &fakeCallGraphReader{}
+		adapter := &AdapterExtractor{
+			cgExec:            exec,
+			cgReader:          reader,
+			cgPipelineVersion: "0.1.0",
+		}
+
+		res, err := adapter.Extract(t.Context(), coord, "callgraph", false, "")
+		if err != nil {
+			t.Fatalf("Extract returned error: %v", err)
+		}
+		if res.Status != domain.StageFailed {
+			t.Errorf("Status = %v, want Failed", res.Status)
+		}
+		if !strings.Contains(res.Error, "no progress") {
+			t.Errorf("Error = %q, want the stall named", res.Error)
+		}
+		if res.Cause != failurecause.Environment {
+			t.Errorf("Cause = %q, want environment", res.Cause)
+		}
+	})
+
+	t.Run("a record's own cause is what the stage reports", func(t *testing.T) {
+		exec := &fakeSubprocessExecutor{}
+		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{
+			OverallStatus: cgdomain.CallGraphStatusLoadFailed,
+			FailureCause:  cgdomain.FailureCauseModule,
+			FailureDetail: "no packages found",
+		}}
+		res, err := newCallgraphAdapter(exec, reader).Extract(t.Context(), coord, "callgraph", false, "")
+		if err != nil {
+			t.Fatalf("Extract failed: %v", err)
+		}
+		if res.Cause != failurecause.Module {
+			t.Errorf("Cause = %q, want module: the record already decided, and the stage repeats it "+
+				"rather than reaching a second answer", res.Cause)
 		}
 	})
 }

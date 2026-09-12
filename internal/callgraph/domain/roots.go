@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// RootCandidate is the minimal node view SelectReachabilityRoots needs to
-// classify a node as a reachability root. It is deliberately decoupled from
+// RootCandidate is the minimal node view the selectors below need to classify a
+// node as a reachability root. It is deliberately decoupled from
 // CallNode (and from any adapter's projection type) so every reachability
 // analysis can feed the shared selector its own node representation and the
 // root-selection rule can never drift between them.
@@ -15,7 +15,30 @@ type RootCandidate struct {
 	Symbol        string
 	IsExternal    bool
 	IsExportedAPI bool
+	// IsTest is the node's test axis: declared in a _test.go file or an external
+	// test package. It is carried because a test declaration is exported and
+	// owned like any other, so without it the selector cannot tell a consumer's
+	// entry point from one only `go test` runs.
+	IsTest bool
 }
+
+// RootScope says whether test-declared nodes may root a traversal.
+//
+// The two answers are both correct and belong to different questions, so the
+// caller states which it is asking rather than the selector guessing: a
+// consumer does not compile a dependency's _test.go files, while an analysis
+// that names the test root in its answer is showing the reader a real path.
+type RootScope int
+
+const (
+	// RootScopeProduction drops test-declared candidates before any further rule
+	// is applied — the consumer's question, and the zero value so a caller that
+	// says nothing gets the narrower root set rather than the wider.
+	RootScopeProduction RootScope = iota
+	// RootScopeWithTests keeps them, for a surface whose answer states that the
+	// root it found is a test declaration.
+	RootScopeWithTests
+)
 
 // IsInitSymbol reports whether a symbol name denotes a package init function.
 // The Go compiler names the user-written init as "init" and any additional
@@ -70,15 +93,36 @@ func ExternalEntryPointReason(symbol, receiver string) string {
 	return ""
 }
 
-// SelectReachabilityRoots returns the reachability roots for an analysis over a
-// call graph, conditioned on what the analysed module is.
+// SelectOwnedRoots roots the traversal at every module-owned (non-external)
+// node, dropping test declarations under RootScopeProduction.
 //
-// For an application (kind ArtifactApplication) every module-owned (non-external)
-// node is a root. An application's functions are entered in ways no static
-// analysis can enumerate — framework dispatch, registered callbacks, goroutine
-// entry functions — so rooting only the exported API would leave those subgraphs
-// dark and under-report the capabilities the shipped code really exercises.
-// Whole-graph rooting witnesses them with zero framework knowledge.
+// It is the whole-graph rule: a module's code is entered through more than its
+// exported API — framework dispatch, registered callbacks, cgo trampolines,
+// closures, goroutine entries — and no static analysis can enumerate those, so
+// rooting only the exported API leaves their subgraphs dark.
+//
+// Results are sorted for determinism.
+func SelectOwnedRoots(candidates []RootCandidate, scope RootScope) []string {
+	var owned []string
+	for _, c := range candidates {
+		if c.IsExternal {
+			continue
+		}
+		if c.IsTest && scope == RootScopeProduction {
+			continue
+		}
+		owned = append(owned, c.ID)
+	}
+	sort.Strings(owned)
+	return owned
+}
+
+// SelectReachabilityRoots returns the reachability roots for an analysis that
+// asks what a CONSUMER's build can trigger, conditioned on what the analysed
+// module is.
+//
+// For an application (kind ArtifactApplication) it is every owned node, by
+// SelectOwnedRoots: the shipped code's own entry points are not enumerable.
 //
 // For a library it is every owned node that is either part of the public API or
 // a package init function: a library only runs what its consumer can reach.
@@ -88,28 +132,53 @@ func ExternalEntryPointReason(symbol, receiver string) string {
 // qualifies it falls back to every owned node so the analysis still reasons
 // about the analysed code.
 //
+// A kind of ArtifactNotEstablished takes the library rule. A module that MIGHT
+// build a command is not evidence that it does, so the narrower set is the safe
+// default — but it is a default and not a finding, and RootSelectionCaveat is
+// what says so on the answer.
+//
+// A RootScopeProduction scope drops test-declared candidates first, so the
+// exclusion holds for the application rule and the owned-node fallback too: a
+// consumer compiles none of those files whatever the analysed module is.
+//
 // Results are sorted for determinism.
-func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind) []string {
-	var roots, owned []string
+func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind, scope RootScope) []string {
+	if kind == ArtifactApplication {
+		return SelectOwnedRoots(candidates, scope)
+	}
+	var roots []string
 	for _, c := range candidates {
 		if c.IsExternal {
 			continue
 		}
-		owned = append(owned, c.ID)
+		if c.IsTest && scope == RootScopeProduction {
+			continue
+		}
 		if c.IsExportedAPI || IsInitSymbol(c.Symbol) {
 			roots = append(roots, c.ID)
 		}
-	}
-	if kind == ArtifactApplication {
-		sort.Strings(owned)
-		return owned
 	}
 	if len(roots) > 0 {
 		sort.Strings(roots)
 		return roots
 	}
-	sort.Strings(owned)
-	return owned
+	return SelectOwnedRoots(candidates, scope)
+}
+
+// RootSelectionCaveat states the root set SelectReachabilityRoots applied when
+// the record does not say what the analysed module is, and "" for a kind that
+// was established, where the rule reads off the kind itself.
+//
+// An analysis that fell back to the narrow set and did not say so publishes a
+// default as though it were a measurement, and a reader has no way to tell the
+// two apart afterwards.
+func RootSelectionCaveat(kind ArtifactKind) string {
+	if kind != ArtifactNotEstablished {
+		return ""
+	}
+	return "the analysis did not establish whether this module builds a command, so the traversal was " +
+		"rooted at its exported API and package init — the library rule, applied as the default rather " +
+		"than because the module was measured to be one"
 }
 
 // ConfidenceRank orders the edge-confidence vocabulary from most to least

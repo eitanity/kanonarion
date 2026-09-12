@@ -3,6 +3,7 @@ package reachability_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -168,6 +169,52 @@ func TestAnalyse_Library_DoesNotReachDynamicallyDispatchedSymbol(t *testing.T) {
 	}
 }
 
+// TestAnalyse_UnestablishedKind_KeepsTheLibraryRootsAndSaysSo pins both halves
+// of the third value. The answer is the library one, because a module that MIGHT
+// build a command is not evidence that it does; and it names the rule it used,
+// so the default is not read back as a measured choice.
+func TestAnalyse_UnestablishedKind_KeepsTheLibraryRootsAndSaysSo(t *testing.T) {
+	a := reachability.New()
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	loader := &fakeLoader{record: dynamicSinkProjection(string(callgraphdomain.ArtifactNotEstablished))}
+	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
+
+	result, err := a.Analyse(t.Context(), coord, symbols, loader)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsReachable {
+		t.Error("an unestablished kind must not widen the root set; the library answer stands")
+	}
+	want := callgraphdomain.RootSelectionCaveat(callgraphdomain.ArtifactNotEstablished)
+	if result.DerivedBy.RootSelection != want {
+		t.Errorf("RootSelection = %q, want %q", result.DerivedBy.RootSelection, want)
+	}
+	if !strings.Contains(result.DerivedBy.String(), want) {
+		t.Errorf("the rendered derivation does not state the rooting it used:\n%s", result.DerivedBy.String())
+	}
+}
+
+// TestAnalyse_EstablishedKind_StatesNoRootingCaveat is the control: a record
+// that says what the module is has no fallback to disclose, and the field stays
+// empty rather than restating the kind.
+func TestAnalyse_EstablishedKind_StatesNoRootingCaveat(t *testing.T) {
+	a := reachability.New()
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
+
+	for _, kind := range []callgraphdomain.ArtifactKind{callgraphdomain.ArtifactLibrary, callgraphdomain.ArtifactApplication} {
+		loader := &fakeLoader{record: dynamicSinkProjection(string(kind))}
+		result, err := a.Analyse(t.Context(), coord, symbols, loader)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.DerivedBy.RootSelection != "" {
+			t.Errorf("kind %q: RootSelection = %q, want empty", kind, result.DerivedBy.RootSelection)
+		}
+	}
+}
+
 func TestAnalyse_Reachable_TransitiveCall(t *testing.T) {
 	// Entry → Intermediate → Vulnerable
 	a := reachability.New()
@@ -330,5 +377,40 @@ func TestAnalyse_MethodSymbol_MatchedByReceiverDotName(t *testing.T) {
 	}
 	if !result.IsReachable {
 		t.Error("expected method to be reachable when it is an exported entry point")
+	}
+}
+
+// TestAnalyse_TestRootStillReachesTheSymbol pins the decision that vuln
+// reachability keeps test declarations as roots where capability analysis drops
+// them. A route names its own root and the classification marks a test-scope one
+// as such, so a test-only reach is reported and disclosed rather than becoming a
+// silent negative. A change of default here must be deliberate.
+func TestAnalyse_TestRootStillReachesTheSymbol(t *testing.T) {
+	a := reachability.New()
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+
+	loader := &fakeLoader{record: ports.CallGraphProjection{
+		Nodes: []ports.CallGraphNode{
+			{ID: "github.com/foo/bar.Exported", Module: "github.com/foo/bar", Symbol: "Exported", IsExportedAPI: true},
+			{ID: "github.com/foo/bar_test.TestVuln", Module: "github.com/foo/bar",
+				Symbol: "TestVuln", IsExportedAPI: true, IsTest: true},
+			{ID: "github.com/foo/bar.Vuln", Module: "github.com/foo/bar", Symbol: "Vuln"},
+		},
+		Edges: []ports.CallGraphEdge{
+			// Only the test reaches Vuln; Exported reaches nothing.
+			{FromID: "github.com/foo/bar_test.TestVuln", ToID: "github.com/foo/bar.Vuln"},
+		},
+	}}
+	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
+
+	result, err := a.Analyse(t.Context(), coord, symbols, loader)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsReachable {
+		t.Fatal("expected reachable from the test root")
+	}
+	if len(result.Routes) == 0 || result.Routes[0][0].Symbol != "TestVuln" {
+		t.Errorf("expected the route rooted at the test declaration, got %v", result.Routes)
 	}
 }

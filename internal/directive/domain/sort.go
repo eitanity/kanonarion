@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/eitanity/kanonarion/internal/versionorder"
 )
 
 // DirectiveLess is the canonical ordering for Directive slices: where the
@@ -31,11 +33,17 @@ func DirectiveLess(a, b Directive) bool {
 	if a.OldPath != b.OldPath {
 		return a.OldPath < b.OldPath
 	}
+	if c := versionorder.CompareModuleVersions(a.OldVersion, b.OldVersion); c != 0 {
+		return c < 0
+	}
 	if a.OldVersion != b.OldVersion {
 		return a.OldVersion < b.OldVersion
 	}
 	if a.NewPath != b.NewPath {
 		return a.NewPath < b.NewPath
+	}
+	if c := versionorder.CompareModuleVersions(a.NewVersion, b.NewVersion); c != 0 {
+		return c < 0
 	}
 	if a.NewVersion != b.NewVersion {
 		return a.NewVersion < b.NewVersion

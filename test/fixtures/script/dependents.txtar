@@ -40,14 +40,54 @@ kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FA
 stdout '1 direct module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame not-platform-scoped\) depend on example.com/dep@v1.0.0'
 stdout 'example.com/app@v1.0.0.*\[root\]'
 
-# Walk B: dep upgraded to v1.1.0; dep@v1.0.0 has no dependents in walk B
-kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --include-root
-stdout 'No modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB \(frame not-platform-scoped\) depend on example.com/dep@v1.0.0'
+# Walk B upgraded dep to v1.1.0, so it does not hold v1.0.0 at all. That is a
+# refusal, not an empty answer: "no modules depend on it" over a build that never
+# resolved the version asserts an absence nothing searched for. The refusal names
+# the version the walk did resolve, which is what the caller wants.
+! kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --include-root
+! stdout 'No modules'
+stderr 'does not contain example.com/dep@v1.0.0'
+stderr 'it resolved example.com/dep at v1.1.0'
 
 # Walk B: dep@v1.1.0 is depended on by the root (app)
 kanonarion dependents example.com/dep@v1.1.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --include-root
 stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB \(frame not-platform-scoped\) depend on example.com/dep@v1.1.0'
 stdout 'example.com/app@v1.0.0.*\[root\]'
+
+# A bare module path is answered across the versions the named build holds, and
+# the answer says which ones. The rows are the ones the coordinate form gives.
+kanonarion dependents example.com/dep --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --include-root
+stdout 'notice: no version was named; walk 01ARZ3NDEKTSV4RRFFQ69G5FAV resolves example.com/dep at v1.0.0, and the answer below covers it'
+stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame not-platform-scoped\) depend on example.com/dep'
+stdout 'example.com/app@v1.0.0.*\[root\]'
+
+# Walk B resolved the other version, and the same bare path answers there too.
+kanonarion dependents example.com/dep --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --include-root
+stdout 'resolves example.com/dep at v1.1.0'
+stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB'
+
+# Under --json the scope is a field: a rendered list cannot say which versions it
+# answered for.
+kanonarion dependents example.com/dep --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --include-root --json
+stdout '"target": "example.com/dep"'
+stdout '"target_versions"'
+stdout '"v1.0.0"'
+
+# The coordinate form is unchanged, and carries no target_versions: it named one.
+kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --include-root --json
+stdout '"target": "example.com/dep@v1.0.0"'
+! stdout '"target_versions"'
+
+# --any-build searches for a build holding ONE coordinate, so it has no frame to
+# read versions out of and refuses a bare path, naming the flag that gives it one.
+! kanonarion dependents example.com/dep --any-build --store-root=$WORK/stores
+stderr 'names a path'
+stderr 'kanonarion dependents example.com/dep --gomod ./go.mod'
+
+# A walk id in the module slot is named as one, not reported as a malformed path.
+! kanonarion dependents 01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores
+stderr 'is a walk id'
+stderr 'kanonarion dependents <module> --walk-id 01ARZ3NDEKTSV4RRFFQ69G5FAV'
 
 # Missing walk ID errors
 ! kanonarion dependents example.com/dep@v1.0.0 --walk-id=NOSUCHID --store-root=$WORK/stores

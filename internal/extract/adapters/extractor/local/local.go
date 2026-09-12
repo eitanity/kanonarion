@@ -7,9 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/extract/domain"
@@ -19,16 +21,12 @@ import (
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 )
-
-// callgraphSubprocessTimeout is the per-module timeout for callgraph subprocess
-// invocations. SSA closure construction for large modules can take many minutes;
-// 10 minutes provides headroom while bounding the blast radius of a hung child.
-const callgraphSubprocessTimeout = 10 * time.Minute
 
 type LicenseUseCase interface {
 	Execute(ctx context.Context, req licapp.ExtractRequest) (licapp.ExtractResult, error)
@@ -45,20 +43,21 @@ type SubprocessExecutor interface {
 	Execute(ctx context.Context, args []string) (stderr []byte, err error)
 }
 
-// CallGraphReader reads the call graph generations the ledger holds for a
-// coordinate. It is satisfied by the sqlite call graph store.
+// CallGraphReader reads back what the subprocess just recorded. It is satisfied
+// by the sqlite call graph store.
 //
-// Two reads, because the stage asks two different questions. GetCallGraphRecord
-// COMPOSES — "which generation answers questions about this coordinate" — and
-// may refuse when two of them disagree. ListCallGraphRecordsFor does not
-// compose. Confirming a write is the second question: the subprocess appended a
-// generation, and that is the one the stage reports, whatever composition would
-// serve to a reader afterwards.
+// One read, and a narrow one. The stage asks "what did the child I just ran
+// write here", which is answered by the newest generation's own columns and the
+// four fields the result carries. It is NOT the question composition answers —
+// "which generation should be served for this coordinate" — and asking that one
+// instead is what made this stage the most expensive thing in an extraction run:
+// composing decodes every generation the ledger holds, rebuilds each one's whole
+// edge set, and re-marshals it to check the seal, so a coordinate with a large
+// graph or a long history costs gigabytes to learn a status from.
 type CallGraphReader interface {
-	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error)
-	// ListCallGraphRecordsFor returns every generation for the coordinate and
-	// pipeline version, oldest first.
-	ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]cgdomain.CallGraphRecord, error)
+	// LatestCallGraphOutcome returns what the newest generation at the coordinate
+	// states, in append order, or (zero, false, nil) when the ledger holds none.
+	LatestCallGraphOutcome(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgports.CallGraphOutcome, bool, error)
 }
 
 type ExampleUseCase interface {
@@ -82,11 +81,50 @@ type AdapterExtractor struct {
 	example     ExampleUseCase
 	// logger is optional; a nil one discards. See WithLogger.
 	logger *slog.Logger
+	// cgSem admits one call-graph subprocess per slot. It bounds the two costs
+	// that scale with the number of children rather than with the pool: the SSA
+	// closures held at once, and the writers queueing on the store's single
+	// writer. A nil channel means unbounded and is reachable only from a struct
+	// literal; the constructor always fills it.
+	cgSem chan struct{}
+	// cgMem reports what the host can hand to new work, re-read before each
+	// analysis starts. The bound alone cannot answer that: it is sized once, when
+	// the extractor is built, and the module in front of a worker ten minutes
+	// later may be the one that holds fifty gigabytes on its own. A nil reporter
+	// means no headroom gate, which is what a composition root with no way to ask
+	// the host gets.
+	cgMem HostMemory
+	// cgRunning counts the analyses actually EXECUTING, not the slots held. The
+	// gate reads it to guarantee progress: when none is running, the next one
+	// starts whatever the host reports, because a host that cannot fund a single
+	// analysis still has to attempt one to find that out — and a gate that could
+	// stop every worker at once would turn a tight host into a hang.
+	cgRunning atomic.Int64
+	// cgPoll overrides CallgraphHeadroomPoll. It is unexported and set only by
+	// this package's own tests, which exercise the gate thirty times over and
+	// cannot wait two seconds a round for a condition they control.
+	cgPoll time.Duration
 }
 
-// WithLogger wires a logger so the stage can say when it reported the
-// generation it measured rather than the one composition would serve. It is
-// optional — a nil logger discards — and returns the receiver for chaining.
+// headroomPoll is how long a waiting worker sleeps before re-reading the host.
+func (a *AdapterExtractor) headroomPoll() time.Duration {
+	if a.cgPoll > 0 {
+		return a.cgPoll
+	}
+	return CallgraphHeadroomPoll
+}
+
+// WithHostMemory wires the reading the headroom gate needs. It is optional — a
+// nil reporter leaves the bound as the only limit — and returns the receiver
+// for chaining.
+func (a *AdapterExtractor) WithHostMemory(m HostMemory) *AdapterExtractor {
+	a.cgMem = m
+	return a
+}
+
+// WithLogger wires a logger so the stage can say when it is waiting for the
+// host to have room for the next analysis. It is optional — a nil logger
+// discards — and returns the receiver for chaining.
 func (a *AdapterExtractor) WithLogger(l *slog.Logger) *AdapterExtractor {
 	a.logger = l
 	return a
@@ -138,6 +176,105 @@ func NewAdapterExtractor(
 		cgPipelineVersion: cgPipelineVersion,
 		cgExtraArgs:       cgExtraArgs,
 		example:           ex,
+		cgSem:             make(chan struct{}, ResolveCallgraphConcurrency(0, nil, nil)),
+	}
+}
+
+// WithCallgraphConcurrency bounds how many call-graph subprocesses this adapter
+// runs at once. A value below one restores the CPU-derived default, so a
+// composition root that has no operator value to pass still gets a bound.
+func (a *AdapterExtractor) WithCallgraphConcurrency(n int) *AdapterExtractor {
+	if n < 1 {
+		n = ResolveCallgraphConcurrency(0, nil, nil)
+	}
+	a.cgSem = make(chan struct{}, n)
+	return a
+}
+
+// CallgraphHeadroomPoll is how often a worker holding a slot re-reads the host
+// while it waits for room to start its analysis.
+const CallgraphHeadroomPoll = 2 * time.Second
+
+// acquireCallgraphSlot waits for a subprocess slot AND for the host to have
+// room for the analysis, and returns the release. A second return of false
+// means the run ended while waiting, and the caller records that rather than
+// starting an analysis nothing will read.
+//
+// Two gates, because they bound different things. The slot bounds how many
+// analyses this run admits, and it is sized once from the host it started on.
+// The headroom gate bounds what the host can carry right NOW: the distribution
+// of module sizes is extremely skewed — most under 3 GiB, one over 50 — so four
+// slots is a safe bound for four ordinary modules and an unsafe one the moment
+// the heaviest module in the walk is one of them.
+func (a *AdapterExtractor) acquireCallgraphSlot(ctx context.Context) (func(), bool) {
+	releaseSlot := func() {}
+	if a.cgSem != nil {
+		select {
+		case a.cgSem <- struct{}{}:
+			releaseSlot = func() { <-a.cgSem }
+		case <-ctx.Done():
+			return func() {}, false
+		}
+	}
+	if !a.awaitCallgraphHeadroom(ctx) {
+		releaseSlot()
+		return func() {}, false
+	}
+	return func() {
+		a.cgRunning.Add(-1)
+		releaseSlot()
+	}, true
+}
+
+// awaitCallgraphHeadroom blocks until the host can fund another concurrent
+// analysis. It returns false only when the run ended while waiting.
+//
+// It cannot deadlock, and the reason is the running count rather than a timeout.
+// A worker waits only while some other analysis is running, and that analysis is
+// what will release the memory it is waiting for; when nothing is running there
+// is nothing to wait for and the worker proceeds. So at every moment at least
+// one analysis is either running or about to start.
+//
+// An unreadable host is "unknown", never a budget of zero: refusing to run
+// because the memory could not be measured would turn a diagnostic gap into an
+// outage.
+func (a *AdapterExtractor) awaitCallgraphHeadroom(ctx context.Context) bool {
+	if a.cgMem == nil {
+		a.cgRunning.Add(1)
+		return true
+	}
+	waiting := false
+	for {
+		// The claim and the "is anything running" test are one atomic operation.
+		// Read-then-increment lets two workers each see an idle run and both start,
+		// which is the bound this gate exists to hold reappearing one worker later.
+		if a.cgRunning.CompareAndSwap(0, 1) {
+			return true
+		}
+		available, err := a.cgMem.AvailableBytes()
+		if err != nil {
+			a.cgRunning.Add(1)
+			return true
+		}
+		if available >= CallgraphBudgetBytes {
+			a.cgRunning.Add(1)
+			return true
+		}
+		if !waiting {
+			waiting = true
+			a.log().InfoContext(ctx, "callgraph_analysis_waiting_for_memory",
+				slog.Uint64("available_bytes", available),
+				slog.Uint64("per_subprocess_budget_bytes", CallgraphBudgetBytes),
+				slog.Int64("analyses_running", a.cgRunning.Load()),
+			)
+		}
+		timer := time.NewTimer(a.headroomPoll())
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		}
 	}
 }
 
@@ -203,10 +340,11 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleC
 // process. The child runs the full callgraph extraction and persists the record
 // to the store. The parent reads the record back on success.
 func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord coordinate.ModuleCoordinate, force bool, walkID string) (ports.StageResult, error) {
-	cgCtx, cancel := context.WithTimeout(ctx, callgraphSubprocessTimeout)
-	defer cancel()
-
-	args := []string{"callgraph", coord.String()}
+	// The subprocess reports each phase it enters and the executor ends it when those
+	// reports stop, so the instruction is explicit rather than left to the store's
+	// progress preference — a config file must not be able to disable the stall
+	// detector.
+	args := []string{"callgraph", coord.String(), "--narrate-progress"}
 	args = append(args, a.cgExtraArgs...)
 	if force {
 		args = append(args, "--force")
@@ -219,33 +357,37 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 		args = append(args, "--from-walk", walkID)
 	}
 
-	stderr, execErr := a.cgExec.Execute(cgCtx, args)
+	// The subprocesses carry their own bound, however wide the module pool is:
+	// one worker runs every stage for its module, and the cheap in-process stages
+	// must not be slowed to bound this one.
+	release, admitted := a.acquireCallgraphSlot(ctx)
+	if !admitted {
+		return ports.StageResult{
+			Status: domain.StageFailed,
+			Cause:  failurecause.Environment,
+			Error: fmt.Sprintf("callgraph stage status=%s: the run ended before the analysis could start",
+				cgdomain.CallGraphStatusCancelled),
+		}, nil
+	}
+	defer release()
+
+	stderr, execErr := a.cgExec.Execute(ctx, args)
+	// The child's writes are this run's writes. Without folding its count in, a
+	// run whose children waited repeatedly for the store lock reports none.
+	sqlitestore.AddRetries(sqlitestore.ContentionNoticeIn(string(stderr)))
 	// A child that exited Partial wrote its graph; the record read below is what
 	// classifies it. Reading that exit as a fault made every incompletely
 	// analysable module a failed stage.
 	if execErr != nil && !childproc.ExitedPartial(execErr) {
-		detail := buildSubprocessErrorDetail(cgCtx, execErr, stderr)
+		detail, cause, cgStatus := buildSubprocessErrorDetail(execErr, stderr, walkID)
 		return ports.StageResult{
 			Status: domain.StageFailed,
-			Error:  fmt.Sprintf("callgraph stage status=ExtractionFailed: %s", detail),
+			Cause:  cause,
+			Error:  fmt.Sprintf("callgraph stage status=%s: %s", cgStatus, detail),
 		}, nil
 	}
 
-	rec, found, err := a.cgReader.GetCallGraphRecord(ctx, coord, a.cgPipelineVersion)
-	if errors.Is(err, cgports.ErrCallGraphConflict) {
-		// The child has just appended a generation that disagrees with an older
-		// one, so composition refuses to name which of them answers the
-		// coordinate. That refusal is correct for a reader and irrelevant here:
-		// this stage reports the measurement it just took, not a served answer.
-		a.log().InfoContext(ctx, "callgraph_stage_reports_measured_generation",
-			slog.String("extraction.module.path", coord.Path()),
-			slog.String("extraction.module.version", coord.Version()),
-			slog.String("extraction.stage", "callgraph"),
-			slog.String("pipeline_version", a.cgPipelineVersion),
-			slog.String("conflict", err.Error()),
-		)
-		rec, found, err = a.measuredGeneration(ctx, coord)
-	}
+	rec, found, err := a.cgReader.LatestCallGraphOutcome(ctx, coord, a.cgPipelineVersion)
 	if err != nil {
 		return ports.StageResult{}, fmt.Errorf("reading callgraph record after subprocess: %w", err)
 	}
@@ -264,43 +406,106 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	return ports.StageResult{
 		RecordID: rec.ContentHash,
 		Status:   status,
-		Error:    failureReason("callgraph", status, rec.OverallStatus.String(), rec.FailureDetail),
+		// The record already decided what its failure is a statement about; the
+		// stage repeats the record's own answer rather than reaching a second one.
+		Cause: rec.FailureCause,
+		Error: failureReason("callgraph", status, rec.OverallStatus.String(), rec.FailureDetail),
 	}, nil
 }
 
-// measuredGeneration returns the generation the subprocess just appended.
-//
-// The ledger is append-only and lists in insertion order, so the newest row is
-// the child's own write. LatestObservation states that rule, and stating it once
-// is why this does not index the slice itself.
-func (a *AdapterExtractor) measuredGeneration(ctx context.Context, coord coordinate.ModuleCoordinate) (cgdomain.CallGraphRecord, bool, error) {
-	recs, err := a.cgReader.ListCallGraphRecordsFor(ctx, coord, a.cgPipelineVersion)
-	if err != nil {
-		return cgdomain.CallGraphRecord{}, false, fmt.Errorf("listing callgraph generations for %s: %w", coord, err)
-	}
-	if len(recs) == 0 {
-		return cgdomain.CallGraphRecord{}, false, nil
-	}
-	return cgdomain.LatestObservation(recs), true, nil
-}
-
 // buildSubprocessErrorDetail formats the error_detail for a failed callgraph
-// subprocess. The context is checked first so timeout failures are labelled
-// clearly regardless of what the OS-level kill returns.
-func buildSubprocessErrorDetail(ctx context.Context, execErr error, stderr []byte) string {
+// subprocess, says what the failure is a statement about, and names the
+// call-graph status it amounts to.
+//
+// The status is decided here rather than at the call site because it is the same
+// judgement as the detail: what ended this child, and what would a reader do
+// about it. Everything the child itself could record is in the record it wrote;
+// this covers the outcomes where there is no record because there is no longer a
+// child, and the parent is the only process left to state them.
+//
+// The two deadlines are named separately because a reader acts on them
+// differently: a subprocess stopped for reporting nothing had halted, while one
+// killed at the ceiling was still working and needs a larger number. Both are
+// this host rather than the module — the same module on an idle box, or with the
+// ceiling raised, may well produce a complete graph — so neither may be cached
+// as a property of the published bytes.
+func buildSubprocessErrorDetail(execErr error, stderr []byte, walkID string) (string, failurecause.Cause, cgdomain.CallGraphStatus) {
 	stderrStr := strings.TrimSpace(string(stderr))
+	suffix := ""
+	if stderrStr != "" {
+		suffix = ": " + stderrStr
+	}
 
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		if stderrStr != "" {
-			return fmt.Sprintf("subprocess timed out after %s: %s", callgraphSubprocessTimeout, stderrStr)
-		}
-		return fmt.Sprintf("subprocess timed out after %s", callgraphSubprocessTimeout)
+	switch {
+	case strings.Contains(stderrStr, sqlitestore.ContentionMarker):
+		// The analysis ran; only its write lost. That is this host at this moment,
+		// never the module, and running again is what repairs it — which is exactly
+		// what a reader must not have to guess from "database is locked".
+		return "the analysis finished and its record could not be stored: another writer held the " +
+				"store lock for the whole retry budget; running the stage again stores it" + suffix,
+			failurecause.Environment, cgdomain.CallGraphStatusExtractionFailed
+	case errors.Is(execErr, childproc.ErrStalled):
+		return fmt.Sprintf("the analysis reported no progress for %s and was stopped%s",
+				cgports.DefaultStallWindow, suffix),
+			failurecause.Environment, cgdomain.CallGraphStatusExtractionFailed
+	case errors.Is(execErr, childproc.ErrCeiling):
+		return "the analysis was still working when the wall-clock ceiling was reached; " +
+				raiseCeilingRemedy(walkID) + suffix,
+			failurecause.Environment, cgdomain.CallGraphStatusExtractionFailed
+	case errors.Is(execErr, context.Canceled):
+		return "the run was cancelled before the analysis finished" + suffix,
+			failurecause.Environment, cgdomain.CallGraphStatusCancelled
+	case strings.Contains(stderrStr, childproc.MemoryCeilingMarker):
+		// The analysis reached the ceiling this run gives one analysis and ended
+		// itself there. Said apart from the case below because the two are different
+		// facts: this one is a number this run chose and an operator can raise,
+		// while the kernel choosing a victim is neither. Both are the host rather
+		// than the module, so neither may be cached as a property of the bytes.
+		return "the analysis reached the memory ceiling this host allows one analysis and stopped " +
+				"itself; give it more with --callgraph-memory-ceiling, or analyse this module on its own" + suffix,
+			failurecause.Environment, cgdomain.CallGraphStatusOutOfMemory
+	case killedBySignal(execErr):
+		// Neither deadline fired, so something outside this process ended the
+		// subprocess — the operating system reclaiming memory in every case
+		// observed. That is the host's memory, not the module's source: the same
+		// module analysed on its own, or with fewer concurrent subprocesses, may
+		// well produce a complete graph. --workers is not the control: it sizes
+		// the module pool, and the concurrent analyses are bounded separately.
+		//
+		// This is where OutOfMemory is produced, and it is produced HERE — in the
+		// parent, about a child — because a status the dying process has to write
+		// is not a status. A process the kernel ends gets no chance to record
+		// anything, so the only account of it that can exist is the one its
+		// parent writes afterwards.
+		return "the analysis was ended by the operating system before it finished, which is " +
+				"usually memory: lower --callgraph-workers, or analyse this module on its own" + suffix,
+			failurecause.Environment, cgdomain.CallGraphStatusOutOfMemory
 	}
 
 	if stderrStr != "" {
-		return fmt.Sprintf("subprocess failed (%v): %s", execErr, stderrStr)
+		return fmt.Sprintf("subprocess failed (%v): %s", execErr, stderrStr),
+			failurecause.Unrecorded, cgdomain.CallGraphStatusExtractionFailed
 	}
-	return fmt.Sprintf("subprocess failed: %v", execErr)
+	return fmt.Sprintf("subprocess failed: %v", execErr),
+		failurecause.Unrecorded, cgdomain.CallGraphStatusExtractionFailed
+}
+
+// killedBySignal reports whether a child was ended by a signal rather than by
+// exiting. exec renders that as "signal: killed"; 137 is the shell's spelling of
+// the same thing, and both reach this from different places.
+func killedBySignal(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "signal: killed") || strings.Contains(msg, "exit status 137")
+}
+
+// raiseCeilingRemedy names the invocation that gives this module more time. The
+// walk is named when the stage has one, because a reader copying the line should
+// not have to go and find the id of the run they are already inside.
+func raiseCeilingRemedy(walkID string) string {
+	if walkID == "" {
+		return "give it longer with --callgraph-timeout"
+	}
+	return fmt.Sprintf("give it longer with: kanonarion extract %s --stages callgraph --callgraph-timeout 4h", walkID)
 }
 
 // failureReason builds the diagnostic string surfaced via StageResult.Error

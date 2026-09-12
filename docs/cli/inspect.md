@@ -11,6 +11,11 @@ With no positional module, `inspect` defaults to `--gomod ./go.mod` and runs the
 pipeline over a single project-rooted walk (see
 [`inspect --gomod <path>`](#inspect---gomod-path)).
 
+The positional slot is a module coordinate, never a walk id: `inspect` is the
+command that **produces** a walk. Handed one, it says so and names the commands
+that consume an existing walk - `extract`, `vuln-scan` and `walk-show` - rather
+than reading the id as a module path.
+
 ## Description
 
 `inspect` runs the full kanonarion pipeline for a module in a single command:
@@ -34,7 +39,14 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 
 If the binary is missing, the scan fails with a descriptive error naming the
 install command, and the summary reports `Partial` with a scan-failure count
-instead of a clean verdict.
+instead of a clean status.
+
+govulncheck type-checks the project's source with the `go/types` compiled into
+it, so the Go release it was **built with** must be at least the one the
+project's `go` directive names - the `go` on `PATH` and `GOTOOLCHAIN` do not
+change it. A scan that meets that gap names the tool, both versions, and the
+command that rebuilds it; see
+[vuln-scan prerequisites](vuln.md#prerequisites).
 
 ## Commands
 
@@ -44,7 +56,7 @@ The two modes scan from **different roots**, and their vuln legs differ to match
   which becomes the main module and is scanned in isolation (the coordinate-keyed
   path). This is the intended "scan it on its own to see what it looks like" view.
 - **Project** (`inspect`, `--gomod`, `--tool`, `--project`) roots the walk at the
-  local main module and derives its vuln verdict from a single **project-rooted**
+  local main module and derives its vulnerability status from a single **project-rooted**
   scan of the live working tree - the project's real build - not from re-scanning
   each dependency in isolation. In-build modules read `Clean`/`Affected`/`Withdrawn`; only a
   genuine fault reads `Unscannable`/`ScanFailed`.
@@ -77,6 +89,8 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 | `--gomod` | _(none; `./go.mod` when no positional module)_ | Run the pipeline over a project-rooted walk and print a summary |
 | `--tool` | `false` | Scope the `go.mod` run to the tooling supply chain. Mutually exclusive with `--project` |
 | `--project` | `false` | Scope the `go.mod` run to the complete set: code **and** tooling. Mutually exclusive with `--tool` |
+| `--callgraph-workers` | `0` (host-sized: `min(NumCPU, 4, available memory / 4 GiB)`) | How many callgraph subprocesses may run at once. See [Memory](#memory) |
+| `--callgraph-memory-ceiling` | `0` (host-sized) | How much memory one callgraph analysis may hold, in bytes, before it stops itself. See [extract](extract.md#how-large-one-analysis-may-get) |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain (project-mode `--gomod` run; refused on a positional module run). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 
@@ -170,7 +184,7 @@ directly to `sbom`, `extract`, `vuln-scan`, and `walk-show`.
 > **Reachability roots at the dependency closure, not the project's own code.**
 > With `--reachability`, the project walk analyses the consumer module in
 > consumer-mode, so its call graph is not loaded into the store. A `reachable`
-> verdict therefore means "reachable from the closure roots", one hop short of
+> answer therefore means "reachable from the closure roots", one hop short of
 > "reachable from a project entrypoint" - the final application-to-dependency
 > edge is absent. `inspect --gomod --reachability` prints an explicit banner to
 > stderr stating this. To root reachability at the application, run
@@ -272,7 +286,7 @@ vendored build:
   this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
 ```
 
-It states a fact and changes no verdict: a vendored project answers exactly as
+It states a fact and changes no answer: a vendored project answers exactly as
 before, with one more line of basis. `kanonarion vendor` is the command that
 compares the shipped bytes against the published module zips.
 
@@ -316,6 +330,16 @@ the same module is fast: only changed or absent records are recomputed. Use
 `--force` to bypass the cache for all stages.
 
 ## Memory
+
+Two of `inspect`'s stages spawn memory-heavy subprocesses, and each carries its
+own bound.
+
+The extract stage runs `callgraph` over every module in the walk, one
+subprocess per module. At most `min(NumCPU, 4, floor(available memory / 4 GiB))`
+of them run at once, whatever `--workers` the underlying pool uses — see
+[how many subprocesses run at once](extract.md#how-many-subprocesses-run-at-once).
+`--callgraph-workers` changes that bound, and raising it raises the run's peak
+memory by about one more module's worth per step.
 
 The vuln-scan stage runs a bounded pool of `govulncheck` processes. A single
 source-mode scan of a cloud-SDK-heavy module can hold several GB, so the pool is

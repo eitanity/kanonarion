@@ -1,4 +1,4 @@
-# error-shaped: nothing is stored, so no verdict can be served.
+# error-shaped: nothing is stored, so no answer can be served.
 $ kanonarion reachability example.com/mod@v1.2.0 --vuln GO-2026-0001 --json
 exit 4
 --- error ---

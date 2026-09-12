@@ -71,6 +71,10 @@ type graph struct {
 	// the synthetic "local" version, and "callgraph <path>@local" is an
 	// instruction that cannot succeed.
 	remedy string
+	// analysisRoot is the working tree the served record was analysed in, empty
+	// when the record does not say. It is carried so a remedy printed later names
+	// the directory instead of a placeholder the reader cannot substitute.
+	analysisRoot string
 	// nodes is keyed by (package, receiver, symbol) — what a route frame carries.
 	// A node ID would be the obvious key, but the frame does not hold one and
 	// reconstructing an ID from its parts encodes an ID convention this context
@@ -141,7 +145,7 @@ func (c *Classifier) facts(ctx context.Context, coord coordinate.ModuleCoordinat
 			Unavailable: fmt.Sprintf(
 				"the route's entry point %s is not a node in %s's call graph, so the graph cannot say what enters it",
 				frame, coord),
-			UnavailableRemedy: callgraphdomain.ReanalysisCommand(coord, "") + ", to re-analyse the module the route starts in",
+			UnavailableRemedy: callgraphdomain.ReanalysisInstruction(coord, g.analysisRoot) + ", to re-analyse the module the route starts in",
 		}
 	}
 	return vuldomain.RootFacts{
@@ -221,7 +225,9 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 	case !found:
 		return &graph{
 			unavailable: fmt.Sprintf("no call graph is stored for %s, so nothing can be said about what enters the route", coord),
-			remedy:      callgraphdomain.ReanalysisCommand(coord, ""),
+			// No record came back, so there is no tree to name: the instruction says
+			// so rather than printing a command with a placeholder in it.
+			remedy: callgraphdomain.ReanalysisInstruction(coord, ""),
 		}
 	case len(rec.Nodes) == 0:
 		// A record with no nodes is not an empty module. It is a module analysed at
@@ -232,11 +238,12 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 			unavailable: fmt.Sprintf(
 				"%s's call graph was analysed at %s and holds no nodes, so it cannot say what enters the route",
 				coord, rec.Completeness),
-			remedy: callgraphdomain.ReanalysisCommand(coord, ""),
+			remedy: callgraphdomain.ReanalysisInstruction(coord, rec.AnalysisRoot),
 		}
 	}
 
 	g := &graph{
+		analysisRoot:    rec.AnalysisRoot,
 		nodes:           make(map[frameKey]callgraphdomain.CallNode, len(rec.Nodes)),
 		callers:         make(map[string]int),
 		externalCallers: make(map[string]int),

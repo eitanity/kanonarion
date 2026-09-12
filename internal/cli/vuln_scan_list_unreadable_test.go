@@ -36,7 +36,7 @@ func listableRun(id, walkID string) vulndomain.WalkScanRun {
 // driftedRuns is the error the store returns for a row sealed by a generation
 // this build no longer produces.
 func driftedRuns(id string) error {
-	return &vulnports.UnreadableRuns{Runs: []vulnports.UnreadableRun{{
+	return &vulnports.UnreadableRows{Rows: []vulnports.UnreadableRow{{Kind: vulnports.RowKindRun,
 		ID: id,
 		Reason: fmt.Errorf("%w: content hash mismatch: stored %q, computed %q",
 			recordseal.ErrGenerationDrift, "e4bb5481", "aa1aeac1"),
@@ -65,7 +65,7 @@ func TestRunScanList_ListsReadableRunsAndNamesTheUnreadable(t *testing.T) {
 	if !strings.Contains(got, "vscan-bad") {
 		t.Errorf("output does not name the unreadable run:\n%s", got)
 	}
-	if !strings.Contains(got, scanRunStatusUnreadable) {
+	if !strings.Contains(got, statusUnreadable) {
 		t.Errorf("output does not mark the row unreadable:\n%s", got)
 	}
 	// Drift is not tampering, and the wording must not let a reader conclude it
@@ -99,7 +99,7 @@ func TestRunScanList_JSONCarriesTheUnreadableRow(t *testing.T) {
 		t.Fatalf("entries = %+v, want the readable run and the unreadable one", entries)
 	}
 	last := entries[1]
-	if last.ID != "vscan-bad" || last.Status != scanRunStatusUnreadable || last.Reason == "" {
+	if last.ID != "vscan-bad" || last.Status != statusUnreadable || last.Reason == "" {
 		t.Errorf("unreadable entry = %+v, want it named, marked unreadable and given a reason", last)
 	}
 }
@@ -111,7 +111,7 @@ func TestRunScanList_JSONCarriesTheUnreadableRow(t *testing.T) {
 func TestRunScanList_NeutralWordingWhenDriftCannotBeShown(t *testing.T) {
 	fake := testfakes.NewFakeQueryScanRuns()
 	fake.AddRun(listableRun("vscan-good-1", "walk-1"))
-	fake.ListErr = &vulnports.UnreadableRuns{Runs: []vulnports.UnreadableRun{{
+	fake.ListErr = &vulnports.UnreadableRows{Rows: []vulnports.UnreadableRow{{Kind: vulnports.RowKindRun,
 		ID:     "vscan-bad",
 		Reason: errors.New(`content hash mismatch: stored "e4bb5481", computed "aa1aeac1"`),
 	}}}
@@ -140,7 +140,7 @@ func TestRunScanList_CleanStoreIsUnchanged(t *testing.T) {
 		t.Fatalf("runScanList() = %v, want nil", err)
 	}
 	got := out.String()
-	if strings.Contains(got, scanRunStatusUnreadable) {
+	if strings.Contains(got, statusUnreadable) {
 		t.Errorf("a clean store reported an unreadable row:\n%s", got)
 	}
 	if lines := strings.Count(strings.TrimSpace(got), "\n") + 1; lines != 1 {
@@ -196,7 +196,7 @@ func TestRunScanShow_ReportsTheUnreadableRunItWasAskedFor(t *testing.T) {
 	if !strings.Contains(got, "vscan-bad") {
 		t.Errorf("output does not name the run asked for:\n%s", got)
 	}
-	if !strings.Contains(got, scanRunStatusUnreadable) {
+	if !strings.Contains(got, statusUnreadable) {
 		t.Errorf("output does not mark the run unreadable:\n%s", got)
 	}
 	if !strings.Contains(got, "sealed by an earlier record generation; re-scan to reseal") {
@@ -223,7 +223,7 @@ func TestRunScanShow_JSONNamesTheRun(t *testing.T) {
 	}
 	// The stored bytes named no run; the id the caller typed is still reported,
 	// because it is the only identity in the exchange.
-	if got.ID != "vscan-bad" || got.Status != scanRunStatusUnreadable || got.Reason == "" {
+	if got.ID != "vscan-bad" || got.Status != statusUnreadable || got.Reason == "" {
 		t.Errorf("got %+v, want the asked-for id marked unreadable with a reason", got)
 	}
 }

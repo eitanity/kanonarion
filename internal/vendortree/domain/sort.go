@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/eitanity/kanonarion/internal/versionorder"
 )
 
 // VendoredModuleLess is the canonical ordering for VendoredModule slices: the
@@ -20,11 +22,17 @@ func VendoredModuleLess(a, b VendoredModule) bool {
 	if a.Path != b.Path {
 		return a.Path < b.Path
 	}
+	if c := versionorder.CompareModuleVersions(a.Version, b.Version); c != 0 {
+		return c < 0
+	}
 	if a.Version != b.Version {
 		return a.Version < b.Version
 	}
 	if a.ReplacementPath != b.ReplacementPath {
 		return a.ReplacementPath < b.ReplacementPath
+	}
+	if c := versionorder.CompareModuleVersions(a.ReplacementVersion, b.ReplacementVersion); c != 0 {
+		return c < 0
 	}
 	if a.ReplacementVersion != b.ReplacementVersion {
 		return a.ReplacementVersion < b.ReplacementVersion
@@ -61,6 +69,9 @@ func FindingLess(a, b Finding) bool {
 	}
 	if a.Kind != b.Kind {
 		return a.Kind < b.Kind
+	}
+	if c := versionorder.CompareModuleVersions(a.Version, b.Version); c != 0 {
+		return c < 0
 	}
 	if a.Version != b.Version {
 		return a.Version < b.Version

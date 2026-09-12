@@ -29,7 +29,8 @@ exit 0
     "rechecked": 0,
     "inherited": 0,
     "never": 0,
-    "not_measured": 3
+    "not_measured": 3,
+    "unavailable": 0
   },
   "build": {
     "vendoring_known": false,

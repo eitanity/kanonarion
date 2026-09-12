@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -360,21 +359,71 @@ func servesBefore(a, b InterfaceRecord) bool {
 // Everything else is compared, over the canonical shape rather than a chosen
 // subset, so anything else inside the seal separates two measurements.
 func SameMeasurement(a, b InterfaceRecord) (bool, error) {
-	// The rule the field-dropping above depends on. It is stated here rather than
-	// left to the caller: a comparison that is only sound when someone else
-	// checked something is a comparison that stops being sound when they stop.
-	if !NamesAnalysedContent(a) || !NamesAnalysedContent(b) {
+	seal, named, err := SealMeasurement(a)
+	if err != nil {
+		return false, err
+	}
+	if !named {
 		return false, nil
 	}
-	ab, err := marshalCanonical(forMeasurementComparison(a))
-	if err != nil {
-		return false, fmt.Errorf("marshal interface record for measurement comparison: %w", err)
+	return seal.SameAs(b)
+}
+
+// ErrUnsealedMeasurement is what a zero MeasurementSeal answers with. A seal is
+// taken OVER a record, and the zero value was taken over none; comparing a
+// record against it would report "not the same measurement" about a comparison
+// that never happened.
+var ErrUnsealedMeasurement = errors.New("measurement seal was never taken over a record")
+
+// MeasurementSeal is SameMeasurement's comparison held as a value, taken once
+// over one record so that asking it of N held generations encodes that record
+// once rather than N times.
+//
+// The ledger asks this question of every candidate the prefilter returns, and
+// the freshly extracted record is the same record for all of them, so the pair
+// form encoded it again on each of them. The blob holds the whole API, which for
+// the largest module in the maintainer's store is hundreds of megabytes of one
+// record — an edge set is not the only thing worth not encoding twice.
+//
+// It is the digest of exactly the bytes SameMeasurement compared, so "the same
+// seal" and "the same bytes" are one answer; the equality is asserted directly
+// rather than assumed.
+type MeasurementSeal struct {
+	digest string
+}
+
+// SealMeasurement takes the seal over one record. The bool is false when the
+// record names no analysed content: such a record is the same measurement as
+// nothing, including another that names none, so there is nothing to seal — the
+// rule is stated here rather than left to the caller, because a comparison that
+// is only sound when someone else checked something stops being sound when they
+// stop.
+func SealMeasurement(r InterfaceRecord) (MeasurementSeal, bool, error) {
+	if !NamesAnalysedContent(r) {
+		return MeasurementSeal{}, false, nil
 	}
-	bb, err := marshalCanonical(forMeasurementComparison(b))
+	b, err := marshalCanonical(forMeasurementComparison(r))
 	if err != nil {
-		return false, fmt.Errorf("marshal interface record for measurement comparison: %w", err)
+		return MeasurementSeal{}, false, fmt.Errorf("marshal interface record for measurement comparison: %w", err)
 	}
-	return bytes.Equal(ab, bb), nil
+	sum := sha256.Sum256(b)
+	return MeasurementSeal{digest: hex.EncodeToString(sum[:])}, true, nil
+}
+
+// SameAs reports whether r states the identical measurement to the record this
+// seal was taken over.
+func (s MeasurementSeal) SameAs(r InterfaceRecord) (bool, error) {
+	if s.digest == "" {
+		return false, ErrUnsealedMeasurement
+	}
+	other, named, err := SealMeasurement(r)
+	if err != nil {
+		return false, err
+	}
+	if !named {
+		return false, nil
+	}
+	return s.digest == other.digest, nil
 }
 
 // forMeasurementComparison blanks when a record was measured, the seal that

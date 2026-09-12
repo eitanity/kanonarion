@@ -3,6 +3,7 @@ package sqlite_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -862,6 +863,64 @@ func TestLedger_IdenticalGenerationFindsTheMeasurementAlreadyHeld(t *testing.T) 
 	}
 	if got.ContentHash != held.ContentHash {
 		t.Fatalf("content hash = %q, want the generation already held (%q)", got.ContentHash, held.ContentHash)
+	}
+}
+
+// TestLedger_IdenticalGenerationWalksEveryCandidateAndAppendsNothing.
+//
+// The prefilter returns every plausible duplicate, newest first, and the loop
+// stops at the first match — so the case that walks the whole set is the one
+// where the match is the OLDEST row. The fresh record is encoded once for that
+// whole walk rather than once per candidate, and this pins that the once is
+// taken over the right record: a seal taken over a candidate, or carried over
+// from a previous call, would match the wrong row or none.
+func TestLedger_IdenticalGenerationWalksEveryCandidateAndAppendsNothing(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	artefact := fetchtest.ZipArtefact("tree-one=").String()
+	first := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	// The oldest row is the one the fresh extraction restates. Every later row
+	// exports a differently named symbol, so each states one package and one
+	// export — every column the prefilter reads agrees — and only the decoded
+	// comparison separates it.
+	restated := ledgerRecord(t, local, domain2.InterfaceStatusExtracted, []string{"A"}, first, artefact)
+	if perr := s.PutInterfaceRecord(ctx, restated); perr != nil {
+		t.Fatalf("PutInterfaceRecord: %v", perr)
+	}
+	const candidates = 5
+	for i := 1; i < candidates; i++ {
+		other := ledgerRecord(t, local, domain2.InterfaceStatusExtracted,
+			[]string{fmt.Sprintf("Elsewhere%d", i)}, first.Add(time.Duration(i)*time.Hour), artefact)
+		if perr := s.PutInterfaceRecord(ctx, other); perr != nil {
+			t.Fatalf("PutInterfaceRecord: %v", perr)
+		}
+	}
+
+	fresh := ledgerRecord(t, local, domain2.InterfaceStatusExtracted, []string{"A"},
+		first.Add(candidates*time.Hour), artefact)
+	if fresh.ContentHash == restated.ContentHash {
+		t.Fatal("the two runs sealed identically; the fixture is not exercising the case")
+	}
+	got, found, gerr := s.IdenticalGeneration(ctx, fresh)
+	if gerr != nil || !found {
+		t.Fatalf("IdenticalGeneration: found=%v err=%v — the walk did not reach the oldest candidate", found, gerr)
+	}
+	if got.ContentHash != restated.ContentHash {
+		t.Fatalf("matched %q, want the oldest generation (%q)", got.ContentHash, restated.ContentHash)
+	}
+
+	// A record that differs — here in the artefact it read, which the comparison
+	// does NOT set aside and no column can see — is still not matched.
+	elsewhere := ledgerRecord(t, local, domain2.InterfaceStatusExtracted, []string{"A"},
+		first.Add((candidates+1)*time.Hour), fetchtest.ZipArtefact("tree-two=").String())
+	if _, found, ferr := s.IdenticalGeneration(ctx, elsewhere); ferr != nil || found {
+		t.Fatalf("an extraction of different bytes matched a held generation: found=%v err=%v", found, ferr)
 	}
 }
 

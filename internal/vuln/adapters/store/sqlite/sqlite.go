@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
@@ -773,24 +776,27 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 	// including the first-seen lookup — must run on the transaction's handle. A
 	// query issued against s.db.DB() while this transaction is open would wait
 	// for a connection the transaction is holding, and deadlock.
-	tx, err := s.db.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	// Retried when another writer holds the single-writer lock: the condition is
+	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	if err := sqlitestore.RetryOnBusy(ctx, "vulnerability record for "+record.Coordinate.String(), func(ctx context.Context) error {
+		tx, err := s.db.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("beginning transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
 
-	if existing, ok, ferr := s.firstScannedAt(ctx, tx, record); ferr != nil {
-		return ferr
-	} else if ok {
-		record.FirstScannedAt = existing
-	}
+		if existing, ok, ferr := s.firstScannedAt(ctx, tx, record); ferr != nil {
+			return ferr
+		} else if ok {
+			record.FirstScannedAt = existing
+		}
 
-	serialised, err := h.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("marshalling vulnerability record: %w", err)
-	}
+		serialised, err := h.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("marshalling vulnerability record: %w", err)
+		}
 
-	const q = `
+		const q = `
 INSERT INTO vulnerability_records (
     module_path, module_version, pipeline_version,
     snapshot_source, snapshot_version, rooting, walk_id,
@@ -802,30 +808,34 @@ ON CONFLICT (module_path, module_version, pipeline_version,
              snapshot_source, snapshot_version, scanned_at, content_hash)
 DO NOTHING`
 
-	// The columns come from RecordAxes rather than from the fields directly, so a
-	// record that reached here without the seal step's derivation still indexes
-	// under a real axis instead of the empty string.
-	coverage, findings := domain.RecordAxes(record)
-	rooting := domain.RecordRooting(record)
+		// The columns come from RecordAxes rather than from the fields directly, so a
+		// record that reached here without the seal step's derivation still indexes
+		// under a real axis instead of the empty string.
+		coverage, findings := domain.RecordAxes(record)
+		rooting := domain.RecordRooting(record)
 
-	if _, err = tx.ExecContext(ctx, q,
-		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
-		string(rooting), record.WalkID,
-		string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
-		record.ScannedAt.UTC().Format(time.RFC3339),
-		record.FirstScannedAt.UTC().Format(time.RFC3339),
-		record.ContentHash, serialised,
-	); err != nil {
-		return fmt.Errorf("inserting vulnerability record: %w", err)
-	}
+		if _, err = tx.ExecContext(ctx, q,
+			record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
+			record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
+			string(rooting), record.WalkID,
+			string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
+			recordstamp.Format(record.ScannedAt),
+			recordstamp.Format(record.FirstScannedAt),
+			record.ContentHash, serialised,
+		); err != nil {
+			return fmt.Errorf("inserting vulnerability record: %w", err)
+		}
 
-	if err = s.reconcileFindingsIndex(ctx, tx, record, rooting); err != nil {
-		return err
-	}
+		if err = s.reconcileFindingsIndex(ctx, tx, record, rooting); err != nil {
+			return err
+		}
 
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("committing vulnerability record: %w", err)
+		if err = tx.Commit(); err != nil {
+			return fmt.Errorf("committing vulnerability record: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	return nil
 }
@@ -923,16 +933,17 @@ func (s *Store) listGenerations(
 	q querier,
 	path, version, pipelineVersion, snapshotSource, snapshotVersion string,
 ) ([]domain.VulnerabilityRecord, error) {
-	// rowid, not content_hash, is the secondary sort: scanned_at persists at
-	// second precision — the precision the canonical hash covers, so widening the
-	// column would put the stored hashes and the stored time out of step — and two
-	// scans within one second carry the same timestamp. The ledger is append-only,
-	// so insertion order is the sequence it actually has.
+	// rowid, not content_hash, is the secondary sort: two scans can share a
+	// timestamp, at whole seconds on every row written before the column was
+	// widened and at any precision when two land inside one tick. The ledger is
+	// append-only, so insertion order is the sequence it actually has. The order
+	// reads the PARSED time, because a whole second and a fixed-width fraction
+	// invert against each other as text.
 	const stmt = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND snapshot_source = ? AND snapshot_version = ?
-ORDER BY scanned_at ASC, rowid ASC`
+ORDER BY julianday(scanned_at) ASC, rowid ASC`
 
 	rows, err := q.QueryContext(ctx, stmt, path, version, pipelineVersion, snapshotSource, snapshotVersion)
 	if err != nil {
@@ -976,8 +987,11 @@ ORDER BY scanned_at ASC, rowid ASC`
 // connection, so a query on the store's own handle would block on the
 // transaction that is about to write the row it is reading.
 func (s *Store) firstScannedAt(ctx context.Context, q querier, record domain.VulnerabilityRecord) (time.Time, bool, error) {
-	const stmt = `
-SELECT MIN(first_scanned_at) FROM vulnerability_records
+	// The aggregate reads the column at fixed width. A bare MIN over TEXT would
+	// return the LATER of two spellings of one second, and the anchor this query
+	// exists to hold still would move forward — see sqlitestore.SortableStamp.
+	stmt := `
+SELECT MIN(` + sqlitestore.SortableStamp("first_scanned_at") + `) FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND snapshot_source = ? AND snapshot_version = ?
   AND first_scanned_at != ''`
@@ -1173,7 +1187,7 @@ func (s *Store) GetLatestVulnerabilityRecord(
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY scanned_at ASC, rowid ASC`
+ORDER BY julianday(scanned_at) ASC, rowid ASC`
 
 	records, err := s.queryRecords(ctx, "latest vulnerability record", q,
 		coord.Path(), coord.Version(), pipelineVersion)
@@ -1241,7 +1255,7 @@ WHERE vr.module_path      = ?
   AND vr.module_version   = ?
   AND vr.pipeline_version = ?
   AND wsr.walk_id = ?
-ORDER BY vr.scanned_at ASC, vr.rowid ASC`
+ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion, walkID)
 	if err != nil {
@@ -1251,7 +1265,10 @@ ORDER BY vr.scanned_at ASC, vr.rowid ASC`
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
 	}()
 
-	var records []domain.VulnerabilityRecord
+	var (
+		records    []domain.VulnerabilityRecord
+		unreadable []ports.UnreadableRow
+	)
 	for rows.Next() {
 		var serialised []byte
 		var scannedAt string // ordering keys only; the record carries its own timestamp.
@@ -1259,16 +1276,17 @@ ORDER BY vr.scanned_at ASC, vr.rowid ASC`
 		if serr := rows.Scan(&serialised, &scannedAt, &rowID); serr != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", serr)
 		}
-		rec, derr := decodeRecord(serialised)
-		if derr != nil {
-			return nil, derr
+		rec, bad := recordRow(serialised)
+		if bad != nil {
+			unreadable = append(unreadable, *bad)
+			continue
 		}
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records for walk: %w", err)
 	}
-	return records, nil
+	return records, unreadableRowsErr(unreadable)
 }
 
 // queryRecords runs a query selecting only the serialised column and decodes
@@ -1283,22 +1301,26 @@ func (s *Store) queryRecords(ctx context.Context, what, query string, args ...an
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
 	}()
 
-	var out []domain.VulnerabilityRecord
+	var (
+		out        []domain.VulnerabilityRecord
+		unreadable []ports.UnreadableRow
+	)
 	for rows.Next() {
 		var serialised []byte
 		if serr := rows.Scan(&serialised); serr != nil {
 			return nil, fmt.Errorf("scanning %s: %w", what, serr)
 		}
-		rec, derr := decodeRecord(serialised)
-		if derr != nil {
-			return nil, derr
+		rec, bad := recordRow(serialised)
+		if bad != nil {
+			unreadable = append(unreadable, *bad)
+			continue
 		}
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating %s: %w", what, err)
 	}
-	return out, nil
+	return out, unreadableRowsErr(unreadable)
 }
 
 // PutWalkScanRun persists a walk scan run and its per-module membership index.
@@ -1314,13 +1336,16 @@ func (s *Store) PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) erro
 		return fmt.Errorf("marshalling walk scan run: %w", err)
 	}
 
-	tx, err := s.db.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	// Retried when another writer holds the single-writer lock: the condition is
+	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	if err := sqlitestore.RetryOnBusy(ctx, "walk scan run "+run.ID, func(ctx context.Context) error {
+		tx, err := s.db.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("beginning transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
 
-	const q = `
+		const q = `
 INSERT INTO walk_scan_runs (
     id, walk_id, snapshot_source, snapshot_version,
     started_at, completed_at, overall_status,
@@ -1347,25 +1372,25 @@ ON CONFLICT (id) DO UPDATE SET
     content_hash        = excluded.content_hash,
     serialised          = excluded.serialised`
 
-	if _, err = tx.ExecContext(ctx, q,
-		run.ID, run.WalkID, run.Snapshot.Source(), run.Snapshot.Version(),
-		run.StartedAt.UTC().Format(time.RFC3339),
-		run.CompletedAt.UTC().Format(time.RFC3339),
-		string(run.OverallStatus),
-		string(run.CoverageStatus), string(run.FindingsStatus),
-		run.Counts.Total, run.Counts.Analysed, run.Counts.Affected,
-		run.Counts.Unscannable, run.Counts.Failed,
-		run.Operator, run.ContentHash, serialised,
-	); err != nil {
-		return fmt.Errorf("inserting walk scan run: %w", err)
-	}
+		if _, err = tx.ExecContext(ctx, q,
+			run.ID, run.WalkID, run.Snapshot.Source(), run.Snapshot.Version(),
+			recordstamp.Format(run.StartedAt),
+			recordstamp.Format(run.CompletedAt),
+			string(run.OverallStatus),
+			string(run.CoverageStatus), string(run.FindingsStatus),
+			run.Counts.Total, run.Counts.Analysed, run.Counts.Affected,
+			run.Counts.Unscannable, run.Counts.Failed,
+			run.Operator, run.ContentHash, serialised,
+		); err != nil {
+			return fmt.Errorf("inserting walk scan run: %w", err)
+		}
 
-	// record_content_hash names the exact generation this run scanned. Since the
-	// record table became a ledger a coordinate resolves to several, so a
-	// membership row that named only the coordinate would let a run be read back
-	// against a record written after it finished. PerModuleResults already holds
-	// the hash; this carries it into the index the joins actually use.
-	const modQ = `
+		// record_content_hash names the exact generation this run scanned. Since the
+		// record table became a ledger a coordinate resolves to several, so a
+		// membership row that named only the coordinate would let a run be read back
+		// against a record written after it finished. PerModuleResults already holds
+		// the hash; this carries it into the index the joins actually use.
+		const modQ = `
 INSERT INTO walk_scan_run_modules (
     walk_scan_run_id, module_path, module_version,
     pipeline_version, snapshot_source, snapshot_version, walk_id,
@@ -1373,21 +1398,25 @@ INSERT INTO walk_scan_run_modules (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (walk_scan_run_id, module_path, module_version) DO NOTHING`
 
-	// The row set, not a winner: each coordinate is a distinct key and the
-	// conflict clause makes a repeat a no-op, and every read of this table
-	// orders on the record columns rather than on insertion.
-	for coord, contentHash := range run.PerModuleResults {
-		if _, err = tx.ExecContext(ctx, modQ,
-			run.ID, coord.Path(), coord.Version(),
-			run.PipelineVersion, run.Snapshot.Source(), run.Snapshot.Version(), run.WalkID,
-			contentHash,
-		); err != nil {
-			return fmt.Errorf("inserting walk scan run module %s: %w", coord, err)
+		// The row set, not a winner: each coordinate is a distinct key and the
+		// conflict clause makes a repeat a no-op, and every read of this table
+		// orders on the record columns rather than on insertion.
+		for coord, contentHash := range run.PerModuleResults {
+			if _, err = tx.ExecContext(ctx, modQ,
+				run.ID, coord.Path(), coord.Version(),
+				run.PipelineVersion, run.Snapshot.Source(), run.Snapshot.Version(), run.WalkID,
+				contentHash,
+			); err != nil {
+				return fmt.Errorf("inserting walk scan run module %s: %w", coord, err)
+			}
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing walk scan run: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing walk scan run: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	return nil
 }
@@ -1412,8 +1441,8 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 		// is the next thing they do, so the two must speak the same language:
 		// an inspection command can name the row and carry on, and a consuming
 		// caller still matches the integrity sentinel and still fails closed.
-		return domain.WalkScanRun{}, false, unreadableRunsErr([]ports.UnreadableRun{
-			{ID: runIDFrom(serialised), Reason: derr},
+		return domain.WalkScanRun{}, false, unreadableRowsErr([]ports.UnreadableRow{
+			{Kind: ports.RowKindRun, ID: runIDFrom(serialised), Reason: derr},
 		})
 	}
 	return run, true, nil
@@ -1421,7 +1450,7 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 
 // ListWalkScanRuns lists scan runs for a walk.
 func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error) {
-	const q = `SELECT serialised FROM walk_scan_runs WHERE walk_id = ? ORDER BY started_at DESC, id DESC`
+	const q = `SELECT serialised FROM walk_scan_runs WHERE walk_id = ? ORDER BY julianday(started_at) DESC, id DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, walkID)
 	if err != nil {
@@ -1433,7 +1462,7 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 	if err != nil {
 		return nil, err
 	}
-	return runs, unreadableRunsErr(unreadable)
+	return runs, unreadableRowsErr(unreadable)
 }
 
 // ListAllWalkScanRuns lists all scan runs across all walks, most recent first.
@@ -1442,7 +1471,7 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 // listing in memory, and a page is only the rows the previous page did not show
 // if two calls order the population identically.
 func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, error) {
-	const q = `SELECT serialised FROM walk_scan_runs ORDER BY started_at DESC, id DESC`
+	const q = `SELECT serialised FROM walk_scan_runs ORDER BY julianday(started_at) DESC, id DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q)
 	if err != nil {
@@ -1454,7 +1483,7 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 	if err != nil {
 		return nil, err
 	}
-	return runs, unreadableRunsErr(unreadable)
+	return runs, unreadableRowsErr(unreadable)
 }
 
 // collectRuns reads every scan run in rows, keeping the ones that verify and
@@ -1466,10 +1495,10 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 // Only a seal failure is survivable here. A database that cannot hand over the
 // row at all is a different fault: nothing is known about what was skipped, not
 // even that it exists, so there is no honest partial answer to give.
-func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRun, error) {
+func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRow, error) {
 	var (
 		runs       []domain.WalkScanRun
-		unreadable []ports.UnreadableRun
+		unreadable []ports.UnreadableRow
 	)
 	for rows.Next() {
 		var serialised []byte
@@ -1478,7 +1507,7 @@ func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRun, e
 		}
 		run, derr := decodeRun(serialised)
 		if derr != nil {
-			unreadable = append(unreadable, ports.UnreadableRun{ID: runIDFrom(serialised), Reason: derr})
+			unreadable = append(unreadable, ports.UnreadableRow{Kind: ports.RowKindRun, ID: runIDFrom(serialised), Reason: derr})
 			continue
 		}
 		runs = append(runs, run)
@@ -1489,13 +1518,15 @@ func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRun, e
 	return runs, unreadable, nil
 }
 
-// unreadableRunsErr wraps the unreadable rows for the caller, or returns nil
-// when there were none.
-func unreadableRunsErr(unreadable []ports.UnreadableRun) error {
+// unreadableRowsErr wraps the unreadable rows for the caller, or returns nil
+// when there were none. Runs and records share it: one unreadable stored row is
+// one fact, and two error types for it would let a fix reach one listing and
+// miss the other.
+func unreadableRowsErr(unreadable []ports.UnreadableRow) error {
 	if len(unreadable) == 0 {
 		return nil
 	}
-	return &ports.UnreadableRuns{Runs: unreadable}
+	return &ports.UnreadableRows{Rows: unreadable}
 }
 
 // runIDFrom recovers a run's identifier from stored bytes the seal check
@@ -1798,7 +1829,7 @@ SELECT serialised, scanned_at FROM (
   WHERE fi.finding_id = ?
 )
 WHERE rn = 1
-ORDER BY scanned_at DESC`
+ORDER BY julianday(scanned_at) DESC`
 
 	// The partition also absorbs the duplicate rows a walk with several scan
 	// runs over one module would otherwise produce.
@@ -1823,7 +1854,7 @@ SELECT serialised, scanned_at FROM (
   WHERE fi.finding_id = ? AND wsr.walk_id = ?
 )
 WHERE rn = 1
-ORDER BY scanned_at DESC`
+ORDER BY julianday(scanned_at) DESC`
 
 	rank := []any{
 		string(domain.FindingsRecordAffected),
@@ -1852,23 +1883,27 @@ ORDER BY scanned_at DESC`
 	}
 	defer func() { _ = rows.Close() }()
 
-	var records []domain.VulnerabilityRecord
+	var (
+		records    []domain.VulnerabilityRecord
+		unreadable []ports.UnreadableRow
+	)
 	for rows.Next() {
 		var serialised []byte
 		var scannedAt string // ordering key only; the record carries its own timestamp.
 		if err := rows.Scan(&serialised, &scannedAt); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		rec, derr := decodeRecord(serialised)
-		if derr != nil {
-			return nil, derr
+		rec, bad := recordRow(serialised)
+		if bad != nil {
+			unreadable = append(unreadable, *bad)
+			continue
 		}
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
 	}
-	return records, nil
+	return records, unreadableRowsErr(unreadable)
 }
 
 // walkHasScanRun reports whether any vulnerability scan run was recorded for
@@ -1912,7 +1947,7 @@ JOIN walk_scan_run_modules m
  AND m.snapshot_source  = vr.snapshot_source
  AND m.snapshot_version = vr.snapshot_version
 WHERE m.walk_scan_run_id = ?
-ORDER BY vr.module_path, vr.module_version, vr.scanned_at ASC, vr.rowid ASC`
+ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, walkScanRunID)
 	if err != nil {
@@ -1973,10 +2008,9 @@ ORDER BY vr.module_path, vr.module_version, vr.scanned_at ASC, vr.rowid ASC`
 // served record, the earlier one is still here, stating the snapshot, the
 // call-graph completeness and the frame it was reached in.
 //
-// The secondary sort is the row id, not the content hash. scanned_at persists at
-// second precision — the precision the canonical hash covers, so widening the
-// column would put the stored hashes and the stored time out of step — and two
-// scans within one second carry the same timestamp. The ledger is append-only,
+// The secondary sort is the row id, not the content hash. Two scans can share a
+// timestamp, at whole seconds on every row written before the column was widened
+// and at any precision when two land inside one tick. The ledger is append-only,
 // so insertion order is the sequence it actually has.
 func (s *Store) ListVulnerabilityRecordsForModule(
 	ctx context.Context,
@@ -1992,7 +2026,7 @@ func (s *Store) ListVulnerabilityRecordsForModule(
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY scanned_at DESC, rowid DESC`
+ORDER BY julianday(scanned_at) DESC, rowid DESC`
 
 	return s.queryRecords(ctx, "vulnerability records for module", q,
 		coord.Path(), coord.Version(), pipelineVersion)
@@ -2007,9 +2041,9 @@ ORDER BY scanned_at DESC, rowid DESC`
 // pipeline bump those are different questions with different answers — the
 // second is the one a history listing asks.
 //
-// Ordering and its tie-break are the keyed read's, for its reasons: scanned_at
-// persists at second precision, so the row id carries the sequence the
-// append-only ledger actually has. Across generations that matters more, not
+// Ordering and its tie-break are the keyed read's, for its reasons: two scans
+// can share a timestamp, so the row id carries the sequence the append-only
+// ledger actually has. Across generations that matters more, not
 // less: a re-scan under new logic lands after the record it supersedes.
 func (s *Store) ListVulnerabilityRecordsForModuleAllGenerations(
 	ctx context.Context,
@@ -2023,7 +2057,7 @@ func (s *Store) ListVulnerabilityRecordsForModuleAllGenerations(
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ?
-ORDER BY scanned_at DESC, rowid DESC`
+ORDER BY julianday(scanned_at) DESC, rowid DESC`
 
 	return s.queryRecords(ctx, "vulnerability records for module across generations", q,
 		coord.Path(), coord.Version())
@@ -2051,12 +2085,27 @@ func (s *Store) ListVulnerabilityRecordGenerationsForModule(
 	if coord.IsZero() {
 		return nil, coordinate.ErrZeroCoordinate
 	}
-	const q = `
-SELECT pipeline_version, COUNT(*), COALESCE(SUM(finding_count), 0)
+	// Grouped by walk as well as by generation, and folded back into one row per
+	// generation below. The walk is what a re-scan is named by, so a census that
+	// dropped it forced every refusal built on it to guess a command.
+	// The generation is NOT ordered in SQL. A pipeline version is a number
+	// written as text, and text order inverts at every digit-count boundary — v9
+	// after v19, v99 after v100 — so the ordering happens in Go, against the
+	// comparison that reads the number. The recency ordering stays here because
+	// the fold below relies on it: the first row of a generation sets its
+	// recency, so the rows of each generation must arrive newest first.
+	//
+	// One expression for the recency, selected and ordered by. The value a
+	// generation REPORTS as its latest scan and the value the rows are ordered on
+	// are the same aggregate, so they cannot disagree about which scan was last.
+	latest := "MAX(" + sqlitestore.SortableStamp("scanned_at") + ")"
+	q := `
+SELECT pipeline_version, COALESCE(walk_id, ''), COUNT(*), COALESCE(SUM(finding_count), 0),
+       ` + latest + `
 FROM vulnerability_records
 WHERE module_path = ? AND module_version = ?
-GROUP BY pipeline_version
-ORDER BY pipeline_version`
+GROUP BY pipeline_version, walk_id
+ORDER BY ` + latest + ` DESC, walk_id`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version())
 	if err != nil {
@@ -2067,16 +2116,44 @@ ORDER BY pipeline_version`
 	}()
 
 	var out []ports.VulnerabilityRecordGeneration
+	byPipeline := make(map[string]int, 8)
 	for rows.Next() {
-		var g ports.VulnerabilityRecordGeneration
-		if serr := rows.Scan(&g.PipelineVersion, &g.Records, &g.Findings); serr != nil {
+		var (
+			pipeline, walkID, scannedAt string
+			records, findings           int
+		)
+		if serr := rows.Scan(&pipeline, &walkID, &records, &findings, &scannedAt); serr != nil {
 			return nil, fmt.Errorf("scanning vulnerability record generations: %w", serr)
 		}
-		out = append(out, g)
+		i, seen := byPipeline[pipeline]
+		if !seen {
+			out = append(out, ports.VulnerabilityRecordGeneration{PipelineVersion: pipeline})
+			i = len(out) - 1
+			byPipeline[pipeline] = i
+		}
+		out[i].Records += records
+		out[i].Findings += findings
+		if walkID != "" {
+			out[i].Walks = append(out[i].Walks, walkID)
+		}
+		// The rows arrive newest first within a generation, so the first one sets
+		// the recency and the rest cannot move it. An unparseable instant leaves
+		// the zero value: a census may not fail over a column it only ranks by.
+		if !seen {
+			if t, perr := time.Parse(time.RFC3339, scannedAt); perr == nil {
+				out[i].LastScannedAt = t
+			}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability record generations: %w", err)
 	}
+	// The census reads oldest generation first. Ordering it here rather than in
+	// SQL is the point: v9 is an older generation than v19 and sorts before it,
+	// which is not what a TEXT column would have said.
+	sort.SliceStable(out, func(i, j int) bool {
+		return versionorder.ComparePipelineVersions(out[i].PipelineVersion, out[j].PipelineVersion) < 0
+	})
 	return out, nil
 }
 
@@ -2090,6 +2167,18 @@ ORDER BY pipeline_version`
 // detected tamper reported as "nothing here" becomes a silent re-scan that
 // overwrites the evidence of the tamper.
 func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
+	rec, cerr := classifyRecord(serialised)
+	if cerr != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w", ports.ErrVulnIntegrity, rec.Coordinate, cerr)
+	}
+	return rec, nil
+}
+
+// classifyRecord parses a stored record and says why it cannot be trusted,
+// without naming it: the coordinate comes back on the record, so a caller that
+// already names the row — an unreadable-row report does — does not have to
+// print the identity twice to state one fault.
+func classifyRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 	var h domain.VulnerabilityRecordHasher
 	rec, err := h.Unmarshal(serialised)
 	if err != nil {
@@ -2105,11 +2194,77 @@ func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 		// sealed bytes are not the same set of fields: a record that has been
 		// re-scanned carries a first-seen anchor the seal never covered, and a
 		// verifier that did not know would report every one of them as altered.
-		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w",
-			ports.ErrVulnIntegrity, rec.Coordinate,
-			recordseal.Excluding(h.SealExcludes()...).Classify(serialised, rec.ContentHash, verr))
+		// Returned unwrapped on purpose: both callers wrap it, one with the
+		// integrity sentinel and one with the row's identity, and a sentence here
+		// would sit between those two and repeat them.
+		//nolint:wrapcheck // recordseal is this module's own classifier; the callers supply the framing
+		return rec, recordseal.Excluding(h.SealExcludes()...).Classify(serialised, rec.ContentHash, verr)
 	}
 	return rec, nil
+}
+
+// recordRow decodes one stored record, or names it as a row this build cannot
+// verify.
+//
+// It is the seam every record LISTING goes through, so the rule for an
+// unreadable row cannot be applied to one listing and missed by another: the
+// record reads fan out over four store methods and reach vuln-by-id, vuln-show
+// and its history alike. The single-record reads deliberately do not come
+// through here — see listGenerations.
+func recordRow(serialised []byte) (domain.VulnerabilityRecord, *ports.UnreadableRow) {
+	rec, derr := classifyRecord(serialised)
+	if derr != nil {
+		id, generation := recordIdentityFrom(serialised)
+		return domain.VulnerabilityRecord{}, &ports.UnreadableRow{
+			Kind:       ports.RowKindRecord,
+			ID:         id,
+			Generation: generation,
+			Reason:     derr,
+		}
+	}
+	return rec, nil
+}
+
+// recordIdentityFrom recovers a record's identity from stored bytes the seal
+// check rejected, so the row can be named in a report.
+//
+// The coordinate and the generation come back apart rather than spliced into one
+// string: a machine surface renders the coordinate under the key its readable
+// siblings use, and a consumer must not have to pull it back out of prose. The
+// prose form is composed where prose is wanted.
+//
+// Only a head is read, and nothing is asserted about the rest: the bytes are
+// under suspicion, which is precisely why they must not be interpreted as a
+// record. Anything that cannot be read comes back empty and the row is reported
+// without it.
+func recordIdentityFrom(serialised []byte) (string, ports.RowGeneration) {
+	var head struct {
+		Coordinate       json.RawMessage `json:"coordinate"`
+		PipelineVersion  string          `json:"pipeline_version"`
+		DatabaseSnapshot struct {
+			Source  string `json:"source"`
+			Version string `json:"version"`
+		} `json:"database_snapshot"`
+	}
+	if err := json.Unmarshal(serialised, &head); err != nil {
+		return "", ports.RowGeneration{}
+	}
+	generation := ports.RowGeneration{
+		PipelineVersion: head.PipelineVersion,
+		SnapshotSource:  head.DatabaseSnapshot.Source,
+		SnapshotVersion: head.DatabaseSnapshot.Version,
+	}
+	var coord coordinate.ModuleCoordinate
+	if err := json.Unmarshal(head.Coordinate, &coord); err != nil {
+		return "", generation
+	}
+	// The zero coordinate renders as "@", which names nothing and reads as an
+	// identity. A row that will not say which module it is is reported without
+	// one.
+	if coord.IsZero() {
+		return "", generation
+	}
+	return coord.String(), generation
 }
 
 // decodeRun parses a stored walk scan run and checks its seal, on the same

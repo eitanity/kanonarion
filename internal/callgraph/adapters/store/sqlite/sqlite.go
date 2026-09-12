@@ -12,6 +12,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -382,8 +383,8 @@ ALTER TABLE callgraph_records ADD COLUMN failure_cause TEXT NOT NULL DEFAULT ''`
 		// the bytes it was sealed over; and the one thing an old record would
 		// otherwise say falsely — that an empty callers answer is a measured
 		// absence — is closed by CallGraphRecord.ReferenceScope, which reads
-		// "not measured" on every record written before it and downgrades the
-		// verdict rather than deleting the evidence.
+		// "not measured" on every record written before it and qualifies what the
+		// record states rather than deleting the evidence.
 		{Module: "callgraph", Version: 12, SQL: `
 ALTER TABLE callgraph_edges ADD COLUMN kind TEXT NOT NULL DEFAULT ''`},
 		// Migration v13: add the analysis_root column, so a query can be answered
@@ -478,6 +479,56 @@ ALTER TABLE callgraph_records ADD COLUMN worktree_scan_digest TEXT NOT NULL DEFA
 		{Module: "callgraph", Version: 15, SQL: `
 ALTER TABLE callgraph_records ADD COLUMN analyser TEXT NOT NULL DEFAULT ''`,
 			Fn: backfillAnalyser},
+		// Migration v16: add the foreign_modules_built column, so an edge query can
+		// qualify its answer without decoding the record.
+		//
+		// A record holds another module's code built with real bodies whenever the
+		// analysed module's path nests one — target selection for the syntax load is
+		// by path prefix, deliberately wider than membership, so the nested module's
+		// dispatch is resolved rather than lost. The record now NAMES those modules
+		// and the version resolution gave each. What that leaves is a read problem:
+		// `callers` is answered out of callgraph_edges alone, and deciding whether an
+		// answer's rows are one of those modules' nodes meant composing the record
+		// they came from. Measured against one store with three binaries differing
+		// only in that read: a one-row `callers` answer over a 16,005-node,
+		// 213,828-edge working-tree record cost 1,574 ms unqualified, 2,078 ms
+		// qualified from a composed record, and 1,582 ms qualified from this column —
+		// for a set that is empty on almost every record in the store.
+		//
+		// THIS TABLE ALREADY DENORMALISES EXACTLY THIS CLASS OF FIELD. completeness,
+		// node_count and edge_count are each a column AND a field inside the sealed
+		// blob, for this reason and no other: a read that qualifies an answer must not
+		// have to decompress one. This axis does the same job, so it takes the same
+		// shape.
+		//
+		// THE BLOB REMAINS AUTHORITATIVE. The column is a derived copy, written in the
+		// same transaction as the blob it copies so the two cannot diverge, and
+		// nothing reads it to decide what a record IS — composition reads the decoded
+		// record, as it always has.
+		//
+		// BACK-FILLED FROM THE BLOB, which is what a migration is for: one decode per
+		// row, offline, once. Measured population at the time of writing: 476
+		// coordinates, 836 generations. A row whose record predates the field
+		// back-fills to the empty string, and that is the truth about it rather than a
+		// default — the analysis named no foreign module, so the set of modules it can
+		// name is empty. "Predates the field" stays readable where it belongs, on the
+		// record's own SchemaVersion.
+		//
+		// NO PIPELINE BUMP AND NO PURGE, because THE SEAL DOES NOT MOVE. The canonical
+		// encoding omits foreign_modules_built when empty, so every stored record
+		// marshals to the bytes it was sealed over and every content_hash in the table
+		// is left exactly as written; this column is derived from bytes the store
+		// already holds. No stored record is made to say anything false: they were
+		// silent about holding another module's built code, and silence is what is
+		// being replaced.
+		//
+		// NO INDEX. Nothing filters on it. The column is read for rows already found by
+		// the coordinate's own primary-key prefix, over the handful of generations it
+		// holds, and an index nothing queries is a write cost and a second place to be
+		// wrong — the same reasoning migration 15 records for the analyser column.
+		{Module: "callgraph", Version: 16, SQL: `
+ALTER TABLE callgraph_records ADD COLUMN foreign_modules_built TEXT NOT NULL DEFAULT ''`,
+			Fn: backfillForeignModulesBuilt},
 	}
 }
 
@@ -711,6 +762,71 @@ func backfillCompleteness(tx *sql.Tx) error {
 	return nil
 }
 
+// backfillForeignModulesBuilt copies each record's foreign-module set out of its
+// own sealed blob into the column migration 16 added.
+//
+// Every row is visited, not only the ones that turn out to hold something. The
+// column's empty value has exactly one meaning — the empty set — and it only has
+// that meaning because this pass decided it from the record rather than leaving
+// the DEFAULT in place unexamined. A row skipped here would carry a value nothing
+// measured, which is the state migration 9 exists because of.
+//
+// Rows are drained fully before any UPDATE is issued: the store runs on a single
+// connection, so writing while the SELECT's result set is still open deadlocks.
+//
+// A row that cannot be decoded is an error rather than a skip, on the same terms
+// as migration 10: guessing what an unreadable row holds is exactly the judgement
+// a migration must not make on its own.
+func backfillForeignModulesBuilt(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT rowid, serialised FROM callgraph_records`)
+	if err != nil {
+		return fmt.Errorf("selecting rows to back-fill foreign modules: %w", err)
+	}
+	type pending struct {
+		rowID int64
+		blob  []byte
+	}
+	var todo []pending
+	for rows.Next() {
+		var p pending
+		if serr := rows.Scan(&p.rowID, &p.blob); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return fmt.Errorf("scanning row to back-fill foreign modules: %w", serr)
+		}
+		todo = append(todo, p)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return fmt.Errorf("iterating rows to back-fill foreign modules: %w", cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return fmt.Errorf("closing foreign module back-fill rows: %w", cerr)
+	}
+
+	var h domain2.CallGraphRecordHasher
+	for _, p := range todo {
+		raw, derr := blobcodec.Decode(p.blob)
+		if derr != nil {
+			return fmt.Errorf("decompressing record %d: %w", p.rowID, derr)
+		}
+		rec, uerr := h.Unmarshal(raw)
+		if uerr != nil {
+			return fmt.Errorf("unmarshalling record %d: %w", p.rowID, uerr)
+		}
+		column := domain2.ForeignModulesColumn(rec.ForeignModulesBuilt)
+		if column == "" {
+			// The DEFAULT is already this value, and it is now a measured one: this
+			// record names no foreign module, so its set is empty.
+			continue
+		}
+		if _, uerr := tx.Exec(`UPDATE callgraph_records SET foreign_modules_built = ? WHERE rowid = ?`,
+			column, p.rowID); uerr != nil {
+			return fmt.Errorf("back-filling foreign modules for record %d: %w", p.rowID, uerr)
+		}
+	}
+	return nil
+}
+
 // Open opens (or creates) the SQLite database at dsn and runs migrations.
 // Use ":memory:" for tests.
 func Open(dsn string) (*Store, error) {
@@ -812,46 +928,52 @@ func (s *Store) PutCallGraphRecord(ctx context.Context, r domain2.CallGraphRecor
 	}
 	blob := blobcodec.Encode(raw)
 
-	tx, err := s.db.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback() //nolint:errcheck
-	}()
+	// Retried when another writer holds the single-writer lock: the condition is
+	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	if err := sqlitestore.RetryOnBusy(ctx, "callgraph record for "+r.Coordinate.String(), func(ctx context.Context) error {
+		tx, err := s.db.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("beginning transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback() //nolint:errcheck
+		}()
 
-	const qRecord = `
+		const qRecord = `
 INSERT INTO callgraph_records (
     module_path, module_version, pipeline_version,
     algorithm, overall_status, completeness, analysis_source, worktree_digest,
     analysis_root, worktree_scan_digest,
-    failure_cause, analyser,
+    failure_cause, analyser, foreign_modules_built,
     node_count, edge_count,
     extracted_at, content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
-	// The analyser is written as the record states it and is never invented here.
-	// A record produced by something that could not read its own build info states
-	// none, and the honest column for it is the empty one: the back-fill's
-	// inference is for rows written before the axis existed, not for rows written
-	// now by a binary that declined to say.
-	_, err = tx.ExecContext(ctx, qRecord,
-		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-		string(r.Algorithm), int(r.OverallStatus),
-		string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
-		r.AnalysisRoot, r.WorktreeScanDigest,
-		string(r.FailureCause), r.Analyser.Column(),
-		r.NodeCount, r.EdgeCount,
-		r.ExtractedAt.UTC().Format(time.RFC3339),
-		r.ContentHash, blob,
-	)
-	if err != nil {
-		return fmt.Errorf("inserting callgraph record: %w", err)
-	}
+		// The analyser is written as the record states it and is never invented here.
+		// A record produced by something that could not read its own build info states
+		// none, and the honest column for it is the empty one: the back-fill's
+		// inference is for rows written before the axis existed, not for rows written
+		// now by a binary that declined to say.
+		_, err = tx.ExecContext(ctx, qRecord,
+			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+			string(r.Algorithm), int(r.OverallStatus),
+			string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
+			r.AnalysisRoot, r.WorktreeScanDigest,
+			string(r.FailureCause), r.Analyser.Column(),
+			// Written in the same statement as the blob it copies, so the derived column
+			// and the sealed record cannot diverge on any row this leg writes.
+			domain2.ForeignModulesColumn(r.ForeignModulesBuilt),
+			r.NodeCount, r.EdgeCount,
+			recordstamp.Format(r.ExtractedAt),
+			r.ContentHash, blob,
+		)
+		if err != nil {
+			return fmt.Errorf("inserting callgraph record: %w", err)
+		}
 
-	const qEdge = `
+		const qEdge = `
 INSERT OR IGNORE INTO callgraph_edges (
     record_content_hash,
     from_module, from_version, pipeline_version,
@@ -859,39 +981,43 @@ INSERT OR IGNORE INTO callgraph_edges (
     call_site_file, call_site_line, reflect_dispatch, is_test, kind
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	stmtEdge, err := tx.PrepareContext(ctx, qEdge)
-	if err != nil {
-		return fmt.Errorf("preparing callgraph edge statement: %w", err)
-	}
-	defer func() { _ = stmtEdge.Close() }()
-
-	// An edge is test-scope when either end is: a production function calling a
-	// test fake, and a test calling production code, are both part of the test
-	// surface a query may want to set aside. The role is denormalised onto the
-	// edge because the edge queries are answered from this table alone — they
-	// never load the record the node roles live in.
-	testNode := make(map[string]bool, len(r.Nodes))
-	for _, n := range r.Nodes {
-		if n.IsTest {
-			testNode[n.ID] = true
+		stmtEdge, err := tx.PrepareContext(ctx, qEdge)
+		if err != nil {
+			return fmt.Errorf("preparing callgraph edge statement: %w", err)
 		}
-	}
+		defer func() { _ = stmtEdge.Close() }()
 
-	for _, e := range r.Edges {
-		if _, err := stmtEdge.ExecContext(ctx,
-			r.ContentHash,
-			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-			e.FromID, e.ToID, string(e.Confidence),
-			e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
-			testNode[e.FromID] || testNode[e.ToID],
-			string(e.Kind),
-		); err != nil {
-			return fmt.Errorf("inserting callgraph edge %s→%s: %w", e.FromID, e.ToID, err)
+		// An edge is test-scope when either end is: a production function calling a
+		// test fake, and a test calling production code, are both part of the test
+		// surface a query may want to set aside. The role is denormalised onto the
+		// edge because the edge queries are answered from this table alone — they
+		// never load the record the node roles live in.
+		testNode := make(map[string]bool, len(r.Nodes))
+		for _, n := range r.Nodes {
+			if n.IsTest {
+				testNode[n.ID] = true
+			}
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing callgraph record: %w", err)
+		for _, e := range r.Edges {
+			if _, err := stmtEdge.ExecContext(ctx,
+				r.ContentHash,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+				e.FromID, e.ToID, string(e.Confidence),
+				e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
+				testNode[e.FromID] || testNode[e.ToID],
+				string(e.Kind),
+			); err != nil {
+				return fmt.Errorf("inserting callgraph edge %s→%s: %w", e.FromID, e.ToID, err)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing callgraph record: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	_, _ = s.db.DB().ExecContext(ctx, `PRAGMA optimize`) //nolint:errcheck
 	return nil
@@ -1052,7 +1178,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	if qerr != nil {
 		return domain2.CallGraphRecord{}, false, qerr
 	}
-	rec, ok, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser)
+	rec, ok, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser, newIdentifierPool())
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -1148,12 +1274,14 @@ type generationRow struct {
 // restricted to one analysis root. An empty root imposes no restriction, which
 // is what a read that names no tree means.
 //
-// "Newest" is by insertion order, because extracted_at persists at second
-// precision — the precision the canonical hash covers — and two runs within one
-// second share it.
+// "Newest" falls to insertion order when the timestamps tie, which they do
+// whenever two runs land inside the resolution extracted_at was written at: a
+// fast-fail analysis takes well under a second, and the column held whole
+// seconds before it was widened. The ledger is append-only, so the later append
+// is the later run.
 func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root string) (generationRow, bool, error) {
 	q := `SELECT serialised, content_hash, analysis_root, worktree_scan_digest,
-                 overall_status, completeness, failure_cause, extracted_at, analyser
+                 overall_status, completeness, failure_cause, extracted_at, analyser, rowid
           FROM callgraph_records
           WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	args := []any{coord.Path(), coord.Version(), pipelineVersion}
@@ -1161,23 +1289,27 @@ func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate
 		q += " AND analysis_root = ?"
 		args = append(args, root)
 	}
+	// Ordered on the PARSED time: the column holds a whole second on generations
+	// written before it was widened and a fixed-width fraction after, and TEXT
+	// order puts "…09.5Z" before "…09Z" because '.' precedes 'Z'.
 	q += `
-ORDER BY extracted_at DESC, rowid DESC
+ORDER BY julianday(extracted_at) DESC, rowid DESC
 LIMIT 1`
 
 	var row generationRow
 	var overallStatus int
 	var completeness, failureCause, extractedAt string
+	var rowID int64
 	serr := s.db.DB().QueryRowContext(ctx, q, args...).Scan(
 		&row.blob, &row.hash, &row.root, &row.scanDigest,
-		&overallStatus, &completeness, &failureCause, &extractedAt, &row.analyser)
+		&overallStatus, &completeness, &failureCause, &extractedAt, &row.analyser, &rowID)
 	switch {
 	case errors.Is(serr, sql.ErrNoRows):
 		return generationRow{}, false, nil
 	case serr != nil:
 		return generationRow{}, false, fmt.Errorf("querying latest generation for %s: %w", coord, serr)
 	}
-	rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
+	rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt, rowID)
 	if perr != nil {
 		return generationRow{}, false, perr
 	}
@@ -1203,7 +1335,7 @@ func (s *Store) bestGenerationOfTreeState(ctx context.Context, coord coordinate.
 	if newest.scanDigest == "" {
 		return newest, nil
 	}
-	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser
+	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_root = ? AND worktree_scan_digest = ?`
@@ -1217,12 +1349,13 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		candidate := generationRow{root: newest.root, scanDigest: newest.scanDigest}
 		var overallStatus int
 		var completeness, failureCause, extractedAt string
+		var rowID int64
 		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness,
-			&failureCause, &extractedAt, &candidate.analyser); serr != nil {
+			&failureCause, &extractedAt, &candidate.analyser, &rowID); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return generationRow{}, fmt.Errorf("scanning generation of %s: %w", coord, serr)
 		}
-		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
+		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt, rowID)
 		if perr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the parse error
 			return generationRow{}, perr
@@ -1247,10 +1380,10 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 // it. An unparsable timestamp stops the read: a generation whose time
 // cannot be read cannot be ordered, and defaulting it to the zero time would
 // silently sort it last.
-func rankOfColumns(overallStatus int, completeness, failureCause, extractedAt string) (domain2.GenerationRank, error) {
-	t, err := time.Parse(time.RFC3339, extractedAt)
+func rankOfColumns(overallStatus int, completeness, failureCause, extractedAt string, rowID int64) (domain2.GenerationRank, error) {
+	t, err := recordstamp.Parse(extractedAt)
 	if err != nil {
-		return domain2.GenerationRank{}, fmt.Errorf("parsing extracted_at %q: %w", extractedAt, err)
+		return domain2.GenerationRank{}, fmt.Errorf("parsing extracted_at: %w", err)
 	}
 	return domain2.GenerationRank{
 		Completeness: domain2.CompletenessLevel(completeness),
@@ -1259,7 +1392,10 @@ func rankOfColumns(overallStatus int, completeness, failureCause, extractedAt st
 		// second statement of it.
 		EnvironmentLimited: domain2.EnvironmentLimitedGraph(
 			domain2.CallGraphStatus(overallStatus), domain2.FailureCause(failureCause)),
-		ExtractedAt: t.UTC(),
+		ExtractedAt: t,
+		// The row id is the ledger's append order, which is what decides recency
+		// when two generations share a timestamp.
+		AppendOrder: rowID,
 	}, nil
 }
 
@@ -1277,7 +1413,7 @@ func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleC
 	if root == "" || scanDigest == "" {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser
+	const q = `SELECT serialised, content_hash, overall_status, completeness, failure_cause, extracted_at, analyser, rowid
 FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_root = ? AND worktree_scan_digest = ? AND analysis_source = ?`
@@ -1293,12 +1429,13 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		candidate := generationRow{root: root, scanDigest: scanDigest}
 		var overallStatus int
 		var completeness, failureCause, extractedAt string
+		var rowID int64
 		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness,
-			&failureCause, &extractedAt, &candidate.analyser); serr != nil {
+			&failureCause, &extractedAt, &candidate.analyser, &rowID); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return domain2.CallGraphRecord{}, false, fmt.Errorf("scanning generation of %s: %w", coord, serr)
 		}
-		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt)
+		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt, rowID)
 		if perr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the parse error
 			return domain2.CallGraphRecord{}, false, perr
@@ -1319,7 +1456,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	if !found {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	rec, ok, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser)
+	rec, ok, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser, newIdentifierPool())
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -1366,7 +1503,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND analysis_source = ? AND worktree_digest = ? AND analysis_root = ?
   AND worktree_scan_digest = ? AND failure_cause = ? AND analyser = ?
   AND node_count = ? AND edge_count = ?
-ORDER BY extracted_at DESC, content_hash DESC`
+ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 	rows, err := s.db.DB().QueryContext(ctx, q,
 		rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
 		string(rec.Algorithm), int(rec.OverallStatus), string(rec.Completeness),
@@ -1382,8 +1519,28 @@ ORDER BY extracted_at DESC, content_hash DESC`
 		return domain2.CallGraphRecord{}, false, err
 	}
 
+	if len(candidates) == 0 {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	// Sealed once, here, rather than once per candidate. The fresh record is the
+	// same record for every candidate, and the pairwise form canonicalised it
+	// again on each of them: a coordinate holding nineteen plausible generations
+	// encoded this record's whole edge set nineteen times to ask nineteen
+	// questions about it.
+	//
+	// Sealed after the prefilter rather than before it, so a coordinate with no
+	// candidate still pays nothing.
+	sealed, named, serr := domain2.SealAnalysis(rec)
+	if serr != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("comparing generations of %s: %w", rec.Coordinate, serr)
+	}
+	if !named {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+
+	pool := newIdentifierPool()
 	for _, c := range candidates {
-		held, ok, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser)
+		held, ok, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser, pool)
 		if derr != nil {
 			return domain2.CallGraphRecord{}, false, derr
 		}
@@ -1392,9 +1549,9 @@ ORDER BY extracted_at DESC, content_hash DESC`
 			// cannot be shown to restate this analysis.
 			continue
 		}
-		same, serr := domain2.RestatesAnalysis(rec, held)
-		if serr != nil {
-			return domain2.CallGraphRecord{}, false, fmt.Errorf("comparing generations of %s: %w", rec.Coordinate, serr)
+		same, rerr := sealed.RestatedBy(held)
+		if rerr != nil {
+			return domain2.CallGraphRecord{}, false, fmt.Errorf("comparing generations of %s: %w", rec.Coordinate, rerr)
 		}
 		if same {
 			return held, true, nil
@@ -1427,7 +1584,7 @@ func scanIdenticalCandidates(rows *sql.Rows, coord coordinate.ModuleCoordinate) 
 //
 // It is a separate read rather than a value returned alongside the record
 // because the notice it feeds is printed once per answer, while the record is
-// fetched several times over the course of one — by the verdict helpers, the
+// fetched several times over the course of one — by the answer helpers, the
 // completeness caveat and the edge resolution — and a routing fact attached to
 // each of them would be reported as many times as the read happened.
 func (s *Store) WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ports.WorktreeRouting, bool, error) {
@@ -1492,11 +1649,12 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ? AND analys
 // are both still here, each naming the artefact or the working tree it was
 // computed from.
 //
-// The secondary sort is the row id, not the content hash. extracted_at persists
-// at second precision — that is the precision the canonical hash covers — and
-// two extractions within one second carry the same timestamp. The ledger is
-// append-only, so insertion order is the sequence it actually has, and
-// composition relies on it for a mutating working tree.
+// The secondary sort is the row id, not the content hash. Two extractions can
+// share a timestamp — at whole seconds on every generation written before the
+// column was widened, and at any precision when two runs land inside one tick —
+// and a timestamp sort cannot order those. The ledger is append-only, so
+// insertion order is the sequence it actually has, and composition relies on it
+// both for a mutating working tree and for the ladder's own recency tiebreak.
 func (s *Store) ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.CallGraphRecord, error) {
 	// The zero coordinate names no module, so this is a question about nothing.
 	// Answering it with absence would report "no record here" for a module that
@@ -1506,7 +1664,7 @@ func (s *Store) ListCallGraphRecordsFor(ctx context.Context, coord coordinate.Mo
 	}
 	const q = `SELECT serialised, content_hash, analyser FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY extracted_at ASC, rowid ASC`
+ORDER BY julianday(extracted_at) ASC, rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	if err != nil {
@@ -1538,8 +1696,12 @@ ORDER BY extracted_at ASC, rowid ASC`
 	// the store is opened on a single connection, so a second query issued while
 	// the first result set is still open deadlocks.
 	out := make([]domain2.CallGraphRecord, 0, len(raw))
+	// One pool for the whole history: see identifierPool. The generations at a
+	// coordinate are repeated analyses of the same code, so each one's
+	// identifiers are very nearly the previous one's.
+	pool := newIdentifierPool()
 	for _, st := range raw {
-		rec, ok, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser)
+		rec, ok, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser, pool)
 		if derr != nil {
 			return nil, derr
 		}
@@ -1551,6 +1713,66 @@ ORDER BY extracted_at ASC, rowid ASC`
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+// LatestCallGraphOutcome returns what the newest generation at the coordinate
+// STATES, without reconstructing the graph it states it about.
+//
+// It reads one row and decodes one blob. The blob omits edges at the current
+// schema, so nothing here touches callgraph_edges and nothing re-marshals a
+// reconstructed record — which is the whole difference between this and
+// GetCallGraphRecord, and the difference is measured in tens of gigabytes on a
+// coordinate with a large graph or a long history.
+//
+// Newest in APPEND ORDER, so this is what was written here last, not what
+// composition would serve. The two differ whenever an older generation outranks
+// the newest, and a caller reporting an analysis it has just finished wants the
+// one it wrote — see ports.CallGraphOutcomeReader.
+//
+// A generation written at an older record schema reports (zero, false, nil), the
+// same absence ListCallGraphRecordsFor renders by skipping it: a stale shape
+// decodes with every later field at its zero value, and reporting those zeros as
+// a measurement is the failure the schema gate exists to prevent.
+func (s *Store) LatestCallGraphOutcome(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ports.CallGraphOutcome, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	if coord.IsZero() {
+		return ports.CallGraphOutcome{}, false, coordinate.ErrZeroCoordinate
+	}
+	row, found, err := s.newestRow(ctx, coord, pipelineVersion, "")
+	if err != nil || !found {
+		return ports.CallGraphOutcome{}, false, err
+	}
+
+	raw, decErr := blobcodec.Decode(row.blob)
+	if decErr != nil {
+		return ports.CallGraphOutcome{}, false, fmt.Errorf("decompressing callgraph record: %w", decErr)
+	}
+	var h domain2.CallGraphRecordHasher
+	rec, uerr := h.Unmarshal(raw)
+	if uerr != nil {
+		return ports.CallGraphOutcome{}, false, fmt.Errorf("unmarshalling callgraph record: %w", uerr)
+	}
+	if rec.SchemaVersion != domain2.CallGraphSchemaVersion {
+		return ports.CallGraphOutcome{}, false, nil
+	}
+	// The seal cannot be recomputed without the edges, so this checks the half
+	// that does not need them: that the blob's own hash is the one the ledger
+	// filed it under. A row whose blob disagrees with its key is a tampered or
+	// mis-written row whatever its edges say, and reading a status off it would
+	// attribute one generation's outcome to another's seal.
+	if rec.ContentHash != row.hash {
+		return ports.CallGraphOutcome{}, false, fmt.Errorf("%w: embedded hash %q does not match stored %q",
+			ports.ErrCallGraphIntegrity, rec.ContentHash, row.hash)
+	}
+	return ports.CallGraphOutcome{
+		ContentHash:   rec.ContentHash,
+		OverallStatus: rec.OverallStatus,
+		FailureCause:  rec.FailureCause,
+		FailureDetail: rec.FailureDetail,
+		NodeCount:     rec.NodeCount,
+		EdgeCount:     rec.EdgeCount,
+		ExtractedAt:   rec.ExtractedAt.UTC(),
+	}, true, nil
 }
 
 // decodeRecord turns one stored row into a verified record, reconstructing its
@@ -1568,7 +1790,7 @@ ORDER BY extracted_at ASC, rowid ASC`
 // This gate is also why the ledger does not need a purge on every analyser shape
 // change: the stale generation stays in the table, readable as history, and
 // answers nothing.
-func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string) (domain2.CallGraphRecord, bool, error) {
+func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string, pool *identifierPool) (domain2.CallGraphRecord, bool, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("decompressing callgraph record: %w", decErr)
@@ -1589,7 +1811,7 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analy
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: embedded hash %q does not match stored %q",
 			ports.ErrCallGraphIntegrity, rec.ContentHash, storedHash)
 	}
-	edges, fetchErr := s.fetchEdges(ctx, storedHash)
+	edges, fetchErr := s.fetchEdges(ctx, storedHash, rec.EdgeCount, pool)
 	if fetchErr != nil {
 		return domain2.CallGraphRecord{}, false, fetchErr
 	}
@@ -1624,7 +1846,7 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analy
 // coordinate-keyed fetch would hand a record the union of its own edges and
 // every other generation's — and the hash verification over the reconstructed
 // record would then fail on a record nothing had tampered with.
-func (s *Store) fetchEdges(ctx context.Context, recordContentHash string) ([]domain2.CallEdge, error) {
+func (s *Store) fetchEdges(ctx context.Context, recordContentHash string, expected int, pool *identifierPool) ([]domain2.CallEdge, error) {
 	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind
 	    FROM callgraph_edges
 	    WHERE record_content_hash = ?
@@ -1638,18 +1860,32 @@ func (s *Store) fetchEdges(ctx context.Context, recordContentHash string) ([]dom
 		_ = rows.Close() //nolint:errcheck
 	}()
 
-	var edges []domain2.CallEdge
+	edges := make([]domain2.CallEdge, 0, edgeCapacity(expected))
+	// The scan targets are declared once rather than per row: Scan takes their
+	// addresses, so a fresh set each iteration is an allocation per edge for
+	// values that are overwritten immediately.
+	var (
+		fromID, toID, file, conf, kind sql.RawBytes
+		line                           int
+		reflectDispatch                bool
+	)
 	for rows.Next() {
-		var e domain2.CallEdge
-		var conf, kind string
-		var reflectDispatch bool
-		if serr := rows.Scan(&e.FromID, &e.ToID, &conf, &e.CallSite.File, &e.CallSite.Line, &reflectDispatch, &kind); serr != nil {
+		// RawBytes rather than string: the driver's own buffer is handed over
+		// without a copy, and the copy that IS kept is the interned one. Every
+		// value must be interned before the next Next, which is the only point at
+		// which the bytes are still valid.
+		if serr := rows.Scan(&fromID, &toID, &conf, &file, &line, &reflectDispatch, &kind); serr != nil {
 			return nil, fmt.Errorf("scanning callgraph edge: %w", serr)
 		}
-		e.Kind = domain2.EdgeKind(kind)
+		e := domain2.CallEdge{
+			FromID:   pool.intern(fromID),
+			ToID:     pool.intern(toID),
+			CallSite: domain2.SourcePosition{File: pool.intern(file), Line: line},
+			Kind:     domain2.EdgeKind(pool.intern(kind)),
+		}
 		// Normalise any legacy vocabulary lingering in the table; a stored
 		// Reflection string also implies the reflect origin.
-		e.Confidence, e.ReflectDispatch = domain2.MigrateConfidence(conf)
+		e.Confidence, e.ReflectDispatch = domain2.MigrateConfidence(pool.intern(conf))
 		e.ReflectDispatch = e.ReflectDispatch || reflectDispatch
 		edges = append(edges, e)
 	}
@@ -1657,6 +1893,54 @@ func (s *Store) fetchEdges(ctx context.Context, recordContentHash string) ([]dom
 		return nil, fmt.Errorf("iterating callgraph edges: %w", err)
 	}
 	return edges, nil
+}
+
+// maxEdgeCapacityHint bounds what a record's own edge_count may reserve. The
+// count is sealed and is trusted for what it is — a hint that saves the
+// regrowth — but a tampered count would otherwise ask for an allocation the host
+// cannot serve, before the seal check that catches it runs. Beyond the bound the
+// slice grows as it did before.
+const maxEdgeCapacityHint = 1 << 24
+
+func edgeCapacity(expected int) int {
+	if expected < 0 || expected > maxEdgeCapacityHint {
+		return 0
+	}
+	return expected
+}
+
+// identifierPool collapses the identifier strings a read materialises onto one
+// copy each.
+//
+// A record's node identifiers are a small set repeated across its edges — tens
+// of endpoints per distinct identifier — and the file paths repeat harder still.
+// Scanning each row into its own string keeps every one of those copies alive
+// for as long as the record is; interning keeps one.
+//
+// It is shared across the generations of ONE read rather than one record,
+// because a coordinate's generations are repeated analyses of the same code and
+// each restates almost exactly the previous one's identifiers.
+//
+// It holds no lock and must not be shared between goroutines; a read is
+// sequential and each read makes its own.
+type identifierPool struct {
+	seen map[string]string
+}
+
+func newIdentifierPool() *identifierPool {
+	return &identifierPool{seen: make(map[string]string)}
+}
+
+// intern returns the pool's single copy of b's contents. The bytes are not
+// retained: a miss copies them, and a hit copies nothing at all, because a map
+// lookup keyed on string(b) is compiled without an allocation.
+func (p *identifierPool) intern(b []byte) string {
+	if s, ok := p.seen[string(b)]; ok {
+		return s
+	}
+	s := string(b)
+	p.seen[s] = s
+	return s
 }
 
 // ListCallGraphRecords returns one summary per module, pipeline version pair —
@@ -1698,7 +1982,7 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " ORDER BY extracted_at DESC, rowid DESC"
+	q += " ORDER BY julianday(extracted_at) DESC, rowid DESC"
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
@@ -1816,7 +2100,8 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 // fact about the coordinate's history and about no single generation.
 func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallGraphFilter) ([]ports.CallGraphCoordinate, error) {
 	q := `SELECT module_path, module_version, pipeline_version, overall_status, completeness,
-	             algorithm, analysis_source, node_count, edge_count, extracted_at, content_hash
+	             algorithm, analysis_source, node_count, edge_count, extracted_at, content_hash,
+	             analyser
 	      FROM callgraph_records`
 	var args []any
 	var where []string
@@ -1837,7 +2122,7 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 	}
 	// The same order ListCallGraphRecords uses, so a caller that swaps one listing
 	// for the other sees the coordinates in the same sequence.
-	q += " ORDER BY extracted_at DESC, rowid DESC"
+	q += " ORDER BY julianday(extracted_at) DESC, rowid DESC"
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
@@ -1851,10 +2136,11 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 	for rows.Next() {
 		var k generationKey
 		var status int
-		var completeness, algo, source, extractedAt string
+		var completeness, algo, source, extractedAt, analyser string
 		var gen ports.CallGraphGeneration
 		if serr := rows.Scan(&k.path, &k.version, &k.pipeline, &status, &completeness,
-			&algo, &source, &gen.NodeCount, &gen.EdgeCount, &extractedAt, &gen.ContentHash); serr != nil {
+			&algo, &source, &gen.NodeCount, &gen.EdgeCount, &extractedAt, &gen.ContentHash,
+			&analyser); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return nil, fmt.Errorf("scanning callgraph coordinate: %w", serr)
 		}
@@ -1863,6 +2149,16 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 			_ = rows.Close() //nolint:errcheck // returning the parse error
 			return nil, fmt.Errorf("parsing extracted_at %q: %w", extractedAt, perr)
 		}
+		// A column value naming no known provenance stops the listing, exactly as it
+		// stops decodeRecord. Only the write leg and the back-fill write here, and
+		// both write a provenance; reading a third value as "not recorded" would
+		// silently drop a claim the store is carrying.
+		id, aerr := domain2.ParseAnalyserColumn(analyser)
+		if aerr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the parse error
+			return nil, fmt.Errorf("reading the analyser of record %s: %w", gen.ContentHash, aerr)
+		}
+		gen.Analyser = id
 		gen.ExtractedAt = t.UTC()
 		gen.Algorithm = domain2.CallGraphAlgorithm(algo)
 		gen.OverallStatus = domain2.CallGraphStatus(status)
@@ -1985,6 +2281,102 @@ LIMIT 2`
 		}
 		return served.ContentHash, found, nil
 	}
+}
+
+// ForeignModulesBuilt returns the modules OTHER than this one whose packages the
+// SERVED record for this coordinate built with bodies, read from the
+// denormalised column rather than from the record.
+//
+// It is the read the answer qualification exists for, and reading the column is
+// the whole point of the column. An edge query is answered out of callgraph_edges
+// alone; composing the record to learn one small set would pay a decompress, a
+// full unmarshal, an edge reconstruction and a seal check for a value that is
+// empty on almost every record in the store. Measured before the column: 483 ms
+// added to a one-row answer over a 213,828-edge record.
+//
+// It is keyed on the SERVED generation, through the same resolution the edge
+// query itself uses, because the rows being qualified are that generation's rows.
+// The single-generation case — every module in the store today — costs two
+// indexed column reads and decodes nothing.
+//
+// A coordinate the ledger does not hold reports no modules and found=false. That
+// is not the same statement as an empty set, and the caller must not read it as
+// one: nothing was consulted.
+func (s *Store) ForeignModulesBuilt(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) ([]domain2.ForeignModule, bool, error) {
+	// The DISTINCT values across every generation, capped at two, before any
+	// generation is chosen. It is the one-way gate AnyPartial and AnyBelowFull are
+	// built on, applied to a column instead of a flag: when every generation
+	// states the SAME set, whichever one composition serves states that set, so
+	// the answer is known without deciding which one that is.
+	//
+	// Without it a coordinate with many generations pays a composition here, and
+	// those are exactly the coordinates where it hurts. Measured on the
+	// maintainer's store: the local working-tree coordinate holds 80 generations,
+	// one per ingest, and composing them cost 2,073 ms against 1,710 ms for the
+	// same answer before the axis existed.
+	const qDistinct = `SELECT DISTINCT foreign_modules_built FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+LIMIT 2`
+	rows, err := s.db.DB().QueryContext(ctx, qDistinct, coord.Path(), coord.Version(), pipelineVersion)
+	if err != nil {
+		return nil, false, fmt.Errorf("querying foreign modules for %s: %w", coord, err)
+	}
+	var columns []string
+	for rows.Next() {
+		var c string
+		if serr := rows.Scan(&c); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return nil, false, fmt.Errorf("scanning foreign modules for %s: %w", coord, serr)
+		}
+		columns = append(columns, c)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return nil, false, fmt.Errorf("iterating foreign modules for %s: %w", coord, cerr)
+	}
+	// Drained and closed before resolving the served generation: the store runs on
+	// a single connection, so issuing that query while this result set is still
+	// open deadlocks.
+	if cerr := rows.Close(); cerr != nil {
+		return nil, false, fmt.Errorf("closing foreign module rows: %w", cerr)
+	}
+
+	switch len(columns) {
+	case 0:
+		// Nothing is held for the coordinate. Not an empty set: nothing was
+		// consulted, so nothing is claimed.
+		return nil, false, nil
+	case 1:
+		mods, perr := domain2.ParseForeignModulesColumn(columns[0])
+		if perr != nil {
+			return nil, false, fmt.Errorf("reading the foreign modules of %s: %w", coord, perr)
+		}
+		return mods, true, nil
+	}
+
+	// The generations disagree, so which one answers decides the set, and that is
+	// the composition's question. This is the only path that decodes anything, and
+	// it is reached only by a coordinate whose generations were built over
+	// genuinely different foreign modules.
+	hash, found, err := s.servedContentHash(ctx, coord, pipelineVersion, toolchain)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	var column string
+	err = s.db.DB().QueryRowContext(ctx,
+		`SELECT foreign_modules_built FROM callgraph_records WHERE content_hash = ? LIMIT 1`,
+		hash).Scan(&column)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("querying foreign modules for %s: %w", coord, err)
+	}
+	mods, perr := domain2.ParseForeignModulesColumn(column)
+	if perr != nil {
+		return nil, false, fmt.Errorf("reading the foreign modules of record %s: %w", hash, perr)
+	}
+	return mods, true, nil
 }
 
 // FindCallers returns all edges where the callee matches symbolID, restricted

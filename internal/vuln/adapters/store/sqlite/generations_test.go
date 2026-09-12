@@ -82,6 +82,44 @@ func TestListVulnerabilityRecordGenerationsForModule_SeesPastTheBump(t *testing.
 	}
 }
 
+// The census names the walks its records were written by, because that is what a
+// re-scan is named by: vuln-scan takes a walk id, and its --module form resolves
+// only a walk ROOTED at the coordinate. Ordered by the newest record each walk
+// wrote, so a refusal naming one names the same one every time.
+func TestListVulnerabilityRecordGenerationsForModule_NamesTheWalksNewestFirst(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	base := time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC)
+	older := generationRecord(t, "v19", base, 1)
+	newer := generationRecord(t, "v19", base.Add(time.Hour), 1)
+	newer.WalkID = "walk-2"
+	for _, rec := range []domain.VulnerabilityRecord{older, seal(t, newer)} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord: %v", err)
+		}
+	}
+
+	gens, err := store.ListVulnerabilityRecordGenerationsForModule(ctx, older.Coordinate)
+	if err != nil {
+		t.Fatalf("ListVulnerabilityRecordGenerationsForModule: %v", err)
+	}
+	if len(gens) != 1 {
+		t.Fatalf("census holds %d generations, want 1: %+v", len(gens), gens)
+	}
+	// The counts are the control: grouping by walk as well as by generation must
+	// not split one generation into two rows.
+	if gens[0].Records != 2 || gens[0].Findings != 2 {
+		t.Errorf("generation = %+v, want 2 records carrying 2 findings", gens[0])
+	}
+	if got := gens[0].Walks; len(got) != 2 || got[0] != "walk-2" || got[1] != "walk-1" {
+		t.Errorf("walks = %v, want [walk-2 walk-1] — newest record first", got)
+	}
+	if !gens[0].LastScannedAt.Equal(base.Add(time.Hour)) {
+		t.Errorf("LastScannedAt = %s, want the newest record's instant %s", gens[0].LastScannedAt, base.Add(time.Hour))
+	}
+}
+
 func TestListVulnerabilityRecordGenerationsForModule_UnknownCoordinateHoldsNothing(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)

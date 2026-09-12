@@ -24,6 +24,7 @@ import (
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	cgmodulecache "github.com/eitanity/kanonarion/internal/callgraph/adapters/modulecache"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -136,6 +137,13 @@ type Container struct {
 	// extract
 	Extract      ExtractUseCase
 	QueryExtract QueryExtractionUseCase
+
+	// CallgraphBound is the subprocess bound this invocation adopted and what
+	// decided it. It is on the container because it is resolved when the
+	// extractor is built and a command that reports it must report the value the
+	// run is actually using — resolving it a second time reads the host again and
+	// can produce a different number from the one in force.
+	CallgraphBound extextractor.CallgraphBound
 
 	// license
 	ExtractLicense     ExtractLicenseUseCase
@@ -479,7 +487,26 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
 	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
-	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger)
+	// The analyser narrates its phases to the same place the spawners copy a
+	// child's to. This process is one or the other, never both: as a child it
+	// writes the lines its parent's stall detector reads, and as a parent it
+	// forwards what its children wrote.
+	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger).WithProgress(callgraphNarration)
+	// A module analysed in isolation is its own main module, and the load runs
+	// with the network off, so every go.mod minimal version selection reads and
+	// every dependency the type checker compiles has to be in a module cache
+	// already. Reading the host's own made that a property of what unrelated go
+	// commands had left on the machine; the cache is built here instead, from the
+	// bytes the store holds, fetching what it is missing.
+	if modcacheMode {
+		// --from-modcache: the operator's cache is already populated, and the walk
+		// scan takes it as it stands for the same reason.
+		cgAnalyser = cgAnalyser.WithRealModcache(modcacheDir)
+	} else {
+		cgAnalyser = cgAnalyser.WithModuleCache(
+			cgmodulecache.New(factStore, blobs, logger).
+				WithFetcher(vulnfetch.NewFetchModuleAdapter(fetchUC)))
+	}
 	cgExtractUC := cgapp.NewExtractCallGraphUseCase(cgapp.Config{
 		Facts: factStore, Blobs: blobs, Store: cgStore,
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
@@ -501,7 +528,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		_ = dbHandle.Close()
 		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
-	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary)
+	// One worker runs every stage for its module, so the pool cannot bound the
+	// call-graph subprocesses without also slowing the cheap in-process stages.
+	// The subprocesses carry their own bound, sized from this host, and each one
+	// carries the ceiling that bound shares out.
+	hostMemory := meminfo.New()
+	callgraphBound := extextractor.ResolveCallgraphBound(callgraphWorkers, callgraphMemoryCeiling, hostMemory, logger)
+	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary, callgraphCeiling, callgraphNarration).
+		WithMemoryCeiling(callgraphBound.CeilingBytes)
 	// The callgraph stage runs as a fresh subprocess (see NewAdapterExtractor),
 	// which does not inherit this process's --store-root/--from-modcache
 	// state. Without these the child falls back to the default store root and
@@ -513,7 +547,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
 	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC).
-		WithLogger(logger)
+		WithLogger(logger).
+		WithCallgraphConcurrency(callgraphBound.Workers).
+		// The bound is sized once; the host is re-read before each analysis
+		// starts, because the module in front of a worker later in the run may be
+		// the one that holds fifty gigabytes on its own.
+		WithHostMemory(hostMemory)
 	pipelineVersions := map[string]string{
 		"license":   "0.1.0",
 		"interface": "0.1.0",
@@ -558,7 +597,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
 
-	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary)
+	// The same ceiling: a reachability scan spawns the same analysis of the same
+	// module, and a ceiling that applied only on the extract path would leave the
+	// heaviest module able to take the host by the other route.
+	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary, callgraphCeiling, callgraphNarration).
+		WithMemoryCeiling(callgraphBound.CeilingBytes)
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,
 		scanner, database, reach,
@@ -704,6 +747,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		Extract:      extractUC,
 		QueryExtract: queryExtractUC,
+
+		CallgraphBound: callgraphBound,
 
 		ExtractLicense:     licExtractUC,
 		QueryLicense:       queryLicenseUC,

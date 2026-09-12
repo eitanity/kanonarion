@@ -132,7 +132,7 @@ func TestCallGraphList_ZeroResultNoticeComposesNothing(t *testing.T) {
 func TestCallGraphShow_SupersededNoteComposesNothing(t *testing.T) {
 	uc := fakeWithGenerations()
 	note, err := supersededGenerationsNote(context.Background(),
-		coordinatetest.MustNew(listModule, "v9.9.9"), uc)
+		coordinatetest.MustNew(listModule, "v9.9.9"), uc, nil)
 	if err != nil {
 		t.Fatalf("supersededGenerationsNote: %v", err)
 	}
@@ -182,11 +182,11 @@ func TestCallGraphList_DifferingGenerationsStateThatInsteadOfACount(t *testing.T
 			t.Errorf("the row presents %s as the coordinate's own count: %q", n, out)
 		}
 	}
-	// The listing cannot know composition's verdict, so it must not speak in its
+	// The listing cannot know what composition serves, so it must not speak in its
 	// vocabulary: a coordinate whose generations differ may still compose.
 	for _, w := range []string{"conflict", "refus", "unavailable"} {
 		if strings.Contains(strings.ToLower(out), w) {
-			t.Errorf("the row says %q, which is composition's verdict and not what a column proves: %q", w, out)
+			t.Errorf("the row says %q, which is what composition settles and not what a column proves: %q", w, out)
 		}
 	}
 }

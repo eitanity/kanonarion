@@ -12,6 +12,7 @@ import (
 
 	factsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 )
 
 // storeLedgerFlags are the query shapes the assurance log is asked in. They are
@@ -41,7 +42,7 @@ type storeLedgerFlags struct {
 // the same commit as any change to what emits, on the rule the migrations
 // document already states for the event table.
 var ledgerNotEmitted = []string{
-	"individual vulnerability record generations — a walk scan COUNTS them (vuln_scan_completed) and names each finding (vuln_finding_observed), but no event names a per-module verdict, and a Clean generation is only an increment; a single-module scan names no generation either, and appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query",
+	"individual vulnerability record generations — a walk scan COUNTS them (vuln_scan_completed) and names each finding (vuln_finding_observed), but no event names a per-module status, and a Clean generation is only an increment; a single-module scan names no generation either, and appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query",
 	"attestations — additive provenance, recorded beside a fact record and not mirrored into the log",
 	"latest-version (staleness) ledger entries — resolved and written with no audit sink wired at all",
 	"blob content writes — the artefact bytes themselves; fact_record_written names the blob identity, the write of the bytes appends nothing",
@@ -507,13 +508,19 @@ func parseLedgerTime(flag, value string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// formatLedgerTime renders a timestamp, or the empty string for a zero time so
-// an absent bound is omitted rather than printed as year one.
+// formatLedgerTime renders a timestamp in the encoding the ledgers write, or
+// the empty string for a zero time so an absent bound is omitted rather than
+// printed as year one.
+//
+// The canonical encoding rather than RFC3339Nano, because a rendered stamp is
+// compared against a stored one: RFC3339Nano strips trailing zeros, so it prints
+// one instant at whichever width its digits happen to end at, and a reader
+// matching it against a record has to normalise before they can.
 func formatLedgerTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return recordstamp.Format(t)
 }
 
 // writeLedgerText renders the human form: the log's coverage first, the events

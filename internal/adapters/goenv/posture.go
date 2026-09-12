@@ -26,14 +26,26 @@ var postures = map[string]Posture{
 	// extracted-module analysis needs is layered on top of it.
 	"extracted-module": {
 		Require: map[string]string{"GOWORK": "off"},
-		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOFLAGS", "GOMODCACHE", "GOGC"},
+		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED"},
 	},
 	"extracted-module-analysis": {
 		Require: map[string]string{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
 			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod",
 		},
-		Forbid: []string{"GOMODCACHE", "GOGC"},
+		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED"},
+	},
+	// The same analysis pointed at a module cache the run decided on: one
+	// materialised from the store for this module, or the operator's own under
+	// --from-modcache. It is the posture above with GOMODCACHE named, and naming
+	// it is what makes the offline resolution a property of what kanonarion holds
+	// rather than of what unrelated go commands left on the host.
+	"extracted-module-analysis-modcache": {
+		Require: map[string]string{
+			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
+			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod", "GOMODCACHE": ModCache,
+		},
+		Forbid: []string{"GOGC", "CGO_ENABLED"},
 	},
 	// -mod=readonly on both worktree postures. The tree belongs to the developer,
 	// and -mod=mod lets the go command close a missing go.sum entry from the
@@ -43,14 +55,14 @@ var postures = map[string]Posture{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
 			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
 		},
-		Forbid: []string{"GOMODCACHE", "GOGC"},
+		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED"},
 	},
 	"worktree-workspace": {
 		Require: map[string]string{
 			"GOPROXY": "off", "GOSUMDB": "off",
 			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
 		},
-		Forbid: []string{"GOWORK", "GOMODCACHE", "GOGC"},
+		Forbid: []string{"GOWORK", "GOMODCACHE", "GOGC", "CGO_ENABLED"},
 	},
 	// The vendored surface reads no module cache and runs no MVS, so it leaves
 	// the checksum database on and the toolchain unpinned: it completes a
@@ -60,16 +72,32 @@ var postures = map[string]Posture{
 		Require: map[string]string{
 			"GOGC": "30", "GOWORK": "off", "GOFLAGS": "-mod=vendor", "GOPROXY": "off",
 		},
-		Forbid: []string{"GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE"},
+		Forbid: []string{"GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED"},
 	},
 	"scan-fetched": {
 		Require: map[string]string{"GOGC": "30", "GOWORK": "off"},
-		Forbid:  []string{"GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE"},
+		Forbid:  []string{"GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED"},
 	},
 	"scan-fetched-modcache": {
 		Require: map[string]string{
 			"GOGC": "30", "GOWORK": "off", "GOMODCACHE": ModCache,
 			"GOFLAGS": "-mod=mod", "GOSUMDB": "off", "GOTOOLCHAIN": "local", "GOPROXY": "off",
+		},
+		Forbid: []string{"CGO_ENABLED"},
+	},
+	// The binary-mode test build, and the only environment in this table that
+	// turns cgo off. It is the one analysis child that compiles an untrusted
+	// module's C source with the system C compiler, and it is the one whose
+	// failure already downgrades to another analysis rather than losing the
+	// answer, so the surface is dropped here and nowhere else. Every other
+	// posture leaves CGO_ENABLED as the caller has it: source and project
+	// analysis load packages with type information, which runs cgo for a cgo
+	// package, so turning it off there costs coverage instead.
+	"scan-binary-build": {
+		Require: map[string]string{
+			"GOGC": "30", "GOWORK": "off", "GOMODCACHE": ModCache,
+			"GOFLAGS": "-mod=mod", "GOSUMDB": "off", "GOTOOLCHAIN": "local", "GOPROXY": "off",
+			"CGO_ENABLED": "0",
 		},
 	},
 	// The one escalation any of the three pinned analysis postures may take: the
@@ -82,14 +110,14 @@ var postures = map[string]Posture{
 	// PATH is absent from both lists because moving it is the whole mechanism.
 	"on-disk-toolchain": {
 		Require: map[string]string{"GOTOOLCHAIN": "path"},
-		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOWORK", "GOFLAGS", "GOMODCACHE", "GOGC"},
+		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOWORK", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED"},
 	},
 	// A project that has a vendor tree and a caller declining it: Go selects
 	// -mod=vendor from the tree's mere presence, so the fetched surface has to
 	// say otherwise, and that flag is refused in workspace mode.
 	"project-fetched-over-vendor": {
 		Require: map[string]string{"GOGC": "30", "GOWORK": "off", "GOFLAGS": "-mod=mod"},
-		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE"},
+		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED"},
 	},
 	// The project surface with no vendor tree, and the one posture in this table
 	// that overrides nothing about resolution. It analyses a live working tree
@@ -113,7 +141,7 @@ var postures = map[string]Posture{
 	// the analysis does not need to spend.
 	"scan-project": {
 		Require: map[string]string{"GOGC": "30"},
-		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE"},
+		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED"},
 	},
 }
 
@@ -122,6 +150,9 @@ var postures = map[string]Posture{
 // A new one is a new posture nothing states, which is the shape all three prior
 // defects had.
 var EnvBuilders = map[string]string{
+	"internal/adapters/childproc RunBounded": "not a go-command child: the child is this same binary, and the " +
+		"environment reaches it unchanged but for its own memory ceiling, which no posture governs " +
+		"because it decides nothing about how a build resolves",
 	"internal/callgraph/adapters/analyser/staticcha isolatedModuleEnv": "extracted-module",
 	"internal/adapters/proxy/modcache download":                        "not an analysis child: populates a module cache",
 	"internal/staleness/adapters/golist childEnv":                      "not an analysis child: an update probe that must reach a proxy",

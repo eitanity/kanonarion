@@ -94,14 +94,14 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	}
 	defer dbCleanup()
 
-	govulncheckBin, err := lookupGovulncheck()
+	tool, err := resolveGovulncheck(ctx)
 	if err != nil {
 		return domain.ProjectScanResult{}, err
 	}
 
 	s.logger.Info("vuln-scan: running project-rooted govulncheck source mode",
 		"dir", projectDir, "db", dbArg, "analysis_surface", string(surface))
-	cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+	cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 	cmd.Dir = projectDir
 	cmd.Env = env
 
@@ -133,12 +133,13 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	if waitErr != nil {
 		stderrStr := stderr.String()
 		s.logger.Debug("vuln-scan: project-rooted govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
-		status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(waitErr, stderrStr)
+		f := classifyScanFailure(waitErr, stderrStr, tool)
 		return domain.ProjectScanResult{
-			Status:            status,
-			UnscanReason:      unscanReason,
-			ErrorDetail:       errorDetail,
-			UnscannableReason: unscannableReason,
+			Status:            f.status,
+			UnscanReason:      f.unscanReason,
+			ErrorDetail:       f.errorDetail,
+			UnscannableReason: f.unscannableReason,
+			FailureCause:      f.cause,
 			// A failure is still a failure of a named surface. Which one it was is
 			// the first thing a reader needs — a build break under -mod=vendor says
 			// the vendored tree does not compile, which is a different fact from the
@@ -192,45 +193,14 @@ func projectScanSurface(projectDir string, wantVendored bool) (domain.AnalysisSu
 
 	switch {
 	case hasVendorTree && wantVendored:
-		return domain.AnalysisSurfaceVendored, scanEnv(os.Environ(), "", domain.AnalysisSurfaceVendored)
+		return domain.AnalysisSurfaceVendored, scanEnv(os.Environ(), "", surfaceVendored)
 	case hasVendorTree:
 		return domain.AnalysisSurfaceFetched,
-			append(scanEnv(os.Environ(), "", domain.AnalysisSurfaceFetched), "GOFLAGS=-mod=mod")
+			append(scanEnv(os.Environ(), "", surfaceNormalised), "GOFLAGS=-mod=mod")
 	default:
 		// No vendor tree: the toolchain's own default resolution against the
 		// project's go.mod/go.sum is the fetched surface, and forcing a mode flag
 		// would only override whatever the project itself declares.
-		return domain.AnalysisSurfaceFetched, projectScanEnv(os.Environ())
+		return domain.AnalysisSurfaceFetched, scanEnv(os.Environ(), "", surfaceLiveTree)
 	}
-}
-
-// projectScanEnv is the environment for a project-rooted scan of a live working
-// tree, and it overrides nothing that decides which code the build contains.
-//
-// This surface analyses a directory the caller named, in place, as its own main
-// module. The build it has to measure is therefore the one the go command
-// produces for the developer standing in that directory, and that build is
-// defined by the developer's environment — so the toolchain selection, the
-// proxy, the checksum database and the workspace are all left exactly as they
-// were found. That is a decision, not an omission:
-//
-//   - GOTOOLCHAIN unpinned. The developer's own build switches toolchains when
-//     the go directive asks for one; a scan pinned to `local` would refuse a
-//     project that builds, which is the class two closed defects had to undo.
-//   - GOPROXY and GOSUMDB unpinned. There is no kanonarion-owned module cache
-//     behind this surface to pin resolution to — the tree's own go.mod and
-//     go.sum decide the versions, and a dependency not yet in the local cache is
-//     one the developer's build fetches too.
-//   - GOWORK left alone. A workspace in scope IS the tree's build configuration,
-//     the same conclusion the working-tree call-graph surface reached; disabling
-//     it made this scan resolve a different module graph from the one the walk
-//     resolved and the developer compiles, silently where both graphs load.
-//
-// GOGC is the one value set, and it decides nothing about resolution:
-// govulncheck holds the whole package graph live, and the default pacing costs
-// the host memory this analysis has no need to spend.
-func projectScanEnv(base []string) []string {
-	env := make([]string, len(base), len(base)+1)
-	copy(env, base)
-	return append(env, "GOGC=30")
 }

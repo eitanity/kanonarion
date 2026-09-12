@@ -248,15 +248,18 @@ func (s *Store) PutExampleRecord(ctx context.Context, r domain2.ExampleRecord) e
 	}
 	blob := blobcodec.Encode(raw)
 
-	tx, err := s.db.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
-	}()
+	// Retried when another writer holds the single-writer lock: the condition is
+	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	if err := sqlitestore.RetryOnBusy(ctx, "example record for "+r.Coordinate.String(), func(ctx context.Context) error {
+		tx, err := s.db.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("beginning transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+		}()
 
-	const qRecord = `
+		const qRecord = `
 INSERT INTO example_records (
     module_path, module_version, pipeline_version,
     overall_status, example_count,
@@ -265,17 +268,17 @@ INSERT INTO example_records (
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
-	_, err = tx.ExecContext(ctx, qRecord,
-		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-		int(r.OverallStatus), len(r.Examples),
-		r.ExtractedAt.UTC().Format(time.RFC3339),
-		r.ContentHash, blob,
-	)
-	if err != nil {
-		return fmt.Errorf("inserting example record: %w", err)
-	}
+		_, err = tx.ExecContext(ctx, qRecord,
+			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+			int(r.OverallStatus), len(r.Examples),
+			r.ExtractedAt.UTC().Format(time.RFC3339),
+			r.ContentHash, blob,
+		)
+		if err != nil {
+			return fmt.Errorf("inserting example record: %w", err)
+		}
 
-	const qIdx = `
+		const qIdx = `
 INSERT INTO example_index (
     record_content_hash,
     module_path, module_version, pipeline_version,
@@ -284,32 +287,36 @@ INSERT INTO example_index (
 ON CONFLICT (record_content_hash, package_path, associated_symbol, example_name)
 DO NOTHING`
 
-	// Deduplicate before inserting. Platform-specific test files (e.g.
-	// connect_test.go and connect_windows_test.go) can both declare the same
-	// example function in the same package; only one variant builds on any
-	// given OS but both are present in the module zip.
-	seenIdx := make(map[string]bool, len(r.Examples))
-	for _, e := range r.Examples {
-		key := e.Package + "\x00" + e.AssociatedSymbol + "\x00" + e.Name
-		if seenIdx[key] {
-			continue
+		// Deduplicate before inserting. Platform-specific test files (e.g.
+		// connect_test.go and connect_windows_test.go) can both declare the same
+		// example function in the same package; only one variant builds on any
+		// given OS but both are present in the module zip.
+		seenIdx := make(map[string]bool, len(r.Examples))
+		for _, e := range r.Examples {
+			key := e.Package + "\x00" + e.AssociatedSymbol + "\x00" + e.Name
+			if seenIdx[key] {
+				continue
+			}
+			seenIdx[key] = true
+			validates := 0
+			if e.Validates {
+				validates = 1
+			}
+			if _, err := tx.ExecContext(ctx, qIdx,
+				r.ContentHash,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+				e.Package, e.AssociatedSymbol, e.Name, validates,
+			); err != nil {
+				return fmt.Errorf("inserting example index row %s: %w", e.Name, err)
+			}
 		}
-		seenIdx[key] = true
-		validates := 0
-		if e.Validates {
-			validates = 1
-		}
-		if _, err := tx.ExecContext(ctx, qIdx,
-			r.ContentHash,
-			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-			e.Package, e.AssociatedSymbol, e.Name, validates,
-		); err != nil {
-			return fmt.Errorf("inserting example index row %s: %w", e.Name, err)
-		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing example record: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing example record: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	return nil
 }

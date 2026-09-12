@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -464,16 +466,52 @@ func TestBackfillAnalyser_ReportsAMixedCoordinate(t *testing.T) {
 		coord coordinate.ModuleCoordinate
 		want  bool
 	}{{mixed, true}, {agreed, false}} {
-		recs, lerr := s.ListCallGraphRecordsFor(ctx, tc.coord, "0.5.0")
-		if lerr != nil {
-			t.Fatalf("ListCallGraphRecordsFor(%s): %v", tc.coord, lerr)
-		}
 		served, found, gerr := s.GetCallGraphRecord(ctx, tc.coord, "0.5.0")
 		if gerr != nil || !found {
 			t.Fatalf("GetCallGraphRecord(%s): %v (found=%v)", tc.coord, gerr, found)
 		}
-		if _, got := domain2.AnalyserDisagreementAmong(recs, served); got != tc.want {
-			t.Errorf("%s: disagreement reported = %v, want %v", tc.coord, got, tc.want)
+
+		// The notice is read from the analyser COLUMN, so the column listing is what
+		// has to carry it.
+		listed, cerr := s.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{
+			ModulePath: tc.coord.Path(), PipelineVersion: "0.5.0",
+		})
+		if cerr != nil {
+			t.Fatalf("ListCallGraphCoordinates(%s): %v", tc.coord, cerr)
+		}
+		var fromColumns []domain2.AnalyserIdentity
+		for _, c := range listed {
+			if c.ModuleVersion != tc.coord.Version() {
+				continue
+			}
+			for _, g := range c.Generations {
+				fromColumns = append(fromColumns, g.Analyser)
+			}
+		}
+
+		// And it has to be the SAME answer the composing read gave, which is the
+		// whole claim of reading a column instead of reconstructing every
+		// generation's edge set to reach the same field.
+		recs, lerr := s.ListCallGraphRecordsFor(ctx, tc.coord, "0.5.0")
+		if lerr != nil {
+			t.Fatalf("ListCallGraphRecordsFor(%s): %v", tc.coord, lerr)
+		}
+		composed := make([]domain2.AnalyserIdentity, 0, len(recs))
+		for i := range recs {
+			composed = append(composed, recs[i].Analyser)
+		}
+		byColumn, spokeByColumn := domain2.AnalyserDisagreementAmong(fromColumns, served)
+		if spokeByColumn != tc.want {
+			t.Errorf("%s: disagreement from the columns = %v, want %v", tc.coord, spokeByColumn, tc.want)
+		}
+		byRecord, spokeByRecord := domain2.AnalyserDisagreementAmong(composed, served)
+		if spokeByColumn != spokeByRecord {
+			t.Errorf("%s: columns and composed read disagree about whether to speak: %v vs %v",
+				tc.coord, spokeByColumn, spokeByRecord)
+		}
+		if !slices.Equal(byColumn.Identities, byRecord.Identities) {
+			t.Errorf("%s: columns named %v, composed read named %v",
+				tc.coord, byColumn.Identities, byRecord.Identities)
 		}
 	}
 }

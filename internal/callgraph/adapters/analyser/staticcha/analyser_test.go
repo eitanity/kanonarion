@@ -822,7 +822,7 @@ func (e *Engine) Exported() { func() { helper() }() }
 			IsExternal: n.IsExternal, IsExportedAPI: n.IsExportedAPI,
 		})
 	}
-	for _, id := range domain.SelectReachabilityRoots(roots, domain.ArtifactLibrary) {
+	for _, id := range domain.SelectReachabilityRoots(roots, domain.ArtifactLibrary, domain.RootScopeProduction) {
 		if id == pkg+".(*Engine).Exported$1" {
 			t.Error("closure selected as a library reachability root")
 		}

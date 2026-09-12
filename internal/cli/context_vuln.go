@@ -185,7 +185,7 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 		for coord := range run.PerModuleResults {
 			rec, found, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
 			if err != nil {
-				return nil, fmt.Errorf("reading walk-peer verdict for %s in walk %s: %w", coord, run.WalkID, err)
+				return nil, fmt.Errorf("reading walk-peer status for %s in walk %s: %w", coord, run.WalkID, err)
 			}
 			if !found {
 				continue
@@ -274,9 +274,9 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	if batch.anchored {
-		return supersededOr(ctx, coord, vulnUC, batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC))
+		return supersededOr(ctx, coord, vulnUC, batch.walkUC, batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC))
 	}
-	return supersededOr(ctx, coord, vulnUC, batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC))
+	return supersededOr(ctx, coord, vulnUC, batch.walkUC, batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC))
 }
 
 // supersededOr replaces a not_run section with the superseded one when that is
@@ -292,6 +292,7 @@ func supersededOr(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	vulnUC QueryVulnUseCase,
+	walks QueryWalksUseCase,
 	section contextVulnerabilities,
 ) contextVulnerabilities {
 	if section.Status != sectionStatusNotRun {
@@ -303,7 +304,7 @@ func supersededOr(
 	}
 	return contextVulnerabilities{
 		Status: sectionStatusSuperseded,
-		Error:  supersededVulnLine(coord, gens),
+		Error:  supersededVulnLine(coord, gens, supersededVulnRemedy(ctx, walks, coord, gens)),
 	}
 }
 
@@ -489,19 +490,19 @@ func walkCoverageCaveat(run vuldomain.WalkScanRun) string {
 
 func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCoverage string) contextVulnerabilities {
 	out := contextVulnerabilities{
-		ExtractedAt:     isoTime(rec.ScannedAt),
+		ExtractedAt:     ledgerStamp(rec.ScannedAt),
 		Status:          string(rec.OverallStatus),
 		WalkStatus:      walkStatus,
 		WalkCoverage:    walkCoverage,
 		Reason:          rec.UnscannableReason,
 		WalkID:          rec.WalkID,
 		Frame:           string(vuldomain.RecordRooting(*rec)),
-		LastValidatedAt: isoTime(rec.ScannedAt),
+		LastValidatedAt: ledgerStamp(rec.ScannedAt),
 		SnapshotVersion: rec.DatabaseSnapshot.Version(),
 		PipelineVersion: rec.PipelineVersion,
 	}
 	if !rec.FirstScannedAt.IsZero() {
-		out.FirstValidatedAt = isoTime(rec.FirstScannedAt)
+		out.FirstValidatedAt = ledgerStamp(rec.FirstScannedAt)
 	}
 	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
 		out.SnapshotRetrievedAt = isoTime(rec.DatabaseSnapshot.RetrievedAt())
@@ -526,6 +527,11 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 			r := f.Reachable.IsReachable
 			cve.Reachable = &r
 		}
+		// The answer, on the same read-time contract as the rung below and from the
+		// one function every surface shares. Before it, this projection published
+		// the stored bit alone, so a package-level-only finding and a finding with a
+		// route to the vulnerable symbol left here as the same document.
+		cve.ReachabilityState = vuldomain.FindingReachabilityState(f)
 		// Derived, never read off a stored field: NegativeSoundness classifies the
 		// answer from the analyser that produced it and that analyser's own
 		// fidelity, so every record already in the store carries a rung here.

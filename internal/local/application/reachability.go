@@ -311,7 +311,7 @@ func absentReason(probeKind string, binaries []ports.ProbedBinary) string {
 // tree, possibly the module built alone.
 func seededReason(basis string) string {
 	if basis == "" {
-		return "carried from the stored scan, which recorded no derivation for its reachability verdict"
+		return "carried from the stored scan, which recorded no derivation for its reachability answer"
 	}
 	return "carried from the stored scan (" + basis + ")"
 }

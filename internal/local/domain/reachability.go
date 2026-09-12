@@ -3,6 +3,8 @@ package domain
 import (
 	"sort"
 	"time"
+
+	"github.com/eitanity/kanonarion/internal/versionorder"
 )
 
 // BuildModule is one module the local build resolves — every non-main module
@@ -74,6 +76,9 @@ type UncoveredModule struct {
 func UncoveredModuleLess(a, b UncoveredModule) bool {
 	if a.Path != b.Path {
 		return a.Path < b.Path
+	}
+	if c := versionorder.CompareModuleVersions(a.Version, b.Version); c != 0 {
+		return c < 0
 	}
 	if a.Version != b.Version {
 		return a.Version < b.Version
@@ -335,6 +340,9 @@ type LocalReachabilityResult struct {
 func ModuleProbeResultLess(a, b ModuleProbeResult) bool {
 	if a.Path != b.Path {
 		return a.Path < b.Path
+	}
+	if c := versionorder.CompareModuleVersions(a.Version, b.Version); c != 0 {
+		return c < 0
 	}
 	if a.Version != b.Version {
 		return a.Version < b.Version
