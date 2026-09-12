@@ -18,7 +18,7 @@ exit 0
   },
   "per_module_results": {
     "example.com/clean@v1.0.0": "sha256:54d50d2601a90f9ec385ef2ced0e943f8af3075369d28c396ddfa9b5475d82af",
-    "example.com/mod@v1.2.0": "sha256:08001736470b48c243e9fa0a9d86b98348be3449621cfd095058e10e9c59219f",
+    "example.com/mod@v1.2.0": "sha256:a8f9911adc3854db05dc4f8ab5d5a3c8cf89cb26bc8a97396a0ca8278fd4230d",
     "example.com/shallow@v1.0.0": "sha256:a622c385892c679b578924b8be775ea4ccc00e92bb20c00302c2c2b82ba4cf9e"
   },
   "started_at": "2026-02-20T09:00:00Z",
@@ -26,7 +26,7 @@ exit 0
   "overall_status": "Affected",
   "pipeline_version": "v25",
   "operator": "fixture",
-  "content_hash": "sha256:ff5ff1bab98fc0fb93ca686de1e1c7f63a90b19b4eda4f7d5e2479a57904e6f3",
+  "content_hash": "sha256:fb01b0d8764ad8dbecaf3bb7a1f2414e6fa35894f095b3b5d1500d49c4fc1c3b",
   "affected_modules": [
     {
       "coordinate": "example.com/mod@v1.2.0",
@@ -51,19 +51,39 @@ exit 0
                 {
                   "module_path": "example.com/app",
                   "package": "example.com/app",
-                  "symbol": "main"
+                  "symbol": "main",
+                  "dispatch": {
+                    "kind": "route-entry",
+                    "reason": "this is the route's first hop: no hop above it, so there is no call site to read"
+                  }
                 },
                 {
                   "module_path": "example.com/mod",
                   "module_version": "v1.2.0",
                   "package": "example.com/mod",
-                  "symbol": "Handle"
+                  "symbol": "Handle",
+                  "dispatch": {
+                    "kind": "not-annotated",
+                    "reason": "no call graph is held for example.com/app@local, the module this call site is in, so there is no edge to read; the route stands as the analyser reported it",
+                    "graph": "example.com/app@local"
+                  }
                 },
                 {
                   "module_path": "example.com/mod",
                   "module_version": "v1.2.0",
                   "package": "example.com/mod",
-                  "symbol": "Parse"
+                  "symbol": "Parse",
+                  "dispatch": {
+                    "kind": "interface",
+                    "confidence": "CHA-overapprox",
+                    "graph": "example.com/mod@v1.2.0",
+                    "graph_completeness": "BUILT_WITH_BODIES",
+                    "call_site": "handle.go:42",
+                    "interface": "example.com/mod.Parser",
+                    "implementation_module": "example.com/mod",
+                    "implementers": 3,
+                    "implementers_query": "kanonarion implementers 'example.com/mod.Parser'"
+                  }
                 }
               ]
             ],

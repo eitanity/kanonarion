@@ -84,6 +84,42 @@ consumer nowhere.
 
 The rows themselves are unchanged.
 
+## A route hop says how control reached it: no migration and no bump
+
+Each hop of a stored reachability route — `findings[].reachable.routes[][]` on a
+`VulnerabilityRecord` — gains a `dispatch` object saying how control reached that
+hop: a direct call, an interface dispatch (with the interface crossed, the module
+supplying the implementation that ran, and how many concrete types satisfy it), a
+reflection edge, a framework-bound edge, an unresolved one, a function value
+taken rather than called, the route's own entry point, or a stated refusal
+carrying the reason the call graph could not corroborate the hop.
+
+The values are READ off the call-graph edge that reaches the hop — its own
+confidence and reflect-origin fields — in the call graph of the module the CALL
+SITE is in, which is the caller's module and not the hop's own.
+
+**No migration, no purge, no pipeline bump, no schema-version bump.** `dispatch`
+is `omitzero` and absent from every route already written, so stored hashes still
+verify: measured on a working store, 38 generations of one coordinate reaching
+back a month all verify unchanged under the new build.
+
+**It is computed at scan time and sealed with the record**, unlike the derived
+soundness rung and route-root classification, which are computed at read time and
+change no bytes. A route is inside the content hash, so annotating at read time
+would either mutate a sealed record or produce two renderings of one stored route
+that disagree.
+
+**Cost: a route already in the store stays unannotated until its finding is
+re-scanned.** Nothing is superseded and nothing stops being served — an
+unannotated hop reads as "this route does not say", which every surface states
+rather than rendering as a direct call.
+
+**An OLDER build cannot verify a record written by this one.** That is the
+ordinary consequence of an additive field under a canonical-shape seal, in the
+direction the hash-transparency rule does not cover, and the store already names
+it: such a record is reported as "written by a different canonical shape … should
+be re-extracted rather than investigated", never as a tamper.
+
 ## Coverage gaps say what they are a statement about: no migration and no bump
 
 Three record shapes gain an axis that already existed on one of them, spelled the

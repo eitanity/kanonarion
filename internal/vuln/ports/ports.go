@@ -886,6 +886,102 @@ type CallGraphEdge struct {
 	ToID   string
 }
 
+// CallSiteKey names one directed call site: the caller node and the callee node,
+// in the call graph's own node-ID form.
+type CallSiteKey struct {
+	FromID string
+	ToID   string
+}
+
+// CallSiteFact is what a module's call graph records about one call site.
+//
+// The first three fields are the edge's own, copied verbatim and never
+// combined here: deciding what they MEAN is the vuln domain's job, and doing it
+// in two places is how a reflect edge comes to be reported as unresolved in one
+// surface and as a call in another.
+type CallSiteFact struct {
+	// Confidence is the edge's resolution label as the graph stored it.
+	Confidence string
+	// ReflectDispatch is the edge's reflect origin. Such edges carry an
+	// unresolved confidence, so this is the only field that distinguishes them.
+	ReflectDispatch bool
+	// Reference is true when the edge records a function VALUE being taken rather
+	// than a call being made.
+	Reference bool
+	// CallSiteFile and CallSiteLine are where in the calling module's source the
+	// graph recorded the site. Both are zero when the edge carries no position.
+	CallSiteFile string
+	CallSiteLine int
+	// InterfaceID is the interface the callee satisfies at this method, where the
+	// analysed module's own implementation relation attributes it to exactly one.
+	// Empty when it attributes none, or more than one — the edge does not carry
+	// the interface it dispatched through, so an ambiguous recovery is no answer.
+	InterfaceID string
+	// Implementers is how many concrete types the analysed module records as
+	// satisfying InterfaceID, including the callee. Zero when InterfaceID is empty.
+	Implementers int
+	// ImplementationModule is the module the callee node belongs to in this graph.
+	ImplementationModule string
+}
+
+// CallSiteAnswer is one module graph's answer about the call sites asked of it.
+//
+// Served distinguishes the two absences a bare empty map cannot. A graph that is
+// not held answers nothing about any site in the module; a graph that IS held
+// and records no edge is a measurement — the analysis of that module built no
+// such call — and the two lead a reader to different remedies.
+type CallSiteAnswer struct {
+	// Served reports whether the store produced a graph for the coordinate at all.
+	Served bool
+	// Completeness is the fidelity the served graph was built at, as an opaque
+	// string. Empty when nothing was served, or when the graph does not state one.
+	Completeness string
+	// KnownCallers holds the requested caller node IDs the graph names. A caller
+	// the graph does not name and a caller it names with no edge to the callee are
+	// different findings and both must be sayable.
+	KnownCallers map[string]bool
+	// Edges holds one fact per call site the graph records out of the requested
+	// callers. A site the graph does not record is absent, never a zero fact.
+	Edges map[CallSiteKey]CallSiteFact
+}
+
+// CallSiteReader reads what one module's SERVED call graph records about
+// specific call sites inside it.
+//
+// The coordinate is the module the CALL SITE is in — the caller's module, not
+// the callee's. An edge is recorded by the analysis of the module whose source
+// makes the call, so the callee's own graph, which never saw the caller, cannot
+// answer for it.
+//
+// It reads the served generation, never a coordinate's whole history. The
+// call-graph ledger is append-only and a coordinate names every generation at
+// once, so an edge read by coordinate could come from a superseded generation —
+// plausibly a metadata-only one with almost no edges — and the annotation would
+// silently disagree with the graph the reachability answer itself was computed
+// against.
+//
+// It takes the caller node IDs up front rather than one site at a time because
+// serving a graph is expensive: one read answers every site in that module.
+type CallSiteReader interface {
+	ReadCallSites(ctx context.Context, coord coordinate.ModuleCoordinate, fromIDs []string) (CallSiteAnswer, error)
+}
+
+// RouteAnnotator states, on every hop of every route a record carries, how
+// control reached that hop, and returns the decomposition of what it could and
+// could not read.
+//
+// It runs at SCAN time, before the record is sealed. A route is inside the
+// record's content hash, so annotating at read time would either mutate a sealed
+// record or produce two renderings of one stored route that disagree.
+//
+// It never withholds, alters, drops or reorders a route. The annotation enriches
+// a route the producing analyser reported and that analyser remains the
+// instrument; a hop the call graph cannot corroborate is left unannotated and
+// says so.
+type RouteAnnotator interface {
+	AnnotateRecord(ctx context.Context, record *domain.VulnerabilityRecord) domain.DispatchTally
+}
+
 // CallGraphSpawner runs a callgraph extraction subprocess for a module so that
 // a vuln-scan can populate the callgraph store on demand for findings-only
 // modules. On exit 0 the record is persisted in the store and available via

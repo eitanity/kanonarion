@@ -488,10 +488,42 @@ func seedFixtureVuln(t *testing.T, store *vulnsqlite.Store, mod, shallow, clean 
 		t.Fatalf("filing fixture snapshot two: %v", err)
 	}
 
+	// The route carries all three answers the dispatch annotation gives, because
+	// every surface that publishes a route renders them and a fixture that only
+	// exercised the happy one would pin a third of the rendering. The entry point
+	// says it is one; the hop out of the unanalysed root says why it could not be
+	// read; the last hop is an interface dispatch read off the edge.
 	route := vulndomain.ReachabilityRoute{
-		{ModulePath: "example.com/app", Package: "example.com/app", Symbol: "main"},
-		{ModulePath: "example.com/mod", ModuleVersion: "v1.2.0", Package: "example.com/mod", Symbol: "Handle"},
-		{ModulePath: "example.com/mod", ModuleVersion: "v1.2.0", Package: "example.com/mod", Symbol: "Parse"},
+		{
+			ModulePath: "example.com/app", Package: "example.com/app", Symbol: "main",
+			Dispatch: vulndomain.HopDispatch{
+				Kind:   vulndomain.DispatchRouteEntry,
+				Reason: "this is the route's first hop: no hop above it, so there is no call site to read",
+			},
+		},
+		{
+			ModulePath: "example.com/mod", ModuleVersion: "v1.2.0", Package: "example.com/mod", Symbol: "Handle",
+			Dispatch: vulndomain.HopDispatch{
+				Kind:  vulndomain.DispatchNotAnnotated,
+				Graph: "example.com/app@local",
+				Reason: "no call graph is held for example.com/app@local, the module this call site is in, " +
+					"so there is no edge to read; the route stands as the analyser reported it",
+			},
+		},
+		{
+			ModulePath: "example.com/mod", ModuleVersion: "v1.2.0", Package: "example.com/mod", Symbol: "Parse",
+			Dispatch: vulndomain.HopDispatch{
+				Kind:                 vulndomain.DispatchInterface,
+				Confidence:           "CHA-overapprox",
+				Graph:                "example.com/mod@v1.2.0",
+				GraphCompleteness:    "BUILT_WITH_BODIES",
+				CallSite:             "handle.go:42",
+				Interface:            "example.com/mod.Parser",
+				ImplementationModule: "example.com/mod",
+				Implementers:         3,
+				ImplementersQuery:    "kanonarion implementers 'example.com/mod.Parser'",
+			},
+		},
 	}
 	finding := vulndomain.VulnerabilityFinding{
 		ID:              "GO-2026-0001",

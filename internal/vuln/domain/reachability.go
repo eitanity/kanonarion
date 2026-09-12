@@ -58,12 +58,43 @@ func (a ReachabilityAnalyser) String() string {
 //
 // ModuleVersion is empty when the producing analyser does not know it. That is
 // a statement, not a gap: see AnalyserCallGraphBFS.
+//
+// Dispatch is how control reached this hop, and it is the field that stops a
+// route being read as a dependency chain. A hop that crosses an interface names
+// the concrete function that ran, and nothing on the frame says the callee was
+// chosen at runtime rather than named in the caller's source. The zero value
+// means the hop does not say — it is what every route stored before the
+// annotation existed carries — and it must never be read as a direct call.
 type ReachabilityFrame struct {
 	ModulePath    string `json:"module_path,omitzero"`
 	ModuleVersion string `json:"module_version,omitzero"`
 	Package       string `json:"package,omitzero"`
 	Receiver      string `json:"receiver,omitzero"`
 	Symbol        string `json:"symbol,omitzero"`
+	// Dispatch enriches the hop and never alters it: the five fields above are
+	// exactly what the producing analyser reported, and the annotation is written
+	// beside them.
+	Dispatch HopDispatch `json:"dispatch,omitzero"`
+}
+
+// NodeID renders the hop in the call graph's own node-ID form —
+// "pkg/path.Func" for a free function, "pkg/path.(*Recv).Method" for a method —
+// so a frame can be matched against the graph without every caller restating
+// the convention.
+//
+// It is the frame's identity in the graph, not a guess at one: where the two
+// conventions disagree the lookup misses and the hop is left unannotated, which
+// is the honest outcome. The closure form govulncheck reports without its
+// enclosing receiver is the measured example — it is named "Start$2" on the
+// route and "(*Uploader).Start$2" in the graph, and no match is claimed.
+func (f ReachabilityFrame) NodeID() string {
+	if f.Package == "" || f.Symbol == "" {
+		return ""
+	}
+	if f.Receiver != "" {
+		return f.Package + ".(" + f.Receiver + ")." + f.Symbol
+	}
+	return f.Package + "." + f.Symbol
 }
 
 // String renders one hop as "module@version pkg.(Recv).Symbol", omitting the

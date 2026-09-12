@@ -394,6 +394,7 @@ type ScanModuleUseCase struct {
 	database         ports.VulnerabilityDatabase
 	reachability     ports.ReachabilityAnalyser
 	callGraphLoader  ports.CallGraphLoader
+	routeAnnotator   ports.RouteAnnotator
 	callGraphSpawner ports.CallGraphSpawner
 	clock            fetchports.Clock
 	pipelineVersion  string
@@ -436,6 +437,39 @@ func NewScanModuleUseCase(
 func (uc *ScanModuleUseCase) WithAudit(sink ports.AuditSink) *ScanModuleUseCase {
 	uc.audit = sink
 	return uc
+}
+
+// WithRouteAnnotator sets the annotator that states how control reached each
+// hop of a stored route. It is optional: without one every route is stored
+// exactly as the producing analyser reported it, with no hop claiming a
+// dispatch kind — which is what an unannotated route means and never "direct".
+func (uc *ScanModuleUseCase) WithRouteAnnotator(annotator ports.RouteAnnotator) *ScanModuleUseCase {
+	uc.routeAnnotator = annotator
+	return uc
+}
+
+// annotateRouteDispatch runs the route annotator over a record about to be
+// sealed, and logs the decomposition so a run reports what it could and could
+// not read rather than only what it annotated.
+//
+// It is a free function because the two use cases that seal records with routes
+// — the per-module scan and the walk-wide one — both need it and share no type.
+// A record with no routes logs nothing: there is nothing to say about it, and a
+// line per clean module would bury the ones that carry an answer.
+func annotateRouteDispatch(
+	ctx context.Context,
+	annotator ports.RouteAnnotator,
+	logger *slog.Logger,
+	record *domain.VulnerabilityRecord,
+) {
+	if annotator == nil {
+		return
+	}
+	tally := annotator.AnnotateRecord(ctx, record)
+	if tally.Hops == 0 {
+		return
+	}
+	logger.Info("route dispatch annotated", "coordinate", record.Coordinate, "hops", tally.String())
 }
 
 // WithCallGraphLoader sets the loader used to retrieve call graph records for
@@ -795,6 +829,12 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// The analysers below this layer produce the reachability answers and cannot
 	// know the frame the record is being written in; this is where the two meet.
 	domain.StampReachabilityRooting(&record)
+
+	// How control reached each hop, read from the call graph of the module each
+	// call site is in. It runs here, before the seal, because a route is inside
+	// the record's content hash: annotating at read time would either mutate a
+	// sealed record or produce two renderings of one stored route that disagree.
+	annotateRouteDispatch(ctx, uc.routeAnnotator, uc.logger, &record)
 
 	// 7. Deterministic Identity (T5: Hash-based Identity)
 	record, err = domain.VulnerabilityRecordHasher{}.SetContentHash(record)

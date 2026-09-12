@@ -21,7 +21,7 @@ exit 0
     "callgraph_algorithm": "CHA",
     "rooting": "target-rooted",
     "analysis_surface": "fetched",
-    "content_hash": "sha256:08001736470b48c243e9fa0a9d86b98348be3449621cfd095058e10e9c59219f",
+    "content_hash": "sha256:a8f9911adc3854db05dc4f8ab5d5a3c8cf89cb26bc8a97396a0ca8278fd4230d",
     "findings": [
       {
         "id": "GO-2026-0001",
@@ -42,19 +42,39 @@ exit 0
               {
                 "module_path": "example.com/app",
                 "package": "example.com/app",
-                "symbol": "main"
+                "symbol": "main",
+                "dispatch": {
+                  "kind": "route-entry",
+                  "reason": "this is the route's first hop: no hop above it, so there is no call site to read"
+                }
               },
               {
                 "module_path": "example.com/mod",
                 "module_version": "v1.2.0",
                 "package": "example.com/mod",
-                "symbol": "Handle"
+                "symbol": "Handle",
+                "dispatch": {
+                  "kind": "not-annotated",
+                  "reason": "no call graph is held for example.com/app@local, the module this call site is in, so there is no edge to read; the route stands as the analyser reported it",
+                  "graph": "example.com/app@local"
+                }
               },
               {
                 "module_path": "example.com/mod",
                 "module_version": "v1.2.0",
                 "package": "example.com/mod",
-                "symbol": "Parse"
+                "symbol": "Parse",
+                "dispatch": {
+                  "kind": "interface",
+                  "confidence": "CHA-overapprox",
+                  "graph": "example.com/mod@v1.2.0",
+                  "graph_completeness": "BUILT_WITH_BODIES",
+                  "call_site": "handle.go:42",
+                  "interface": "example.com/mod.Parser",
+                  "implementation_module": "example.com/mod",
+                  "implementers": 3,
+                  "implementers_query": "kanonarion implementers 'example.com/mod.Parser'"
+                }
               }
             ]
           ],
@@ -129,7 +149,7 @@ exit 0
     "callgraph_algorithm": "CHA",
     "rooting": "target-rooted",
     "analysis_surface": "fetched",
-    "content_hash": "sha256:885d000d8200f0de756cdfeafa01e380147eb780599d3cf2fc34bac1b1cc0651",
+    "content_hash": "sha256:208b42a52316e22121a9f14665221823fbd539fcb77704bb29d512cd876875f4",
     "findings": [
       {
         "id": "GO-2026-0001",
@@ -150,19 +170,39 @@ exit 0
               {
                 "module_path": "example.com/app",
                 "package": "example.com/app",
-                "symbol": "main"
+                "symbol": "main",
+                "dispatch": {
+                  "kind": "route-entry",
+                  "reason": "this is the route's first hop: no hop above it, so there is no call site to read"
+                }
               },
               {
                 "module_path": "example.com/mod",
                 "module_version": "v1.2.0",
                 "package": "example.com/mod",
-                "symbol": "Handle"
+                "symbol": "Handle",
+                "dispatch": {
+                  "kind": "not-annotated",
+                  "reason": "no call graph is held for example.com/app@local, the module this call site is in, so there is no edge to read; the route stands as the analyser reported it",
+                  "graph": "example.com/app@local"
+                }
               },
               {
                 "module_path": "example.com/mod",
                 "module_version": "v1.2.0",
                 "package": "example.com/mod",
-                "symbol": "Parse"
+                "symbol": "Parse",
+                "dispatch": {
+                  "kind": "interface",
+                  "confidence": "CHA-overapprox",
+                  "graph": "example.com/mod@v1.2.0",
+                  "graph_completeness": "BUILT_WITH_BODIES",
+                  "call_site": "handle.go:42",
+                  "interface": "example.com/mod.Parser",
+                  "implementation_module": "example.com/mod",
+                  "implementers": 3,
+                  "implementers_query": "kanonarion implementers 'example.com/mod.Parser'"
+                }
               }
             ]
           ],

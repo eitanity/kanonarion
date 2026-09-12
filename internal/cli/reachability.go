@@ -636,12 +636,20 @@ func rootToOutput(root vuldomain.RouteRoot) *routeRootOutput {
 }
 
 // reachabilityFrameOutput is one hop.
+//
+// Dispatch is how control reached it, as the scan sealed it into the record. It
+// is emitted on every hop that states one and omitted on every hop that does
+// not, and the omission is the answer "this route does not say" — never "a
+// direct call". A machine cannot read the prose the text surface prints beside a
+// route, so a hop annotated there and bare here would be a route whose meaning
+// depends on which surface you read it from.
 type reachabilityFrameOutput struct {
-	Module   string `json:"module,omitempty"`
-	Version  string `json:"version,omitempty"`
-	Package  string `json:"package,omitempty"`
-	Receiver string `json:"receiver,omitempty"`
-	Symbol   string `json:"symbol,omitempty"`
+	Module   string                `json:"module,omitempty"`
+	Version  string                `json:"version,omitempty"`
+	Package  string                `json:"package,omitempty"`
+	Receiver string                `json:"receiver,omitempty"`
+	Symbol   string                `json:"symbol,omitempty"`
+	Dispatch vuldomain.HopDispatch `json:"dispatch,omitzero"`
 }
 
 // routesToOutput renders stored routes for the curated JSON shape, classifying
@@ -662,6 +670,7 @@ func routesToOutput(routes []vuldomain.ReachabilityRoute, classify routeRootFunc
 			frames = append(frames, reachabilityFrameOutput{
 				Module: f.ModulePath, Version: f.ModuleVersion,
 				Package: f.Package, Receiver: f.Receiver, Symbol: f.Symbol,
+				Dispatch: f.Dispatch,
 			})
 		}
 		out = append(out, reachabilityRouteOutput{
@@ -941,8 +950,16 @@ func printRoute(stdout io.Writer, res vulnReachabilityQuery) {
 		label = "  route (entry point first; hops carry no module version, so it cannot be checked against another build):"
 	}
 	_, _ = fmt.Fprintln(stdout, label)
+	annotated := routeStatesDispatch(r.Frames)
+	if !annotated {
+		_, _ = fmt.Fprintln(stdout, "    (no hop on this route says how control reached it: the route was stored before the "+
+			"dispatch annotation was recorded, so no hop here is a direct call unless a re-scan says so)")
+	}
 	for _, f := range r.Frames {
 		_, _ = fmt.Fprintf(stdout, "    %s\n", frameLine(f))
+		if annotated {
+			_, _ = fmt.Fprintf(stdout, "      reached by: %s\n", hopDispatchLine(f.Dispatch))
+		}
 	}
 	printRouteRoot(stdout, r.Root)
 	if len(res.Routes) > 1 {
@@ -1313,4 +1330,38 @@ func ancestryLine(a *rootAncestryOutput) string {
 		line += "; at least one hop is a reference, so the value was registered rather than invoked"
 	}
 	return line
+}
+
+// routeStatesDispatch reports whether any hop of a rendered route says how
+// control reached it.
+//
+// It decides between two renderings rather than two labels. A route where every
+// hop is silent was stored before the annotation existed, and saying that once
+// under the route is worth more than repeating "not recorded" on every hop; a
+// route where some hops speak needs the per-hop lines, because there the silence
+// of one hop is a measurement about that hop.
+func routeStatesDispatch(frames []reachabilityFrameOutput) bool {
+	for _, f := range frames {
+		if f.Dispatch.IsRecorded() {
+			return true
+		}
+	}
+	return false
+}
+
+// hopDispatchLine renders one hop's dispatch annotation for a person.
+//
+// Every branch says something. Nothing here may render as a direct call on the
+// strength of an absence — the route's first hop says it is the first hop, a hop
+// the call graph could not corroborate says so and why, and a hop carrying
+// nothing at all says that too.
+func hopDispatchLine(d vuldomain.HopDispatch) string {
+	switch {
+	case !d.IsRecorded():
+		return "not recorded — this hop was stored before the dispatch annotation existed; it is not a direct call"
+	case d.Kind == vuldomain.DispatchRouteEntry:
+		return "the route's entry point — there is no hop above it, so there is no call site to read"
+	default:
+		return d.String()
+	}
 }

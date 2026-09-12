@@ -263,6 +263,73 @@ kanonarion vuln-scan --gomod ./go.mod --reachability
 kanonarion reachability --local .
 ```
 
+### How control reached each hop
+
+A route is a **call stack**, not a dependency chain, and without saying more it
+renders a direct call and an interface dispatch identically. The difference
+matters: where a hop crosses an interface, the route names the concrete function
+that ran, and the module that supplied — or installed — that implementation need
+not be on the route at all.
+
+Every hop therefore carries a `dispatch` block saying how control reached it,
+read from the call graph of the module the **call site** is in. That is the
+caller's module, not the hop's own: an edge is recorded by the analysis of the
+module whose source makes the call.
+
+```
+  route (entry point first):
+    example.com/app example.com/app/cluster.Start
+      reached by: the route's entry point — there is no hop above it, so there is no call site to read
+    example.com/mod@v1.2.3 example.com/mod/auto.(*Uploader).upload
+      reached by: not annotated, no call graph is held for example.com/app@local, the module this call site is in, so there is no edge to read; the route stands as the analyser reported it
+    example.com/mod@v1.2.3 example.com/mod/aws.(*S3Client).CurrentID
+      reached by: interface, edge confidence CHA-overapprox, through example.com/mod/auto.StorageClient (4 implementer(s) recorded), implementation from example.com/mod, at auto/uploader.go:167, read from the call graph of example.com/mod@v1.2.3 (BUILT_WITH_BODIES) — list them: kanonarion implementers 'example.com/mod/auto.StorageClient'
+```
+
+| `kind` | Means |
+|---|---|
+| `direct` | The caller named the callee. The edge's own `Direct` confidence, which also covers an interface site the analyser resolved to its sole implementer. |
+| `interface` | The callee was dispatched through an interface. Where the graph can attribute it, the block names the interface crossed, the module supplying the implementation that ran, and how many concrete types satisfy that interface — the **count**, with `implementers_query` naming the command that lists them. |
+| `reflect` | The edge was resolved through reflection: the callee set is not statically knowable. |
+| `framework` | The edge was bound by a framework model or thunk rather than observed in the analysed source. |
+| `unresolved` | The analyser could not resolve the call to a concrete callee, and did not attribute it to reflection. |
+| `reference` | The callee's function **value** was taken at that site. It is not an invocation and never counts as one. |
+| `route-entry` | The route's first hop. There is no hop above it, so there is no call site to read. |
+| `not-annotated` | The call graph could not corroborate this hop. `reason` says which: no graph is held for the module the call site is in, the graph does not name the calling function, or it names it and records no edge to this callee. |
+
+Four rules keep this honest:
+
+- **A hop that could not be read is never rendered as a direct call.** It says
+  `not-annotated` with the reason, and a route whose hops say nothing at all —
+  one stored before the annotation existed — says that once, under the route.
+- **The kind is read, never guessed.** It comes from the edge's own confidence
+  and reflect-origin fields, and `confidence` carries the graph's own word beside
+  it. A confidence this build does not recognise is `unresolved`, never `direct`.
+- **No route is withheld, altered, dropped or reordered** because the call graph
+  could not corroborate it. The analyser that produced the route remains the
+  instrument and the route remains its answer; the annotation is written beside
+  each hop and touches nothing else.
+- **It is computed at scan time**, unlike the root classification below. A route
+  is inside the record's content hash, so annotating at read time would either
+  change a sealed record or produce two renderings of one stored route that
+  disagree. The consequence is that **routes already in the store stay
+  unannotated until their finding is re-scanned** — re-run `vuln-scan --force`.
+
+Two things decide how much of a route can be annotated, and both are about which
+call graphs the store holds:
+
+- The **standard library** has no call graph: the call-graph stage analyses a
+  module zip and the standard library arrives by a different route. Hops whose
+  call site is in `stdlib` are always `not-annotated`.
+- A **project's own root module** is analysed only when its working tree has been
+  ingested — `kanonarion local /path/to/tree`. Until then, every hop out of the
+  project's own code is `not-annotated`, and that is usually the largest single
+  group on a real route.
+
+`reachability --json`, `vuln-show --json`, `vuln-by-id --json` and
+`vuln-scan-diff --json` all publish the same `dispatch` object under the same
+keys, so nothing the text surface says about a hop is missing from the document.
+
 ### Root classification
 
 **A source scan searches the whole tree.** govulncheck is run over `./...`, so

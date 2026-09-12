@@ -1050,6 +1050,16 @@ registration rather than a call. The text form has printed all of it under
 `root:` since the classification existed; `--json` states it under one key so a
 consumer need not parse prose.
 
+Each hop of a stored route also carries a `dispatch` block saying how control
+reached it — a direct call, an interface dispatch naming the interface crossed
+and the module supplying the implementation, a reflection edge, or a stated
+refusal with the reason the call graph could not corroborate it. See
+[`reachability`](reachability.md#how-control-reached-each-hop) for the full
+vocabulary. Unlike `route_root` it is computed at SCAN time and sealed with the
+record, because a route is inside the content hash: **routes already in the store
+stay unannotated until their finding is re-scanned** with `vuln-scan --force`. A
+hop that says nothing is never a direct call.
+
 `route_root` is **null**, never absent, on a finding that records no route:
 there is no root to classify, and an advisory that names no symbols for the
 module path explains that absence already. The key missing entirely is a

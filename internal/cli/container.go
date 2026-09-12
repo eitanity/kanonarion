@@ -596,6 +596,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger)
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
+	// One annotator for the whole container, so the module scanner, the walk scan
+	// and the re-scan share its memo of served graphs: serving a graph is a blob
+	// decode and an edge reconstruction, and a walk's records share their routes.
+	routeAnnotator := reachability.NewDispatchAnnotator(
+		reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion), logger)
 
 	// The same ceiling: a reachability scan spawns the same analysis of the same
 	// module, and a ceiling that applied only on the extract path would leave the
@@ -608,6 +613,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		clk, vulnapp.PipelineVersion, logger,
 	).WithCallGraphLoader(cgLoader).
 		WithCallGraphSpawner(cgSpawner).
+		WithRouteAnnotator(routeAnnotator).
 		// A module scan resolves its own snapshot when no walk scan handed it one,
 		// and that download is a persist like any other. The walk and re-scan use
 		// cases carry the same sink, so an advisory set arriving by any route is
@@ -618,6 +624,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
 	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+		WithRouteAnnotator(routeAnnotator).
 		// A vendored project's analysis surface is its vendor/ tree. The reader is
 		// built over the vendor context's own modules.txt parser rather than a
 		// second one, so the closure the scan analyses and the closure the vendor
@@ -629,6 +636,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
 	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+		WithRouteAnnotator(routeAnnotator).
 		// The same reader the scan gets, for the same reason and one more: a
 		// re-scan reaches for the walk's project directory to reproduce the frame
 		// the run it re-scans was rooted in, and without this it could only

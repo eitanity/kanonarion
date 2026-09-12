@@ -161,6 +161,12 @@ type scanRouteFrameJSON struct {
 	Package       string `json:"package,omitzero"`
 	Receiver      string `json:"receiver,omitzero"`
 	Symbol        string `json:"symbol,omitzero"`
+	// Dispatch is how control reached the hop, as the record stored it. It is
+	// carried rather than dropped because a diff is read by the consumer least
+	// able to go and look: a route whose hops are all direct calls and one whose
+	// middle hop is an interface dispatch are different answers, and this shape is
+	// the only place a machine sees either.
+	Dispatch vuldomain.HopDispatch `json:"dispatch,omitzero"`
 }
 
 // scanDerivationJSON states the instrument, how well it could see, and the
@@ -345,6 +351,7 @@ func scanRouteJSONOf(in vuldomain.ReachabilityRoute) scanRouteJSON {
 			Package:       f.Package,
 			Receiver:      f.Receiver,
 			Symbol:        f.Symbol,
+			Dispatch:      f.Dispatch,
 		})
 	}
 	return out

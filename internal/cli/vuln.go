@@ -299,8 +299,20 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 				caveat = " (hops carry no module version)"
 			}
 			_, _ = fmt.Fprintf(stdout, "      route:    entry point first%s\n", caveat)
+			// How control reached each hop, printed under it. A route renders a
+			// direct call and an interface dispatch identically without it, and the
+			// second is the one where the module that supplied the implementation
+			// need not be on the route at all.
+			annotated := routeStatesHopDispatch(route)
+			if !annotated {
+				_, _ = fmt.Fprintln(stdout, "        (no hop says how control reached it: this route was stored before the "+
+					"dispatch annotation was recorded, so no hop here is a direct call unless a re-scan says so)")
+			}
 			for _, hop := range route {
 				_, _ = fmt.Fprintf(stdout, "        %s\n", hop)
+				if annotated {
+					_, _ = fmt.Fprintf(stdout, "          reached by: %s\n", hopDispatchLine(hop.Dispatch))
+				}
 			}
 			// The evidence behind the tag on the heading, printed where the route it
 			// describes is. Naming the root kind is a fact about what starts the
@@ -349,4 +361,16 @@ func firstScannedAtAnchorNote(coord coordinate.ModuleCoordinate) string {
 	return "anchored per (module, version, pipeline_version, snapshot): first validation against this " +
 		"advisory snapshot at this pipeline version, not first awareness — a new snapshot starts a new " +
 		"anchor. For the first observation across snapshots and generations run: " + firstObservationCommand(coord)
+}
+
+// routeStatesHopDispatch reports whether any hop of a stored route says how
+// control reached it. It is routeStatesDispatch over the domain type, for the
+// surface that renders the record's own frames rather than the curated ones.
+func routeStatesHopDispatch(route vuldomain.ReachabilityRoute) bool {
+	for _, hop := range route {
+		if hop.Dispatch.IsRecorded() {
+			return true
+		}
+	}
+	return false
 }

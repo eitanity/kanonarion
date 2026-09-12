@@ -533,6 +533,11 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 	// walk; the frame it was rooted at is stamped on each of them here, so a
 	// finding carries its own derivation wherever it is copied to.
 	domain.StampReachabilityRooting(&rec)
+	// And how control reached each hop of each route, read from the call graph of
+	// the module each call site is in. It runs before the seal because a route is
+	// inside the record's content hash. The frame is already stamped above, which
+	// is what tells the annotator which module the versionless hops belong to.
+	annotateRouteDispatch(ctx, uc.routeAnnotator, uc.logger, &rec)
 	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
 	if herr != nil {
 		// An unsealed record is one the store refuses, so there is nothing to

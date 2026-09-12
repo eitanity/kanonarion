@@ -20,8 +20,11 @@ example.com/mod@v1.2.0 — Affected
       derived:  by govulncheck, fidelity source, rooted at target-rooted
       route:    entry point first
         example.com/app main
+          reached by: the route's entry point — there is no hop above it, so there is no call site to read
         example.com/mod@v1.2.0 Handle
+          reached by: not annotated, no call graph is held for example.com/app@local, the module this call site is in, so there is no edge to read; the route stands as the analyser reported it
         example.com/mod@v1.2.0 Parse
+          reached by: interface, edge confidence CHA-overapprox, through example.com/mod.Parser (3 implementer(s) recorded), implementation from example.com/mod, at handle.go:42, read from the call graph of example.com/mod@v1.2.0 (BUILT_WITH_BODIES) — list them: kanonarion implementers 'example.com/mod.Parser'
       root:     unrooted — the route's entry point is in example.com/app, which names no version on the frame and is not the module the analysis frame identifies, so no call graph can be located for it
   GO-2026-0002 (CVE-2026-00002): withdrawn advisory for example.com/mod
       WITHDRAWN: advisory retracted upstream 2026-02-10T00:00:00Z — not a finding against this module

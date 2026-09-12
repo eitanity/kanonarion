@@ -279,8 +279,16 @@ func CompareReachabilityRoute(a, b ReachabilityRoute) int {
 	return slices.CompareFunc(a, b, compareReachabilityFrame)
 }
 
-// compareReachabilityFrame orders two hops on every field a hop puts on the
-// wire, so no two distinct hops compare equal.
+// compareReachabilityFrame orders two hops on every IDENTITY field a hop puts
+// on the wire, so no two hops naming different code compare equal.
+//
+// The dispatch annotation is deliberately not compared. It is derived from the
+// hop's identity, the identity of the hop above it and the call graph of the
+// module holding that call site, so within one record two hops that compare
+// equal here carry the same annotation and it can never be the tiebreak. Adding
+// it would also make the order of a finding's routes depend on which module
+// graphs happened to be in the store, which is exactly what a canonical order
+// must not do.
 func compareReachabilityFrame(a, b ReachabilityFrame) int {
 	if c := cmp.Compare(a.ModulePath, b.ModulePath); c != 0 {
 		return c
