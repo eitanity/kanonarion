@@ -578,11 +578,13 @@ version name more than one analyser VERSION, the composed read adds a `notice:`
 saying so, and `--json` carries it as `analyser_disagreement` (`analysers`,
 `served`). The notice reads each generation's own analyser column, so it also
 names a generation written at a record schema this build no longer serves — such
-a row answers nothing and still says which library parsed it. It changes nothing
-about which generation answers — the completeness ladder decides that — and it
-appears only where there is a disagreement to report: two generations at one
-version, or generations that name none, produce no line. `--history` names the
-analyser on every generation whether they agree or not.
+a row answers nothing and still says which library parsed it. `--history`
+discloses that generation too, so every version the notice names can be found
+there. It changes nothing about which generation answers — the completeness
+ladder decides that — and it appears only where there is a disagreement to
+report: two generations at one version, or generations that name none, produce
+no line. `--history` names the analyser on every generation whether they agree
+or not.
 
 ##### Modules published before Go modules
 
@@ -758,6 +760,29 @@ A generation whose analysis failed carries a `failure:` line between `from:` and
 Generations that did not record a failure print no such line. Positions in a
 failure are module-relative; the directory a zip is staged in is gone by the
 time anyone reads the record.
+
+A record is written at a **record schema**, and a build serves only the current
+one: a generation at an older schema decodes with every later field at its zero
+value, so it answers nothing and is not listed. `--history` says how many such
+generations the coordinate holds and which library parsed each, because their
+columns still state that, and names the remedy:
+
+```
+* served by the composed read (highest completeness, then most recent, within one analysis source)
+
+not listed above: the store holds 1 generation(s) of it written at a record schema this build no longer decodes, parsed by golang.org/x/tools v0.47.0 (observed).
+  re-analyse it: kanonarion callgraph example.com/mod@v1.2.3
+```
+
+The same sentence appears where **no** generation at the served pipeline version
+decodes, on the line that reports the absence — there it separates a coordinate
+the store has never held from one whose every generation this build has stopped
+serving. A coordinate whose generations all decode prints no such line.
+
+The record schema is not the pipeline version, and `--history` states them
+differently. A generation under another **pipeline** version is outside the view
+entirely — the header names the pipeline version being listed — and is reported
+only when nothing at the served one answers.
 
 #### Composition
 

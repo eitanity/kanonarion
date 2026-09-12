@@ -121,7 +121,10 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 				"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
 				source, coord)}
 		}
-		note, nerr := supersededGenerationsNote(ctx, coord, uc)
+		// Nothing is served: composition answers not-found only where the reading
+		// leg decoded no generation at all, since neither source nor toolchain is
+		// restricted on this path.
+		note, nerr := supersededGenerationsNote(ctx, coord, uc, nil)
 		if nerr != nil {
 			return nerr
 		}
@@ -247,7 +250,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		// The history view is where an operator lands after a bump, so it must
 		// distinguish a coordinate the store has never held from one whose every
 		// generation this build has stopped serving.
-		note, nerr := supersededGenerationsNote(ctx, coord, uc)
+		note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
 		if nerr != nil {
 			return nerr
 		}
@@ -295,6 +298,22 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 	if _, werr := fmt.Fprintln(stdout,
 		"\n* served by the composed read (highest completeness, then most recent, within one analysis source)"); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
+	}
+	// The list above is every generation this build can decode, which is not
+	// always every generation the ledger holds. Saying so in the MIXED case as
+	// well as the empty one is the whole of the rule this view already states for
+	// itself: a coordinate the store has never held and one whose generations
+	// this build has stopped serving are different facts, and a list that simply
+	// omits the second states neither.
+	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
+	if nerr != nil {
+		return nerr
+	}
+	if note != "" {
+		if _, werr := fmt.Fprintf(stdout, "\nnot listed above: %s.\n  re-analyse it: %s\n",
+			note, domain.ReanalysisInstruction(coord, "")); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
 	}
 	return nil
 }
@@ -1183,38 +1202,126 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 }
 
 // supersededGenerationsNote describes the generations the store holds for a
-// coordinate under pipeline versions this build no longer serves, or "" when it
-// holds none. It is the difference between "this was never analysed" and "this
-// was analysed by logic that has since been superseded", which are different
-// facts with different remedies.
+// coordinate that this build will not serve, or "" when it holds none. It is the
+// difference between "this was never analysed" and "this was analysed by logic
+// that has since been superseded", which are different facts with different
+// remedies.
 //
-// Which pipeline versions a coordinate exists under is a question about the
-// ledger's KEYS, so it is asked of the coordinates. Asked of the composing
-// listing it spent eight seconds reconstructing fifteen generations of one
-// module's edge set to read a version string off each — to say that a version
-// nobody analysed was not analysed.
-func supersededGenerationsNote(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase) (string, error) {
+// A generation stops being served two ways, and both belong in one note because
+// an operator reading it is asking one question. Its PIPELINE version is
+// superseded, which the ledger's KEYS say — so it is asked of the coordinates.
+// Asked of the composing listing it spent eight seconds reconstructing fifteen
+// generations of one module's edge set to read a version string off each, to say
+// that a version nobody analysed was not analysed.
+//
+// Or its RECORD SCHEMA is superseded, which no column says: schema_version lives
+// inside the blob. The only evidence available from columns is the difference
+// between the rows the listing returns and the records the reading leg handed
+// back, so the caller passes what it will serve and that difference is the set.
+// The caller is the only party that knows it, and a caller that passes nothing
+// is stating that this build serves none of them.
+//
+// The second clause names each unserved generation's analyser, and that is the
+// point of it rather than detail. The disagreement notice on a composed read
+// speaks from the same column listing, so it names generations the reading leg
+// drops; an operator it sends to --history must find every version it named,
+// with a reason, instead of a version silently missing from the list.
+func supersededGenerationsNote(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	uc QueryCallGraphUseCase,
+	servable []domain.CallGraphRecord,
+) (string, error) {
 	sums, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})
 	if err != nil {
 		return "", fmt.Errorf("listing stored generations for %s: %w", coord, err)
 	}
+	served := make(map[string]bool, len(servable))
+	for _, r := range servable {
+		served[r.ContentHash] = true
+	}
 	seen := make(map[string]bool)
 	var versions []string
+	var unserved []ports.CallGraphGeneration
 	for _, s := range sums {
-		if s.ModuleVersion != coord.Version() || s.PipelineVersion == cgapp.PipelineVersion {
+		if s.ModuleVersion != coord.Version() {
 			continue
 		}
-		if !seen[s.PipelineVersion] {
-			seen[s.PipelineVersion] = true
-			versions = append(versions, s.PipelineVersion)
+		if s.PipelineVersion != cgapp.PipelineVersion {
+			if !seen[s.PipelineVersion] {
+				seen[s.PipelineVersion] = true
+				versions = append(versions, s.PipelineVersion)
+			}
+			continue
+		}
+		for _, g := range s.Generations {
+			// Matched on the content hash, which the reading leg checks the blob's own
+			// copy against, so the two sides name the same row. A listing entry that
+			// states no hash cannot be matched at all, and calling it unserved would
+			// be a guess about a row nothing established anything about.
+			if g.ContentHash == "" || served[g.ContentHash] {
+				continue
+			}
+			unserved = append(unserved, g)
 		}
 	}
-	if len(versions) == 0 {
+	var clauses []string
+	// The pipeline clause answers "why is there no answer at all", so it is
+	// stated only where there is none. Every caller that displays generations
+	// names the pipeline version it is displaying them at, so a generation under
+	// another one is outside the question being asked rather than missing from
+	// the reply to it.
+	if len(versions) > 0 && len(served) == 0 {
+		sort.Strings(versions)
+		clauses = append(clauses, fmt.Sprintf("the store holds it at superseded pipeline %s, which this build does not serve",
+			strings.Join(versions, ", ")))
+	}
+	if len(unserved) > 0 {
+		// The pipeline version is not repeated: every framing of this note names it
+		// already, and a sentence that states it twice reads as two facts.
+		clause := fmt.Sprintf("the store holds %d generation(s) of it written at a record schema this build no longer decodes",
+			len(unserved))
+		if parsed := statedAnalysers(unserved); parsed != "" {
+			clause += ", parsed by " + parsed
+		}
+		clauses = append(clauses, clause)
+	}
+	if len(clauses) == 0 {
 		return "", nil
 	}
-	sort.Strings(versions)
-	return fmt.Sprintf("the store holds it at superseded pipeline %s, which this build does not serve",
-		strings.Join(versions, ", ")), nil
+	return strings.Join(clauses, "; "), nil
+}
+
+// statedAnalysers renders the distinct analysers a set of listed generations
+// states, or "" where not one of them states any.
+//
+// The library is named once and every version carries its strength, on
+// AnalyserIdentity.Short's own rule: an unmarked version beside a marked one
+// invites a reader to take the unmarked one as the plain fact.
+func statedAnalysers(gens []ports.CallGraphGeneration) string {
+	seen := make(map[domain.AnalyserIdentity]bool, len(gens))
+	var ids []domain.AnalyserIdentity
+	for _, g := range gens {
+		if !g.Analyser.Recorded() || seen[g.Analyser] {
+			continue
+		}
+		seen[g.Analyser] = true
+		ids = append(ids, g.Analyser)
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if ids[i].Version != ids[j].Version {
+			return ids[i].Version < ids[j].Version
+		}
+		return ids[i].Provenance < ids[j].Provenance
+	})
+	short := make([]string, 0, len(ids))
+	for _, id := range ids {
+		short = append(short, id.Short())
+	}
+	return domain.AnalyserModulePath + " " + strings.Join(short, " and ")
 }
 
 // statedToolchain is the toolchain the record itself named, or nil when it named
