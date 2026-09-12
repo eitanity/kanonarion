@@ -37,9 +37,24 @@ const (
 	GoDevChecksumMismatch VerificationStatus = "GoDevChecksumMismatch"
 
 	// UnverifiedGoDevUnavailable means the release manifest could not be consulted
-	// (offline, or the version is absent from go.dev/dl), so the tarball checksum
-	// could not be matched against a published value.
+	// at all — the request for it failed, or what came back could not be decoded —
+	// so the tarball checksum was never matched against a published value.
+	//
+	// It is about REACHING go.dev/dl, and nothing else. A manifest that was read
+	// and simply publishes no checksum for this version is
+	// UnverifiedGoDevNotPublished: saying "unavailable" of a service that answered
+	// is a wrong statement rather than a vague one.
 	UnverifiedGoDevUnavailable VerificationStatus = "UnverifiedGoDevUnavailable"
+
+	// UnverifiedGoDevNotPublished means the release manifest WAS read and
+	// publishes no source-tarball checksum for this Go version — either it lists
+	// no such release, or it lists the release without a source tarball. There is
+	// nothing to match the downloaded bytes against, so they are unverified.
+	//
+	// It carries exactly as much assurance as UnverifiedGoDevUnavailable, namely
+	// none, and is a separate value because the two ask different things of a
+	// reader: retry the network, versus check which toolchain this project pins.
+	UnverifiedGoDevNotPublished VerificationStatus = "UnverifiedGoDevNotPublished"
 
 	// VerifiedLocalToolchain means the chain of custody was established from the
 	// local Go toolchain ($GOROOT/src and $GOROOT/LICENSE) in an offline
@@ -82,6 +97,8 @@ func AnchorLimitation(status VerificationStatus, vcsCommitResolved bool) string 
 		anchor = "integrity NOT anchored: the acquired source tarball did not match the checksum go.dev/dl publishes for it, so these bytes are unverified and the mismatch is retained as evidence"
 	case UnverifiedGoDevUnavailable:
 		anchor = "integrity not anchored to a published checksum: the go.dev/dl release manifest could not be consulted, so nothing was matched against it"
+	case UnverifiedGoDevNotPublished:
+		anchor = "integrity not anchored to a published checksum: the go.dev/dl release manifest was consulted and publishes no source-tarball checksum for this Go version, so there was nothing to match against"
 	case VerifiedLocalToolchain:
 		anchor = "integrity rests on the locally-held toolchain source these digests were computed over; the checksum go.dev/dl publishes was not consulted"
 	default:

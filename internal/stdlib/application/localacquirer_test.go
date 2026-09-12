@@ -169,3 +169,52 @@ func TestLocalAcquire_MissingLicenseIsCoverageGap(t *testing.T) {
 		t.Errorf("LicenseSPDX = %q, want empty on unreadable LICENSE", facts.LicenseSPDX)
 	}
 }
+
+// TestLocalAcquire_LicenceGapNamesItsCause is the offline route's half of the
+// same defect the online acquirer had: three different things leave the SPDX
+// identifier empty, and one blank field cannot say which.
+//
+// The offline route writes the same record type as the online one and is read by
+// the same commands, so leaving it collapsed would have shipped the fix for half
+// the runs.
+func TestLocalAcquire_LicenceGapNamesItsCause(t *testing.T) {
+	acquire := func(t *testing.T, src fakeSource, lic fakeLicense) domain.Facts {
+		t.Helper()
+		acq := newLocalAcquirer(t, &fakeToolchain{goRoot: "/opt/go", version: "go1.26.4"}, src, lic, newMemStore())
+		facts, err := acq.Acquire(context.Background(), "go1.26.4", application.Options{})
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		return facts
+	}
+
+	readable := fakeSource{fsys: stdlibSrcFS(), license: []byte("BSD-3-Clause text")}
+	identified := acquire(t, readable, fakeLicense{spdx: "BSD-3-Clause"})
+	unreadable := acquire(t, fakeSource{fsys: stdlibSrcFS(), licenseErr: errors.New("no LICENSE")}, fakeLicense{spdx: "BSD-3-Clause"})
+	classifierFailed := acquire(t, readable, fakeLicense{err: errors.New("classifier unavailable")})
+	unrecognised := acquire(t, readable, fakeLicense{})
+
+	details := map[string]string{
+		"identified":         identified.VerificationDetail,
+		"LICENSE unreadable": unreadable.VerificationDetail,
+		"classifier failed":  classifierFailed.VerificationDetail,
+		"nothing recognised": unrecognised.VerificationDetail,
+	}
+	seen := map[string]string{}
+	for name, detail := range details {
+		if other, dup := seen[detail]; dup {
+			t.Errorf("%q and %q record the same verification detail %q", name, other, detail)
+		}
+		seen[detail] = name
+	}
+
+	// The control: an identified licence adds no clause, so the offline record a
+	// healthy run writes reads exactly as it did before.
+	const want = "digests computed over local toolchain source /opt/go/src; " +
+		"go.dev/dl published checksum not consulted (offline); " +
+		"googlesource commit anchor skipped (offline)"
+	if identified.VerificationDetail != want {
+		t.Errorf("an identified licence changed the healthy detail\n got: %q\nwant: %q",
+			identified.VerificationDetail, want)
+	}
+}

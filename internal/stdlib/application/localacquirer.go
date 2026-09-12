@@ -126,14 +126,16 @@ func (a *LocalAcquirer) Acquire(ctx context.Context, goVersionRaw string, opts O
 		return domain.Facts{}, fmt.Errorf("computing stdlib source digests under %s: %w", goRoot, err)
 	}
 
+	licenseSPDX, licenseResult := a.identifyLicense(ctx, version, goRoot)
+
 	facts := domain.Facts{
 		GoVersion:          version,
 		Digests:            digests,
 		VerificationStatus: domain.VerifiedLocalToolchain,
 		VerificationDetail: fmt.Sprintf(
 			"digests computed over local toolchain source %s/src; go.dev/dl published checksum not consulted (offline); googlesource commit anchor skipped (offline)",
-			goRoot),
-		LicenseSPDX: a.identifyLicense(ctx, version, goRoot),
+			goRoot) + licenseDetail(licenseResult),
+		LicenseSPDX: licenseSPDX,
 		SourceURL:   goRoot + "/src",
 		VCSURL:      domain.VCSRepoURL,
 		VCSRef:      version,
@@ -170,22 +172,29 @@ func (a *LocalAcquirer) Acquire(ctx context.Context, goVersionRaw string, opts O
 	return facts, nil
 }
 
-// identifyLicense reads and classifies $GOROOT/LICENSE. A missing or
-// unclassifiable licence is a coverage gap (empty SPDX), never a failure.
-func (a *LocalAcquirer) identifyLicense(ctx context.Context, version, goRoot string) string {
+// identifyLicense reads and classifies $GOROOT/LICENSE. It returns the SPDX
+// identifier and which outcome produced it, on the same terms as the online
+// route: an empty identifier has three causes, and the record says which. None
+// of them is a failure.
+func (a *LocalAcquirer) identifyLicense(ctx context.Context, version, goRoot string) (string, licenseOutcome) {
 	text, err := a.source.LicenseText(goRoot)
 	if err != nil {
 		a.logger.WarnContext(ctx, "stdlib.license.read_failed",
 			slog.String("go_version", version), slog.String("error", err.Error()))
-		return ""
+		return "", licenseTextUnavailable
 	}
 	spdx, err := a.licenses.Identify(ctx, text)
 	if err != nil {
 		a.logger.WarnContext(ctx, "stdlib.license.identify_failed",
 			slog.String("go_version", version), slog.String("error", err.Error()))
-		return ""
+		return "", licenseClassifierFailed
 	}
-	return spdx
+	if spdx == "" {
+		a.logger.WarnContext(ctx, "stdlib.license.unrecognised",
+			slog.String("go_version", version))
+		return "", licenseUnrecognised
+	}
+	return spdx, licenseIdentified
 }
 
 var _ Acquisition = (*LocalAcquirer)(nil)

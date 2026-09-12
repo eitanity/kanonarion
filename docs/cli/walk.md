@@ -817,7 +817,7 @@ Each standard-library custody measurement the walk persists appends one
 run), the verification anchors that acquisition established (`godev_checksum`,
 `googlesource_commit`, `local_toolchain_source`), the artefact identity it was
 taken over, and the record's content hash. It witnesses the write, not the
-conclusion - the custody record itself carries the verification status, the
+conclusion - the stdlib record itself carries the verification status, the
 published checksum and the licence, and the content hash is what reaches them.
 The tarball is cached per Go version, so a re-used measurement appends nothing
 and `--force` re-acquires and appends again; a run that could not establish

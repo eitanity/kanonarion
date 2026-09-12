@@ -529,7 +529,7 @@ measurement carried one - the same two words `audit` prints for the same node.
 | `custody` field | Type | Description |
 |---|---|---|
 | `basis` | string | `stdlib-tarball` (extracted evidence) or `stdlib-known` (published knowledge) |
-| `verification` | string | The recorded stdlib verification status - `VerifiedGoDevChecksum`, `VerifiedLocalToolchain`, `GoDevChecksumMismatch`, `UnverifiedGoDevUnavailable`. **Absent when nothing has been acquired for this toolchain**, which is a different statement from `stdlib-known` |
+| `verification` | string | The recorded stdlib verification status - `VerifiedGoDevChecksum`, `VerifiedLocalToolchain`, `GoDevChecksumMismatch`, `UnverifiedGoDevUnavailable` (go.dev/dl could not be reached), `UnverifiedGoDevNotPublished` (go.dev/dl answered and publishes no source-tarball checksum for this toolchain version - retry nothing, check which toolchain is pinned). **Absent when nothing has been acquired for this toolchain**, which is a different statement from `stdlib-known` |
 | `detail` | string | The verification summary: checksum source and, when resolved, the googlesource commit |
 | `route` | string | `godev` (published tarball) or `local-toolchain` (`$GOROOT`) |
 | `source_url`, `vcs_url`, `vcs_ref`, `vcs_commit`, `sha256` | string | The acquired artefact and its VCS anchor |

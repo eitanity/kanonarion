@@ -97,6 +97,12 @@ func TestAnchorLimitation_NamesOnlyTheAnchorsReached(t *testing.T) {
 			mustNotHave: []string{"integrity anchored to"},
 		},
 		{
+			name:        "nothing published claims no anchor, and does not blame availability",
+			status:      domain.UnverifiedGoDevNotPublished,
+			mustContain: []string{"not anchored to a published checksum", "was consulted and publishes no source-tarball checksum"},
+			mustNotHave: []string{"integrity anchored to", "could not be consulted", "anchor not recorded"},
+		},
+		{
 			name:        "no status recorded claims no anchor",
 			status:      "",
 			mustContain: []string{"integrity anchor not recorded"},

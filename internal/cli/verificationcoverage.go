@@ -169,7 +169,11 @@ func stdlibCoverageObservation(n walkdomain.GraphNode) fetchdomain.CoverageObser
 		// Checked against the toolchain already on this host rather than the
 		// published manifest: a positive offline signal, no published anchor.
 		bucket = fetchdomain.BucketGoSumOnly
-	case stdlibdomain.GoDevChecksumMismatch, stdlibdomain.UnverifiedGoDevUnavailable:
+	case stdlibdomain.GoDevChecksumMismatch, stdlibdomain.UnverifiedGoDevUnavailable,
+		stdlibdomain.UnverifiedGoDevNotPublished:
+		// All three carry no published-checksum anchor. They say different things
+		// about WHY, which the row's status and reason carry verbatim; the bucket is
+		// the coarser word and folds them together on purpose.
 		bucket = fetchdomain.BucketUnverified
 	}
 	return fetchdomain.CoverageObservation{Bucket: bucket, Recorded: true}

@@ -161,7 +161,7 @@ const (
 	// established, the bytes it was taken over and the measurement's content hash.
 	//
 	// It is named for the write, not for the verification: the event WITNESSES
-	// that a custody record exists and by which route it was obtained, and the
+	// that the measurement exists and by which route it was obtained, and the
 	// record itself carries the claims. Custody is the one record whose whole
 	// value is provable observation, so the observation being unwitnessed was the
 	// sharpest form of the gap — an operator could see that the stdlib was

@@ -74,6 +74,50 @@ func TestCompose_DefiniteAnchorOutranksRecency(t *testing.T) {
 	}
 }
 
+// TestCompose_NothingPublishedDoesNotDisplaceAnAnchor is the same rule for the
+// second unverified status.
+//
+// "go.dev/dl publishes no checksum for this version" is a definite answer about
+// the VERSION, which is why it is worth recording separately. It is not an
+// answer about these bytes, so it must not displace a run that matched them
+// against a published checksum, however much later it was taken.
+func TestCompose_NothingPublishedDoesNotDisplaceAnAnchor(t *testing.T) {
+	t.Parallel()
+	verified := measurement(t, spec{
+		route: domain.RouteGoDev, status: domain.VerifiedGoDevChecksum,
+		at: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	notPublished := measurement(t, spec{
+		route: domain.RouteGoDev, status: domain.UnverifiedGoDevNotPublished,
+		at: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	got, err := domain.Compose([]domain.Facts{verified, notPublished}, domain.ComposeRequest{})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if got.VerificationStatus != domain.VerifiedGoDevChecksum {
+		t.Fatalf("composed read served %q; an unpublished-version measurement displaced a verified anchor",
+			got.VerificationStatus)
+	}
+
+	// And the two unverified statuses do not conflict with each other: neither
+	// states anything about the bytes, so there is nothing for them to disagree
+	// about and composition falls through to recency.
+	unavailable := measurement(t, spec{
+		route: domain.RouteGoDev, status: domain.UnverifiedGoDevUnavailable,
+		at: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+	})
+	got, err = domain.Compose([]domain.Facts{unavailable, notPublished}, domain.ComposeRequest{})
+	if err != nil {
+		t.Fatalf("Compose of two unverified measurements: %v", err)
+	}
+	if got.VerificationStatus != domain.UnverifiedGoDevNotPublished {
+		t.Fatalf("composed read served %q, want the more recent of two equally unanchored measurements",
+			got.VerificationStatus)
+	}
+}
+
 // TestCompose_MismatchIsEvidenceNotAWeakerVerification pins the rung a naive
 // ladder gets wrong.
 //
@@ -265,6 +309,10 @@ func TestServesAsCacheHit(t *testing.T) {
 		{domain.GoDevChecksumMismatch, true},  // definite, and evidence worth keeping
 		{domain.VerifiedLocalToolchain, true}, // definite about the bytes it read
 		{domain.UnverifiedGoDevUnavailable, false},
+		// The manifest answered and publishes no checksum. That is a real answer
+		// about the VERSION and none at all about these bytes, so it sits on the
+		// same rung as an unreachable manifest and does not satisfy the cache.
+		{domain.UnverifiedGoDevNotPublished, false},
 		{domain.VerificationStatus(""), false}, // states nothing at all
 	}
 	for _, tc := range cases {

@@ -550,8 +550,8 @@ Standard-library custody records that a *measurement was taken*
 artefact identity it was taken over, and the measurement's content hash). Both
 acquisition routes emit on the same terms. The payload deliberately omits the
 verification status, the published checksum and the licence: the event
-*witnesses* that a custody record was written and by which route, and the record
-carries the claims - the content hash is what reaches them. A cache hit re-serves
+*witnesses* that a chain-of-custody measurement was written and by which route,
+and the record carries the claims - the content hash is what reaches them. A cache hit re-serves
 without appending, and a run that could not establish custody at all wrote no
 record and so appends nothing, since an absence is not an observation.
 

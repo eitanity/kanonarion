@@ -78,7 +78,7 @@ func verificationAnchors(facts domain.Facts) []string {
 		anchors = append(anchors, anchorGoDevChecksum)
 	case domain.VerifiedLocalToolchain:
 		anchors = append(anchors, anchorLocalToolchainSrc)
-	case domain.GoDevChecksumMismatch, domain.UnverifiedGoDevUnavailable:
+	case domain.GoDevChecksumMismatch, domain.UnverifiedGoDevUnavailable, domain.UnverifiedGoDevNotPublished:
 		// The tarball was acquired and sealed, but nothing corroborated it.
 	}
 	if facts.VCSCommit != "" {
