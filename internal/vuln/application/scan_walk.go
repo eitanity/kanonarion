@@ -586,7 +586,7 @@ func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 		named = named[:missingRecordLogLimit]
 	}
 	return fmt.Errorf(
-		"vuln scan of walk %s reported a verdict for %d modules but stored only %d: no record persisted for %v (and %d more)",
+		"vuln scan of walk %s reported a status for %d modules but stored only %d: no record persisted for %v (and %d more)",
 		run.WalkID, len(walk.Graph.Nodes), len(walk.Graph.Nodes)-len(missing), named, len(missing)-len(named),
 	)
 }
@@ -641,7 +641,7 @@ func (uc *ScanWalkUseCase) applyFrameGaps(
 		if prev, ok := finalResults[coord]; ok && prev.err == nil {
 			declined = domain.RecordRooting(prev.record).String()
 		}
-		uc.logger.Warn("module has no verdict in this run's frame; not counting a record from another frame as its coverage",
+		uc.logger.Warn("module has no status in this run's frame; not counting a record from another frame as its coverage",
 			"coordinate", coord,
 			"run_frame", string(domain.TargetRootedAt(target)),
 			"declined_frame", declined,
@@ -1109,7 +1109,7 @@ func (uc *ScanWalkUseCase) populatePrePruningGoMods(ctx context.Context, graph w
 	seeds = append(seeds, roots...)
 	seeds = append(seeds, edgeSeeds...)
 
-	report := modcache.PopulateGoModClosure(
+	report, _ := modcache.PopulateGoModClosure(
 		ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir,
 		seeds,
 		func(ctx context.Context, batch []coordinate.ModuleCoordinate) { uc.prefetchGoModOnly(ctx, batch) },

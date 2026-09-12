@@ -1345,7 +1345,7 @@ func TestRunVulnShowHistory_Empty(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	coord := mustVulnCoord(t, "example.com/mod", "v1.0.0")
 	var buf bytes.Buffer
-	err := runVulnShowHistory(context.Background(), coord, false, uc, nil, &buf)
+	err := runVulnShowHistory(context.Background(), coord, false, uc, nil, nil, &buf)
 	if err == nil {
 		t.Fatal("expected error for empty history")
 	}
@@ -1359,7 +1359,7 @@ func TestRunVulnShowHistory_WithRecord_Text(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	uc.AddRecord(vulnRec.Coordinate, vulnRec)
 	var buf bytes.Buffer
-	err := runVulnShowHistory(context.Background(), vulnRec.Coordinate, false, uc, nil, &buf)
+	err := runVulnShowHistory(context.Background(), vulnRec.Coordinate, false, uc, nil, nil, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1377,7 +1377,7 @@ func TestRunVulnShowHistory_JSON(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	uc.AddRecord(vulnRec.Coordinate, vulnRec)
 	var buf bytes.Buffer
-	err := runVulnShowHistory(context.Background(), vulnRec.Coordinate, true, uc, nil, &buf)
+	err := runVulnShowHistory(context.Background(), vulnRec.Coordinate, true, uc, nil, nil, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -51,6 +51,12 @@ func (uc *QueryVulnUseCase) GetLatestRecord(
 // ListRecordsForModuleInWalk returns every generation of a coordinate the named
 // walk's scan runs covered — the candidates, not an answer.
 //
+// The records the store could verify are returned even when it also reports rows
+// it could not, and every record listing on this use case does the same — see
+// ports.UnreadableRows. Discarding them here would put the choice beyond every
+// caller's reach: a survey could then only print a list that omits the faulty
+// rows without saying so, or nothing at all.
+//
 // Candidates, because ranking them needs an analysis frame the store does not
 // have: a walk's membership index carries none, so its candidate set spans every
 // frame the coordinate was measured in at that generation. The caller knows
@@ -65,7 +71,7 @@ func (uc *QueryVulnUseCase) ListRecordsForModuleInWalk(
 ) ([]domain.VulnerabilityRecord, error) {
 	recs, err := uc.store.ListVulnerabilityRecordsForModuleInWalk(ctx, coord, pipelineVersion, walkID)
 	if err != nil {
-		return nil, fmt.Errorf("listing vulnerability records for %s (walk %s): %w", coord, walkID, err)
+		return recs, fmt.Errorf("listing vulnerability records for %s (walk %s): %w", coord, walkID, err)
 	}
 	return recs, nil
 }
@@ -78,7 +84,7 @@ func (uc *QueryVulnUseCase) ListRecordsForModule(
 ) ([]domain.VulnerabilityRecord, error) {
 	recs, err := uc.store.ListVulnerabilityRecordsForModule(ctx, coord, pipelineVersion)
 	if err != nil {
-		return nil, fmt.Errorf("listing vulnerability records for %s: %w", coord, err)
+		return recs, fmt.Errorf("listing vulnerability records for %s: %w", coord, err)
 	}
 	return recs, nil
 }
@@ -97,7 +103,7 @@ func (uc *QueryVulnUseCase) ListRecordsForModuleAllGenerations(
 ) ([]domain.VulnerabilityRecord, error) {
 	recs, err := uc.store.ListVulnerabilityRecordsForModuleAllGenerations(ctx, coord)
 	if err != nil {
-		return nil, fmt.Errorf("listing vulnerability records across generations for %s: %w", coord, err)
+		return recs, fmt.Errorf("listing vulnerability records across generations for %s: %w", coord, err)
 	}
 	return recs, nil
 }
@@ -141,7 +147,7 @@ func (uc *QueryVulnUseCase) ListRecordsByFindingID(ctx context.Context, findingI
 	// already names it, and three mentions of one ULID is not three facts.
 	recs, err := uc.store.ListVulnerabilityRecordsByFindingID(ctx, findingID, walkID)
 	if err != nil {
-		return nil, fmt.Errorf("listing vulnerability records by finding ID %q: %w", findingID, err)
+		return recs, fmt.Errorf("listing vulnerability records by finding ID %q: %w", findingID, err)
 	}
 	return recs, nil
 }
@@ -237,7 +243,7 @@ func (uc *QueryScanRunsUseCase) GetRun(ctx context.Context, id string) (domain.W
 // ListRunsForWalk returns all scan runs for the given walk ID.
 //
 // The runs the store could verify are returned even when it also reports rows
-// it could not — see ports.UnreadableRuns. Discarding them here would put the
+// it could not — see ports.UnreadableRows. Discarding them here would put the
 // choice beyond every caller's reach: a survey command could then only print a
 // list that omits the faulty rows without saying so, or nothing at all.
 func (uc *QueryScanRunsUseCase) ListRunsForWalk(ctx context.Context, walkID string) ([]domain.WalkScanRun, error) {

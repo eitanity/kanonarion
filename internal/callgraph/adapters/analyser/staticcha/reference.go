@@ -49,7 +49,7 @@ func (a *Analyser) collectReferenceEdges(
 	funcs []*ssa.Function,
 	mem moduleMembership,
 	fset *token.FileSet,
-	tempDir string,
+	roots sourceRoots,
 	nodes []domain.CallNode,
 	edges []domain.CallEdge,
 ) ([]domain.CallNode, []domain.CallEdge) {
@@ -64,9 +64,9 @@ func (a *Analyser) collectReferenceEdges(
 	// Reference edges share the edge table's key with calls, so a reference at
 	// the exact site of an existing call would collide with it. The call is the
 	// stronger fact and keeps the key.
-	seenEdges := make(map[string]struct{}, len(edges))
+	seenEdges := make(map[edgeKey]struct{}, len(edges))
 	for _, e := range edges {
-		seenEdges[edgeKey(e.FromID, e.ToID, e.CallSite.File, e.CallSite.Line)] = struct{}{}
+		seenEdges[newEdgeKey(e.FromID, e.ToID, e.CallSite.File, e.CallSite.Line)] = struct{}{}
 	}
 
 	nodeCache := make(map[*ssa.Function]domain.CallNode)
@@ -74,7 +74,7 @@ func (a *Analyser) collectReferenceEdges(
 		if n, ok := nodeCache[fn]; ok {
 			return n
 		}
-		n := buildNode(fn, mem, fset, tempDir)
+		n := buildNode(fn, mem, fset, roots)
 		nodeCache[fn] = n
 		return n
 	}
@@ -98,8 +98,8 @@ func (a *Analyser) collectReferenceEdges(
 					}
 					from := nodeFor(fn)
 					to := nodeFor(resolved)
-					file, line := sitePosition(instr, fset, tempDir)
-					key := edgeKey(from.ID, to.ID, file, line)
+					file, line := sitePosition(instr, fset, roots)
+					key := newEdgeKey(from.ID, to.ID, file, line)
 					if _, dup := seenEdges[key]; dup {
 						continue
 					}

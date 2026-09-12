@@ -17,6 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
@@ -97,24 +98,29 @@ func TestScanner_ClassifyScanFailure(t *testing.T) {
 	// field vuln-show and audit read for ScanFailed), not UnscannableReason —
 	// otherwise the reason is dropped and the user sees "unknown reason".
 	t.Run("scan failure puts reason in ErrorDetail with stderr", func(t *testing.T) {
-		status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(
+		f := classifyScanFailure(
 			errors.New("exit status 1"),
 			"govulncheck: loading packages: invalid array length",
+			resolvedTool{bin: "/usr/bin/govulncheck", builtWith: "go1.26.5"},
 		)
-		if status != domain.StatusScanFailed {
-			t.Fatalf("status = %s, want %s", status, domain.StatusScanFailed)
+		if f.status != domain.StatusScanFailed {
+			t.Fatalf("status = %s, want %s", f.status, domain.StatusScanFailed)
 		}
-		if errorDetail == "" {
+		if f.errorDetail == "" {
 			t.Error("ErrorDetail must carry the failure reason for ScanFailed")
 		}
-		if !strings.Contains(errorDetail, "invalid array length") {
-			t.Errorf("ErrorDetail %q must include the govulncheck stderr", errorDetail)
+		if !strings.Contains(f.errorDetail, "invalid array length") {
+			t.Errorf("ErrorDetail %q must include the govulncheck stderr", f.errorDetail)
 		}
-		if unscannableReason != "" {
-			t.Errorf("UnscannableReason must be empty for ScanFailed, got %q", unscannableReason)
+		if f.unscannableReason != "" {
+			t.Errorf("UnscannableReason must be empty for ScanFailed, got %q", f.unscannableReason)
 		}
-		if unscanReason != "" {
-			t.Errorf("UnscanReason must be empty for ScanFailed, got %q", unscanReason)
+		if f.unscanReason != "" {
+			t.Errorf("UnscanReason must be empty for ScanFailed, got %q", f.unscanReason)
+		}
+		if f.cause != failurecause.Unrecorded {
+			t.Errorf("cause = %q: a failure this classification does not recognise says nothing "+
+				"about whether the module or the host is at fault", f.cause)
 		}
 	})
 
@@ -122,18 +128,22 @@ func TestScanner_ClassifyScanFailure(t *testing.T) {
 	oomCases := []string{"signal: killed", "killed", "Killed", "exit status 137"}
 	for _, errStr := range oomCases {
 		t.Run("OOM: "+errStr, func(t *testing.T) {
-			status, errorDetail, unscannableReason, unscanReason := classifyScanFailure(errors.New(errStr), "")
-			if status != domain.StatusUnscannable {
-				t.Errorf("status = %s, want %s", status, domain.StatusUnscannable)
+			f := classifyScanFailure(errors.New(errStr), "", resolvedTool{})
+			if f.status != domain.StatusUnscannable {
+				t.Errorf("status = %s, want %s", f.status, domain.StatusUnscannable)
 			}
-			if unscannableReason == "" {
+			if f.unscannableReason == "" {
 				t.Error("UnscannableReason must carry the reason for Unscannable")
 			}
-			if errorDetail != "" {
-				t.Errorf("ErrorDetail must be empty for Unscannable, got %q", errorDetail)
+			if f.errorDetail != "" {
+				t.Errorf("ErrorDetail must be empty for Unscannable, got %q", f.errorDetail)
 			}
-			if unscanReason != domain.UnscanReasonOOMKilled {
-				t.Errorf("UnscanReason = %q, want %q", unscanReason, domain.UnscanReasonOOMKilled)
+			if f.unscanReason != domain.UnscanReasonOOMKilled {
+				t.Errorf("UnscanReason = %q, want %q", f.unscanReason, domain.UnscanReasonOOMKilled)
+			}
+			if f.cause != failurecause.Environment {
+				t.Errorf("cause = %q, want environment: the box ran out of memory, the module did not "+
+					"become unanalysable", f.cause)
 			}
 		})
 	}
@@ -218,7 +228,7 @@ func envMap(env []string) map[string]string {
 // The cache now carries the superseded intermediate go.mod files a pre-pruning
 // dependency needs, so GOPROXY=off can no longer fail on a missing go.mod.
 func TestScanEnv_PopulatedModcacheRunsHermetic(t *testing.T) {
-	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", surfaceNormalised))
 
 	want := map[string]string{
 		"GOMODCACHE": "/tmp/kanonarion-modcache",
@@ -240,7 +250,7 @@ func TestScanEnv_PopulatedModcacheRunsHermetic(t *testing.T) {
 // rejects -mod=mod and gets misreported as a module that does not build.
 func TestScanEnv_DisablesWorkspaceMode(t *testing.T) {
 	for _, modcache := range []string{"/tmp/kanonarion-modcache", ""} {
-		got := envMap(scanEnv([]string{"PATH=/usr/bin"}, modcache, domain.AnalysisSurfaceFetched))
+		got := envMap(scanEnv([]string{"PATH=/usr/bin"}, modcache, surfaceNormalised))
 		if got["GOWORK"] != "off" {
 			t.Errorf("scanEnv(modcache=%q) GOWORK = %q, want off", modcache, got["GOWORK"])
 		}
@@ -250,7 +260,7 @@ func TestScanEnv_DisablesWorkspaceMode(t *testing.T) {
 // TestScanEnv_LastValueWinsOverInheritedWorkspace guards that an ambient GOWORK
 // pointing at a workspace file cannot leak into an isolated single-module scan.
 func TestScanEnv_LastValueWinsOverInheritedWorkspace(t *testing.T) {
-	got := envMap(scanEnv([]string{"GOWORK=/home/dev/go.work"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
+	got := envMap(scanEnv([]string{"GOWORK=/home/dev/go.work"}, "/tmp/kanonarion-modcache", surfaceNormalised))
 
 	if got["GOWORK"] != "off" {
 		t.Errorf("GOWORK = %q, want off to override the inherited workspace file", got["GOWORK"])
@@ -262,7 +272,7 @@ func TestScanEnv_LastValueWinsOverInheritedWorkspace(t *testing.T) {
 // values — exec.Cmd honours the last value for a duplicate key.
 func TestScanEnv_LastValueWinsOverInheritedFlags(t *testing.T) {
 	base := []string{"GOFLAGS=-mod=readonly", "GOSUMDB=sum.golang.org"}
-	got := envMap(scanEnv(base, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
+	got := envMap(scanEnv(base, "/tmp/kanonarion-modcache", surfaceNormalised))
 
 	if got["GOFLAGS"] != "-mod=mod" {
 		t.Errorf("GOFLAGS = %q, want -mod=mod to override the inherited -mod=readonly", got["GOFLAGS"])
@@ -277,7 +287,7 @@ func TestScanEnv_LastValueWinsOverInheritedFlags(t *testing.T) {
 // hermetic regardless of the inherited environment.
 func TestScanEnv_LastValueWinsOverInheritedProxy(t *testing.T) {
 	base := []string{"GOPROXY=https://proxy.golang.org"}
-	got := envMap(scanEnv(base, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
+	got := envMap(scanEnv(base, "/tmp/kanonarion-modcache", surfaceNormalised))
 
 	if got["GOPROXY"] != "off" {
 		t.Errorf("GOPROXY = %q, want off to override the inherited network proxy", got["GOPROXY"])
@@ -288,7 +298,7 @@ func TestScanEnv_LastValueWinsOverInheritedProxy(t *testing.T) {
 // populated cache keep the default network-backed resolution — the offline
 // overrides must not leak into that path.
 func TestScanEnv_NoModcacheLeavesResolutionDefault(t *testing.T) {
-	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "", domain.AnalysisSurfaceFetched))
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "", surfaceNormalised))
 
 	for _, k := range []string{"GOMODCACHE", "GOPROXY", "GOSUMDB"} {
 		if v, ok := got[k]; ok {
@@ -628,7 +638,7 @@ func TestScanProject_InputFaultsCarryDistinctReasons(t *testing.T) {
 // downloads, so with GOSUMDB=off it can only fail, and it failed reporting that
 // setting — which the build-incompatibility classifier read as a broken module.
 func TestScanEnv_PinsTheLocalToolchainAlongsideTheDisabledChecksumDB(t *testing.T) {
-	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", surfaceNormalised))
 
 	if got["GOTOOLCHAIN"] != "local" {
 		t.Errorf("GOTOOLCHAIN = %q, want local: with GOSUMDB=off a toolchain switch cannot verify what it "+
@@ -643,7 +653,7 @@ func TestScanEnv_PinsTheLocalToolchainAlongsideTheDisabledChecksumDB(t *testing.
 // TestScanEnv_LastValueWinsOverInheritedToolchain guards the direction of the
 // override against the ambient GOTOOLCHAIN=auto every shell carries.
 func TestScanEnv_LastValueWinsOverInheritedToolchain(t *testing.T) {
-	got := envMap(scanEnv([]string{"GOTOOLCHAIN=auto"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
+	got := envMap(scanEnv([]string{"GOTOOLCHAIN=auto"}, "/tmp/kanonarion-modcache", surfaceNormalised))
 
 	if got["GOTOOLCHAIN"] != "local" {
 		t.Errorf("GOTOOLCHAIN = %q, want local to override the inherited setting", got["GOTOOLCHAIN"])
@@ -654,7 +664,7 @@ func TestScanEnv_LastValueWinsOverInheritedToolchain(t *testing.T) {
 // branch that earns it: without a cache the scan resolves over the network, where
 // a switch completes and pinning would break a scan that works today.
 func TestScanEnv_NoModcacheLeavesTheToolchainSwitchAlone(t *testing.T) {
-	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "", domain.AnalysisSurfaceFetched))
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "", surfaceNormalised))
 
 	if v, ok := got["GOTOOLCHAIN"]; ok {
 		t.Errorf("scanEnv without a modcache set GOTOOLCHAIN=%q; the network is available there and a "+

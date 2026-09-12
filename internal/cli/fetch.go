@@ -203,7 +203,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	}
 
 	if version == "" {
-		return fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
+		return moduleVersionRequired("fetch", path)
 	}
 
 	var coord coordinate.ModuleCoordinate

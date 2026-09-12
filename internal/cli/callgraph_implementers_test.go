@@ -174,7 +174,7 @@ func TestRunImplementers_UnknownMethodNamesTheRealOnes(t *testing.T) {
 // shape as honest as the text one.
 func TestRunImplementers_JSONCarriesVerdictAndScope(t *testing.T) {
 	out := runImpl(t, implPortID, true, implRecord(), cgports.EdgeQueryOptions{})
-	for _, want := range []string{`"verdict"`, `"scope"`, `"is_test"`, `"count": 2`} {
+	for _, want := range []string{`"answer"`, `"scope"`, `"is_test"`, `"count": 2`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("JSON missing %q:\n%s", want, out)
 		}

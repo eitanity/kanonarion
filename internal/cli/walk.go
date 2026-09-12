@@ -111,7 +111,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 					return fmt.Errorf("invalid argument %q: %w", args[0], err)
 				}
 				if version == "" {
-					return fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
+					return moduleVersionRequired("walk", path)
 				}
 			}
 			if f.gomodPath != "" {
@@ -479,7 +479,7 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 		return application.ExecuteWalkResult{}, fmt.Errorf("invalid argument %q: %w", arg, err)
 	}
 	if version == "" {
-		return application.ExecuteWalkResult{}, fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
+		return application.ExecuteWalkResult{}, moduleVersionRequired("walk", path)
 	}
 
 	var coord coordinate.ModuleCoordinate

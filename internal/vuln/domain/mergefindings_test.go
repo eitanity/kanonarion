@@ -198,9 +198,10 @@ func TestMergeCoordinateMatches_FillsARetractionTheAnalysisMissed(t *testing.T) 
 	}
 }
 
-// TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList: the
-// "advisory names no symbols" flag is adopted from the match only where the
-// analysis names none of its own, so the record can never state both.
+// TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList: the record
+// can never state both the "advisory names no symbols" flag and a symbol list.
+// The flag is what the advisory entry says, and it decides: a list standing
+// under it did not come from the advisory, so adopting the flag empties it.
 func TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList(t *testing.T) {
 	match := coordinateMatch()
 	match.AffectedSymbols = nil
@@ -211,8 +212,39 @@ func TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList(t *testing
 		[]domain.VulnerabilityFinding{match},
 		nil,
 	)
-	if merged[0].AdvisoryNamesNoSymbols {
-		t.Error("AdvisoryNamesNoSymbols set on a finding that names symbols: the record would say the advisory named none while listing one")
+	if !merged[0].AdvisoryNamesNoSymbols {
+		t.Error("AdvisoryNamesNoSymbols dropped: the advisory fact the match read is the one thing the analysis route could not have")
+	}
+	if len(merged[0].AffectedSymbols) != 0 {
+		t.Errorf("AffectedSymbols = %v, want empty: the record would say the advisory named none while listing one", merged[0].AffectedSymbols)
+	}
+	// The same reasoning reaches the reachability answer: with no symbol named
+	// there was nothing for the analysis to reach, so the record must not seal a
+	// symbol-level claim beside the flag. The route stays — a real call frame is
+	// evidence about which dependency reaches the package.
+	if r := merged[0].Reachable; r == nil {
+		t.Error("the reachability answer was dropped rather than withdrawn")
+	} else {
+		if r.IsReachable {
+			t.Error("is_reachable = true beside a flag saying the advisory names no symbol for this path")
+		}
+		if r.Confidence != domain.ConfidenceUnknown {
+			t.Errorf("confidence = %q, want %q", r.Confidence, domain.ConfidenceUnknown)
+		}
+	}
+	// And the caller's own finding is untouched: the merge returns a shallow clone,
+	// so withdrawing the claim through the shared pointer would rewrite its input.
+	if src := analysisFinding(); !src.Reachable.IsReachable || src.Reachable.Confidence != domain.ConfidenceHigh {
+		t.Fatal("fixture changed")
+	}
+	input := analysisFinding()
+	_, _ = domain.MergeCoordinateMatches(
+		[]domain.VulnerabilityFinding{input},
+		[]domain.VulnerabilityFinding{match},
+		nil,
+	)
+	if !input.Reachable.IsReachable || input.Reachable.Confidence != domain.ConfidenceHigh {
+		t.Errorf("the merge rewrote its own input's reachability answer: %+v", input.Reachable)
 	}
 
 	bare := analysisFinding()
@@ -224,6 +256,89 @@ func TestMergeCoordinateMatches_SymbolFlagNeverContradictsASymbolList(t *testing
 	)
 	if !merged[0].AdvisoryNamesNoSymbols {
 		t.Error("AdvisoryNamesNoSymbols not adopted where the analysis names no symbols: an empty symbol list would read as a gap rather than as the advisory naming none")
+	}
+}
+
+// TestMergeCoordinateMatches_AddedMatchNamingNoSymbolsCarriesNoConfidentNegative
+// drives the leg no test covered: an advisory the analysis never reported at all,
+// added by the coordinate match alone. The flag arrives from the advisory entry
+// and the verdict beside it is stamped by the caller's onAdd, so neither producer
+// on its own can see the contradiction — and a "not reachable at High confidence"
+// on an advisory naming no symbol asserts a search that had no target.
+func TestMergeCoordinateMatches_AddedMatchNamingNoSymbolsCarriesNoConfidentNegative(t *testing.T) {
+	match := coordinateMatch()
+	match.ID = "GO-2026-5932"
+	match.AffectedSymbols = nil
+	match.AdvisoryNamesNoSymbols = true
+
+	// The stamp the project-rooted scan applies to an advisory the build analysis
+	// did not report: its silence is the answer, at high confidence.
+	stamped := 0
+	merged, added := domain.MergeCoordinateMatches(
+		[]domain.VulnerabilityFinding{analysisFinding()},
+		[]domain.VulnerabilityFinding{match},
+		func(f *domain.VulnerabilityFinding) {
+			stamped++
+			f.Reachable = &domain.ReachabilityResult{
+				IsReachable: false,
+				Confidence:  domain.ConfidenceHigh,
+				DerivedBy: domain.ReachabilityDerivation{
+					Analyser: domain.AnalyserGovulncheck,
+					Fidelity: string(domain.ScanModeSource),
+				},
+			}
+		},
+	)
+	if added != 1 || stamped != 1 || len(merged) != 2 {
+		t.Fatalf("added = %d, onAdd calls = %d, merged = %d; want 1, 1, 2", added, stamped, len(merged))
+	}
+
+	var got *domain.VulnerabilityFinding
+	for i := range merged {
+		if merged[i].ID == match.ID {
+			got = &merged[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("the coordinate match was dropped")
+	}
+	if !got.AdvisoryNamesNoSymbols {
+		t.Fatal("AdvisoryNamesNoSymbols dropped from the added match")
+	}
+	if len(got.AffectedSymbols) != 0 {
+		t.Errorf("AffectedSymbols = %v, want empty", got.AffectedSymbols)
+	}
+	if got.Reachable == nil {
+		t.Fatal("the caller's answer was dropped rather than withdrawn")
+	}
+	if got.Reachable.IsReachable {
+		t.Error("is_reachable = true beside a flag saying the advisory names no symbol for this path")
+	}
+	if got.Reachable.Confidence != domain.ConfidenceUnknown {
+		t.Errorf("confidence = %q, want %q: High asserts a thorough search and there was no target to search for",
+			got.Reachable.Confidence, domain.ConfidenceUnknown)
+	}
+	if got.Reachable.DerivedBy.Analyser != domain.AnalyserGovulncheck {
+		t.Errorf("derivation = %+v, want the caller's: withdrawing the claim must not erase what produced it", got.Reachable.DerivedBy)
+	}
+
+	// The control: an added match whose advisory DOES name symbols keeps the
+	// confident negative. A fix that demoted every added match would pass the
+	// assertions above and fail here.
+	named := coordinateMatch()
+	named.ID = "GO-2026-6354"
+	merged, _ = domain.MergeCoordinateMatches(
+		nil,
+		[]domain.VulnerabilityFinding{named},
+		func(f *domain.VulnerabilityFinding) {
+			f.Reachable = &domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}
+		},
+	)
+	if len(merged) != 1 || merged[0].Reachable.Confidence != domain.ConfidenceHigh {
+		t.Errorf("an advisory naming symbols lost its confidence: %+v", merged[0].Reachable)
+	}
+	if len(merged[0].AffectedSymbols) == 0 {
+		t.Error("an advisory naming symbols lost its symbol list")
 	}
 }
 

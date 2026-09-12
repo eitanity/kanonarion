@@ -212,7 +212,7 @@ func TestDependentsJSONStatesTheExclusion(t *testing.T) {
 			}
 			var buf bytes.Buffer
 			if err := writeDependentsJSON(&buf, tc.rec.ID, linuxAmd64Frame, pinnedContainment(tc.rec).selection(),
-				tc.target.String(), deps, scope, nil); err != nil {
+				tc.target.String(), nil, deps, scope, nil); err != nil {
 				t.Fatalf("writeDependentsJSON: %v", err)
 			}
 			var got struct {
@@ -241,7 +241,7 @@ func TestDependentsRootScopeIsDataNotProse(t *testing.T) {
 	deps, scope := walkDependents(dependentsWalk(root, [2]coordinate.ModuleCoordinate{root, cast}), cast, false)
 
 	var buf bytes.Buffer
-	if err := writeDependentsJSON(&buf, "w1", linuxAmd64Frame, walkSelectionJSON{}, cast.String(), deps, scope, nil); err != nil {
+	if err := writeDependentsJSON(&buf, "w1", linuxAmd64Frame, walkSelectionJSON{}, cast.String(), nil, deps, scope, nil); err != nil {
 		t.Fatalf("writeDependentsJSON: %v", err)
 	}
 	var doc any

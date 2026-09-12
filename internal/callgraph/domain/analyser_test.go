@@ -178,8 +178,9 @@ func TestParseAnalyserColumn_RefusesMalformed(t *testing.T) {
 	}
 }
 
-// analyserRecord is a record carrying nothing but a coordinate and an analyser,
-// which is all the disagreement read looks at.
+// analyserRecord is the served record the disagreement is reported against,
+// carrying nothing but a coordinate and an analyser — all the notice reads off
+// the served side.
 func analyserRecord(t *testing.T, id domain.AnalyserIdentity) domain.CallGraphRecord {
 	t.Helper()
 	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
@@ -257,11 +258,8 @@ func TestAnalyserDisagreementAmong(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			records := make([]domain.CallGraphRecord, 0, len(tc.states))
-			for _, st := range tc.states {
-				records = append(records, analyserRecord(t, st))
-			}
-			d, got := domain.AnalyserDisagreementAmong(records, records[0])
+			served := analyserRecord(t, tc.states[0])
+			d, got := domain.AnalyserDisagreementAmong(tc.states, served)
 			if got != tc.want {
 				t.Fatalf("AnalyserDisagreementAmong = %v, want %v", got, tc.want)
 			}
@@ -281,8 +279,8 @@ func TestAnalyserDisagreementAmong(t *testing.T) {
 						i, d.Identities[i].Provenance, want)
 				}
 			}
-			if d.Served != records[0].Analyser {
-				t.Errorf("served identity %+v, want %+v", d.Served, records[0].Analyser)
+			if d.Served != served.Analyser {
+				t.Errorf("served identity %+v, want %+v", d.Served, served.Analyser)
 			}
 			// The sentence has to carry the strength of each value, or a reader
 			// comparing two version numbers cannot see which one is a guess.

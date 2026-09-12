@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 )
 
 // ErrUnsupportedEcosystem is returned when a record's ecosystem field is
@@ -109,33 +111,15 @@ func (CanonicalHasher) VerifyContentHash(r FactRecord) error {
 }
 
 // CanonicalTimeFormat is the fixed-width nanosecond encoding a measurement time
-// takes when it carries sub-second precision. The width is fixed — nine digits
-// always — so the encoding is also usable as a sort key; time.RFC3339Nano strips
-// trailing zeros and would not be.
-const CanonicalTimeFormat = "2006-01-02T15:04:05.000000000Z07:00"
+// takes when it carries sub-second precision, re-exported from the package that
+// now owns it for every ledger and the assurance log.
+const CanonicalTimeFormat = recordstamp.Layout
 
 // canonicalTime encodes a measurement time for hashing, at the precision the
-// value actually carries.
-//
-// A whole-second value encodes as plain RFC3339, exactly as every record written
-// before sub-second measurement existed. Those records were produced by a
-// pipeline that truncated to seconds, so they all take this branch and their
-// stored content hashes still recompute — no record is rehashed and none needs
-// to be. A value carrying nanoseconds encodes them, so two measurements taken
-// within one second are distinguishable in the ledger and correlatable against
-// the assurance log, which is the forensic question a second-precision timestamp
-// cannot answer.
-//
-// The precision follows the VALUE, not a schema version or a flag on the record.
-// That is what makes verification self-describing: recomputing a record's hash
-// asks only what the record says, so there is no second decoder to pick between
-// and no way for the two generations to be read through the wrong one.
+// value actually carries. See recordstamp.Format for why the precision follows
+// the value and what that buys.
 func canonicalTime(t time.Time) string {
-	t = t.UTC()
-	if t.Nanosecond() == 0 {
-		return t.Format(time.RFC3339)
-	}
-	return t.Format(CanonicalTimeFormat)
+	return recordstamp.Format(t)
 }
 
 // marshalCanonical produces the deterministic JSON bytes for a FactRecord.

@@ -220,14 +220,14 @@ func TestSynthesiseGoMod_DetectsVendorTree(t *testing.T) {
 func TestAnalysisEnv_PinsModuleModeOnEveryLoad(t *testing.T) {
 	t.Parallel()
 
-	plain := analysisEnv()
+	plain := analysisEnv("")
 	if idx := slices.Index(plain, "GOFLAGS=-mod=mod"); idx != len(plain)-1 {
 		t.Errorf("GOFLAGS at position %d of %d on a load that synthesised nothing: "+
 			"a published zip carrying no go.sum for its own module graph fails the load without it",
 			idx, len(plain))
 	}
 
-	vendored := analysisEnv()
+	vendored := analysisEnv("")
 	if !slices.Contains(vendored, "GOFLAGS=-mod=mod") {
 		t.Error("analysisEnv left vendor mode selectable beside a synthesised go.mod")
 	}
@@ -317,7 +317,7 @@ func TestSynthesiseGoMod_RefusesWhenTheBuildListMissesOneImport(t *testing.T) {
 // there.
 func TestAnalysisEnv_LoadsOffline(t *testing.T) {
 	t.Parallel()
-	env := analysisEnv()
+	env := analysisEnv("")
 	for _, want := range []string{"GOPROXY=off", "GOSUMDB=off", "GOFLAGS=-mod=mod"} {
 		if !slices.Contains(env, want) {
 			t.Errorf("analysisEnv does not set %s: a load that can reach a proxy can substitute "+
@@ -551,7 +551,7 @@ func TestAnalyseDir_PartialFromTheModulesOwnSourcesStaysCacheable(t *testing.T) 
 // GOSUMDB=off can only fail, and it failed naming the checksum database.
 func TestAnalysisEnv_PinsTheLocalToolchain(t *testing.T) {
 	t.Parallel()
-	env := analysisEnv()
+	env := analysisEnv("")
 	if !slices.Contains(env, "GOTOOLCHAIN=local") {
 		t.Error("analysisEnv leaves the toolchain switch enabled alongside GOPROXY=off and GOSUMDB=off: " +
 			"the switch cannot complete, and the load fails naming the checksum database instead of the version gap")
@@ -569,7 +569,7 @@ func TestAnalysisEnv_PinsTheLocalToolchain(t *testing.T) {
 func TestAnalysisEnv_OverridesInheritedToolchainSetting(t *testing.T) {
 	t.Setenv("GOTOOLCHAIN", "auto")
 
-	env := analysisEnv()
+	env := analysisEnv("")
 
 	last := ""
 	for _, kv := range env {
@@ -586,7 +586,7 @@ func TestAnalysisEnv_OverridesInheritedToolchainSetting(t *testing.T) {
 // point is to stop the child attempting a fetch, never to permit one.
 func TestAnalysisEnv_StaysOffline(t *testing.T) {
 	t.Parallel()
-	env := analysisEnv()
+	env := analysisEnv("")
 	for _, want := range []string{"GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOWORK=off"} {
 		if !slices.Contains(env, want) {
 			t.Errorf("analysisEnv does not set %s", want)

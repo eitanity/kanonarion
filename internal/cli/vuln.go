@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/spf13/cobra"
 )
@@ -101,10 +102,19 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 	// First and last validated are stated as distinct facts: when the verdict was
 	// first established versus the run that last re-confirmed it. The reader, not
 	// kanonarion, judges whether that is acceptably fresh.
+	//
+	// The grain is printed beside the stamp because the stamp's stored name,
+	// first_scanned_at, reads as "first ever" and is not: it is anchored per
+	// (module, version, pipeline version, snapshot), so a new advisory snapshot
+	// starts a new anchor and the value legitimately moves forward. The ledger is
+	// what answers the historical question, and it is named here rather than left
+	// for the reader to know about.
 	if !rec.FirstScannedAt.IsZero() {
-		_, _ = fmt.Fprintf(stdout, "  First validated: %s\n", rec.FirstScannedAt.UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(stdout, "  First validated: %s  (against this snapshot at pipeline %s, not first awareness)\n",
+			ledgerStamp(rec.FirstScannedAt), rec.PipelineVersion)
+		_, _ = fmt.Fprintf(stdout, "                   first observation: %s\n", firstObservationCommand(rec.Coordinate))
 	}
-	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", rec.ScannedAt.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", ledgerStamp(rec.ScannedAt))
 	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version())
 	_, _ = fmt.Fprintf(stdout, "  Advisories:      %s\n", advisoryCountLine(rec.DatabaseSnapshot))
 	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
@@ -145,43 +155,55 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 	printFindingLines(stdout, rec, classify)
 }
 
-// reachabilityLabel renders the one-word reachability tag beside a finding.
+// reachabilityLabel renders the reachability tag beside a finding, from the one
+// shared reading every surface uses.
 //
-// It has three outcomes, not two. A finding whose answer was never determined at
-// symbol level — because the advisory names no symbol for this module path, or
-// because the analysis could not decide — is not a negative: labelling it "not
-// reachable" reports a search that was never run, and the operator acts on the
-// negative by not upgrading. notReachable lets each caller keep its own wording
-// for the genuine negative, which differs in how much of the instrument it names.
+// It has more outcomes than two, and the branch that matters is the one it used
+// to reach last. A finding whose answer was never determined at symbol level —
+// because the advisory names no symbol for this module path — is not a negative
+// and not a positive: labelling it "not reachable" reports a search that was
+// never run, and labelling it "[reachable]" reports code as running that nothing
+// showed running. This function tested the stored bit BEFORE the advisory, so a
+// finding carrying both read "[reachable]" here while the reachability command,
+// over the same record, reported it at package level. The state settles the
+// order once, for every surface.
+//
+// notReachable lets each caller keep its own wording for the genuine negative,
+// which differs in how much of the instrument it names.
 func reachabilityLabel(f vuldomain.VulnerabilityFinding, notReachable string) string {
-	if f.Reachable == nil {
+	switch state := vuldomain.FindingReachabilityState(f); state {
+	case vuldomain.StateNotAnalysed:
+		// Nobody asked. No tag: there is no answer here to qualify, and the state
+		// line under the finding says so in full.
+		return ""
+	case vuldomain.StateNotComputed:
 		// A reachability question that was asked and could not be answered is not
 		// the same as one nobody asked, and the blank label rendered them alike. The
 		// note printed under the finding carries the reason; this is what stops the
 		// entry reading as a finding reachability was simply not run for.
-		if f.ReachabilityAttemptFailed() {
-			return " [reachability requested but not computed]"
-		}
-		return ""
-	}
-	if f.Reachable.IsReachable {
+		return " [reachability requested but not computed]"
+	case vuldomain.StateReachable:
 		return " [reachable]"
-	}
-	if f.AdvisoryNamesNoSymbols {
+	case vuldomain.StatePackageLevelOnly:
 		return " [affected at package level; symbol-level reachability not determined]"
-	}
-	if f.Reachable.Confidence == vuldomain.ConfidenceUnknown {
+	case vuldomain.StateNotDetermined:
 		return " [reachability not determined]"
+	case vuldomain.StateWithdrawn:
+		// The retraction has its own line under the finding and it is the whole
+		// answer; a reachability tag beside it would offer reachability as the
+		// mitigation for an advisory that no longer stands.
+		return ""
+	default:
+		// The genuine negative: the entry an operator acts on by NOT upgrading, so
+		// the label says how thorough the search behind it was. A bare "[not
+		// reachable]" reads the same whether a call graph was searched or an
+		// analyser simply never mentioned the module, and on a working store every
+		// one of them was the second.
+		if soundness, _ := vuldomain.NegativeSoundness(f); soundness != vuldomain.SoundnessNotStated {
+			return strings.TrimSuffix(notReachable, "]") + " — " + soundness.String() + "]"
+		}
+		return notReachable
 	}
-	// The negative is the entry an operator acts on by NOT upgrading, so the
-	// label says how thorough the search behind it was. A bare "[not reachable]"
-	// reads the same whether a call graph was searched or an analyser simply
-	// never mentioned the module, and on a working store every one of them was
-	// the second.
-	if soundness, _ := vuldomain.NegativeSoundness(f); soundness != vuldomain.SoundnessNotStated {
-		return strings.TrimSuffix(notReachable, "]") + " — " + soundness.String() + "]"
-	}
-	return notReachable
 }
 
 // fixReferenceURLs returns the URLs of a finding's FIX references, in the
@@ -250,6 +272,14 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 		if f.AdvisoryNamesNoSymbols {
 			_, _ = fmt.Fprintln(stdout, "      symbols:  none named by the advisory for this module path — affected at package level, symbol-level reachability not determinable")
 		}
+		// The state is printed on every finding and never omitted at a "normal"
+		// value, in the same word the JSON surfaces publish. A reader must be able
+		// to tell not_reachable from package_level_only from a build that does not
+		// derive the state at all, and only a line that is always present carries
+		// the third distinction. The tag on the heading above is prose for a
+		// person; this is the word every surface agrees on.
+		state := vuldomain.FindingReachabilityState(f)
+		_, _ = fmt.Fprintf(stdout, "      reachability: %s — %s\n", state, state.Statement())
 		// A reachability answer never prints without saying what produced it. The
 		// same advisory in the same module is reachable in one build and not in
 		// the next, so an unlabelled answer reads as a property of the module and
@@ -291,4 +321,30 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 			_, _ = fmt.Fprintf(stdout, "      reachability: %s\n", f.ReachabilityNote)
 		}
 	}
+}
+
+// firstObservationCommand names the reader that answers "when did we first
+// become aware", which the first-validated stamp does not.
+//
+// The stamp is anchored per (module, version, pipeline version, snapshot) by
+// design, so it resets whenever a new advisory snapshot rolls — measured across
+// this project's own store, every coordinate scanned against more than one
+// snapshot reset, most of them with no pipeline change at all. The value is
+// correct for the question it answers; the name is what invites the other one,
+// and every surface that shows the stamp shows this beside it.
+func firstObservationCommand(coord coordinate.ModuleCoordinate) string {
+	return fmt.Sprintf("kanonarion store ledger --event-type vuln_finding_observed --module %s", coord)
+}
+
+// firstScannedAtAnchorNote is firstObservationCommand's statement for a machine
+// consumer: what the stamp is anchored to, and where the historical answer is.
+//
+// It is a sibling key rather than a rename. The key name first_scanned_at is a
+// stability contract and the value under it is correct, so renaming would break
+// consumers to fix a documentation problem; what was missing is any statement of
+// the grain on the surface a machine reads.
+func firstScannedAtAnchorNote(coord coordinate.ModuleCoordinate) string {
+	return "anchored per (module, version, pipeline_version, snapshot): first validation against this " +
+		"advisory snapshot at this pipeline version, not first awareness — a new snapshot starts a new " +
+		"anchor. For the first observation across snapshots and generations run: " + firstObservationCommand(coord)
 }

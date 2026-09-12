@@ -2,11 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 
 	domain "github.com/eitanity/kanonarion/internal/extract/domain"
 )
@@ -148,6 +150,78 @@ func TestPrintExtractionFailures_WithFailures(t *testing.T) {
 	}
 	if !strings.Contains(got, "interface") {
 		t.Errorf("expected interface stage in output, got:\n%s", got)
+	}
+}
+
+// TestExtractionFailures_NameWhatTheGapIsAStatementAbout is the output contract
+// the deadline and lock-contention repairs share: a module absent from coverage
+// says whether this HOST or the module is why, in text and in --json, because
+// only the first is repaired by changing something and running again.
+func TestExtractionFailures_NameWhatTheGapIsAStatementAbout(t *testing.T) {
+	run := domain.ExtractionRun{
+		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
+			coordinatetest.MustNew("example.com/slow", "v1.0.0"): {
+				Stages: map[string]domain.StageResult{
+					"callgraph": {
+						Status: domain.StageFailed,
+						Cause:  failurecause.Environment,
+						Error:  "callgraph stage status=ExtractionFailed: the analysis reported no progress for 10m0s and was stopped",
+					},
+				},
+			},
+			coordinatetest.MustNew("example.com/broken", "v2.0.0"): {
+				Stages: map[string]domain.StageResult{
+					"callgraph": {
+						Status: domain.StageFailed,
+						Cause:  failurecause.Module,
+						Error:  "callgraph stage status=LoadFailed: no packages found",
+					},
+				},
+			},
+			// Written before the axis existed, or by a classification that does not
+			// recognise the failure. It states no cause and must not be shown one.
+			coordinatetest.MustNew("example.com/silent", "v3.0.0"): {
+				Stages: map[string]domain.StageResult{
+					"callgraph": {Status: domain.StageFailed, Error: "subprocess failed: exit status 9"},
+				},
+			},
+		},
+	}
+
+	var buf strings.Builder
+	printExtractionFailures(&buf, run)
+	got := buf.String()
+	for _, want := range []string{
+		"example.com/broken@v2.0.0  stage=callgraph  cause=module",
+		"example.com/silent@v3.0.0  stage=callgraph  error=",
+		"example.com/slow@v1.0.0  stage=callgraph  cause=environment",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("text output does not carry %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "cause=not recorded") || strings.Contains(got, "cause= ") {
+		t.Errorf("an unstated cause must be absent, not rendered:\n%s", got)
+	}
+
+	raw, err := json.Marshal(extractionFailures(run))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docs []map[string]any
+	if err := json.Unmarshal(raw, &docs); err != nil {
+		t.Fatal(err)
+	}
+	wantCause := map[string]any{
+		"example.com/broken@v2.0.0": "module",
+		"example.com/silent@v3.0.0": nil,
+		"example.com/slow@v1.0.0":   "environment",
+	}
+	for _, d := range docs {
+		module, _ := d["module"].(string)
+		if got, want := d["cause"], wantCause[module]; got != want {
+			t.Errorf("%s: --json cause = %v, want %v", module, got, want)
+		}
 	}
 }
 

@@ -106,11 +106,17 @@ func (e *remedyGrammarError) Error() string {
 }
 
 // A remedy the tool then rejects costs the caller exactly the round trip the
-// remedy existed to save. Every line every reachability remedy can print is
-// parsed here, so a refusal cannot ship advice the CLI refuses — which is what
+// remedy existed to save. Every line every remedy can print is checked here, so
+// a refusal cannot ship advice the CLI refuses — nor a line no reader could run
+// because it carries a placeholder — which is what
 // "kanonarion vuln-scan <module>@<version> --reachability" was: vuln-scan takes
 // a walk id positionally, so following it failed with "walk record not found".
-func TestReachabilityRemedies_EveryLineIsAcceptedByTheParser(t *testing.T) {
+//
+// The superseded-record remedies join it because they printed the other half of
+// the same defect: "vuln-scan --module <coord>", which resolves only a walk
+// ROOTED at the coordinate and so exited 20 for a module measured in a
+// consumer's build. A coordinate planted in the walk-id slot fails here.
+func TestPrintableRemedies_EveryLineIsAcceptedByTheParser(t *testing.T) {
 	// Both coordinate kinds, because a project's own module carries the synthetic
 	// "local" version and the store holds vulnerability records for one: a remedy
 	// built by concatenating that coordinate onto "kanonarion walk " or
@@ -121,7 +127,7 @@ func TestReachabilityRemedies_EveryLineIsAcceptedByTheParser(t *testing.T) {
 		mustCoord(t, "github.com/cortezaproject/corteza/server", coordinate.LocalVersion),
 	} {
 		t.Run(coord.String(), func(t *testing.T) {
-			remedies := reachabilityRemedies(coord)
+			remedies := printableRemedies(coord, "01M0VG1267S1XDJGDFZTVRPM84")
 			if len(remedies) == 0 {
 				t.Fatal("no remedies enumerated")
 			}
@@ -130,10 +136,44 @@ func TestReachabilityRemedies_EveryLineIsAcceptedByTheParser(t *testing.T) {
 					t.Errorf("remedy %q prints no invocation", r.lead)
 				}
 				for _, line := range r.lines {
-					assertRunnableFor(t, coord, line)
+					assertRemedyLine(t, coord, line)
 				}
 			}
 		})
+	}
+}
+
+// A remedy that has no runnable command names none. The superseded refusal is
+// the one that can reach that state — no walk is rooted at the coordinate and
+// its records name none — and a lead printed over an empty list would read as a
+// command the terminal swallowed.
+func TestRemedyRescanSuperseded_NoWalkAndNoRootNamesNoCommand(t *testing.T) {
+	coord := mustCoord(t, "github.com/golang-jwt/jwt/v4", "v4.5.1")
+	r := remedyRescanSuperseded("Re-scan it", coord, false, nil)
+	if !r.empty() {
+		t.Errorf("remedy names %v with nothing to name", r.lines)
+	}
+	if got := supersededVulnLine(coord, nil, r); strings.Contains(got, "Re-scan it") {
+		t.Errorf("refusal printed a lead over no command:\n%s", got)
+	}
+}
+
+// Where more than one walk holds the coordinate the reader is told so, and still
+// gets exactly one command.
+func TestRemedyRescanSuperseded_CountsTheOtherWalks(t *testing.T) {
+	coord := mustCoord(t, "github.com/golang-jwt/jwt/v4", "v4.5.1")
+	r := remedyRescanSuperseded("Re-scan it", coord, false, []string{"01A", "01B", "01C"})
+	if len(r.lines) != 1 {
+		t.Fatalf("got %d invocations, want 1: %v", len(r.lines), r.lines)
+	}
+	if r.lines[0] != "kanonarion vuln-scan 01A --reachability" {
+		t.Errorf("named %q, want the newest walk", r.lines[0])
+	}
+	if !strings.Contains(r.lead, "of the 3 that hold it") {
+		t.Errorf("lead does not say the other walks exist: %q", r.lead)
+	}
+	if strings.Contains(r.String(), "<walk-id>") {
+		t.Errorf("remedy printed a placeholder:\n%s", r.String())
 	}
 }
 

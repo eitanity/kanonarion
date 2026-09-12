@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,6 +84,12 @@ type CallGraphConflict struct {
 
 	// ContentHashes name the records carrying each of Values, in the same order.
 	ContentHashes []string
+
+	// AnalysisRoot is the working tree every disagreeing record that names one
+	// agrees it was analysed in, empty when they disagree or none says. A remedy
+	// that re-analyses a working tree needs it, and naming one of two trees a
+	// conflict is precisely about would be inventing the answer.
+	AnalysisRoot string
 
 	// Difference is what the first two disagreeing generations actually differ
 	// about, when the conflict is one over the graph and both generations passed
@@ -193,7 +200,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 		if sel := selectableToolchain(c.Values); sel != "" {
 			lines = append(lines, "kanonarion callgraph-show "+coord+" --toolchain "+sel)
 		}
-		lines = append(lines, ForcedReanalysisCommand(c.Coordinate, ""))
+		lines = append(lines, ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot))
 		return Remedy{
 			Lead: "Two Go toolchains built this coordinate and produced different graphs, and a graph carries " +
 				"the toolchain's own stdlib and vendored trees, so neither answer supersedes the other. Name " +
@@ -212,7 +219,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 					"Inspect the generations, then analyse the tree you mean",
 				Lines: []string{
 					"kanonarion callgraph-show " + coord + " --history",
-					ReanalysisCommand(c.Coordinate, ""),
+					ReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
 				},
 			}
 		}
@@ -222,7 +229,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
 				"kanonarion fetch " + coord,
-				ForcedReanalysisCommand(c.Coordinate, ""),
+				ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
 			},
 		}
 	default:
@@ -263,7 +270,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 				// --force is on the analysis because a stored answer already exists, so
 				// without it the run is served from cache and reads as the remedy having
 				// been tried and failed.
-				ForcedReanalysisCommand(c.Coordinate, ""),
+				ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot),
 			},
 		}
 	}
@@ -391,10 +398,29 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 		candidates = resolved
 	}
 
-	ordered := make([]CallGraphRecord, len(candidates))
-	copy(ordered, candidates)
-	sort.SliceStable(ordered, func(i, j int) bool { return servesBefore(ordered[i], ordered[j]) })
-	return ordered[0], nil
+	// Ranked by position rather than sorted, because the position IS one of the
+	// ranking keys: candidates arrive in append order and every filter above
+	// preserves it, so index i is generation i of this coordinate.
+	ranks := ranksInAppendOrder(candidates)
+	best := 0
+	for i := 1; i < len(candidates); i++ {
+		if ranks[i].ServesBefore(ranks[best]) {
+			best = i
+		}
+	}
+	return candidates[best], nil
+}
+
+// ranksInAppendOrder projects each record onto its ordering key, taking its
+// position in the slice as its append order. Callers must pass records in the
+// order the ledger appended them — see GenerationRank.AppendOrder.
+func ranksInAppendOrder(records []CallGraphRecord) []GenerationRank {
+	out := make([]GenerationRank, len(records))
+	for i, r := range records {
+		out[i] = RankOf(r)
+		out[i].AppendOrder = int64(i)
+	}
+	return out
 }
 
 // LatestObservation returns the record that describes a working tree as it is
@@ -431,8 +457,9 @@ func LatestObservation(records []CallGraphRecord) CallGraphRecord {
 	if last.WorktreeScanDigest == "" {
 		return last
 	}
-	best := last
-	for _, r := range records {
+	ranks := ranksInAppendOrder(records)
+	best := len(records) - 1
+	for i, r := range records {
 		if r.WorktreeScanDigest != last.WorktreeScanDigest {
 			continue
 		}
@@ -443,11 +470,11 @@ func LatestObservation(records []CallGraphRecord) CallGraphRecord {
 		if r.AnalysisRoot != last.AnalysisRoot {
 			continue
 		}
-		if RankOf(r).ServesBefore(RankOf(best)) {
-			best = r
+		if ranks[i].ServesBefore(ranks[best]) {
+			best = i
 		}
 	}
-	return best
+	return records[best]
 }
 
 // GenerationRank is the ordering key of one generation: completeness first, then
@@ -479,6 +506,20 @@ type GenerationRank struct {
 	// failed — see EnvironmentLimitedGraph.
 	EnvironmentLimited bool
 	ExtractedAt        time.Time
+	// AppendOrder is the generation's position in the ledger, and it is what
+	// decides recency below the resolution the timestamp has.
+	//
+	// Two generations of one coordinate can share extracted_at: a fast-fail
+	// analysis writes in well under a second, so a retry loop or a scripted
+	// re-analysis lands both inside one tick of whatever precision the column
+	// was written at. "Newest" then had no answer and the rank fell through to
+	// the content hash, which orders by an arbitrary digest rather than by time.
+	// The ledger is append-only, so insertion order IS the sequence, and the
+	// later append is the later run.
+	//
+	// A caller that has no append order leaves it zero, and the content hash
+	// still decides. That is not authority either — see ContentHash.
+	AppendOrder int64
 	// ContentHash is the last resort. It is not authority and is not claimed to be
 	// — it is here so the served record does not depend on the order rows happen
 	// to come back in.
@@ -517,6 +558,9 @@ func (g GenerationRank) ServesBefore(o GenerationRank) bool {
 	}
 	if !g.ExtractedAt.Equal(o.ExtractedAt) {
 		return g.ExtractedAt.After(o.ExtractedAt)
+	}
+	if g.AppendOrder != o.AppendOrder {
+		return g.AppendOrder > o.AppendOrder
 	}
 	return g.ContentHash < o.ContentHash
 }
@@ -569,6 +613,7 @@ func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGra
 		return nil, CallGraphConflict{
 			Coordinate:      records[0].Coordinate,
 			PipelineVersion: records[0].PipelineVersion,
+			AnalysisRoot:    agreedAnalysisRoot(records),
 			Field:           ConflictFieldAnalysisSource,
 			Values:          distinctSources(records),
 			ContentHashes:   hashesForSources(records),
@@ -601,6 +646,24 @@ func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGra
 	}
 }
 
+// agreedAnalysisRoot returns the working tree these records agree they were
+// analysed in, or empty when any two that state one disagree. A remedy may name
+// only a tree every measurement points at; two trees under one name is the
+// conflict itself, not something to pick a side of.
+func agreedAnalysisRoot(records []CallGraphRecord) string {
+	root := ""
+	for _, r := range records {
+		if r.AnalysisRoot == "" {
+			continue
+		}
+		if root != "" && root != r.AnalysisRoot {
+			return ""
+		}
+		root = r.AnalysisRoot
+	}
+	return root
+}
+
 // analysedIn reports whether any of these records was analysed in root. An empty
 // root matches nothing: a reader standing in no recorded tree makes no claim
 // about which tree they meant, and a record that states no root cannot be shown
@@ -621,9 +684,9 @@ func analysedIn(records []CallGraphRecord, root string) bool {
 //
 // Order is not cosmetic here: composition serves the LAST observation of a
 // mutating working tree, and that is by position rather than by timestamp
-// because extracted_at persists at second precision. Rebuilding a group by
-// concatenating subsets would put a legacy record after a newer one and hand
-// back a graph the tree no longer has.
+// because two extractions can share one. Rebuilding a group by concatenating
+// subsets would put a legacy record after a newer one and hand back a graph the
+// tree no longer has.
 func inAppendOrder(all, a, b []CallGraphRecord) []CallGraphRecord {
 	keep := make(map[string]bool, len(a)+len(b))
 	for _, r := range a {
@@ -824,9 +887,9 @@ func graphDisagreement(records []CallGraphRecord) *CallGraphConflict {
 		return nil
 	}
 
-	stated := make([]map[string]json.RawMessage, len(records))
+	stated := make([]map[string]bool, len(records))
 	for i, r := range records {
-		fields, err := graphFields(r)
+		names, err := graphFieldNames(r)
 		if err != nil {
 			// Which fields each record states could not be read, so whether they agree
 			// was never measured. Composing them anyway would serve one graph on the
@@ -835,13 +898,17 @@ func graphDisagreement(records []CallGraphRecord) *CallGraphConflict {
 			// a plausible digest.
 			return unmeasurableGraphs(records, err)
 		}
-		stated[i] = fields
+		stated[i] = names
 	}
 
 	shared := sharedFieldsAmong(stated, GraphClaimFields())
 	values := make([]string, len(records))
-	for i := range records {
-		values[i] = digestOfFields(stated[i], shared)
+	for i, r := range records {
+		value, err := graphClaimDigest(r, shared)
+		if err != nil {
+			return unmeasurableGraphs(records, err)
+		}
+		values[i] = value
 	}
 	c := disagreementOf(records, ConflictFieldCallGraph, values)
 	if c == nil {
@@ -966,6 +1033,7 @@ func unmeasurableGraphs(records []CallGraphRecord, err error) *CallGraphConflict
 	return &CallGraphConflict{
 		Coordinate:      records[0].Coordinate,
 		PipelineVersion: records[0].PipelineVersion,
+		AnalysisRoot:    agreedAnalysisRoot(records),
 		Field:           ConflictFieldCallGraph,
 		Completeness:    records[0].Completeness,
 		Values:          values,
@@ -973,22 +1041,29 @@ func unmeasurableGraphs(records []CallGraphRecord, err error) *CallGraphConflict
 	}
 }
 
-// graphFields is GraphDigest's input rather than its output: everything a record
-// says about the call graph, keyed by the canonical field name that says it.
+// graphFieldNames names the canonical fields a record states.
 //
-// A field absent from the map is one the record states nothing for — either
+// A name absent from the set is one the record states nothing for — either
 // because it predates the field or because the canonical encoding omits its zero
 // value, which for this purpose are the same thing: neither is a claim.
-func graphFields(r CallGraphRecord) (map[string]json.RawMessage, error) {
-	data, err := marshalCanonical(forGraphComparison(r))
+//
+// It reads the NAMES and not the values on purpose. Which fields two records
+// share has to be settled before either can be hashed over them, and holding
+// every record's field bytes to answer that kept three copies of every
+// generation's edges live at once — the largest resident term in a deep
+// coordinate's composed read. Nothing here outlives the walk.
+func graphFieldNames(r CallGraphRecord) (map[string]bool, error) {
+	shell, err := canonicalMarshal(canonicalShell(forGraphComparison(fieldPresenceProbe(r))))
 	if err != nil {
 		return nil, fmt.Errorf("marshal record for graph comparison: %w", err)
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+	names := make(map[string]bool, 32)
+	if err := canonicalFields(shell, func(name string, _ []byte) {
+		names[name] = true
+	}); err != nil {
 		return nil, fmt.Errorf("read canonical record as fields: %w", err)
 	}
-	return fields, nil
+	return names, nil
 }
 
 // sharedFieldsAmong names which of candidates every record states, sorted, so a
@@ -997,12 +1072,12 @@ func graphFields(r CallGraphRecord) (map[string]json.RawMessage, error) {
 // The candidate list is what scopes the digest to one question. Passing every
 // field name that appears would make the digest answer "are these records the
 // same", which is not what any caller of it asks.
-func sharedFieldsAmong(stated []map[string]json.RawMessage, candidates []string) []string {
+func sharedFieldsAmong(stated []map[string]bool, candidates []string) []string {
 	shared := make([]string, 0, len(candidates))
 	for _, name := range candidates {
 		inAll := true
-		for _, fields := range stated {
-			if _, ok := fields[name]; !ok {
+		for _, names := range stated {
+			if !names[name] {
 				inAll = false
 				break
 			}
@@ -1015,25 +1090,151 @@ func sharedFieldsAmong(stated []map[string]json.RawMessage, candidates []string)
 	return shared
 }
 
-// digestOfFields hashes one record's values for the named fields.
+// graphClaimDigest hashes one record's values for the named fields.
 //
-// It rebuilds a JSON object rather than hashing the values alone so that a value
-// moving between fields cannot go unnoticed, and it walks the names in the order
-// given so two records are hashed over the same fields in the same order.
-func digestOfFields(fields map[string]json.RawMessage, names []string) string {
-	var b bytes.Buffer
-	b.WriteByte('{')
+// It hashes a JSON object rather than the values alone so that a value moving
+// between fields cannot go unnoticed, and it walks the names in the order given
+// so two records are hashed over the same fields in the same order. Those are
+// the terms digestOfFields set and this keeps: the bytes hashed are exactly the
+// bytes the canonical marshal of the record would carry for those fields, in
+// that order, and TestGraphClaimDigest_MatchesMaterialisedFields asserts it
+// against a materialised marshal directly.
+//
+// What changed is that they are never held. The edge array is streamed into the
+// hash the way the seal is, and every other field's value is a span of the
+// shell's own bytes rather than a copy of it, so a record's digest costs the
+// shell and no multiple of the edge set.
+func graphClaimDigest(r CallGraphRecord, names []string) (string, error) {
+	g := forGraphComparison(r)
+	edges := canonicalEdgeOrder(g.Edges)
+	shell, err := canonicalMarshal(canonicalShell(g))
+	if err != nil {
+		return "", fmt.Errorf("marshal record for graph comparison: %w", err)
+	}
+	wanted := make(map[string]bool, len(names))
+	for _, name := range names {
+		wanted[name] = true
+	}
+	values := make(map[string][]byte, len(names))
+	if err := canonicalFields(shell, func(name string, value []byte) {
+		if wanted[name] {
+			values[name] = value
+		}
+	}); err != nil {
+		return "", fmt.Errorf("read canonical record as fields: %w", err)
+	}
+
+	h := sha256.New()
+	hashWrite(h, []byte{'{'})
 	for i, name := range names {
 		if i > 0 {
-			b.WriteByte(',')
+			hashWrite(h, []byte{','})
 		}
-		b.WriteString(strconv.Quote(name))
-		b.WriteByte(':')
-		b.Write(fields[name])
+		hashWrite(h, []byte(strconv.Quote(name)))
+		hashWrite(h, []byte{':'})
+		if name == edgesFieldName {
+			// The shell carries the placeholder here, not the array, so the edges
+			// are the one field written from the record rather than from the shell.
+			if err := writeCanonicalEdges(h, edges); err != nil {
+				return "", err
+			}
+			continue
+		}
+		// A name the record does not state contributes nothing, which is what a
+		// materialised field map would have done with a missing key. Callers pass
+		// only shared names, so this is a property of the encoding rather than a
+		// case that arises.
+		hashWrite(h, values[name])
 	}
-	b.WriteByte('}')
-	sum := sha256.Sum256(b.Bytes())
-	return "sha256:" + hex.EncodeToString(sum[:])
+	hashWrite(h, []byte{'}'})
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// fieldPresenceProbe is r with every collection cut to one element.
+//
+// Which fields a record STATES turns on whether its collections are empty and
+// never on what is in them, so a one-element stand-in states exactly the fields
+// the record does. Encoding the whole record to read its key names walked every
+// node and edge to answer a question none of them bear on.
+//
+// A collection this misses is encoded in full: slower, never a different answer.
+// TestGraphFieldNames_MatchesMaterialisedFieldKeys asserts the names against the
+// record's own untruncated encoding.
+func fieldPresenceProbe(r CallGraphRecord) CallGraphRecord {
+	v := reflect.ValueOf(&r).Elem()
+	for i := range v.NumField() {
+		f := v.Field(i)
+		if f.Kind() == reflect.Slice && f.CanSet() && f.Len() > 1 {
+			f.SetLen(1)
+		}
+	}
+	return r
+}
+
+// edgesFieldName is the canonical field carrying the edge array, which is the
+// one field graphClaimDigest writes from the record rather than from the shell.
+const edgesFieldName = "edges"
+
+// canonicalFields walks the top-level fields of a canonical record encoding and
+// calls visit with each field's name and the exact bytes of its value.
+//
+// The value handed over is a span of data, not a copy: the caller is hashing it
+// and the whole point is that a record's fields are never materialised a second
+// time. A caller that needs a value to outlive the walk must copy it.
+func canonicalFields(data []byte, visit func(name string, value []byte)) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	open, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("reading the canonical record: %w", err)
+	}
+	if delim, ok := open.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("reading the canonical record: want a JSON object, got %v", open)
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("reading a canonical field name: %w", err)
+		}
+		name, ok := key.(string)
+		if !ok {
+			return fmt.Errorf("reading a canonical field name: want a string, got %v", key)
+		}
+		// The canonical encoding carries no whitespace, so the value starts one
+		// byte past the name — the colon — and ends where its last token does.
+		start := dec.InputOffset() + 1
+		if err := skipCanonicalValue(dec); err != nil {
+			return fmt.Errorf("reading the value of canonical field %q: %w", name, err)
+		}
+		stop := dec.InputOffset()
+		if start > stop || stop > int64(len(data)) {
+			return fmt.Errorf("reading the value of canonical field %q: bytes [%d,%d) are outside the %d-byte record", name, start, stop, len(data))
+		}
+		visit(name, data[start:stop])
+	}
+	return nil
+}
+
+// skipCanonicalValue advances dec past one value, however deeply nested, without
+// decoding it into anything.
+func skipCanonicalValue(dec *json.Decoder) error {
+	depth := 0
+	for {
+		token, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("reading a canonical value: %w", err)
+		}
+		if delim, ok := token.(json.Delim); ok {
+			switch delim {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+			}
+		}
+		if depth == 0 {
+			return nil
+		}
+	}
 }
 
 // disagreement reports the distinct values of one field across records, as a
@@ -1078,6 +1279,7 @@ func disagreementOf(records []CallGraphRecord, field string, values []string) *C
 	return &CallGraphConflict{
 		Coordinate:      records[0].Coordinate,
 		PipelineVersion: records[0].PipelineVersion,
+		AnalysisRoot:    agreedAnalysisRoot(records),
 		Field:           field,
 		Values:          distinct,
 		ContentHashes:   hashes,
@@ -1135,15 +1337,17 @@ func hashesForSources(records []CallGraphRecord) []string {
 // marshal, so it changes only when the hashed shape does, and no stored record's
 // own hash depends on it.
 func GraphDigest(r CallGraphRecord) string {
-	data, err := marshalCanonical(forGraphComparison(r))
+	// Streamed rather than marshalled: the digest is over exactly the canonical
+	// bytes, and --history takes one per generation, so materialising them would
+	// hold a second full copy of every generation's graph to hash it.
+	digest, err := hashCanonical(forGraphComparison(r))
 	if err != nil {
-		// marshalCanonical fails only on a value json.Marshal cannot encode, which
-		// this shape has none of. Returning a distinct marker rather than a
+		// The canonical encoding fails only on a value json.Marshal cannot encode,
+		// which this shape has none of. Returning a distinct marker rather than a
 		// plausible digest keeps a failure from reading as agreement.
 		return "unhashable:" + err.Error()
 	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return digest
 }
 
 // MeasurementDigest is a hash of everything a record states except when it was
@@ -1156,12 +1360,57 @@ func GraphDigest(r CallGraphRecord) string {
 // comparison needs the second question, or the input that separated them is the
 // one thing the comparison cannot show.
 func MeasurementDigest(r CallGraphRecord) string {
-	data, err := marshalCanonical(withoutRunCircumstance(r))
+	seal, err := SealMeasurement(r)
 	if err != nil {
 		return "unhashable:" + err.Error()
 	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return seal.digest
+}
+
+// ErrUnsealedMeasurement is what a zero MeasurementSeal answers with. A seal is
+// taken OVER a record, and the zero value was taken over none; comparing a
+// record against it would report "not the same measurement" about a comparison
+// that never happened.
+var ErrUnsealedMeasurement = errors.New("measurement seal was never taken over a record")
+
+// MeasurementSeal is SameMeasurement's comparison held as a value, taken once
+// over one record so that asking it of N held generations canonicalises that
+// record once rather than N times.
+//
+// It is the digest of exactly the bytes SameMeasurement used to compare, and
+// exactly the bytes marshalCanonical produces — hashCanonical streams them
+// rather than materialising them, and the equality against the materialised form
+// is asserted directly. So "the same seal" and "the same bytes" are one answer
+// here, and neither encoding is ever held whole.
+//
+// It is not persisted and is not a record's ContentHash: that one covers the
+// clock and the fetch provenance, which is why two runs a second apart that
+// measured the identical graph carry different content hashes and the same seal.
+type MeasurementSeal struct {
+	digest string
+}
+
+// SealMeasurement takes the seal over one record. The circumstances of the run
+// are set aside here, as SameMeasurement always set them aside.
+func SealMeasurement(r CallGraphRecord) (MeasurementSeal, error) {
+	digest, err := hashCanonical(withoutRunCircumstance(r))
+	if err != nil {
+		return MeasurementSeal{}, fmt.Errorf("seal record for measurement comparison: %w", err)
+	}
+	return MeasurementSeal{digest: digest}, nil
+}
+
+// SameAs reports whether r states the identical measurement to the record this
+// seal was taken over.
+func (s MeasurementSeal) SameAs(r CallGraphRecord) (bool, error) {
+	if s.digest == "" {
+		return false, ErrUnsealedMeasurement
+	}
+	other, err := SealMeasurement(r)
+	if err != nil {
+		return false, err
+	}
+	return s.digest == other.digest, nil
 }
 
 // SameMeasurement reports whether two records state the identical measurement,
@@ -1183,15 +1432,11 @@ func MeasurementDigest(r CallGraphRecord) string {
 // that read different bytes, or were offered different build lists, are two
 // measurements even where their graphs agree.
 func SameMeasurement(a, b CallGraphRecord) (bool, error) {
-	ab, err := marshalCanonical(withoutRunCircumstance(a))
+	seal, err := SealMeasurement(a)
 	if err != nil {
-		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
+		return false, err
 	}
-	bb, err := marshalCanonical(withoutRunCircumstance(b))
-	if err != nil {
-		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
-	}
-	return bytes.Equal(ab, bb), nil
+	return seal.SameAs(b)
 }
 
 // RestatesAnalysis reports whether a generation the ledger already holds records
@@ -1218,10 +1463,52 @@ func SameMeasurement(a, b CallGraphRecord) (bool, error) {
 //     and dropping it is only sound because the artefact identity IS compared and
 //     the naming rule above guarantees it is there to compare.
 func RestatesAnalysis(fresh, held CallGraphRecord) (bool, error) {
-	if !NamesAnalysedContent(fresh) || !NamesAnalysedContent(held) {
+	sealed, named, err := SealAnalysis(fresh)
+	if err != nil {
+		return false, err
+	}
+	if !named {
 		return false, nil
 	}
-	return SameMeasurement(withoutFetchProvenance(fresh), withoutFetchProvenance(held))
+	return sealed.RestatedBy(held)
+}
+
+// AnalysisRestatement is RestatesAnalysis's question held as a value, taken once
+// over the freshly measured record.
+//
+// It exists because the ledger asks that question of every plausible candidate
+// and the fresh record is the same record for all of them. Asked as a pair, a
+// coordinate holding nineteen candidates canonicalised the fresh record
+// nineteen times; asked through this, once.
+type AnalysisRestatement struct {
+	seal MeasurementSeal
+}
+
+// SealAnalysis takes the comparison over the record a run has just measured, for
+// a caller about to put it to several held generations.
+//
+// The bool is false when the fresh record names no analysed content. Such a
+// record restates nothing — that is the naming rule, not an absence of candidates
+// — so there is nothing to seal and no candidate worth decoding.
+func SealAnalysis(fresh CallGraphRecord) (AnalysisRestatement, bool, error) {
+	if !NamesAnalysedContent(fresh) {
+		return AnalysisRestatement{}, false, nil
+	}
+	seal, err := SealMeasurement(withoutFetchProvenance(fresh))
+	if err != nil {
+		return AnalysisRestatement{}, false, err
+	}
+	return AnalysisRestatement{seal: seal}, true, nil
+}
+
+// RestatedBy reports whether a generation the ledger holds records the analysis
+// this was sealed over. A held record naming no analysed content restates
+// nothing, on the same rule the fresh side is held to.
+func (a AnalysisRestatement) RestatedBy(held CallGraphRecord) (bool, error) {
+	if !NamesAnalysedContent(held) {
+		return false, nil
+	}
+	return a.seal.SameAs(withoutFetchProvenance(held))
 }
 
 // withoutFetchProvenance blanks which fetch measurement supplied the bytes,
@@ -1380,11 +1667,6 @@ func claimsTheModulesGraph(r CallGraphRecord) bool {
 		return false
 	}
 	return statesAGraph(r)
-}
-
-// servesBefore orders two records by which should be served first.
-func servesBefore(a, b CallGraphRecord) bool {
-	return RankOf(a).ServesBefore(RankOf(b))
 }
 
 // preferredToolchain narrows a refused group to the toolchain a reader named,

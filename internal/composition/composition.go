@@ -18,6 +18,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
@@ -276,7 +277,7 @@ func NewDriver(storeRoot string) (*Driver, func() error, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
-	return newDriver(storeRoot, extextractor.NewOsSubprocessExecutor(kanonarionBinary))
+	return newDriver(storeRoot, extextractor.NewOsSubprocessExecutor(kanonarionBinary, 0, nil))
 }
 
 // newDriver is NewDriver with the callgraph child's executor injected. The
@@ -419,6 +420,9 @@ func newLocalWalkExtract(
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
 	stages := extstages.New()
+	// One reporter for both uses: the bound is sized from it once, and the
+	// headroom gate re-reads it before each analysis starts.
+	driverHostMemory := meminfo.New()
 	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:  extStore,
 		Walks: walkStore,
@@ -430,8 +434,14 @@ func newLocalWalkExtract(
 		// composition roots cannot drift. The driver passes no modcache
 		// directory: it has no --from-modcache concept and always reads bytes
 		// through the content-addressed blob store.
+		//
+		// The subprocesses are bounded separately from the module pool, and sized
+		// from this host: the driver takes no operator value, so it asks for the
+		// host-derived default rather than leaving the memory term unread.
 		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion,
-			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC).WithLogger(logger),
+			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC).WithLogger(logger).
+			WithCallgraphConcurrency(extextractor.ResolveCallgraphConcurrency(0, driverHostMemory, logger)).
+			WithHostMemory(driverHostMemory),
 		Stages:    stages,
 		Clock:     clk,
 		Stopwatch: stopwatch,

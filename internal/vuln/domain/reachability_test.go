@@ -168,6 +168,34 @@ func TestReachabilityDerivation_String(t *testing.T) {
 	}
 }
 
+// TestReachabilityDerivation_RootSelectionIsAbsentWhenUnstated pins the
+// hash-transparency of the field. Every stored answer states no root selection,
+// so it must leave the wire shape alone: a record that re-marshals with a new
+// key no longer reproduces the bytes it was sealed over.
+func TestReachabilityDerivation_RootSelectionIsAbsentWhenUnstated(t *testing.T) {
+	t.Parallel()
+	stored := domain.ReachabilityDerivation{Analyser: domain.AnalyserGovulncheck, Fidelity: string(domain.ScanModeSource)}
+	b, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(b), "root_selection") {
+		t.Errorf("an unstated root selection reaches the wire, moving every stored record's bytes: %s", b)
+	}
+	stated := stored
+	stated.RootSelection = "rooted at the library set by default"
+	b, err = json.Marshal(stated)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(b), "root_selection") {
+		t.Errorf("a stated root selection is dropped from the wire: %s", b)
+	}
+	if !strings.Contains(stated.String(), stated.RootSelection) {
+		t.Errorf("the rendered derivation does not state the root selection: %s", stated.String())
+	}
+}
+
 // StampReachabilityRooting is the one place the frame — decided by the use case
 // that writes the record — meets the answers produced by analysers below it.
 func TestStampReachabilityRooting(t *testing.T) {

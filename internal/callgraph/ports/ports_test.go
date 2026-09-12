@@ -156,3 +156,36 @@ func TestCallGraphGeneration_StatesTheSame_IgnoresPerGenerationIdentity(t *testi
 		})
 	}
 }
+
+// The version legs order as versions. This comparator is not only a
+// serialisation tiebreak — it orders the transitive traversal
+// `callers`/`callees --transitive` renders — and text order would show a reader
+// "v10.0.0" above "v9.0.0".
+func TestCallEdgeRefLess_OrdersVersionsSemantically(t *testing.T) {
+	nine := ports.CallEdgeRef{FromID: "a", ToID: "b", ModulePath: "example.com/mod", ModuleVersion: "v9.0.0"}
+	ten := ports.CallEdgeRef{FromID: "a", ToID: "b", ModulePath: "example.com/mod", ModuleVersion: "v10.0.0"}
+	if !ports.CallEdgeRefLess(nine, ten) || ports.CallEdgeRefLess(ten, nine) {
+		t.Error("v9.0.0 does not order before v10.0.0")
+	}
+
+	older := ports.CallEdgeRef{FromID: "a", ToID: "b", PipelineVersion: "v9"}
+	newer := ports.CallEdgeRef{FromID: "a", ToID: "b", PipelineVersion: "v19"}
+	if !ports.CallEdgeRefLess(older, newer) || ports.CallEdgeRefLess(newer, older) {
+		t.Error("pipeline v9 does not order before v19")
+	}
+}
+
+// And it stays total over versions the semantic comparison cannot separate,
+// which is the contract the whole comparator exists for: no two distinct refs
+// compare equal.
+func TestCallEdgeRefLess_StaysTotalOnVersionsThatCompareEqual(t *testing.T) {
+	for _, pair := range [][2]ports.CallEdgeRef{
+		{{FromID: "a", ModuleVersion: "main"}, {FromID: "a", ModuleVersion: "master"}},
+		{{FromID: "a", PipelineVersion: "0.4"}, {FromID: "a", PipelineVersion: "0.4.0"}},
+		{{FromID: "a", PipelineVersion: "draft"}, {FromID: "a", PipelineVersion: "wip"}},
+	} {
+		if ports.CallEdgeRefLess(pair[0], pair[1]) == ports.CallEdgeRefLess(pair[1], pair[0]) {
+			t.Errorf("%+v and %+v compare equal both ways; the order is not total", pair[0], pair[1])
+		}
+	}
+}

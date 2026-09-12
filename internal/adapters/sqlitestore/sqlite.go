@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -249,19 +250,28 @@ func Apply(handle DB, migrations []Migration) error {
 }
 
 func migrate(db *sql.DB, migrations []Migration) error {
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+	// Retried on a lost lock like every other write here: an open that loses a
+	// race with a sibling process is a statement about this moment, and refusing
+	// the whole command for it discards whatever that command was going to do.
+	if err := retryOnBusyOpen("creating the migrations table", func() error {
+		_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
         module     TEXT NOT NULL,
         version    INTEGER NOT NULL,
         applied_at TEXT NOT NULL,
         PRIMARY KEY (module, version)
-    )`); err != nil {
+    )`)
+		return err //nolint:wrapcheck // as below
+	}); err != nil {
 		return fmt.Errorf("creating migrations table: %w", err)
 	}
 
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS _store_meta (
+	if err := retryOnBusyOpen("creating the store metadata table", func() error {
+		_, err := db.Exec(`CREATE TABLE IF NOT EXISTS _store_meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
-    )`); err != nil {
+    )`)
+		return err //nolint:wrapcheck // the retry classifies the driver's own error; the caller below names the step
+	}); err != nil {
 		return fmt.Errorf("creating _store_meta table: %w", err)
 	}
 
@@ -275,39 +285,66 @@ func migrate(db *sql.DB, migrations []Migration) error {
 			continue
 		}
 
-		tx, err := db.Begin()
-		if err != nil {
-			return fmt.Errorf("beginning migration transaction: %w", err)
-		}
-		if strings.TrimSpace(m.SQL) != "" {
-			if _, err := tx.Exec(m.SQL); err != nil {
-				rerr := tx.Rollback()
-				return fmt.Errorf("migration %s v%d: %w", m.Module, m.Version, errors.Join(err, rerr))
+		// Retried on a lost lock: the transaction rolls back whole, so an attempt
+		// that lost the race left nothing behind to re-apply over.
+		if err := retryOnBusyOpen(MigrationKey(m.Module, m.Version), func() error {
+			tx, err := db.Begin()
+			if err != nil {
+				return fmt.Errorf("beginning migration transaction: %w", err)
 			}
-		}
-		if m.Fn != nil {
-			// Inside the same transaction, so a back-fill that fails leaves the
-			// schema change it accompanies rolled back too — a half-applied
-			// migration is a store whose columns disagree with its rows.
-			if err := m.Fn(tx); err != nil {
-				rerr := tx.Rollback()
-				return fmt.Errorf("migration %s v%d go step: %w", m.Module, m.Version, errors.Join(err, rerr))
+			if strings.TrimSpace(m.SQL) != "" {
+				if _, err := tx.Exec(m.SQL); err != nil {
+					rerr := tx.Rollback()
+					return fmt.Errorf("migration %s v%d: %w", m.Module, m.Version, errors.Join(err, rerr))
+				}
 			}
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO schema_migrations (module, version, applied_at) VALUES (?, ?, ?)`,
-			m.Module, m.Version, time.Now().UTC().Format(time.RFC3339),
-		); err != nil {
-			rerr := tx.Rollback()
-			return fmt.Errorf("recording migration %s v%d: %w", m.Module, m.Version, errors.Join(err, rerr))
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration %s v%d: %w", m.Module, m.Version, err)
+			if m.Fn != nil {
+				// Inside the same transaction, so a back-fill that fails leaves the
+				// schema change it accompanies rolled back too — a half-applied
+				// migration is a store whose columns disagree with its rows.
+				if err := m.Fn(tx); err != nil {
+					rerr := tx.Rollback()
+					return fmt.Errorf("migration %s v%d go step: %w", m.Module, m.Version, errors.Join(err, rerr))
+				}
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO schema_migrations (module, version, applied_at) VALUES (?, ?, ?)`,
+				m.Module, m.Version, time.Now().UTC().Format(time.RFC3339),
+			); err != nil {
+				rerr := tx.Rollback()
+				return fmt.Errorf("recording migration %s v%d: %w", m.Module, m.Version, errors.Join(err, rerr))
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("committing migration %s v%d: %w", m.Module, m.Version, err)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
 	}
 
-	if _, err := db.Exec(`INSERT OR REPLACE INTO _store_meta (key, value)
-        SELECT 'schema_version', CAST(COUNT(*) AS TEXT) FROM schema_migrations`); err != nil {
+	// Written only when it would change. Every process writes this row on every
+	// open, and the store has one writer: thirty-two call-graph children opening
+	// at once turned a no-op restatement of a value nobody had changed into
+	// thirty-seven refused opens. A read costs nothing under WAL, and the write
+	// that remains is the one a real migration owes.
+	if err := retryOnBusyOpen("recording the schema version", func() error {
+		var recorded string
+		err := db.QueryRow(`SELECT value FROM _store_meta WHERE key = 'schema_version'`).Scan(&recorded)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading schema_version from _store_meta: %w", err)
+		}
+		var applied int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); err != nil {
+			return fmt.Errorf("counting applied migrations: %w", err)
+		}
+		if recorded == strconv.Itoa(applied) {
+			return nil
+		}
+		_, err = db.Exec(`INSERT OR REPLACE INTO _store_meta (key, value) VALUES ('schema_version', ?)`,
+			strconv.Itoa(applied))
+		return err //nolint:wrapcheck // the retry classifies the driver's own error; the caller below names the step
+	}); err != nil {
 		return fmt.Errorf("updating schema_version in _store_meta: %w", err)
 	}
 

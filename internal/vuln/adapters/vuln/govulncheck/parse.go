@@ -589,6 +589,7 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 				Fidelity: string(mode),
 			},
 		}
+		domain.WithdrawSymbolLevelClaim(f)
 	}
 	s.logMem(ctx, "parse_enriched")
 
@@ -777,6 +778,7 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader, mode do
 				m = &findingMeta{}
 			}
 			mf.findings[i].Reachable.Confidence = findingConfidence(m)
+			domain.WithdrawSymbolLevelClaim(&mf.findings[i])
 		}
 		domain.SortFindings(mf.findings)
 		out[coord] = mf.findings
@@ -804,14 +806,14 @@ func applyOSV(f *domain.VulnerabilityFinding, entry *OSV, modulePath string) {
 	// is never recorded from silence.
 	if syms, ok := entry.SymbolsByPath[modulePath]; ok {
 		if len(syms) == 0 {
+			// The field states what the advisory names, so it is empty where it names
+			// nothing. The trace's terminals survive as the last hop of each route.
 			f.AdvisoryNamesNoSymbols = true
+			f.AffectedSymbols = nil
 		} else if len(f.AffectedSymbols) == 0 {
-			// The analysis reached no symbol of this advisory, so it has none of its
-			// own to state and the advisory's own at-risk list is the answer. It can
-			// never overwrite a reached list: a finding the analysis traced to a
-			// symbol already carries that symbol, and the two lists must never be
-			// conflated — one says what the build reaches, the other what the
-			// advisory considers at risk.
+			// The analysis reached no symbol, so the advisory's own at-risk list is the
+			// answer. It never overwrites a reached list, which is the more precise
+			// one and is drawn from this same named set.
 			f.AffectedSymbols = slices.Clone(syms)
 		}
 	}

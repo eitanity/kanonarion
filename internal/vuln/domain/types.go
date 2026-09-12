@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -570,6 +571,19 @@ func SnapshotAgeDays(validatedAt, retrievedAt time.Time) int {
 // produced it, how well it could see, and what it was rooted at will be read as
 // a property of the module, which it is not.
 type ReachabilityResult struct {
+	// IsReachable is the stored bit: the analysis either did or did not report a
+	// path to the vulnerable symbol. It is ONE INPUT to the answer and is not the
+	// answer — FindingReachabilityState is, and every surface that publishes a
+	// finding publishes that beside this.
+	//
+	// The bit has two positions and the question has more answers than two. Where
+	// the advisory names no symbol for this module path there was never a symbol
+	// to reach, so neither position describes the finding: measured on a working
+	// store, 24 such findings carry the bit true and 30 carry it false, and a
+	// consumer reading it as the answer counted one of the first group as
+	// reachable and published it. It is stored, sealed and part of the content
+	// hash, so it stays on the wire — but a reader deriving a state from it alone
+	// is reproducing the collapse rather than the answer.
 	IsReachable bool                   `json:"is_reachable"`
 	Confidence  ReachabilityConfidence `json:"confidence"`
 	// Routes are the paths from an entry point to the vulnerable symbol, entry
@@ -618,10 +632,11 @@ type VulnerabilityFinding struct {
 	//
 	// Where it is true, symbol-level reachability was never available for this
 	// coordinate: the analysis has no target to search for, so an empty
-	// AffectedSymbols and an empty route are the expected shape rather than a
-	// gap, and a reader must not read the absent route as "nothing calls it".
-	// Recording it explicitly is what lets a consumer tell the two apart instead
-	// of inferring the reason from an empty field.
+	// AffectedSymbols and a Reachable of false at Confidence Unknown are the
+	// expected shape rather than a gap. A ROUTE may still be present — a call
+	// into the affected package is traceable with no symbol named — and it says
+	// which dependency pulls the package in, never that its code runs. An absent
+	// route must not be read as "nothing calls it" either.
 	//
 	// False means either that the entry names symbols or that no advisory entry
 	// was read to ask — an enrichment that never ran states nothing here, on the
@@ -740,15 +755,39 @@ type VulnerabilityRecord struct {
 	UnscanReason      UnscanReason         `json:"unscan_reason,omitempty"`
 	UnscannableReason string               `json:"unscannable_reason,omitempty"`
 	ErrorDetail       string               `json:"error_detail,omitempty"`
-	DatabaseSnapshot  DatabaseSnapshot     `json:"database_snapshot"`
-	ScannedAt         time.Time            `json:"scanned_at"`
+	// FailureCause says what a coverage gap is a statement about: the module, or
+	// this environment. It is the same axis the call-graph ledger carries, and it
+	// is here for the same reason — a scanner too old to parse the project, a
+	// toolchain that could not be resolved and a module whose source does not
+	// build are three different facts, and only the first two are repaired by
+	// changing something on this host and running again.
+	//
+	// It is omitempty and absent from every record written before it existed, so
+	// those records seal to the bytes they always did; an absent cause is read as
+	// "not stated", never as the module's fault.
+	FailureCause     failurecause.Cause `json:"failure_cause,omitempty"`
+	DatabaseSnapshot DatabaseSnapshot   `json:"database_snapshot"`
+	ScannedAt        time.Time          `json:"scanned_at"`
 	// FirstScannedAt anchors when this verdict was first established for the
 	// (module, version, pipeline, snapshot) tuple. Unlike ScannedAt — which
 	// moves forward to the run that last validated the verdict — it is set once
-	// on first insert and never overwritten on reuse/re-attribution, so it
-	// answers "when did we first find this out" for triage and audit. It is
+	// on first insert and never overwritten on reuse/re-attribution. It is
 	// provenance, not verdict, so it is excluded from ContentHash to keep
 	// identity deterministic across re-validation.
+	//
+	// The snapshot is HALF THE KEY, so this is not "when did we first become
+	// aware" and must not be read as it: a new advisory snapshot is a new tuple
+	// and therefore a new anchor, and the stamp legitimately moves forward with
+	// no pipeline change at all. Measured on this project's store, every
+	// coordinate ever scanned against more than one snapshot reset. What it
+	// answers is when this coordinate was first validated against THIS snapshot
+	// at THIS pipeline version — which is what the freshness block on a rendered
+	// record needs, and what its stored name does not say.
+	//
+	// The question the name invites is answered by the assurance ledger, which
+	// spans snapshots and generations:
+	//
+	//	kanonarion store ledger --event-type vuln_finding_observed --module <path>@<version>
 	FirstScannedAt  time.Time `json:"first_scanned_at,omitzero"`
 	PipelineVersion string    `json:"pipeline_version"`
 	// CallGraphCompleteness records the per-module call-graph fidelity level that
@@ -865,6 +904,9 @@ type ProjectScanResult struct {
 	UnscanReason      UnscanReason
 	UnscannableReason string
 	ErrorDetail       string
+	// FailureCause mirrors the record's, so a project-rooted failure carries the
+	// same axis a module-rooted one does.
+	FailureCause failurecause.Cause
 	// AnalysisSurface is the surface the scan actually resolved from, reported
 	// by the adapter that ran it rather than assumed by the caller. The caller
 	// asks for a vendored analysis; only the scanner knows whether the project

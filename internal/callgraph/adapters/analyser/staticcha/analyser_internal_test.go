@@ -134,27 +134,38 @@ func Get() pkgb.Value { return 42 }
 	}
 }
 
-// TestArtifactKind_SkipsIncompletePackages covers the defensive guards in
-// artifactKind: a batch of SSA packages can contain a nil entry (a package that
-// failed to build) and a partially-initialised one. Neither may panic, and
-// neither counts as evidence of a command.
-func TestArtifactKind_SkipsIncompletePackages(t *testing.T) {
-	if got := artifactKind(nil); got != domain.ArtifactLibrary {
-		t.Errorf("artifactKind(nil) = %q, want library", got)
-	}
-	pkgs := []*ssa.Package{nil, {}}
-	if got := artifactKind(pkgs); got != domain.ArtifactLibrary {
-		t.Errorf("artifactKind = %q, want library", got)
-	}
-}
-
-// TestArtifactKind_MainPackageWithoutMainFunc pins the "defines func main"
-// half of the rule: a package merely named main is not a command until it has
-// a main function to enter.
-func TestArtifactKind_MainPackageWithoutMainFunc(t *testing.T) {
+// TestArtifactKind_AnIncompleteSetEstablishesNothing pins the asymmetry between
+// the two findings. Application needs one witness and an incomplete set can
+// still supply it; library is the claim that no package of the module is a
+// command, so it needs every package. Where the set is short — nothing loaded,
+// something failed, or an entry the classifier cannot read — the answer is that
+// the kind was not established, never the library that was not observed.
+func TestArtifactKind_AnIncompleteSetEstablishesNothing(t *testing.T) {
 	prog := ssa.NewProgram(token.NewFileSet(), ssa.BuilderMode(0))
-	pkg := prog.CreatePackage(types.NewPackage("example.com/cmd/x", "main"), nil, nil, false)
-	if got := artifactKind([]*ssa.Package{pkg}); got != domain.ArtifactLibrary {
-		t.Errorf("artifactKind = %q, want library for a main package with no func main", got)
+	// A package merely named main is not a command until it has a main function
+	// to enter: the miniredis shape, whose integration/ package is package main
+	// with no func main in any file.
+	mainNoFunc := prog.CreatePackage(types.NewPackage("example.com/cmd/x", "main"), nil, nil, false)
+	lib := prog.CreatePackage(types.NewPackage("example.com/lib", "lib"), nil, nil, false)
+
+	cases := []struct {
+		name     string
+		pkgs     []*ssa.Package
+		complete bool
+		want     domain.ArtifactKind
+	}{
+		{"nothing loaded", nil, true, domain.ArtifactNotEstablished},
+		{"unreadable entries", []*ssa.Package{nil, {}}, true, domain.ArtifactNotEstablished},
+		{"complete, no command", []*ssa.Package{lib}, true, domain.ArtifactLibrary},
+		{"complete, main without func main", []*ssa.Package{mainNoFunc, lib}, true, domain.ArtifactLibrary},
+		{"a package failed to load", []*ssa.Package{lib}, false, domain.ArtifactNotEstablished},
+		{"main without func main, set incomplete", []*ssa.Package{mainNoFunc}, false, domain.ArtifactNotEstablished},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := artifactKind(tc.pkgs, tc.complete); got != tc.want {
+				t.Errorf("artifactKind = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

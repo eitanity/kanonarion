@@ -97,11 +97,15 @@ type scanUnresolvedFindingJSON struct {
 	Reason     string                      `json:"reason"`
 }
 
-// scanFindingJSON is one stored finding with its derived reachability rung.
+// scanFindingJSON is one stored finding with its derived reachability state and
+// rung.
 //
-// Soundness is emitted on every finding, positive and negative alike: "not
-// stated" on a reachable finding is a statement, and it is a different statement
-// from the key being missing. SoundnessReason is omitted when there is none,
+// ReachabilityState and Soundness are emitted on every finding, positive and
+// negative alike: "not stated" on a reachable finding is a statement, and it is
+// a different statement from the key being missing. The state answers what the
+// reachable.is_reachable bit beside it cannot — a finding whose advisory names
+// no symbol for this module path is neither reachable nor not reachable, and the
+// bit has no position for that. SoundnessReason is omitted when there is none,
 // because NegativeSoundness returns a reason exactly when it returns a rung.
 type scanFindingJSON struct {
 	ID                     string                          `json:"id"`
@@ -119,6 +123,7 @@ type scanFindingJSON struct {
 	PublishedAt            time.Time                       `json:"published_at"`
 	ModifiedAt             time.Time                       `json:"modified_at"`
 	WithdrawnAt            time.Time                       `json:"withdrawn_at,omitzero"`
+	ReachabilityState      vuldomain.ReachabilityState     `json:"reachability_state"`
 	Soundness              vuldomain.ReachabilitySoundness `json:"soundness"`
 	SoundnessReason        string                          `json:"soundness_reason,omitempty"`
 }
@@ -258,7 +263,7 @@ func scanUnresolvedFindingsJSONOf(in []vuldomain.UnresolvedFinding) []scanUnreso
 	return out
 }
 
-// scanFindingJSONOf projects one finding and derives its rung.
+// scanFindingJSONOf projects one finding and derives its state and rung.
 func scanFindingJSONOf(f vuldomain.VulnerabilityFinding) scanFindingJSON {
 	soundness, reason := vuldomain.NegativeSoundness(f)
 	return scanFindingJSON{
@@ -277,6 +282,7 @@ func scanFindingJSONOf(f vuldomain.VulnerabilityFinding) scanFindingJSON {
 		PublishedAt:            f.PublishedAt,
 		ModifiedAt:             f.ModifiedAt,
 		WithdrawnAt:            f.WithdrawnAt,
+		ReachabilityState:      vuldomain.FindingReachabilityState(f),
 		Soundness:              soundness,
 		SoundnessReason:        reason,
 	}

@@ -73,8 +73,18 @@ func (s *Store) PutExtractionRun(ctx context.Context, run domain.ExtractionRun) 
 		return fmt.Errorf("marshalling for storage: %w", err)
 	}
 
-	_, err = s.db.DB().ExecContext(ctx,
-		`INSERT INTO extraction_runs (
+	// Retried on contention, because the run competes with its own children for
+	// the store's single writer: a call-graph run has up to four subprocesses
+	// appending records while the run states itself, and SQLITE_BUSY there is
+	// transient rather than a fault. Without this the run record — the only
+	// account of what the whole extraction did — was the one write in the tree
+	// that a busy moment could simply delete. See RetryOnBusy.
+	//
+	// The write is an upsert on the run's own id, so re-running it is exactly
+	// idempotent.
+	if err := sqlitestore.RetryOnBusy(ctx, "extraction run "+run.ID, func(ctx context.Context) error {
+		_, execErr := s.db.DB().ExecContext(ctx,
+			`INSERT INTO extraction_runs (
 			id, walk_id, target_path, target_version, started_at, completed_at, 
 			overall_status, content_hash, raw_record
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -82,15 +92,16 @@ func (s *Store) PutExtractionRun(ctx context.Context, run domain.ExtractionRun) 
 			completed_at=excluded.completed_at,
 			overall_status=excluded.overall_status,
 			raw_record=excluded.raw_record`,
-		run.ID, run.WalkID, "", "", // We don't have target at hand, but it's in raw_record.
-		// Actually let's try to get it if we want to filter by target.
-		run.StartedAt.UTC().Format(time.RFC3339),
-		run.CompletedAt.UTC().Format(time.RFC3339),
-		int(run.OverallStatus),
-		run.ContentHash,
-		data,
-	)
-	if err != nil {
+			run.ID, run.WalkID, "", "", // We don't have target at hand, but it's in raw_record.
+			// Actually let's try to get it if we want to filter by target.
+			run.StartedAt.UTC().Format(time.RFC3339),
+			run.CompletedAt.UTC().Format(time.RFC3339),
+			int(run.OverallStatus),
+			run.ContentHash,
+			data,
+		)
+		return execErr //nolint:wrapcheck // RetryOnBusy names the write; the caller wraps once below
+	}); err != nil {
 		return fmt.Errorf("inserting extraction run: %w", err)
 	}
 	return nil

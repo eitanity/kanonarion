@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 )
 
 // RecordWriter is the write half of ports.FactStore. The contract assertions
@@ -187,7 +188,12 @@ func ComposeCoordinate(coord coordinate.ModuleCoordinate, records []domain.FactR
 		if !a.FetchedAt.Equal(b.FetchedAt) {
 			return a.FetchedAt.Before(b.FetchedAt)
 		}
+		if c := versionorder.ComparePipelineVersions(a.PipelineVersion, b.PipelineVersion); c != 0 {
+			return c < 0
+		}
 		if a.PipelineVersion != b.PipelineVersion {
+			// Two versions that state the same number, or neither of which states
+			// one, still have to be separated: this is a total order.
 			return a.PipelineVersion < b.PipelineVersion
 		}
 		return a.ContentHash < b.ContentHash

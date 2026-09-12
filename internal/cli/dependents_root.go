@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -41,11 +42,29 @@ func resolveDependentsRoot(
 		if err != nil {
 			return walkContainment{}, walkdomain.WalkRecord{}, err
 		}
+		if !graphHoldsTarget(rec.Graph, coord) {
+			// The same check the --gomod path makes, for the same reason. Without
+			// it a pinned question about a version the walk does not hold answered
+			// "no modules depend on it" at exit 0: an absence asserted over a
+			// population that was never enumerated, because nothing was searched.
+			return walkContainment{}, walkdomain.WalkRecord{},
+				walkLacksModule(ctx, walks, rec, coord, f.walkID)
+		}
 		return pinnedContainment(rec), rec, nil
 
 	case f.anyBuild:
 		if err := refuseInapplicableFlags("dependents --any-build", dependentsScopeFlags(f)); err != nil {
 			return walkContainment{}, walkdomain.WalkRecord{}, err
+		}
+		if !coord.HasVersion() {
+			// --any-build searches for the build holding ONE coordinate. A bare path
+			// is answered across the versions a build resolved, which needs the
+			// build named first: there is no frame here to read them out of.
+			return walkContainment{}, walkdomain.WalkRecord{}, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--any-build searches for a build holding one coordinate, and %q names a path: "+
+					"give the version to search for, or name the build and let it resolve the versions:"+
+					"\n  kanonarion dependents %s --gomod %s",
+				coord.Path(), coord.Path(), defaultGoModPath)}
 		}
 		found, err := findWalkContaining(ctx, walks, coord,
 			fmt.Sprintf("kanonarion dependents %s --walk-id <walk of that build>", coord))
@@ -83,7 +102,7 @@ func resolveDependentsRoot(
 		return walkContainment{}, walkdomain.WalkRecord{}, err
 	}
 	containment := gomodContainment(choice, rec, scope)
-	if !graphHolds(rec.Graph, coord) {
+	if !graphHoldsTarget(rec.Graph, coord) {
 		return walkContainment{}, walkdomain.WalkRecord{},
 			buildLacksModule(ctx, walks, rec, coord, containment.build, gomodPath)
 	}
@@ -122,7 +141,7 @@ func noDependentsRoot(coord coordinate.ModuleCoordinate) error {
 			"\n  --gomod %s    answer from the latest project walk for that go.mod (add --tool or --project for another scope)"+
 			"\n  --walk-id <id>      answer from one stored walk (kanonarion walk-list lists them)"+
 			"\n  --any-build         search this store for a build that holds %s",
-		defaultGoModPath, coord)}
+		defaultGoModPath, dependentsTargetText(coord))}
 }
 
 // buildLacksModule is the refusal for a rooted question whose build does not
@@ -145,19 +164,63 @@ func buildLacksModule(
 	coord coordinate.ModuleCoordinate,
 	build, gomodPath string,
 ) error {
-	msg := fmt.Sprintf("%s, rooted at %s, does not contain %s", build, rec.Target, coord)
+	return lacksModuleRefusal(ctx, walks, rec, coord, build, func(h holdingBuild) string {
+		return fmt.Sprintf("kanonarion dependents %s --gomod %s%s", dependentsTargetText(coord), gomodPath, h.flag)
+	})
+}
+
+// walkLacksModule is buildLacksModule for a question pinned with --walk-id.
+//
+// The pinned path had no such refusal and answered "no modules depend on X" at
+// exit 0 for a coordinate the walk had never resolved. Its sibling path already
+// held the rule: an empty dependent list and "that build does not hold this
+// module" are different facts, and only the first is a measurement.
+//
+// The remedy names --walk-id rather than --gomod, because a caller who pinned a
+// walk is asking about stored builds and a manifest path is not what they have
+// in hand.
+func walkLacksModule(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	rec walkdomain.WalkRecord,
+	coord coordinate.ModuleCoordinate,
+	walkID string,
+) error {
+	build := fmt.Sprintf("walk %s (%s, frame %s)", walkID, walkScopeLabel(rec.Scope), rec.Graph.Frame())
+	return lacksModuleRefusal(ctx, walks, rec, coord, build, func(h holdingBuild) string {
+		return fmt.Sprintf("kanonarion dependents %s --walk-id %s", dependentsTargetText(coord), h.walkID)
+	})
+}
+
+// lacksModuleRefusal is the refusal both rooted paths give, differing only in
+// how a caller would ask the build that does hold the coordinate.
+func lacksModuleRefusal(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	rec walkdomain.WalkRecord,
+	coord coordinate.ModuleCoordinate,
+	build string,
+	askElsewhere func(holdingBuild) string,
+) error {
+	target := dependentsTargetText(coord)
+	msg := fmt.Sprintf("%s, rooted at %s, does not contain %s", build, rec.Target, target)
 	if versions := graphVersionsOf(rec.Graph, coord.Path()); len(versions) > 0 {
 		msg += fmt.Sprintf("; it resolved %s at %s", coord.Path(), strings.Join(versions, ", "))
 	}
 	holding := buildsHolding(ctx, walks, rec, coord)
 	switch {
 	case len(holding) > 0:
-		msg += fmt.Sprintf("; the store holds it in the %s of %s — ask there:\n  kanonarion dependents %s --gomod %s%s",
-			joinHoldingBuilds(holding), rec.Target, coord, gomodPath, holding[0].flag)
-	default:
+		msg += fmt.Sprintf("; the store holds it in the %s of %s — ask there:\n  %s",
+			joinHoldingBuilds(holding), rec.Target, askElsewhere(holding[0]))
+	case coord.HasVersion():
 		msg += fmt.Sprintf("; no current build of %s holds it either — the newest walk of each scope and "+
 			"platform was checked, and an older one still may, so search them all with:"+
-			"\n  kanonarion dependents %s --any-build", rec.Target, coord)
+			"\n  kanonarion dependents %s --any-build", rec.Target, target)
+	default:
+		// --any-build takes a coordinate, so a bare path cannot be offered it.
+		msg += fmt.Sprintf("; no current build of %s holds any version of it either — the newest walk of "+
+			"each scope and platform was checked, and an older one still may:"+
+			"\n  kanonarion walk-list --limit 0", rec.Target)
 	}
 	return &exitError{code: ExitConfig, msg: msg}
 }
@@ -270,6 +333,10 @@ func graphVersionsOf(g walkdomain.Graph, path string) []string {
 		seen[n.Coordinate.Version()] = struct{}{}
 		out = append(out, n.Coordinate.Version())
 	}
-	sort.Strings(out)
+	// Newest first, semantically: a text sort puts v1.10.0 below v1.9.0, and this
+	// list is both read by a caller and used to pick the version a remedy names.
+	sort.Slice(out, func(i, j int) bool {
+		return versionorder.CompareModuleVersions(out[i], out[j]) > 0
+	})
 	return out
 }

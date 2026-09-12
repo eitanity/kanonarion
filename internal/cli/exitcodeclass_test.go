@@ -133,6 +133,9 @@ func TestExitCodeClass_ExtractionRunStatus(t *testing.T) {
 		{"ExtractionRunPartial", extractdomain.ExtractionRunPartial, ExitPartial},
 		{"ExtractionRunFailed", extractdomain.ExtractionRunFailed, ExitFailed},
 		{"ExtractionRunCancelled", extractdomain.ExtractionRunCancelled, ExitCancelled},
+		// The checkpoint a killed run leaves behind. It did not reach every
+		// module, which is what Cancelled's exit says to a caller.
+		{"ExtractionRunInProgress", extractdomain.ExtractionRunInProgress, ExitCancelled},
 	}
 	var covered []string
 	for _, tc := range cases {

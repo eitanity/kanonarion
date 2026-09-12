@@ -179,7 +179,11 @@ persisting per-module `VulnerabilityRecord`s and a `WalkScanRun`. Optional
 call-graph reachability (`adapters/reachability`, reading the callgraph and
 fetch contexts through their ports) triages findings the code cannot actually
 reach. Scan runs are append-only, and each record carries an immutable
-`first_scanned_at`.
+`first_scanned_at`, anchored per (module, version, pipeline version, snapshot) —
+a new advisory snapshot starts a new anchor, so it states first validation
+against that snapshot rather than first awareness. The assurance ledger answers
+the historical question: `kanonarion store ledger --event-type
+vuln_finding_observed --module <path>@<version>`.
 
 **sbom** - generates a deterministic CycloneDX software bill of materials
 (`SBOMRecord`) from any walk. *Adapter:* `generator/cyclonedx`.
@@ -206,7 +210,7 @@ made. *Adapters:* `proxy` (with `retrying`), `golist`, `store/sqlite`.
 module ships inside its own published zip and compiles into the binary through
 cgo. `github.com/mattn/go-sqlite3` carries the whole SQLite amalgamation as an
 8.4 MB `sqlite3-binding.c`; its licence record describes the Go wrapper and its
-vulnerability verdict is keyed on the Go coordinate, so nothing downstream knew
+vulnerability answer is keyed on the Go coordinate, so nothing downstream knew
 the library was there.
 
 Scope is decided by what the build compiles, not by what the zip contains: a
@@ -391,7 +395,12 @@ enforcing test does not belong in this section.
   `time.Now` and `time.Since`. The context set it walks is derived from the
   tree, so a context added later is covered without editing the test.
 - **Canonical serialisation** uses sorted JSON keys, RFC3339 UTC timestamps,
-  and fixed field ordering. Maps that must serialise (e.g. per-node results)
+  and fixed field ordering. A timestamp is encoded by `internal/recordstamp`:
+  UTC, with a fixed-width nine-digit fraction when the value carries one and a
+  whole second when it does not. Fixed width because a stamp is also a sort key
+  and `time.RFC3339Nano` trims trailing zeros; precision that follows the value
+  because that is what lets records sealed before the widening recompute their
+  own hashes unchanged. Maps that must serialise (e.g. per-node results)
   are emitted as sorted arrays of `(key, value)` pairs, since maps have no
   canonical JSON order. Enforced by `TestCanonicalShape_IsPinned`, which every
   record domain runs against a golden file of the exact bytes it seals, so a
@@ -508,7 +517,7 @@ Licence extraction records what was *classified* (`license_extracted`: module,
 version, resolved primary SPDX, overall status, identity source), and the walk
 records what was *resolved* (`walk_completed`: walk id, root, scope
 (`code`/`tool`/`complete`), node count, content hash). Both anchor the inputs
-that bound every downstream verdict in the append-only assurance log, not only
+that bound every downstream answer in the append-only assurance log, not only
 in a mutable record. Each is emitted only after a successful, freshly computed
 result is persisted; cache hits re-serve without re-emitting.
 

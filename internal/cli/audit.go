@@ -571,7 +571,7 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 	walkLine := fmt.Sprintf("walk %s: derived by this run", d.walkRecord.ID)
 	if d.walkReused {
 		walkLine = fmt.Sprintf("walk %s: re-resolved and found identical to the walk taken %s; that record was reused",
-			d.walkRecord.ID, d.walkRecord.CompletedAt.UTC().Format(time.RFC3339))
+			d.walkRecord.ID, ledgerStamp(d.walkRecord.CompletedAt))
 	}
 
 	scanLine := "vulnerability scan: derived by this run"

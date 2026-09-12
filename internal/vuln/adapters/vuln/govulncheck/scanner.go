@@ -49,6 +49,31 @@ func lookupGovulncheck() (string, error) {
 	return bin, nil
 }
 
+// resolvedTool is the scanner this host offers: where it is, and which Go
+// release compiled it.
+//
+// The second half is not decoration. govulncheck type-checks the project in
+// process, so its BUILD version decides which projects can be scanned at all —
+// and when one cannot be, that version is the only thing that explains why. A
+// presence check alone left a current project reporting nine lines of type
+// errors about its own files.
+type resolvedTool struct {
+	bin string
+	// builtWith is the Go release the binary was compiled by, in "go1.26.5" form,
+	// or "" when it could not be read. It is never a gate: a probe that cannot run
+	// must not stop a scan that would have worked.
+	builtWith string
+}
+
+// resolveGovulncheck resolves the binary and asks what built it.
+func resolveGovulncheck(ctx context.Context) (resolvedTool, error) {
+	bin, err := lookupGovulncheck()
+	if err != nil {
+		return resolvedTool{}, err
+	}
+	return resolvedTool{bin: bin, builtWith: builtWithGo(ctx, bin)}, nil
+}
+
 // Preflight implements ports.VulnerabilityScanner: it verifies govulncheck is
 // resolvable on PATH so a walk scan can fail fast with an actionable error
 // before any expensive snapshot fetch or module scanning.

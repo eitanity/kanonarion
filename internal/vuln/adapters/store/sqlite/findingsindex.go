@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/versionorder"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -78,12 +79,14 @@ const (
 // support: the index has to agree with what a read returns, or vuln-by-id
 // answers from a record no reader is served.
 func (s *Store) CheckFindingsIndex(ctx context.Context) ([]FindingsIndexDefect, error) {
+	// Unordered in SQL, ordered in Go below. Two of the key columns hold version
+	// strings, and SQLite would order them as text: "v10.0.0" before "v9.0.0",
+	// "v9" before "v19". A version is ordered by the numbers it states, and the
+	// comparison that knows that lives in versionorder.
 	const q = `
 SELECT finding_id, module_path, module_version, pipeline_version,
        snapshot_source, snapshot_version, rooting
-FROM vulnerability_findings_index
-ORDER BY module_path, module_version, pipeline_version,
-         snapshot_source, snapshot_version, rooting, finding_id`
+FROM vulnerability_findings_index`
 
 	// The index rows are read to completion and the cursor closed BEFORE any
 	// record is composed. The pool holds a single connection, so composing inside
@@ -117,6 +120,34 @@ ORDER BY module_path, module_version, pipeline_version,
 	}(); err != nil {
 		return nil, err
 	}
+
+	// Most-specific key order, with both version legs read as versions. The
+	// finding id closes the order: the index key is unique, so no two rows tie.
+	sort.Slice(indexRows, func(i, j int) bool {
+		a, b := indexRows[i], indexRows[j]
+		if a.path != b.path {
+			return a.path < b.path
+		}
+		if c := versionorder.CompareModuleVersions(a.version, b.version); c != 0 {
+			return c < 0
+		}
+		if c := versionorder.ComparePipelineVersions(a.pipeline, b.pipeline); c != 0 {
+			return c < 0
+		}
+		if a.pipeline != b.pipeline {
+			return a.pipeline < b.pipeline
+		}
+		if a.snapSource != b.snapSource {
+			return a.snapSource < b.snapSource
+		}
+		if a.snapVersion != b.snapVersion {
+			return a.snapVersion < b.snapVersion
+		}
+		if a.rooting != b.rooting {
+			return a.rooting < b.rooting
+		}
+		return a.findingID < b.findingID
+	})
 
 	// supported caches, per (key, frame), the identifier set the composed record
 	// carries — or the reason there is none — so a module with many index rows

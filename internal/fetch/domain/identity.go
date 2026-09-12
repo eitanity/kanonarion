@@ -233,7 +233,8 @@ type ValidationLeg struct {
 
 	// EstablishedAt is the fetch time of the measurement that actually performed
 	// the check — this record's own time when rechecked, the source record's
-	// time when inherited.
+	// time when inherited. On an unavailable leg it is the time of the attempt,
+	// since nothing was established.
 	EstablishedAt string
 }
 
@@ -265,6 +266,14 @@ const (
 	// LegInherited means the result was transferred from an earlier record of
 	// the same artefact, named by ValidationLeg.Source.
 	LegInherited LegProvenance = "inherited"
+
+	// LegUnavailable means the check was attempted and could not run because the
+	// tool it needs is absent from this host. That is a property of the machine
+	// that measured, not of the module measured, so it must not be recorded as a
+	// recheck (which claims an establishment that never happened) nor as an
+	// absence (which claims the run declined to look). A record carrying it is
+	// not cache-eligible — see RecordIsCacheable.
+	LegUnavailable LegProvenance = "unavailable"
 )
 
 // RecordLegs projects a record's persisted leg provenance onto ValidationLeg

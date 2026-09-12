@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -42,10 +43,17 @@ type canonicalCoord struct {
 }
 
 type canonicalStageResult struct {
-	Name       string `json:"name"`
-	Status     int    `json:"status"`
-	RecordID   string `json:"record_id,omitzero"`
-	Error      string `json:"error,omitzero"`
+	Name     string `json:"name"`
+	Status   int    `json:"status"`
+	RecordID string `json:"record_id,omitzero"`
+	Error    string `json:"error,omitzero"`
+	// Cause is the axis the prose in Error cannot carry: whether a failed stage
+	// is a statement about the module or about this host. The run printed it and
+	// then dropped it on the way to the store, so `extract show` on a stored run
+	// could say a module failed and not say whether running again would repair
+	// it. Omitted when unrecorded, which every stage written before it was
+	// carried here is, so those records hash and verify exactly as before.
+	Cause      string `json:"cause,omitzero"`
 	DurationMs int64  `json:"duration_ms"`
 }
 
@@ -110,6 +118,7 @@ func (ExtractionRunHasher) Unmarshal(data []byte) (ExtractionRun, error) {
 				Status:     StageStatus(cs.Status),
 				RecordID:   cs.RecordID,
 				Error:      cs.Error,
+				Cause:      failurecause.Cause(cs.Cause),
 				DurationMs: cs.DurationMs,
 			}
 		}
@@ -168,6 +177,7 @@ func marshalCanonicalRun(r ExtractionRun) ([]byte, error) {
 				Status:     int(s.Status),
 				RecordID:   s.RecordID,
 				Error:      s.Error,
+				Cause:      string(s.Cause),
 				DurationMs: s.DurationMs,
 			}
 		}

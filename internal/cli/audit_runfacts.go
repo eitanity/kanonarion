@@ -157,7 +157,7 @@ func auditWalkOf(d auditDerivation) auditWalkJSON {
 		Resolved:    true,
 		ID:          d.walkRecord.ID,
 		Reused:      d.walkReused,
-		CompletedAt: d.walkRecord.CompletedAt.UTC().Format(time.RFC3339),
+		CompletedAt: ledgerStamp(d.walkRecord.CompletedAt),
 	}
 }
 
@@ -193,7 +193,7 @@ func auditScanOf(d auditDerivation) auditScanJSON {
 // that run took as it wrote the records.
 func auditReachabilityOf(d auditDerivation) vulnScanReachability {
 	if d.scanReused {
-		return vulnScanReachability{Verdicts: d.scanReachabilityVerdicts, SourceReadByThisRun: false}
+		return vulnScanReachability{Answers: d.scanReachabilityVerdicts, SourceReadByThisRun: false}
 	}
 	return d.scanFacts.Reachability
 }

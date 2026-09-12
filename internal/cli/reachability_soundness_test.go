@@ -60,8 +60,8 @@ func TestNotReachableStatesItsSoundness(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: vulnReachabilityVerdict: %v", tc.name, err)
 		}
-		if res.Verdict != verdictNotReachable {
-			t.Fatalf("%s: verdict = %q, want the negative under test", tc.name, res.Verdict)
+		if res.ReachabilityState != verdictNotReachable {
+			t.Fatalf("%s: verdict = %q, want the negative under test", tc.name, res.ReachabilityState)
 		}
 		if res.Soundness != tc.wantSound {
 			t.Errorf("%s: soundness = %q, want %q", tc.name, res.Soundness, tc.wantSound)
@@ -107,8 +107,8 @@ func TestPackageLevelVerdictStatesItIsUnsearchable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}
-	if res.Verdict != verdictPackageLevelOnly {
-		t.Fatalf("verdict = %q, want the package-level one", res.Verdict)
+	if res.ReachabilityState != verdictPackageLevelOnly {
+		t.Fatalf("verdict = %q, want the package-level one", res.ReachabilityState)
 	}
 	if res.Soundness != "unsearchable" {
 		t.Errorf("soundness = %q, want unsearchable", res.Soundness)
@@ -129,8 +129,8 @@ func TestReachablePositiveStatesNoSoundness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}
-	if res.Verdict != verdictReachable {
-		t.Fatalf("verdict = %q, want reachable", res.Verdict)
+	if res.ReachabilityState != verdictReachable {
+		t.Fatalf("verdict = %q, want reachable", res.ReachabilityState)
 	}
 	if res.Soundness != "" || res.SoundnessReason != "" {
 		t.Errorf("positive carried soundness %q / %q", res.Soundness, res.SoundnessReason)

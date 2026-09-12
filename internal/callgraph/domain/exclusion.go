@@ -55,10 +55,12 @@ func IsModuleExcluded(modulePath string, exclude []string) bool {
 // exclusionList must already be normalised (see NormaliseExclusions).
 func NewExcludedRecord(coord coordinate.ModuleCoordinate, algorithm CallGraphAlgorithm, exclusionList []string) CallGraphRecord {
 	return CallGraphRecord{
-		SchemaVersion:   CallGraphSchemaVersion,
-		Ecosystem:       fetchdomain.EcosystemGo,
-		Coordinate:      coord,
-		Algorithm:       algorithm,
+		SchemaVersion: CallGraphSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    coord,
+		Algorithm:     algorithm,
+		// The module was never loaded, so nothing about it was classified.
+		ArtifactKind:    ArtifactNotEstablished,
 		OverallStatus:   CallGraphStatusExcludedByConfig,
 		ExclusionReason: ExclusionReasonConfig,
 		ExclusionList:   exclusionList,

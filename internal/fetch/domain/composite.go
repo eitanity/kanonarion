@@ -305,6 +305,12 @@ func composeLegs(records []FactRecord) []ValidationLeg {
 // legIsBetter reports whether candidate should replace current as the composed
 // evidence for a leg kind.
 func legIsBetter(candidate, current ValidationLeg) bool {
+	// A leg that could not run established nothing, so however recent it is it
+	// never displaces one that did — otherwise a run on a host without git would
+	// erase the cross-verification evidence the store already holds.
+	if ca, cu := candidate.Provenance == LegUnavailable, current.Provenance == LegUnavailable; ca != cu {
+		return cu
+	}
 	if candidate.EstablishedAt != current.EstablishedAt {
 		return candidate.EstablishedAt > current.EstablishedAt
 	}

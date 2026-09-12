@@ -10,8 +10,6 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
-	"github.com/oklog/ulid/v2"
-
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -84,7 +82,7 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX, walkID string, stdou
 		// with the wrong grammar, and "expected module@version" does not tell
 		// them that; every sibling command that takes a walk id takes it
 		// positionally, so the mistake is the natural one.
-		if _, uerr := ulid.ParseStrict(arg); uerr == nil {
+		if looksLikeWalkID(arg) {
 			return &exitError{
 				code: ExitConfig,
 				msg:  fmt.Sprintf("%q is a walk id, and license-compat takes a coordinate here: kanonarion license-compat <module>@<version> --walk-id %s", arg, arg),
@@ -229,10 +227,10 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID stri
 		// conjunction appears in full with dep_spdx naming the arm that raised
 		// this entry. This is the field that answers "what is this module
 		// licensed under", and it agrees with license, sbom and audit.
-		ModuleSPDX string `json:"module_spdx"`
-		Target     string `json:"target_spdx"`
-		Verdict    string `json:"verdict"`
-		Kind       string `json:"kind"`
+		ModuleSPDX    string `json:"module_spdx"`
+		Target        string `json:"target_spdx"`
+		Compatibility string `json:"compatibility"`
+		Kind          string `json:"kind"`
 		// ElectableArms lists the compatible arms of a dual-licence
 		// disjunction (verdict "electable"): the module is compatible if one
 		// of these is elected via a license_overrides entry.
@@ -311,7 +309,7 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID stri
 			SPDXOriginPath:     c.OriginPath,
 			ModuleSPDX:         c.ModuleExpression,
 			Target:             c.TargetSPDX,
-			Verdict:            c.Verdict.String(),
+			Compatibility:      c.Verdict.String(),
 			Kind:               c.Kind.String(),
 			ElectableArms:      c.ElectableArms,
 			LicenseMeasurement: c.Measurement.String(),
@@ -532,6 +530,6 @@ func compatExitCode(report domain.ClosureCompatibilityReport) error {
 	// this build recognises is not a pass. Same rule as the three above: an
 	// unjudged pair is never silently "compatible".
 	return &exitError{code: ExitFailed, msg: fmt.Sprintf(
-		"closure is not clean and its %d conflict(s) carry no verdict this build recognises",
+		"closure is not clean and its %d conflict(s) carry no compatibility answer this build recognises",
 		len(report.Conflicts))}
 }

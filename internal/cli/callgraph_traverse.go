@@ -161,14 +161,17 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return err
 	}
 	if len(refs) > 0 && !jsonOut {
-		return writeEdgeScopeLine(stdout, "callers", opts)
+		if err := writeEdgeScopeLine(stdout, "callers", opts); err != nil {
+			return err
+		}
+		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callers", symbolID, refs, true)
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
-		return writeCallVerdict(stdout, "callers", symbolID, v, opts)
+		return writeCallAnswer(stdout, "callers", symbolID, v, opts)
 	}
 	return nil
 }
@@ -277,14 +280,17 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return err
 	}
 	if len(refs) > 0 && !jsonOut {
-		return writeEdgeScopeLine(stdout, "callees", opts)
+		if err := writeEdgeScopeLine(stdout, "callees", opts); err != nil {
+			return err
+		}
+		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callees", symbolID, refs, false)
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
-		return writeCallVerdict(stdout, "callees", symbolID, v, opts)
+		return writeCallAnswer(stdout, "callees", symbolID, v, opts)
 	}
 	return nil
 }
@@ -454,14 +460,17 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return err
 	}
 	if len(nodes) > 0 && !jsonOut {
-		return writeEdgeScopeLine(stdout, "callers", opts)
+		if err := writeEdgeScopeLine(stdout, "callers", opts); err != nil {
+			return err
+		}
+		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callers", symbolID, edges, nodes, true)
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
-		return writeCallVerdict(stdout, "transitive callers", symbolID, v, opts)
+		return writeCallAnswer(stdout, "transitive callers", symbolID, v, opts)
 	}
 	return nil
 }
@@ -521,14 +530,17 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return err
 	}
 	if len(nodes) > 0 && !jsonOut {
-		return writeEdgeScopeLine(stdout, "callees", opts)
+		if err := writeEdgeScopeLine(stdout, "callees", opts); err != nil {
+			return err
+		}
+		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callees", symbolID, edges, nodes, false)
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
-		return writeCallVerdict(stdout, "transitive callees", symbolID, v, opts)
+		return writeCallAnswer(stdout, "transitive callees", symbolID, v, opts)
 	}
 	return nil
 }

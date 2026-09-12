@@ -208,8 +208,8 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		label:   notScannedNote + " (the target could not be loaded)",
 		heading: notScannedNote + " — the walk target could not be loaded, so nothing was rooted at it",
 		explanation: "the run asked for an analysis rooted at this module and the toolchain could not load its packages, " +
-			"so no call graph was built and this module has no verdict in the run's own frame; " +
-			"any per-module verdicts this run reports come from isolated scans, which answer a weaker question",
+			"so no call graph was built and this module has no status in the run's own frame; " +
+			"any per-module statuses this run reports come from isolated scans, which answer a weaker question",
 	},
 	// One fault, fanned out: the directory the walk was taken from moved on, and
 	// that is a single fact about the run, not N module problems. Every

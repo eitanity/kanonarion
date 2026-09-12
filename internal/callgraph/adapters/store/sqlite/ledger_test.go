@@ -3,6 +3,7 @@ package sqlite_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1437,6 +1438,88 @@ func TestLedger_IdenticalGenerationFindsTheMeasurementAlreadyHeld(t *testing.T) 
 	}
 	if got.ContentHash != held.ContentHash {
 		t.Fatalf("content hash = %q, want the generation already held (%q)", got.ContentHash, held.ContentHash)
+	}
+}
+
+// TestLedger_IdenticalGenerationWalksEveryCandidateAndAppendsNothing.
+//
+// The prefilter returns every plausible duplicate, newest first, and the loop
+// stops at the first match — so the case that walks the whole set is the one
+// where the match is the OLDEST row. The fresh record is canonicalised once for
+// that whole walk rather than once per candidate, and this is what pins that the
+// once is taken over the right record: a seal taken over a candidate, or reused
+// from a previous call, would match the wrong row or none.
+//
+// It also asserts what KN-704's rule is FOR, at the store: asking the question
+// appends nothing, and a record that differs is still not matched, so the caller
+// still appends it.
+func TestLedger_IdenticalGenerationWalksEveryCandidateAndAppendsNothing(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	spec := ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:tree-one=",
+		completeness: domain2.CompletenessBuiltWithBodies, at: testTime, callee: "example.com/mod.A",
+	}
+	// The oldest row is the one the fresh analysis restates. Every later row
+	// states a graph that reached a different symbol, so each of them passes the
+	// fourteen-column prefilter — same counts, same status, same completeness —
+	// and only the decoded comparison separates it.
+	restated := ledgerRecord(t, spec)
+	if perr := s.PutCallGraphRecord(ctx, restated); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
+	}
+	const candidates = 5
+	for i := 1; i < candidates; i++ {
+		other := spec
+		other.at = testTime.Add(time.Duration(i) * time.Hour)
+		other.callee = fmt.Sprintf("example.com/mod.Elsewhere%d", i)
+		if perr := s.PutCallGraphRecord(ctx, ledgerRecord(t, other)); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+	held, lerr := s.ListCallGraphRecordsFor(ctx, local, testPipeline)
+	if lerr != nil {
+		t.Fatalf("ListCallGraphRecordsFor: %v", lerr)
+	}
+	if len(held) != candidates {
+		t.Fatalf("the ledger holds %d generations, want %d; the fixture is not a deep candidate set", len(held), candidates)
+	}
+
+	// The next run of the unchanged input: the same measurement, a later clock.
+	fresh := spec
+	fresh.at = testTime.Add(candidates * time.Hour)
+	freshRecord := ledgerRecord(t, fresh)
+	if freshRecord.ContentHash == restated.ContentHash {
+		t.Fatal("the two runs sealed identically; the fixture is not exercising the case")
+	}
+	got, found, gerr := s.IdenticalGeneration(ctx, freshRecord)
+	if gerr != nil || !found {
+		t.Fatalf("IdenticalGeneration: found=%v err=%v — the walk did not reach the oldest candidate", found, gerr)
+	}
+	if got.ContentHash != restated.ContentHash {
+		t.Fatalf("matched %q, want the oldest generation (%q)", got.ContentHash, restated.ContentHash)
+	}
+
+	// A record that differs — here in the artefact it read, which the comparison
+	// does NOT set aside and no column can see — is still not matched, so the run
+	// that produced it still appends it.
+	elsewhere := fresh
+	elsewhere.artefact = "zip:h1:tree-two="
+	if _, found, ferr := s.IdenticalGeneration(ctx, ledgerRecord(t, elsewhere)); ferr != nil || found {
+		t.Fatalf("an analysis of different bytes matched a held generation: found=%v err=%v", found, ferr)
+	}
+
+	after, lerr := s.ListCallGraphRecordsFor(ctx, local, testPipeline)
+	if lerr != nil {
+		t.Fatalf("ListCallGraphRecordsFor: %v", lerr)
+	}
+	if len(after) != candidates {
+		t.Errorf("the ledger holds %d generations after the check, want %d; asking the question wrote to it", len(after), candidates)
 	}
 }
 

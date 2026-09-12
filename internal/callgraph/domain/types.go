@@ -101,6 +101,20 @@ import (
 // the verdict layer downgrades to UNRESOLVED over it. Bumping instead would take
 // every stored graph out of every answer until re-extraction — a purge by
 // another name, to replace a fact the record can simply state.
+//
+// ForeignModulesBuilt joined on those same terms, and it is the one case where
+// the "absent reads as not-measured" argument is carried by THIS constant rather
+// than by the field. It is omitted when empty, so every stored record re-marshals
+// to the bytes it was sealed over; but an absent value genuinely does read two
+// ways — this analysis built no foreign module's packages, or the record predates
+// the field — and a consumer that must tell them apart reads the schema version,
+// which is what a schema version is for. The alternative considered was an
+// always-present key, and it is not available: verification re-marshals the
+// struct rather than checking the stored bytes, so a key on every record moves
+// every record's digest and the axis would cost a bump plus a migration to state
+// a fact that changes no old record's meaning. No old record is made to say
+// anything false: they were silent about holding another module's built code, and
+// silence is what is being replaced.
 const CallGraphSchemaVersion = "13"
 
 // TestScope records whether a module's _test.go declarations were part of the
@@ -133,16 +147,28 @@ func (t TestScope) IsMeasured() bool { return t == TestScopeAnalysed }
 // points the analysis cannot enumerate (framework dispatch, registered
 // callbacks, goroutine entries), so every owned function is a root; a library is
 // only exercised through what a consumer can call.
+//
+// The three values are two findings and an absence. A vocabulary of only
+// "application" and "library" had no way to say a load resolved nothing, so a
+// failed measurement was stored as the positive claim that the module is a
+// library.
 type ArtifactKind string
 
 const (
 	// ArtifactLibrary is a module with no command: it is reached only through
-	// its exported API and package init. It is the zero value, so a record
-	// persisted before this field existed keeps the pre-existing behaviour.
+	// its exported API and package init. It is a positive finding — every
+	// package the module owns loaded and none of them builds a command. It is
+	// also the zero value, so a record persisted before ArtifactNotEstablished
+	// existed reads exactly as it did before.
 	ArtifactLibrary ArtifactKind = ""
 	// ArtifactApplication is a module that builds a command — it contains a
 	// package main defining func main.
 	ArtifactApplication ArtifactKind = "Application"
+	// ArtifactNotEstablished is the analysis stating it could not tell: no
+	// package of the module loaded, or some did not, so a command may sit in the
+	// part that never resolved. Rooting treats it as a library and says so, so
+	// the default is not read as a measurement.
+	ArtifactNotEstablished ArtifactKind = "NotEstablished"
 )
 
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
@@ -164,8 +190,20 @@ const (
 	// CallGraphStatusLoadFailed means package loading failed fatally; no graph
 	// was produced.
 	CallGraphStatusLoadFailed
-	// CallGraphStatusOutOfMemory means the extraction hit the configured memory
-	// budget and was terminated cleanly.
+	// CallGraphStatusOutOfMemory means the analysis ran out of memory: the host
+	// could not hold the module's SSA closure and the operating system ended the
+	// process doing the holding.
+	//
+	// It is stated by the RUN, not by the analysis. An analysis the kernel ends
+	// gets no chance to write anything, so a status it had to record itself would
+	// only ever exist for failures mild enough not to need it — which is why this
+	// value sat in the type for a year with nothing producing it. The extraction
+	// stage produces it in the parent, about a child it saw ended by a signal
+	// that neither of its own deadlines explains.
+	//
+	// It is always FailureCauseEnvironment: it describes what this host could
+	// carry at one moment, never the published bytes. The same module on an idle
+	// machine, or beside fewer concurrent analyses, may come back complete.
 	CallGraphStatusOutOfMemory
 	// CallGraphStatusCancelled means extraction was interrupted by context
 	// cancellation.
@@ -449,11 +487,13 @@ type CallGraphRecord struct {
 	// caveat keys off, so neither has to infer fidelity from node/edge totals.
 	Completeness CompletenessLevel
 	// ArtifactKind is what the analysed module is — an application that builds a
-	// command, or a library. Reachability roots are conditioned on it: an
-	// application roots every owned node, because code the runtime dispatches to
-	// dynamically is still the application's own code and its capabilities are
-	// really exercised. Empty means library, so pre-v10 records keep their
-	// original rooting.
+	// command, a library, or not established. Reachability roots are conditioned
+	// on it: an application roots every owned node, because code the runtime
+	// dispatches to dynamically is still the application's own code and its
+	// capabilities are really exercised. Empty means library, so pre-v10 records
+	// keep their original rooting. A record whose analysis did not resolve the
+	// module's whole package set says ArtifactNotEstablished rather than
+	// claiming the library it was never in a position to observe.
 	ArtifactKind ArtifactKind
 	Nodes        []CallNode
 	Edges        []CallEdge
@@ -644,6 +684,15 @@ type CallGraphRecord struct {
 	// The zero value means the published bytes were analysed as published. See
 	// SynthesisedGoMod for why that is a statement and not merely an absence.
 	SynthesisedGoMod SynthesisedGoMod
+	// DroppedReplaces names every replace directive this analysis removed from the
+	// extracted module's own go.mod before loading it, sorted. Like
+	// SynthesisedGoMod it says the analysed tree is not the published tree, and
+	// exactly how.
+	//
+	// Empty means nothing was dropped. That is the truth about every record
+	// written before the field existed — nothing dropped a directive then — so
+	// there is no unrecorded third state to ladder against. See DroppedReplace.
+	DroppedReplaces []DroppedReplace
 	// BuildListSource names the walk whose resolved build list was OFFERED to this
 	// analysis, whether or not anything was pinned from it.
 	//
@@ -676,6 +725,24 @@ type CallGraphRecord struct {
 	// "none happened". Nothing may infer from an empty list that a record's
 	// membership was measured.
 	PrefixAttributedPackages []string
+	// ForeignModulesBuilt names every module OTHER than the analysed one whose
+	// packages this analysis built with bodies, at the version resolution gave
+	// it, sorted.
+	//
+	// It is the claim the completeness ladder could not make. Completeness is a
+	// per-MODULE level, and a record that holds a nested module's built packages
+	// says BUILT_WITH_BODIES about code belonging to a module it does not name —
+	// so within one record the level meant two different things depending on
+	// which node a query landed on. This names the second population, so a
+	// negative answered from it can say which record answered and at what version.
+	//
+	// Empty means this analysis built no foreign module's packages. It is also
+	// what a record written before the field existed carries, and those two are
+	// separated by the record's own SchemaVersion rather than by an
+	// always-present key: the field is omitted from the sealed shape when empty,
+	// on the terms every additive field here has used, so every stored record
+	// re-marshals to the bytes it was sealed over.
+	ForeignModulesBuilt []ForeignModule
 	// DerivedBy states WHY this generation exists: which reuse gate governed the
 	// append, and whether the run asked it or forced past it. See
 	// GenerationDerivation.

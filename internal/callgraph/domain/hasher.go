@@ -1,15 +1,18 @@
 package domain
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"sort"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -28,12 +31,11 @@ func (CallGraphRecordHasher) SetContentHash(r CallGraphRecord) (CallGraphRecord,
 	// hash does not stand behind.
 	r = canonicalOrder(r)
 	r.ContentHash = ""
-	data, err := marshalCanonical(r)
+	sum, err := hashCanonical(r)
 	if err != nil {
 		return CallGraphRecord{}, fmt.Errorf("marshalling for hash: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	r.ContentHash = "sha256:" + hex.EncodeToString(sum[:])
+	r.ContentHash = sum
 	return r, nil
 }
 
@@ -70,6 +72,10 @@ func canonicalOrder(r CallGraphRecord) CallGraphRecord {
 	sort.Strings(r.FailedPackages)
 	r.PrefixAttributedPackages = append([]string(nil), r.PrefixAttributedPackages...)
 	sort.Strings(r.PrefixAttributedPackages)
+	r.ForeignModulesBuilt = append([]ForeignModule(nil), r.ForeignModulesBuilt...)
+	sort.Slice(r.ForeignModulesBuilt, func(i, j int) bool {
+		return ForeignModuleLess(r.ForeignModulesBuilt[i], r.ForeignModulesBuilt[j])
+	})
 	return r
 }
 
@@ -78,12 +84,10 @@ func canonicalOrder(r CallGraphRecord) CallGraphRecord {
 func (CallGraphRecordHasher) VerifyContentHash(r CallGraphRecord) error {
 	saved := r.ContentHash
 	r.ContentHash = ""
-	data, err := marshalCanonical(r)
+	expected, err := hashCanonical(r)
 	if err != nil {
 		return fmt.Errorf("marshalling for verification: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	expected := "sha256:" + hex.EncodeToString(sum[:])
 	if saved != expected {
 		return fmt.Errorf("content hash mismatch: stored %q, computed %q", saved, expected)
 	}
@@ -195,6 +199,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		FailureDetail:            c.FailureDetail,
 		FailedPackages:           c.FailedPackages,
 		PrefixAttributedPackages: c.PrefixAttributedPackages,
+		ForeignModulesBuilt:      domainForeignModules(c.ForeignModulesBuilt),
 		ExclusionReason:          c.ExclusionReason,
 		ExclusionList:            c.ExclusionList,
 		NodeCount:                c.NodeCount,
@@ -220,7 +225,76 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			VendorTreePresent: c.SynthesisedGoMod.VendorTreePresent,
 			Requires:          domainRequires(c.SynthesisedGoMod.Requires),
 		},
+		DroppedReplaces: domainDroppedReplaces(c.DroppedReplaces),
 	}, nil
+}
+
+// canonicalDroppedReplaces renders the dropped replace directives onto the wire,
+// keeping nil as nil so a record that dropped none marshals to the bytes it
+// always did.
+func canonicalDroppedReplaces(ds []DroppedReplace) []canonicalDroppedReplace {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]canonicalDroppedReplace, 0, len(ds))
+	for _, d := range ds {
+		// The wire and domain shapes are deliberately separate types; the conversion
+		// is legal only while their fields coincide, so a field added to either stops
+		// compiling here rather than silently changing what stored records hash over.
+		out = append(out, canonicalDroppedReplace{Path: d.Path, Target: d.Target, Version: d.Version})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return DroppedReplaceLess(
+			DroppedReplace{Path: out[i].Path, Version: out[i].Version, Target: out[i].Target},
+			DroppedReplace{Path: out[j].Path, Version: out[j].Version, Target: out[j].Target},
+		)
+	})
+	return out
+}
+
+// domainDroppedReplaces reads the dropped replace directives back off the wire.
+func domainDroppedReplaces(ds []canonicalDroppedReplace) []DroppedReplace {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]DroppedReplace, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, DroppedReplace{Path: d.Path, Version: d.Version, Target: d.Target})
+	}
+	return out
+}
+
+// canonicalForeignModules renders the foreign modules this analysis built onto
+// the wire, keeping nil as nil so a record that built none marshals to the bytes
+// it always did.
+func canonicalForeignModules(mods []ForeignModule) []canonicalForeignModule {
+	if len(mods) == 0 {
+		return nil
+	}
+	out := make([]canonicalForeignModule, 0, len(mods))
+	for _, m := range mods {
+		// The wire and domain shapes are deliberately separate types; the conversion
+		// is legal only while their fields coincide, so a field added to either
+		// stops compiling here rather than silently changing what stored records
+		// hash over.
+		out = append(out, canonicalForeignModule(m))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return ForeignModuleLess(ForeignModule(out[i]), ForeignModule(out[j]))
+	})
+	return out
+}
+
+// domainForeignModules reads the foreign modules back off the wire.
+func domainForeignModules(mods []canonicalForeignModule) []ForeignModule {
+	if len(mods) == 0 {
+		return nil
+	}
+	out := make([]ForeignModule, 0, len(mods))
+	for _, m := range mods {
+		out = append(out, ForeignModule(m))
+	}
+	return out
 }
 
 // canonicalRequires renders the pinned require directives onto the wire, keeping
@@ -376,12 +450,25 @@ type canonicalRecord struct {
 	// exactly the bytes it always did and keeps its stored content hash
 	// verifiable. Absent is "no prefix attribution recorded", not "none happened"
 	// — see the domain field.
-	PrefixAttributedPackages []string        `json:"prefix_attributed_packages,omitempty"`
-	Nodes                    []canonicalNode `json:"nodes"`
-	OverallStatus            int             `json:"overall_status"`
-	PipelineVersion          string          `json:"pipeline_version"`
-	SchemaVersion            string          `json:"schema_version"`
-	SourceContentHash        string          `json:"source_content_hash,omitempty"`
+	PrefixAttributedPackages []string `json:"prefix_attributed_packages,omitempty"`
+	// ForeignModulesBuilt is omitted when empty, on the terms every additive field
+	// on this shape has used: every record sealed before it marshals to exactly
+	// the bytes it always did and keeps its stored content hash verifiable, so the
+	// axis lands with no PipelineVersion bump and no migration.
+	//
+	// Absent therefore reads two ways — this analysis built no foreign module's
+	// packages, or the record predates the field — and the record's own
+	// schema_version is what separates them. That is what a schema version is for,
+	// and an always-present key bought the same distinction at the cost of every
+	// stored record's content hash: verification re-marshals the struct rather
+	// than checking the stored bytes, so a new key present on every record moves
+	// every record's digest.
+	ForeignModulesBuilt []canonicalForeignModule `json:"foreign_modules_built,omitzero"`
+	Nodes               []canonicalNode          `json:"nodes"`
+	OverallStatus       int                      `json:"overall_status"`
+	PipelineVersion     string                   `json:"pipeline_version"`
+	SchemaVersion       string                   `json:"schema_version"`
+	SourceContentHash   string                   `json:"source_content_hash,omitempty"`
 	// SynthesisedGoMod is omitted when zero so every record sealed before the
 	// field existed marshals to exactly the bytes it always did and keeps its
 	// stored content hash verifiable — the terms every additive field on this
@@ -389,6 +476,18 @@ type canonicalRecord struct {
 	// go.mod before this field, so absent means the published tree was analysed
 	// as published.
 	SynthesisedGoMod canonicalSynthesisedGoMod `json:"synthesised_go_mod,omitzero"`
+	// DroppedReplaces is omitted when empty, on the terms every additive field on
+	// this shape has used: every record sealed before it marshals to exactly the
+	// bytes it always did and keeps its stored content hash verifiable, so the
+	// axis lands with no PipelineVersion bump and no migration. An absent list is
+	// not "unrecorded" — no analysis dropped a directive before this field, so
+	// absent means the module's own go.mod was loaded as published.
+	//
+	// It is INSIDE the seal because it changes what the graph is. A build with a
+	// dangling replace resolves a different set of dependency versions from one
+	// without it, so two analyses of the same bytes that dropped different
+	// directives are two different graphs and the digest has to say so.
+	DroppedReplaces []canonicalDroppedReplace `json:"dropped_replaces,omitzero"`
 	// ReferenceScope is omitted when unmeasured, which is the truth about every
 	// record sealed before reference edges were extracted.
 	ReferenceScope  string `json:"reference_scope,omitempty"`
@@ -433,6 +532,15 @@ type canonicalSynthesisedGoMod struct {
 	VendorTreePresent bool               `json:"vendor_tree_present"`
 }
 
+// canonicalDroppedReplace is the wire shape of domain.DroppedReplace, pinned
+// separately from the domain type so a field added there does not silently
+// change what every stored record hashes over.
+type canonicalDroppedReplace struct {
+	Path    string `json:"path"`
+	Target  string `json:"target"`
+	Version string `json:"version,omitempty"`
+}
+
 // canonicalDerivation is the wire shape of domain.GenerationDerivation, pinned
 // separately from the domain type so a field added there does not silently
 // change what every stored record hashes over.
@@ -447,17 +555,24 @@ type canonicalRequire struct {
 	Version string `json:"version"`
 }
 
-func marshalCanonical(r CallGraphRecord) ([]byte, error) {
-	// marshalCanonical owns the canonical ordering. It sorts copies, so hashing
-	// never mutates the caller's record, and no caller has to remember to put a
-	// record in order before it is sealed.
-	nodes := make([]CallNode, len(r.Nodes))
-	copy(nodes, r.Nodes)
-	sort.Slice(nodes, func(i, j int) bool { return CallNodeLess(nodes[i], nodes[j]) })
+// canonicalForeignModule is the wire shape of domain.ForeignModule, pinned
+// separately from the domain type so a field added there does not silently
+// change what every stored record hashes over.
+type canonicalForeignModule struct {
+	Path    string `json:"path"`
+	Version string `json:"version"`
+}
 
-	edges := make([]CallEdge, len(r.Edges))
-	copy(edges, r.Edges)
-	sort.Slice(edges, func(i, j int) bool { return CallEdgeLess(edges[i], edges[j]) })
+// canonicalShell builds the canonical form of every part of r EXCEPT its edges,
+// leaving Edges nil so the shape marshals with a "edges":null placeholder. The
+// two callers fill that placeholder differently — marshalCanonical with the
+// whole array, hashCanonical by streaming it — and share this so neither can
+// drift into hashing a different record from the one the other marshals.
+func canonicalShell(r CallGraphRecord) canonicalRecord {
+	// The canonical ordering is owned here. Ordering never mutates the caller's
+	// record, and no caller has to remember to put a record in order before it is
+	// sealed.
+	nodes := canonicalNodeOrder(r.Nodes)
 
 	cNodes := make([]canonicalNode, len(nodes))
 	for i, n := range nodes {
@@ -476,18 +591,6 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			UsesUnsafePointer:    n.UsesUnsafePointer,
 		}
 	}
-	cEdges := make([]canonicalEdge, len(edges))
-	for i, e := range edges {
-		cEdges[i] = canonicalEdge{
-			CallSite:        canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
-			Confidence:      string(e.Confidence),
-			FromID:          e.FromID,
-			Kind:            string(e.Kind),
-			ReflectDispatch: e.ReflectDispatch,
-			ToID:            e.ToID,
-		}
-	}
-
 	var cIfaces []canonicalInterface
 	if len(r.Interfaces) > 0 {
 		ifaces := make([]InterfaceType, len(r.Interfaces))
@@ -577,10 +680,9 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		},
 		Ecosystem:                r.Ecosystem,
 		EdgeCount:                r.EdgeCount,
-		Edges:                    cEdges,
 		ExclusionList:            exclusions,
 		ExclusionReason:          r.ExclusionReason,
-		ExtractedAt:              r.ExtractedAt.UTC().Format(time.RFC3339),
+		ExtractedAt:              recordstamp.Format(r.ExtractedAt),
 		FailedPackages:           failedPkgs,
 		FailureCause:             string(r.FailureCause),
 		FailureDetail:            r.FailureDetail,
@@ -589,6 +691,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		NodeCount:                r.NodeCount,
 		Nodes:                    cNodes,
 		PrefixAttributedPackages: prefixAttributed,
+		ForeignModulesBuilt:      canonicalForeignModules(r.ForeignModulesBuilt),
 		OverallStatus:            int(r.OverallStatus),
 		PipelineVersion:          r.PipelineVersion,
 		SchemaVersion:            r.SchemaVersion,
@@ -600,6 +703,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			Requires:          canonicalRequires(r.SynthesisedGoMod.Requires),
 			VendorTreePresent: r.SynthesisedGoMod.VendorTreePresent,
 		},
+		DroppedReplaces:    canonicalDroppedReplaces(r.DroppedReplaces),
 		ReferenceScope:     string(r.ReferenceScope),
 		TestScope:          string(r.TestScope),
 		TestScopeDetail:    r.TestScopeDetail,
@@ -607,6 +711,16 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		WorktreeScanDigest: r.WorktreeScanDigest,
 		AnalysisRoot:       r.AnalysisRoot,
 		Toolchain:          string(r.Toolchain),
+	}
+	return c
+}
+
+func marshalCanonical(r CallGraphRecord) ([]byte, error) {
+	edges := canonicalEdgeOrder(r.Edges)
+	c := canonicalShell(r)
+	c.Edges = make([]canonicalEdge, len(edges))
+	for i := range edges {
+		c.Edges[i] = canonicalEdgeOf(edges[i])
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {
@@ -622,3 +736,142 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 // correct, not that the guard is reachable with a real value today — it
 // exists for the never-silent-failure invariant, not a known failure mode.
 var canonicalMarshal = json.Marshal
+
+// canonicalEdgeChunk is how many edges are encoded at a time while streaming a
+// record into its digest. One at a time costs an allocation per edge; the whole
+// array at once is the copy the streaming exists to avoid.
+const canonicalEdgeChunk = 4096
+
+// edgesPlaceholder is what canonicalShell's nil Edges marshals to. Streaming
+// replaces this one span with the array; see hashCanonical for why it cannot
+// collide with anything else in the bytes.
+const edgesPlaceholder = `"edges":null`
+
+// hashCanonical computes the content hash over exactly the bytes
+// marshalCanonical produces, without ever holding them. A verified read
+// re-marshals the whole edge set, and that materialised JSON was the largest
+// single term in what such a read cost.
+//
+// It is byte-for-byte the same digest, not an equivalent one: this may reduce
+// what a verification costs and may not change what it verifies. The test
+// asserts the equality against marshalCanonical directly.
+//
+// The split is by the "edges":null placeholder canonicalShell leaves, which
+// cannot appear anywhere else: the key is unique on the shape, and a string
+// value containing it would have its quotes escaped. A count other than one is
+// a failure rather than a guess — guessing which span to replace would seal a
+// record over bytes nobody chose.
+func hashCanonical(r CallGraphRecord) (string, error) {
+	edges := canonicalEdgeOrder(r.Edges)
+	shell, err := canonicalMarshal(canonicalShell(r))
+	if err != nil {
+		return "", fmt.Errorf("marshalling canonical callgraph record: %w", err)
+	}
+	at := bytes.Index(shell, []byte(edgesPlaceholder))
+	if at < 0 || bytes.Contains(shell[at+len(edgesPlaceholder):], []byte(edgesPlaceholder)) {
+		return "", fmt.Errorf("locating the edge array in the canonical callgraph record: want exactly one %s", edgesPlaceholder)
+	}
+	tail := at + len(edgesPlaceholder)
+
+	h := sha256.New()
+	hashWrite(h, shell[:at])
+	hashWrite(h, []byte(`"edges":`))
+	if err := writeCanonicalEdges(h, edges); err != nil {
+		return "", err
+	}
+	hashWrite(h, shell[tail:])
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// writeCanonicalEdges writes the canonical JSON array of edges into h without
+// holding it. Two digests are taken over a record's edges — the seal and the
+// one conflict detection compares generations by — and both stream through
+// here, so neither can drift into hashing a different array from the other.
+func writeCanonicalEdges(h hash.Hash, edges []CallEdge) error {
+	hashWrite(h, []byte{'['})
+	// One buffer and one encoder for every chunk: json.Marshal would hand back a
+	// fresh slice per chunk, which is the same copy a chunk at a time.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	chunk := make([]canonicalEdge, 0, canonicalEdgeChunk)
+	for start := 0; start < len(edges); start += canonicalEdgeChunk {
+		stop := min(start+canonicalEdgeChunk, len(edges))
+		chunk = chunk[:0]
+		for i := start; i < stop; i++ {
+			chunk = append(chunk, canonicalEdgeOf(edges[i]))
+		}
+		buf.Reset()
+		if err := enc.Encode(chunk); err != nil {
+			return fmt.Errorf("marshalling canonical callgraph edges: %w", err)
+		}
+		// Encode writes the chunk's own array and a trailing newline. The
+		// brackets and the newline are dropped, and the chunks are joined by the
+		// comma the whole array would have carried anyway.
+		b := buf.Bytes()
+		if start > 0 {
+			hashWrite(h, []byte{','})
+		}
+		hashWrite(h, b[1:len(b)-2])
+	}
+	hashWrite(h, []byte{']'})
+	return nil
+}
+
+// hashWrite writes b to h. hash.Hash documents that Write never returns an
+// error, so there is nothing here for a caller to handle.
+func hashWrite(h hash.Hash, b []byte) {
+	_, _ = h.Write(b) //nolint:errcheck // #nosec G104 -- hash.Hash.Write never errors
+}
+
+func canonicalEdgeOf(e CallEdge) canonicalEdge {
+	return canonicalEdge{
+		CallSite:        canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
+		Confidence:      string(e.Confidence),
+		FromID:          e.FromID,
+		Kind:            string(e.Kind),
+		ReflectDispatch: e.ReflectDispatch,
+		ToID:            e.ToID,
+	}
+}
+
+// canonicalEdgeOrder returns the edges in canonical order, copying only when
+// they are not in it already. The copy was never the point — not mutating the
+// caller's slice is — and edges read back from the store arrive sorted, under
+// the same ORDER BY the canonical form uses.
+func canonicalEdgeOrder(edges []CallEdge) []CallEdge {
+	if edgesInCanonicalOrder(edges) {
+		return edges
+	}
+	out := make([]CallEdge, len(edges))
+	copy(out, edges)
+	sort.Slice(out, func(i, j int) bool { return CallEdgeLess(out[i], out[j]) })
+	return out
+}
+
+func edgesInCanonicalOrder(edges []CallEdge) bool {
+	for i := 1; i < len(edges); i++ {
+		if CallEdgeLess(edges[i], edges[i-1]) {
+			return false
+		}
+	}
+	return true
+}
+
+// canonicalNodeOrder is canonicalEdgeOrder's counterpart for nodes, on the same
+// terms and for the same reason.
+func canonicalNodeOrder(nodes []CallNode) []CallNode {
+	sorted := true
+	for i := 1; i < len(nodes); i++ {
+		if CallNodeLess(nodes[i], nodes[i-1]) {
+			sorted = false
+			break
+		}
+	}
+	if sorted {
+		return nodes
+	}
+	out := make([]CallNode, len(nodes))
+	copy(out, nodes)
+	sort.Slice(out, func(i, j int) bool { return CallNodeLess(out[i], out[j]) })
+	return out
+}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 )
 
 // ExtractionRunStatus summarises the overall outcome of an ExtractionRun.
@@ -20,6 +21,18 @@ const (
 	ExtractionRunFailed
 	// ExtractionRunCancelled means the context was cancelled during the run.
 	ExtractionRunCancelled
+	// ExtractionRunInProgress means the run had not finished when this record was
+	// written. It is the only status a run can carry that describes the record
+	// rather than the outcome, and it exists because the worst failure mode was
+	// the one that recorded nothing about itself: a run persisted only on
+	// completion leaves no trace at all when the operating system ends it, and
+	// the modules it never reached are indistinguishable from modules that do not
+	// exist.
+	//
+	// A run that still says this once its process is gone did not finish. What it
+	// completed before then is in PerModuleResults and is true; CompletedAt is
+	// zero, because it never did.
+	ExtractionRunInProgress
 )
 
 func (s ExtractionRunStatus) String() string {
@@ -32,6 +45,8 @@ func (s ExtractionRunStatus) String() string {
 		return "failed"
 	case ExtractionRunCancelled:
 		return "cancelled"
+	case ExtractionRunInProgress:
+		return "in_progress"
 	default:
 		return fmt.Sprintf("ExtractionRunStatus(%d)", int(s))
 	}
@@ -57,6 +72,8 @@ func (s *ExtractionRunStatus) UnmarshalJSON(data []byte) error {
 		*s = ExtractionRunFailed
 	case "cancelled":
 		*s = ExtractionRunCancelled
+	case "in_progress":
+		*s = ExtractionRunInProgress
 	default:
 		return fmt.Errorf("invalid ExtractionRunStatus: %q", str)
 	}
@@ -117,10 +134,15 @@ type ModuleExtractionResult struct {
 
 // StageResult captures the outcome and record ID of a single stage.
 type StageResult struct {
-	Status     StageStatus `json:"status"`
-	RecordID   string      `json:"record_id,omitzero"`
-	Error      string      `json:"error,omitzero"`
-	DurationMs int64       `json:"duration_ms"`
+	Status   StageStatus `json:"status"`
+	RecordID string      `json:"record_id,omitzero"`
+	Error    string      `json:"error,omitzero"`
+	// Cause says what a failed stage is a statement about: the module, or this
+	// host. It is omitzero and absent from every stage recorded before it
+	// existed, so those records seal to the bytes they always did — and an
+	// absent cause is read as "not stated", never as the module's fault.
+	Cause      failurecause.Cause `json:"cause,omitzero"`
+	DurationMs int64              `json:"duration_ms"`
 }
 
 // ExtractionRunSchemaVersion is the schema version for ExtractionRun JSON.

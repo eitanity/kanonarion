@@ -24,7 +24,7 @@ execute root command: closure has unmodelled license pairs requiring review
       "spdx_origin": "module_root",
       "module_spdx": "",
       "target_spdx": "MIT",
-      "verdict": "unknown_pair",
+      "compatibility": "unknown_pair",
       "kind": "unknown_pair",
       "license_measurement": "unmeasured"
     }

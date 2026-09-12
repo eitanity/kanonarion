@@ -12,6 +12,7 @@ import (
 	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
 	domain "github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
+	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/spf13/cobra"
 )
 
@@ -39,10 +40,13 @@ func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
-	cmd.Flags().StringSliceVar(&f.stages, "stages", []string{"license", "interface", "example"}, "Comma-separated list of stages to run (callgraph is excluded by default: it loads each module's full transitive dependency closure into SSA, and running that over a whole walk in --workers concurrent subprocesses is what exhausts memory — one module on its own is a bounded cost, see 'kanonarion callgraph --help'; pass explicitly when needed)")
+	cmd.Flags().StringSliceVar(&f.stages, "stages", []string{"license", "interface", "example"}, "Comma-separated list of stages to run (callgraph is excluded by default: it loads each module's full transitive dependency closure into SSA, which costs far more than the other stages even with --callgraph-workers bounding how many run at once, see 'kanonarion callgraph --help'; pass explicitly when needed)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
-	cmd.Flags().IntVar(&f.workers, "workers", 0, "parallel module extraction workers (0 = number of CPUs; each concurrent callgraph subprocess holds its own module's SSA closure, so the run's peak is roughly this many times the largest module's peak — reduce to limit memory use)")
+	cmd.Flags().IntVar(&f.workers, "workers", 0, "parallel module extraction workers (0 = number of CPUs). It sizes the pool that runs the cheap in-process stages; the memory-heavy callgraph subprocesses are bounded by --callgraph-workers instead, so raising this does not raise the run's peak memory")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerCallgraphTimeoutFlag(cmd)
+	registerCallgraphWorkersFlag(cmd)
+	registerCallgraphMemoryCeilingFlag(cmd)
 
 	cmd.AddCommand(newExtractShowCmd(stdout, stderr))
 	cmd.AddCommand(newExtractListCmd(stdout, stderr))
@@ -83,6 +87,7 @@ func renderExtraction(run domain.ExtractionRun, asJSON bool, stdout io.Writer) e
 // that needs its failures must read the record rather than a returned error.
 func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.Writer) (domain.ExtractionRun, error) {
 	logger := buildLogger(logLevel, stderr)
+	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 
 	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
@@ -99,7 +104,14 @@ func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.W
 	// to silence it along with the heartbeat it introduces. Writing it directly
 	// left `extract --no-progress` narrating anyway, while `vuln-scan
 	// --no-progress` — whose equivalent line already routes here — did not.
-	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "Starting extraction for walk %s...\n", walkID)
+	preamble := progressWriter(stderr, f.noProgress)
+	_, _ = fmt.Fprintf(preamble, "Starting extraction for walk %s...\n", walkID)
+	// Only when the stage that has a bound is one of the ones being run: a
+	// licence-and-interface run never spawns a subprocess, and stating a bound it
+	// will not reach describes a different run.
+	if slices.Contains(f.stages, "callgraph") {
+		_, _ = fmt.Fprintln(preamble, describeCallgraphBound(ctr.CallgraphBound))
+	}
 	run, err := ctr.Extract.Execute(ctx, extractapp.ExtractRequest{
 		WalkID:   walkID,
 		Stages:   f.stages,
@@ -127,6 +139,13 @@ func extractionExit(run domain.ExtractionRun) error {
 	case domain.ExtractionRunCancelled:
 		return &exitError{code: ExitCancelled, msg: fmt.Sprintf(
 			"extraction cancelled: run %s did not reach every module", run.ID)}
+	case domain.ExtractionRunInProgress:
+		// A run still saying this is one whose process is gone: the record is the
+		// checkpoint it wrote before it ended. It shares Cancelled's exit because
+		// it shares Cancelled's meaning for a caller — the run did not reach every
+		// module, and nothing in it is a finding about the ones it missed.
+		return &exitError{code: ExitCancelled, msg: fmt.Sprintf(
+			"extraction incomplete: run %s never finished; it records the modules it had completed", run.ID)}
 	default:
 		return &exitError{code: ExitPartial, msg: fmt.Sprintf(
 			"extraction %s: %d stage(s) failed; run %s records which modules and stages",
@@ -139,7 +158,11 @@ func extractionExit(run domain.ExtractionRun) error {
 type extractStageFailure struct {
 	Module string `json:"module"`
 	Stage  string `json:"stage"`
-	Error  string `json:"error,omitempty"`
+	// Cause says whether the gap is this host's or the module's. Only the first
+	// is repaired by changing something and running again, and a run that names
+	// no cause leaves a reader unable to tell which they are looking at.
+	Cause failurecause.Cause `json:"cause,omitempty"`
+	Error string             `json:"error,omitempty"`
 }
 
 // extractionFailures lists the run's failed stages, ordered so two readings of
@@ -152,6 +175,7 @@ func extractionFailures(run domain.ExtractionRun) []extractStageFailure {
 				failures = append(failures, extractStageFailure{
 					Module: coord.String(),
 					Stage:  stageName,
+					Cause:  stageResult.Cause,
 					Error:  stageResult.Error,
 				})
 			}
@@ -175,10 +199,14 @@ func printExtractionFailures(w io.Writer, run domain.ExtractionRun) {
 	}
 	_, _ = fmt.Fprintf(w, "Failed stages (%d):\n", len(failures))
 	for _, f := range failures {
+		cause := ""
+		if f.Cause != failurecause.Unrecorded {
+			cause = "  cause=" + string(f.Cause)
+		}
 		if f.Error != "" {
-			_, _ = fmt.Fprintf(w, "  %s  stage=%s  error=%s\n", f.Module, f.Stage, f.Error)
+			_, _ = fmt.Fprintf(w, "  %s  stage=%s%s  error=%s\n", f.Module, f.Stage, cause, f.Error)
 		} else {
-			_, _ = fmt.Fprintf(w, "  %s  stage=%s\n", f.Module, f.Stage)
+			_, _ = fmt.Fprintf(w, "  %s  stage=%s%s\n", f.Module, f.Stage, cause)
 		}
 	}
 }
@@ -218,7 +246,14 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			_, _ = fmt.Fprintf(stdout, "Walk ID:        %s\n", run.WalkID)
 			_, _ = fmt.Fprintf(stdout, "Status:         %s\n", run.OverallStatus)
 			_, _ = fmt.Fprintf(stdout, "Started:        %s\n", run.StartedAt.Format(time.RFC3339))
-			_, _ = fmt.Fprintf(stdout, "Completed:      %s\n", run.CompletedAt.Format(time.RFC3339))
+			// A run whose process was ended leaves a checkpoint with no completion
+			// time. Rendering the zero instant prints a date in year one, which
+			// reads as a corrupt record rather than as a run that never finished.
+			completed := "never (the run did not finish)"
+			if !run.CompletedAt.IsZero() {
+				completed = run.CompletedAt.Format(time.RFC3339)
+			}
+			_, _ = fmt.Fprintf(stdout, "Completed:      %s\n", completed)
 			_, _ = fmt.Fprintf(stdout, "Stages:         %s\n", strings.Join(run.RequestedStages, ", "))
 			_, _ = fmt.Fprintf(stdout, "Module Results: %d\n", len(run.PerModuleResults))
 

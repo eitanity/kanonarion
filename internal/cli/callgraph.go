@@ -19,6 +19,13 @@ type cgFlags struct {
 	force        bool
 	fromModcache string
 	fromWalk     string
+	noProgress   bool
+	// narrate is the parent's instruction to report phase transitions whatever
+	// this store's preferences say. A spawned child's stderr is a pipe to the
+	// process bounding it, not a terminal, and those lines are how that process
+	// tells a working analysis from a stalled one: leaving them to an operator
+	// preference would let a config file disable the stall detector.
+	narrate bool
 }
 
 func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -48,9 +55,12 @@ different budget: see 'kanonarion extract --help'.`,
 				// Direct, never execute: 'callgraph' analyses fetched
 				// (consumer-mode) modules; the local working tree is
 				// author-mode and has its own command.
+				// The tree meant is the one the reader is standing in — that is what
+				// they asked for — so the command names it rather than a placeholder
+				// they would have to fill in.
 				return errors.New(
-					"the 'callgraph' command analyses fetched modules; to analyse the " +
-						"local working tree use the 'local' command:\n  kanonarion local <dir>")
+					"the 'callgraph' command analyses fetched modules; the local working " +
+						"tree is analysed by 'kanonarion local .' run from that tree")
 			}
 			if len(args) == 0 {
 				return usageErr(cmd)
@@ -68,6 +78,9 @@ different budget: see 'kanonarion extract --help'.`,
 		"pin a pre-modules module's require directives to the versions this walk resolved")
 	cmd.Flags().BoolVar(&localShim, "local", false, "")
 	_ = cmd.Flags().MarkHidden("local")
+	cmd.Flags().BoolVar(&f.narrate, "narrate-progress", false, "")
+	_ = cmd.Flags().MarkHidden("narrate-progress")
+	registerNoProgressFlag(cmd, &f.noProgress)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 
 	return cmd
@@ -90,6 +103,12 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	}
 
 	logger := buildLogger(logLevel, stderr)
+	// The analysis narrates the phase it is in, so a run that takes minutes says
+	// so rather than looking wedged — and so a parent bounding this process can
+	// tell the difference. See cgports.ProgressPrefix.
+	if f.narrate || (!f.noProgress && activeConfig.Preferences.Progress) {
+		callgraphNarration = stderr
+	}
 
 	coord, err := parseCoordinate(arg)
 	if err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"time"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -26,7 +25,7 @@ func runCallGraphDiff(ctx context.Context, coord coordinate.ModuleCoordinate, f 
 	if len(recs) == 0 {
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no callgraph records for %s at pipeline %s — analyse it first:\n  %s",
-			coord, cgapp.PipelineVersion, domain.ReanalysisCommand(coord, ""))}
+			coord, cgapp.PipelineVersion, domain.ReanalysisInstruction(coord, ""))}
 	}
 
 	measurements := groupBy(recs, domain.MeasurementDigest)
@@ -120,9 +119,9 @@ func printGenerationDiff(stdout io.Writer, coord coordinate.ModuleCoordinate, co
 	}
 	line("\ncomparing the first generation of the first two measurements:\n")
 	line("  left   %s  %s  %d node(s) / %d edge(s)\n",
-		left.ContentHash, left.ExtractedAt.UTC().Format(time.RFC3339), left.NodeCount, left.EdgeCount)
+		left.ContentHash, ledgerStamp(left.ExtractedAt), left.NodeCount, left.EdgeCount)
 	line("  right  %s  %s  %d node(s) / %d edge(s)\n\n",
-		right.ContentHash, right.ExtractedAt.UTC().Format(time.RFC3339), right.NodeCount, right.EdgeCount)
+		right.ContentHash, ledgerStamp(right.ExtractedAt), right.NodeCount, right.EdgeCount)
 
 	if diff.Empty() {
 		line("the two generations state the same record\n")
@@ -232,8 +231,8 @@ func toCallGraphDiffJSON(coord coordinate.ModuleCoordinate, counts diffCounts,
 		Generations:      counts.generations,
 		DistinctMeasures: counts.measurements,
 		DistinctGraphs:   counts.graphs,
-		Left:             &diffSideJSON{ContentHash: left.ContentHash, ExtractedAt: isoTime(left.ExtractedAt), NodeCount: left.NodeCount, EdgeCount: left.EdgeCount},
-		Right:            &diffSideJSON{ContentHash: right.ContentHash, ExtractedAt: isoTime(right.ExtractedAt), NodeCount: right.NodeCount, EdgeCount: right.EdgeCount},
+		Left:             &diffSideJSON{ContentHash: left.ContentHash, ExtractedAt: ledgerStamp(left.ExtractedAt), NodeCount: left.NodeCount, EdgeCount: left.EdgeCount},
+		Right:            &diffSideJSON{ContentHash: right.ContentHash, ExtractedAt: ledgerStamp(right.ExtractedAt), NodeCount: right.NodeCount, EdgeCount: right.EdgeCount},
 		Summary:          diff.Summary(),
 	}
 	for _, f := range diff.Fields {

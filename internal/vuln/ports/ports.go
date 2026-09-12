@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -132,7 +133,7 @@ var ErrSnapshotEmpty = errors.New("vulnerability database snapshot holds no advi
 func EmptySnapshotAbort(snapshot domain.DatabaseSnapshot, count int) error {
 	return fmt.Errorf(
 		"%w: the advisory database snapshot %s@%s holds %d advisories, so a scan against it can only report "+
-			"that nothing was found because nothing was consulted; no verdict may be sealed against it — "+
+			"that nothing was found because nothing was consulted; no status may be sealed against it — "+
 			"fetch a populated database (--fresh) and re-run",
 		ErrSnapshotEmpty, snapshot.Source(), snapshot.Version(), count)
 }
@@ -163,37 +164,108 @@ var ErrSnapshotUnavailable = errors.New("vulnerability database snapshot could n
 func UnavailableSnapshotAbort(snapshot domain.DatabaseSnapshot, stage string, err error) error {
 	return fmt.Errorf(
 		"%w: %s for the advisory database snapshot %s@%s: %v; the record this scan would write names that "+
-			"snapshot, and answering from the live database instead would seal a verdict against an advisory "+
+			"snapshot, and answering from the live database instead would seal a status against an advisory "+
 			"set the record does not state — fix the store or re-fetch the database (--fresh) and re-run",
 		ErrSnapshotUnavailable, stage, snapshot.Source(), snapshot.Version(), err)
 }
 
-// UnreadableRun names one stored scan run a listing could not verify, together
-// with the failure the read path reported.
-type UnreadableRun struct {
-	// ID is the run identifier carried by the stored bytes, or empty when they
-	// could not be parsed far enough to name it. An unnamed row is still
-	// reported: "there is a row here I cannot read" is an answer, and dropping
-	// it because it will not introduce itself is not.
+// RowKind names what sort of stored row a read could not verify, so a report
+// says "record" where it means a record and "run" where it means a run.
+//
+// It is one word rather than two vocabularies because the fact is one fact: a
+// stored row this build cannot reproduce. The listings that raise it and the
+// commands that render it are shared, and a second set of names for the same
+// thing is how the record reads came to abort where the run listings had
+// already learned not to.
+type RowKind string
+
+const (
+	// RowKindRun is a stored walk scan run.
+	RowKindRun RowKind = "run"
+	// RowKindRecord is a stored vulnerability record.
+	RowKindRecord RowKind = "record"
+)
+
+// RowGeneration places a record row in the ledger. A coordinate alone does not
+// pick one row out of a history — the ledger holds a coordinate at several
+// pipeline versions and against several advisory snapshots — so the generation
+// travels beside the identity rather than being spliced into it.
+//
+// The fields are separate because a caller reading this is a caller that could
+// not read the row, and every one of them is optional: the head of a suspect
+// blob may yield all three, some, or none. Each is empty when it was not there.
+// All three are empty for a run, which has no generation.
+type RowGeneration struct {
+	PipelineVersion string
+	SnapshotSource  string
+	SnapshotVersion string
+}
+
+// String renders the generation for prose, empty when there is none to state.
+func (g RowGeneration) String() string {
+	var parts []string
+	if g.PipelineVersion != "" {
+		parts = append(parts, "pipeline "+g.PipelineVersion)
+	}
+	if g.SnapshotVersion != "" {
+		parts = append(parts, "vuln-db "+g.SnapshotVersion)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// UnreadableRow names one stored row a listing could not verify, together with
+// the failure the read path reported.
+type UnreadableRow struct {
+	// Kind says what the row is. Empty renders as the neutral "row": a report
+	// that cannot say which kind still says there is one.
+	Kind RowKind
+
+	// ID is the BARE identity carried by the stored bytes — a run's id, a
+	// record's coordinate — or empty when they could not be parsed far enough to
+	// name it. An unnamed row is still reported: "there is a row here I cannot
+	// read" is an answer, and dropping it because it will not introduce itself is
+	// not.
+	//
+	// Bare, because a machine surface renders this under the key its readable
+	// siblings use, and a consumer must not have to pull a coordinate back out of
+	// a display string. What else the head yielded belongs in Generation.
 	ID string
+
+	// Generation is the rest of what the head yielded about a record row. Zero
+	// for a run.
+	Generation RowGeneration
 
 	// Reason is the read failure exactly as it was reported, so a caller that
 	// wants to tell generation drift from altered bytes can still match on it.
 	Reason error
 }
 
-// String renders one unreadable run for a message, naming the run when the
-// bytes named themselves.
-func (r UnreadableRun) String() string {
-	if r.ID == "" {
-		return fmt.Sprintf("unidentified run: %v", r.Reason)
+// String renders one unreadable row for a message, naming the row when the
+// bytes named themselves. It is the prose form; a structured surface reads the
+// fields.
+func (r UnreadableRow) String() string {
+	kind := string(r.Kind)
+	if kind == "" {
+		kind = "row"
 	}
-	return fmt.Sprintf("run %s: %v", r.ID, r.Reason)
+	named := r.ID
+	if named == "" {
+		named = "unidentified " + kind
+	} else {
+		named = kind + " " + named
+	}
+	if gen := r.Generation.String(); gen != "" {
+		named += " " + gen
+	}
+	return fmt.Sprintf("%s: %v", named, r.Reason)
 }
 
-// UnreadableRuns reports that a scan-run listing returned every row it could
-// verify and names the ones it could not. The verified runs come back as the
-// listing's ordinary result alongside it.
+// UnreadableRows reports that a listing returned every row it could verify and
+// names the ones it could not. The verified rows come back as the listing's
+// ordinary result alongside it.
 //
 // It exists so one seam can serve both kinds of caller. It unwraps to
 // ErrVulnIntegrity, so a consuming command — one whose answer would be wrong if
@@ -202,20 +274,20 @@ func (r UnreadableRun) String() string {
 // the rows it has and the rows it does not, and exits 0: the tool used to
 // diagnose the problem is not the one that refuses to run.
 //
-// The verified runs are returned WITH the error rather than discarded because
+// The verified rows are returned WITH the error rather than discarded because
 // the alternative failure is worse than aborting. A listing that quietly
 // omitted the rows it could not read would answer a question about the store
 // with a clean list that is not true of it, and the reader would have no way to
 // know.
-type UnreadableRuns struct {
-	Runs []UnreadableRun
+type UnreadableRows struct {
+	Rows []UnreadableRow
 }
 
-// Error renders every unreadable run, so a consuming command that only prints
+// Error renders every unreadable row, so a consuming command that only prints
 // the error still says which rows were at fault.
-func (e *UnreadableRuns) Error() string {
-	parts := make([]string, 0, len(e.Runs))
-	for _, r := range e.Runs {
+func (e *UnreadableRows) Error() string {
+	parts := make([]string, 0, len(e.Rows))
+	for _, r := range e.Rows {
 		parts = append(parts, r.String())
 	}
 	return fmt.Sprintf("%s: %s", ErrVulnIntegrity, strings.Join(parts, "; "))
@@ -224,7 +296,7 @@ func (e *UnreadableRuns) Error() string {
 // Unwrap keeps errors.Is(err, ErrVulnIntegrity) true, so every caller that
 // classified this failure before this type existed classifies it the same way
 // now.
-func (e *UnreadableRuns) Unwrap() error { return ErrVulnIntegrity }
+func (e *UnreadableRows) Unwrap() error { return ErrVulnIntegrity }
 
 // VulnerabilityStore defines the port for persisting vulnerability records.
 //
@@ -316,6 +388,8 @@ type VulnerabilityStore interface {
 	// whichever won the frame-blind ladder, which is how a walk-pinned read came
 	// to answer from a different walk entirely. The caller knows which frame it
 	// asked about and selects on it.
+	//
+	// Partial results on the terms ListVulnerabilityRecordsByFindingID states.
 	ListVulnerabilityRecordsForModuleInWalk(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -331,12 +405,9 @@ type VulnerabilityStore interface {
 
 	// ListWalkScanRuns lists all scan runs for a specific walk.
 	//
-	// A row that fails its seal does not end the listing. Implementations return
-	// every run they could verify AND an *UnreadableRuns naming the rest, so the
-	// caller decides: a consumer sees a non-nil error and fails closed as before,
-	// a survey reports the named rows and carries on. One unreadable row must
-	// never make the store unlistable, because the listing is how an operator
-	// finds it.
+	// A row that fails its seal does not end the listing — see the partial-result
+	// rule on ListVulnerabilityRecordsByFindingID, which every listing on this
+	// port follows.
 	ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error)
 
 	// ListAllWalkScanRuns lists all scan runs across all walks, most recent first,
@@ -364,9 +435,33 @@ type VulnerabilityStore interface {
 	// current build contains. A non-empty walkID restricts the answer to the
 	// modules a scan run of that walk covered, and an unknown walkID is an
 	// error rather than an empty result.
+	//
+	// A row that fails its seal does not end the listing. This is where the rule
+	// every listing on this port follows is stated: implementations return every
+	// row they could verify AND an *UnreadableRows naming the rest, so the caller
+	// decides. A consumer sees a non-nil error and fails closed exactly as it did
+	// before the type existed, because *UnreadableRows unwraps to
+	// ErrVulnIntegrity; a survey matches the type, reports the named rows in
+	// place and carries on. One unreadable row must never make the store
+	// unlistable, because the listing is how an operator finds it — and a row
+	// silently dropped instead would answer a question about the store with a
+	// list that is not true of it.
+	//
+	// The line is what the read RETURNS, not how many rows it touches. A read
+	// that hands back rows may hand back the ones it has; a read that COMPOSES a
+	// verdict out of them may not, because a verdict composed over a candidate
+	// set with a row missing states a finding the store cannot support. So
+	// GetLatestVulnerabilityRecord, ListVulnerabilityRecords and the point-in-time
+	// gets fail closed, and the listings here do not.
 	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error)
 
-	// ListVulnerabilityRecords returns all vulnerability records for a walk scan run.
+	// ListVulnerabilityRecords returns all vulnerability records for a walk scan
+	// run.
+	//
+	// It does NOT relax on an unreadable row the way the listings above do: it
+	// composes one verdict per module out of the generations the run reached, and
+	// a verdict composed over a candidate set that is missing a row states a
+	// finding the store cannot support. It fails closed.
 	ListVulnerabilityRecords(ctx context.Context, walkScanRunID string) ([]domain.VulnerabilityRecord, error)
 
 	// ListVulnerabilityRecordsForModule returns every generation the ledger holds
@@ -382,6 +477,8 @@ type VulnerabilityStore interface {
 	// at this generation" — never "nothing at all". A caller turning that empty
 	// answer into a statement about the store asks
 	// ListVulnerabilityRecordGenerationsForModule which generations exist.
+	//
+	// Partial results on the terms ListVulnerabilityRecordsByFindingID states.
 	ListVulnerabilityRecordsForModule(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -402,6 +499,8 @@ type VulnerabilityStore interface {
 	// Nothing point-in-time may be served from it. A record from a superseded
 	// generation is not what a current scan would answer, so a caller that
 	// renders these rows states which generation each came from.
+	//
+	// Partial results on the terms ListVulnerabilityRecordsByFindingID states.
 	ListVulnerabilityRecordsForModuleAllGenerations(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -434,6 +533,18 @@ type VulnerabilityRecordGeneration struct {
 	PipelineVersion string
 	Records         int
 	Findings        int
+	// Walks names the walks whose scans wrote these records, the walk that
+	// wrote the newest of them first. A refusal that must name a re-scan needs
+	// it: vuln-scan takes a walk id, and its --module form resolves only a walk
+	// ROOTED at the coordinate, which a module measured in a consumer's build
+	// has none of.
+	Walks []string
+	// LastScannedAt is the newest scanned_at among these records, and it is what
+	// ranks one generation against another: pipeline version strings do not
+	// order, and this census is returned in their order for display. Zero when
+	// the stored instant cannot be read, which ranks it last rather than
+	// failing a diagnostic.
+	LastScannedAt time.Time
 }
 
 // ScanRequest carries the inputs for one isolated per-module scan.
@@ -735,10 +846,12 @@ type CallGraphProjection struct {
 	// verdict and checks completeness parity before trusting a green result.
 	Completeness string
 	Algorithm    string
-	// ArtifactKind is what the analysed module is (application or library), as an
-	// opaque string for the same reason. Reachability roots are conditioned on
-	// it: an application's own code is all reachable, because functions the
-	// runtime dispatches to dynamically are still shipped code.
+	// ArtifactKind is what the analysed module is (application, library, or not
+	// established), as an opaque string for the same reason. Reachability roots
+	// are conditioned on it: an application's own code is all reachable, because
+	// functions the runtime dispatches to dynamically are still shipped code. A
+	// kind the analysis could not establish takes the library roots, and the
+	// answer states that it did.
 	ArtifactKind string
 	// ServableAsCacheHit reports whether the stored graph this projection came
 	// from may stand in for a fresh analysis, or whether the coordinate must be
@@ -761,6 +874,10 @@ type CallGraphNode struct {
 	Receiver      string
 	IsExternal    bool
 	IsExportedAPI bool
+	// IsTest is the graph's test axis for the node. It is projected so the root
+	// selection is fed the fact rather than a zero value that reads as "not a
+	// test", leaving the scope the only thing that decides.
+	IsTest bool
 }
 
 // CallGraphEdge is a directed call edge between two node IDs.

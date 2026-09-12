@@ -86,6 +86,19 @@ that is tight on memory.`,
 			if (f.tool || f.project) && len(args) > 0 {
 				return fmt.Errorf("--tool and --project apply to a go.mod scan, not a positional module argument")
 			}
+			// A walk id has a decidable shape, so it is refused as one rather than
+			// parsed as a module path — which produced "use <id>@latest", advice
+			// whose second failure was the reader following it. inspect is the
+			// command that PRODUCES a walk; the stages that consume one are named
+			// instead.
+			if len(args) == 1 && looksLikeWalkID(args[0]) {
+				return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+					"%q is a walk id, and inspect takes a module coordinate or a go.mod: it RUNS the walk "+
+						"that produces one. To run the remaining stages over a walk that already exists:"+
+						"\n  kanonarion extract %s\n  kanonarion vuln-scan %s\nor read it with:"+
+						"\n  kanonarion walk-show %s",
+					args[0], args[0], args[0], args[0])}
+			}
 			// With no positional module, default to a go.mod scan; --gomod
 			// defaults to ./go.mod via resolveGoModPath.
 			if f.gomodPath != "" || len(args) == 0 {
@@ -116,6 +129,9 @@ that is tight on memory.`,
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerCallgraphTimeoutFlag(cmd)
+	registerCallgraphWorkersFlag(cmd)
+	registerCallgraphMemoryCeilingFlag(cmd)
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
 
@@ -146,6 +162,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	}
 
 	logger := buildLogger(logLevel, stderr)
+	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, f.goBinary, f.skipVCS, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
@@ -598,6 +615,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	resolveProjectGoSum(f.gomodPath)
 
 	logger := buildLogger(logLevel, stderr)
+	callgraphNarration = callgraphNarrationFor(stderr, f.noProgress, activeConfig.Preferences.Progress)
 	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, f.goBinary, f.skipVCS, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
@@ -792,7 +810,7 @@ func printReachabilityClosureBanner(w io.Writer, gomodPath string) {
 	projectDir := filepath.Dir(gomodPath)
 	_, _ = fmt.Fprintln(w, "==> NOTE: reachability is rooted at the DEPENDENCY CLOSURE, not the project's own code.")
 	_, _ = fmt.Fprintln(w, "    The consumer module is analysed in consumer-mode, so its call graph is not")
-	_, _ = fmt.Fprintln(w, "    loaded: a 'reachable' verdict means reachable from the closure roots, one hop")
+	_, _ = fmt.Fprintln(w, "    loaded: a 'reachable' answer means reachable from the closure roots, one hop")
 	_, _ = fmt.Fprintln(w, "    short of reachable from a project entrypoint. The final app->dependency edge")
 	_, _ = fmt.Fprintln(w, "    is absent from this analysis.")
 	_, _ = fmt.Fprintf(w, "    To root reachability at the application, run: kanonarion local %s\n", projectDir)

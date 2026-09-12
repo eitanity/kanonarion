@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"go/token"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,11 +28,62 @@ type Analyser struct {
 	pipelineVersion string
 	goBinary        string
 	logger          *slog.Logger
+	// moduleCache builds the GOMODCACHE an isolated analysis resolves from. Nil
+	// leaves the host's own cache in force, which is what a composition root that
+	// wires no store can offer.
+	moduleCache cgports.ModuleCache
+	// realModcacheDir is --from-modcache: an existing module cache the operator
+	// named. It wins over moduleCache and nothing is materialised.
+	realModcacheDir string
+	// progress receives one line each time the analysis moves on. A parent that
+	// spawned this process reads those lines to tell a working subprocess from a stalled
+	// one, and shows them to the operator; nil narrates nothing.
+	progress io.Writer
 }
 
 // New constructs an Analyser.
 func New(pipelineVersion string, goBinary string, logger *slog.Logger) *Analyser {
 	return &Analyser{pipelineVersion: pipelineVersion, goBinary: goBinary, logger: logger}
+}
+
+// WithModuleCache gives the analyser a materialiser for the module cache each
+// isolated analysis reads. Without one the analysis resolves against whatever
+// the host's own cache happens to hold, which under GOPROXY=off decides whether
+// a module can be analysed at all.
+func (a *Analyser) WithModuleCache(mc cgports.ModuleCache) *Analyser {
+	a.moduleCache = mc
+	return a
+}
+
+// WithRealModcache points the analysis at an existing module cache — the
+// operator's own, named by --from-modcache — instead of one built per analysis.
+//
+// It materialises nothing, on the vuln scan's precedent: an operator who has
+// pointed at a populated cache has already answered the question materialisation
+// exists to answer, and duplicating that cache per module would be work with
+// nothing to show for it.
+func (a *Analyser) WithRealModcache(dir string) *Analyser {
+	a.realModcacheDir = dir
+	return a
+}
+
+// WithProgress narrates the analysis's phase transitions to w.
+//
+// It is the child half of the subprocess stall detector — see
+// cgports.ProgressPrefix — and the same lines are what an operator running this
+// by hand sees, because "which phase is it in" is one question with one answer.
+func (a *Analyser) WithProgress(w io.Writer) *Analyser {
+	a.progress = w
+	return a
+}
+
+// step reports that the analysis has moved on, naming the module so a parent
+// running several children can tell them apart.
+func (a *Analyser) step(coord coordinate.ModuleCoordinate, text string) {
+	if a.progress == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(a.progress, "%s%s: %s\n", cgports.ProgressPrefix, coord, text)
 }
 
 // AnalyserMetadata returns the algorithm and version of this implementation.
@@ -71,6 +123,7 @@ func (a *Analyser) Analyse(
 	// this axis exists to explain.
 	defer func() { rec.Analyser = observedAnalyser() }()
 	a.logMem(ctx, "start")
+	a.step(coord, "unpacking the module")
 	tempDir, err := os.MkdirTemp("", "kanonarion-cg-*")
 	if err != nil {
 		return domain.CallGraphRecord{}, fmt.Errorf("creating temp dir: %w", err)
@@ -89,7 +142,31 @@ func (a *Analyser) Analyse(
 		// The zip is the module: bytes that will not unpack are a property of what
 		// was published, and unpacking them again tomorrow fails identically.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source, tempDir), nil
+			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}, nil, inputs.Source, tempDir), nil
+	}
+
+	// A module published from a monorepo carries replace directives pointing at
+	// its sibling directories. They apply to no consumer's build — a replace is
+	// ignored outside the main module — but this analysis IS a build whose main
+	// module is the extracted one, and the siblings are not in the zip. Dropping
+	// them before the load is what makes the module resolve here the way it
+	// resolves for everyone else; the record then says which ones went. See
+	// dropLocalReplaces.
+	dropped, err := dropLocalReplaces(tempDir)
+	if err != nil {
+		// Rewriting a file in a directory this process just created is the run, not
+		// the module: the same zip on a working filesystem loads.
+		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
+			domain.FailureCauseEnvironment, "preparing the extracted go.mod: "+err.Error()),
+			domain.SynthesisedGoMod{}, nil, inputs.Source, tempDir), nil
+	}
+	if len(dropped) > 0 {
+		a.logger.InfoContext(ctx, "callgraph_local_replaces_dropped",
+			slog.String("module", coord.Path()),
+			slog.String("version", coord.Version()),
+			slog.Int("dropped", len(dropped)),
+			slog.String("directives", domain.DroppedReplacesSummary(dropped)),
+		)
 	}
 
 	// A module published before Go modules ships no go.mod, and an extraction of
@@ -131,7 +208,7 @@ func (a *Analyser) Analyse(
 		// Failing to write into a directory this process just created is the run,
 		// not the module: the same zip on a working filesystem extracts and loads.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source, tempDir), nil
+			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}, dropped, inputs.Source, tempDir), nil
 	default:
 		a.logger.InfoContext(ctx, "callgraph_gomod_synthesised",
 			slog.String("module", coord.Path()),
@@ -145,14 +222,17 @@ func (a *Analyser) Analyse(
 
 	if ctx.Err() != nil {
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown,
-			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source, tempDir), nil
+			domain.FailureCauseEnvironment, "cancelled before load"), synth, dropped, inputs.Source, tempDir), nil
 	}
 
-	rec, err = a.analyseDir(ctx, tempDir, coord, synth, nil, false)
+	goModCache, cleanupCache := a.prepareModuleCache(ctx, tempDir, coord)
+	defer cleanupCache()
+
+	rec, err = a.analyseDir(ctx, tempDir, coord, synth, nil, false, goModCache)
 	if err != nil {
 		return rec, err
 	}
-	return a.sourced(withDeclinedSynthesis(rec, declined), synth, inputs.Source, tempDir), nil
+	return a.sourced(withDeclinedSynthesis(rec, declined), synth, dropped, inputs.Source, tempDir), nil
 }
 
 // withDeclinedSynthesis prefixes a failed record's detail with the reason no
@@ -188,7 +268,9 @@ func withDeclinedSynthesis(r domain.CallGraphRecord, declined string) domain.Cal
 }
 
 // sourced stamps a record as built from a fetched module zip, and states how the
-// tree it read related to the bytes that were published.
+// tree it read related to the bytes that were published: the go.mod kanonarion
+// wrote where the zip carried none, and the replace directives it removed
+// because they name directories outside the extracted tree.
 //
 // It is applied on every return path of Analyse, including the failures. A
 // record that says nothing about what it read cannot be told apart from one
@@ -202,9 +284,15 @@ func withDeclinedSynthesis(r domain.CallGraphRecord, declined string) domain.Cal
 // a per-run directory inside the record is a defect rather than noise. The
 // working-tree path does not come through here — its root is a real place a
 // reader can open, and the record states it as a fact of its own.
-func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoMod, buildListSource, stagingRoot string) domain.CallGraphRecord {
+func (a *Analyser) sourced(
+	r domain.CallGraphRecord,
+	synth domain.SynthesisedGoMod,
+	dropped []domain.DroppedReplace,
+	buildListSource, stagingRoot string,
+) domain.CallGraphRecord {
 	r.AnalysisSource = domain.AnalysisSourceModuleZip
 	r.SynthesisedGoMod = synth
+	r.DroppedReplaces = dropped
 	r.BuildListSource = buildListSource
 	r.FailureDetail = moduleRelative(r.FailureDetail, stagingRoot)
 	return r
@@ -248,7 +336,10 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	// module and already declares itself, so nothing is synthesised into it and
 	// the record carries the zero value.
 	var read []string
-	rec, err = a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true)
+	// A working tree resolves from the developer's own module cache: it is their
+	// build being described, and a cache materialised from the store would be a
+	// different one. See loadenv.go for the same split on the workspace.
+	rec, err = a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true, "")
 	if err != nil {
 		return rec, err
 	}
@@ -360,6 +451,7 @@ func (a *Analyser) analyseDir(
 	synth domain.SynthesisedGoMod,
 	read *[]string,
 	worktree bool,
+	goModCache string,
 ) (domain.CallGraphRecord, error) {
 	toolchains := goenv.NewToolchains()
 	defer func() {
@@ -368,7 +460,7 @@ func (a *Analyser) analyseDir(
 		}
 	}()
 
-	rec, err := a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, toolchains)
+	rec, err := a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, goModCache, toolchains)
 	if err != nil {
 		return rec, err
 	}
@@ -385,7 +477,7 @@ func (a *Analyser) analyseDir(
 		slog.String("version", coord.Version()),
 		slog.String("toolchain", toolchains.Selected()),
 	)
-	return a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, toolchains)
+	return a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, goModCache, toolchains)
 }
 
 // analyseDirOnce holds the shared post-extraction analysis pipeline: load
@@ -417,6 +509,7 @@ func (a *Analyser) analyseDirOnce(
 	synth domain.SynthesisedGoMod,
 	read *[]string,
 	worktree bool,
+	goModCache string,
 	toolchains *goenv.Toolchains,
 ) (rec domain.CallGraphRecord, err error) {
 	fset := token.NewFileSet()
@@ -472,7 +565,7 @@ func (a *Analyser) analyseDirOnce(
 	if worktree {
 		env = goenv.Worktree(os.Environ(), tempDir)
 	} else {
-		env = analysisEnv()
+		env = analysisEnv(goModCache)
 	}
 	env = toolchains.Apply(env)
 
@@ -497,6 +590,7 @@ func (a *Analyser) analyseDirOnce(
 		Tests:   false,
 	}
 
+	a.step(coord, "loading package metadata")
 	pkgsMeta, err := packages.Load(cfgMeta, "./...")
 	if err != nil {
 		// A Load error is the driver failing, and the driver is the go command. It
@@ -507,6 +601,7 @@ func (a *Analyser) analyseDirOnce(
 			classifyLoad(err.Error()), "meta load: "+err.Error()), nil
 	}
 	a.logMem(ctx, "meta_loaded")
+	a.step(coord, fmt.Sprintf("package metadata loaded (%d packages)", len(pkgsMeta)))
 
 	// Every error the driver attached to a package rather than returning. A load
 	// that resolved nothing still returns a nil error when the go command reported
@@ -598,6 +693,14 @@ func (a *Analyser) analyseDirOnce(
 		if isOfflineCacheMiss(detail) {
 			cause = domain.FailureCauseEnvironment
 		}
+		// The loader's own account of a module it could not obtain, read off the
+		// dependency it failed on. It leads, because everything else here is its
+		// symptom, and it moves the cause: a build this host could not assemble is
+		// not a statement about the module's sources.
+		if unobtainable := describeUnobtainableModules(tempDir, build.UnobtainableImports); unobtainable != "" {
+			detail = unobtainable + "; " + detail
+			cause = domain.FailureCauseEnvironment
+		}
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessMetadataOnly,
 			cause, detail), nil
 	}
@@ -621,9 +724,11 @@ func (a *Analyser) analyseDirOnce(
 	// pass that enumerates for itself analyses a different program from the one
 	// before it. See functionset.go.
 	a.logMem(ctx, "pre_cha")
+	a.step(coord, "closing the function set")
 	funcs := closedFunctionSet(prog)
 	ordered := orderedFunctions(funcs)
 	a.logger.InfoContext(ctx, "callgraph_function_set_closed", slog.Int("function_count", len(ordered)))
+	a.step(coord, fmt.Sprintf("building the call graph (%d functions)", len(ordered)))
 	cg := chaCallGraph(funcs)
 	a.logMem(ctx, "post_cha")
 
@@ -638,34 +743,43 @@ func (a *Analyser) analyseDirOnce(
 	// Ensure GC can reclaim memory before starting walk
 	runtime.GC()
 
-	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, tempDir)
+	// How a resolved file path is written into the record. The extracted module's
+	// own files stay module-relative; a dependency's are written relative to the
+	// cache this run materialised, so nothing about where this process put it
+	// reaches the record. See sourceRoots.
+	roots := newSourceRoots(tempDir, goModCache)
+
+	a.step(coord, fmt.Sprintf("walking the call graph (%d caller nodes)", len(recordedCallers)))
+	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, roots)
 
 	// Attach body-level capability facts. These are properties of a
 	// function's own body — unsafe.Pointer conversions, assembly/linkname
 	// leaves — that the call graph and package sink map cannot witness. Scan
 	// only the packages that appear as graph nodes so the extra syntax load is
 	// bounded by the graph rather than the full dependency set.
+	a.step(coord, fmt.Sprintf("attaching body facts (%d nodes)", len(nodes)))
 	a.attachBodyFacts(ctx, nodes, tempDir, env)
 
 	// Recover client-side interface-dispatch edges CHA drops when the sole
 	// implementer's body was never built into SSA (type-only dep / unbuilt
 	// package). Runs after body facts so those only scan built module bodies;
 	// devirtualized leaf targets carry no onward edges.
-	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, ordered, mem, fset, tempDir, nodes, edges)
+	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, ordered, mem, fset, roots, nodes, edges)
 
 	// Record the function values the code takes but does not call. A method
 	// registered with a router is passed, never called, so CHA sees nothing —
 	// and a handler an HTTP request drives on every hit ends up with no in-edge.
 	// Runs after devirtualisation so an edge a call already witnesses keeps the
 	// call's key rather than being recorded twice under two kinds.
-	nodes, edges = a.collectReferenceEdges(ctx, prog, ordered, mem, fset, tempDir, nodes, edges)
+	nodes, edges = a.collectReferenceEdges(ctx, prog, ordered, mem, fset, roots, nodes, edges)
 
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
 	// go to implementations — so the edge collections cannot answer "what must
 	// change with this port", and a grep for the method name cannot tell an
 	// implementation from a call.
-	ifaces, impls := a.extractInterfaces(ctx, prog, mem, fset, tempDir)
+	a.step(coord, "extracting the interface relation")
+	ifaces, impls := a.extractInterfaces(ctx, prog, mem, fset, roots)
 
 	// A failed package (or any load error) means the graph is incomplete;
 	// never report Extracted when some target package did not resolve. Keeping
@@ -682,8 +796,10 @@ func (a *Analyser) analyseDirOnce(
 		Algorithm:     domain.AlgorithmCHA,
 		Completeness:  buildCompleteness(build),
 		// Only production packages decide the artifact kind: the test binary main
-		// go/packages synthesises is not a command this module ships.
-		ArtifactKind:    artifactKind(build.TargetPkgs),
+		// go/packages synthesises is not a command this module ships. The set is
+		// complete on the same terms the Partial downgrade above uses, so a graph
+		// that reports library is one whose whole package set was seen.
+		ArtifactKind:    artifactKind(build.TargetPkgs, len(allLoadErrs) == 0 && len(failedPkgs) == 0),
 		Nodes:           nodes,
 		Edges:           edges,
 		Interfaces:      ifaces,
@@ -710,53 +826,10 @@ func (a *Analyser) analyseDirOnce(
 	if len(allLoadErrs) > 0 {
 		rec.FailureDetail = joinFirst(allLoadErrs, 3)
 	}
-	// A dependency the local module cache does not hold is the one incompleteness
-	// whose cause is not visible in the errors recorded above. Every load runs
-	// offline, so the packages importing it fail to type-check and the type errors
-	// they produce name the import — "could not import x" — and never the reason.
-	// The reason is in the metadata load's own errors, in the go command's own
-	// sentence about its offline posture, and it is the only thing that tells a
-	// reader to warm the cache rather than go looking for a fault in the module.
-	//
-	// It is written to the CAUSE as well as to the detail. The detail is prose a
-	// reader acts on; the cause is the axis RecordIsCacheable reads, and a reason
-	// that reaches only the prose leaves the record served back on every later run
-	// — including the run made after the cache was warmed, which is the one run
-	// that would have measured the module completely. An incompleteness this host
-	// imposed is not a property of these bytes, exactly as the failing load two
-	// screens up says of the same marker.
-	//
-	// Every other Partial states the module. Reaching here means the toolchain
-	// demonstrably ran — it produced a graph — and the packages that did not
-	// typecheck did so on their own sources, which is a stable finding worth
-	// keeping rather than rediscovering at full analysis cost. The limit of that
-	// claim is that a type error the analysed sources produce only under THIS
-	// toolchain version is filed as the module's; the axis is classified from what
-	// the run can observe, never re-derived by reading the stored prose.
+	// A graph exists, so what remains is to say what its incompleteness is a
+	// statement about — the module, or this host. See classifyIncompleteGraph.
 	if overallStatus == domain.CallGraphStatusPartial {
-		miss := firstOfflineCacheMiss(metaErrs)
-		if miss != "" {
-			rec.FailureDetail = strings.TrimPrefix(rec.FailureDetail+"; ", "; ") +
-				"the loader reported: " + miss
-		}
-		rec.FailureCause = domain.FailureCauseModule
-		// The marker is looked for in both error sets. The metadata load is where
-		// it usually appears, and the sentence above is taken from there because
-		// that is the one worth quoting; a syntax load that meets the same cold
-		// cache states it too, and a cause read from only one of the two would
-		// depend on which pass happened to hit the missing module first.
-		if miss != "" || firstOfflineCacheMiss(allLoadErrs) != "" {
-			rec.FailureCause = domain.FailureCauseEnvironment
-		}
-		// Same shape one step over: the type errors name the import and never the
-		// reason, and here the go command named the condition and its own remedy. It
-		// leads, because what follows it is its symptom; the cause does not move,
-		// because the gap is in the tree and not on this host.
-		if sum := firstMissingChecksum(metaErrs, allLoadErrs); sum != "" && miss == "" {
-			// The go command lays its remedy out over a second line; this is stored prose.
-			sum = strings.Join(strings.Fields(sum), " ")
-			rec.FailureDetail = strings.TrimSuffix("the loader reported: "+sum+"; "+rec.FailureDetail, "; ")
-		}
+		rec = classifyIncompleteGraph(rec, tempDir, metaErrs, allLoadErrs, build.UnobtainableImports)
 	}
 	// FailedPackages scopes the incompleteness to the exact packages that did
 	// not typecheck, so callers/callees/reachability verdicts over this Partial
@@ -767,7 +840,88 @@ func (a *Analyser) analyseDirOnce(
 	// says the loader named every in-module package itself; non-empty is the
 	// reconstruction, stated rather than hidden inside the membership answer.
 	rec.PrefixAttributedPackages = mem.prefixAttributed()
+	// Every module other than this one whose packages this analysis built with
+	// bodies. The selection above is deliberately wider than membership, so this
+	// is what stops BUILT_WITH_BODIES being claimed uniformly over code belonging
+	// to modules the record does not name.
+	rec.ForeignModulesBuilt = build.ForeignModulesBuilt
+	// The last thing the analysis says. What follows is the caller sealing and
+	// storing the record, which on a large graph is the longest stretch after this
+	// point; a reader watching a run should see where it got to before it goes
+	// quiet.
+	a.step(coord, fmt.Sprintf("graph assembled (%d nodes, %d edges); storing", len(nodes), len(edges)))
 	return rec, nil
+}
+
+// classifyIncompleteGraph says what a Partial graph's incompleteness is a
+// statement about, and leads the detail with the fact a reader can act on.
+//
+// It is a function of the two error sets and the imports the load could not
+// obtain, and nothing else. It is separated from the pipeline that produced them
+// because it is the one place the cause axis is decided for a graph that exists,
+// and a rule spelled inside a five-hundred-line method is one nobody reads before
+// adding a sixth branch to it.
+//
+// The default is the module. Reaching here means the toolchain demonstrably ran —
+// it produced a graph — and the packages that did not typecheck did so on their
+// own sources, which is a stable finding worth keeping rather than rediscovering
+// at full analysis cost. The limit of that claim is that a type error the
+// analysed sources produce only under THIS toolchain version is filed as the
+// module's; the axis is classified from what the run can observe, never
+// re-derived by reading the stored prose.
+func classifyIncompleteGraph(
+	rec domain.CallGraphRecord,
+	tempDir string,
+	metaErrs, allLoadErrs, unobtainableImports []string,
+) domain.CallGraphRecord {
+	// A dependency the local module cache does not hold is the one incompleteness
+	// whose cause is not visible in the type errors. Every load runs offline, so
+	// the packages importing it fail to type-check and the errors they produce
+	// name the import — "could not import x" — and never the reason. The reason is
+	// in the go command's own sentence about its offline posture, and it is the
+	// only thing that tells a reader to warm the cache rather than go looking for
+	// a fault in the module.
+	//
+	// It is written to the CAUSE as well as to the detail. The detail is prose a
+	// reader acts on; the cause is the axis RecordIsCacheable reads, and a reason
+	// that reaches only the prose leaves the record served back on every later run
+	// — including the run made after the cache was warmed, which is the one run
+	// that would have measured the module completely.
+	miss := firstOfflineCacheMiss(metaErrs)
+	if miss != "" {
+		rec.FailureDetail = strings.TrimPrefix(rec.FailureDetail+"; ", "; ") +
+			"the loader reported: " + miss
+	}
+	rec.FailureCause = domain.FailureCauseModule
+	// The marker is looked for in both error sets. The metadata load is where it
+	// usually appears, and the sentence above is taken from there because that is
+	// the one worth quoting; a syntax load that meets the same cold cache states
+	// it too, and a cause read from only one of the two would depend on which pass
+	// happened to hit the missing module first.
+	if miss != "" || firstOfflineCacheMiss(allLoadErrs) != "" {
+		rec.FailureCause = domain.FailureCauseEnvironment
+	}
+	// Same shape one step over: the type errors name the import and never the
+	// reason, and here the go command named the condition and its own remedy. It
+	// leads, because what follows it is its symptom; the cause does not move,
+	// because the gap is in the tree and not on this host.
+	if sum := firstMissingChecksum(metaErrs, allLoadErrs); sum != "" && miss == "" {
+		// The go command lays its remedy out over a second line; this is stored prose.
+		sum = strings.Join(strings.Fields(sum), " ")
+		rec.FailureDetail = strings.TrimSuffix("the loader reported: "+sum+"; "+rec.FailureDetail, "; ")
+	}
+	// Last, so it leads whatever the branches above assembled. A module this host
+	// could not supply is the CAUSE of every "could not import" line that follows
+	// it, and it is the only line that names something a reader can go and get. It
+	// is also the one reading that survives a test-only dependency: the metadata
+	// load runs with tests off, so a missing test framework reaches neither of the
+	// error sets above, and every module short of one was filed as failing to
+	// compile on its own sources.
+	if unobtainable := describeUnobtainableModules(tempDir, unobtainableImports); unobtainable != "" {
+		rec.FailureDetail = strings.TrimSuffix(unobtainable+"; "+rec.FailureDetail, "; ")
+		rec.FailureCause = domain.FailureCauseEnvironment
+	}
+	return rec
 }
 
 // buildCompleteness reads the module-level fidelity off the load result, at the
@@ -791,19 +945,29 @@ func buildCompleteness(build ssaBuildResult) domain.CompletenessLevel {
 	return domain.CompletenessBuiltWithBodies
 }
 
-// artifactKind classifies the analysed module from the packages it owns: it is
-// an application as soon as one of them is a package main defining func main,
-// otherwise a library. The distinction cannot be recovered from an import path,
-// so it is captured here, at load time, and carried on the record — reachability
-// rooting depends on it.
-func artifactKind(targetPkgs []*ssa.Package) domain.ArtifactKind {
+// artifactKind classifies the analysed module from the production packages it
+// owns. The distinction cannot be recovered from an import path, so it is
+// captured here, at load time, and carried on the record — reachability rooting
+// depends on it.
+//
+// Application needs one witness: a package main defining func main. Library
+// needs the whole set, because it is the claim that no such package exists, and
+// complete is what says the set is whole. Without it a command may sit in a
+// package that did not resolve, so the answer is that the kind was not
+// established rather than the library the load was never in a position to see.
+func artifactKind(targetPkgs []*ssa.Package, complete bool) domain.ArtifactKind {
 	for _, p := range targetPkgs {
 		if p == nil || p.Pkg == nil {
+			// A package the classifier cannot read is one it cannot rule out.
+			complete = false
 			continue
 		}
 		if p.Pkg.Name() == "main" && p.Func("main") != nil {
 			return domain.ArtifactApplication
 		}
+	}
+	if !complete || len(targetPkgs) == 0 {
+		return domain.ArtifactNotEstablished
 	}
 	return domain.ArtifactLibrary
 }
@@ -824,11 +988,14 @@ func (a *Analyser) failRecord(
 	detail string,
 ) domain.CallGraphRecord {
 	return domain.CallGraphRecord{
-		SchemaVersion:   domain.CallGraphSchemaVersion,
-		Ecosystem:       fetchdomain.EcosystemGo,
-		Coordinate:      coord,
-		Algorithm:       domain.AlgorithmCHA,
-		Completeness:    completeness,
+		SchemaVersion: domain.CallGraphSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    coord,
+		Algorithm:     domain.AlgorithmCHA,
+		Completeness:  completeness,
+		// Nothing was classified, so the kind is stated as unestablished. The zero
+		// value would say "library", which is the failure reported as a finding.
+		ArtifactKind:    domain.ArtifactNotEstablished,
 		OverallStatus:   status,
 		FailureCause:    cause,
 		FailureDetail:   detail,

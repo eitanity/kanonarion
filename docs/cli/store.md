@@ -103,7 +103,7 @@ evidence they did not happen:
 
 - individual vulnerability record generations — a walk scan *counts* them
   (`vuln_scan_completed`) and names each finding (`vuln_finding_observed`), but
-  no event names a per-module verdict, and a Clean generation is only an
+  no event names a per-module answer, and a Clean generation is only an
   increment. A single-module scan names no generation either, and appends only
   the advisory snapshot it acquired, if it acquired one. Enumerating
   generations is a store query (`vuln-scan-show`), not a ledger query.

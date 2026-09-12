@@ -154,6 +154,47 @@ func TestCallGraphShow_ReportsAnAnalyserDisagreement(t *testing.T) {
 	}
 }
 
+// TestCallGraphShow_ReadsTheAnalyserFromTheColumnsNotTheHistory.
+//
+// Which library parsed a generation is a column on its row. Asking the composing
+// history read for it reconstructed and verified every generation's whole edge
+// set to deliver one field per generation, on top of the reconstruction the
+// composition had already done — a second complete pass, and about a third of
+// what the command cost, at two generations as much as at fifty-two.
+//
+// The notice must still be exactly the notice, so this asserts the answer and
+// the route together: a test that only checked the route would pass on a command
+// that had stopped speaking.
+func TestCallGraphShow_ReadsTheAnalyserFromTheColumnsNotTheHistory(t *testing.T) {
+	coord := makeCGCoord(t)
+	uc := testfakes.NewFakeQueryCallGraph()
+	served := analyserShowRecord(t, cgdomain.ObservedAnalyser("v0.49.0"))
+	uc.AddRecord(coord, cgapp.PipelineVersion, served)
+	uc.AddGeneration(coord, cgapp.PipelineVersion, analyserShowRecord(t, cgdomain.InferredAnalyser("v0.47.0")))
+	uc.AddGeneration(coord, cgapp.PipelineVersion, served)
+
+	out := showText(t, uc)
+	if !strings.Contains(out, "not all parsed by the same golang.org/x/tools") {
+		t.Fatalf("the notice is gone, so the route it took proves nothing:\n%s", out)
+	}
+	if uc.HistoryCalls != 0 {
+		t.Errorf("the show read the composing history %d time(s); the analyser is a column", uc.HistoryCalls)
+	}
+	if uc.CoordinateListCalls == 0 {
+		t.Error("the show read no coordinate listing, so it did not read the columns either")
+	}
+
+	// --history is the surface that IS the composing read, and this ticket does
+	// not touch it.
+	var buf bytes.Buffer
+	if err := runCallGraphHistory(context.Background(), coord, uc, &buf); err != nil {
+		t.Fatalf("runCallGraphHistory: %v", err)
+	}
+	if uc.HistoryCalls == 0 {
+		t.Error("callgraph-show --history stopped reading the history")
+	}
+}
+
 // TestCallGraphShow_SaysNothingWhenTheAnalysersAgree is the other half, and the
 // one that keeps the statement worth reading. A store written by a single binary
 // gains no line anywhere.

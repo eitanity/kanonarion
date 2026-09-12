@@ -17,6 +17,7 @@ import (
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // A pipeline bump leaves records the reads cannot see, and every empty answer
@@ -36,9 +37,13 @@ const supersededVulnPipeline = "0.0.1-superseded"
 func darkCoord(t *testing.T, uc *testfakes.FakeQueryVuln, records, findings int) coordinate.ModuleCoordinate {
 	t.Helper()
 	coord := coordinatetest.MustNew("example.com/dark", "v1.0.0")
-	uc.SetRecordGenerations(coord, []vulnports.VulnerabilityRecordGeneration{
-		{PipelineVersion: supersededVulnPipeline, Records: records, Findings: findings},
-	})
+	uc.SetRecordGenerations(coord, []vulnports.VulnerabilityRecordGeneration{{
+		PipelineVersion: supersededVulnPipeline,
+		Records:         records,
+		Findings:        findings,
+		Walks:           []string{fixtureWalkID},
+		LastScannedAt:   time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC),
+	}})
 	uc.AddSupersededRecords(coord, darkRecords(coord, records, findings)...)
 	return coord
 }
@@ -73,6 +78,7 @@ func darkRecords(coord coordinate.ModuleCoordinate, records, findings int) []vul
 			DatabaseSnapshot: fixtureSnap,
 			ScannedAt:        scannedAt.Add(-time.Duration(i) * time.Hour),
 			PipelineVersion:  supersededVulnPipeline,
+			WalkID:           fixtureWalkID,
 			Findings:         fs,
 		})
 	}
@@ -124,6 +130,55 @@ func TestVulnShow_SupersededGenerationIsNamedNotReportedAbsent(t *testing.T) {
 	}
 }
 
+// The refusal names a command that resolves for the record in hand. A module
+// measured in a consumer's build has no walk rooted at it, so "vuln-scan
+// --module <coord>" exited 20 there and sent the reader on to a second failure
+// message — for an id the refusing command already held on every record it
+// counted.
+func TestVulnShow_SupersededWithNoRootedWalk_NamesTheWalkThatMeasuredIt(t *testing.T) {
+	uc := testfakes.NewFakeQueryVuln()
+	coord := darkCoord(t, uc, 16, 252)
+
+	// No summaries: nothing in the store is rooted at this coordinate, which is
+	// what --module searches for.
+	err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, io.Discard)
+	if err == nil {
+		t.Fatal("expected a refusal, got nil")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "--module") {
+		t.Errorf("refusal names a form that resolves only a rooted walk:\n%s", msg)
+	}
+	if !strings.Contains(msg, "kanonarion vuln-scan "+fixtureWalkID+" --reachability") {
+		t.Errorf("refusal does not name the walk its records carry:\n%s", msg)
+	}
+	if strings.Contains(msg, "<walk-id>") {
+		t.Errorf("refusal hands the reader a placeholder to fill in:\n%s", msg)
+	}
+	if code := ExitCodeForError(err); code != ExitNotFound {
+		t.Errorf("exit code %d, want %d", code, ExitNotFound)
+	}
+}
+
+// Control: --module is the right form for the coordinates that do have a walk
+// rooted at them, and it stays.
+func TestVulnShow_SupersededWithRootedWalk_KeepsTheModuleForm(t *testing.T) {
+	uc := testfakes.NewFakeQueryVuln()
+	coord := darkCoord(t, uc, 16, 252)
+	walks := testfakes.NewFakeQueryWalks()
+	walks.SetSummaries([]walkports.WalkSummary{{ID: "01JWALKROOTED0000000000001", Target: coord}})
+
+	err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, io.Discard)
+	if err == nil {
+		t.Fatal("expected a refusal, got nil")
+	}
+	if !strings.Contains(err.Error(), "Re-scan it:\n  kanonarion vuln-scan --module "+coord.String()+" --reachability") {
+		t.Errorf("the rooted remedy changed:\n%s", err.Error())
+	}
+}
+
 // A history is what the store has ever recorded, so a pipeline bump may not
 // empty it. Every other read on this coordinate refuses, and refusing is right
 // for them: they answer "what holds now". This one answers "what was recorded",
@@ -134,7 +189,7 @@ func TestVulnShowHistory_SupersededGenerationIsListedNotRefused(t *testing.T) {
 	coord := darkCoord(t, uc, 16, 252)
 
 	var buf bytes.Buffer
-	if err := runVulnShowHistory(context.Background(), coord, false, uc, nil, &buf); err != nil {
+	if err := runVulnShowHistory(context.Background(), coord, false, uc, nil, nil, &buf); err != nil {
 		t.Fatalf("history refused a coordinate the store holds 16 records for: %v", err)
 	}
 	out := buf.String()
@@ -159,7 +214,7 @@ func TestVulnShowHistoryJSON_MarksSupersededRecords(t *testing.T) {
 	coord := darkCoord(t, uc, 3, 3)
 
 	var buf bytes.Buffer
-	if err := runVulnShowHistory(context.Background(), coord, true, uc, nil, &buf); err != nil {
+	if err := runVulnShowHistory(context.Background(), coord, true, uc, nil, nil, &buf); err != nil {
 		t.Fatalf("history --json refused a coordinate the store holds records for: %v", err)
 	}
 	var got []struct {
@@ -188,7 +243,7 @@ func TestVulnShowHistory_NeverScannedStillReadsAsAbsent(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	coord := coordinatetest.MustNew("example.com/never-scanned", "v1.0.0")
 
-	err := runVulnShowHistory(context.Background(), coord, false, uc, nil, io.Discard)
+	err := runVulnShowHistory(context.Background(), coord, false, uc, nil, nil, io.Discard)
 	if err == nil {
 		t.Fatal("expected a refusal for a coordinate the store holds nothing for")
 	}

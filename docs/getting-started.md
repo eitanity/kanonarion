@@ -102,7 +102,7 @@ github.com/spf13/cobra@v1.8.1
   Vulnerabilities: Clean
   Walk basis:      01KZWK6GHN7CK9Y54YTHMTNRKJ (frame target-rooted:github.com/spf13/cobra@v1.8.1)
   Run context:     this record was measured in a walk outside the 10 most recent walks this report loaded, so there is no run context to show
-  Snapshot:        2026-08-21T20:38:00Z (pipeline v24)
+  Snapshot:        2026-08-28T14:47:45Z (pipeline v25)
 
 Context size: ~6062 tokens (24248 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 ```
@@ -237,7 +237,7 @@ carries a `commands` section, which names the exact command for each part.
 `context --json` always prints one JSON object. The per-module records are in
 its `modules` list, whether you asked about the whole project or named one
 module. Beside them the object says which dependency scope was read, how many
-modules that was, and which build the vulnerability verdicts came from. The JSON
+modules that was, and which build the vulnerability answers came from. The JSON
 is large. For all 20 modules of this project it is 1.6 MB. When you feed an LLM,
 ask for one module at a time.
 
@@ -293,7 +293,7 @@ checksum. The version comes from your live toolchain (`go env GOVERSION`). Pass
 after an `inspect` costs more, because it extracts any licence records that are
 still missing and asks upstream for the latest version of each module.
 
-The vulnerability verdict is **project-rooted**: one `govulncheck` run over your
+The vulnerability answer is **project-rooted**: one `govulncheck` run over your
 live working tree. kanonarion does not measure it every time. It reuses a stored
 run when nothing that matters has changed, and it names the run it reused.
 `--force` measures again. The exact conditions are in
@@ -350,7 +350,8 @@ github.com/spf13/cobra@v1.8.1 — Clean
   Walk:            01KZWK6GHN7CK9Y54YTHMTNRKJ
   Analysis frame:  target-rooted:github.com/spf13/cobra@v1.8.1
   Toolchain:       go1.26.5
-  First validated: 2026-08-27T01:09:38Z
+  First validated: 2026-08-27T01:09:38Z  (against this snapshot at pipeline v25, not first awareness)
+                   first observation: kanonarion store ledger --event-type vuln_finding_observed --module github.com/spf13/cobra@v1.8.1
   Last validated:  2026-08-27T01:09:38Z
   Snapshot:        vuln.go.dev@2026-08-21T20:38:00Z
   Advisories:      4291 in the snapshot scanned against
@@ -414,7 +415,7 @@ A text search for the method name does not answer this. It cannot tell an
 implementation from a call, and it misses types that satisfy the interface by
 embedding.
 
-**Read the verdict line.** When `callers`, `callees` or `implementers` find
+**Read the answer line.** When `callers`, `callees` or `implementers` find
 nothing, they say which kind of nothing it is:
 
 ```bash
@@ -423,7 +424,7 @@ kanonarion callers 'github.com/google/uuid.NewDCEGroup' --exclude-tests
 
 ```
 No callers found for github.com/google/uuid.NewDCEGroup
-verdict: RESOLVED-ABSENT — no callers of github.com/google/uuid.NewDCEGroup across a fully-built path (production only; --exclude-tests was given)
+answer: RESOLVED-ABSENT — no callers of github.com/google/uuid.NewDCEGroup across a fully-built path (production only; --exclude-tests was given)
 ```
 
 `RESOLVED-ABSENT` is a measurement. You may report it as "nothing calls this".
@@ -606,7 +607,7 @@ Interpretation rules. These are load-bearing.
 2. Queries over unanalysed data exit non-zero and print the command to run.
    Run that command, then repeat the query. An empty result with exit 0 over
    analysed data is a real zero. Report it as one.
-3. Read the verdict line on callers, callees and implementers, not just the
+3. Read the answer line on callers, callees and implementers, not just the
    list. RESOLVED-ABSENT is a measurement and you may report it as "nothing
    calls this". UNRESOLVED is not an answer: the graph could not decide, and
    the line names what stopped it. Relay that. Never turn it into a confident

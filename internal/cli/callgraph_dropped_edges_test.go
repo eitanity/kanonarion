@@ -113,7 +113,7 @@ func TestRunCallers_DroppedEdgePackageWithNoEdgesIsUnresolvedNotAbsent(t *testin
 		t.Fatalf("an empty answer was raised as an error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "verdict: UNRESOLVED") {
+	if !strings.Contains(out, "answer: UNRESOLVED") {
 		t.Errorf("expected UNRESOLVED, got:\n%s", out)
 	}
 	if !strings.Contains(out, string(cgdomain.SinkDroppedPackageEdges)) {
@@ -155,7 +155,7 @@ func TestDroppedEdgePackage_EveryEdgeCommandAnswers(t *testing.T) {
 			if !strings.Contains(out, "unmeasured on one side") {
 				t.Errorf("%s does not state the gap:\n%s", name, out)
 			}
-			if !strings.Contains(out, "verdict: UNRESOLVED") {
+			if !strings.Contains(out, "answer: UNRESOLVED") {
 				t.Errorf("%s does not downgrade its empty answer:\n%s", name, out)
 			}
 		})
@@ -169,12 +169,12 @@ func TestDroppedEdgePackage_EveryEdgeCommandAnswers(t *testing.T) {
 // commands in one binary disagreeing about whether a question is answerable is
 // the defect, not the wording.
 func TestPrintUsedBySection_DisclosesTheConsumersDroppedPackages(t *testing.T) {
-	used := &usedByResult{
+	used := &usedByResult{consumerBinding: consumerBinding{
 		Consumer:        coordinatetest.MustNew("example.com/app", coordinate.LocalVersion),
 		WalkID:          "01TESTWALK",
 		CallGraphFound:  true,
 		DroppedPackages: []string{"example.com/app/internal/broken"},
-	}
+	}}
 	var buf bytes.Buffer
 	if err := printUsedBySection(used, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -190,11 +190,11 @@ func TestPrintUsedBySection_DisclosesTheConsumersDroppedPackages(t *testing.T) {
 
 // A complete consumer graph must not gain a caveat it has no basis for.
 func TestPrintUsedBySection_SaysNothingWhenNoPackageWasDropped(t *testing.T) {
-	used := &usedByResult{
+	used := &usedByResult{consumerBinding: consumerBinding{
 		Consumer:       coordinatetest.MustNew("example.com/app", coordinate.LocalVersion),
 		WalkID:         "01TESTWALK",
 		CallGraphFound: true,
-	}
+	}}
 	var buf bytes.Buffer
 	if err := printUsedBySection(used, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)

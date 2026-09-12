@@ -72,7 +72,7 @@ func TestScanBodyFacts_LeavesTheProcessEnvironmentAlone(t *testing.T) {
 
 	before, beforeSet := os.LookupEnv("GOGC")
 
-	facts := scanBodyFacts(context.Background(), dir, []string{modPath + "/app"}, analysisEnv())
+	facts := scanBodyFacts(context.Background(), dir, []string{modPath + "/app"}, analysisEnv(""))
 
 	// The non-zero control: the load has to have actually happened, or the
 	// environment assertion below would pass on a load that never ran.

@@ -336,7 +336,7 @@ Each fresh extraction appends a `license_extracted` event to the append-only
 audit log (`{store-root}/audit.jsonl`): module, version, resolved
 `primary_spdx`, `overall_status` (`Detected` / `Unclassified` / `None` / …), and
 the identity `source` (`scanner`). Licence extraction is half of `audit`'s
-compliance verdict, so this anchors *what licence was resolved, and when* in the
+compliance evidence, so this anchors *what licence was resolved, and when* in the
 append-only assurance log - independent of the mutable licence record. A cache hit
 (no `--force`) re-serves the stored record without re-extracting, so it appends
 nothing. A re-extraction that appends no generation appends no event either: the log

@@ -7,6 +7,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -254,8 +255,8 @@ type CallGraphStore interface {
 type EdgeQueryOptions struct {
 	// ExcludeTests drops every edge with a test-scope endpoint. It is opt-in:
 	// the default answer covers the whole graph, because a hidden test caller is
-	// a false negative — the failure the three-valued verdict exists to prevent
-	// — while an unwanted one is merely noise the reader can see and discount.
+	// a false negative — the failure the three-valued answer exists to prevent —
+	// while an unwanted one is merely noise the reader can see and discount.
 	ExcludeTests bool
 	// Toolchain restricts the query to graphs built by one Go toolchain. The zero
 	// value names none and composition groups on its own.
@@ -280,6 +281,56 @@ type CallGraphRecordLister interface {
 	// pipeline version, oldest first, each with its edges reconstructed and its
 	// content hash verified.
 	ListCallGraphRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.CallGraphRecord, error)
+}
+
+// CallGraphOutcomeReader is the optional narrow read: what ONE generation SAYS
+// about itself, without reconstructing the graph it says it about.
+//
+// It exists because a composed read is not a cheap way to learn a status. Every
+// generation at the coordinate is decoded, its whole edge set is rebuilt from
+// the satellite, and the reconstructed record is re-marshalled to check its
+// seal — so the cost is the SUM over the coordinate's history, and every
+// re-analysis makes it larger. Measured on this project's own store, one
+// coordinate holding 4.3M edges cost 12.85 GB of resident memory to read, and
+// one holding twelve generations of 3.2M edges could not be read on a 61 GB
+// host at all.
+//
+// A caller that wants the served answer still asks GetCallGraphRecord and pays
+// for it. This is for the caller that wants what a generation states — a
+// status, a cause, the seal it was written under — and reads no edge.
+//
+// A store that does not offer it is still a usable call graph store; callers
+// type-assert for it.
+type CallGraphOutcomeReader interface {
+	// LatestCallGraphOutcome returns what the NEWEST generation at the coordinate
+	// states, in append order, or (zero, false, nil) when the ledger holds none
+	// at the current record schema.
+	//
+	// Newest in append order, not the composed winner: this answers "what was
+	// just written here", which is the question a stage asks about the analysis
+	// it has this moment finished. Composition answers the different question of
+	// which generation should be SERVED, and may name an older one.
+	LatestCallGraphOutcome(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (CallGraphOutcome, bool, error)
+}
+
+// CallGraphOutcome is what one generation states about itself: the seal it was
+// written under and what it says the analysis came to.
+//
+// It carries no nodes and no edges, and that is its point — see
+// CallGraphOutcomeReader. A reader that needs the graph asks for the record.
+type CallGraphOutcome struct {
+	ContentHash   string
+	OverallStatus domain.CallGraphStatus
+	// FailureCause says what a failing OverallStatus is a statement about;
+	// FailureDetail is the prose beside it. Both are empty on a generation that
+	// did not fail.
+	FailureCause  domain.FailureCause
+	FailureDetail string
+	// NodeCount and EdgeCount are what the generation says it measured, read
+	// from the ledger's columns. Nothing is reconstructed to produce them.
+	NodeCount   int
+	EdgeCount   int
+	ExtractedAt time.Time
 }
 
 // CallGraphCoordinate is one analysed (module, version, pipeline version)
@@ -314,7 +365,7 @@ type CallGraphCoordinate struct {
 	// a read serves, any generation's numbers are that generation's numbers too.
 	// True says only that they do not all agree.
 	//
-	// It is NOT composition's verdict on the coordinate. That verdict is decided
+	// It is NOT the answer composition serves for the coordinate. That is settled
 	// over decoded records, and this listing decodes nothing — the cost it exists
 	// not to pay. Generations that state different counts can still compose to a
 	// served answer, and generations that state identical counts can still fail
@@ -327,7 +378,7 @@ type CallGraphCoordinate struct {
 	//
 	// It is a list rather than a winner because picking one is composition's job,
 	// and a listing that printed the winner's counts without saying so would be a
-	// derived verdict wearing a row's clothes. A caller that needs the served
+	// derived conclusion wearing a row's clothes. A caller that needs the served
 	// answer reads the coordinate.
 	Generations []CallGraphGeneration
 }
@@ -350,6 +401,14 @@ type CallGraphGeneration struct {
 	// a listing and nothing may treat it as verified because a listing returned
 	// it.
 	ContentHash string
+	// Analyser is the library this row says parsed the module, from the row's own
+	// analyser column. It is here so that asking "were these generations parsed
+	// by one x/tools or several" costs the column scan and not a reconstruction
+	// of every generation's edge set to read one field off each.
+	//
+	// It sits outside the seal, like the column it comes from, so it is neither
+	// covered by ContentHash nor verified by returning it.
+	Analyser domain.AnalyserIdentity
 }
 
 // StatesTheSame reports whether two generations say the same thing about
@@ -361,6 +420,11 @@ type CallGraphGeneration struct {
 // difference counts. ExtractedAt, the content hash and the analysis source are
 // deliberately excluded: every generation has its own, so including them would
 // make every re-analysed coordinate differ and the flag would say nothing.
+//
+// The analyser is excluded on a different ground: it is a dimension rather than
+// a count, and a flag about whether the rows agree on WHAT they measured must
+// not start reporting who measured it. domain.AnalyserDisagreementAmong reports
+// that on its own.
 func (g CallGraphGeneration) StatesTheSame(other CallGraphGeneration) bool {
 	return g.NodeCount == other.NodeCount &&
 		g.EdgeCount == other.EdgeCount &&
@@ -549,8 +613,21 @@ func CallEdgeRefLess(a, b CallEdgeRef) bool {
 	if a.ModulePath != b.ModulePath {
 		return a.ModulePath < b.ModulePath
 	}
+	// Both version legs are read as versions, not as text. This comparator is not
+	// only a serialisation tiebreak — it orders the transitive traversal
+	// `callers`/`callees --transitive` renders — and a reader shown "v10" above
+	// "v9" is being shown the wrong order. The raw comparison stays behind each
+	// as the fallback that keeps the order total: two versions that state the
+	// same number, or neither of which states one, still have to be separated,
+	// which is this comparator's documented contract.
+	if c := versionorder.CompareModuleVersions(a.ModuleVersion, b.ModuleVersion); c != 0 {
+		return c < 0
+	}
 	if a.ModuleVersion != b.ModuleVersion {
 		return a.ModuleVersion < b.ModuleVersion
+	}
+	if c := versionorder.ComparePipelineVersions(a.PipelineVersion, b.PipelineVersion); c != 0 {
+		return c < 0
 	}
 	if a.PipelineVersion != b.PipelineVersion {
 		return a.PipelineVersion < b.PipelineVersion
@@ -567,10 +644,89 @@ func CallEdgeRefLess(a, b CallEdgeRef) bool {
 	return false
 }
 
+// CallGraphForeignModuleReader is the read that names the modules OTHER than the
+// analysed one whose packages the SERVED record for a coordinate built with
+// bodies, at the version resolution gave each.
+//
+// It is separate from the record read on purpose, and the separation is the
+// feature. An edge query is answered out of the edge table without decoding any
+// record; qualifying that answer must not turn it into one that does. The store
+// keeps this set in a column beside the record for exactly this read.
+//
+// found=false means the ledger holds no served generation for the coordinate.
+// That is not an empty set and must never be reported as one — nothing was
+// consulted, so nothing is claimed.
+type CallGraphForeignModuleReader interface {
+	ForeignModulesBuilt(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) ([]domain.ForeignModule, bool, error)
+}
+
 // CallGraphWorktreeRouter is the optional read that reports which working tree
 // answered for a local coordinate. A store that cannot distinguish trees does
 // not implement it, and a caller that cannot ask simply prints no notice —
 // rather than inventing one.
 type CallGraphWorktreeRouter interface {
 	WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (WorktreeRouting, bool, error)
+}
+
+// ModuleCacheReport accounts for one materialisation: how many coordinates were
+// asked for, how many reached the cache, and the reason for each one that did
+// not. Requested is carried beside Written because the two are only equal when
+// nothing failed, and a caller must be able to tell a cache that holds the whole
+// closure from one that holds part of it.
+type ModuleCacheReport struct {
+	Requested int
+	Written   int
+	// Failures renders the coordinates that were not written and why, bounded for
+	// a log line. Empty when every one of them was.
+	Failures string
+}
+
+// Complete reports whether the whole requested closure reached the cache.
+func (r ModuleCacheReport) Complete() bool { return r.Failures == "" }
+
+// MainModule describes the module an isolated analysis is about to load as its
+// own main module: the requirements its go.mod declares, and the language
+// version that decides how much of the module graph the toolchain reads for
+// them.
+//
+// The version is not decoration. From go1.17 the module graph is PRUNED: the
+// main module's own require block names every module providing a package the
+// build imports, and nothing below it is read. Before 1.17 the complete,
+// unpruned graph is loaded instead, and the go.mod of every version minimal
+// version selection walks past has to be readable. Populating for the second
+// shape when the first applies reaches thousands of versions no toolchain would
+// ever open.
+type MainModule struct {
+	// GoVersion is the go directive, empty when the module declares none — which
+	// is treated as pre-pruning, because a module that states no version does not
+	// record its full requirements either.
+	GoVersion string
+	// Requires are the module's require directives, direct and indirect alike:
+	// the toolchain reads every line of the block regardless of which one it sits
+	// in.
+	Requires []coordinate.ModuleCoordinate
+}
+
+// ModuleCache materialises the GOMODCACHE an isolated analysis reads.
+//
+// It exists because the analysis of a fetched module runs offline. Minimal
+// version selection reads the go.mod of every module in the transitive
+// requirement graph and the type checker reads the source of every module the
+// build imports, and under GOPROXY=off both come from a module cache or from
+// nowhere. Left to the host's own cache, whether a module could be analysed
+// depended on what unrelated go commands had happened to leave on the machine —
+// while the bytes that answer the question sit in kanonarion's own store.
+//
+// main names what the toolchain will read: the source of every requirement,
+// because a pruned main module's require block names every module providing a
+// package the build imports; and, where the graph is not pruned, the go.mod of
+// the versions minimal version selection walks past, which appear on no edge of
+// any walk.
+//
+// It is best-effort by construction — a coordinate whose bytes cannot be
+// obtained leaves one hole rather than failing the analysis — and the report is
+// how that hole is stated rather than discovered later as an unexplained offline
+// resolution failure.
+type ModuleCache interface {
+	Materialise(ctx context.Context, dir string, main MainModule) ModuleCacheReport
 }

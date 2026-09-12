@@ -213,6 +213,12 @@ type ReachabilityDerivation struct {
 	// record for the reason given on the type. Empty when the writer did not
 	// state one.
 	Rooting Rooting `json:"rooting,omitzero"`
+	// RootSelection names the rule that chose the traversal's entry points, and
+	// is stated only where that rule was a fallback rather than a finding — an
+	// analysis that could not establish whether the module builds a command
+	// roots at the narrow consumer surface by default. Empty otherwise, so it
+	// carries a caveat and never restates what the answer already implies.
+	RootSelection string `json:"root_selection,omitzero"`
 }
 
 // IsRecorded reports whether the derivation says anything at all.
@@ -230,6 +236,11 @@ func (d ReachabilityDerivation) String() string {
 	}
 	if d.Rooting.IsRecorded() {
 		parts = append(parts, "rooted at "+d.Rooting.String())
+	}
+	// Labelled, because "rooted at" above is the analysis frame and this is which
+	// functions the traversal started from.
+	if d.RootSelection != "" {
+		parts = append(parts, "root selection: "+d.RootSelection)
 	}
 	return strings.Join(parts, ", ")
 }
@@ -454,4 +465,27 @@ func soundnessFromDerivation(d ReachabilityDerivation) (soundness ReachabilitySo
 	default:
 		return SoundnessUnconfirmed, "the answer does not name the analyser that produced it, so the search behind it cannot be weighed"
 	}
+}
+
+// WithdrawSymbolLevelClaim empties the symbol list and withdraws the reachability
+// verdict on a finding whose advisory names no symbol for this module path: there
+// was no target, so a confident negative would assert a search that never ran. The
+// routes stay — a call frame says which dependency pulls the package in.
+//
+// It is one function because the flag and the verdict beside it are set on
+// different routes, so no single producer can hold the invariant.
+func WithdrawSymbolLevelClaim(f *VulnerabilityFinding) {
+	if f == nil || !f.AdvisoryNamesNoSymbols {
+		return
+	}
+	f.AffectedSymbols = nil
+	if f.Reachable == nil {
+		return
+	}
+	// Copied, never written through: callers hold shallow clones of the finding,
+	// so mutating the pointee would rewrite a result they still own.
+	r := *f.Reachable
+	r.IsReachable = false
+	r.Confidence = ConfidenceUnknown
+	f.Reachable = &r
 }

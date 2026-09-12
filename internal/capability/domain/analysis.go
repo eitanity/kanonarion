@@ -67,6 +67,10 @@ type CapabilityFinding struct {
 	// WeakestConfidence is the least-certain edge confidence along Path. It is
 	// ConfidenceDirect for a zero-edge path (the root itself is the sink).
 	WeakestConfidence cgdomain.EdgeConfidence
+	// Basis says what the path established. It is always populated, so a
+	// consumer concatenating Findings and Observations can still tell them
+	// apart; every entry in Findings carries BasisUse.
+	Basis CapabilityBasis
 }
 
 // CapabilityReport is the result of analysing one call graph.
@@ -74,8 +78,16 @@ type CapabilityReport struct {
 	// Findings holds one finding per witnessed capability, sorted by capability
 	// name. Each finding's WeakestConfidence is the strongest available across
 	// every witnessing path, so a confirmed witness is never hidden behind an
-	// over-approximated one.
+	// over-approximated one. Every entry is a capability of the analysed module
+	// (BasisUse); this is the set Capabilities() and the diff read.
 	Findings []CapabilityFinding
+	// Observations holds paths that reach a classified node but establish
+	// something weaker than a capability of the analysed module — an external
+	// package's init (linkage) or a body fact recorded on an external callee.
+	// They are reported rather than dropped because silence is the
+	// false-negative direction, and only for a capability Findings does not
+	// already carry, since a real witness answers the question outright.
+	Observations []CapabilityFinding
 	// Partial is true when the underlying graph did not fully resolve
 	// (OverallStatus != Extracted). A capability set over a Partial graph is a
 	// soundness caveat, never a clean set (parity with capslock's UNANALYZED).
@@ -94,23 +106,21 @@ func (r CapabilityReport) Capabilities() []Capability {
 	return caps
 }
 
-// SelectRoots returns the reachability roots for the record's capability
-// analysis, conditioned on the record's artifact kind: an application roots all
-// of its own code (a capability present in owned code is a capability of that
-// code however the function is entered), a library roots its exported API plus
-// package init. Delegates to the shared callgraph-domain selector so it can
-// never drift from vuln reachability.
-func SelectRoots(rec cgdomain.CallGraphRecord) []string {
+// SelectRoots roots the capability traversal at every node the module owns.
+// The command is opened to see what a module's code can do, and that code is
+// entered through handlers, cgo trampolines, closures and goroutine entries,
+// none of them exported, so the artifact kind is not consulted. scope is the
+// only narrowing axis: a consumer compiles none of the module's _test.go files.
+func SelectRoots(rec cgdomain.CallGraphRecord, scope cgdomain.RootScope) []string {
 	candidates := make([]cgdomain.RootCandidate, 0, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		candidates = append(candidates, cgdomain.RootCandidate{
-			ID:            n.ID,
-			Symbol:        n.Symbol,
-			IsExternal:    n.IsExternal,
-			IsExportedAPI: n.IsExportedAPI,
+			ID:         n.ID,
+			IsExternal: n.IsExternal,
+			IsTest:     n.IsTest,
 		})
 	}
-	return cgdomain.SelectReachabilityRoots(candidates, rec.ArtifactKind)
+	return cgdomain.SelectOwnedRoots(candidates, scope)
 }
 
 // Analyse computes the capability report for rec, treating the given node IDs
@@ -134,7 +144,7 @@ func Analyse(rec cgdomain.CallGraphRecord, roots []string) CapabilityReport {
 	adj := buildAdjacency(rec.Edges)
 	dist, pred := widestPaths(roots, nodeByID, adj)
 
-	report.Findings = collectFindings(dist, pred, nodeByID)
+	report.Findings, report.Observations = collectFindings(dist, pred, nodeByID)
 	return report
 }
 
@@ -211,13 +221,18 @@ func widestPaths(
 }
 
 // collectFindings turns settled sink nodes into one finding per capability,
-// keeping the strongest-witness finding for each capability.
+// keeping the strongest witness for each. It returns two lists: the capabilities
+// of the analysed module, and the observations — paths whose sink is an external
+// package's init or an external node's body fact, which classify the callee
+// rather than the caller. An observation is dropped when the same capability has
+// a real witness, because the stronger answer already stands.
 func collectFindings(
 	dist map[string]int,
 	pred map[string]cgdomain.CallEdge,
 	nodeByID map[string]cgdomain.CallNode,
-) []CapabilityFinding {
+) (findings, observations []CapabilityFinding) {
 	best := make(map[Capability]CapabilityFinding)
+	weak := make(map[Capability]CapabilityFinding)
 	for id, rank := range dist {
 		n := nodeByID[id]
 		caps := NodeCapabilities(n)
@@ -226,26 +241,44 @@ func collectFindings(
 		}
 		path := reconstructPath(id, pred)
 		conf := confidenceForRank(rank)
-		for _, capName := range caps {
+		for _, nc := range caps {
 			f := CapabilityFinding{
-				Capability:        capName,
+				Capability:        nc.Capability,
 				Path:              path,
 				SinkPackage:       n.Package,
 				SinkSymbol:        n.Symbol,
 				WeakestConfidence: conf,
+				Basis:             nc.Basis,
 			}
-			if cur, exists := best[capName]; !exists || strongerFinding(f, cur) {
-				best[capName] = f
+			into := best
+			if nc.Basis != BasisUse {
+				into = weak
+			}
+			if cur, exists := into[nc.Capability]; !exists || strongerFinding(f, cur) {
+				into[nc.Capability] = f
 			}
 		}
 	}
 
-	findings := make([]CapabilityFinding, 0, len(best))
+	findings = make([]CapabilityFinding, 0, len(best))
 	for _, f := range best {
 		findings = append(findings, f)
 	}
-	sort.Slice(findings, func(i, j int) bool { return CapabilityFindingLess(findings[i], findings[j]) })
-	return findings
+	observations = make([]CapabilityFinding, 0, len(weak))
+	for c, f := range weak {
+		if _, witnessed := best[c]; witnessed {
+			continue
+		}
+		observations = append(observations, f)
+	}
+	sortFindings(findings)
+	sortFindings(observations)
+	return findings, observations
+}
+
+// sortFindings puts a finding slice in the canonical order.
+func sortFindings(fs []CapabilityFinding) {
+	sort.Slice(fs, func(i, j int) bool { return CapabilityFindingLess(fs[i], fs[j]) })
 }
 
 // CapabilityFindingLess is the canonical ordering for CapabilityFinding slices.
@@ -274,7 +307,7 @@ func CapabilityFindingLess(a, b CapabilityFinding) bool {
 			return a.Path[i] < b.Path[i]
 		}
 	}
-	return false
+	return a.Basis < b.Basis
 }
 
 // strongerFinding reports whether candidate is a better witness than current:
