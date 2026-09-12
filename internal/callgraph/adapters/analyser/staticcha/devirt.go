@@ -62,9 +62,9 @@ func (a *Analyser) devirtualizeSingleImplementer(
 	for _, n := range nodes {
 		existingNodes[n.ID] = struct{}{}
 	}
-	existingEdges := make(map[string]struct{}, len(edges))
+	existingEdges := make(map[edgeKey]struct{}, len(edges))
 	for _, e := range edges {
-		existingEdges[edgeKey(e.FromID, e.ToID, e.CallSite.File, e.CallSite.Line)] = struct{}{}
+		existingEdges[newEdgeKey(e.FromID, e.ToID, e.CallSite.File, e.CallSite.Line)] = struct{}{}
 	}
 
 	var addedEdges, addedNodes, leafNodes int
@@ -121,7 +121,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 				}
 
 				siteFile, siteLine := sitePosition(instr, fset, roots)
-				ek := edgeKey(callerNode.ID, target.ID, siteFile, siteLine)
+				ek := newEdgeKey(callerNode.ID, target.ID, siteFile, siteLine)
 				if _, dup := existingEdges[ek]; dup {
 					continue
 				}
@@ -387,6 +387,19 @@ func sitePosition(instr ssa.Instruction, fset *token.FileSet, roots sourceRoots)
 // edgeKey is the deduplication key for a call edge: caller, callee, and call
 // site. Shared with walkGraph so devirtualized edges collapse against the ones
 // CHA already emitted for the same site.
-func edgeKey(fromID, toID, siteFile string, siteLine int) string {
-	return fromID + "\x00" + toID + "\x00" + siteFile + "\x00" + fmt.Sprintf("%d", siteLine)
+//
+// A struct rather than a concatenated string because the walk's key set is the
+// largest structure in the analysis: a struct key borrows the three strings the
+// graph already holds, where concatenating copied all three per edge into a key
+// that was then freed unread. It also keys on the line as a number, so no
+// edge's key depends on how an integer is formatted.
+type edgeKey struct {
+	fromID   string
+	toID     string
+	siteFile string
+	siteLine int
+}
+
+func newEdgeKey(fromID, toID, siteFile string, siteLine int) edgeKey {
+	return edgeKey{fromID: fromID, toID: toID, siteFile: siteFile, siteLine: siteLine}
 }

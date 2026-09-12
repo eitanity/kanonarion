@@ -53,16 +53,28 @@ into SSA in a single process. For most modules that is a gigabyte-scale,
 seconds-scale operation — the figures below are all between 0.23 and 1.22 GB.
 
 A small number of modules cost far more, and **you cannot predict which from
-their size**: the most expensive one measured here holds about 54 GB while being
-smaller, on every size axis, than one that holds 11 GB. The one axis on which the
-two differ by orders of magnitude is how many types satisfy an interface.
+their size**. What the cost tracks is the number of call edges the analysis
+resolves, which is not the module's size and not how many interfaces it declares.
+Measured on one host: `google.golang.org/api@v0.290.0`, with 344,500 functions
+and 16 interface declarations, resolves 1.1M edges and peaks at 11.6 GiB;
+`github.com/envoyproxy/go-control-plane/envoy@v1.37.0`, a fifth its size, resolves
+**29.3M** edges and peaks at **21.8 GB**. `k8s.io/client-go@v0.36.3` declares 977
+interfaces — more than either — and peaks at 1.7 GiB.
 
-Two practical consequences. A whole-walk run bounds this for you:
+Generated code is where the large edge counts come from, because generated types
+implement a shared interface in bulk and every call through it resolves to all of
+them. `github.com/felixge/httpsnoop@v1.1.0` is the clearest case: a library of a
+few hundred lines, declaring four interfaces, that resolves 3.2M edges.
+
+Three practical consequences. A whole-walk run bounds this for you:
 [`extract`](extract.md#how-large-one-analysis-may-get) gives each analysis a
 memory ceiling derived from the host, so a module that will not fit records
 `OutOfMemory` and the run carries on. A single `callgraph` run has no such
 ceiling, so for an unfamiliar module on a small machine, run it on its own before
-running it beside anything you mind losing.
+running it beside anything you mind losing. And **storing a large graph costs far
+more than analysing it** — that 29.3M-edge record takes about a minute to analyse
+and around twenty-five to persist, occupying roughly 31 GB of store, because every
+edge is indexed by its endpoints.
 
 The figures below come from one developer machine — 32 cores, 61 GiB of RAM —
 over this project's own dependency set, each module fetched first and then

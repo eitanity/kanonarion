@@ -145,7 +145,7 @@ func (a *Analyser) walkGraph(
 	roots sourceRoots,
 ) ([]domain.CallNode, []domain.CallEdge, domain.CallGraphStatus) {
 	seenNodes := make(map[string]domain.CallNode)
-	seenEdges := make(map[string]struct{})
+	seenEdges := make(map[edgeKey]struct{})
 	var edges []domain.CallEdge
 
 	// Cache for built nodes to avoid redundant buildNode calls
@@ -190,7 +190,7 @@ func (a *Analyser) walkGraph(
 			}
 		}
 
-		ek := edgeKey(callerNode.ID, calleeNode.ID, sitePosFile, sitePosLine)
+		ek := newEdgeKey(callerNode.ID, calleeNode.ID, sitePosFile, sitePosLine)
 
 		if _, dup := seenEdges[ek]; !dup {
 			seenEdges[ek] = struct{}{}

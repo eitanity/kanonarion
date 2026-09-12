@@ -143,3 +143,52 @@ func TestLeafNodeFromFunc(t *testing.T) {
 		})
 	}
 }
+
+// edgeKeySink keeps newEdgeKey's result live so the compiler cannot fold the
+// call away in the allocation test below.
+var edgeKeySink edgeKey
+
+// TestEdgeKeyDistinguishesItsFields pins the deduplication contract the walk
+// depends on: two call edges collapse when, and only when, caller, callee, call
+// site file and call site line all agree. Nothing here may make two distinct
+// edges share a key — an edge dropped as a duplicate it is not is an edge the
+// graph never records.
+func TestEdgeKeyDistinguishesItsFields(t *testing.T) {
+	base := newEdgeKey("pkg.From", "pkg.To", "a.go", 12)
+
+	if base != newEdgeKey("pkg.From", "pkg.To", "a.go", 12) {
+		t.Fatal("identical edges produced different keys; duplicates would no longer collapse")
+	}
+
+	for _, tc := range []struct {
+		name string
+		key  edgeKey
+	}{
+		{"caller", newEdgeKey("pkg.Other", "pkg.To", "a.go", 12)},
+		{"callee", newEdgeKey("pkg.From", "pkg.Other", "a.go", 12)},
+		{"file", newEdgeKey("pkg.From", "pkg.To", "b.go", 12)},
+		{"line", newEdgeKey("pkg.From", "pkg.To", "a.go", 13)},
+	} {
+		if tc.key == base {
+			t.Errorf("edges differing in %s share a key", tc.name)
+		}
+	}
+}
+
+// TestEdgeKeyDoesNotAllocate is the memory property. The walk holds one key per
+// resolved edge — tens of millions on a dispatch-heavy module — and every field
+// is a string the graph already holds, so forming a key must borrow them rather
+// than copy them into a fresh allocation that is freed unread.
+func TestEdgeKeyDoesNotAllocate(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		edgeKeySink = newEdgeKey(
+			"github.com/example/mod/internal/pkg.(*Receiver).Method",
+			"github.com/example/mod/internal/other.(*Thing).Handle",
+			"internal/pkg/file.go",
+			1234,
+		)
+	})
+	if allocs != 0 {
+		t.Errorf("newEdgeKey allocated %.1f times per call, want 0", allocs)
+	}
+}
