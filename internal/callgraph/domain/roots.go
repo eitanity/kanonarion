@@ -11,8 +11,14 @@ import (
 // analysis can feed the shared selector its own node representation and the
 // root-selection rule can never drift between them.
 type RootCandidate struct {
-	ID            string
-	Symbol        string
+	ID     string
+	Symbol string
+	// Package and Receiver carry the rest of the node's identity, because the
+	// entry-point witnesses below read it: a receiverless main is the process
+	// entry point where a method named main is not, and the main the go command
+	// synthesises for a test binary is recognisable only by its package.
+	Package       string
+	Receiver      string
 	IsExternal    bool
 	IsExportedAPI bool
 	// IsTest is the node's test axis: declared in a _test.go file or an external
@@ -46,6 +52,20 @@ const (
 // run unconditionally when the package is loaded.
 func IsInitSymbol(symbol string) bool {
 	return symbol == "init" || strings.HasPrefix(symbol, "init#")
+}
+
+// IsSyntheticTestMain reports whether a node is the main the go command
+// SYNTHESISES to run a test binary: a receiverless main in a package whose path
+// ends ".test". No source file in the analysed module declares it.
+//
+// It is not covered by the IsTest axis, and that is measured rather than
+// assumed: in kanonarion's own graph 138 of the 140 main nodes are these, and
+// every one of them carries IsTest false, because the axis records whether the
+// DECLARATION came from a _test.go file and this declaration came from no file
+// at all. A root selection that drops test declarations therefore keeps all 138
+// unless this is asked separately.
+func IsSyntheticTestMain(pkg, symbol, receiver string) bool {
+	return receiver == "" && symbol == "main" && strings.HasSuffix(pkg, ".test")
 }
 
 // ExternalEntryPointReason names why a node is entered from OUTSIDE the
@@ -163,6 +183,63 @@ func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind, scop
 		return roots
 	}
 	return SelectOwnedRoots(candidates, scope)
+}
+
+// SelectEntryPointRoots returns the nodes the analysis can NAME as entry points
+// of the analysed module, whatever the module is.
+//
+// It is the other question from SelectReachabilityRoots, not a narrower setting
+// of it. That selector answers "what might this module's shipped code run",
+// and for an application it answers "all of it" — deliberately, so a positive
+// is not under-reported. The consequence is that an ABSENCE can never be
+// established from it: every node is a root, so every node is reached in zero
+// hops and no search can come back empty. This selector answers "what enters
+// this module from outside", which is the only root set an absence can be
+// certified against.
+//
+// A node is an entry point when it is owned, non-external, and either
+//
+//   - part of the public API — a consumer's build can call it directly; or
+//   - witnessed by ExternalEntryPointReason: package init, the process entry
+//     point, an http.Handler's ServeHTTP.
+//
+// The set is deliberately generous. Every extra root can only turn a confirmed
+// absence back into a found path, so an over-approximation here is the safe
+// direction: it refuses to confirm, it never confirms wrongly.
+//
+// The main the go command synthesises for a test binary is excluded at every
+// scope, unlike a test DECLARATION, which RootScopeProduction drops and
+// RootScopeWithTests keeps. The two are not the same thing: a test function is
+// code somebody wrote and an answer may name it, while the synthetic main is a
+// file the toolchain generated to run them, is the entry point of no build a
+// consumer ships, and appears in no source. It is hygiene, and it changes no
+// classification on its own — the test declarations it would reach are reached
+// from the tests themselves under RootScopeWithTests.
+//
+// An empty result is a real answer and the caller must read it as one: this
+// graph offers no entry point, so no absence may be certified over it. Nothing
+// falls back to the whole-graph rule here, because falling back is exactly what
+// makes an absence uncertifiable.
+//
+// Results are sorted for determinism.
+func SelectEntryPointRoots(candidates []RootCandidate, scope RootScope) []string {
+	var roots []string
+	for _, c := range candidates {
+		if c.IsExternal {
+			continue
+		}
+		if c.IsTest && scope == RootScopeProduction {
+			continue
+		}
+		if IsSyntheticTestMain(c.Package, c.Symbol, c.Receiver) {
+			continue
+		}
+		if c.IsExportedAPI || ExternalEntryPointReason(c.Symbol, c.Receiver) != "" {
+			roots = append(roots, c.ID)
+		}
+	}
+	sort.Strings(roots)
+	return roots
 }
 
 // RootSelectionCaveat states the root set SelectReachabilityRoots applied when

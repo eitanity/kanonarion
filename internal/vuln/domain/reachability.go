@@ -311,15 +311,54 @@ func StampReachabilityRooting(record *VulnerabilityRecord) {
 // was not one this search may speak to. It never means "searched and found
 // nothing"; that is a non-nil value with PathFound false.
 type NegativeSearch struct {
+	// NotSearched names why no search could be made, and is empty on a search
+	// that ran. A value here means every other field below is unset.
+	//
+	// It exists because the alternative was silence. A negative whose graph could
+	// not be loaded, or whose graph holds none of the symbols the advisory named,
+	// used to leave NO NegativeSearch at all — so the read surface published a
+	// rung with nothing beside it, indistinguishable from a coordinate the search
+	// had never been asked about. Measured: on the one coordinate in a working
+	// store that held both a searchable negative and a call graph, the answer
+	// carried no search, no reason and no remedy. Declining to search is a
+	// finding about the graph, and this is where it is stated.
+	NotSearched string
 	// Fidelity is the completeness level of the graph searched, in the
 	// call-graph ladder's own terms. It is what decides whether a clean search
 	// may confirm the negative.
 	Fidelity string
-	// PathFound reports that the search DID reach a vulnerable symbol from an
-	// entry point — a direct contradiction of the negative the record states.
+	// EntryPointRoots is how many roots the search was given: nodes the analysis
+	// can name as entered from outside the module — public API, package init, a
+	// command's main, an http.Handler.
+	//
+	// Zero is the answer "this graph offers no entry point", and it is the reason
+	// the count is carried rather than left to be inferred from an empty route. A
+	// search that started nowhere finds nothing, and reporting that as a
+	// confirmed absence is the exact false negative this type exists to prevent.
+	EntryPointRoots int
+	// ArtifactKind is what the graph said the analysed module is, carried so a
+	// reader can see which rooting produced their answer. It is the dimension the
+	// whole question turns on and it appeared on no read surface.
+	ArtifactKind string
+	// PathFound reports that the search DID reach a vulnerable symbol from one of
+	// those entry points — a direct contradiction of the negative the record
+	// states. Route is that path, entry point first, empty unless PathFound.
 	PathFound bool
-	// Route is that path, entry point first. Empty unless PathFound.
-	Route ReachabilityRoute
+	Route     ReachabilityRoute
+	// ShippedCodePathFound is the same search under the WHOLE-GRAPH rule, which
+	// for an application roots at every owned node. It is a different claim and
+	// is never the one that decides the rung: under that rule the vulnerable
+	// symbol is itself a root, so it is reached in zero hops whatever the code
+	// does, and an absence can never be established.
+	//
+	// It is carried, not dropped. Where the entry points reach nothing and the
+	// shipped code does, that is real: a function the module ships, entered by
+	// dispatch no static analysis enumerates, does reach the vulnerable symbol.
+	// The rung says the negative is confirmed against the entry points that were
+	// named; the reason says this as well, because a route found and not reported
+	// is worse than one reported with its rooting named.
+	ShippedCodePathFound bool
+	ShippedCodeRoute     ReachabilityRoute
 	// InRecordedFrame reports whether the graph searched is a graph OF the frame
 	// the record was measured in — the analysed module's own build — rather than
 	// a graph of the module standing alone inside someone else's.
@@ -422,6 +461,20 @@ const completenessBuiltWithBodies = "BUILT_WITH_BODIES"
 // refuses to confirm and the rung says the two analysers disagree; the recorded
 // verdict is never overwritten by the search, in either direction.
 //
+//  6. THE SEARCH THAT MAY CONFIRM IS THE ONE ROOTED AT NAMED ENTRY POINTS, and a
+//     search given none of them confirms nothing. Whole-graph rooting makes every
+//     function of an application a root, so the vulnerable symbol is its own root
+//     and is reached in zero hops whatever the code does; a negative could
+//     therefore never be certified against it, and measurement on a working store
+//     bore that out — not one confirmed negative existed anywhere in it. The
+//     entry-point search — public API, package init, a command's main, an
+//     http.Handler — is the one an absence is established against, because those
+//     are the only ways into the module a consumer's build has. EntryPointRoots
+//     of zero is a graph that named none, and it falls through to the recorded
+//     derivation rather than confirming out of an empty search. The whole-graph
+//     result rides along in the reason when the two disagree; it is never
+//     discarded and never decides.
+//
 // reason is always non-empty when a rung is returned, and it names the basis in
 // the producing analyser's own terms. A bare rung is a label, and a label is what
 // turns a measurement into a verdict.
@@ -439,6 +492,13 @@ func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness,
 	// the record denies, neither answer is discarded: rule 4 still refuses to
 	// confirm, and the rung says the two disagree.
 	if s := f.NegativeSearch; s != nil {
+		// A search that could not be made says so on the rung, which keeps the
+		// recorded derivation: the absence of a search is not evidence either way,
+		// and a rung with nothing beside it is the silence this field exists to end.
+		if why := s.unsearchedReason(); why != "" {
+			rung, reason := soundnessFromDerivation(d)
+			return rung, reason + ". No call-graph search stands behind this rung: " + why
+		}
 		switch {
 		case s.PathFound && s.InRecordedFrame:
 			return SoundnessDisputed, disputedReason(d, s)
@@ -451,10 +511,71 @@ func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness,
 			rung, reason := soundnessFromDerivation(d)
 			return rung, reason + crossFrameNote(s)
 		default:
-			d = ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting}
+			// Nothing the analysis can name as an entry point reaches the vulnerable
+			// symbol. That is the search rules 3 to 5 weigh, so the derivation
+			// becomes this tool's own, at the fidelity of the graph it ran over.
+			rung, reason := soundnessFromDerivation(
+				ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting})
+			return rung, reason + entryPointRootingNote(s)
 		}
 	}
 	return soundnessFromDerivation(d)
+}
+
+// unsearchedReason states why no search stands behind this finding, and "" where
+// one does.
+//
+// The entry-point count is checked here rather than trusted to the adapter that
+// filled the struct. A search given no starting point finds nothing whatever the
+// code does, so reading its empty result as a certified absence is the exact
+// false negative the rung exists to prevent — and the rule that prevents it
+// belongs beside the rung, not in whatever produced the input.
+func (s *NegativeSearch) unsearchedReason() string {
+	if s == nil {
+		return "no search was attempted"
+	}
+	if s.NotSearched != "" {
+		return s.NotSearched
+	}
+	if s.EntryPointRoots == 0 {
+		return "the call graph names no entry point at all — no public API, no package initialiser, no command — so a traversal over it would start nowhere and could only come back empty"
+	}
+	return ""
+}
+
+// entryPointRootingNote names the root set the clean search was made against,
+// and states the whole-graph result where it disagrees.
+//
+// Both halves are needed. Without the first, "no path was found" reads as a
+// property of the module rather than of one root set, which is the confusion
+// that made every negative in a working store uncertifiable. Without the
+// second, a route this tool found in the shipped code would go unreported
+// because it started somewhere the analysis could not name.
+func entryPointRootingNote(s *NegativeSearch) string {
+	note := ", rooted at the " + plural(s.EntryPointRoots, "entry point") +
+		" the analysis can name — the public API, package init and the process entry point"
+	if s.ArtifactKind != "" {
+		note += "; the graph is " + s.ArtifactKind
+	}
+	if !s.ShippedCodePathFound {
+		return note
+	}
+	note += ". Separately, rooting the whole graph — every function the module ships, on the premise that an" +
+		" application is entered in ways no static analysis enumerates — DOES reach the vulnerable symbol"
+	if r := s.ShippedCodeRoute.String(); r != "" && len(s.ShippedCodeRoute) > 1 {
+		note += " along " + r
+	}
+	return note + ". That is a different claim from this one, made from roots nothing established are entered," +
+		" and it is stated so the reader can weigh it rather than discover it later"
+}
+
+// plural renders a count with its noun, so a reason never reads "1 entry
+// points". The counts here are small and the rung is quoted by operators.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
 }
 
 // crossFrameNote states a path the search found in the module's own graph that

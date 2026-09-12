@@ -32,5 +32,17 @@ example.com/mod@v1.2.0 — Affected
       fix:      fixed in v1.3.0
       symbols:  Parse
       reachability: withdrawn — the advisory was retracted upstream, so there is nothing here to reach
+  GO-2026-0003 (CVE-2026-00003) [not reachable — confirmed]: unreached advisory for example.com/mod
+      affected: <v1.3.0
+      fix:      fixed in v1.3.0
+      symbols:  parseInternal
+      reachability: not_reachable — the analysis reported no path to the vulnerable symbol; soundness says how thorough that search was
+      derived:  by govulncheck, fidelity source, rooted at target-rooted
+  GO-2026-0004 (CVE-2026-00004) [not reachable — inferred]: advisory naming a symbol this build does not hold
+      affected: <v1.3.0
+      fix:      fixed in v1.3.0
+      symbols:  neverDeclared
+      reachability: not_reachable — the analysis reported no path to the vulnerable symbol; soundness says how thorough that search was
+      derived:  by govulncheck, fidelity source, rooted at target-rooted
 --- stderr ---
 (empty)

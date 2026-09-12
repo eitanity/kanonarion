@@ -325,6 +325,66 @@ func runVulnReachability(
 	graphs QueryCallGraphUseCase,
 	stdout io.Writer,
 ) error {
+	err := runVulnReachabilityQuery(ctx, arg, vulnID, walkID, gomod, gomodSet, jsonOut, uc, walks, graphs, stdout)
+	if err == nil || !jsonOut {
+		return err
+	}
+	// A --json run that refuses still has something to say, and it was saying it
+	// on stderr alone: stdout was EMPTY for every coordinate the store holds no
+	// verdict for. A consumer reading stdout could not tell that from a crash, so
+	// the refusal is published in the shape the surface's other answers take,
+	// with the same exit code as before. The message is the one the text surface
+	// prints, so the two cannot drift.
+	if encErr := writeReachabilityRefusalJSON(stdout, arg, vulnID, err); encErr != nil {
+		return encErr
+	}
+	return err
+}
+
+// reachabilityRefusalJSON is a refusal published as data.
+//
+// It carries no reachability_state. There is no verdict to render, and putting a
+// word in that field is precisely the false stand-down every refusal on this
+// surface exists to prevent — an absent answer is not "not affected".
+type reachabilityRefusalJSON struct {
+	Module  string `json:"module"`
+	Version string `json:"version,omitempty"`
+	VulnID  string `json:"vuln_id"`
+	// Answered is always false. It is emitted rather than implied by the absent
+	// verdict so a consumer can branch on one key instead of on which keys are
+	// missing.
+	Answered bool `json:"answered"`
+	// Refusal is the operator-facing sentence, verbatim, including the remedy it
+	// names. A machine reader gets the same words as a human one.
+	Refusal string `json:"refusal"`
+}
+
+// writeReachabilityRefusalJSON publishes a refusal on stdout.
+func writeReachabilityRefusalJSON(stdout io.Writer, arg, vulnID string, refusal error) error {
+	out := reachabilityRefusalJSON{Module: arg, VulnID: vulnID, Refusal: refusal.Error()}
+	if coord, perr := parseCoordinate(arg); perr == nil {
+		out.Module, out.Version = coord.Path(), coord.Version()
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		return fmt.Errorf("encoding reachability refusal: %w", err)
+	}
+	return nil
+}
+
+// runVulnReachabilityQuery is the query itself. It is separate from the function
+// above only so that every one of its refusals reaches the --json publisher,
+// rather than each return site having to remember.
+func runVulnReachabilityQuery(
+	ctx context.Context,
+	arg, vulnID, walkID, gomod string,
+	gomodSet, jsonOut bool,
+	uc QueryVulnUseCase,
+	walks QueryWalksUseCase,
+	graphs QueryCallGraphUseCase,
+	stdout io.Writer,
+) error {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
@@ -531,6 +591,13 @@ type vulnReachabilityQuery struct {
 	// root is exported-api is still reachable, and naming the root kind is not a
 	// statement that anything is exploitable.
 	RouteRoot *routeRootOutput `json:"route_root,omitempty"`
+	// NegativeSearch is what kanonarion's own read-time call-graph search says
+	// about this negative, and it is on the same payload as the verdict because a
+	// soundness rung is meaningless without the root set it was made against. It
+	// is absent where no search ran — no graph is held for the coordinate, or the
+	// graph names none of the advisory's symbols — which is never "searched and
+	// found nothing".
+	NegativeSearch *negativeSearchOutput `json:"negative_search,omitempty"`
 	// IsolatedAside is what an isolated-frame scan of this module says about the
 	// same advisory, when the answer above came from a consumer-rooted record and
 	// the two frames both hold a verdict. Absent otherwise: an aside beside an
@@ -541,6 +608,65 @@ type vulnReachabilityQuery struct {
 	// negative the reader has to take on trust.
 	WithdrawnAt string `json:"withdrawn_at,omitempty"`
 	ScannedAt   string `json:"scanned_at,omitempty"`
+}
+
+// negativeSearchOutput is the read-time search's own claims, in the curated
+// JSON shape.
+//
+// It exists so a consumer can see WHICH ROOTING produced the rung beside it.
+// ArtifactKind decides how the graph is rooted and was on no read surface at
+// all, so a reader could not tell an answer rooted at a library's public API
+// from one rooted at every function an application ships — which is exactly the
+// difference between a negative that can be confirmed and one that cannot.
+//
+// EntryPointRoots is emitted even when zero, because zero is the answer "this
+// graph named no entry point" and is the reason a clean search did not confirm.
+// The two path fields are two claims and are never collapsed: the entry-point
+// one decides the rung, the whole-graph one is what the shipped code does.
+type negativeSearchOutput struct {
+	// NotSearched is why no search stands behind the rung, and is absent where
+	// one does. Its presence means every field below it is a zero value because
+	// nothing was measured, not because the measurement came back empty — the two
+	// were indistinguishable while a skipped search published no object at all.
+	NotSearched         string `json:"not_searched,omitempty"`
+	ArtifactKind        string `json:"artifact_kind"`
+	Fidelity            string `json:"fidelity,omitempty"`
+	EntryPointRoots     int    `json:"entry_point_roots"`
+	EntryPointPathFound bool   `json:"entry_point_path_found"`
+	WholeGraphPathFound bool   `json:"whole_graph_path_found"`
+	// InRecordedFrame says whether the graph searched is a graph of the build the
+	// record was measured in. It decides what a found path may mean and is
+	// emitted always, never inferred from the fields above.
+	InRecordedFrame bool                      `json:"in_recorded_frame"`
+	Routes          []reachabilityRouteOutput `json:"routes,omitempty"`
+}
+
+// negativeSearchToOutput renders the search, or nil when none ran.
+func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc) *negativeSearchOutput {
+	if s == nil {
+		return nil
+	}
+	out := &negativeSearchOutput{
+		NotSearched:         s.NotSearched,
+		ArtifactKind:        s.ArtifactKind,
+		Fidelity:            s.Fidelity,
+		EntryPointRoots:     s.EntryPointRoots,
+		EntryPointPathFound: s.PathFound,
+		WholeGraphPathFound: s.ShippedCodePathFound,
+		InRecordedFrame:     s.InRecordedFrame,
+	}
+	// Every route the search found, from either rooting. A route this tool
+	// computed and did not publish is the one outcome a reachability surface must
+	// not produce.
+	var routes []vuldomain.ReachabilityRoute
+	if s.PathFound {
+		routes = append(routes, s.Route)
+	}
+	if s.ShippedCodePathFound {
+		routes = append(routes, s.ShippedCodeRoute)
+	}
+	out.Routes = routesToOutput(routes, classify)
+	return out
 }
 
 // reachabilityRouteOutput is one route in the curated JSON shape. Versioned
@@ -840,6 +966,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		SoundnessReason:   soundnessReason,
 		Routes:            routes,
 		RouteRoot:         firstRouteRoot(routes),
+		NegativeSearch:    negativeSearchToOutput(f.NegativeSearch, classify),
 		ScannedAt:         ledgerStamp(rec.ScannedAt),
 	}, nil
 }

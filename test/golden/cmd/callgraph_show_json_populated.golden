@@ -11,12 +11,13 @@ exit 0
   "algorithm": "CHA",
   "completeness": "BUILT_WITH_BODIES",
   "analysis_source": "zip",
+  "artifact_kind": "Application",
   "toolchain": "not recorded",
   "toolchain_stated": null,
   "nodes": [
     {
       "id": "example.com/mod.Handle",
-      "module": "",
+      "module": "example.com/mod",
       "package": "example.com/mod",
       "symbol": "Handle",
       "is_external": false,
@@ -26,13 +27,43 @@ exit 0
     },
     {
       "id": "example.com/mod.Parse",
-      "module": "",
+      "module": "example.com/mod",
       "package": "example.com/mod",
       "symbol": "Parse",
       "is_external": false,
       "is_exported_api": true,
       "is_test": false,
       "role": "api"
+    },
+    {
+      "id": "example.com/mod.parseInternal",
+      "module": "example.com/mod",
+      "package": "example.com/mod",
+      "symbol": "parseInternal",
+      "is_external": false,
+      "is_exported_api": false,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "example.com/mod.test.main",
+      "module": "example.com/mod",
+      "package": "example.com/mod.test",
+      "symbol": "main",
+      "is_external": false,
+      "is_exported_api": false,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "example.com/mod/cmd/tool.main",
+      "module": "example.com/mod",
+      "package": "example.com/mod/cmd/tool",
+      "symbol": "main",
+      "is_external": false,
+      "is_exported_api": false,
+      "is_test": false,
+      "role": "internal"
     }
   ],
   "edges": [
@@ -44,11 +75,11 @@ exit 0
     }
   ],
   "overall_status": "Extracted",
-  "node_count": 2,
+  "node_count": 5,
   "edge_count": 1,
   "extracted_at": "2026-01-15T08:00:00Z",
   "pipeline_version": "0.6.0",
-  "content_hash": "sha256:f3dddd4131578b095028d2c0c2d9ffd8f66bfbf8f04f0a1fd346b5ebe751ca04",
+  "content_hash": "sha256:0e502b6898b741bfbc2ff5612c4b41e880a9fda9f3a94f4afc432e391dfccca9",
   "test_scope": "Analysed",
   "test_node_count": 0,
   "reference_scope": "Analysed",

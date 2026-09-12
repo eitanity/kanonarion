@@ -3,6 +3,7 @@ package reachability
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -117,6 +118,44 @@ func routeFrom(cg ports.CallGraphProjection, path []string) domain.ReachabilityR
 	return route
 }
 
+// advisorySymbolForm renders a node the way an ADVISORY names it: a bare
+// function name, or "Receiver.Method" with the receiver's pointer star dropped.
+//
+// The star is dropped because the two sides spell the same method differently
+// and neither is wrong. A call graph records the receiver as the Go type
+// expression the method is declared on, so a pointer method is "*Renderer"; an
+// advisory's ecosystem-specific symbol list never writes one, so the same method
+// is "Renderer.renderAutoLink". Compared literally they never match, and the
+// consequence is silent and one-directional: the target set comes up short, the
+// search looks for less than the advisory named, and an absence it reports is an
+// absence of the wrong thing.
+//
+// Measured on a working store, over the only two coordinates holding both a
+// negative and a graph: every pointer-receiver symbol was missed — three of
+// three on github.com/yuin/goldmark, four of eight on golang.org/x/crypto.
+//
+// Dropping the star cannot over-match. Go forbids declaring the same method name
+// on both the value and the pointer receiver of one type, so at most one node
+// answers to a given "Type.Method".
+func advisorySymbolForm(receiver, symbol string) string {
+	if receiver == "" {
+		return symbol
+	}
+	return strings.TrimPrefix(strings.Trim(receiver, "()"), "*") + "." + symbol
+}
+
+// normaliseAdvisorySymbol puts an advisory's own symbol into the same form, so a
+// database that does spell the receiver as a pointer — or parenthesises it —
+// meets the node on equal terms. The receiver is everything before the LAST dot,
+// which is what leaves a bare function name untouched.
+func normaliseAdvisorySymbol(sym string) string {
+	i := strings.LastIndex(sym, ".")
+	if i < 0 {
+		return sym
+	}
+	return advisorySymbolForm(sym[:i], sym[i+1:])
+}
+
 // buildTargetSet returns the set of node IDs that match any of the target symbols.
 func buildTargetSet(cg ports.CallGraphProjection, targets []ports.SymbolReference) map[string]bool {
 	ids := make(map[string]bool)
@@ -124,10 +163,7 @@ func buildTargetSet(cg ports.CallGraphProjection, targets []ports.SymbolReferenc
 		if node.IsExternal {
 			continue
 		}
-		nodeSymStr := node.Symbol
-		if node.Receiver != "" {
-			nodeSymStr = node.Receiver + "." + node.Symbol
-		}
+		nodeSymStr := advisorySymbolForm(node.Receiver, node.Symbol)
 		for _, sym := range targets {
 			if sym.Module != "" && node.Module != sym.Module {
 				continue
@@ -135,7 +171,7 @@ func buildTargetSet(cg ports.CallGraphProjection, targets []ports.SymbolReferenc
 			if sym.Package != "" && node.Package != sym.Package {
 				continue
 			}
-			if nodeSymStr == sym.Symbol {
+			if nodeSymStr == normaliseAdvisorySymbol(sym.Symbol) {
 				ids[node.ID] = true
 				break
 			}
@@ -156,18 +192,46 @@ func buildTargetSet(cg ports.CallGraphProjection, targets []ports.SymbolReferenc
 // the root instead would turn a disclosed test-only reach into a silent "not
 // reachable", which is the false-negative direction.
 func collectEntryPoints(cg ports.CallGraphProjection) []string {
+	return callgraphdomain.SelectReachabilityRoots(
+		rootCandidates(cg), callgraphdomain.ArtifactKind(cg.ArtifactKind), callgraphdomain.RootScopeWithTests)
+}
+
+// collectNamedEntryPoints returns only the roots the analysis can NAME as
+// entered from outside the module — the public API, package init, a command's
+// main, an http.Handler — whatever the artifact kind says.
+//
+// It is the root set an ABSENCE is certified against, and it is separate from
+// collectEntryPoints because the two answer different questions: that one roots
+// an application at every owned node so a positive is not under-reported, which
+// makes the vulnerable symbol its own root and every absence uncertifiable.
+// This one is never used to reach a stored verdict — see NegativeSearcher,
+// which runs both and reports them as the two claims they are.
+//
+// The scope is production: a consumer compiles none of a dependency's _test.go
+// files, so a symbol only its tests reach is not one the consumer's build
+// enters. Where a test DOES reach it, collectEntryPoints still finds the route
+// and the answer states it.
+func collectNamedEntryPoints(cg ports.CallGraphProjection) []string {
+	return callgraphdomain.SelectEntryPointRoots(rootCandidates(cg), callgraphdomain.RootScopeProduction)
+}
+
+// rootCandidates projects the graph's nodes onto the shared selector's input, so
+// both root sets are chosen from one projection and a field added to the
+// candidate cannot reach one selector and not the other.
+func rootCandidates(cg ports.CallGraphProjection) []callgraphdomain.RootCandidate {
 	candidates := make([]callgraphdomain.RootCandidate, 0, len(cg.Nodes))
 	for _, node := range cg.Nodes {
 		candidates = append(candidates, callgraphdomain.RootCandidate{
 			ID:            node.ID,
 			Symbol:        node.Symbol,
+			Package:       node.Package,
+			Receiver:      node.Receiver,
 			IsExternal:    node.IsExternal,
 			IsExportedAPI: node.IsExportedAPI,
 			IsTest:        node.IsTest,
 		})
 	}
-	return callgraphdomain.SelectReachabilityRoots(
-		candidates, callgraphdomain.ArtifactKind(cg.ArtifactKind), callgraphdomain.RootScopeWithTests)
+	return candidates
 }
 
 // bfsPath performs a BFS from entryPoints following call edges and returns the

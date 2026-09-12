@@ -171,6 +171,25 @@ const (
 	ArtifactNotEstablished ArtifactKind = "NotEstablished"
 )
 
+// String names the kind for a reader, and it exists because the zero value is a
+// FINDING rather than an absence: a library's wire value is the empty string, so
+// every surface rendering the raw field printed a measured library as a blank —
+// or, worse, as "not recorded", which is the one thing it is not.
+//
+// A value this build does not know is rendered as it stands. Inventing a name
+// for it would hide the disagreement.
+func (k ArtifactKind) String() string {
+	switch k {
+	case ArtifactLibrary:
+		return "Library"
+	case ArtifactApplication:
+		return "Application"
+	case ArtifactNotEstablished:
+		return "NotEstablished"
+	}
+	return string(k)
+}
+
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
 // a module was skipped because its path is listed in callgraph.exclude.
 const ExclusionReasonConfig = "excluded_by_config"

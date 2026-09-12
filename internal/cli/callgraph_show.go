@@ -488,6 +488,17 @@ type callGraphRecordJSON struct {
 	// ("not recorded") and must be visible as one.
 	Completeness   string `json:"completeness"`
 	AnalysisSource string `json:"analysis_source"`
+	// ArtifactKind is what the analysis established the module to be, and it
+	// decides how a reachability traversal over this graph is rooted: an
+	// application is rooted at every function it owns, a library at its public
+	// API and package init. That makes it the fact deciding whether a negative
+	// reachability answer over this graph could ever be confirmed, and it reached
+	// no read surface at all — a reader could not see which rooting produced
+	// their answer. Always a named value: the library kind's stored form is the
+	// empty string, so emitting the raw field published a measured library as a
+	// blank, and the "not recorded" token every other axis here uses would have
+	// been a second wrong answer for the same reason.
+	ArtifactKind string `json:"artifact_kind"`
 	// Toolchain is the toolchain this record ESTABLISHES, on the same terms: a
 	// consumer that cannot see which Go built the graph cannot tell two
 	// toolchains' answers apart. A record that establishes none says so in the
@@ -762,6 +773,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		Algorithm:          string(r.Algorithm),
 		Completeness:       string(r.Completeness),
 		AnalysisSource:     string(r.AnalysisSource),
+		ArtifactKind:       r.ArtifactKind.String(),
 		Toolchain:          orNotRecorded(domain.RecordToolchain(r).Key()),
 		ToolchainStated:    statedToolchain(r),
 		WorktreeDigest:     r.WorktreeDigest,
@@ -810,8 +822,12 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 // and a record that does not say is reported as not recording it rather than
 // silently reading as a zip.
 func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
-	line := fmt.Sprintf("  fidelity: %s   source: %s   toolchain: %s",
-		r.Completeness.String(), r.AnalysisSource.String(), domain.RecordToolchain(r).String())
+	// The artefact kind is on this line because it is a fidelity fact, not a
+	// label: it decides how a reachability traversal over this graph is rooted,
+	// and therefore whether a negative answer over it could ever be confirmed.
+	line := fmt.Sprintf("  fidelity: %s   source: %s   kind: %s   toolchain: %s",
+		r.Completeness.String(), r.AnalysisSource.String(), r.ArtifactKind.String(),
+		domain.RecordToolchain(r).String())
 	if r.AnalysisSource == domain.AnalysisSourceWorktree && r.WorktreeDigest != "" {
 		line += "  (tree " + r.WorktreeDigest + ")"
 	}

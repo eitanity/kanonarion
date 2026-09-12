@@ -73,7 +73,7 @@ exit 0
         "extracted_at": "2026-01-15T08:00:00Z",
         "status": "Extracted",
         "algorithm": "CHA",
-        "node_count": 2,
+        "node_count": 5,
         "edge_count": 1,
         "entry_point_count": null,
         "entry_points_by_package": {
@@ -115,6 +115,32 @@ exit 0
             "reachability_state": "withdrawn",
             "reachable": null,
             "soundness": "not stated"
+          },
+          {
+            "id": "GO-2026-0003",
+            "aliases": [
+              "CVE-2026-00003"
+            ],
+            "summary": "unreached advisory for example.com/mod",
+            "fixed_in": "v1.3.0",
+            "score": null,
+            "reachability_state": "not_reachable",
+            "reachable": false,
+            "soundness": "confirmed",
+            "soundness_reason": "a call-graph search ran over a graph built with function bodies and found no path from an entry point to the vulnerable symbol, rooted at the 3 entry points the analysis can name — the public API, package init and the process entry point; the graph is Application. Separately, rooting the whole graph — every function the module ships, on the premise that an application is entered in ways no static analysis enumerates — DOES reach the vulnerable symbol. That is a different claim from this one, made from roots nothing established are entered, and it is stated so the reader can weigh it rather than discover it later"
+          },
+          {
+            "id": "GO-2026-0004",
+            "aliases": [
+              "CVE-2026-00004"
+            ],
+            "summary": "advisory naming a symbol this build does not hold",
+            "fixed_in": "v1.3.0",
+            "score": null,
+            "reachability_state": "not_reachable",
+            "reachable": false,
+            "soundness": "inferred",
+            "soundness_reason": "govulncheck analysed this build from source and reported no route to the vulnerable symbol; the negative reads that silence, not a search over a call graph that ran and came back empty. No call-graph search stands behind this rung: the stored call graph for example.com/mod@v1.2.0 holds none of the symbols the advisory names (neverDeclared), so there was nothing in it to search for"
           }
         ],
         "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",

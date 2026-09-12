@@ -337,6 +337,28 @@ func reachabilityCases(emptyStore string) []cmdCase {
 			args: []string{"reachability", "example.com/mod@v1.2.0", "--vuln", "GO-2099-9999", "--json"},
 			why:  "empty: the coordinate was scanned and this advisory is not among its findings.",
 		},
+		// The headline of the soundness work: a negative a search CONFIRMED, on the
+		// --json surface. Before this, the search over an application's graph was
+		// rooted at every function the module owns, so the vulnerable symbol was
+		// itself a root, every search reached it in zero hops, and this rung could
+		// not be produced for any record in any store. Measured on a working store
+		// at the time: 37 negatives, every one inferred, zero confirmed.
+		{
+			name: "reachability_json_confirmed_negative",
+			args: []string{"reachability", "example.com/mod@v1.2.0", "--vuln", "GO-2026-0003", "--json"},
+		},
+		{
+			name: "reachability_text_confirmed_negative",
+			args: []string{"reachability", "example.com/mod@v1.2.0", "--vuln", "GO-2026-0003"},
+		},
+		// The other half of the same rule: a search that could NOT be made says so.
+		// Here the graph loads and holds none of the symbols the advisory names, so
+		// there was nothing to look for — which is not a search that came back
+		// empty, and must not read like one.
+		{
+			name: "reachability_json_search_skipped",
+			args: []string{"reachability", "example.com/mod@v1.2.0", "--vuln", "GO-2026-0004", "--json"},
+		},
 		{
 			name:      "reachability_json_store_missing",
 			args:      []string{"reachability", "example.com/mod@v1.2.0", "--vuln", "GO-2026-0001", "--json"},

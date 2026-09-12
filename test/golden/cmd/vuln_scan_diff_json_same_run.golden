@@ -14,7 +14,7 @@ exit 0
     },
     "per_module_results": {
       "example.com/clean@v1.0.0": "sha256:54d50d2601a90f9ec385ef2ced0e943f8af3075369d28c396ddfa9b5475d82af",
-      "example.com/mod@v1.2.0": "sha256:a8f9911adc3854db05dc4f8ab5d5a3c8cf89cb26bc8a97396a0ca8278fd4230d",
+      "example.com/mod@v1.2.0": "sha256:b33942f4a280ca91055d14f058b26a7ea7e997b67facaa27129ed9d9865adf25",
       "example.com/shallow@v1.0.0": "sha256:a622c385892c679b578924b8be775ea4ccc00e92bb20c00302c2c2b82ba4cf9e"
     },
     "started_at": "2026-02-20T09:00:00Z",
@@ -31,7 +31,7 @@ exit 0
     },
     "pipeline_version": "v25",
     "operator": "fixture",
-    "content_hash": "sha256:fb01b0d8764ad8dbecaf3bb7a1f2414e6fa35894f095b3b5d1500d49c4fc1c3b"
+    "content_hash": "sha256:90aceb424a5282e22fa12419d2ad07f43681f4ff281a8cc17858a1d3a20807ef"
   },
   "run_b": {
     "id": "01JSCANRUN0GOLDEN00000002",
@@ -44,7 +44,7 @@ exit 0
     },
     "per_module_results": {
       "example.com/clean@v1.0.0": "sha256:54d50d2601a90f9ec385ef2ced0e943f8af3075369d28c396ddfa9b5475d82af",
-      "example.com/mod@v1.2.0": "sha256:a8f9911adc3854db05dc4f8ab5d5a3c8cf89cb26bc8a97396a0ca8278fd4230d",
+      "example.com/mod@v1.2.0": "sha256:b33942f4a280ca91055d14f058b26a7ea7e997b67facaa27129ed9d9865adf25",
       "example.com/shallow@v1.0.0": "sha256:a622c385892c679b578924b8be775ea4ccc00e92bb20c00302c2c2b82ba4cf9e"
     },
     "started_at": "2026-02-20T09:00:00Z",
@@ -61,7 +61,7 @@ exit 0
     },
     "pipeline_version": "v25",
     "operator": "fixture",
-    "content_hash": "sha256:fb01b0d8764ad8dbecaf3bb7a1f2414e6fa35894f095b3b5d1500d49c4fc1c3b"
+    "content_hash": "sha256:90aceb424a5282e22fa12419d2ad07f43681f4ff281a8cc17858a1d3a20807ef"
   },
   "new_findings": null,
   "resolved_findings": null,

@@ -143,11 +143,11 @@ The rungs, most to least sound:
 
 | `soundness` | What was searched |
 |---|---|
-| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path. The only rung a clean negative may rest on. |
+| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, an `http.Handler`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
 | `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
-| `disputed` | The recorded negative is contradicted: a call-graph search over the module's own graph found a path to the symbol. Both answers stand; neither is discarded. Treat the finding as open. |
+| `disputed` | The recorded negative is contradicted: a search from one of those entry points found a path to the symbol. Both answers stand; neither is discarded. Treat the finding as open. |
 
 Two consequences worth knowing before you read a negative:
 
@@ -162,12 +162,79 @@ Two consequences worth knowing before you read a negative:
   is what can raise it to `confirmed` or `disputed` with no re-scan. A search over
   a dependency's own graph can confirm a negative in any frame, but contradicts
   one only in the frame it was measured in; a path found in another frame is
-  reported in the reason and does not change the rung.
+  reported in the reason and does not change the rung. Which roots that search
+  starts from is what decides whether it can confirm at all — see below.
 - **A reachable answer states no soundness.** A route is its own evidence, so the
   text prints no rung for a positive. The JSON still carries the `soundness` key,
   with the value `"not stated"`: the key present says this producer derived the
   rung and found no absence to qualify; the key absent says it states no rung at
   all. An omitted key rendered those identically.
+
+### Which roots the confirming search uses
+
+An absence is only as good as the set of starting points it was searched from, so
+the rung names it. The confirming search starts at what the analysis can name as a
+way INTO the module — its public API, its package initialisers, a command's
+`main`, an `http.Handler` — because those are the only ways a consumer's build
+enters it. The `main` the go command synthesises to run a test binary is not one
+of them, and neither is a dependency's `_test.go` file, which your build does not
+compile.
+
+That is a narrower set than the one a *positive* is found from. Reachability roots
+an application at every function it ships, deliberately, because an application is
+entered by framework dispatch, registered callbacks and goroutine entry points
+that no static analysis enumerates — and under-reporting a positive is the worse
+failure. The two are different claims and the answer keeps them apart: where
+nothing you can enter reaches the vulnerable symbol but some function the module
+ships does, the rung is `confirmed` against the entry points, **and the reason
+says so and names the route**. Read both before acting on it.
+
+A graph that names no entry point at all confirms nothing. The search would start
+nowhere, so of course it finds nothing, and `entry_point_roots: 0` in the JSON is
+what says that happened.
+
+### A search that could not be made says so
+
+There are four reasons the search declines to run, and every one of them is
+stated on the answer rather than passed over — in `not_searched` under
+`negative_search`, and in the `soundness_reason` the text surface prints. None of
+them changes the rung: a search that did not happen concludes nothing, in either
+direction. What they change is that you can tell them apart from a coordinate the
+search was never owed for, and act on the one that has a remedy.
+
+| Reason | What to do |
+|---|---|
+| The store holds no call graph for the coordinate | The message names the command that extracts one. |
+| The stored graph could not be read | The message carries the store's own refusal. |
+| The graph holds no node the module owns | Nothing to traverse from; the graph is not usable for this question. |
+| The graph holds none of the symbols the advisory names | The two records disagree about what this version contains. Nothing to search **for** — which is not a search that came back empty, and must never read like one. |
+
+The advisory and the graph spell a method differently and both are right: an
+advisory writes `Renderer.renderAutoLink`, a call graph records the receiver as
+the Go type the method is declared on and writes `*Renderer`. They are matched on
+the advisory's form, so a pointer-receiver method is found. It was not always:
+compared literally the two never met, and the target set came up short without
+saying so.
+
+In `--json`, the search rides on the same payload as the verdict, under
+`negative_search`. It is absent where no search ran — no call graph is held for
+the coordinate, or the graph names none of the advisory's symbols — which is never
+"searched and found nothing":
+
+| Key | Means |
+|---|---|
+| `artifact_kind` | What the graph says the module is: `Application`, `Library` or `NotEstablished`. It decides the rooting, so it decides what a negative over this graph can ever be worth. |
+| `fidelity` | The completeness level of the graph searched. Only `BUILT_WITH_BODIES` may confirm. |
+| `not_searched` | Why no search stands behind the rung. Absent where one does; present means every field beside it is a zero value because nothing was measured. |
+| `entry_point_roots` | How many entry points the search started from. Zero confirms nothing. |
+| `entry_point_path_found` | Whether a path was found from one of them. This is the claim that decides the rung. |
+| `whole_graph_path_found` | Whether a path was found with the module's whole graph rooted. A different claim; it never decides the rung and is never dropped. |
+| `in_recorded_frame` | Whether the graph searched is a graph of the build this record was measured in. A clean search confirms in any frame; a found path contradicts only in this one. |
+| `routes` | Every route the search found, from either rooting, each naming its own root. |
+
+The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
+line and in `--json`, so you can see which rooting a graph will get before you ask
+a reachability question of it.
 
 The rung is derived at read time, so it appears on records scanned long before it
 existed and improves whenever the analysis behind them does. The search costs one

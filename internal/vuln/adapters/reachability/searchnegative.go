@@ -2,9 +2,13 @@ package reachability
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+
+	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -21,9 +25,14 @@ import (
 // call-graph ledger already hold — so it is run here rather than at scan time.
 // Nothing is written and no record changes shape; see domain.NegativeSearch.
 //
-// It uses the same target matching, the same root selection and the same
-// traversal as Analyse, so a read-time search and a scan-time one cannot drift
-// into different answers.
+// It uses the same target matching and the same traversal as Analyse, so a
+// read-time search and a scan-time one cannot drift into different answers. It
+// roots TWICE, which is the one place the two deliberately differ: Analyse asks
+// what the shipped code can run and roots the whole graph for an application,
+// and an absence cannot be certified against a root set the target is a member
+// of. The confirming search is therefore rooted at the entry points the
+// analysis can name — see callgraphdomain.SelectEntryPointRoots — and the
+// whole-graph result is carried beside it rather than dropped.
 //
 // Cost is one call-graph decode per coordinate that has a negative worth
 // searching, memoised for the life of the searcher, and exactly zero for a
@@ -40,9 +49,20 @@ type NegativeSearcher struct {
 // graph is the common case, and re-asking the store for each of its findings
 // would pay the miss over and over.
 type cachedProjection struct {
-	projection  ports.CallGraphProjection
-	entryPoints []string
-	loaded      bool
+	projection ports.CallGraphProjection
+	// shippedRoots is the whole-graph rule Analyse uses — for an application,
+	// every owned node. A path from it says the module's shipped code reaches the
+	// symbol from somewhere; it cannot say an absence, because the target is
+	// itself one of the roots.
+	shippedRoots []string
+	// entryRoots is what the analysis can name as entered from outside. It is the
+	// root set an absence is certified against, and it is empty when the graph
+	// offers none — in which case nothing is certified.
+	entryRoots []string
+	loaded     bool
+	// loadErr is why the load failed, kept so the refusal a reader is shown names
+	// the cause rather than asserting the commonest one.
+	loadErr error
 }
 
 // NewNegativeSearcher returns a searcher reading graphs through loader. A nil
@@ -54,12 +74,19 @@ func NewNegativeSearcher(loader ports.CallGraphLoader) *NegativeSearcher {
 // Search attaches a domain.NegativeSearch to every finding in rec whose negative
 // this search can speak to, leaving every other field untouched.
 //
-// It is deliberately silent on failure. A graph that cannot be loaded, a graph
-// that names none of the advisory's symbols and a graph with no entry points all
-// leave the finding as stored, which reads at the rung the recorded derivation
-// earns. The one thing that must never happen is an absent or unusable graph
-// being reported as a confirmed negative, and leaving the finding alone is what
-// guarantees it.
+// A search that CANNOT be made attaches one too, carrying the reason and nothing
+// else. It used to attach nothing at all, and that silence was the defect: a
+// graph that would not load, a graph naming none of the advisory's symbols and a
+// graph with no entry point all left the finding looking exactly like a
+// coordinate the search had never been asked about. Measured on a working store,
+// on the one coordinate holding both a searchable negative and a call graph: the
+// answer carried no search, no reason and no remedy, and the rung beside it said
+// only that govulncheck had been silent.
+//
+// What has not changed is what a failure may CONCLUDE, which is nothing. The
+// recorded derivation still earns the rung in every one of these cases. The one
+// thing that must never happen is an absent or unusable graph being reported as
+// a confirmed negative, and a reason field cannot become one.
 func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.VulnerabilityRecord) {
 	if s == nil || s.loader == nil || rec == nil {
 		return
@@ -73,19 +100,47 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 		if graph == nil {
 			graph = s.graphFor(ctx, rec.Coordinate)
 		}
-		if !graph.loaded || len(graph.entryPoints) == 0 {
-			return
+		if !graph.loaded {
+			f.NegativeSearch = &domain.NegativeSearch{NotSearched: graph.loadRefusal(rec.Coordinate)}
+			continue
+		}
+		if len(graph.shippedRoots) == 0 {
+			f.NegativeSearch = &domain.NegativeSearch{
+				ArtifactKind: graph.kind(),
+				NotSearched: "the stored call graph for " + rec.Coordinate.String() +
+					" holds no node this module owns, so there is nothing in it to traverse from",
+			}
+			continue
 		}
 		targets := buildTargetSet(graph.projection, symbolRefsFor(rec.Coordinate, f.AffectedSymbols))
 		if len(targets) == 0 {
 			// The graph holds none of the symbols the advisory named. That is not a
 			// search that came back empty — there was nothing here to look for — and
 			// reporting it as one would confirm a negative out of a mismatch between
-			// the graph and the advisory.
+			// the graph and the advisory. It is now SAID rather than passed over: a
+			// mismatch between the two is a fact about this pair of records, and the
+			// reader is the only one who can tell whether the advisory names a symbol
+			// this version never had or the graph was built without it.
+			f.NegativeSearch = &domain.NegativeSearch{
+				ArtifactKind: graph.kind(),
+				Fidelity:     graph.projection.Completeness,
+				NotSearched: "the stored call graph for " + rec.Coordinate.String() +
+					" holds none of the symbols the advisory names (" + strings.Join(f.AffectedSymbols, ", ") +
+					"), so there was nothing in it to search for",
+			}
 			continue
 		}
 		result := &domain.NegativeSearch{
 			Fidelity: graph.projection.Completeness,
+			// How many entry points the graph offered. Zero is what stops an
+			// absence being certified over a graph that named none, and it is
+			// carried rather than inferred from an empty route: "searched from
+			// nothing and found nothing" and "searched from real entry points and
+			// found nothing" are the two answers that must never look alike.
+			EntryPointRoots: len(graph.entryRoots),
+			// Named, not raw: a library's stored kind is the empty string, and the
+			// reason string must not read as though the graph said nothing.
+			ArtifactKind: graph.kind(),
 			// The stored graph is a graph of the module's own build. It therefore
 			// speaks in the record's own frame exactly when that frame is rooted at
 			// this very module — the project's own scan of itself — and speaks about
@@ -93,9 +148,17 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 			// domain.NegativeSearch.InRecordedFrame says what each case may mean.
 			InRecordedFrame: rec.Rooting.IsRootedAtPath(rec.Coordinate.Path()),
 		}
-		if path := bfsPath(graph.projection, graph.entryPoints, targets); path != nil {
+		// Two searches over one graph, because they are two claims. The
+		// entry-point search is the one that may confirm or contradict the
+		// negative; the whole-graph search is what the shipped code does, kept so
+		// a route this tool found is never dropped.
+		if path := bfsPath(graph.projection, graph.entryRoots, targets); path != nil {
 			result.PathFound = true
 			result.Route = routeFrom(graph.projection, path)
+		}
+		if path := bfsPath(graph.projection, graph.shippedRoots, targets); path != nil {
+			result.ShippedCodePathFound = true
+			result.ShippedCodeRoute = routeFrom(graph.projection, path)
 		}
 		f.NegativeSearch = result
 	}
@@ -131,8 +194,30 @@ func symbolRefsFor(coord coordinate.ModuleCoordinate, symbols []string) []ports.
 	return refs
 }
 
-// graphFor loads and memoises the projection for coord, along with the entry
-// points selected over it — the selection walks every node, so it is computed
+// loadRefusal names why the graph could not be loaded, in the terms the reader
+// can act on: the store either holds no record for the coordinate — which a
+// command fixes — or refused the one it holds, which is a different problem.
+func (c *cachedProjection) loadRefusal(coord coordinate.ModuleCoordinate) string {
+	if errors.Is(c.loadErr, ports.ErrCallGraphNotFound) {
+		return "the store holds no call graph for " + coord.String() +
+			", so there was no graph to search; extract one with: kanonarion callgraph " + coord.String()
+	}
+	if c.loadErr != nil {
+		return "the stored call graph for " + coord.String() + " could not be read: " + c.loadErr.Error()
+	}
+	return "no call graph was loaded for " + coord.String()
+}
+
+// kind names the artefact kind of the loaded graph, and "" when none loaded.
+func (c *cachedProjection) kind() string {
+	if !c.loaded {
+		return ""
+	}
+	return callgraphdomain.ArtifactKind(c.projection.ArtifactKind).String()
+}
+
+// graphFor loads and memoises the projection for coord, along with both root
+// sets selected over it — each selection walks every node, so they are computed
 // once per graph rather than once per finding.
 func (s *NegativeSearcher) graphFor(ctx context.Context, coord coordinate.ModuleCoordinate) *cachedProjection {
 	s.mu.Lock()
@@ -141,9 +226,13 @@ func (s *NegativeSearcher) graphFor(ctx context.Context, coord coordinate.Module
 		return cached
 	}
 	entry := &cachedProjection{}
-	if proj, err := s.loader.Load(ctx, coord); err == nil {
+	proj, err := s.loader.Load(ctx, coord)
+	if err != nil {
+		entry.loadErr = err
+	} else {
 		entry.projection = proj
-		entry.entryPoints = collectEntryPoints(proj)
+		entry.shippedRoots = collectEntryPoints(proj)
+		entry.entryRoots = collectNamedEntryPoints(proj)
 		entry.loaded = true
 	}
 	s.cache[coord] = entry

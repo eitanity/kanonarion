@@ -31,7 +31,7 @@ func searchedNegative(search *domain.NegativeSearch) domain.VulnerabilityFinding
 // confirmed once a search over a graph built with bodies has run over it and
 // come back empty. Nothing in the record changed to make that true.
 func TestSearchedNegativeConfirmsAtBuiltWithBodies(t *testing.T) {
-	f := searchedNegative(&domain.NegativeSearch{Fidelity: "BUILT_WITH_BODIES"})
+	f := searchedNegative(&domain.NegativeSearch{EntryPointRoots: 3, Fidelity: "BUILT_WITH_BODIES"})
 
 	got, reason := domain.NegativeSoundness(f)
 
@@ -54,7 +54,7 @@ func TestSearchedNegativeConfirmsAtBuiltWithBodies(t *testing.T) {
 // search over one states what it searched rather than confirming.
 func TestSearchedNegativeBelowBodiesIsUnconfirmed(t *testing.T) {
 	for _, fidelity := range []string{"METADATA_ONLY", "TYPE_ONLY"} {
-		got, reason := domain.NegativeSoundness(searchedNegative(&domain.NegativeSearch{Fidelity: fidelity}))
+		got, reason := domain.NegativeSoundness(searchedNegative(&domain.NegativeSearch{EntryPointRoots: 3, Fidelity: fidelity}))
 		if got != domain.SoundnessUnconfirmed {
 			t.Errorf("a search over a %s graph -> %s, want %s", fidelity, got, domain.SoundnessUnconfirmed)
 		}
@@ -69,6 +69,7 @@ func TestSearchedNegativeBelowBodiesIsUnconfirmed(t *testing.T) {
 // and is not suppressed; the rung is what tells the reader the two disagree.
 func TestFoundPathInTheRecordedFrameIsDisputed(t *testing.T) {
 	f := searchedNegative(&domain.NegativeSearch{
+		EntryPointRoots: 3,
 		Fidelity:        "BUILT_WITH_BODIES",
 		PathFound:       true,
 		InRecordedFrame: true,
@@ -101,6 +102,7 @@ func TestFoundPathInTheRecordedFrameIsDisputed(t *testing.T) {
 // is still reported: a route found and hidden is the one thing this must not do.
 func TestFoundPathOutsideTheRecordedFrameIsStatedNotDisputed(t *testing.T) {
 	got, reason := domain.NegativeSoundness(searchedNegative(&domain.NegativeSearch{
+		EntryPointRoots: 3,
 		Fidelity:        "BUILT_WITH_BODIES",
 		PathFound:       true,
 		InRecordedFrame: false,
@@ -119,7 +121,7 @@ func TestFoundPathOutsideTheRecordedFrameIsStatedNotDisputed(t *testing.T) {
 // advisory that names no symbols reads unsearchable whatever a search says,
 // because there was never a symbol for one to look for.
 func TestUnsearchableIsCheckedBeforeTheSearch(t *testing.T) {
-	f := searchedNegative(&domain.NegativeSearch{Fidelity: "BUILT_WITH_BODIES"})
+	f := searchedNegative(&domain.NegativeSearch{EntryPointRoots: 3, Fidelity: "BUILT_WITH_BODIES"})
 	f.AffectedSymbols = nil
 	f.AdvisoryNamesNoSymbols = true
 
@@ -142,7 +144,7 @@ func TestNegativeSearchIsNotSerialised(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sealing: %v", err)
 	}
-	sealed.Findings[0].NegativeSearch = &domain.NegativeSearch{Fidelity: "BUILT_WITH_BODIES", PathFound: true}
+	sealed.Findings[0].NegativeSearch = &domain.NegativeSearch{EntryPointRoots: 3, Fidelity: "BUILT_WITH_BODIES", PathFound: true}
 	if err := hasher.VerifyContentHash(sealed); err != nil {
 		t.Errorf("a searched record no longer verifies: %v", err)
 	}
@@ -161,5 +163,54 @@ func TestRouteStringElidesTheMiddle(t *testing.T) {
 	}
 	if !strings.Contains(got, "more)") {
 		t.Errorf("route rendering does not say how much it elided: %q", got)
+	}
+}
+
+// TestNegativeSoundness_ASearchFromNoEntryPointConfirmsNothing is the refusal at
+// the ladder. A graph offering no way in gives the search nowhere to start, so it
+// finds nothing whatever the code does; reading that as a certified absence is
+// the false negative this rung exists to prevent.
+func TestNegativeSoundness_ASearchFromNoEntryPointConfirmsNothing(t *testing.T) {
+	f := searchedNegative(&domain.NegativeSearch{EntryPointRoots: 0, Fidelity: "BUILT_WITH_BODIES"})
+
+	got, reason := domain.NegativeSoundness(f)
+	if got == domain.SoundnessConfirmed {
+		t.Errorf("a search rooted at nothing confirmed a negative: %q", reason)
+	}
+	if got != domain.SoundnessInferred {
+		t.Errorf("soundness = %s, want the recorded rung %s to stand", got, domain.SoundnessInferred)
+	}
+}
+
+// TestNegativeSoundness_TheWholeGraphClaimIsStatedAndDoesNotDecide pins the
+// ticket's decision. The two rootings are different claims: the entry-point
+// search is what an absence is certified against, and the whole-graph reach —
+// where the vulnerable symbol is itself a root — states itself in the reason
+// rather than vetoing the rung or going unreported.
+func TestNegativeSoundness_TheWholeGraphClaimIsStatedAndDoesNotDecide(t *testing.T) {
+	route := domain.ReachabilityRoute{
+		{ModulePath: "example.com/mod", Package: "example.com/mod", Symbol: "onEvent"},
+		{ModulePath: "example.com/mod", Package: "example.com/mod", Symbol: "vulnerable"},
+	}
+	f := searchedNegative(&domain.NegativeSearch{
+		EntryPointRoots:      1,
+		Fidelity:             "BUILT_WITH_BODIES",
+		ArtifactKind:         "Application",
+		ShippedCodePathFound: true,
+		ShippedCodeRoute:     route,
+	})
+
+	got, reason := domain.NegativeSoundness(f)
+	if got != domain.SoundnessConfirmed {
+		t.Errorf("soundness = %s, want %s", got, domain.SoundnessConfirmed)
+	}
+	for _, want := range []string{"1 entry point", "Application", "DOES reach", "onEvent"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("the reason does not state %q: %q", want, reason)
+		}
+	}
+	// The count reads as prose, not as a field dump: an operator quotes this line.
+	if strings.Contains(reason, "1 entry points") {
+		t.Errorf("the reason reads ungrammatically: %q", reason)
 	}
 }

@@ -1,0 +1,55 @@
+# 
+$ kanonarion reachability example.com/mod@v1.2.0 --vuln GO-2026-0003 --json
+exit 0
+--- stdout ---
+{
+  "module": "example.com/mod",
+  "version": "v1.2.0",
+  "vuln_id": "GO-2026-0003",
+  "aliases": [
+    "CVE-2026-00003"
+  ],
+  "summary": "unreached advisory for example.com/mod",
+  "reachability_state": "not_reachable",
+  "confidence": "High",
+  "method": "govulncheck",
+  "fidelity": "source",
+  "rooting": "target-rooted",
+  "soundness": "confirmed",
+  "soundness_reason": "a call-graph search ran over a graph built with function bodies and found no path from an entry point to the vulnerable symbol, rooted at the 3 entry points the analysis can name — the public API, package init and the process entry point; the graph is Application. Separately, rooting the whole graph — every function the module ships, on the premise that an application is entered in ways no static analysis enumerates — DOES reach the vulnerable symbol. That is a different claim from this one, made from roots nothing established are entered, and it is stated so the reader can weigh it rather than discover it later",
+  "negative_search": {
+    "artifact_kind": "Application",
+    "fidelity": "BUILT_WITH_BODIES",
+    "entry_point_roots": 3,
+    "entry_point_path_found": false,
+    "whole_graph_path_found": true,
+    "in_recorded_frame": false,
+    "routes": [
+      {
+        "versioned": false,
+        "frames": [
+          {
+            "module": "example.com/mod",
+            "package": "example.com/mod",
+            "symbol": "parseInternal"
+          }
+        ],
+        "root": {
+          "kind": "internal",
+          "reason": "not exported and no caller recorded in the analysed module — nothing in the graph says what enters it",
+          "closure_rooted": false,
+          "node_id": "example.com/mod.parseInternal",
+          "entry_point_ancestry": {
+            "found": false,
+            "hops": 0,
+            "via_reference": false,
+            "search_bound": 0
+          }
+        }
+      }
+    ]
+  },
+  "scanned_at": "2026-02-20T09:00:00Z"
+}
+--- stderr ---
+(empty)

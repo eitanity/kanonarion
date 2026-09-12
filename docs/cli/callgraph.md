@@ -416,7 +416,7 @@ kanonarion callgraph-show <module>@<version> [flags]
 ```
 $ kanonarion callgraph-show golang.org/x/mod@v0.30.0 --limit-nodes 2 --limit-edges 2
 golang.org/x/mod@v0.30.0  [CHA]  Extracted
-  fidelity: BUILT_WITH_BODIES   source: zip   toolchain: go1.26.6
+  fidelity: BUILT_WITH_BODIES   source: zip   kind: Library   toolchain: go1.26.6
   analyser: golang.org/x/tools v0.49.0
   test scope: analysed — 290 of 1039 nodes are test declarations
   interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
@@ -435,6 +435,17 @@ not measured — silence there would read as "there was no test code". Under
 `--json`, `test_scope` is always present and reads `not recorded` on a record
 that makes no claim, for the same reason: an empty string there reads as an
 absence of test code rather than an absence of a measurement.
+
+The `kind:` field is what the analysis established the module to be —
+`Application` (some package in it declares `func main`), `Library` (every package
+loaded and none does), or `NotEstablished` (some package did not load, so a
+command may sit in the part that never resolved). It is on the record because it
+decides how a reachability traversal over this graph is rooted, and therefore
+what a *negative* reachability answer over it can be worth: see
+[reachability](reachability.md#which-roots-the-confirming-search-uses). Under
+`--json` it is `artifact_kind`, always present and always a named value — a
+library's stored form is an empty string, which would otherwise read as a
+measurement that never happened.
 
 A `reference scope:` line is printed on every record for the same reason, and it
 is the axis a confident negative rests on:

@@ -1,0 +1,8 @@
+# 
+$ kanonarion reachability example.com/mod@v1.2.0 --vuln GO-2026-0003
+exit 0
+--- stdout ---
+GO-2026-0003 affects example.com/mod@v1.2.0 but is NOT reachable [confidence: High, soundness: confirmed, by: govulncheck, fidelity: source, rooted at: target-rooted]
+  soundness: confirmed — a call-graph search ran over a graph built with function bodies and found no path from an entry point to the vulnerable symbol, rooted at the 3 entry points the analysis can name — the public API, package init and the process entry point; the graph is Application. Separately, rooting the whole graph — every function the module ships, on the premise that an application is entered in ways no static analysis enumerates — DOES reach the vulnerable symbol. That is a different claim from this one, made from roots nothing established are entered, and it is stated so the reader can weigh it rather than discover it later
+--- stderr ---
+(empty)
