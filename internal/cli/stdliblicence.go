@@ -43,6 +43,10 @@ const (
 // The standard library arrives with the toolchain, never through the module
 // proxy, so `kanonarion fetch` cannot take its coordinate and must never be
 // offered as the way to obtain it.
+//
+// It carries no build target. It is printed only by `license` and
+// `license-recursive`, neither of which declares one, and a remedy raised on a
+// path that cannot carry a target is left exactly as it is.
 const stdlibCustodyRemedy = "kanonarion walk --gomod ./go.mod"
 
 // isStdlibPath reports whether a module path names the synthetic

@@ -258,7 +258,7 @@ func TestRunVulnShow_FailsClosedAndNamesTheHistory(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	uc.PartialErr = driftedRecords("example.com/bravo@v2.0.0")
 
-	err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
+	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
 		uc, nil, nil, nil, io.Discard)
 	if err == nil {
 		t.Fatal("runVulnShow() = nil; a single-verdict read over a partly unreadable ledger must refuse")

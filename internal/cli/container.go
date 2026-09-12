@@ -450,7 +450,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(parser, fetcher, blobs, clk, "", logger).
-		WithBuildListResolver(walkbuildlist.New(goBinary, logger))
+		WithBuildListResolver(walkbuildlist.New(goBinary, logger).WithTarget(declaredTarget))
 	// The stdlib chain of custody has two anchors. On the network path it uses
 	// go.dev/dl's published checksum plus a googlesource commit. In --from-modcache
 	// mode the run is fully offline, so it anchors instead to the local toolchain
@@ -592,7 +592,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	queryExamplesUC := exapp.NewQueryExamplesUseCase(exStore)
 
 	// ---- vuln use cases ----
-	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger)
+	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger).WithTarget(declaredTarget)
 	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger)
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)

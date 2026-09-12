@@ -39,6 +39,7 @@ type sbomFlags struct {
 	policyPath      string
 	noProgress      bool
 	generatedAt     string
+	target          buildTargetFlags
 }
 
 func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -73,7 +74,8 @@ Exit codes:
 		Example: `  kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --output sbom.json
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --package ./cmd/kanonarion
-  kanonarion sbom --package ./cmd/kanonarion`,
+  kanonarion sbom --package ./cmd/kanonarion
+  kanonarion sbom --package ./cmd/kanonarion --target windows/amd64`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			walkID := ""
@@ -105,6 +107,7 @@ Exit codes:
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
 	registerNoProgressFlag(cmd, &f.noProgress)
+	registerBuildTargetFlags(cmd, &f.target)
 	return cmd
 }
 
@@ -167,6 +170,23 @@ func runSBOMGenerate(
 	logger *slog.Logger,
 	stdout, stderr io.Writer,
 ) error {
+	// A --package SBOM's component set is that binary's import closure, which
+	// the toolchain resolves against the build target, and the project walk it
+	// is filtered against has to be the same target's. Both are settled here,
+	// before either is asked for. A walk id names a walk that already recorded
+	// the platform it resolved under, so a target there would be a second answer
+	// to a settled question.
+	if walkID != "" && f.target.declared() {
+		if rerr := refuseInapplicableFlags("sbom <walk-id>", []inapplicableFlag{{
+			flag:  "--target/--goos/--goarch",
+			where: "sbom --package, which resolves a closure; a walk id already names the platform its walk recorded",
+		}}); rerr != nil {
+			return rerr
+		}
+	}
+	if terr := resolveBuildTarget(ctx, f.target, "", ""); terr != nil {
+		return terr
+	}
 	// A module fetched via --from-modcache is stored under a "modcache:zip:"
 	// blob handle, not a content-addressed one; every stage that reads those
 	// blobs needs the same modcache-aware store that fetched them. Resolved on

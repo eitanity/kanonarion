@@ -133,7 +133,7 @@ func TestVulnShow_ServesTheConsumerFrameNotTheIsolatedStandDown(t *testing.T) {
 	uc.AddRecords(coord, twoFrameLedger(t, vulntest.MustNew("test", "v1"))...)
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
+	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
 		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf)
 	if err != nil {
 		t.Fatalf("runVulnShow: %v", err)
@@ -156,7 +156,7 @@ func TestVulnShow_ReportsTheDeclinedIsolatedFrameAsAnAside(t *testing.T) {
 	uc.AddRecords(coord, twoFrameLedger(t, vulntest.MustNew("test", "v1"))...)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
+	if err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
 		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
 		t.Fatalf("runVulnShow: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestVulnShow_NoAsideWhenOnlyOneFrameWasMeasured(t *testing.T) {
 	}))
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
+	if err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
 		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
 		t.Fatalf("runVulnShow: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestVulnShow_NoAsideWhenTheIsolatedRecordAnsweredNoReachabilityQuestion(t *
 	uc.AddRecords(coord, sealed, consumer)
 
 	var buf bytes.Buffer
-	if rerr := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
+	if rerr := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
 		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); rerr != nil {
 		t.Fatalf("runVulnShow: %v", rerr)
 	}

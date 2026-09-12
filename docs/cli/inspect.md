@@ -77,6 +77,7 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--force` | `false` | Re-fetch and re-extract even if cached records exist |
+| `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. Applies to the `--gomod` path, whose walk it resolves; a positional module inspect records no build environment. Unknown pairs are refused against `go tool dist list`. `--goos`/`--goarch` set the two halves separately. See [Declaring the build target](walk.md#declaring-the-build-target---target). |
 | `--fresh` | `false` | Refresh the vulnerability advisory database: read the published generation and module index, and download a new snapshot only if an advisory listed for a module in this walk has changed |
 | `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan. For `--gomod`, reachability roots at the dependency closure, not the project's own code (see the note under [`inspect --gomod`](#inspect---gomod-path)) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; sumdb verification still runs |

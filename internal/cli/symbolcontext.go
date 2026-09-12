@@ -77,7 +77,9 @@ too: 'symbol-context <module>@<version> <name>' is exactly equivalent to
 			if !ok {
 				return usageErr(cmd)
 			}
-			f.scope.bind(cmd)
+			if berr := f.scope.bind(cmd); berr != nil {
+				return berr
+			}
 			return runSymbolContext(cmd.Context(), symbolName, f, jsonOut, stdout, stderr)
 		},
 	}

@@ -60,6 +60,9 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.mod` to read the directive from. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
 | `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the project's local `go.sum` - the offline walk. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A module missing from the cache, or whose bytes disagree with `go.sum`, fails the walk. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.sum` to verify the cache against. See [Offline and air-gapped walks](#offline-and-air-gapped-walks). |
+| `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. The canonical spelling. Requires a `go.mod` walk; refused by name on a positional module walk, which records no build environment. See [Declaring the build target](#declaring-the-build-target---target). |
+| `--goos` | _(this host's)_ | The `GOOS` half of `--target`. Must be given with `--goarch`; mutually exclusive with `--target`. |
+| `--goarch` | _(this host's)_ | The `GOARCH` half of `--target`. Must be given with `--goos`; mutually exclusive with `--target`. |
 | `--json` | `false` | Emit the walk record, and this run's verification coverage, as JSON |
 
 #### What `walk --json` carries
@@ -389,6 +392,104 @@ toolchain selects - including the full lint/tool dependency tree pinned by `go
 mod tidy`, and, for any shared transitive, the version the build actually
 selects. Those new coordinates download and verify once; subsequent runs are
 fully cached.
+
+## Declaring the build target (`--target`)
+
+Build constraints select files per platform, so the module set a project
+resolves is different on each one. `--target GOOS/GOARCH` says which platform a
+walk is about:
+
+```console
+$ kanonarion walk --gomod ./go.mod --target windows/amd64
+$ kanonarion walk --gomod ./go.mod --target wasip1/wasm
+```
+
+`--goos` and `--goarch` set the same thing one half at a time, for a caller that
+already holds the two separately. Both halves are required, and they cannot be
+combined with `--target`.
+
+**Default: this host's platform.** With no flag, the walk resolves and records
+the platform kanonarion is running on. The target is **never** taken from the
+environment: `GOOS` and `GOARCH` exported in the calling shell no longer reach
+the resolution, and a walk taken with an export in scope records this host, not
+the export. Declare the target instead.
+
+The declared pair is recorded on the walk (`goos`/`goarch` in
+`walk-list --json`) and is covered by the walk's identity hash, so two targets
+are two walks rather than one walk that changed its mind:
+
+```console
+$ kanonarion walk --gomod ./go.mod --target wasip1/wasm
+$ kanonarion walk-list --limit 2 --json | jq -r '.records[] | "\(.goos)/\(.goarch) \(.identity_hash)"'
+wasip1/wasm  sha256:cf0caf...
+linux/amd64  sha256:e118dc...
+```
+
+Reads select on it too. `audit`, `sbom`, `vuln-scan` and `inspect` take the same
+three flags, and so do the commands that read a stored walk by manifest -
+`context`, `callers`, `callees`, `implementers`, `examples-find`,
+`symbol-context`, `symbol-find`, `usage`, `vuln-show`, `reachability` and
+`dependents`. A read that declares a target answers from a walk taken for that
+target - never from another platform's, and never from an undeclared read's host
+walk. A read declaring nothing asks for the host's.
+
+On a read the flag applies to the `--gomod` route. `--walk-id` names a walk that
+already recorded its platform, and a read that names no build at all chooses no
+walk, so both refuse the declaration by name rather than accepting it and
+filtering nothing.
+
+**A refusal prints a remedy that reaches the answer.** A read for a target the
+store holds no walk of names both platforms - the one asked for and the one it
+does hold - and the command it prints carries the declaration, so running it
+records the walk the read was asking about:
+
+```console
+$ kanonarion context --gomod ./go.mod --target windows/amd64
+notice: no walk anchors these vulnerability statuses: no succeeded code project
+walk for example.com/myapp on windows/amd64, though the store holds 1 succeeded
+walk(s) of it (code on linux/amd64); a walk of another scope or platform is a
+different build, so it does not answer here - run: kanonarion walk --gomod
+./go.mod --target windows/amd64
+```
+
+Run that line and the same read answers, from the walk it just produced. Every
+remedy a read prints behaves this way: the staleness note that tells you to
+re-walk, the reachability surface's walk-and-scan pair, and the missing-licence
+route all carry the target the read was asked for. A read that declared nothing
+prints them exactly as it always has.
+
+**Unknown pairs are refused.** The pair is checked against `go tool dist list`
+taken from the toolchain in hand, and the refusal names both the pair and the
+list:
+
+```console
+$ kanonarion walk --gomod ./go.mod --target windows/riscv64
+error: build target windows/riscv64 is not one this Go toolchain builds for
+(it does build linux/riscv64, openbsd/riscv64, windows/386, windows/amd64);
+run `go tool dist list` for the 47 pairs it offers
+```
+
+The check is here because the toolchain's own refusal is unreadable. `go list`
+does refuse an unlisted pair — it exits 1 and resolves nothing — but the sentence
+it prints names a cgo linking mode, or a build constraint inside a dependency
+several levels down, and never GOOS or GOARCH. A mistyped architecture therefore
+looks like a broken dependency. This refusal names the pair, before any
+resolution is attempted. The list is asked for only when a flag is given; a run
+that declares no target spawns nothing extra.
+
+A cross-target resolution that fails names the target as a possible cause, since
+the toolchain's own sentence does not:
+
+```console
+$ kanonarion walk --gomod ./go.mod --target wasip1/wasm
+error: resolving code scope: go list -deps -test ... (resolving for the declared
+build target wasip1/wasm; this failure may be the target's rather than the
+project's): build constraints exclude all Go files in .../modernc.org/libc/errno
+```
+
+That is a truthful answer about this project: it depends on a cgo SQLite driver
+with no `wasip1` files, so it has no `wasip1/wasm` build to resolve. A project
+whose dependencies do build for the target resolves normally.
 
 ## Standard-library version (`--stdlib-from-gomod`)
 

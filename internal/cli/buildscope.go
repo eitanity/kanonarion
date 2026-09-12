@@ -38,6 +38,11 @@ type buildScopeFlags struct {
 	// cobra at run time.
 	gomodSet  bool
 	toolchain string
+	// target is the platform this read selects a stored walk for. It rides on the
+	// scope flags rather than on each command because all seven commands that
+	// carry these flags select their walk through one resolution, and a flag
+	// registered per command is one a new command forgets.
+	target buildTargetFlags
 }
 
 // defaultGoModPath is the manifest a caller means when they name no other: the
@@ -57,12 +62,24 @@ func registerBuildScopeFlags(cmd *cobra.Command, f *buildScopeFlags) {
 	// name a toolchain and has no way to name one.
 	cmd.Flags().StringVar(&f.toolchain, "toolchain", "",
 		"restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
+	// The platform is registered on the same terms and for the same reason. A
+	// walk taken for a declared target is selected by a read declaring the same
+	// one; without the flag here that walk is writable and unreadable, and the
+	// refusal's remedy records a host walk the reader did not ask for.
+	registerBuildTargetFlags(cmd, &f.target)
 }
 
-// bind reads the flag state cobra holds but a string variable cannot express.
-// Call it from RunE, where cmd is in hand.
-func (f *buildScopeFlags) bind(cmd *cobra.Command) {
+// bind reads the flag state cobra holds but a string variable cannot express,
+// and settles the platform this read selects in. Call it from RunE, where cmd
+// and its context are in hand.
+//
+// The target is settled here rather than inside resolve because one of these
+// commands — usage — resolves its build through bindConsumer instead, and a
+// declaration honoured on six commands and dropped on the seventh is the defect
+// in miniature. Every command carrying these flags calls bind.
+func (f *buildScopeFlags) bind(cmd *cobra.Command) error {
 	f.gomodSet = cmd.Flags().Changed("gomod")
+	return resolveReadTarget(cmd.Context(), f.target, cmd.Name(), f.gomodSet && f.walkID == "", f.gomod)
 }
 
 // requested reports whether the caller named a build at all.
@@ -207,12 +224,12 @@ func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod stri
 	if err != nil {
 		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("building project coordinate for %s: %w", modulePath, err)
 	}
-	// One `go env` probe, in the project's own directory, answering both axes at
-	// once — the same probe the walk resolver runs, so the read asks in the terms
-	// the walk answered in, including any GOOS/GOARCH override and any go.mod
-	// toolchain directive. A failed platform probe falls back to the host, which
-	// is the resolver's own fallback; a failed toolchain probe pins nothing,
-	// because a guessed toolchain excludes the walks it was meant to find.
+	// The platform comes from the invocation — the target this read declared, or
+	// the measured host when it declared none — and the toolchain from one `go
+	// env` probe in the project's own directory, the same probe the walk resolver
+	// runs. So the read asks in the terms the walk answered in. A failed toolchain
+	// probe pins nothing, because a guessed toolchain excludes the walks it was
+	// meant to find.
 	env := currentWalkBuildEnv(ctx, "", filepath.Dir(gomodPath), nil)
 	return selectProjectWalkToRead(ctx, walks, coord, scope, env, gomodPath)
 }
@@ -286,7 +303,7 @@ func noProjectWalkOfScope(
 	platform walkports.BuildEnvFilter,
 	gomodPath string,
 ) error {
-	remedy := fmt.Sprintf("run: kanonarion walk --gomod %s%s", gomodPath, scopeWalkFlagHint(scope))
+	remedy := fmt.Sprintf("run: kanonarion walk --gomod %s%s%s", gomodPath, scopeWalkFlagHint(scope), targetFlagHint())
 	succeeded := walkdomain.WalkSucceeded
 	// Every axis but the target is deliberately unpinned, Toolchain included: this
 	// listing exists to say what the store DOES hold when the narrowed one held

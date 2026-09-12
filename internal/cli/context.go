@@ -37,6 +37,10 @@ type contextFlags struct {
 	// to true, so its value alone cannot distinguish "asked for compact" from
 	// "did not ask"; a path that has to refuse the flag needs the difference.
 	compactSet bool
+	// target is the platform the --gomod form selects its anchoring walk for.
+	// The other three forms name their own module set — a coordinate, a walk id,
+	// a working tree — and none of them chooses a walk by platform.
+	target buildTargetFlags
 }
 
 // -- output types --
@@ -631,6 +635,7 @@ working-tree document, which reports a tree rather than a set of modules.`,
 	cmd.Flags().BoolVar(&f.symbol, "symbol", false, "with a local path: enable symbol-level analysis (go/packages type-check, ~2-5s)")
 	cmd.Flags().BoolVar(&f.reachability, "reachability", false, "with a local path: probe the binary for CVE-affected symbols (~30s)")
 	cmd.Flags().BoolVar(&f.excludeTests, testScopeFlagName, false, "narrow to production code: with --gomod, resolve the scope without test imports; with a local path, omit dependency users declared in _test.go files")
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }

@@ -203,6 +203,8 @@ count.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--gomod` | `./go.mod` | Restrict to the latest code-scope project walk for this manifest |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--walk-id` | _(none)_ | Restrict to the resolved version set of this walk |
 | `--toolchain` | _(none)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form |
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |

@@ -64,6 +64,12 @@ func inspectGoModOnlyFlags(f inspectFlags) []inapplicableFlag {
 	if f.project {
 		out = append(out, inapplicableFlag{flag: "--project", where: where})
 	}
+	if f.target.declared() {
+		// A coordinate inspect resolves no build list and records no build
+		// environment, so a declared target reaches no record that could say
+		// which platform the answer is about.
+		out = append(out, inapplicableFlag{flag: "--target/--goos/--goarch", where: where})
+	}
 	return out
 }
 
@@ -83,6 +89,12 @@ func vulnScanGoModScopeFlags(f vulnScanFlags) []inapplicableFlag {
 	}
 	if f.project {
 		out = append(out, inapplicableFlag{flag: "--project", where: where})
+	}
+	if f.target.declared() {
+		// The target selects which project walk a scope scan reads; a named walk
+		// id, or --module, has already named one, and the platform it was
+		// resolved for is the walk's own rather than this invocation's to choose.
+		out = append(out, inapplicableFlag{flag: "--target/--goos/--goarch", where: where})
 	}
 	return out
 }
@@ -121,6 +133,16 @@ func walkGoModOnlyFlags(f walkFlags) []inapplicableFlag {
 	}
 	if f.stdlibFromGoMod {
 		out = append(out, inapplicableFlag{flag: "--stdlib-from-gomod", where: where})
+	}
+	if f.target.declared() {
+		// A published coordinate walk resolves no build list and records no
+		// build environment, so there is no frame for a declared target to
+		// reach. Accepting it would let a caller name a platform the record
+		// cannot say it was about.
+		out = append(out, inapplicableFlag{
+			flag:  "--target/--goos/--goarch",
+			where: "walk --gomod, whose record carries the build environment it resolved under; a positional module walk records none",
+		})
 	}
 	if f.fromModcache != "" {
 		// Named with its reason: under --from-modcache go.sum is the sole anchor
@@ -164,6 +186,12 @@ func contextGoModOnlyFlags(f contextFlags) []inapplicableFlag {
 	var out []inapplicableFlag
 	if f.gomodPath != "" {
 		out = append(out, inapplicableFlag{flag: "--gomod", where: where})
+	}
+	if f.target.declared() {
+		// The target names which platform's stored walk answers. A coordinate, a
+		// walk id and a working tree each name their own module set and choose no
+		// walk, so there is nothing for the declaration to select between.
+		out = append(out, inapplicableFlag{flag: "--target/--goos/--goarch", where: where})
 	}
 	if f.tool {
 		out = append(out, inapplicableFlag{flag: "--tool", where: where})
@@ -260,6 +288,12 @@ func dependentsScopeFlags(f dependentsFlags) []inapplicableFlag {
 	var out []inapplicableFlag
 	if f.gomod != "" {
 		out = append(out, inapplicableFlag{flag: "--gomod", where: where})
+	}
+	if f.target.declared() {
+		// The search and a pinned walk each arrive at a build that already
+		// recorded the platform it resolved under, so a declaration there would
+		// name a platform the answer is not about.
+		out = append(out, inapplicableFlag{flag: "--target/--goos/--goarch", where: where})
 	}
 	if f.tool {
 		out = append(out, inapplicableFlag{flag: "--tool", where: where})

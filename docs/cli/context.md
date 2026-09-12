@@ -717,6 +717,8 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--entry-points-full` | false | Include flat `entry_points` list alongside `entry_points_by_package` |
 | `--package <path>` | | Restrict `interface`, `call_graph`, and `examples` sections to a single import path |
 | `--gomod <path>` | `./go.mod` when no module/`--walk-id` given | Emit context for every module in the `go.mod`'s code scope; under `--json` that is one object with the documents in `modules` |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--walk-id <id>` | | Emit context for every module in the walk; under `--json` that is one object with the documents in `modules` |

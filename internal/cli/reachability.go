@@ -171,6 +171,10 @@ type reachabilityFlags struct {
 	vulnID    string
 	walkID    string
 	gomod     string
+	// target is the platform the --gomod frame selects its walk for. --local
+	// measures the tree in front of it and --walk-id names a walk that recorded
+	// its own platform, so neither can act on a declaration.
+	target buildTargetFlags
 }
 
 func newReachabilityCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -233,6 +237,7 @@ frame — never another project's — and states that restriction in its output.
 	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "answer the stored query in the frame of this walk's scans")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "",
 		"answer the stored query in the frame of the latest project walk for this go.mod; takes a path, e.g. --gomod "+defaultGoModPath)
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -264,6 +269,12 @@ func runReachabilityStoredQuery(ctx context.Context, coordArg string, f reachabi
 	if coordArg == "" {
 		return fmt.Errorf("reachability --vuln requires a <module>@<version> argument")
 	}
+	// The frame this query answers in is selected by platform when --gomod names
+	// it. A walk id names one walk, whose record already says which platform it
+	// resolved under, so the declaration is refused there rather than ignored.
+	if terr := resolveReadTarget(ctx, f.target, "reachability --vuln", f.walkID == "" && gomodSet, f.gomod); terr != nil {
+		return terr
+	}
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
@@ -282,6 +293,12 @@ func runReachabilityLocalProbe(ctx context.Context, coordArg string, f reachabil
 	}
 	if coordArg != "" {
 		return fmt.Errorf("reachability --local does not take a module argument; use '<module>@<version> --vuln <id>' to query a stored module")
+	}
+	// The probe measures the tree in front of it, in the frame that tree builds
+	// in. There is no stored walk for a declaration to select, so it is refused
+	// by name on the same terms as --walk-id and --gomod below.
+	if terr := resolveReadTarget(ctx, f.target, "reachability --local", false, ""); terr != nil {
+		return terr
 	}
 	// The local probe measures the working tree it was pointed at, so it
 	// already has a build: accepting a second name for one would invite the

@@ -40,7 +40,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	// An isolated scan extracts a published zip into a scratch directory: there
 	// is no working tree and therefore no vendor/ tree to root at, so this path
 	// is fetched-surface by construction.
-	env := scanEnv(os.Environ(), goModCache, surfaceNormalised)
+	env := s.target.Apply(scanEnv(os.Environ(), goModCache, surfaceNormalised))
 
 	// The environment above pins the toolchain so no scan child can download one,
 	// which also refuses a toolchain already unpacked on this host. One decision

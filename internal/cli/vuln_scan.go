@@ -41,6 +41,7 @@ type vulnScanFlags struct {
 	policyPath         string
 	noVendor           bool
 	noProgress         bool
+	target             buildTargetFlags
 	// excludeTests is parsed only so the refusal can name it. A scope scan
 	// re-walks when the manifest has drifted; see
 	// refuseTestScopeOnRecordingCommand.
@@ -70,7 +71,8 @@ it. It is reported on its own and counted in no roll-up.`,
   kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln-scan --binary-pre-pass 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan --tool
-  kanonarion vuln-scan --tool --gomod ./go.mod`,
+  kanonarion vuln-scan --tool --gomod ./go.mod
+  kanonarion vuln-scan --target windows/amd64`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// With neither a walk-id nor --module the scan is the project in
@@ -110,6 +112,7 @@ it. It is reported on its own and counted in no roll-up.`,
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerCallgraphTimeoutFlag(cmd)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -148,6 +151,12 @@ func runVulnScanScope(ctx context.Context, f vulnScanFlags, stdout, stderr io.Wr
 	gomodPath, err := resolveGoModPath(f.gomod)
 	if err != nil {
 		return err
+	}
+	// The platform this scan is about: it selects the project walk to scan and
+	// is the platform govulncheck analyses for, since build constraints decide
+	// which files are in the package graph at all.
+	if terr := resolveBuildTarget(ctx, f.target, f.goBinary, filepath.Dir(gomodPath)); terr != nil {
+		return terr
 	}
 	// The scope path resolves the project walk and scans it in source mode; the
 	// pre-pass is a lens on a named walk and this path has never passed it on.
@@ -286,8 +295,8 @@ func selectProjectWalkToScan(
 		return walkports.WalkSummary{}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
 	}
 	if len(walks) == 0 {
-		return walkports.WalkSummary{}, fmt.Errorf("no succeeded %s project walk for %s on %s — run: kanonarion walk --gomod %s%s",
-			scope, coord.Path(), env, gomodPath, scopeWalkFlagHint(scope))
+		return walkports.WalkSummary{}, fmt.Errorf("no succeeded %s project walk for %s on %s — run: kanonarion walk --gomod %s%s%s",
+			scope, coord.Path(), env, gomodPath, scopeWalkFlagHint(scope), targetFlagHint())
 	}
 	return walks[0], nil
 }

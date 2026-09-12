@@ -81,6 +81,10 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	}
 
 	surface, env := projectScanSurface(projectDir, req.Vendored)
+	// The platform is layered on last, over whichever surface the tree selected,
+	// so the one decision a posture must not make is made in one place for all
+	// three of them.
+	env = s.target.Apply(env)
 
 	// Stamped on every result this scan returns, faults included: a project's
 	// reachable set is the toolchain's, and it is resolved from the project

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"log/slog"
-	"runtime"
 
 	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -40,21 +39,22 @@ func (e walkBuildEnv) toolchainFilter() *string {
 
 // currentWalkBuildEnv probes the build environment for projectDir.
 //
-// When the platform probe fails it falls back to the host platform, because
-// that is what the walk resolver falls back to when it cannot run the probe
-// either. The toolchain has no such fallback: the resolver records the empty
-// string, and a filter that guessed would exclude the walks it was meant to
-// find.
+// The platform comes from the invocation rather than from the probe: it is the
+// target this run declared, or the measured host when it declared none, which is
+// exactly the pair the resolving children are run with. A read therefore selects
+// the walk its own resolution would produce, and a declared-target walk is found
+// by a later read declaring the same target — and by no other.
+//
+// The probe still runs, and still for the toolchain alone. That is one question
+// the invocation cannot answer: the go.mod's own toolchain directive and any
+// GOTOOLCHAIN switch decide it, and only the go command knows how they settled.
+// It has no fallback either — the resolver records the empty string, and a
+// filter that guessed would exclude the walks it was meant to find.
 func currentWalkBuildEnv(ctx context.Context, goBinary, projectDir string, logger *slog.Logger) walkBuildEnv {
-	goVersion, goos, goarch := gotoolchain.New(goBinary, logger).BuildEnvironment(ctx, projectDir)
-	if goos == "" || goarch == "" {
-		return walkBuildEnv{
-			platform:  walkports.BuildEnvFilter{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
-			toolchain: goVersion,
-		}
-	}
+	resolved := declaredTarget.OrHost()
+	goVersion, _, _ := gotoolchain.New(goBinary, logger).WithTarget(declaredTarget).BuildEnvironment(ctx, projectDir)
 	return walkBuildEnv{
-		platform:  walkports.BuildEnvFilter{GOOS: goos, GOARCH: goarch},
+		platform:  walkports.BuildEnvFilter{GOOS: resolved.GOOS(), GOARCH: resolved.GOARCH()},
 		toolchain: goVersion,
 	}
 }

@@ -43,6 +43,7 @@ type auditFlags struct {
 	fromModcache    string
 	policyPath      string
 	noProgress      bool
+	target          buildTargetFlags
 	// excludeTests is parsed only so the refusal can name it. audit records a
 	// walk, and a walk record cannot name the test axis; see
 	// refuseTestScopeOnRecordingCommand.
@@ -119,6 +120,7 @@ Exit codes:
 	registerAllowVerificationDowngradeFlag(cmd)
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -363,6 +365,12 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return err
 	}
 	f.gomodPath = gomodPath
+
+	// The platform every leg of this audit is about — the scope closure, the
+	// walk, and the scan rooted on it — settled once, before any of them runs.
+	if terr := resolveBuildTarget(ctx, f.target, "", filepath.Dir(gomodPath)); terr != nil {
+		return terr
+	}
 
 	if err := resolveModcacheMode(ctx, f.fromModcache, gomodPath); err != nil {
 		return err

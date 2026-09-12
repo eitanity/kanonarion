@@ -85,6 +85,10 @@ kanonarion examples-find Marshal
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory |
 
+Also takes the build-scope flags `--gomod`, `--walk-id`, `--toolchain` and
+`--target GOOS/GOARCH` — see [Declaring the build
+target](walk.md#declaring-the-build-target---target).
+
 ### `examples-list` - list modules with harvested example records
 
 ```

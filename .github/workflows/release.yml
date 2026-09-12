@@ -124,8 +124,8 @@ jobs:
           # and govulncheck reachability is GOOS/GOARCH-sensitive too — so a
           # single linux/amd64 audit misses modules present only on other targets
           # (e.g. github.com/inconshreveable/mousetrap on windows) and their
-          # vulns. Each iteration exports the target pair, inherited by the
-          # 'go list' the CLI shells out to.
+          # vulns. Each iteration DECLARES the target with --target, which the
+          # CLI writes into every child it resolves and scans with.
           #
           # No --force here (unlike the SBOM step): a walk's identity covers
           # GOOS/GOARCH/GoVersion, so each target resolves its own walk, an
@@ -141,7 +141,6 @@ jobs:
           # release. A re-scan happens only when the database changed for a
           # module in that target's own walk; within one release it never does.
           for t in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm; do
-            os=${t%/*}; arch=${t#*/}
             fresh=""; [ "$t" = darwin/amd64 ] && fresh="--fresh"
             echo "audit for $t"
             # --stdlib-from-gomod pins the synthetic stdlib node to the go.mod
@@ -157,7 +156,8 @@ jobs:
             # missing entry hard-fails the release) and contacts neither
             # proxy.golang.org, sum.golang.org, nor any VCS host — only the OSV
             # database (vuln.go.dev) for the vulnerability scan.
-            GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 audit $fresh \
+            ./dist/kanonarion_linux_amd64 audit $fresh \
+              --target "$t" \
               --from-modcache \
               --stdlib-from-gomod
           done
@@ -168,17 +168,16 @@ jobs:
           # One SBOM per released binary. A '--package' SBOM's component set is
           # the binary's import closure, which the Go toolchain resolves against
           # GOOS/GOARCH and build constraints — so a single linux/amd64 SBOM does
-          # NOT describe the windows or arm binaries. Each iteration exports the
-          # target pair (inherited by the 'go list' the CLI shells out to for both
-          # the package allow-list and the project walk) so the closure matches
-          # that binary.
+          # NOT describe the windows or arm binaries. Each iteration DECLARES the
+          # target with --target, which settles both halves at once: the package
+          # allow-list and the project walk are resolved for the same declared
+          # pair, so the closure matches that binary by construction.
           #
-          # --force is required for correctness, not speed: without it
-          # 'sbom --package' reuses the latest succeeded project walk in the store
-          # (the one the audit step built for linux/amd64), pinning every SBOM to
-          # that platform's dependency graph. Filtering a linux walk to a windows
-          # allow-list cannot surface windows-only modules. --force rebuilds the
-          # project walk under the current GOOS/GOARCH so walk and allow-list agree.
+          # --force is kept, and it is now freshness rather than platform
+          # correctness: the walk a declared target selects is one resolved for
+          # that same target, so a stale linux walk can no longer be filtered to a
+          # windows allow-list. --force re-resolves anyway, so every released
+          # document is built from a walk taken in this release's own run.
           #
           # 'sbom --package' bootstraps its own prerequisites (project walk +
           # licence extraction) and exits non-zero if any component of the
@@ -206,8 +205,9 @@ jobs:
             # --from-modcache sources modules from the build-populated GOMODCACHE
             # and verifies against the local go.sum, so the SBOM build is offline
             # w.r.t. the module proxy/checksum-db/VCS (matching the audit step).
-            GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 sbom \
+            ./dist/kanonarion_linux_amd64 sbom \
               --package ./cmd/kanonarion \
+              --target "$t" \
               --from-modcache \
               --force \
               --stdlib-from-gomod \

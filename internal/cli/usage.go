@@ -146,7 +146,9 @@ the store already holds and refuses a module it has not fetched.`,
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			scopeFlags.bind(cmd)
+			if berr := scopeFlags.bind(cmd); berr != nil {
+				return berr
+			}
 			return runUsage(cmd.Context(), args[0], scopeFlags, stdout, stderr)
 		},
 	}

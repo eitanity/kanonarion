@@ -49,7 +49,9 @@ the callers and callees queries also accept.`,
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			scopeFlags.bind(cmd)
+			if berr := scopeFlags.bind(cmd); berr != nil {
+				return berr
+			}
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {

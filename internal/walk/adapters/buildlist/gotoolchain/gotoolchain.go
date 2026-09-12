@@ -15,17 +15,23 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // Resolver runs the Go toolchain to compute a project's build list.
 type Resolver struct {
 	goBinary string // empty → resolved via PATH as "go"
-	logger   *slog.Logger
+	// target is the platform this resolver's children resolve for. The zero
+	// value is a resolver nobody declared a target to, which still writes the
+	// measured host into every child: see goenv.Target.Apply.
+	target goenv.Target
+	logger *slog.Logger
 }
 
 // New constructs a Resolver. goBinary may be empty (uses "go" from PATH).
@@ -34,6 +40,16 @@ func New(goBinary string, logger *slog.Logger) *Resolver {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Resolver{goBinary: goBinary, logger: logger}
+}
+
+// WithTarget returns a copy of the resolver whose children resolve for the
+// declared target. It is a copy rather than a setter because one resolver serves
+// one operation, and an operation whose target changed halfway would produce a
+// module set no single platform ever had.
+func (r *Resolver) WithTarget(t goenv.Target) *Resolver {
+	out := *r
+	out.target = t
+	return &out
 }
 
 func (r *Resolver) goBin() string {
@@ -130,6 +146,11 @@ func (r *Resolver) buildEnv(ctx context.Context, projectDir string) (goVersion, 
 func (r *Resolver) run(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := childproc.CommandContext(ctx, r.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	cmd.Dir = dir
+	// The platform is stated rather than inherited. Every child of a build-list
+	// resolution — the module list, the requirement graph and the environment
+	// probe — resolves for the same pair, and it is the pair the invocation
+	// declared or, failing that, the host this process measured.
+	cmd.Env = r.target.Apply(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {

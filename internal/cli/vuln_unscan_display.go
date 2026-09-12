@@ -40,6 +40,12 @@ type unscanDisplay struct {
 	explanation string
 	hint        string
 	oneFault    bool
+	// hintTakesTarget marks a hint whose last words are a walk invocation, so the
+	// declaration this run was made under is appended to it. The table is static
+	// and the declaration is not, and a hint telling the reader to walk the
+	// project again has to mean the platform they asked about rather than this
+	// host's.
+	hintTakesTarget bool
 }
 
 // metadataOnlyNote and notScannedNote name the two shapes an Unscannable record
@@ -221,8 +227,9 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		heading: metadataOnlyNote + " — one project-level fault: the project directory no longer resolves to this walk's module versions",
 		explanation: "the directory this walk was taken from now requires different versions of modules the walk pinned, " +
 			"so an analysis of it would be evidence about a different build; advisories matched, reachability not established",
-		hint:     "walk the project again so a walk describes the tree as it stands, then scan that walk: kanonarion walk --gomod <project-dir>/go.mod",
-		oneFault: true,
+		hint:            "walk the project again so a walk describes the tree as it stands, then scan that walk: kanonarion walk --gomod <project-dir>/go.mod",
+		hintTakesTarget: true,
+		oneFault:        true,
 	},
 }
 
@@ -235,6 +242,9 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 // which older pipeline versions could produce — and says exactly that.
 func unscanDisplayFor(reason vuldomain.UnscanReason) unscanDisplay {
 	if d, ok := unscanDisplays[reason]; ok {
+		if d.hintTakesTarget {
+			d.hint += targetFlagHint()
+		}
 		return d
 	}
 	if reason == "" {

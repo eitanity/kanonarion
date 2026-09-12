@@ -399,19 +399,22 @@ mutually exclusive with a positional walk-id and with `--module`.
 has drifted, and a walk record names its scope but not its test axis. See
 [Test scope](walk.md#test-scope---exclude-tests).
 
-**The walk must match this platform.** Selection filters on the current
-environment's `go env GOOS`/`GOARCH`, because build constraints select which
-files compile and reachability follows those files. A store holding walks for
-several platforms therefore never answers a scan from another platform's walk;
-when this platform has no matching walk the scan refuses and names the remedy:
+**The walk must match the declared target.** Selection filters on `--target`,
+which defaults to this host's platform and is never taken from the environment,
+because build constraints select which files compile and reachability follows
+those files. A store holding walks for several platforms therefore never answers
+a scan from another platform's walk; when the declared target has no matching
+walk the scan refuses and names the remedy:
 
 ```
 no succeeded code project walk for example.com/myapp on darwin/arm64 — run: kanonarion walk --gomod ./go.mod
 ```
 
-To scan another platform's walk deliberately, name it by ID:
-`kanonarion vuln-scan <walk-id>`. The progress line states the frame the
-selected walk was resolved in.
+To scan another platform's walk deliberately, declare that platform —
+`kanonarion vuln-scan --target windows/amd64` — or name the walk by ID:
+`kanonarion vuln-scan <walk-id>`, which refuses a target because it has already
+named the walk. The progress line states the frame the selected walk was
+resolved in.
 
 **The walk must still describe this manifest.** The lookup above finds a walk by
 the project's module path, which does not change when the `go.mod` does, so
@@ -519,6 +522,7 @@ the current resolution, and scanning that walk gives a reachability answer again
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it (not platform-filtered; such walks record no platform) |
+| `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. Selects the project walk a scope scan reads, and is the platform govulncheck analyses for. Refused beside a positional walk id or `--module`, which already name the walk. Unknown pairs are refused against `go tool dist list`. `--goos`/`--goarch` set the two halves separately. See [Declaring the build target](walk.md#declaring-the-build-target---target). |
 | `--gomod` | `./go.mod` | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
@@ -1092,6 +1096,8 @@ counts them: those rows are history, not the answer a scan would give today. In
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
 | `--gomod <path>` | _(none)_ | Answer in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The notice names the walk's scope and frame, and states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--history` | `false` | List all scan records across walks, snapshots and pipeline generations, marking superseded rows |
 | `--json` | `false` | Emit record as JSON |
 

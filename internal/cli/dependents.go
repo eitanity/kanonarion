@@ -33,6 +33,10 @@ type dependentsFlags struct {
 	anyBuild    bool
 	directOnly  bool
 	includeRoot bool
+	// target is the platform the manifest route selects its walk for. The search
+	// and a pinned walk each arrive at a build that already recorded one, so it
+	// is refused there rather than ignored.
+	target buildTargetFlags
 }
 
 func newDependentsCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -126,6 +130,7 @@ Flag combinations:
 	cmd.Flags().BoolVar(&f.anyBuild, "any-build", false, "search the store for a build that holds the target, instead of rooting at a project")
 	cmd.Flags().BoolVar(&f.directOnly, "direct-only", false, "only show direct dependencies of the walk root")
 	cmd.Flags().BoolVar(&f.includeRoot, "include-root", false, "show the walk root module itself if it depends on the target")
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -134,6 +139,13 @@ func runDependents(ctx context.Context, moduleArg, storeRoot string, f dependent
 	coord, err := parseDependentsTarget(moduleArg)
 	if err != nil {
 		return err
+	}
+
+	// The manifest route is the one that chooses a walk, so it is the one a
+	// declared target can act on; --walk-id and --any-build refuse it by name in
+	// resolveDependentsRoot, through the flag list they already carry.
+	if terr := resolveReadTarget(ctx, f.target, "dependents", f.walkID == "" && !f.anyBuild, f.gomod); terr != nil {
+		return terr
 	}
 
 	logger := buildLogger(logLevel, stderr)

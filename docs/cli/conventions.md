@@ -101,9 +101,21 @@ same project for several platforms — a cross-compiled release run produces one
 per target — and for several toolchains, because which `go` leads `PATH` decides
 which one a walk records. The two kinds of command behave differently:
 
-**Commands that run analysis over a walk** select the walk resolved in the
-current environment — both the platform and the toolchain — not the newest one.
-This covers `vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan
+The platform comes from the invocation, never from the environment. The
+commands that RESOLVE a build — `walk`, `audit`, `sbom`, `vuln-scan`, `inspect`
+— and the commands that READ one by manifest — `context`, `callers`, `callees`,
+`implementers`, `examples-find`, `symbol-context`, `symbol-find`, `usage`,
+`vuln-show`, `reachability`, `dependents` — all take `--target GOOS/GOARCH` (or
+`--goos`/`--goarch`), and with no flag the platform is the measured host —
+`GOOS` and `GOARCH` exported in the calling shell reach no resolution. See
+[Declaring the build target](walk.md#declaring-the-build-target---target). The
+toolchain is not declarable: it comes from the project's own directory, because
+only the go command knows how the `toolchain` directive and any `GOTOOLCHAIN`
+switch settled.
+
+**Commands that run analysis over a walk** select the walk resolved for the
+declared target — and for the current toolchain — not the newest one. This
+covers `vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan
 <module@version>`, and `sbom --package` without `--force`.
 
 The toolchain is part of the question because the walk names the standard
@@ -127,13 +139,14 @@ the walk it selected was resolved by.
 `sbom --package` builds the missing walk itself in the current frame rather
 than refusing.
 
-To scan or inventory another platform's walk deliberately, name it by ID:
-`kanonarion vuln-scan <walk-id>`.
+To scan or inventory another platform's walk deliberately, declare that
+platform — `kanonarion vuln-scan --target windows/amd64` — or name the walk by
+ID: `kanonarion vuln-scan <walk-id>`.
 
 **Query commands** (`inspect`, `license`, `license-compat`, `context`,
 `dependents`, `interface-diff --used-by`, `callers`/`callees`/`implementers`
-with `--gomod`) answer from one walk of the target whatever its platform, and
-state which frame answered:
+with `--gomod`) answer from one walk of the target and state which frame
+answered:
 
 ```
 Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
@@ -144,6 +157,26 @@ A module-rooted walk resolves no platform and reads `not-platform-scoped`; an
 unknown platform reads `unrecorded`. JSON carries the token in `frame` /
 `walk_frame` and the basis (`platform`, `not_platform_scoped`, `unrecorded`)
 in `frame_basis` / `walk_frame_basis`.
+
+A query that names its build with `--gomod` selects on the platform too: the
+one it declared with `--target`, or the measured host when it declared none. A
+walk of another platform is another build and does not answer, and the refusal
+names both — the platform asked for and the platform the store holds. **Its
+printed remedy carries the declaration**, so running what the tool printed
+records the walk the read was asking about rather than another of this host's:
+
+```
+notice: no walk anchors these vulnerability statuses: no succeeded code project
+walk for example.com/myapp on windows/amd64, though the store holds 1 succeeded
+walk(s) of it (code on linux/amd64); a walk of another scope or platform is a
+different build, so it does not answer here — run: kanonarion walk --gomod
+./go.mod --target windows/amd64
+```
+
+`--target` applies to the `--gomod` route. A read that names its walk with
+`--walk-id`, or that names no build at all, refuses the flag by name rather
+than accepting it and filtering nothing: the walk is already chosen, and its
+record already says which platform it resolved for.
 
 Where such a command chooses among walks that were **resolved by different
 toolchains**, it names the one it chose, because that choice decides which

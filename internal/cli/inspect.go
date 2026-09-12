@@ -40,6 +40,7 @@ type inspectFlags struct {
 	noProgress      bool
 	stdlibFromGoMod bool
 	policyPath      string
+	target          buildTargetFlags
 	// excludeTests is parsed only so the refusal can name it. inspect drives a
 	// project walk; see refuseTestScopeOnRecordingCommand.
 	excludeTests bool
@@ -76,7 +77,8 @@ that is tight on memory.`,
   kanonarion inspect
   kanonarion inspect --gomod ./go.mod
   kanonarion inspect --tool
-  kanonarion inspect --project`,
+  kanonarion inspect --project
+  kanonarion inspect --target wasip1/wasm`,
 		Args: cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scope, serr := scopeFromFlags(f.tool, f.project)
@@ -134,6 +136,7 @@ that is tight on memory.`,
 	registerCallgraphMemoryCeilingFlag(cmd)
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -591,6 +594,11 @@ func refuseInspectGoModFlags(f inspectFlags) error {
 func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout, stderr io.Writer) error {
 	if err := refuseInspectGoModFlags(f); err != nil {
 		return err
+	}
+	// Settled before the scope closure below, which is the first thing that
+	// resolves for it.
+	if terr := resolveBuildTarget(ctx, f.target, f.goBinary, filepath.Dir(f.gomodPath)); terr != nil {
+		return terr
 	}
 
 	// For code and tool scopes, check whether the scope is empty before

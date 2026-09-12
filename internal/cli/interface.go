@@ -341,7 +341,9 @@ func newSymbolFindCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			scopeFlags.bind(cmd)
+			if berr := scopeFlags.bind(cmd); berr != nil {
+				return berr
+			}
 			return runSymbolFind(cmd.Context(), args[0], scopeFlags, jsonOut, stdout, stderr)
 		},
 	}

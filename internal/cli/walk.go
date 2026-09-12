@@ -59,6 +59,10 @@ type walkFlags struct {
 	stdlibFromGoMod bool
 	noProgress      bool
 	fromModcache    string
+	// target is the platform this walk resolves for. It is recorded on the
+	// graph's BuildEnv and covered by the walk's identity hash, so two targets
+	// are two walks rather than one walk that changed its mind.
+	target buildTargetFlags
 	// excludeTests is parsed only so the refusal can name it. A walk record names
 	// its scope and not its test axis; see refuseTestScopeOnRecordingCommand.
 	excludeTests bool
@@ -89,7 +93,8 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion walk --gomod ./go.mod --project
   kanonarion walk --gomod ./go.mod --analyse-root
   kanonarion walk --gomod ./go.mod --analyse-local
-  kanonarion walk --gomod ./go.mod --from-modcache`,
+  kanonarion walk --gomod ./go.mod --from-modcache
+  kanonarion walk --gomod ./go.mod --target wasip1/wasm`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// With no positional module, default to a go.mod walk; --gomod
 			// defaults to./go.mod via resolveGoModPath.
@@ -139,6 +144,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
+	registerBuildTargetFlags(cmd, &f.target)
 	return cmd
 }
 
@@ -175,6 +181,12 @@ func openWalkRuntime(f walkFlags, stderr io.Writer) (walkRuntime, error) {
 // module bytes come from and what verifies them — the decision --from-modcache
 // makes — before opening the store, then runs the project walk.
 func runWalkGoMod(ctx context.Context, f walkFlags, stdout, stderr io.Writer) error {
+	// The platform this walk is about, settled before anything resolves: it is
+	// recorded on the graph, covered by the walk's identity, and written into
+	// every child that resolves the module set.
+	if terr := resolveBuildTarget(ctx, f.target, "", filepath.Dir(f.gomodPath)); terr != nil {
+		return terr
+	}
 	// --from-modcache is the offline walk: bytes come from an existing module
 	// cache and the go.sum beside this go.mod is their sole anchor. Resolved
 	// first because resolveProjectGoSum is a no-op under it, and because the

@@ -29,6 +29,7 @@ func newVulnShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 	var gomod string
 	var history bool
+	var target buildTargetFlags
 
 	cmd := &cobra.Command{
 		Use: "vuln-show <module>@<version>",
@@ -76,7 +77,7 @@ marks them superseded.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVulnShow(cmd.Context(), args[0], walkID, gomod, cmd.Flags().Changed("gomod"), jsonOut, history,
+			return runVulnShow(cmd.Context(), args[0], walkID, gomod, target, cmd.Flags().Changed("gomod"), jsonOut, history,
 				ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
 		},
 	}
@@ -85,6 +86,7 @@ marks them superseded.`,
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "answer in the frame of this walk's scans")
 	cmd.Flags().StringVar(&gomod, "gomod", "",
 		"answer in the frame of the latest project walk for this go.mod; takes a path, e.g. --gomod "+defaultGoModPath)
+	registerBuildTargetFlags(cmd, &target)
 
 	return cmd
 }
@@ -92,6 +94,7 @@ marks them superseded.`,
 func runVulnShow(
 	ctx context.Context,
 	arg, walkID, gomod string,
+	target buildTargetFlags,
 	gomodSet, jsonOut, history bool,
 	uc QueryVulnUseCase,
 	runs QueryScanRunsUseCase,
@@ -102,6 +105,13 @@ func runVulnShow(
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
+	}
+
+	// --history spans every frame and every pipeline generation, so it selects no
+	// walk and a declared platform would filter nothing. It is refused there by
+	// name rather than parsed and dropped.
+	if terr := resolveReadTarget(ctx, target, "vuln-show", !history && walkID == "" && gomodSet, gomod); terr != nil {
+		return terr
 	}
 
 	if history {

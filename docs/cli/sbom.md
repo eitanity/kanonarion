@@ -203,7 +203,8 @@ kanonarion sbom [<walk-id>] [flags]
 
 The walk ID is required unless `--package` is used. With `--package` and no
 walk ID, kanonarion reuses the latest succeeded project walk for the current
-module **resolved for this platform** (`go env GOOS`/`GOARCH`) when one exists —
+module **resolved for the declared target** (`--target`, defaulting to this
+host's platform) when one exists —
 a walk of the same project for another platform is not reused, because its
 closure is a different one. On a cold store (or when only another platform's
 walk is stored), it builds the
@@ -222,6 +223,7 @@ re-run when `--force` is passed.
 | `--format` | `cyclonedx-1.6` | SBOM format |
 | `--output <path>` | _(stdout)_ | Write SBOM content to a file |
 | `--force` | `false` | Re-generate even if a cached SBOM exists |
+| `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. Both the `--package` allow-list and the project walk are resolved for this platform, so the closure matches the binary built for it. Unknown pairs are refused against `go tool dist list`. `--goos`/`--goarch` set the two halves separately. See [Declaring the build target](walk.md#declaring-the-build-target---target). |
 | `--generated-at <time>` | _(derived)_ | RFC3339 time the document is being created; becomes `metadata.timestamp`. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so. Supplying it bypasses the cache |
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain. Applies when `sbom` builds a project walk (`--package` with no walk id); refused by name when a walk id is given, because that walk's `stdlib` node is already pinned. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |

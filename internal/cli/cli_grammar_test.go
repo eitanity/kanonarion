@@ -285,7 +285,7 @@ func TestVulnShow_NamesANewerSucceededWalkOfTheSameRoot(t *testing.T) {
 	}})
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), module.String(), namedWalk, "", false, false, false,
+	err := runVulnShow(context.Background(), module.String(), namedWalk, "", buildTargetFlags{}, false, false, false,
 		testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), walks, nil, &buf)
 	if err == nil {
 		t.Fatal("want the missing-scan refusal")
@@ -319,7 +319,7 @@ func TestVulnShow_NoNoteWhenNoNewerWalkExists(t *testing.T) {
 	}})
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), module.String(), namedWalk, "", false, false, false,
+	err := runVulnShow(context.Background(), module.String(), namedWalk, "", buildTargetFlags{}, false, false, false,
 		testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), walks, nil, &buf)
 	if err == nil {
 		t.Fatal("want the missing-scan refusal")
@@ -343,7 +343,7 @@ func TestVulnShow_NoteFailureLeavesTheRefusalIntact(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), module.String(), namedWalk, "", false, false, false,
+	err := runVulnShow(context.Background(), module.String(), namedWalk, "", buildTargetFlags{}, false, false, false,
 		testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), walks, nil, &buf)
 	if err == nil {
 		t.Fatal("want the missing-scan refusal")
