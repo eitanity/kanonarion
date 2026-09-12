@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
+	"strings"
 	"sync"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
@@ -699,7 +701,13 @@ type FakeQueryCallGraph struct {
 	// the composing listing decodes every generation of every multi-generation
 	// coordinate in the store to read fields no part of the answer looks at.
 	CoordinateListCalls int
-	RecordReads         int
+	// HistoryCalls counts the composing history read — the one that reconstructs
+	// and verifies every generation's edge set. It is counted separately from
+	// RecordReads because a caller that needs one COLUMN per generation must not
+	// reach it: reading the analyser through it was a second complete pass over
+	// the coordinate, on top of the one composition had already done.
+	HistoryCalls int
+	RecordReads  int
 	// ForeignModuleReads counts the column read that qualifies an answer. It is
 	// separate from RecordReads because in the store it IS separate: a column
 	// beside the record, read without decompressing or decoding one, which is the
@@ -809,6 +817,7 @@ func (f *FakeQueryCallGraph) CallGraphHistory(ctx context.Context, coord coordin
 		return nil, f.Err
 	}
 	f.mu.Lock()
+	f.HistoryCalls++
 	key := coord.String() + "|" + pipelineVersion
 	gens := append([]cgdomain.CallGraphRecord(nil), f.history[key]...)
 	f.mu.Unlock()
@@ -884,6 +893,7 @@ func (f *FakeQueryCallGraph) ListCallGraphCoordinates(_ context.Context, filter 
 	f.CoordinateListCalls++
 	sums := f.filteredSummaries(filter)
 	var out []cgports.CallGraphCoordinate
+	listed := map[string]bool{}
 	for _, s := range sums {
 		c := cgports.CallGraphCoordinate{
 			ModulePath:      s.ModulePath,
@@ -914,6 +924,7 @@ func (f *FakeQueryCallGraph) ListCallGraphCoordinates(_ context.Context, filter 
 					NodeCount:      rec.NodeCount,
 					EdgeCount:      rec.EdgeCount,
 					ContentHash:    rec.ContentHash,
+					Analyser:       rec.Analyser,
 				})
 				if !c.Generations[len(c.Generations)-1].StatesTheSame(c.Generations[0]) {
 					c.GenerationsDiffer = true
@@ -941,9 +952,97 @@ func (f *FakeQueryCallGraph) ListCallGraphCoordinates(_ context.Context, filter 
 				ContentHash:    s.ContentHash,
 			}}
 		}
+		listed[c.ModulePath+"\x00"+c.ModuleVersion+"\x00"+c.PipelineVersion] = true
 		out = append(out, c)
 	}
-	return out, nil
+	return append(out, f.unlistedLedgerCoordinates(filter, listed)...), nil
+}
+
+// unlistedLedgerCoordinates is every coordinate the fake holds a record or a
+// generation for that no staged summary already described.
+//
+// It exists because in a store the two cannot come apart: a record row IS a
+// listing row, read from the same table by the same key, so there is no store in
+// which GetCallGraphRecord answers for a coordinate and the coordinate listing
+// reports nothing for it. A fake that allowed that let a caller which reads a
+// generation's columns see an empty ledger where the real store sees the
+// generations, and the test that staged only records passed while the command
+// said nothing.
+//
+// Sorted by key rather than emitted in map order, so two runs of one test list
+// the same coordinates in the same sequence.
+func (f *FakeQueryCallGraph) unlistedLedgerCoordinates(filter cgports.CallGraphFilter, listed map[string]bool) []cgports.CallGraphCoordinate {
+	keys := make([]string, 0, len(f.records)+len(f.history))
+	seen := make(map[string]bool, len(f.records)+len(f.history))
+	for k := range f.records {
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	for k := range f.history {
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+
+	var out []cgports.CallGraphCoordinate
+	for _, key := range keys {
+		gens := append([]cgdomain.CallGraphRecord(nil), f.history[key]...)
+		if rec, ok := f.records[key]; ok {
+			gens = append(gens, rec)
+		}
+		if len(gens) == 0 {
+			continue
+		}
+		coord := gens[0].Coordinate
+		at := strings.LastIndex(key, "|")
+		if at < 0 {
+			continue
+		}
+		pipelineVersion := key[at+1:]
+		if listed[coord.Path()+"\x00"+coord.Version()+"\x00"+pipelineVersion] {
+			continue
+		}
+		if filter.ModulePath != "" && coord.Path() != filter.ModulePath {
+			continue
+		}
+		if filter.PipelineVersion != "" && pipelineVersion != filter.PipelineVersion {
+			continue
+		}
+		c := cgports.CallGraphCoordinate{
+			ModulePath:      coord.Path(),
+			ModuleVersion:   coord.Version(),
+			PipelineVersion: pipelineVersion,
+		}
+		// Newest first, as the store's own ordering returns them.
+		for _, rec := range slices.Backward(gens) {
+			c.Generations = append(c.Generations, cgports.CallGraphGeneration{
+				ExtractedAt:    rec.ExtractedAt.UTC(),
+				Algorithm:      rec.Algorithm,
+				OverallStatus:  rec.OverallStatus,
+				Completeness:   rec.Completeness,
+				AnalysisSource: rec.AnalysisSource,
+				NodeCount:      rec.NodeCount,
+				EdgeCount:      rec.EdgeCount,
+				ContentHash:    rec.ContentHash,
+				Analyser:       rec.Analyser,
+			})
+			if !c.Generations[len(c.Generations)-1].StatesTheSame(c.Generations[0]) {
+				c.GenerationsDiffer = true
+			}
+			if rec.OverallStatus == cgdomain.CallGraphStatusPartial {
+				c.AnyPartial = true
+			}
+			if rec.Completeness != cgdomain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
+				c.AnyBelowFull = true
+			}
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 func (f *FakeQueryCallGraph) SetCallers(refs []cgports.CallEdgeRef) {
@@ -1223,7 +1322,7 @@ type FakeScanWalk struct {
 	// ToolchainAdvisories is what the seeded snapshot is taken to say under its
 	// toolchain key; ToolchainErr fails the read instead. JudgeToolchain runs the
 	// real domain judgment over them, so a test seeds advisories rather than a
-	// verdict and the fake cannot disagree with the shipped ranking.
+	// conclusion and the fake cannot disagree with the shipped ranking.
 	ToolchainAdvisories vulndomain.ToolchainAdvisorySet
 	ToolchainErr        error
 	// ToolchainVersion records the version the last judgment was asked about, so

@@ -573,13 +573,16 @@ attributes it from when the record was written against this repository's own
 Under `--json`, `analyser` is always present and carries `module`, `version`,
 `provenance` (`observed`, `inferred`, or empty) and `inferred` as a boolean.
 
-Where the generations composed for one coordinate name more than one analyser
-VERSION, the composed read adds a `notice:` saying so, and `--json` carries it as
-`analyser_disagreement` (`analysers`, `served`). It changes nothing about which
-generation answers — the completeness ladder decides that — and it appears only
-where there is a disagreement to report: two generations at one version, or
-generations that name none, produce no line. `--history` names the analyser on
-every generation whether they agree or not.
+Where the generations the store holds for one coordinate at the served pipeline
+version name more than one analyser VERSION, the composed read adds a `notice:`
+saying so, and `--json` carries it as `analyser_disagreement` (`analysers`,
+`served`). The notice reads each generation's own analyser column, so it also
+names a generation written at a record schema this build no longer serves — such
+a row answers nothing and still says which library parsed it. It changes nothing
+about which generation answers — the completeness ladder decides that — and it
+appears only where there is a disagreement to report: two generations at one
+version, or generations that name none, produce no line. `--history` names the
+analyser on every generation whether they agree or not.
 
 ##### Modules published before Go modules
 

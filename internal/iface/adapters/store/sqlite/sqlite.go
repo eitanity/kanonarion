@@ -501,19 +501,42 @@ ORDER BY extracted_at DESC, content_hash DESC`
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
 	}()
 
+	// Sealed once for the whole walk rather than once per candidate: the freshly
+	// extracted record is the same record for every candidate, and the pairwise
+	// form encoded it again on each of them — the whole API, which for a large
+	// module is hundreds of megabytes.
+	//
+	// Taken at the first candidate rather than before the loop, so the common
+	// append — a coordinate the prefilter matches nothing for — still encodes
+	// nothing.
+	var sealed domain2.MeasurementSeal
+	var haveSeal bool
+
 	for rows.Next() {
 		var blob []byte
 		var storedHash string
-		if serr := rows.Scan(&blob, &storedHash); serr != nil {
-			return domain2.InterfaceRecord{}, false, fmt.Errorf("scanning interface generation of %s: %w", rec.Coordinate, serr)
+		if scanErr := rows.Scan(&blob, &storedHash); scanErr != nil {
+			return domain2.InterfaceRecord{}, false, fmt.Errorf("scanning interface generation of %s: %w", rec.Coordinate, scanErr)
+		}
+		if !haveSeal {
+			var named bool
+			var serr error
+			sealed, named, serr = domain2.SealMeasurement(rec)
+			if serr != nil {
+				return domain2.InterfaceRecord{}, false, fmt.Errorf("comparing interface generations of %s: %w", rec.Coordinate, serr)
+			}
+			if !named {
+				return domain2.InterfaceRecord{}, false, nil
+			}
+			haveSeal = true
 		}
 		held, derr := decodeRecord(blob, storedHash)
 		if derr != nil {
 			return domain2.InterfaceRecord{}, false, derr
 		}
-		same, serr := domain2.SameMeasurement(rec, held)
-		if serr != nil {
-			return domain2.InterfaceRecord{}, false, fmt.Errorf("comparing interface generations of %s: %w", rec.Coordinate, serr)
+		same, cmpErr := sealed.SameAs(held)
+		if cmpErr != nil {
+			return domain2.InterfaceRecord{}, false, fmt.Errorf("comparing interface generations of %s: %w", rec.Coordinate, cmpErr)
 		}
 		if same {
 			return held, true, nil

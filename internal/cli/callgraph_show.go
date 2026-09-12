@@ -173,13 +173,25 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	return writeNodeFilterNotice(stdout, coord, f.source, filter)
 }
 
-// analyserDisagreement reports whether the generations composed for a
+// analyserDisagreement reports whether the generations the ledger holds for a
 // coordinate were parsed by more than one x/tools, and what they were.
 //
-// It reads the history because that is where the other generations are: the
-// composed answer is ONE record, and a fact about the set it was chosen from
-// cannot be recovered from it. The cost is one extra ledger read on an
-// inspection command that has already paid for a composition.
+// It reads the other generations because the composed answer is ONE record, and
+// a fact about the set it was chosen from cannot be recovered from it. It reads
+// them from their COLUMNS: which library parsed a generation is a column, and
+// asking the composing read for it reconstructed and verified every generation's
+// whole edge set to deliver one field per generation, on top of the
+// reconstruction composition had already done.
+//
+// Nothing is verified less than before. The listing never verified anything and
+// does not claim to; the served record is composed and verified exactly as it
+// was, and this decides only where the notice's facts are read from.
+//
+// It speaks about every row at this pipeline version, where the composing read
+// dropped one written at a superseded RECORD schema — a distinction no column
+// scan can make. Such a row is a generation the ledger holds and this build will
+// not serve, and naming its analyser in a notice about which libraries parsed
+// this coordinate is the honest reading of it.
 //
 // It states nothing where there is nothing to state — a coordinate with one
 // generation, or whose generations agree, or where only one of them names an
@@ -194,11 +206,25 @@ func analyserDisagreement(
 	served domain.CallGraphRecord,
 	uc QueryCallGraphUseCase,
 ) (domain.AnalyserDisagreement, bool, error) {
-	recs, err := uc.CallGraphHistory(ctx, coord, cgapp.PipelineVersion)
+	coords, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{
+		ModulePath:      coord.Path(),
+		PipelineVersion: cgapp.PipelineVersion,
+	})
 	if err != nil {
-		return domain.AnalyserDisagreement{}, false, fmt.Errorf("reading callgraph history: %w", err)
+		return domain.AnalyserDisagreement{}, false, fmt.Errorf("listing the generations of %s: %w", coord, err)
 	}
-	d, ok := domain.AnalyserDisagreementAmong(recs, served)
+	var stated []domain.AnalyserIdentity
+	for _, c := range coords {
+		// The filter narrows to the module path, not the version: one listing entry
+		// per (path, version, pipeline), so the version is checked here.
+		if c.ModuleVersion != coord.Version() {
+			continue
+		}
+		for _, g := range c.Generations {
+			stated = append(stated, g.Analyser)
+		}
+	}
+	d, ok := domain.AnalyserDisagreementAmong(stated, served)
 	return d, ok, nil
 }
 
@@ -854,8 +880,8 @@ func referenceEdgeCount(r domain.CallGraphRecord) int {
 //
 // It is the axis a confident negative rests on: `callers` may only answer
 // RESOLVED-ABSENT when both calls and references were measurable, so a reader
-// who cannot see the axis on the record cannot tell whether the verdict they
-// got was entitled to be confident. The axis was stored and never printed,
+// who cannot see the axis on the record cannot tell whether the answer they got
+// was entitled to be confident. The axis was stored and never printed,
 // which is the same defect writeTestScopeLine exists to fix, on the other axis.
 func writeReferenceScopeLine(stdout io.Writer, r domain.CallGraphRecord) error {
 	var line string

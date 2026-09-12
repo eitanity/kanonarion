@@ -234,7 +234,7 @@ func (d AnalyserDisagreement) Summary() string {
 	return line
 }
 
-// AnalyserDisagreementAmong reports whether the generations composed for one
+// AnalyserDisagreementAmong reports whether the generations held for one
 // coordinate state more than one analyser VERSION, and what they state.
 //
 // Grouping is on the version alone. Two rows at one version, one observed and
@@ -242,12 +242,18 @@ func (d AnalyserDisagreement) Summary() string {
 // how confidently the store can say so, which is a statement about the rows and
 // not a disagreement about the graph. Both identities are still listed, because
 // a reader deciding what to trust needs to see which of the versions is a guess.
-func AnalyserDisagreementAmong(records []CallGraphRecord, served CallGraphRecord) (AnalyserDisagreement, bool) {
+//
+// It takes the identities rather than the records, because the identity is the
+// whole of what it reads. Handed records, the only way to obtain them was the
+// composing read, which reconstructs and verifies every generation's edge set to
+// deliver one column per generation; taking the column lets a caller answer this
+// from the column it lives in. Nothing here verifies anything, and nothing here
+// ever did.
+func AnalyserDisagreementAmong(stated []AnalyserIdentity, served CallGraphRecord) (AnalyserDisagreement, bool) {
 	versions := make(map[AnalyserVersion]bool)
 	seen := make(map[AnalyserIdentity]bool)
 	var identities []AnalyserIdentity
-	for i := range records {
-		id := records[i].Analyser
+	for _, id := range stated {
 		if !id.Recorded() {
 			continue
 		}

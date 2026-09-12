@@ -1113,7 +1113,7 @@ Two stamps, answering two questions:
 | Line | Meaning |
 |---|---|
 | `First validated:` | When this coordinate was first validated **against this advisory snapshot, at this pipeline version**. `--json` carries it as `first_scanned_at` |
-| `Last validated:` | The run that most recently re-confirmed the same verdict. `--json` carries it as `scanned_at` |
+| `Last validated:` | The run that most recently re-established the same finding. `--json` carries it as `scanned_at` |
 
 `first_scanned_at` is anchored per (module, version, pipeline version, snapshot),
 so **a new advisory snapshot starts a new anchor** and the stamp legitimately
@@ -1477,8 +1477,8 @@ by <id>`) is **withheld** whenever any row could not be read. `vuln-show
 --history` does the same, and counts what it could not verify in its header.
 
 Under `--json` the unreadable row joins the same array the records are in,
-carrying `overall_status: "unreadable"` — a value no verdict has, so a consumer
-filtering on status sees it and cannot mistake it for one:
+carrying `overall_status: "unreadable"` — a value no scan outcome has, so a
+consumer filtering on status sees it and cannot mistake it for one:
 
 ```json
 {
@@ -1501,10 +1501,10 @@ prose is the right form there.
 `vuln-scan-list` and `vuln-scan-show` report unreadable **scan runs** the same
 way.
 
-The reads that serve **one** verdict do not relax: plain `vuln-show`,
+The reads that answer for **one** coordinate do not relax: plain `vuln-show`,
 `reachability` and the report a stored run is rebuilt into keep failing closed at
-exit `10`, because a verdict chosen from a candidate set with a row missing can be
-a `Clean` standing where a finding was. `vuln-show`'s refusal names the history
+exit `10`, because an answer composed from a candidate set with a row missing can
+report `Clean` where the store holds a finding. `vuln-show`'s refusal names the history
 as the survey that does list the row. The remedy for a drifted row is a re-scan,
 never an investigation: nothing has been altered.
 

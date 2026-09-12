@@ -255,8 +255,8 @@ type CallGraphStore interface {
 type EdgeQueryOptions struct {
 	// ExcludeTests drops every edge with a test-scope endpoint. It is opt-in:
 	// the default answer covers the whole graph, because a hidden test caller is
-	// a false negative — the failure the three-valued verdict exists to prevent
-	// — while an unwanted one is merely noise the reader can see and discount.
+	// a false negative — the failure the three-valued answer exists to prevent —
+	// while an unwanted one is merely noise the reader can see and discount.
 	ExcludeTests bool
 	// Toolchain restricts the query to graphs built by one Go toolchain. The zero
 	// value names none and composition groups on its own.
@@ -365,7 +365,7 @@ type CallGraphCoordinate struct {
 	// a read serves, any generation's numbers are that generation's numbers too.
 	// True says only that they do not all agree.
 	//
-	// It is NOT composition's verdict on the coordinate. That verdict is decided
+	// It is NOT the answer composition serves for the coordinate. That is settled
 	// over decoded records, and this listing decodes nothing — the cost it exists
 	// not to pay. Generations that state different counts can still compose to a
 	// served answer, and generations that state identical counts can still fail
@@ -378,7 +378,7 @@ type CallGraphCoordinate struct {
 	//
 	// It is a list rather than a winner because picking one is composition's job,
 	// and a listing that printed the winner's counts without saying so would be a
-	// derived verdict wearing a row's clothes. A caller that needs the served
+	// derived conclusion wearing a row's clothes. A caller that needs the served
 	// answer reads the coordinate.
 	Generations []CallGraphGeneration
 }
@@ -401,6 +401,14 @@ type CallGraphGeneration struct {
 	// a listing and nothing may treat it as verified because a listing returned
 	// it.
 	ContentHash string
+	// Analyser is the library this row says parsed the module, from the row's own
+	// analyser column. It is here so that asking "were these generations parsed
+	// by one x/tools or several" costs the column scan and not a reconstruction
+	// of every generation's edge set to read one field off each.
+	//
+	// It sits outside the seal, like the column it comes from, so it is neither
+	// covered by ContentHash nor verified by returning it.
+	Analyser domain.AnalyserIdentity
 }
 
 // StatesTheSame reports whether two generations say the same thing about
@@ -412,6 +420,11 @@ type CallGraphGeneration struct {
 // difference counts. ExtractedAt, the content hash and the analysis source are
 // deliberately excluded: every generation has its own, so including them would
 // make every re-analysed coordinate differ and the flag would say nothing.
+//
+// The analyser is excluded on a different ground: it is a dimension rather than
+// a count, and a flag about whether the rows agree on WHAT they measured must
+// not start reporting who measured it. domain.AnalyserDisagreementAmong reports
+// that on its own.
 func (g CallGraphGeneration) StatesTheSame(other CallGraphGeneration) bool {
 	return g.NodeCount == other.NodeCount &&
 		g.EdgeCount == other.EdgeCount &&

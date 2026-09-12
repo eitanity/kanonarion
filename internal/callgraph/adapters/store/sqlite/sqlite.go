@@ -383,8 +383,8 @@ ALTER TABLE callgraph_records ADD COLUMN failure_cause TEXT NOT NULL DEFAULT ''`
 		// the bytes it was sealed over; and the one thing an old record would
 		// otherwise say falsely — that an empty callers answer is a measured
 		// absence — is closed by CallGraphRecord.ReferenceScope, which reads
-		// "not measured" on every record written before it and downgrades the
-		// verdict rather than deleting the evidence.
+		// "not measured" on every record written before it and qualifies what the
+		// record states rather than deleting the evidence.
 		{Module: "callgraph", Version: 12, SQL: `
 ALTER TABLE callgraph_edges ADD COLUMN kind TEXT NOT NULL DEFAULT ''`},
 		// Migration v13: add the analysis_root column, so a query can be answered
@@ -1519,6 +1519,25 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 		return domain2.CallGraphRecord{}, false, err
 	}
 
+	if len(candidates) == 0 {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	// Sealed once, here, rather than once per candidate. The fresh record is the
+	// same record for every candidate, and the pairwise form canonicalised it
+	// again on each of them: a coordinate holding nineteen plausible generations
+	// encoded this record's whole edge set nineteen times to ask nineteen
+	// questions about it.
+	//
+	// Sealed after the prefilter rather than before it, so a coordinate with no
+	// candidate still pays nothing.
+	sealed, named, serr := domain2.SealAnalysis(rec)
+	if serr != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("comparing generations of %s: %w", rec.Coordinate, serr)
+	}
+	if !named {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+
 	pool := newIdentifierPool()
 	for _, c := range candidates {
 		held, ok, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser, pool)
@@ -1530,9 +1549,9 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 			// cannot be shown to restate this analysis.
 			continue
 		}
-		same, serr := domain2.RestatesAnalysis(rec, held)
-		if serr != nil {
-			return domain2.CallGraphRecord{}, false, fmt.Errorf("comparing generations of %s: %w", rec.Coordinate, serr)
+		same, rerr := sealed.RestatedBy(held)
+		if rerr != nil {
+			return domain2.CallGraphRecord{}, false, fmt.Errorf("comparing generations of %s: %w", rec.Coordinate, rerr)
 		}
 		if same {
 			return held, true, nil
@@ -1565,7 +1584,7 @@ func scanIdenticalCandidates(rows *sql.Rows, coord coordinate.ModuleCoordinate) 
 //
 // It is a separate read rather than a value returned alongside the record
 // because the notice it feeds is printed once per answer, while the record is
-// fetched several times over the course of one — by the verdict helpers, the
+// fetched several times over the course of one — by the answer helpers, the
 // completeness caveat and the edge resolution — and a routing fact attached to
 // each of them would be reported as many times as the read happened.
 func (s *Store) WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ports.WorktreeRouting, bool, error) {
@@ -2081,7 +2100,8 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 // fact about the coordinate's history and about no single generation.
 func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallGraphFilter) ([]ports.CallGraphCoordinate, error) {
 	q := `SELECT module_path, module_version, pipeline_version, overall_status, completeness,
-	             algorithm, analysis_source, node_count, edge_count, extracted_at, content_hash
+	             algorithm, analysis_source, node_count, edge_count, extracted_at, content_hash,
+	             analyser
 	      FROM callgraph_records`
 	var args []any
 	var where []string
@@ -2116,10 +2136,11 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 	for rows.Next() {
 		var k generationKey
 		var status int
-		var completeness, algo, source, extractedAt string
+		var completeness, algo, source, extractedAt, analyser string
 		var gen ports.CallGraphGeneration
 		if serr := rows.Scan(&k.path, &k.version, &k.pipeline, &status, &completeness,
-			&algo, &source, &gen.NodeCount, &gen.EdgeCount, &extractedAt, &gen.ContentHash); serr != nil {
+			&algo, &source, &gen.NodeCount, &gen.EdgeCount, &extractedAt, &gen.ContentHash,
+			&analyser); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return nil, fmt.Errorf("scanning callgraph coordinate: %w", serr)
 		}
@@ -2128,6 +2149,16 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 			_ = rows.Close() //nolint:errcheck // returning the parse error
 			return nil, fmt.Errorf("parsing extracted_at %q: %w", extractedAt, perr)
 		}
+		// A column value naming no known provenance stops the listing, exactly as it
+		// stops decodeRecord. Only the write leg and the back-fill write here, and
+		// both write a provenance; reading a third value as "not recorded" would
+		// silently drop a claim the store is carrying.
+		id, aerr := domain2.ParseAnalyserColumn(analyser)
+		if aerr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the parse error
+			return nil, fmt.Errorf("reading the analyser of record %s: %w", gen.ContentHash, aerr)
+		}
+		gen.Analyser = id
 		gen.ExtractedAt = t.UTC()
 		gen.Algorithm = domain2.CallGraphAlgorithm(algo)
 		gen.OverallStatus = domain2.CallGraphStatus(status)

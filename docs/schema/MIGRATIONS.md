@@ -386,9 +386,9 @@ reported as a finding against the module it names.
 
 The field carries `omitzero`, so it is absent from the encoding exactly when it is
 zero, and a `v15` record's hash recomputes identically under this generation. The
-bump records that the *verdict* changed, not the bytes: `overall_status` and
-`findings_status` gain a fifth/third value, `Withdrawn`, for a module whose every
-matched advisory has been retracted. A mixture stays `Affected` — one live advisory
+bump records that what a record *states* changed, not the bytes: `overall_status`
+and `findings_status` gain a fifth/third value, `Withdrawn`, for a module whose
+every matched advisory has been retracted. A mixture stays `Affected` — one live advisory
 decides the axis, and the retracted ones remain visible per finding.
 
 Migration for existing stores: **none.** No store migration and no purge; existing
@@ -398,7 +398,7 @@ retraction answer for a coordinate scanned before `v16`. New scans write `v16`.
 
 Consumer impact: `audit --json` gains `vuln_withdrawn` (`vuln_findings` keeps its
 existing meaning, retracted advisories included), `context` gains
-`findings[].withdrawn_at`, `reachability` gains a `withdrawn` verdict with
+`findings[].withdrawn_at`, `reachability` gains a `withdrawn` state with
 `withdrawn_at`, `vuln-scan-diff` gains a `WithdrawnFindings` bucket, and a
 CycloneDX SBOM marks a retracted advisory `analysis.state: false_positive` with no
 `ratings` block.

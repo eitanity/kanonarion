@@ -1360,11 +1360,57 @@ func GraphDigest(r CallGraphRecord) string {
 // comparison needs the second question, or the input that separated them is the
 // one thing the comparison cannot show.
 func MeasurementDigest(r CallGraphRecord) string {
-	digest, err := hashCanonical(withoutRunCircumstance(r))
+	seal, err := SealMeasurement(r)
 	if err != nil {
 		return "unhashable:" + err.Error()
 	}
-	return digest
+	return seal.digest
+}
+
+// ErrUnsealedMeasurement is what a zero MeasurementSeal answers with. A seal is
+// taken OVER a record, and the zero value was taken over none; comparing a
+// record against it would report "not the same measurement" about a comparison
+// that never happened.
+var ErrUnsealedMeasurement = errors.New("measurement seal was never taken over a record")
+
+// MeasurementSeal is SameMeasurement's comparison held as a value, taken once
+// over one record so that asking it of N held generations canonicalises that
+// record once rather than N times.
+//
+// It is the digest of exactly the bytes SameMeasurement used to compare, and
+// exactly the bytes marshalCanonical produces — hashCanonical streams them
+// rather than materialising them, and the equality against the materialised form
+// is asserted directly. So "the same seal" and "the same bytes" are one answer
+// here, and neither encoding is ever held whole.
+//
+// It is not persisted and is not a record's ContentHash: that one covers the
+// clock and the fetch provenance, which is why two runs a second apart that
+// measured the identical graph carry different content hashes and the same seal.
+type MeasurementSeal struct {
+	digest string
+}
+
+// SealMeasurement takes the seal over one record. The circumstances of the run
+// are set aside here, as SameMeasurement always set them aside.
+func SealMeasurement(r CallGraphRecord) (MeasurementSeal, error) {
+	digest, err := hashCanonical(withoutRunCircumstance(r))
+	if err != nil {
+		return MeasurementSeal{}, fmt.Errorf("seal record for measurement comparison: %w", err)
+	}
+	return MeasurementSeal{digest: digest}, nil
+}
+
+// SameAs reports whether r states the identical measurement to the record this
+// seal was taken over.
+func (s MeasurementSeal) SameAs(r CallGraphRecord) (bool, error) {
+	if s.digest == "" {
+		return false, ErrUnsealedMeasurement
+	}
+	other, err := SealMeasurement(r)
+	if err != nil {
+		return false, err
+	}
+	return s.digest == other.digest, nil
 }
 
 // SameMeasurement reports whether two records state the identical measurement,
@@ -1386,15 +1432,11 @@ func MeasurementDigest(r CallGraphRecord) string {
 // that read different bytes, or were offered different build lists, are two
 // measurements even where their graphs agree.
 func SameMeasurement(a, b CallGraphRecord) (bool, error) {
-	ab, err := marshalCanonical(withoutRunCircumstance(a))
+	seal, err := SealMeasurement(a)
 	if err != nil {
-		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
+		return false, err
 	}
-	bb, err := marshalCanonical(withoutRunCircumstance(b))
-	if err != nil {
-		return false, fmt.Errorf("marshal record for measurement comparison: %w", err)
-	}
-	return bytes.Equal(ab, bb), nil
+	return seal.SameAs(b)
 }
 
 // RestatesAnalysis reports whether a generation the ledger already holds records
@@ -1421,10 +1463,52 @@ func SameMeasurement(a, b CallGraphRecord) (bool, error) {
 //     and dropping it is only sound because the artefact identity IS compared and
 //     the naming rule above guarantees it is there to compare.
 func RestatesAnalysis(fresh, held CallGraphRecord) (bool, error) {
-	if !NamesAnalysedContent(fresh) || !NamesAnalysedContent(held) {
+	sealed, named, err := SealAnalysis(fresh)
+	if err != nil {
+		return false, err
+	}
+	if !named {
 		return false, nil
 	}
-	return SameMeasurement(withoutFetchProvenance(fresh), withoutFetchProvenance(held))
+	return sealed.RestatedBy(held)
+}
+
+// AnalysisRestatement is RestatesAnalysis's question held as a value, taken once
+// over the freshly measured record.
+//
+// It exists because the ledger asks that question of every plausible candidate
+// and the fresh record is the same record for all of them. Asked as a pair, a
+// coordinate holding nineteen candidates canonicalised the fresh record
+// nineteen times; asked through this, once.
+type AnalysisRestatement struct {
+	seal MeasurementSeal
+}
+
+// SealAnalysis takes the comparison over the record a run has just measured, for
+// a caller about to put it to several held generations.
+//
+// The bool is false when the fresh record names no analysed content. Such a
+// record restates nothing — that is the naming rule, not an absence of candidates
+// — so there is nothing to seal and no candidate worth decoding.
+func SealAnalysis(fresh CallGraphRecord) (AnalysisRestatement, bool, error) {
+	if !NamesAnalysedContent(fresh) {
+		return AnalysisRestatement{}, false, nil
+	}
+	seal, err := SealMeasurement(withoutFetchProvenance(fresh))
+	if err != nil {
+		return AnalysisRestatement{}, false, err
+	}
+	return AnalysisRestatement{seal: seal}, true, nil
+}
+
+// RestatedBy reports whether a generation the ledger holds records the analysis
+// this was sealed over. A held record naming no analysed content restates
+// nothing, on the same rule the fresh side is held to.
+func (a AnalysisRestatement) RestatedBy(held CallGraphRecord) (bool, error) {
+	if !NamesAnalysedContent(held) {
+		return false, nil
+	}
+	return a.seal.SameAs(withoutFetchProvenance(held))
 }
 
 // withoutFetchProvenance blanks which fetch measurement supplied the bytes,
