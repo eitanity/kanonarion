@@ -156,3 +156,135 @@ func TestScanRouteJSONOf_CarriesTheDispatch(t *testing.T) {
 		t.Error("a nil route renders as an empty one")
 	}
 }
+
+// reflectHop builds a hop the way a scan builds one: the kind comes from the
+// call graph's own mapping, never hand-stamped. That is what makes the
+// assertions below bite. Hand-writing DispatchReflect would render the same
+// line whatever the mapping decided, and the test would pass against the
+// defect it exists to pin.
+//
+// Both edges carry the reflect_dispatch attribute and the same Unknown
+// confidence, because the attribute marks any callee in package reflect. Only
+// the callee tells them apart.
+func reflectHop(calleeID string) vuldomain.HopDispatch {
+	return vuldomain.HopDispatch{
+		Kind:       vuldomain.DispatchKindOfEdge(calleeID, "Unknown", true, false),
+		Confidence: "Unknown",
+		Graph:      "example.com/mod@v1.2.0",
+		CallSite:   "pkg/expr/gval.go:42",
+	}
+}
+
+// TestHopDispatchLine_ReflectOnlyWhereTheCalleeCanDispatch is the text half of
+// the named failure, on the renderer a report actually prints through.
+//
+// A call into package reflect is not by itself a reflective dispatch.
+// reflect.(Value).MethodByName picks what runs from a string at run time, so
+// the analysis cannot bound it. reflect.TypeOf has exactly one callee. A reader
+// must be able to tell those two lines apart.
+func TestHopDispatchLine_ReflectOnlyWhereTheCalleeCanDispatch(t *testing.T) {
+	t.Parallel()
+
+	dispatching := hopDispatchLine(reflectHop("reflect.(Value).MethodByName"))
+	bounded := hopDispatchLine(reflectHop("reflect.TypeOf"))
+
+	if dispatching == bounded {
+		t.Fatalf("a call that reflection steers and a call that bounds perfectly render the same line: %q", dispatching)
+	}
+	if !strings.HasPrefix(dispatching, "reflect") {
+		t.Errorf("the hop into reflect.(Value).MethodByName renders as %q, which does not lead with the reflect kind", dispatching)
+	}
+	if strings.Contains(bounded, "reflect") {
+		t.Errorf("the hop into reflect.TypeOf renders as %q, which calls it reflection; it has one callee and bounds perfectly", bounded)
+	}
+	if !strings.HasPrefix(bounded, "unresolved") {
+		t.Errorf("the hop into reflect.TypeOf renders as %q, want the unresolved kind — its edge confidence is Unknown", bounded)
+	}
+	// Neither may fall into one of the two absence branches: both hops WERE read
+	// off an edge, and both state a measured kind.
+	for _, line := range []string{dispatching, bounded} {
+		if strings.Contains(line, "not recorded") || strings.Contains(line, "entry point") {
+			t.Errorf("a hop read off an edge renders as %q, which states an absence", line)
+		}
+	}
+}
+
+// TestPrintRoute_RendersAReflectHopAndABoundedOneDifferently walks the same two
+// hops through printRoute, the reachability command's own printer, so the
+// assertion covers the line a reader sees and not only the helper behind it.
+func TestPrintRoute_RendersAReflectHopAndABoundedOneDifferently(t *testing.T) {
+	t.Parallel()
+
+	res := vulnReachabilityQuery{Routes: []reachabilityRouteOutput{{
+		Versioned: true,
+		Frames: []reachabilityFrameOutput{
+			{
+				Module: "example.com/mod", Version: "v1.2.0", Package: "example.com/mod/expr", Symbol: "gvalFunc",
+				Dispatch: reflectHop("reflect.(Value).MethodByName"),
+			},
+			{
+				Module: "example.com/mod", Version: "v1.2.0", Package: "example.com/mod/opts", Symbol: "fill",
+				Dispatch: reflectHop("reflect.TypeOf"),
+			},
+		},
+	}}}
+	var out bytes.Buffer
+	printRoute(&out, res)
+	got := out.String()
+
+	if strings.Count(got, "reached by:") != 2 {
+		t.Fatalf("printRoute renders %d dispatch lines over 2 hops:\n%s", strings.Count(got, "reached by:"), got)
+	}
+	if strings.Count(got, "reflect") != 1 {
+		t.Errorf("printRoute names reflection %d times over one dispatching hop and one bounded one:\n%s",
+			strings.Count(got, "reflect"), got)
+	}
+	if !strings.Contains(got, "reached by: unresolved") {
+		t.Errorf("printRoute does not report the hop into reflect.TypeOf as unresolved:\n%s", got)
+	}
+}
+
+// TestPrintFindingLines_RendersAReflectHopAndABoundedOneDifferently is the
+// second call site of the same renderer, measured rather than assumed to be
+// covered by the first.
+func TestPrintFindingLines_RendersAReflectHopAndABoundedOneDifferently(t *testing.T) {
+	t.Parallel()
+
+	rec := vuldomain.VulnerabilityRecord{
+		Findings: []vuldomain.VulnerabilityFinding{{
+			ID: "GO-2026-5026",
+			Reachable: &vuldomain.ReachabilityResult{
+				IsReachable: true,
+				Confidence:  vuldomain.ConfidenceHigh,
+				Routes: []vuldomain.ReachabilityRoute{{
+					{
+						ModulePath: "example.com/mod", ModuleVersion: "v1.2.0",
+						Package: "example.com/mod/expr", Symbol: "gvalFunc",
+						Dispatch: reflectHop("reflect.(Value).MethodByName"),
+					},
+					{
+						ModulePath: "example.com/mod", ModuleVersion: "v1.2.0",
+						Package: "example.com/mod/opts", Symbol: "fill",
+						Dispatch: reflectHop("reflect.TypeOf"),
+					},
+				}},
+			},
+		}},
+	}
+	var out bytes.Buffer
+	printFindingLines(&out, rec, func(vuldomain.ReachabilityRoute) vuldomain.RouteRoot {
+		return vuldomain.RouteRoot{}
+	})
+	got := out.String()
+
+	if strings.Count(got, "reached by:") != 2 {
+		t.Fatalf("printFindingLines renders %d dispatch lines over 2 hops:\n%s", strings.Count(got, "reached by:"), got)
+	}
+	if strings.Count(got, "reflect") != 1 {
+		t.Errorf("printFindingLines names reflection %d times over one dispatching hop and one bounded one:\n%s",
+			strings.Count(got, "reflect"), got)
+	}
+	if !strings.Contains(got, "reached by: unresolved") {
+		t.Errorf("printFindingLines does not report the hop into reflect.TypeOf as unresolved:\n%s", got)
+	}
+}

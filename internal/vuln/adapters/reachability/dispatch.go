@@ -225,7 +225,7 @@ func annotateHop(
 		return unreadableHop(coord, held.answer, fromID, toID)
 	}
 	out := domain.HopDispatch{
-		Kind:                 domain.DispatchKindOfEdge(fact.Confidence, fact.ReflectDispatch, fact.Reference),
+		Kind:                 domain.DispatchKindOfEdge(toID, fact.Confidence, fact.ReflectDispatch, fact.Reference),
 		Confidence:           fact.Confidence,
 		Graph:                coord.String(),
 		GraphCompleteness:    held.answer.Completeness,

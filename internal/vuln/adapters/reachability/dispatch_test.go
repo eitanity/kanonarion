@@ -566,3 +566,113 @@ func TestAnnotateRecord_RendersACallSiteWithoutALine(t *testing.T) {
 		t.Errorf("an edge with no position renders its call site as %q", got)
 	}
 }
+
+// TestAnnotateRecord_ReflectKindOnlyWhereTheCalleeCanDispatch walks the named
+// defect through the whole annotator and out both renderings.
+//
+// The call graph records an attribute called reflect_dispatch on every edge
+// whose callee is in package reflect. Most of those callees can be bound: an
+// edge to reflect.TypeOf has exactly one callee. Only the reflect.Value methods
+// that pick their target at run time hide anything, and only they may be
+// reported as a reflect dispatch.
+//
+// Both hops below carry the attribute and the same Unknown confidence, so the
+// attribute is the only thing that could tell them apart — which is exactly the
+// misreading this pins shut.
+func TestAnnotateRecord_ReflectKindOnlyWhereTheCalleeCanDispatch(t *testing.T) {
+	t.Parallel()
+
+	const caller = "example.com/dep/auto.(*Uploader).upload"
+	callerFrame := domain.ReachabilityFrame{
+		ModulePath: "example.com/dep", ModuleVersion: "v1.2.3",
+		Package: "example.com/dep/auto", Receiver: "*Uploader", Symbol: "upload",
+	}
+	reflectFrame := func(receiver, symbol string) domain.ReachabilityFrame {
+		return domain.ReachabilityFrame{
+			ModulePath: "stdlib", ModuleVersion: "v1.26.5",
+			Package: "reflect", Receiver: receiver, Symbol: symbol,
+		}
+	}
+	edge := ports.CallSiteFact{
+		Confidence:      "Unknown",
+		ReflectDispatch: true,
+		CallSiteFile:    "auto/uploader.go",
+		CallSiteLine:    42,
+	}
+
+	reader := &fakeCallSiteReader{answers: map[string]ports.CallSiteAnswer{
+		"example.com/dep@v1.2.3": {
+			Served:       true,
+			Completeness: "BUILT_WITH_BODIES",
+			KnownCallers: map[string]bool{caller: true},
+			Edges: map[ports.CallSiteKey]ports.CallSiteFact{
+				{FromID: caller, ToID: "reflect.(Value).MethodByName"}: edge,
+				{FromID: caller, ToID: "reflect.TypeOf"}:               edge,
+			},
+		},
+	}}
+
+	coord, err := coordinate.NewModuleCoordinate("example.com/dep", "v1.2.3")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	root, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	record := &domain.VulnerabilityRecord{
+		Coordinate: coord,
+		Rooting:    domain.TargetRootedAt(root),
+		Findings: []domain.VulnerabilityFinding{{
+			ID: "GO-2026-5026",
+			Reachable: &domain.ReachabilityResult{
+				IsReachable: true,
+				Confidence:  domain.ConfidenceHigh,
+				Routes: []domain.ReachabilityRoute{
+					{callerFrame, reflectFrame("Value", "MethodByName")},
+					{callerFrame, reflectFrame("", "TypeOf")},
+				},
+			},
+		}},
+	}
+	reachability.NewDispatchAnnotator(reader, nil).AnnotateRecord(t.Context(), record)
+	routes := record.Findings[0].Reachable.Routes
+
+	dispatching := routes[0][1].Dispatch
+	if dispatching.Kind != domain.DispatchReflect {
+		t.Errorf("the hop into reflect.(Value).MethodByName is annotated %q, want the reflect kind", dispatching.Kind)
+	}
+	bounded := routes[1][1].Dispatch
+	if bounded.Kind == domain.DispatchReflect {
+		t.Error("the hop into reflect.TypeOf is annotated as a reflect dispatch; it has one callee and bounds perfectly")
+	}
+	if bounded.Kind != domain.DispatchUnresolved {
+		t.Errorf("the hop into reflect.TypeOf is annotated %q, want unresolved — its edge confidence is Unknown", bounded.Kind)
+	}
+
+	// The text rendering a report shows.
+	if got := dispatching.String(); !strings.Contains(got, "reflect") {
+		t.Errorf("the dispatching hop renders as %q, which does not name the reflect kind", got)
+	}
+	if got := bounded.String(); strings.Contains(got, "reflect") {
+		t.Errorf("the hop into reflect.TypeOf renders as %q, which calls it reflection", got)
+	} else if !strings.Contains(got, "unresolved") {
+		t.Errorf("the hop into reflect.TypeOf renders as %q, which does not say the callee was unresolved", got)
+	}
+
+	// The same two claims on --json, which is a separate surface from the text.
+	raw, err := json.Marshal(routes)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"dispatch":{"kind":"reflect","confidence":"Unknown"`) {
+		t.Errorf("--json carries no reflect hop for reflect.(Value).MethodByName:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"dispatch":{"kind":"unresolved","confidence":"Unknown"`) {
+		t.Errorf("--json does not report the hop into reflect.TypeOf as unresolved:\n%s", raw)
+	}
+	if strings.Count(string(raw), `"kind":"reflect"`) != 1 {
+		t.Errorf("--json reports %d reflect hops, want exactly 1:\n%s",
+			strings.Count(string(raw), `"kind":"reflect"`), raw)
+	}
+}

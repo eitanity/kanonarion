@@ -221,9 +221,12 @@ func extractReceiverName(fn *ssa.Function) string {
 	return recvTypeStr(sig.Recv().Type())
 }
 
-// classifyConfidence resolves an edge's confidence tag. The second result
-// reports whether the edge originated from a reflect call; such edges are folded
-// into ConfidenceUnknown but carry the reflect provenance as an edge attribute.
+// classifyConfidence resolves an edge's confidence tag. The second result is the
+// reflect_dispatch attribute, and it marks an edge whose CALLEE IS IN PACKAGE
+// reflect — nothing narrower. It is not a count of reflective dispatches: most
+// of what it marks, reflect.TypeOf among it, has one callee and bounds
+// perfectly. Such edges are folded into ConfidenceUnknown but carry the reflect
+// provenance as an edge attribute.
 func classifyConfidence(edge *callgraph.Edge) (domain.EdgeConfidence, bool) {
 	if edge.Site == nil {
 		return domain.ConfidenceUnknown, false

@@ -479,8 +479,11 @@ type CallEdge struct {
 	ToID       string
 	CallSite   SourcePosition
 	Confidence EdgeConfidence
-	// ReflectDispatch is true when the edge was resolved through a reflect
-	// call. Such edges carry ConfidenceUnknown — reflection is not a distinct
+	// ReflectDispatch is true when the edge's CALLEE IS IN PACKAGE reflect —
+	// nothing narrower. It is not a count of reflective dispatches: most of what
+	// it marks, reflect.TypeOf among it, has one callee and bounds perfectly.
+	//
+	// Such edges carry ConfidenceUnknown — reflection is not a distinct
 	// confidence rank — but the reflect provenance is recorded here so the
 	// verdict-soundness layer can attribute the UNRESOLVED signal to reflection
 	// specifically rather than a generic unresolved dispatch.

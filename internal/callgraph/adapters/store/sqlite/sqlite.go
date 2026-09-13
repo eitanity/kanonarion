@@ -247,6 +247,10 @@ CREATE TABLE callgraph_edges_ledger (
     confidence          TEXT    NOT NULL,
     call_site_file      TEXT    NOT NULL DEFAULT '',
     call_site_line      INTEGER NOT NULL DEFAULT 0,
+    -- reflect_dispatch marks an edge whose callee is in package reflect. It is
+    -- not a count of reflective dispatches: nearly all of what it marks bounds
+    -- perfectly, so summing it overstates that population by two orders of
+    -- magnitude.
     reflect_dispatch    INTEGER NOT NULL DEFAULT 0,
     is_test             INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (record_content_hash, from_id, to_id, call_site_file, call_site_line)

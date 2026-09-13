@@ -44,9 +44,14 @@ const (
 	// the interface, not a callee the caller named.
 	DispatchInterface DispatchKind = "interface"
 
-	// DispatchReflect is an edge resolved through reflection. The callee set is
-	// not statically knowable, so the hop is a path the analysis could follow and
-	// not one it could bound.
+	// DispatchReflect is a hop whose callee is one of the reflect.Value methods
+	// that pick their target at run time — Call, CallSlice, Method, MethodByName,
+	// FieldByName. The callee set is not statically knowable, so the hop is a path
+	// the analysis could follow and not one it could bound.
+	//
+	// The edge attribute behind it, reflect_dispatch, is broader: it marks any
+	// call into package reflect, and most of those bound perfectly. It is not a
+	// count of this kind.
 	DispatchReflect DispatchKind = "reflect"
 
 	// DispatchFramework is an edge bound by a framework model or thunk rather
@@ -221,19 +226,21 @@ func (d HopDispatch) String() string {
 //
 //  1. A reference edge is not a call at all, whatever confidence it carries, so
 //     it can never be reported as one.
-//  2. A reflect-dispatched edge is recorded with Unknown confidence — reflection
-//     is not a confidence rank — so the reflect origin has to be read before the
-//     confidence or it is lost inside "unresolved".
+//  2. An edge into package reflect is recorded with Unknown confidence —
+//     reflection is not a confidence rank — so the reflect origin has to be read
+//     before the confidence or it is lost inside "unresolved". Only a callee that
+//     picks its target at run time is a reflect DISPATCH; every other call into
+//     reflect falls through to its confidence, which is the honest answer for it.
 //  3. The confidence vocabulary then decides, value by value.
 //
 // A confidence this build does not know is UNRESOLVED, never direct. A record
 // written by a future analyser must not have an unfamiliar label rounded down to
 // the strongest claim in the vocabulary.
-func DispatchKindOfEdge(confidence string, reflectDispatch bool, reference bool) DispatchKind {
+func DispatchKindOfEdge(calleeID, confidence string, reflectDispatch, reference bool) DispatchKind {
 	switch {
 	case reference:
 		return DispatchReference
-	case reflectDispatch:
+	case reflectDispatch && isReflectDispatcher(calleeID):
 		return DispatchReflect
 	}
 	switch confidence {
@@ -245,6 +252,26 @@ func DispatchKindOfEdge(confidence string, reflectDispatch bool, reference bool)
 		return DispatchFramework
 	default:
 		return DispatchUnresolved
+	}
+}
+
+// isReflectDispatcher reports whether a call-graph node id names one of the
+// reflect.Value methods that pick their target at run time, from a name string
+// or from the value itself, so a static analysis cannot bound the callee.
+//
+// reflect.Type's Method, MethodByName and FieldByName are deliberately absent:
+// they return a descriptor rather than something to call, and the graph spells
+// them with the *rtype receiver.
+func isReflectDispatcher(calleeID string) bool {
+	switch calleeID {
+	case "reflect.(Value).Call",
+		"reflect.(Value).CallSlice",
+		"reflect.(Value).Method",
+		"reflect.(Value).MethodByName",
+		"reflect.(Value).FieldByName":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -19,35 +19,108 @@ import (
 func TestDispatchKindOfEdge_ReadsTheEdgeAndNeverGuesses(t *testing.T) {
 	t.Parallel()
 
+	const dispatcher = "reflect.(Value).MethodByName"
+
 	cases := []struct {
 		name       string
+		callee     string
 		confidence string
 		reflect    bool
 		reference  bool
 		want       domain.DispatchKind
 	}{
-		{"direct", "Direct", false, false, domain.DispatchDirect},
-		{"cha over-approximated interface dispatch", "CHA-overapprox", false, false, domain.DispatchInterface},
-		{"vta-refined interface dispatch", "VTA", false, false, domain.DispatchInterface},
-		{"framework-bound", "Framework", false, false, domain.DispatchFramework},
-		{"unresolved", "Unknown", false, false, domain.DispatchUnresolved},
-		{"reflect edges carry an unresolved confidence", "Unknown", true, false, domain.DispatchReflect},
-		{"a reflect edge is reflect whatever its confidence says", "Direct", true, false, domain.DispatchReflect},
-		{"a reference is never a call", "Direct", false, true, domain.DispatchReference},
-		{"a reference wins over reflect", "Unknown", true, true, domain.DispatchReference},
-		{"a confidence this build does not know is unresolved", "SomeFutureTier", false, false, domain.DispatchUnresolved},
-		{"an edge with no confidence at all is unresolved", "", false, false, domain.DispatchUnresolved},
+		{"direct", "example.com/mod/pkg.Do", "Direct", false, false, domain.DispatchDirect},
+		{"cha over-approximated interface dispatch", "example.com/mod/pkg.Do", "CHA-overapprox", false, false, domain.DispatchInterface},
+		{"vta-refined interface dispatch", "example.com/mod/pkg.Do", "VTA", false, false, domain.DispatchInterface},
+		{"framework-bound", "example.com/mod/pkg.Do", "Framework", false, false, domain.DispatchFramework},
+		{"unresolved", "example.com/mod/pkg.Do", "Unknown", false, false, domain.DispatchUnresolved},
+		{"reflect edges carry an unresolved confidence", dispatcher, "Unknown", true, false, domain.DispatchReflect},
+		{"a dispatching reflect edge is reflect whatever its confidence says", dispatcher, "Direct", true, false, domain.DispatchReflect},
+		{"a reference is never a call", "example.com/mod/pkg.Do", "Direct", false, true, domain.DispatchReference},
+		{"a reference wins over reflect", dispatcher, "Unknown", true, true, domain.DispatchReference},
+		{"a confidence this build does not know is unresolved", "example.com/mod/pkg.Do", "SomeFutureTier", false, false, domain.DispatchUnresolved},
+		{"an edge with no confidence at all is unresolved", "example.com/mod/pkg.Do", "", false, false, domain.DispatchUnresolved},
+		// The flag alone is not a dispatch: without a callee that picks its target
+		// at run time, the edge is whatever its confidence says it is.
+		{"the flag without a dispatching callee reads its confidence", "reflect.TypeOf", "Unknown", true, false, domain.DispatchUnresolved},
+		{"the flag never promotes a direct call", "reflect.TypeOf", "Direct", true, false, domain.DispatchDirect},
+		// A dispatching callee without the flag is not a reflect hop either: the
+		// stored attribute stays the authority on what the analyser observed.
+		{"a dispatching callee without the flag is not reflect", dispatcher, "Unknown", false, false, domain.DispatchUnresolved},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := domain.DispatchKindOfEdge(tc.confidence, tc.reflect, tc.reference)
+			got := domain.DispatchKindOfEdge(tc.callee, tc.confidence, tc.reflect, tc.reference)
 			if got != tc.want {
-				t.Errorf("DispatchKindOfEdge(%q, reflect=%t, reference=%t) = %q, want %q",
-					tc.confidence, tc.reflect, tc.reference, got, tc.want)
+				t.Errorf("DispatchKindOfEdge(%q, %q, reflect=%t, reference=%t) = %q, want %q",
+					tc.callee, tc.confidence, tc.reflect, tc.reference, got, tc.want)
 			}
 			if got == domain.DispatchDirect && tc.want != domain.DispatchDirect {
 				t.Errorf("an edge that is not a direct call was reported as one")
+			}
+		})
+	}
+}
+
+// TestDispatchKindOfEdge_ReflectOnlyWhereTheCalleeCanDispatch is the named
+// defect.
+//
+// The reflect_dispatch attribute means "the callee is in package reflect". It
+// does not mean the callee set is unknown, and reading it as though it did
+// overstates the reflective population by about 65 times. Every subject below is
+// a real callee taken from the store, and every one of them carries the
+// attribute; only the first group can actually choose what runs.
+//
+// The negatives land on the unresolved kind rather than a direct call. That is
+// the honest answer for them: their confidence is Unknown, so the analysis could
+// not bound the callee by confidence either — a different claim from "this is
+// reflection".
+func TestDispatchKindOfEdge_ReflectOnlyWhereTheCalleeCanDispatch(t *testing.T) {
+	t.Parallel()
+
+	dispatching := []string{
+		"reflect.(Value).Call",
+		"reflect.(Value).CallSlice",
+		"reflect.(Value).Method",
+		"reflect.(Value).MethodByName",
+		"reflect.(Value).FieldByName",
+	}
+	for _, callee := range dispatching {
+		t.Run("dispatching "+callee, func(t *testing.T) {
+			t.Parallel()
+			got := domain.DispatchKindOfEdge(callee, "Unknown", true, false)
+			if got != domain.DispatchReflect {
+				t.Errorf("an edge to %s is annotated %q, want the reflect kind", callee, got)
+			}
+		})
+	}
+
+	// reflect.Type's Method, MethodByName and FieldByName return a descriptor
+	// rather than something to call, and the graph spells them with the *rtype
+	// receiver — so a name match alone would wrongly catch them.
+	bounded := []string{
+		"reflect.TypeOf",
+		"reflect.ValueOf",
+		"reflect.DeepEqual",
+		"reflect.init",
+		"reflect.embeddedIfaceMethStub",
+		"reflect.makeFuncStub",
+		"reflect.(Value).Type",
+		"reflect.(Value).Interface",
+		"reflect.(*rtype).Method",
+		"reflect.(*rtype).MethodByName",
+		"reflect.(*rtype).FieldByName",
+	}
+	for _, callee := range bounded {
+		t.Run("bounded "+callee, func(t *testing.T) {
+			t.Parallel()
+			got := domain.DispatchKindOfEdge(callee, "Unknown", true, false)
+			if got == domain.DispatchReflect {
+				t.Errorf("an edge to %s is annotated as a reflect dispatch; it has one callee and bounds perfectly", callee)
+			}
+			if got != domain.DispatchUnresolved {
+				t.Errorf("an edge to %s is annotated %q, want unresolved — its confidence is Unknown", callee, got)
 			}
 		})
 	}
