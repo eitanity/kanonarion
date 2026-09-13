@@ -12,6 +12,8 @@ example.com/mod@v1.2.0 — Affected
   Snapshot:        govulndb@v2026-02-14T00-00-00
   Advisories:      not recorded (this record predates the advisory count)
   Snapshot age:    retrieved 2026-02-14T00:00:00Z (6 day(s) old at validation)
+  Native code:     not_examined
+                   this module's artefact was not examined for native code compiled into the binary, so nothing is known either way — run: kanonarion native <module>@<version>
   GO-2026-0001 (CVE-2026-00001) [reachable] [root: unrooted]: example vulnerability in example.com/mod
       affected: <v1.3.0
       fix:      fixed in v1.3.0

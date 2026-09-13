@@ -42,7 +42,7 @@ func referencesGinRecord() vuldomain.VulnerabilityRecord {
 // --json.
 func TestPrintVulnRecord_PrintsTheFixReferences(t *testing.T) {
 	var out bytes.Buffer
-	printVulnRecord(&out, referencesGinRecord(), nil)
+	printVulnRecord(&out, referencesGinRecord(), nil, nil)
 	got := out.String()
 
 	if !strings.Contains(got, "fix refs: https://github.com/gin-gonic/gin/pull/2237, https://github.com/gin-gonic/gin/commit/a71af9c1") {
@@ -64,7 +64,7 @@ func TestPrintVulnRecord_NoReferencesPrintsNoLine(t *testing.T) {
 	rec.Findings[0].References = nil
 
 	var out bytes.Buffer
-	printVulnRecord(&out, rec, nil)
+	printVulnRecord(&out, rec, nil, nil)
 	if got := out.String(); strings.Contains(got, "fix refs:") {
 		t.Errorf("output carries a fix-refs line for a finding with no references:\n%s", got)
 	}
@@ -80,7 +80,7 @@ func TestPrintVulnRecord_NonFixReferencesAlonePrintNoLine(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	printVulnRecord(&out, rec, nil)
+	printVulnRecord(&out, rec, nil, nil)
 	if got := out.String(); strings.Contains(got, "fix refs:") {
 		t.Errorf("output carries a fix-refs line for an advisory with no FIX reference:\n%s", got)
 	}

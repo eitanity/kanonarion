@@ -248,14 +248,14 @@ func TestRunScanShow_TextSplitAgreesWithItsOwnJSON(t *testing.T) {
 	ucVuln.AddRecord(mod, rec)
 
 	var text bytes.Buffer
-	if err := runScanShow(context.Background(), runID, false, ucRuns, ucVuln, nil, nil, &text, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), runID, false, ucRuns, ucVuln, nil, nil, nil, &text, io.Discard); err != nil {
 		t.Fatalf("runScanShow: %v", err)
 	}
 
 	jsonOut = true
 	t.Cleanup(func() { jsonOut = false })
 	var doc bytes.Buffer
-	if err := runScanShow(context.Background(), runID, true, ucRuns, ucVuln, nil, nil, &doc, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), runID, true, ucRuns, ucVuln, nil, nil, nil, &doc, io.Discard); err != nil {
 		t.Fatalf("runScanShow --json: %v", err)
 	}
 
@@ -339,7 +339,7 @@ func TestRunScanShowText_DoesNoRouteRootClassification(t *testing.T) {
 	// split ever reached for a root it would have to consult one, and this
 	// asserts it does not by giving it none and still requiring the answer.
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), runID, false, ucRuns, ucVuln, nil, nil, &buf, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), runID, false, ucRuns, ucVuln, nil, nil, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("runScanShow: %v", err)
 	}
 	out := buf.String()

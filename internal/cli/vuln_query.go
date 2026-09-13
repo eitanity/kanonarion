@@ -78,7 +78,7 @@ marks them superseded.`,
 			}
 			defer func() { _ = cleanup() }()
 			return runVulnShow(cmd.Context(), args[0], walkID, gomod, target, cmd.Flags().Changed("gomod"), jsonOut, history,
-				ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
+				ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout)
 		},
 	}
 
@@ -100,6 +100,7 @@ func runVulnShow(
 	runs QueryScanRunsUseCase,
 	walks QueryWalksUseCase,
 	graphs QueryCallGraphUseCase,
+	natives nativeRecordReader,
 	stdout io.Writer,
 ) error {
 	coord, err := parseCoordinate(arg)
@@ -190,6 +191,12 @@ func runVulnShow(
 		rec, isolated, hasIsolated = r, aside, has
 	}
 
+	// The native statement is derived from the module's own stored measurement,
+	// not from the scan record. It is a fact about the artefact, read now, and
+	// writing it into the vulnerability record would re-hash every stored record
+	// to say something the store already holds elsewhere.
+	cov := deriveNativeCoverage(ctx, natives, coord)
+
 	if jsonOut {
 		// The JSON body stays record-shaped: that shape is this command's published
 		// contract, and wrapping it to carry the aside would break every consumer
@@ -205,7 +212,7 @@ func runVulnShow(
 		// and no statement of what was searched to reach it.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordJSON(rec, newRecordRootFunc(ctx, graphs))); err != nil {
+		if err := enc.Encode(toVulnRecordNativeJSON(rec, newRecordRootFunc(ctx, graphs), cov)); err != nil {
 			return fmt.Errorf("encoding vulnerability record: %w", err)
 		}
 		return nil
@@ -221,7 +228,7 @@ func runVulnShow(
 		_, _ = fmt.Fprintln(stdout,
 			"        the Walk line below names the scan that wrote the served record, which may be an earlier walk in the same frame")
 	}
-	printVulnRecord(stdout, rec, newRouteRootFunc(ctx, graphs, rec))
+	printVulnRecord(stdout, rec, newRouteRootFunc(ctx, graphs, rec), cov)
 	printDeclinedIsolatedFrame(stdout, isolated, hasIsolated)
 	return nil
 }

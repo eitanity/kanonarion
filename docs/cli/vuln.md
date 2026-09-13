@@ -43,6 +43,51 @@ nothing in it says how many entries it should have had.
 
 The module must be fetched first (`kanonarion walk` or `kanonarion fetch`).
 
+### The scan covers Go code, and says where it does not
+
+A cgo module can compile a whole C library into your binary from source its own
+published zip ships — `github.com/mattn/go-sqlite3` carries the entire SQLite
+amalgamation. `govulncheck` does not look at that C, and kanonarion has no
+non-Go advisory source to check it against. So the scan's verdict for such a
+module covers its Go code and nothing else.
+
+Until now that gap was silent: a module shipping SQLite and a module with no C
+in it both read `Clean`, and no reader could tell them apart. Every read now
+states which of **five** situations a module is in, on the text surface and as
+a `native_coverage` field in `--json`:
+
+| `state` | what it means |
+|---|---|
+| `not_examined` | no native record is held — **nobody looked**. Not an absence. Run `kanonarion native <module>@<version>` |
+| `absent` | measured: the module compiles no native source of its own and links nothing external |
+| `linked_not_shipped` | it links an external native library the host provides; no version can be read from these bytes |
+| `present_unidentified` | it compiles native source in and no recipe names the library, so no component could be named |
+| `present_identified` | it compiles a **named** library in — the component is stated, and its advisories were **not** searched |
+
+`unsearched_components` beside it is the number a machine acts on: how many
+identified native components in this module were never checked against any
+advisory database. It is zero in every state but `present_identified`.
+
+**This states a gap; it never creates a finding.** No `overall_status`, no
+`findings_status` and no finding changes because of it. The statement is derived
+at read time from the module's own native record, so **no scan pipeline version
+is owed** and no stored record is rewritten — a vulnerability record's content
+hash covers what the scan measured, and the scan did not measure this.
+
+Surfaces that carry it:
+
+- **`vuln` and `vuln-show`** — a `Native code:` block under the record, and
+  `native_coverage` in `--json`.
+- **`vuln-scan` and `vuln-scan-show`** — a walk-level roll-up naming the modules
+  whose native components were not searched and the modules whose native source
+  could not be identified, and `native_coverage` in `--json`. Modules nobody
+  examined are a count, not a list.
+
+Matching a native component against an upstream advisory database is a separate
+question, with its own cost: it needs a non-Go advisory source, a version
+comparator that is not semver, and an identity scheme. It is deliberately not
+begun. What is offered here is the truthful statement kanonarion can make today.
+
 
 ### Coverage decides the exit code
 

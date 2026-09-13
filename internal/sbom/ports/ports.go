@@ -9,6 +9,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -99,6 +100,25 @@ type GenerateRequest struct {
 	// download that cannot happen. This document leaves the building and is
 	// read by people who cannot re-run it, so it states only what was measured.
 	ModuleOrigins map[coordinate.ModuleCoordinate]ModuleOrigin
+	// NativeRecords carries, per module coordinate, what kanonarion measured
+	// about the native code that module's own published zip compiles into the
+	// binary through cgo. A coordinate absent from the map has no such
+	// measurement at the current native generation, and the document then states
+	// nothing about it — which is "nobody looked", never "there is no C in it".
+	//
+	// A C library amalgamated into a Go module's zip — SQLite is the common case,
+	// eight megabytes of it inside github.com/mattn/go-sqlite3 — ships in the
+	// binary and is not a Go module, so no `pkg:golang/` component can name it.
+	// The measurement that identifies it reads a version out of a declaration in
+	// the source the build compiles, inside a zip the fetch ledger already
+	// hashed and verified, so a component built from it inherits that artefact's
+	// verification and asserts nothing that was not read.
+	//
+	// Only a record whose presence is identified yields a component. A record
+	// that found native source no recipe could name has no identity to state, so
+	// it yields none; the run says so on its own channel rather than putting a
+	// nameless entry in an inventory.
+	NativeRecords map[coordinate.ModuleCoordinate]nativedomain.Record
 	// ComponentsScopedToBinary reports that the component list was restricted
 	// to one binary's import closure (sbom --package). It changes no scope
 	// arithmetic — the uncovered set is measured against the components the
@@ -141,6 +161,19 @@ func (o ModuleOrigin) IsZero() bool { return o == ModuleOrigin{} }
 // the document says nothing about that module's origin rather than guessing.
 type ModuleOriginReader interface {
 	ModuleOrigin(ctx context.Context, coord coordinate.ModuleCoordinate) (ModuleOrigin, bool, error)
+}
+
+// NativeRecordReader answers what one module's artefact was measured to compile
+// into the binary from native (C, C++, Objective-C, Fortran) source it ships
+// itself.
+//
+// Implementations return (zero, false, nil) when the store holds no record for
+// the coordinate at the current native generation. That is an absent answer,
+// not an error, and it reads as "this module was never examined" — never as
+// "this module ships no native code". Those are different facts, and collapsing
+// them is the silence this whole surface exists to remove.
+type NativeRecordReader interface {
+	NativeRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (nativedomain.Record, bool, error)
 }
 
 // VendorTreeReader reads the module entries of a project's vendor/modules.txt.

@@ -45,7 +45,7 @@ func withdrawnBboltRecord() vuldomain.VulnerabilityRecord {
 // would pass on the unfixed tree.
 func TestPrintVulnRecord_NamesTheRetractionAndItsDate(t *testing.T) {
 	var out bytes.Buffer
-	printVulnRecord(&out, withdrawnBboltRecord(), nil)
+	printVulnRecord(&out, withdrawnBboltRecord(), nil, nil)
 	got := out.String()
 
 	if !strings.Contains(got, "go.etcd.io/bbolt@v1.4.3 — Withdrawn") {
@@ -107,7 +107,7 @@ func TestPrintVulnScanResult_WithdrawnIsOutOfTheFindingsCountButInTheReport(t *t
 	withdrawn := []vulnScanAffected{{coord: rec.Coordinate.String(), record: rec}}
 
 	var out bytes.Buffer
-	if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, nil, withdrawn, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, false, &out); err != nil {
+	if err := printVulnScanResult(vuldomain.WalkScanRun{ID: "run-1"}, nil, withdrawn, nil, nil, vulnScanReachability{}, vulnScanToolchainJSON{}, nil, false, &out); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 	got := out.String()

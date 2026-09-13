@@ -51,7 +51,7 @@ func TestVulnShowPutsTheTestRootOnTheVerdictLine(t *testing.T) {
 		Kind:   vuldomain.RootTest,
 		Reason: "declared in test scope, so this route is not a production one",
 		NodeID: "example.com/app/handlers.(*Server).ServeHTTP",
-	}))
+	}), nil)
 
 	heading := findLineWith(t, out.String(), "GO-2026-0001")
 	if !strings.Contains(heading, "[reachable]") {
@@ -76,7 +76,7 @@ func TestVulnShowPrintsTheRootEvidenceUnderTheRoute(t *testing.T) {
 		Reason: "called from within the analysed module (3 callers), so the route begins where the analyser stopped",
 		NodeID: "example.com/app/handlers.(*Server).ServeHTTP",
 		Remedy: "kanonarion callers 'example.com/app/handlers.(*Server).ServeHTTP'",
-	}))
+	}), nil)
 
 	got := out.String()
 	for _, want := range []string{
@@ -96,7 +96,7 @@ func TestVulnShowPrintsTheRootEvidenceUnderTheRoute(t *testing.T) {
 // measurement and the absence of one must not be rendered as one.
 func TestVulnShowSaysNothingWhenNothingClassified(t *testing.T) {
 	var out bytes.Buffer
-	printVulnRecord(&out, rootedRecord(), classifyAs(vuldomain.RouteRoot{}))
+	printVulnRecord(&out, rootedRecord(), classifyAs(vuldomain.RouteRoot{}), nil)
 	if strings.Contains(out.String(), "root:") {
 		t.Errorf("an unclassified root printed a root line:\n%s", out.String())
 	}
@@ -158,7 +158,7 @@ func TestReachabilityVerdictNeverCallsItExploitable(t *testing.T) {
 	printVulnReachability(&out, res)
 
 	var show bytes.Buffer
-	printVulnRecord(&show, rec, classifyAs(vuldomain.RouteRoot{Kind: vuldomain.RootIngress, Reason: "an http.Handler implementation"}))
+	printVulnRecord(&show, rec, classifyAs(vuldomain.RouteRoot{Kind: vuldomain.RootIngress, Reason: "an http.Handler implementation"}), nil)
 
 	for _, rendered := range []string{out.String(), show.String()} {
 		for _, forbidden := range []string{"exploit", "attacker", "vulnerable to"} {

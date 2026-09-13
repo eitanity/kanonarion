@@ -112,4 +112,14 @@ type vulnScanDocument struct {
 	// document back into WalkScanRun, and "" is not a time any decoder accepts.
 	StartedAt   string `json:"started_at"`
 	CompletedAt string `json:"completed_at"`
+	// Native is what this scan did NOT cover: the C libraries the build's cgo
+	// modules compile into the binary from source their own zips ship, which no
+	// advisory database was searched for. It is beside the run and never inside
+	// it — nothing here is a finding, no count above moves, and the stored run
+	// record is untouched.
+	//
+	// Null when this producer derives no such statement. Present and empty when
+	// it derived one and the build has nothing to report, which is a measured
+	// answer and a different one.
+	Native *nativeWalkRollup `json:"native_coverage"`
 }

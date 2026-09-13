@@ -897,6 +897,28 @@ produced different records for the same coordinate. Over a 128-module walk, 6 of
 128 differed between passes, every difference a reordering of the same values.
 After the change, 0 of 128.
 
+## SBOM: pipeline `0.9.0` → `0.10.0`
+
+**Document bytes change; no store migration.** SBOM records are cached on
+`(walk id, scan run id, format, pipeline version)`, so the bump makes stored
+`0.9.0` documents unreachable and a request regenerates. Nothing is purged.
+Eleven stored records go dark at once, of which **three** would come back
+different — the two `cortezaproject/corteza/server` walks and the
+`pbinitiative/zenbpm` one, each carrying a cgo module whose C library has been
+identified. The other eight regenerate byte-identical.
+
+The behaviour that forced it: the document could not previously contain a
+component that is not a Go module. A cgo module ships C source inside its own
+zip and compiles it into the binary, and where that library has been identified
+it is now emitted as a `pkg:generic` component, carrying the declaration it was
+read from and a `dependsOn` edge from the Go module that ships it. A `0.9.0`
+document of such a walk lists the Go module and not the library inside it, so it
+understates what the binary contains.
+
+A walk with no identified native component produces byte-identical bytes at both
+versions, so the bump costs those documents a regeneration and changes nothing
+about them.
+
 ## SBOM: pipeline `0.8.0` → `0.9.0`
 
 **Document bytes change; no store migration.** SBOM records are cached on

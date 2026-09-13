@@ -175,7 +175,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 
 	var served bytes.Buffer
 	if err := printVulnScanResult(run, nil, nil, nil, nil,
-		vulnScanReachability{Answers: 3}, vulnScanToolchainJSON{}, true, &served); err != nil {
+		vulnScanReachability{Answers: 3}, vulnScanToolchainJSON{}, nil, true, &served); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 	// than inferring the fact from a key's absence.
 	var fresh bytes.Buffer
 	if err := printVulnScanResult(run, nil, nil, nil, nil,
-		vulnScanReachability{Answers: 3, SourceReadByThisRun: true}, vulnScanToolchainJSON{}, true, &fresh); err != nil {
+		vulnScanReachability{Answers: 3, SourceReadByThisRun: true}, vulnScanToolchainJSON{}, nil, true, &fresh); err != nil {
 		t.Fatalf("printVulnScanResult: %v", err)
 	}
 	if err := json.Unmarshal(fresh.Bytes(), &doc); err != nil {

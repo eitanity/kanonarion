@@ -308,6 +308,20 @@ func sbomGenerateWith(
 		return cerr
 	}
 
+	// Also on stderr, and for the same reason. A module whose artefact compiles
+	// native source into the binary that no recipe could name has no identity to
+	// put in an inventory, so it gets no component — but leaving it out in
+	// silence would mean a reader cannot tell it from a module with no C in it at
+	// all. CycloneDX has no field for "there is something here and we cannot say
+	// what", so the run says it where the run can.
+	//
+	// It is stated whether the document was generated now or served from the
+	// cache, because it is a fact about the walk and not about this invocation.
+	if cerr := writeNativeUnidentifiedCaveat(stderr, nativeRollupOver(
+		ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, record.WalkID))); cerr != nil {
+		return cerr
+	}
+
 	// A licence-less SBOM must never pass as complete. Surface the gap as a
 	// non-zero exit on every output path: the message travels on stderr via
 	// main, never on stdout where it would corrupt the SBOM bytes, and is
@@ -363,9 +377,10 @@ func parseGeneratedAt(v string) (time.Time, error) {
 func undeterminedLicenceSummary(content []byte, build licenceRemedyBuild) string {
 	var doc struct {
 		Components []struct {
-			Name     string            `json:"name"`
-			Version  string            `json:"version"`
-			Licenses []json.RawMessage `json:"licenses"`
+			Name       string            `json:"name"`
+			Version    string            `json:"version"`
+			PackageURL string            `json:"purl"`
+			Licenses   []json.RawMessage `json:"licenses"`
 		} `json:"components"`
 		Metadata struct {
 			Component struct {
@@ -402,6 +417,21 @@ func undeterminedLicenceSummary(content []byte, build licenceRemedyBuild) string
 		add(m.Name, m.Version, " (the document's subject)")
 	}
 	for _, c := range doc.Components {
+		// A native component — the C library a cgo module compiles in from source
+		// its own zip ships — is passed over here, and it is the same population
+		// the document's own licence-completeness annotation measures. Two
+		// reasons, and the second is the one that matters.
+		//
+		// It is not a gap in the licence extraction: that pipeline reads the
+		// LICENSE files of a Go module's artefact, and a library inside one of
+		// those artefacts was never in its scope. And this message names a remedy —
+		// analyse the project's own licence — that cannot touch it. A refusal that
+		// tells an operator to run a command which will not change the outcome is
+		// worse than the silence it replaces. The component states its own
+		// undetermined licence on itself, where the reader of the document meets it.
+		if isNativeComponentPURL(c.PackageURL) {
+			continue
+		}
 		if len(c.Licenses) == 0 {
 			add(c.Name, c.Version, "")
 		}

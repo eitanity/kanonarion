@@ -655,7 +655,8 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain,
+		nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID)), jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: false,
@@ -800,7 +801,8 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain,
+		nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID)), jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: true,
@@ -947,7 +949,7 @@ func scanCompletionSummary(run vuldomain.WalkScanRun) string {
 // the run's stored shape is unchanged and the keys are added beside it, so a
 // consumer that cannot read the stderr statements still learns what the
 // reachability verdicts rest on and what the toolchain was judged to be.
-func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, toolchain vulnScanToolchainJSON, jsonOut bool, stdout io.Writer) error {
+func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, toolchain vulnScanToolchainJSON, native *nativeWalkRollup, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -955,6 +957,7 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 			vulnScanDocument: vulnScanDocument{
 				WalkScanRun: run, Reachability: reach,
 				StartedAt: recordstamp.Format(run.StartedAt), CompletedAt: recordstamp.Format(run.CompletedAt),
+				Native: native,
 			},
 			Toolchain: toolchain,
 		}); err != nil {
@@ -1022,6 +1025,12 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 	// Sections stay separate rather than merged because the direction line
 	// belongs to one reason only.
 	writeUnscannableRollup(unscannable, stdout)
+
+	// Last, and outside every count above: a native component is not a finding
+	// and must never be added to one. What it is, is the part of this binary the
+	// scan did not cover — stated here so the findings list above cannot be read
+	// as covering it.
+	writeNativeRollup(stdout, native)
 
 	return nil
 }

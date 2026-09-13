@@ -31,7 +31,7 @@ func TestVulnShowText_StatesWhatFirstValidatedIsAnchoredTo(t *testing.T) {
 	rec := anchoredTestRecord(t)
 
 	var out bytes.Buffer
-	printVulnRecord(&out, rec, nil)
+	printVulnRecord(&out, rec, nil, nil)
 	got := out.String()
 
 	if !strings.Contains(got, "First validated:") {
@@ -51,7 +51,7 @@ func TestVulnShowText_SaysNothingWhereThereIsNoAnchor(t *testing.T) {
 	rec := unreadableTestRecord(t, "example.com/unanchored", "v1.0.0")
 
 	var out bytes.Buffer
-	printVulnRecord(&out, rec, nil)
+	printVulnRecord(&out, rec, nil, nil)
 	if strings.Contains(out.String(), "first observation:") {
 		t.Errorf("a record with no first-validated stamp printed the pointer anyway:\n%s", out.String())
 	}

@@ -45,6 +45,17 @@ The module's licence record says MIT, which is the Go wrapper's licence. The
 8.4 MB of SQLite it compiles is a separate component with a separate version and
 its own advisories, and this is where the store records it.
 
+Where that record then goes:
+
+- **[`sbom`](sbom.md)** lists an identified component as a component of its own,
+  under a `pkg:generic/…` purl, with the evidence that named it. A
+  `present_unidentified` record emits no component and the run says so on stderr.
+- **[`vuln-show` and `vuln-scan-show`](vuln.md)** state which of five native
+  situations a module is in and, for an identified component, that its
+  advisories were **not** searched. Kanonarion has no non-Go advisory source;
+  what it can do is say so rather than let a Go-only `Clean` stand for the whole
+  binary.
+
 (The real output ends with a **Linked libraries** table as well - this module
 also names `sqlite3`, `icuuc`, `icui18n` and the C runtime in its `#cgo LDFLAGS`
 directives. It is elided here; see

@@ -115,7 +115,7 @@ func TestVulnShow_SupersededGenerationIsNamedNotReportedAbsent(t *testing.T) {
 	coord := darkCoord(t, uc, 16, 252)
 
 	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, io.Discard)
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, io.Discard)
 	if err == nil {
 		t.Fatal("expected a refusal, got nil")
 	}
@@ -142,7 +142,7 @@ func TestVulnShow_SupersededWithNoRootedWalk_NamesTheWalkThatMeasuredIt(t *testi
 	// No summaries: nothing in the store is rooted at this coordinate, which is
 	// what --module searches for.
 	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, io.Discard)
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, io.Discard)
 	if err == nil {
 		t.Fatal("expected a refusal, got nil")
 	}
@@ -170,7 +170,7 @@ func TestVulnShow_SupersededWithRootedWalk_KeepsTheModuleForm(t *testing.T) {
 	walks.SetSummaries([]walkports.WalkSummary{{ID: "01JWALKROOTED0000000000001", Target: coord}})
 
 	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, io.Discard)
+		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, io.Discard)
 	if err == nil {
 		t.Fatal("expected a refusal, got nil")
 	}
@@ -281,7 +281,7 @@ func TestVulnShow_CurrentGenerationAnswersUnchanged(t *testing.T) {
 
 	var buf bytes.Buffer
 	if err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -300,7 +300,7 @@ func TestVulnShow_GenuineAbsenceStillReportsAbsence(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/never", "v0.1.0")
 
 	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, io.Discard)
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, io.Discard)
 	if err == nil {
 		t.Fatal("expected a refusal, got nil")
 	}

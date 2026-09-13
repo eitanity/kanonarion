@@ -111,7 +111,13 @@ exit 0
     }
   ],
   "superseded": false,
-  "reads_pipeline_version": "v25"
+  "reads_pipeline_version": "v25",
+  "native_coverage": {
+    "unsearched": [],
+    "unidentified": [],
+    "not_examined": 4,
+    "components": 0
+  }
 }
 --- stderr ---
 (empty)

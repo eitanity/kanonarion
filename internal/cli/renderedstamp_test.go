@@ -104,7 +104,7 @@ func TestVulnRecord_TextAndJSONAgreeOnTheStamp(t *testing.T) {
 	rec := stampedRecord(t)
 
 	var text bytes.Buffer
-	printVulnRecord(&text, rec, nil)
+	printVulnRecord(&text, rec, nil, nil)
 
 	out, err := json.Marshal(toVulnRecordJSON(rec, nil))
 	if err != nil {

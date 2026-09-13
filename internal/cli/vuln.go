@@ -48,26 +48,33 @@ func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
+			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout)
 		},
 	}
 
 	return cmd
 }
 
-func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
+func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, natives nativeRecordReader, stdout io.Writer) error {
 	// runs is unused on this path — it only explains a walk-scoped miss, and
 	// this command names no walk — but it is threaded rather than nil so the
 	// two entry points cannot drift into different behaviour. walks is used:
 	// the no-record refusal names a succeeded walk if one exists.
 	// `vuln` names no build, so it declares no target: the zero value settles
 	// nothing and leaves the composed read exactly as it was.
-	return runVulnShow(ctx, arg, "", "", buildTargetFlags{}, false, jsonOut, false, uc, runs, walks, graphs, stdout)
+	return runVulnShow(ctx, arg, "", "", buildTargetFlags{}, false, jsonOut, false, uc, runs, walks, graphs, natives, stdout)
 }
 
 // printVulnRecord renders a single VulnerabilityRecord in human-readable form;
 // shared between `vuln`, `vuln-show`, and any future text presenter.
-func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc) {
+//
+// cov is what the module's own artefact was measured to compile into the binary
+// from native source it ships. It is derived at read time from the native
+// record, never from this record: a vulnerability record says what the scan
+// measured, and the scan measured Go code. Nil means the caller derives no such
+// statement, and no native line is printed — an absent line is "this surface
+// does not say", never "there is no native code".
+func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc, cov *nativeCoverage) {
 	if classify == nil {
 		classify = unclassifiedRoutes
 	}
@@ -124,6 +131,11 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 			rec.DatabaseSnapshot.RetrievedAt().UTC().Format(time.RFC3339),
 			vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt()))
 	}
+	// The native statement sits above the findings, not below them. A module that
+	// ships a C library nobody searched advisories for can have a long, clean Go
+	// findings list, and a reader who has scrolled past it has already formed the
+	// verdict the statement exists to qualify.
+	printNativeCoverage(stdout, cov)
 	// The coverage caveat is printed from the coverage axis, and printing it does
 	// not end the record: a coverage gap and an advisory match are independent
 	// facts, and a record carrying both owes both lines. Returning after the reason

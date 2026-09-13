@@ -247,7 +247,7 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, ctr.QueryCallGraph, ctr.QueryWalks, stdout, stderr)
+			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, ctr.QueryCallGraph, ctr.QueryWalks, ctr.QueryNative, stdout, stderr)
 		},
 	}
 
@@ -310,6 +310,16 @@ type scanShowJSON struct {
 	// gone: the findings below stand, but what was scanned cannot be recovered
 	// from this store. Absent on a run whose walk resolves.
 	InputsUnresolvable string `json:"inputs_unresolvable,omitempty"`
+	// NativeCoverage is what this run did NOT cover: the C libraries the build's
+	// cgo modules compile into the binary from source their own zips ship, which
+	// no advisory database was searched for. Nothing in it is a finding and no
+	// count above moves because of it.
+	//
+	// Null when this producer derives no such statement — an unreadable walk
+	// leaves nothing to measure over. Present and empty when it derived one and
+	// the build has nothing to report, which is a measured answer and a different
+	// one.
+	NativeCoverage *nativeWalkRollup `json:"native_coverage"`
 }
 
 // scanRecordFault is a coordinate whose VulnerabilityRecord could not be read,
@@ -344,7 +354,7 @@ type scanShowSummary struct {
 	scanFailed  []scanRecordFault
 }
 
-func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, graphs QueryCallGraphUseCase, walks QueryWalksUseCase, stdout, stderr io.Writer) error {
+func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, graphs QueryCallGraphUseCase, walks QueryWalksUseCase, natives nativeRecordReader, stdout, stderr io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
 	// vuln-scan-list names the rows it could not verify, and this is the command
 	// an operator runs next against one of those names. Refusing here would send
@@ -386,6 +396,13 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	affected := summary.affected
 	unscannable := summary.unscannable
 
+	// Derived over the walk this run scanned, from the modules' own native
+	// records, and never from the run: the run measured Go code, and what the C
+	// libraries in the same binary are is a separate measurement this read joins
+	// to it. An unreadable walk yields nothing to measure over, and nil then says
+	// so rather than reporting an empty build.
+	nativeCov := nativeRollupOver(ctx, natives, nativeWalkCoords(ctx, walks, run.WalkID))
+
 	if jsonOut {
 		out := scanShowJSON{
 			ID:               run.ID,
@@ -408,6 +425,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 			Superseded:           run.PipelineVersion != vulnPipelineVersion,
 			ReadsPipelineVersion: vulnPipelineVersion,
 			SupersededRecords:    summary.superseded,
+			NativeCoverage:       nativeCov,
 		}
 		if !walkPresent {
 			out.InputsUnresolvable = unresolvableInputsNote(run.WalkID)
@@ -467,6 +485,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	writeScanRecordFaults(summary.readErrors, stdout)
 	writeSupersededScanRecords(summary.superseded, run.PipelineVersion, stdout)
 	writeMissingScanRecords(summary.missing, stdout)
+	writeNativeRollup(stdout, nativeCov)
 	writeScanModuleFindings(stdout, "Affected modules", affected)
 	// Printed after the affected list and separately from it: a reader scanning for
 	// what to act on sees the affected set alone, and a reader asking why a module

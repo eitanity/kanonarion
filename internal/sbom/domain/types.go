@@ -10,14 +10,38 @@ import (
 // enabling polyglot mode. There is deliberately no "npm" or "cargo".
 const EcosystemGo = "go"
 
+// EcosystemNative marks a component that is not a package in any ecosystem
+// kanonarion resolves: a C, C++, Objective-C or Fortran library whose source a
+// Go module ships inside its own published zip and compiles into the binary
+// through cgo.
+//
+// It does NOT open polyglot mode, and it is not a sibling of EcosystemGo above.
+// Kanonarion still resolves one dependency graph, the Go one; this names a
+// component found INSIDE a Go module's artefact, which has no package identity
+// of its own to resolve. There is still deliberately no "npm" and no "cargo".
+const EcosystemNative = "native"
+
 // ErrUnsupportedEcosystem is returned when a stored SBOM record's ecosystem is
 // absent or holds a value other than EcosystemGo.
 var ErrUnsupportedEcosystem = errors.New("unsupported ecosystem: kanonarion records are Go-only")
 
-// ErrNonGoComponent is returned by the SBOM generator when a component's
-// package URL does not start with "pkg:golang/". Every component kanonarion
-// emits describes a Go module; a non-Go purl indicates a generator bug.
+// ErrNonGoComponent is returned by the SBOM generator when a component built
+// from a walk graph node does not carry a "pkg:golang/" package URL. Every such
+// component describes a Go module; a non-Go purl there indicates a generator
+// bug.
+//
+// It is scoped to the components assembled from the graph. A native component
+// is built on its own path, from a native-component record rather than a graph
+// node, and is held to ErrNonGenericComponent instead — so neither half of the
+// list can quietly start emitting the other's scheme.
 var ErrNonGoComponent = errors.New("non-Go component: purl must start with pkg:golang/")
+
+// ErrNonGenericComponent is returned when a component built from a
+// native-component record does not carry a "pkg:generic/" package URL. A
+// library that is not published in a registry has no registry identity, and
+// naming it under a registry's purl type would tell a reader to look it up
+// somewhere it cannot be found.
+var ErrNonGenericComponent = errors.New("non-generic native component: purl must start with pkg:generic/")
 
 // SBOMFormat identifies the serialisation format of an SBOM document.
 type SBOMFormat string

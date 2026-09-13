@@ -12,10 +12,87 @@ output.
 > state the advisory snapshot and the analysis frame the answer was measured
 > against.
 
-> **Go-only scope.** kanonarion analyses Go modules exclusively. Every
-> component in an emitted SBOM uses a `pkg:golang/…` Package URL, and
-> each component's `properties` block includes `kanonarion:ecosystem = go`
-> so that consumers do not have to infer the ecosystem from the module path.
+> **Go-only scope, with one stated exception.** kanonarion resolves Go modules
+> exclusively. Every component built from the module graph uses a `pkg:golang/…`
+> Package URL and carries `kanonarion:ecosystem = go` in its `properties` block,
+> so consumers do not have to infer the ecosystem from the module path.
+>
+> The exception is a **native component**: a C, C++, Objective-C or Fortran
+> library whose source a cgo module ships inside its own published zip and
+> compiles into the binary. `github.com/mattn/go-sqlite3` is the common case — it
+> carries the whole SQLite amalgamation as `sqlite3-binding.c`. That library is
+> in the binary, it is not a Go module, and no `pkg:golang/` purl can name it.
+> It is emitted under `pkg:generic/…` and carries
+> `kanonarion:ecosystem = native`. See **Native components** below. This does not
+> open polyglot mode: there is still no `npm` and no `cargo`.
+
+### Native components
+
+A native component appears only when kanonarion has **identified** the library —
+that is, when `kanonarion native <module>@<version>` reports
+`present_identified`, having read a version verbatim out of a declaration the
+library publishes in source the build compiles. The bytes come from a module zip
+the fetch ledger already hashed and verified, so the component inherits that
+artefact's verification.
+
+    "bom-ref": "pkg:generic/sqlite@3.53.0",
+    "type": "library",
+    "name": "SQLite",
+    "version": "3.53.0",
+    "purl": "pkg:generic/sqlite@3.53.0"
+
+What it carries:
+
+- **`evidence`** — the CycloneDX evidence block. `identity` states the concluded
+  version, the technique (`source-code-analysis`) and the verbatim declaration;
+  `occurrences` names every file it was read in, prefixed by the host module.
+- **`properties`** — `kanonarion:component:native = true`, one
+  `kanonarion:native:host_module` per Go module whose artefact ships it, the
+  verified zip it was read from (`kanonarion:native:host_artefact`), the
+  detection generation, `kanonarion:native:confidence`, and two statements of
+  what was **not** established: `kanonarion:native:advisories_searched = false`
+  and `kanonarion:native:licence_determined = false`.
+- **A `dependencies` edge** from the Go module that ships it, so a consumer
+  walking the graph from the subject reaches it.
+
+What it deliberately does **not** carry: no `hashes`, no `externalReferences`, no
+`download_url` or `checksum` purl qualifier, and no CPE. Each would describe an
+upstream release kanonarion never fetched. What it read was a declaration inside
+a Go module's zip, and that is what it states.
+
+Two rules follow:
+
+- **One library at one version is one component**, however many modules ship it.
+  Each is named in its own `kanonarion:native:host_module` property. Two modules
+  shipping *different* versions are two components.
+- **Go components are unchanged.** Native components are appended after them, so
+  every existing component keeps its purl, its fields and its position in the
+  array. A walk with no identified native component produces a byte-identical
+  document.
+
+**`present_unidentified` emits no component.** A module that compiles native
+source no recipe could name has no identity to put in an inventory. The run says
+so on **stderr**, naming the modules, rather than omitting them silently —
+CycloneDX has no field for "something is here and we cannot say what", and a
+caveat injected into the document would be a claim the format does not support.
+
+**A native component's licence is not counted.** The licence pipeline reads the
+LICENSE files of a Go module's artefact; a library inside one of those artefacts
+was never in its scope. So it is excluded from the licence-completeness
+annotation and from the non-zero exit that gate produces — otherwise the command
+would fail with a remedy that cannot change the outcome. The component states
+its own undetermined licence on itself.
+
+**The SBOM still asserts no vulnerabilities.** This adds a component, not a
+finding. Whether that component's advisories were searched is reported by
+[`vuln-show`](vuln.md) and `vuln-scan-show`.
+
+> **`--force` is required to see this on an existing walk.** `sbom <walk-id>`
+> serves the stored document for `(walk, format, pipeline version)`, and a
+> document generated before native components existed is still served from that
+> cache. Re-generate with `kanonarion sbom <walk-id> --force`. If you are
+> comparing two documents, **force both sides**, or you are comparing a cached
+> document against a fresh one.
 
 ### Document structure
 
