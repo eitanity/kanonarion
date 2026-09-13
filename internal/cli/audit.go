@@ -506,10 +506,19 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return cerr
 	}
 
+	// The native axis, on stderr with the others. The verdict columns above
+	// cover Go code; this states which part of the build they do not reach. It
+	// is derived from the rows themselves, so the set it describes is exactly
+	// the set the table lists.
+	native := nativeRollupOver(ctx, ctr.QueryNative, nativeCoordsOf(auditCoordinateStrings(results)))
+	if nerr := writeNativeCoverageSummary(stderr, native); nerr != nil {
+		return nerr
+	}
+
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		run := newAuditRunJSON(derivation, results, activeConfig.Staleness.TTL, cliNow())
+		run := newAuditRunJSON(derivation, results, activeConfig.Staleness.TTL, cliNow(), native)
 		if err := enc.Encode(newAuditOutput(envelope, run, results)); err != nil {
 			return fmt.Errorf("encoding results: %w", err)
 		}
@@ -1292,6 +1301,15 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
 		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
 	return res
+}
+
+// auditCoordinateStrings names the modules the report's rows are about.
+func auditCoordinateStrings(results []auditModuleResult) []string {
+	out := make([]string, 0, len(results))
+	for _, r := range results {
+		out = append(out, r.Coordinate)
+	}
+	return out
 }
 
 // auditVerificationCoverage aggregates the run's own rows. It reads the

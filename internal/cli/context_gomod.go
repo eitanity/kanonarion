@@ -183,6 +183,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
+			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
 		}
 
 		if eerr := emitContextDocument(coordStr, out, f.sizeOnly, array, stream, compact, &arr, &report, stdout); eerr != nil {

@@ -1109,6 +1109,7 @@ Event types added since `callgraph_extracted`, none needing a migration:
 | `sbom_served` | stored SBOM document handed back from the cache |
 | `advisory_snapshot_recorded` | persisted advisory database snapshot |
 | `vuln_scan_served` | stored walk scan run handed back instead of measured |
+| `native_components_recorded` | persisted native-component measurement of one module artefact |
 
 Each is emitted only where the write happened, so a cache hit appends nothing.
 `sbom_served` and `vuln_scan_served` are the deliberate exceptions: they witness

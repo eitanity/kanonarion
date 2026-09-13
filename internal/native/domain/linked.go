@@ -98,6 +98,28 @@ func HasExternalLink(libs []LinkedLibrary) bool {
 	return false
 }
 
+// ExternalLibraryNames returns the DISTINCT names of the libraries linked from
+// outside the module, sorted.
+//
+// Distinct names rather than directives: one library named by five per-platform
+// directives is one library, and counting the directives would report five. The
+// C runtime every cgo binary links is excluded for the same reason it is
+// classified apart — counting it would make "this artefact links something
+// external" true of every cgo module.
+func ExternalLibraryNames(libs []LinkedLibrary) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(libs))
+	for _, l := range libs {
+		if l.Kind != LinkedLibraryExternal || seen[l.Name] {
+			continue
+		}
+		seen[l.Name] = true
+		out = append(out, l.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // LinkedLibrariesIn returns the libraries the `#cgo LDFLAGS` and
 // `#cgo pkg-config` lines of one preamble name, in the order the directives
 // were read.

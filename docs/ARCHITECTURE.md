@@ -555,6 +555,23 @@ and the record carries the claims - the content hash is what reaches them. A cac
 without appending, and a run that could not establish custody at all wrote no
 record and so appends nothing, since an absence is not an observation.
 
+Native-component measurement records that a module artefact was *examined for
+the native code it compiles into, or links into, a binary*
+(`native_components_recorded`: module, version, the artefact identity it read,
+the detection generation as its two axes (pipeline version and recipe catalogue
+version), the presence value, the component, native-source and linked-library
+counts, and the record's content hash). It is named for the write, on the same
+terms as `stdlib_custody_recorded`: the event *witnesses* that a measurement
+exists and over which bytes, and the record carries the claims - no component
+name, version, file or declaration is restated here, and the content hash is
+what reaches them. The counts are emitted at zero, because a module measured and
+found to compile nothing is a measurement. One event per persisted measurement:
+a cache hit re-serves without appending, `--force` re-measures and appends
+again, and a run that could not read the artefact returns before the write and
+appends nothing. This is the generation the SBOM's `pkg:generic` component and a
+scan's "advisories were NOT searched" statement both rest on, so it belongs in
+the append-only log and not only in the mutable native ledger.
+
 SBOM generation records what *left the building*. It is the only artefact
 kanonarion hands to someone else, so both halves are logged: `sbom_generated`
 (record id, walk, format, pipeline version, the document's content hash, and

@@ -168,6 +168,28 @@ const (
 	// verified but not when, or by which run, that was established.
 	EventStdlibCustodyRecorded EventType = "stdlib_custody_recorded"
 
+	// EventNativeComponentsRecorded records that a module artefact was examined
+	// for the native code it compiles into, or links into, a binary and that the
+	// measurement was persisted. Payload carries the module coordinate, the
+	// artefact the measurement read, the detection generation (the pipeline
+	// version and the recipe catalogue version that produced it), the presence
+	// value, the counts of components, native sources and linked libraries, and
+	// the record's content hash.
+	//
+	// It is named for the write, on the same terms as stdlib_custody_recorded:
+	// the event WITNESSES that a measurement exists and over which bytes, and the
+	// record carries the claims. No component name, version or file evidence is
+	// restated here — that would make the log a second, unsealed copy of the
+	// record rather than a witness that the record was written.
+	//
+	// A native measurement is what the SBOM's pkg:generic component and a scan's
+	// "advisories were NOT searched" statement both rest on. Those are published
+	// facts, so the generation behind them belongs in the append-only log and not
+	// only in the mutable native ledger. It also restores the stream's use as a
+	// tripwire: a store write that appended nothing let a stable line count read
+	// as "nothing ran".
+	EventNativeComponentsRecorded EventType = "native_components_recorded"
+
 	// EventSBOMGenerated records that an SBOM document was produced and its
 	// record persisted. Payload carries the record id, the walk the document
 	// describes, the format, the pipeline version, the document's content hash
@@ -251,6 +273,7 @@ var knownEventTypes = map[EventType]struct{}{
 	EventExamplesExtracted:        {},
 	EventExtractionRunCompleted:   {},
 	EventStdlibCustodyRecorded:    {},
+	EventNativeComponentsRecorded: {},
 	EventSBOMGenerated:            {},
 	EventSBOMServed:               {},
 	EventAdvisorySnapshotRecorded: {},

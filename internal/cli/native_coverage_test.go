@@ -446,3 +446,213 @@ func TestIsNativeComponentPURL(t *testing.T) {
 		}
 	}
 }
+
+// natLinked builds a record that ships no native source of its own and links
+// the named external libraries, each twice and beside the C runtime, so the
+// distinct-name rule is exercised rather than assumed.
+func natLinked(names ...string) nativedomain.Record {
+	rec := natRecord(nativedomain.PresenceLinkedNotShipped, nil, 0)
+	rec.LinkedLibraries = []nativedomain.LinkedLibrary{
+		{Name: "c", Kind: nativedomain.LinkedLibrarySystem, Directive: "#cgo LDFLAGS: -lc", File: "a.go"},
+	}
+	for _, n := range names {
+		rec.LinkedLibraries = append(rec.LinkedLibraries,
+			nativedomain.LinkedLibrary{Name: n, Kind: nativedomain.LinkedLibraryExternal,
+				Directive: "#cgo LDFLAGS: -l" + n, File: "a.go"},
+			nativedomain.LinkedLibrary{Name: n, Kind: nativedomain.LinkedLibraryExternal,
+				Directive: "#cgo linux LDFLAGS: -l" + n, File: "b.go"})
+	}
+	return rec
+}
+
+// A build that links libxml2 must be told which library it is. "an external
+// native library" names nothing a reader can go and look up, and the directive
+// named it, so the statement can too.
+func TestNativeCoverage_LinkedNotShippedNamesTheLibraries(t *testing.T) {
+	cov := nativeCoverageOf(natLinked("libxml-2.0"), true)
+
+	if cov.State != nativeStateLinkedNotShipped {
+		t.Fatalf("state = %q, want %q", cov.State, nativeStateLinkedNotShipped)
+	}
+	if !strings.Contains(cov.Statement, "libxml-2.0") {
+		t.Errorf("the statement does not name the library:\n%s", cov.Statement)
+	}
+	if len(cov.LinkedLibraries) != 1 || cov.LinkedLibraries[0] != "libxml-2.0" {
+		t.Errorf("LinkedLibraries = %v, want [libxml-2.0]: the C runtime and the repeated directive are not extra libraries",
+			cov.LinkedLibraries)
+	}
+}
+
+// A module that ships its own sources AND links something else states both.
+// Neither hides the other, and the linked list is populated at every presence.
+func TestNativeCoverage_IdentifiedAlsoStatesWhatItLinks(t *testing.T) {
+	rec := natRecord(nativedomain.PresenceIdentified, sqliteComponent("3.38.0"), 4)
+	rec.LinkedLibraries = []nativedomain.LinkedLibrary{
+		{Name: "icuuc", Kind: nativedomain.LinkedLibraryExternal, Directive: "#cgo LDFLAGS: -licuuc", File: "a.go"},
+	}
+	cov := nativeCoverageOf(rec, true)
+	if len(cov.LinkedLibraries) != 1 || cov.LinkedLibraries[0] != "icuuc" {
+		t.Fatalf("LinkedLibraries = %v, want [icuuc]", cov.LinkedLibraries)
+	}
+
+	var out bytes.Buffer
+	printNativeCoverage(&out, &cov)
+	if !strings.Contains(out.String(), "also links, from outside this module: icuuc") {
+		t.Errorf("the rendering does not state what an identified module links:\n%s", out.String())
+	}
+	// The linked_not_shipped statement already names them, so the extra line
+	// would say it twice there.
+	linked := nativeCoverageOf(natLinked("icuuc"), true)
+	var lout bytes.Buffer
+	printNativeCoverage(&lout, &linked)
+	if strings.Contains(lout.String(), "also links") {
+		t.Errorf("linked_not_shipped stated its libraries twice:\n%s", lout.String())
+	}
+}
+
+// LinkedLibraries serialises as an array at every state, including the states
+// with nothing in them: a consumer must read one key, not infer a fact from a
+// key's absence.
+func TestNativeCoverage_LinkedLibrariesSerialiseAsAnArrayNeverNull(t *testing.T) {
+	for _, rec := range []nativedomain.Record{
+		natRecord(nativedomain.PresenceAbsent, nil, 0),
+		natRecord(nativedomain.PresenceUnidentified, nil, 2),
+	} {
+		cov := nativeCoverageOf(rec, true)
+		raw, err := json.Marshal(cov)
+		if err != nil {
+			t.Fatalf("marshalling coverage: %v", err)
+		}
+		if !strings.Contains(string(raw), `"linked_libraries":[]`) {
+			t.Errorf("linked_libraries is not an empty array at %q: %s", rec.Presence, raw)
+		}
+	}
+	// And at "nobody looked", where there is no record to read them from.
+	cov := nativeCoverageOf(nativedomain.Record{}, false)
+	raw, err := json.Marshal(cov)
+	if err != nil {
+		t.Fatalf("marshalling coverage: %v", err)
+	}
+	if !strings.Contains(string(raw), `"linked_libraries":[]`) {
+		t.Errorf("linked_libraries is not an empty array at not_examined: %s", raw)
+	}
+}
+
+// The walk rollup reports a linked library for the same reason it reports an
+// identified component: something native reaches the binary and no advisory was
+// searched for it. Leaving it out reported a build that links libxml2 as
+// covered.
+func TestNativeRollup_LinkedNotShippedIsAnException(t *testing.T) {
+	a := natCoord(t, "example.com/xml", "v1.0.0")
+	b := natCoord(t, "example.com/text", "v1.0.0")
+	c := natCoord(t, "example.com/plain", "v1.0.0")
+	reader := &fakeNativeReader{recs: map[coordinate.ModuleCoordinate]nativedomain.Record{
+		a: natLinked("libxml-2.0"),
+		b: natLinked("icuuc", "libxml-2.0"),
+		c: natRecord(nativedomain.PresenceAbsent, nil, 0),
+	}}
+
+	roll := nativeRollupOver(context.Background(), reader, []coordinate.ModuleCoordinate{b, a, c})
+	if len(roll.LinkedNotShipped) != 2 {
+		t.Fatalf("LinkedNotShipped holds %d modules, want 2", len(roll.LinkedNotShipped))
+	}
+	// Coordinate order, like every other list in the rollup: text sorts before
+	// xml, whatever order the walk handed them over in.
+	if roll.LinkedNotShipped[0].Module != b.String() {
+		t.Errorf("rollup is not in coordinate order: %+v", roll.LinkedNotShipped)
+	}
+	// Distinct across the build: two modules linking libxml2 link one libxml2.
+	if roll.Libraries != 2 {
+		t.Errorf("Libraries = %d, want 2 distinct across the build", roll.Libraries)
+	}
+	if roll.Examined != 3 || roll.NotExamined != 0 {
+		t.Errorf("examined/not examined = %d/%d, want 3/0", roll.Examined, roll.NotExamined)
+	}
+	if roll.empty() {
+		t.Error("a build that links two external libraries reported nothing to state")
+	}
+
+	var out bytes.Buffer
+	writeNativeRollup(&out, roll)
+	for _, want := range []string{
+		"External native libraries this build links but does not ship (2 in 2 module(s))",
+		"example.com/xml@v1.0.0", "libxml-2.0", "icuuc, libxml-2.0",
+		"These are not findings.",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the rollup does not state %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// The composite summary prints whatever the answer is, the all-clear included:
+// a report that says nothing when a build ships no native code is the same
+// report as one whose modules were never examined.
+func TestWriteNativeCoverageSummary_StatesTheCoverageEvenWithNothingToReport(t *testing.T) {
+	clean := natCoord(t, "example.com/plain", "v1.0.0")
+	reader := &fakeNativeReader{recs: map[coordinate.ModuleCoordinate]nativedomain.Record{
+		clean: natRecord(nativedomain.PresenceAbsent, nil, 0),
+	}}
+	roll := nativeRollupOver(context.Background(), reader, []coordinate.ModuleCoordinate{clean})
+
+	var out bytes.Buffer
+	if err := writeNativeCoverageSummary(&out, roll); err != nil {
+		t.Fatalf("writeNativeCoverageSummary: %v", err)
+	}
+	if !strings.Contains(out.String(), "native code: 1 of 1 module(s) examined") {
+		t.Errorf("the summary does not state its coverage:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "not looked at") {
+		t.Errorf("a fully examined build was told a module was not looked at:\n%s", out.String())
+	}
+}
+
+// A module holding no record is "nobody looked", and the summary says so rather
+// than letting the zero exception count read as an all-clear.
+func TestWriteNativeCoverageSummary_UnexaminedModulesAreNamedAsSuch(t *testing.T) {
+	seen := natCoord(t, "example.com/plain", "v1.0.0")
+	unseen := natCoord(t, "example.com/nobody-looked", "v1.0.0")
+	reader := &fakeNativeReader{recs: map[coordinate.ModuleCoordinate]nativedomain.Record{
+		seen: natRecord(nativedomain.PresenceAbsent, nil, 0),
+	}}
+	roll := nativeRollupOver(context.Background(), reader, []coordinate.ModuleCoordinate{seen, unseen})
+
+	var out bytes.Buffer
+	if err := writeNativeCoverageSummary(&out, roll); err != nil {
+		t.Fatalf("writeNativeCoverageSummary: %v", err)
+	}
+	for _, want := range []string{
+		"native code: 1 of 2 module(s) examined",
+		"that is not a finding of no native code",
+		"kanonarion native-list",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the summary does not state %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// A producer that holds no native reader publishes no summary at all, which
+// says "this producer does not derive it" rather than asserting an absence.
+func TestWriteNativeCoverageSummary_NoRollupPrintsNothing(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeNativeCoverageSummary(&out, nil); err != nil {
+		t.Fatalf("writeNativeCoverageSummary: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("a nil rollup printed %q", out.String())
+	}
+}
+
+// nativeCoordsOf turns a report's own rows into the set the rollup is derived
+// over, and leaves out what it cannot parse rather than counting it as a module
+// nobody looked at.
+func TestNativeCoordsOf_SkipsWhatItCannotParse(t *testing.T) {
+	got := nativeCoordsOf([]string{"example.com/mod@v1.0.0", "not a coordinate", "example.com/two@v2.0.0"})
+	if len(got) != 2 {
+		t.Fatalf("nativeCoordsOf returned %d coordinates, want 2: %v", len(got), got)
+	}
+	if got[0].String() != "example.com/mod@v1.0.0" || got[1].String() != "example.com/two@v2.0.0" {
+		t.Errorf("nativeCoordsOf = %v", got)
+	}
+}

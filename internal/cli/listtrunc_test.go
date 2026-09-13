@@ -18,6 +18,7 @@ import (
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
+	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -340,6 +341,7 @@ func listingSurfaces(t *testing.T) []listingSurface {
 	return []listingSurface{
 		licenseSurface(), interfaceSurface(), examplesSurface(), callGraphSurface(),
 		vulnScanSurface(), walkSurface(t), extractSurface(), directivesSurface(),
+		nativeSurface(t),
 	}
 }
 
@@ -646,6 +648,18 @@ scan-2   2026-01-01T00:00:00Z  0           sha256:abc
 showing first 3 directive scans — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
 			firstRecord: `{"id":"scan-0","project":"example.com/proj","completed_at":"2026-01-01T00:00:00Z","directive_count":0,"content_hash":"sha256:abc","pipeline_version":"dir-1"}`,
+		},
+		"native-list": {
+			text: `example.com/mod0@v1.0.0                                 absent                 —
+example.com/mod1@v1.0.0                                 absent                 —
+example.com/mod2@v1.0.0                                 absent                 —
+listing native records at generation ` + nativedomain.PipelineFingerprint() + `, the generation this build serves; records from a superseded generation are not shown (--all-generations)
+showing first 3 native records at generation ` + nativedomain.PipelineFingerprint() + ` — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","presence":"absent","generation":"` +
+				nativedomain.PipelineFingerprint() +
+				`","superseded":false,"artefact_identity":"zip:h1:example.com/mod0","components":[],` +
+				`"linked_libraries":[],"source_count":0,"extracted_at":"2026-01-01T00:00:00Z","content_hash":"sha256:abc"}`,
 		},
 	}
 	for _, s := range listingSurfaces(t) {

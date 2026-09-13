@@ -362,7 +362,7 @@ is not a listing: a selector that names one record and misses exits `4`, and its
 statement travels on the error (see below).
 
 The listings are `licence-list`/`license-list`, `interface-list`,
-`examples-list`, `callgraph-list`, `vuln-scan-list`, `walk-list`,
+`examples-list`, `callgraph-list`, `native-list`, `vuln-scan-list`, `walk-list`,
 `extract list` and `directives list`. `sbom-list` and `vuln-snapshot-list` apply
 no limit, return their whole population and still answer with a bare array.
 
@@ -440,7 +440,8 @@ record performs no extra read and prints no statement, on either channel.
 
 This applies to every record listing: `callgraph-list`, `vuln-scan-list`,
 `licence-list`/`license-list`, `sbom-list`, `interface-list`, `examples-list`,
-`walk-list`, `extract list`, `directives list` and `vuln-snapshot-list`.
+`native-list`, `walk-list`, `extract list`, `directives list` and
+`vuln-snapshot-list`.
 
 `interface-list`, `examples-list` and `extract list` take no filter, so only the
 empty-store and the paged-past causes can arise on them. Given a module
@@ -452,6 +453,12 @@ coordinate was compared against.
 `vuln-snapshot-list` takes neither a filter nor a `--limit`, so it has exactly
 one cause it can have and states that one: the store holds no snapshot. It does
 not offer a paging remedy, because it cannot page.
+
+`native-list` is the one listing whose paged-past notice counts the FILTERED
+population rather than the store's: `--presence` narrows the rows the offset
+steps through, so a filter that matched two records and a page starting at the
+fifth is a paging zero and says so, naming how many matched. Reporting it as
+"no record matched" would be false about a filter that matched twice.
 
 `directives list` reports one project, and which of the two remaining causes it
 names follows from that project's own scan count. With scans for the project,
@@ -522,8 +529,8 @@ records were withheld costs one extra row, knowing *how many* would cost a secon
 read every listing would then pay.
 
 This applies to `licence-list`/`license-list`, `interface-list`, `examples-list`,
-`callgraph-list`, `vuln-scan-list`, `walk-list`, `extract list` and
-`directives list`. `sbom-list` applies no limit and returns its whole population.
+`callgraph-list`, `native-list`, `vuln-scan-list`, `walk-list`, `extract list`
+and `directives list`. `sbom-list` applies no limit and returns its whole population.
 
 ---
 

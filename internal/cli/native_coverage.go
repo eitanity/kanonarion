@@ -99,6 +99,17 @@ type nativeCoverage struct {
 	// Components is empty except in present_identified. Never nil, so a consumer
 	// iterates uniformly whatever the answer was.
 	Components []nativeCoverageComponent `json:"components"`
+	// LinkedLibraries is the DISTINCT native libraries this module's cgo
+	// directives name as linked from outside the module, sorted. It is populated
+	// at every presence, because a module that ships its own sources can link
+	// something else as well, and it is the whole of what linked_not_shipped has
+	// to report: a build that links libxml2 is told which library it is, not
+	// merely that there is one.
+	//
+	// Never nil, and the C runtime every cgo binary links is excluded — counting
+	// it would make "this module links something external" true of every cgo
+	// module.
+	LinkedLibraries []string `json:"linked_libraries"`
 	// Generation is the detection generation the record was measured at, and
 	// ArtefactIdentity the verified module zip it was read from. Both empty when
 	// no record is held — there is then nothing to attribute.
@@ -112,7 +123,7 @@ type nativeCoverage struct {
 // presence a record can carry, and it gets its own state rather than the
 // nearest one.
 func nativeCoverageOf(rec nativedomain.Record, found bool) nativeCoverage {
-	out := nativeCoverage{Components: []nativeCoverageComponent{}}
+	out := nativeCoverage{Components: []nativeCoverageComponent{}, LinkedLibraries: []string{}}
 	if !found {
 		out.State = nativeStateNotExamined
 		out.Statement = "this module's artefact was not examined for native code compiled into the binary, " +
@@ -121,6 +132,7 @@ func nativeCoverageOf(rec nativedomain.Record, found bool) nativeCoverage {
 	}
 	out.Generation = rec.PipelineVersion + "+recipes." + rec.RecipeCatalogueVersion
 	out.ArtefactIdentity = rec.ArtefactIdentity
+	out.LinkedLibraries = append(out.LinkedLibraries, nativedomain.ExternalLibraryNames(rec.LinkedLibraries)...)
 
 	switch rec.Presence {
 	case nativedomain.PresenceAbsent:
@@ -129,8 +141,13 @@ func nativeCoverageOf(rec nativedomain.Record, found bool) nativeCoverage {
 			"so there is no native component here to search advisories for"
 	case nativedomain.PresenceLinkedNotShipped:
 		out.State = nativeStateLinkedNotShipped
-		out.Statement = "this module compiles no native source of its own; it links an external native library " +
-			"the host provides, whose version cannot be read from these bytes and whose advisories were not searched"
+		// The libraries are named, not counted. "an external native library"
+		// tells a reader that something is there and nothing about what to go
+		// and look up; the directive named it, so the statement can too.
+		out.Statement = fmt.Sprintf(
+			"this module compiles no native source of its own; it links %s, which the host provides — "+
+				"no version can be read from these bytes and no advisories were searched",
+			nativeLibraryList(out.LinkedLibraries))
 	case nativedomain.PresenceUnidentified:
 		out.State = nativeStateUnidentified
 		out.Statement = fmt.Sprintf(
@@ -181,6 +198,19 @@ func nativeComponentList(cs []nativeCoverageComponent) string {
 	}
 }
 
+// nativeLibraryList renders the linked libraries for the statement line.
+//
+// A linked_not_shipped record names at least one external library by
+// construction — that is what the value means — but the sentence still reads
+// correctly without one rather than trailing off, so a record that somehow
+// carries none states the fact it does have.
+func nativeLibraryList(names []string) string {
+	if len(names) == 0 {
+		return "an external native library"
+	}
+	return joinWithAnd(names)
+}
+
 // joinWithAnd renders a list in prose: "a, b and c".
 func joinWithAnd(names []string) string {
 	out := ""
@@ -214,6 +244,14 @@ func printNativeCoverage(stdout io.Writer, cov *nativeCoverage) {
 		_, _ = fmt.Fprintf(stdout, "                   %s %s (%s, %s) — advisories not searched\n",
 			c.Name, c.Version, c.Confidence, c.PURL)
 	}
+	// The linked libraries are already named in the linked_not_shipped
+	// statement, so naming them again there would say it twice. Everywhere else
+	// they are unsaid, and a module that ships its own sources AND links
+	// something the host provides must state both.
+	if cov.State != nativeStateLinkedNotShipped && len(cov.LinkedLibraries) > 0 {
+		_, _ = fmt.Fprintf(stdout, "                   also links, from outside this module: %s\n",
+			strings.Join(cov.LinkedLibraries, ", "))
+	}
 	if cov.Generation != "" {
 		_, _ = fmt.Fprintf(stdout, "                   measured at native generation %s from %s\n",
 			cov.Generation, cov.ArtefactIdentity)
@@ -243,6 +281,24 @@ func nativeWalkCoords(ctx context.Context, walks QueryWalksUseCase, walkID strin
 	coords := make([]coordinate.ModuleCoordinate, 0, len(rec.Graph.Nodes))
 	for _, n := range rec.Graph.Nodes {
 		coords = append(coords, n.Coordinate)
+	}
+	return coords
+}
+
+// nativeCoordsOf parses the coordinates a composite report's own rows name.
+//
+// A rollup derived from the rows rather than from the walk describes exactly the
+// set the reader is looking at. A row whose coordinate cannot be parsed is left
+// out rather than guessed at; it would contribute a not-examined count for a
+// module the reader cannot look up.
+func nativeCoordsOf(rows []string) []coordinate.ModuleCoordinate {
+	coords := make([]coordinate.ModuleCoordinate, 0, len(rows))
+	for _, r := range rows {
+		coord, err := parseCoordinate(r)
+		if err != nil {
+			continue
+		}
+		coords = append(coords, coord)
 	}
 	return coords
 }
@@ -296,6 +352,23 @@ type nativeWalkRollup struct {
 	// recipe could name, in coordinate order. A different fact, and also not a
 	// finding.
 	Unidentified []string `json:"unidentified"`
+	// LinkedNotShipped names each module that compiles no native source of its
+	// own and whose cgo directives link an external native library the host
+	// provides, with those libraries, in coordinate order.
+	//
+	// It is here for the same reason Unsearched is: something native reaches the
+	// binary and no advisory was searched for it. It carries no version because
+	// none can be read — which ICU or which libxml2 the linker finds is a
+	// property of the machine doing the build, not of these bytes — and that is
+	// the fact, not a reason to leave the module out.
+	LinkedNotShipped []nativeWalkLinked `json:"linked_not_shipped"`
+	// Examined counts the modules in the scanned build that hold a native record
+	// at the generation this build serves, and NotExamined the modules that hold
+	// none. The pair is the coverage of the statement itself: a build where
+	// nothing reports a native component because nothing was looked at is a
+	// different answer from one where everything was looked at and found clean,
+	// and a reader given only the exceptions cannot tell them apart.
+	Examined int `json:"examined"`
 	// NotExamined counts the modules in the scanned build holding no native
 	// record at all. A count rather than a list: on a build where nothing has
 	// been examined this is every module, and the number is the statement.
@@ -304,6 +377,17 @@ type nativeWalkRollup struct {
 	// Unsearched — the single number an agent reads to learn that this scan's
 	// verdict does not cover everything in the binary.
 	Components int `json:"components"`
+	// Libraries is how many DISTINCT external native libraries the build links
+	// without shipping, across every module in LinkedNotShipped. Distinct across
+	// the build, because two modules linking libxml2 link one libxml2.
+	Libraries int `json:"libraries"`
+}
+
+// nativeWalkLinked is one module in the rollup and the external native
+// libraries its cgo directives link.
+type nativeWalkLinked struct {
+	Module    string   `json:"module"`
+	Libraries []string `json:"libraries"`
 }
 
 // nativeWalkModule is one module in the rollup and the native components its
@@ -329,13 +413,20 @@ func nativeRollupOver(
 	if reader == nil {
 		return nil
 	}
-	out := nativeWalkRollup{Unsearched: []nativeWalkModule{}, Unidentified: []string{}}
+	out := nativeWalkRollup{
+		Unsearched: []nativeWalkModule{}, Unidentified: []string{},
+		LinkedNotShipped: []nativeWalkLinked{},
+	}
+	linked := map[string]bool{}
 	for _, coord := range coords {
 		rec, found, err := reader.Get(ctx, coord)
 		if err != nil {
 			continue
 		}
 		cov := nativeCoverageOf(rec, found)
+		if cov.State != nativeStateNotExamined {
+			out.Examined++
+		}
 		switch cov.State {
 		case nativeStateNotExamined:
 			out.NotExamined++
@@ -344,9 +435,15 @@ func nativeRollupOver(
 		case nativeStateIdentified:
 			out.Unsearched = append(out.Unsearched, nativeWalkModule{Module: coord.String(), Components: cov.Components})
 			out.Components += len(cov.Components)
-		case nativeStateAbsent, nativeStateLinkedNotShipped:
-			// Measured, and nothing here is unsearched. Neither contributes to a
-			// rollup of exceptions.
+		case nativeStateLinkedNotShipped:
+			out.LinkedNotShipped = append(out.LinkedNotShipped,
+				nativeWalkLinked{Module: coord.String(), Libraries: cov.LinkedLibraries})
+			for _, lib := range cov.LinkedLibraries {
+				linked[lib] = true
+			}
+		case nativeStateAbsent:
+			// Measured, and nothing native reaches the binary from this module.
+			// It contributes to no rollup of exceptions.
 		default:
 			// An unrecognised presence is left out of every bucket rather than put
 			// in the nearest one.
@@ -355,13 +452,46 @@ func nativeRollupOver(
 	// The module coordinate is unique within a walk's node list, so both sorts
 	// are total orders and the report is deterministic.
 	sort.Slice(out.Unsearched, func(i, j int) bool { return out.Unsearched[i].Module < out.Unsearched[j].Module })
+	sort.Slice(out.LinkedNotShipped, func(i, j int) bool { return out.LinkedNotShipped[i].Module < out.LinkedNotShipped[j].Module })
 	sort.Strings(out.Unidentified)
+	out.Libraries = len(linked)
 	return &out
 }
 
 // empty reports whether the rollup has nothing to state beyond counts.
 func (r *nativeWalkRollup) empty() bool {
-	return r == nil || (len(r.Unsearched) == 0 && len(r.Unidentified) == 0)
+	return r == nil || (len(r.Unsearched) == 0 && len(r.Unidentified) == 0 && len(r.LinkedNotShipped) == 0)
+}
+
+// writeNativeCoverageSummary states a build's native coverage in one line, then
+// prints the exceptions beneath it.
+//
+// The line prints whatever the answer, the all-measured-and-nothing-there case
+// included. This is the composite commands' equivalent of the per-module
+// statement: a report that says nothing when a build ships no native code is
+// indistinguishable from one whose modules were never examined, and that is the
+// silence the whole native fact exists to break.
+func writeNativeCoverageSummary(w io.Writer, r *nativeWalkRollup) error {
+	if r == nil {
+		return nil
+	}
+	line := fmt.Sprintf("native code: %d of %d module(s) examined for native code compiled into or linked "+
+		"into the binary; %d with an identified component, %d with native source no recipe names, "+
+		"%d linking an external library it does not ship",
+		r.Examined, r.Examined+r.NotExamined,
+		len(r.Unsearched), len(r.Unidentified), len(r.LinkedNotShipped))
+	if r.Examined < r.Examined+r.NotExamined {
+		line += "\n  a module holding no native record was not looked at; that is not a finding of no native code — " +
+			"run: kanonarion native <module>@<version>, or list what is held: kanonarion native-list"
+	}
+	if !r.empty() {
+		line += "\n  Kanonarion has no non-Go advisory source, so no advisories were searched for any of it"
+	}
+	if _, err := fmt.Fprintln(w, line); err != nil {
+		return fmt.Errorf("writing native coverage summary: %w", err)
+	}
+	writeNativeRollup(w, r)
+	return nil
 }
 
 // writeNativeRollup prints the walk-level statement on a scan report.
@@ -385,6 +515,19 @@ func writeNativeRollup(w io.Writer, r *nativeWalkRollup) {
 			for _, c := range m.Components {
 				_, _ = fmt.Fprintf(w, "    %s %s (%s, %s)\n", c.Name, c.Version, c.Confidence, c.PURL)
 			}
+		}
+	}
+	if len(r.LinkedNotShipped) > 0 {
+		_, _ = fmt.Fprintf(w, "External native %s this build links but does not ship (%d in %d module(s)):\n",
+			pluralise(r.Libraries, "library", "libraries"), r.Libraries, len(r.LinkedNotShipped))
+		_, _ = fmt.Fprintln(w,
+			"  These modules compile no native source of their own and link a library the host provides. Which build of it")
+		_, _ = fmt.Fprintln(w,
+			"  the linker finds is a property of the build machine, not of these bytes, so no version was read and no")
+		_, _ = fmt.Fprintln(w, "  advisories were searched. These are not findings.")
+		for _, m := range r.LinkedNotShipped {
+			_, _ = fmt.Fprintf(w, "  %s\n", m.Module)
+			_, _ = fmt.Fprintf(w, "    %s\n", strings.Join(m.Libraries, ", "))
 		}
 	}
 	if len(r.Unidentified) > 0 {

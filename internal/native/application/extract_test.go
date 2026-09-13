@@ -36,6 +36,7 @@ const sqliteAmalgamation = "#define SQLITE_VERSION        \"3.38.0\"\n#define SQ
 type harness struct {
 	uc     *application.ExtractNativeUseCase
 	native *fakeNativeStore
+	sink   *fakeAuditSink
 	coord  coordinate.ModuleCoordinate
 }
 
@@ -68,11 +69,35 @@ func newHarnessWithZip(
 		t.Fatalf("seeding blob: %v", err)
 	}
 	native := &fakeNativeStore{}
+	sink := &fakeAuditSink{}
 	uc := application.NewExtractNativeUseCase(application.Config{
-		Facts: facts, Blobs: blobs, Native: native, Source: source,
+		Facts: facts, Blobs: blobs, Native: native, Source: source, Audit: sink,
 		Clock: fakeClock{t: time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)}, Stopwatch: fakeStopwatch{},
 	})
-	return harness{uc: uc, native: native, coord: coord}
+	return harness{uc: uc, native: native, sink: sink, coord: coord}
+}
+
+// newHarnessWithoutSink is the same wiring with no assurance sink at all, for
+// the one case that is about a build that keeps no log.
+func newHarnessWithoutSink(t *testing.T, path, version string, files map[string]string) harness {
+	t.Helper()
+	h := newHarness(t, path, version, files)
+	record := fetchtest.Record(t, fetchtest.Coordinate(h.coord), fetchtest.Content("zip-"+path+"@"+version))
+	facts := &fakeFactStore{}
+	if err := facts.PutFetchRecord(context.Background(), fetchtest.Sealed(t,
+		fetchtest.Coordinate(h.coord), fetchtest.Content("zip-"+path+"@"+version))); err != nil {
+		t.Fatalf("seeding fetch record: %v", err)
+	}
+	blobs := &fakeBlobStore{}
+	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, record), bytesReader(buildZip(t, h.coord, files))); err != nil {
+		t.Fatalf("seeding blob: %v", err)
+	}
+	native := &fakeNativeStore{}
+	uc := application.NewExtractNativeUseCase(application.Config{
+		Facts: facts, Blobs: blobs, Native: native, Source: nativegosource.New(),
+		Clock: fakeClock{t: time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)}, Stopwatch: fakeStopwatch{},
+	})
+	return harness{uc: uc, native: native, coord: h.coord}
 }
 
 func (h harness) run(t *testing.T, force bool) application.ExtractResult {

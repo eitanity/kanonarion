@@ -115,8 +115,11 @@ exit 0
   "native_coverage": {
     "unsearched": [],
     "unidentified": [],
+    "linked_not_shipped": [],
+    "examined": 0,
     "not_examined": 4,
-    "components": 0
+    "components": 0,
+    "libraries": 0
   }
 }
 --- stderr ---

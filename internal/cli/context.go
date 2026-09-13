@@ -74,6 +74,15 @@ type contextOutput struct {
 	CallGraph       contextCallGraph       `json:"call_graph"`
 	Examples        contextExamples        `json:"examples"`
 	Vulnerabilities contextVulnerabilities `json:"vulnerabilities"`
+	// Native is what this module's own artefact compiles into the binary from
+	// native source it ships, and what its cgo directives link from outside it.
+	//
+	// It is the same object `vuln-show --json` publishes under the same key, so
+	// a consumer reads one shape wherever it meets it. Null only when the
+	// producer could not derive it — the store holding two records that describe
+	// different artefacts for this pinned version — because every module has a
+	// native state, "nobody looked" included.
+	Native *nativeCoverage `json:"native_coverage"`
 }
 
 // contextForkIndicator is one caveated name-path fork inference.
@@ -705,6 +714,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 		Vulnerabilities: vulns,
+		Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
 		Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 	}
 

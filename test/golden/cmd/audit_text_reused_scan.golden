@@ -30,3 +30,5 @@ staleness coverage over 3 module(s):
     measured (served from ledger)        1   33.3%
   unmeasured (offline)                   1   33.3%
   unmeasured (toolchain-pinned)          1   33.3%
+native code: 0 of 3 module(s) examined for native code compiled into or linked into the binary; 0 with an identified component, 0 with native source no recipe names, 0 linking an external library it does not ship
+  a module holding no native record was not looked at; that is not a finding of no native code — run: kanonarion native <module>@<version>, or list what is held: kanonarion native-list

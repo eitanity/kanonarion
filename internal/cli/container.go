@@ -747,8 +747,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// ---- native use cases ----
 	extractNativeUC := nativeapp.NewExtractNativeUseCase(nativeapp.Config{
 		Facts: factStore, Blobs: blobs, Native: nativeStore,
-		Source: nativegosource.New(),
-		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
+		Source: nativegosource.New(), Audit: factStore,
+		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryNativeUC := nativeapp.NewQueryNativeUseCase(nativeStore)
 
