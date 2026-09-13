@@ -125,6 +125,16 @@ func VCSCheck(p domain.LegProvenance, source string) Option {
 	}
 }
 
+// VCSURLBinding sets which clone URL the VCS cross-verification leg put to the
+// test: one derived from the module path, or one the untrusted proxy named.
+// Leaving it unset is how a record written before this was measured is
+// represented — the record does not say, which is not a negative finding.
+func VCSURLBinding(b domain.VCSURLBinding) Option {
+	return func(r *domain.FactRecord) {
+		r.VCSURLBinding = string(b)
+	}
+}
+
 // Unsealed returns a record with no content hash at all. Use it for tests that
 // prove an unsealed record is rejected — Record would seal it and the test
 // would pass without exercising the guard.

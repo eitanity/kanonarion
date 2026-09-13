@@ -347,7 +347,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	}
 
 	// Step 5: run verification pipeline, accumulating status.
-	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumAnchoredUnder, req.VCSHosts)
+	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable, urlBinding := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumAnchoredUnder, req.VCSHosts)
 
 	// Sign-on-process call site 1: fetch-receive. Sign the received blob over
 	// its canonical content digest, after verification.
@@ -375,6 +375,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		MeasurementKind:    measurementKind(revalidated != nil),
 		SumDBCheck:         domain2.LegRechecked,
 		VCSCheck:           vcsLeg(req.SkipVCSVerify, vcsToolUnavailable),
+		VCSURLBinding:      urlBinding,
 	}
 
 	// Step 7: seal and append. Sealing computes the content hash at construction,
@@ -784,7 +785,7 @@ func (uc *FetchModuleUseCase) verify(
 	// rather than having to trust that the right spelling was looked up.
 	goSumAnchoredUnder string,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.VerificationStatus, string, domain2.GitReference, bool, bool, bool) {
+) (domain2.VerificationStatus, string, domain2.GitReference, bool, bool, bool, domain2.VCSURLBinding) {
 
 	var earlyStatus domain2.VerificationStatus
 	var earlyDetail string
@@ -863,7 +864,12 @@ func (uc *FetchModuleUseCase) verify(
 	// Verified meaning "git ref resolved, ready to cross-verify" — not that the
 	// zip was reproduced from the git tree. crossVerify is what actually
 	// reproduces it, and it is the only step skipVCSVerify gates.
-	gitRef, vcsStatus, vcsDetail, originRefusal := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
+	gitRef, vcsStatus, vcsDetail, originRefusal, urlBinding := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
+	// urlBinding says where the clone URL came from. It is only ATTRIBUTED to
+	// the record where a reproduction was actually attempted against that URL,
+	// below: a run that resolved a URL and never cloned from it established
+	// nothing to attribute.
+	var establishedBinding domain2.VCSURLBinding
 	switch {
 	case skipVCSVerify:
 		// Cross-verify is skipped (e.g. when GitHub rate limits make git
@@ -877,7 +883,10 @@ func (uc *FetchModuleUseCase) verify(
 		}
 	case vcsStatus == domain2.Verified && gitRef.CommitHash != "":
 		vcsStatus, vcsDetail = uc.crossVerify(ctx, log, coord, gitRef.URL, gitRef.CommitHash, dl.ZipHash)
-		log.InfoContext(ctx, "vcs_cross_verify", slog.String("status", string(vcsStatus)))
+		establishedBinding = urlBinding
+		log.InfoContext(ctx, "vcs_cross_verify",
+			slog.String("status", string(vcsStatus)),
+			slog.String("url_binding", string(establishedBinding)))
 	}
 
 	// The git leg could not run on this host. The final status below is the same
@@ -887,6 +896,10 @@ func (uc *FetchModuleUseCase) verify(
 	vcsToolUnavailable = !skipVCSVerify && vcsStatus == domain2.UnverifiedVCSToolMissing
 	if vcsToolUnavailable {
 		log.InfoContext(ctx, "vcs_tool_unavailable", slog.String("detail", vcsDetail))
+		// git went missing partway through the checkout. The leg is unavailable,
+		// which is a property of this host and not of the module, so there is no
+		// established binding to attribute either.
+		establishedBinding = domain2.VCSURLBindingAbsent
 	}
 
 	// VCS reproduction failure downgrades to VerifiedBySumDBOnly when sumdb has
@@ -906,7 +919,7 @@ func (uc *FetchModuleUseCase) verify(
 		if vcsDetail != "" {
 			detail += "; vcs: " + vcsDetail
 		}
-		return earlyStatus, withOriginRefusal(detail, originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable
+		return earlyStatus, withOriginRefusal(detail, originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable, establishedBinding
 	}
 
 	// sumdb passed; combine with VCS result. A refused Origin is recorded even
@@ -914,10 +927,10 @@ func (uc *FetchModuleUseCase) verify(
 	// inferred URL, and the fact that the proxy claimed a different source and
 	// was refused is exactly what an auditor needs afterwards.
 	if vcsStatus == domain2.Verified {
-		return domain2.Verified, withOriginRefusal("", originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable
+		return domain2.Verified, withOriginRefusal("", originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable, establishedBinding
 	}
 	// sumdb passed but VCS was not available or missing.
-	return domain2.VerifiedBySumDBOnly, withOriginRefusal(vcsDetail, originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable
+	return domain2.VerifiedBySumDBOnly, withOriginRefusal(vcsDetail, originRefusal), gitRef, retracted, sumdbLookupFailed, vcsToolUnavailable, establishedBinding
 }
 
 // withOriginRefusal puts a refused proxy Origin at the FRONT of the detail.
@@ -1034,7 +1047,7 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 	coord coordinate.ModuleCoordinate,
 	info ports.ModuleInfo,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.GitReference, domain2.VerificationStatus, string, string) {
+) (domain2.GitReference, domain2.VerificationStatus, string, string, domain2.VCSURLBinding) {
 	var originRejected string
 	if info.Origin != nil && info.Origin.URL != "" && info.Origin.Hash != "" {
 		// The module proxy is untrusted (T1/T2), so its Origin metadata is too.
@@ -1064,11 +1077,17 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 					slog.String("warning", warning))
 			}
 			log.InfoContext(ctx, "origin_from_proxy", slog.String("url", info.Origin.URL))
+			// The URL came from the proxy, which is untrusted. Whether that
+			// weakens the assurance depends on whether the coordinate can
+			// confirm the repository independently, which is what the
+			// comparison below settles — and it is settled HERE, at measurement
+			// time, so the answer is sealed into the record rather than
+			// recomputed from it later.
 			return domain2.GitReference{
 				URL:        info.Origin.URL,
 				Ref:        info.Origin.Ref,
 				CommitHash: info.Origin.Hash,
-			}, domain2.Verified, "", ""
+			}, domain2.Verified, "", "", bindingForProxyURL(coord.Path(), info.Origin.URL)
 		}
 	}
 
@@ -1080,7 +1099,35 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 	// untrusted Origin metadata must say so in the record whatever the eventual
 	// status, or a repelled SSRF attempt is indistinguishable on disk from a run
 	// that never faced one.
-	return gitRef, status, detail, originRejected
+	//
+	// The inferred route derives its URL from the module path, so the coordinate
+	// determined what would be cloned. A URL that could not be inferred at all
+	// is attributed to neither binding: there is no repository to attribute.
+	binding := domain2.VCSURLBindingAbsent
+	if gitRef.URL != "" {
+		binding = domain2.VCSURLBindingCoordinateDerived
+	}
+	return gitRef, status, detail, originRejected, binding
+}
+
+// bindingForProxyURL says whether a clone URL the proxy supplied is nonetheless
+// one the module path itself determines.
+//
+// A matching URL carries the stronger binding even though the proxy handed it
+// over, because the coordinate confirms the repository independently: the proxy
+// chose nothing that the module path does not already fix. A URL that does not
+// match is one only the proxy knows, which is every vanity module path.
+//
+// The comparison is exact, and deliberately so. Normalising away a trailing
+// .git or a trailing slash would let a near-match be reported as the stronger
+// binding, and overstating assurance is the one direction this attribution must
+// never err in. A cosmetic difference is therefore reported as proxy-named,
+// which understates rather than overstates.
+func bindingForProxyURL(modulePath, originURL string) domain2.VCSURLBinding {
+	if originURL != "" && originURL == inferRepoURL(modulePath) {
+		return domain2.VCSURLBindingCoordinateDerived
+	}
+	return domain2.VCSURLBindingProxyNamed
 }
 
 // resolveInferredGitRef resolves a GitReference without any trusted proxy

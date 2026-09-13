@@ -8,6 +8,9 @@ exit 0
   "recorded": 3,
   "cross_verifiable": 3,
   "cross_verified": 3,
+  "cross_verified_module_path_url": 0,
+  "cross_verified_proxy_named_url": 0,
+  "cross_verified_binding_unrecorded": 3,
   "checksum_db_only": 0,
   "go_sum_only": 0,
   "unverified": 0,
@@ -17,6 +20,8 @@ exit 0
   "collapsed": false,
   "shares": {
     "cross_verified": 75,
+    "cross_verified_module_path_url_of_cross_verified": 0,
+    "cross_verified_proxy_named_url_of_cross_verified": 0,
     "checksum_db_only": 0,
     "go_sum_only": 0,
     "unverified": 0,

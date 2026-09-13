@@ -151,4 +151,9 @@ type FetchedModule struct {
 	SumDBCheckSource string
 	VCSCheck         LegProvenance
 	VCSCheckSource   string
+
+	// VCSURLBinding says which binding produced the clone URL the VCS leg used:
+	// one derived from the module path, or one the untrusted proxy named. It is
+	// the zero value whenever no VCS leg was established. See VCSURLBinding.
+	VCSURLBinding VCSURLBinding
 }

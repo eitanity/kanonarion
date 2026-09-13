@@ -229,7 +229,26 @@ type coverageJSON struct {
 	// artefact to anchor.
 	CrossVerifiable int `json:"cross_verifiable"`
 
-	CrossVerified  int `json:"cross_verified"`
+	// CrossVerified is every cross-verified module whatever its VCS URL binding.
+	// It is unchanged by the split below and stays the total a gate asserting
+	// "cross-verification did not collapse" reads.
+	CrossVerified int `json:"cross_verified"`
+	// CrossVerifiedModulePathURL and CrossVerifiedProxyNamedURL split that total
+	// by how the clone URL the git leg reproduced from was arrived at: derived
+	// from the module path, or named by the untrusted proxy in its Origin block.
+	// The second is the weaker assurance — it says the zip and the cloned tree
+	// agree about whatever repository the proxy pointed at, not that the
+	// repository is the coordinate's upstream — and every vanity module path
+	// reaches cross-verification only that way.
+	//
+	// CrossVerifiedBindingUnrecorded is the remainder whose record does not say,
+	// which is every record written before this was measured. It is not a weak
+	// binding; it is the absence of the attribution, and a gate must not read it
+	// as a finding. The three sum to CrossVerified.
+	CrossVerifiedModulePathURL     int `json:"cross_verified_module_path_url"`
+	CrossVerifiedProxyNamedURL     int `json:"cross_verified_proxy_named_url"`
+	CrossVerifiedBindingUnrecorded int `json:"cross_verified_binding_unrecorded"`
+
 	ChecksumDBOnly int `json:"checksum_db_only"`
 	GoSumOnly      int `json:"go_sum_only"`
 	Unverified     int `json:"unverified"`
@@ -277,7 +296,14 @@ type coverageJSON struct {
 // a zero row to stay readable, and a document that dropped the field with it
 // could not tell a bucket that is empty from a bucket nobody measured.
 type coverageSharesJSON struct {
-	CrossVerified  float64 `json:"cross_verified"`
+	CrossVerified float64 `json:"cross_verified"`
+	// The two binding shares are stated against the CROSS-VERIFIED total, not
+	// against the graph, because that is the population being split and the
+	// denominator a reader wants for "how much of our cross-verification rests
+	// on a URL the proxy chose".
+	CrossVerifiedModulePathURLOfCrossVerified float64 `json:"cross_verified_module_path_url_of_cross_verified"`
+	CrossVerifiedProxyNamedURLOfCrossVerified float64 `json:"cross_verified_proxy_named_url_of_cross_verified"`
+
 	ChecksumDBOnly float64 `json:"checksum_db_only"`
 	GoSumOnly      float64 `json:"go_sum_only"`
 	Unverified     float64 `json:"unverified"`
@@ -322,20 +348,23 @@ func verificationCoverageJSON(
 		rows = []moduleVerification{}
 	}
 	return coverageJSON{
-		Build:           buildJSON{buildVendoring: vendoring, walkBuildJSON: env},
-		Modules:         rows,
-		WalkID:          walkID,
-		Total:           c.Total,
-		Recorded:        c.Recorded(),
-		CrossVerifiable: c.CrossVerifiable(),
-		CrossVerified:   c.CrossVerified,
-		ChecksumDBOnly:  c.ChecksumDBOnly,
-		GoSumOnly:       c.GoSumOnly,
-		Unverified:      c.Unverified,
-		LocalSource:     c.LocalSource,
-		Unrecorded:      c.Unrecorded,
-		Unrecognised:    c.Unrecognised,
-		Collapsed:       c.IsCollapsed(),
+		Build:                          buildJSON{buildVendoring: vendoring, walkBuildJSON: env},
+		Modules:                        rows,
+		WalkID:                         walkID,
+		Total:                          c.Total,
+		Recorded:                       c.Recorded(),
+		CrossVerifiable:                c.CrossVerifiable(),
+		CrossVerified:                  c.CrossVerified,
+		CrossVerifiedModulePathURL:     c.CrossVerifiedModulePathURL,
+		CrossVerifiedProxyNamedURL:     c.CrossVerifiedProxyNamedURL,
+		CrossVerifiedBindingUnrecorded: c.CrossVerifiedBindingUnrecorded,
+		ChecksumDBOnly:                 c.ChecksumDBOnly,
+		GoSumOnly:                      c.GoSumOnly,
+		Unverified:                     c.Unverified,
+		LocalSource:                    c.LocalSource,
+		Unrecorded:                     c.Unrecorded,
+		Unrecognised:                   c.Unrecognised,
+		Collapsed:                      c.IsCollapsed(),
 		Shares: coverageSharesJSON{
 			CrossVerified:             sharePercent(c.CrossVerified, c.Total),
 			ChecksumDBOnly:            sharePercent(c.ChecksumDBOnly, c.Total),
@@ -345,6 +374,8 @@ func verificationCoverageJSON(
 			Unrecorded:                sharePercent(c.Unrecorded, c.Total),
 			Unrecognised:              sharePercent(c.Unrecognised, c.Total),
 			CrossVerifiedOfApplicable: sharePercent(c.CrossVerified, c.CrossVerifiable()),
+			CrossVerifiedModulePathURLOfCrossVerified: sharePercent(c.CrossVerifiedModulePathURL, c.CrossVerified),
+			CrossVerifiedProxyNamedURLOfCrossVerified: sharePercent(c.CrossVerifiedProxyNamedURL, c.CrossVerified),
 		},
 		VCS: coverageVCSJSON{
 			Rechecked:   c.VCSRechecked,

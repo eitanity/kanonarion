@@ -77,6 +77,14 @@ type moduleVerification struct {
 	// therefore not a gap in this report, and the report says so in words rather
 	// than leaving a blank that reads as "nothing to report".
 	Reason string `json:"reason,omitempty"`
+	// VCSURLBinding says which clone URL the VCS cross-verification leg put to
+	// the test: "coordinate-derived" for one the module path determines, or
+	// "proxy-named" for one the untrusted proxy supplied in its Origin block.
+	// Absent where no VCS leg was established, and absent on a record written
+	// before the binding was measured — neither of which is a negative finding.
+	// It is the per-module form of the class split in the totals, so a reader
+	// can name the modules behind a count instead of inferring them.
+	VCSURLBinding string `json:"vcs_url_binding,omitempty"`
 
 	// observation is the row's contribution to the aggregate. It is unexported
 	// and derived here, beside the row, so the per-module report and the totals
@@ -131,13 +139,21 @@ func graphVerificationRows(
 			case !found:
 				row.Reason = "no fetch record is stored for this coordinate, so no verification of it was ever measured"
 			default:
+				// The binding is read off the record composition SERVES, not
+				// re-derived here from its git_url and module path. Re-deriving
+				// would make a sealed record's class move whenever the function
+				// that derives a URL from a module path is edited.
 				row.observation = fetchdomain.CoverageObservation{
-					Bucket:   fetchdomain.BucketForVerification(fetchdomain.VerificationStatus(rec.VerificationStatus)),
+					Bucket: fetchdomain.BucketForFetchRecord(
+						fetchdomain.VerificationStatus(rec.VerificationStatus),
+						fetchdomain.VCSURLBinding(rec.VCSURLBinding),
+					),
 					Legs:     rec.Legs,
 					Recorded: true,
 				}
 				row.Status = rec.VerificationStatus
 				row.Reason = rec.VerificationDetail
+				row.VCSURLBinding = rec.VCSURLBinding
 			}
 		}
 		row.Class = row.observation.Bucket.String()
@@ -214,6 +230,9 @@ func writeVerificationCoverage(w io.Writer, c fetchdomain.VerificationCoverage) 
 		bucket fetchdomain.VerificationBucket
 		count  int
 	}{
+		// The rollup, not the unattributed class alone: this line answers "how
+		// much of the graph carries a VCS anchor", which the binding does not
+		// change. The split follows it.
 		{fetchdomain.BucketCrossVerified, c.CrossVerified},
 		{fetchdomain.BucketChecksumDBOnly, c.ChecksumDBOnly},
 		{fetchdomain.BucketGoSumOnly, c.GoSumOnly},
@@ -231,6 +250,15 @@ func writeVerificationCoverage(w io.Writer, c fetchdomain.VerificationCoverage) 
 		if _, err := fmt.Fprintf(w, "  %-34s %5d  %5.1f%%\n",
 			row.bucket, row.count, percentOf(row.count, c.Total)); err != nil {
 			return fmt.Errorf("writing coverage row: %w", err)
+		}
+		// The cross-verified total is split by how the clone URL that the git
+		// leg reproduced from was arrived at. The total line above is unchanged
+		// — the split moves no module between classes and no status with it —
+		// and these three sum to it.
+		if row.bucket == fetchdomain.BucketCrossVerified && c.CrossVerified > 0 {
+			if err := writeCrossVerifiedBindings(w, c); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -266,6 +294,31 @@ func writeVerificationCoverage(w io.Writer, c fetchdomain.VerificationCoverage) 
 		if _, err := fmt.Fprintf(w,
 			"  note: no module in this graph carries a VCS anchor — cross-verification covered none of it\n"); err != nil {
 			return fmt.Errorf("writing coverage note: %w", err)
+		}
+	}
+	return nil
+}
+
+// writeCrossVerifiedBindings breaks the cross-verified total down by how the
+// clone URL the git leg used was arrived at.
+//
+// All three lines are written, zeros included. On a store whose records predate
+// this measurement every module lands in "binding not recorded", and printing
+// that line is the point: it tells a reader why there is no split yet and that
+// re-fetching is what produces one. Dropping it would leave the reader to guess
+// whether the split was zero or never measured.
+func writeCrossVerifiedBindings(w io.Writer, c fetchdomain.VerificationCoverage) error {
+	for _, sub := range []struct {
+		label string
+		count int
+	}{
+		{"of which VCS URL from the module path", c.CrossVerifiedModulePathURL},
+		{"of which VCS URL named by the proxy", c.CrossVerifiedProxyNamedURL},
+		{"of which binding not recorded", c.CrossVerifiedBindingUnrecorded},
+	} {
+		if _, err := fmt.Fprintf(w, "    %-38s %3d  %5.1f%%\n",
+			sub.label, sub.count, percentOf(sub.count, c.CrossVerified)); err != nil {
+			return fmt.Errorf("writing cross-verified binding row: %w", err)
 		}
 	}
 	return nil

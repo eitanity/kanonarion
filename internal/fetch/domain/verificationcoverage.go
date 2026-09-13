@@ -15,7 +15,11 @@ const (
 	BucketUnrecognised VerificationBucket = iota
 
 	// BucketCrossVerified is the strongest assurance: the zip matched both the
-	// checksum database and the content extracted from its git commit.
+	// checksum database and the content extracted from its git commit — with the
+	// record not saying which clone URL the git leg used. That is what every
+	// record written before the URL binding was measured carries, and what the
+	// standard library carries, having no module path to derive a URL from. It
+	// is NOT a claim that the binding was weak; it is the absence of the claim.
 	BucketCrossVerified
 
 	// BucketChecksumDBOnly is authentic with respect to the transparency log,
@@ -42,6 +46,25 @@ const (
 	// node that was never fetched, or was fetched under a different pipeline
 	// version. Absence of a measurement, not a failed one.
 	BucketUnrecorded
+
+	// BucketCrossVerifiedModulePathURL is cross-verified against a clone URL the
+	// module path itself determines. Nothing untrusted chose the repository.
+	//
+	// It is listed after BucketUnrecorded rather than beside BucketCrossVerified
+	// so the existing iota values do not shift. Order here is declaration order,
+	// not rank.
+	BucketCrossVerifiedModulePathURL
+
+	// BucketCrossVerifiedProxyNamedURL is cross-verified against a clone URL the
+	// module proxy named in its Origin block. The proxy is untrusted, so this
+	// says the zip and the cloned tree agree about the repository the proxy
+	// pointed at — not that the repository is the coordinate's upstream. Every
+	// vanity module path reaches cross-verification only this way.
+	//
+	// It is a weaker assurance than BucketCrossVerifiedModulePathURL, and
+	// separating the two is this class's whole purpose. It is not a finding: no
+	// proxy is accused of anything by a module landing here.
+	BucketCrossVerifiedProxyNamedURL
 )
 
 // String names the bucket for display. The names are the reader-facing
@@ -51,6 +74,12 @@ func (b VerificationBucket) String() string {
 	switch b {
 	case BucketCrossVerified:
 		return "cross-verified (checksum db + VCS)"
+	// Both names stay inside the width the per-module listing pads its class
+	// column to, so adding them does not shift every existing row.
+	case BucketCrossVerifiedModulePathURL:
+		return "cross-verified (module-path URL)"
+	case BucketCrossVerifiedProxyNamedURL:
+		return "cross-verified (proxy-named URL)"
 	case BucketChecksumDBOnly:
 		return "checksum database only"
 	case BucketGoSumOnly:
@@ -65,6 +94,38 @@ func (b VerificationBucket) String() string {
 		return "unrecognised status"
 	default:
 		return "unrecognised status"
+	}
+}
+
+// BucketForFetchRecord maps a fetch record's status and URL binding onto its
+// coverage class.
+//
+// It is separate from BucketForVerification because the binding only ever
+// refines the strongest class: every other status either has no VCS leg or has
+// one that established nothing, so there is no clone URL to attribute and
+// qualifying the class would invent a distinction. Callers with a vocabulary of
+// their own — the standard library has one — use BucketForVerification and land
+// in the unqualified class, which is the honest answer for a node that has no
+// module path to derive a URL from.
+func BucketForFetchRecord(s VerificationStatus, binding VCSURLBinding) VerificationBucket {
+	bucket := BucketForVerification(s)
+	if bucket != BucketCrossVerified {
+		return bucket
+	}
+	switch binding {
+	case VCSURLBindingCoordinateDerived:
+		return BucketCrossVerifiedModulePathURL
+	case VCSURLBindingProxyNamed:
+		return BucketCrossVerifiedProxyNamedURL
+	case VCSURLBindingAbsent:
+		// The record does not say. Reporting it as either binding would be a
+		// guess presented as a measurement.
+		return BucketCrossVerified
+	default:
+		// A binding this build has never heard of. Leaving it in the strongest
+		// class unqualified is the only safe answer: claiming the derived
+		// binding would overstate the assurance.
+		return BucketCrossVerified
 	}
 }
 
@@ -183,7 +244,19 @@ type CoverageObservation struct {
 type VerificationCoverage struct {
 	Total int
 
-	CrossVerified  int
+	// CrossVerified is every cross-verified module, whatever its URL binding: the
+	// sum of the three counters below it. It stays the answer to "how much of
+	// this graph carries a VCS anchor", which the binding does not change, so a
+	// gate written against it keeps meaning what it meant.
+	CrossVerified int
+	// CrossVerifiedModulePathURL and CrossVerifiedProxyNamedURL split that total
+	// by how strongly the cloned repository is bound to the coordinate, and
+	// CrossVerifiedBindingUnrecorded is the remainder whose record cannot say.
+	// The three sum to CrossVerified.
+	CrossVerifiedModulePathURL     int
+	CrossVerifiedProxyNamedURL     int
+	CrossVerifiedBindingUnrecorded int
+
 	ChecksumDBOnly int
 	GoSumOnly      int
 	Unverified     int
@@ -214,6 +287,13 @@ func VerificationCoverageOf(obs []CoverageObservation) VerificationCoverage {
 		switch o.Bucket {
 		case BucketCrossVerified:
 			c.CrossVerified++
+			c.CrossVerifiedBindingUnrecorded++
+		case BucketCrossVerifiedModulePathURL:
+			c.CrossVerified++
+			c.CrossVerifiedModulePathURL++
+		case BucketCrossVerifiedProxyNamedURL:
+			c.CrossVerified++
+			c.CrossVerifiedProxyNamedURL++
 		case BucketChecksumDBOnly:
 			c.ChecksumDBOnly++
 		case BucketGoSumOnly:

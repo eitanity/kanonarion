@@ -65,6 +65,54 @@ The classes partition the graph - every module lands in exactly one.
 | `unrecorded` | In the graph, with no fetch record found. Absence of a measurement, not a failed one. |
 | `unrecognised` | A verification status this mapping has never heard of. It lands here rather than being folded into a class it may not belong to. |
 
+### Which repository the VCS check cloned
+
+Cross-verification reproduces a module's zip from a git checkout, so it is only
+as strong as the claim that the repository it cloned is the module's upstream.
+There are two ways that claim gets settled, and they are not equally strong.
+
+Most module paths name their own repository. `github.com/spf13/cobra` lives at
+`https://github.com/spf13/cobra`, so the coordinate fixes what will be cloned
+and nothing untrusted picks it.
+
+A **vanity** path does not. `go.uber.org/zap` lives at
+`https://github.com/uber-go/zap`, and no rule derives the second from the first.
+The clone URL for such a module can only come from the `Origin` block the module
+proxy serves - and the proxy is untrusted. So for those modules, cross-verified
+means the zip and the cloned tree agree about whatever repository the proxy
+pointed at. It does not mean that repository is the module's upstream.
+
+`cross_verified` therefore splits three ways. The three always sum to it, and
+`cross_verified` itself is unchanged: this is an attribution, not a downgrade,
+and no module moves out of the cross-verified class.
+
+| Class | Meaning |
+|-------|---------|
+| `cross_verified_module_path_url` | The cloned URL is the one the module path determines. This holds whether kanonarion derived the URL itself or the proxy supplied one that matched - either way the coordinate confirms the repository independently. |
+| `cross_verified_proxy_named_url` | The cloned URL came from the proxy and is **not** one the module path determines. Every vanity path lands here. |
+| `cross_verified_binding_unrecorded` | The record does not say. This is every record written before kanonarion measured the binding. It is the absence of the attribution, **not** a weak one. |
+
+Each module also carries the answer itself, as `vcs_url_binding` on its row in
+`modules[]`: `coordinate-derived`, `proxy-named`, or absent.
+
+**What to do about `cross_verified_proxy_named_url`.** On an ordinary Go graph
+it is normal and it is often large, because it covers every vanity path a graph
+pulls in - `golang.org/x/*`, the OpenTelemetry modules, the Kubernetes modules,
+`google.golang.org/*`, `go.uber.org/*` and the rest. It is not a finding and it
+accuses no proxy of anything. Read it as the part of your cross-verification that rests on proxy
+metadata rather than on the module path, and weigh it when you decide how much
+the VCS leg is worth to you. There is no action that converts one class into the
+other: the repository for a vanity path genuinely cannot be derived from the
+coordinate, and resolving the vanity domain's `go-import` tag is **not** a
+substitute, because such a domain can lapse and be re-registered by someone
+else.
+
+The comparison is exact and is made when the module is fetched, then sealed into
+the record. A URL that differs from the derived one only cosmetically - a
+trailing `.git`, say - is reported as `proxy-named`, because the only safe
+direction to err in is understating assurance. Records are never re-classified
+on read: the answer a record gives is the one its measurement reached.
+
 `cross_verifiable` is the honest denominator: the recorded modules that are not
 local source. Measured against `total`, a project walk would report a shortfall
 for its own main module, which has no remote artefact to anchor.
@@ -92,8 +140,9 @@ per-module verification (128 module(s)):
 The JSON always carries the list, under `modules[]`, whether or not `--detail`
 is given - the classes without their reasons is exactly the shape that sent
 readers to `python3` over another command's output. Each row carries
-`coordinate`, `path`, `version`, `class`, the recorded `status`, and `reason`
-where the record recorded one.
+`coordinate`, `path`, `version`, `class`, the recorded `status`, `reason`
+where the record recorded one, and `vcs_url_binding` where the record recorded
+a binding.
 
 Most records record a status and no prose: the detail is written when there is
 something worth saying, so its absence is not a gap. A row with neither says so

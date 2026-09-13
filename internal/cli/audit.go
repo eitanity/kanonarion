@@ -858,7 +858,10 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 	if frec, found, ferr := ctr.QueryFetch.ComposeFetchRecord(ctx, coord); ferr == nil && found {
 		res.Verification = frec.VerificationStatus
 		res.coverage = fetchdomain.CoverageObservation{
-			Bucket:   fetchdomain.BucketForVerification(fetchdomain.VerificationStatus(frec.VerificationStatus)),
+			Bucket: fetchdomain.BucketForFetchRecord(
+				fetchdomain.VerificationStatus(frec.VerificationStatus),
+				fetchdomain.VCSURLBinding(frec.VCSURLBinding),
+			),
 			Legs:     frec.Legs,
 			Recorded: true,
 		}

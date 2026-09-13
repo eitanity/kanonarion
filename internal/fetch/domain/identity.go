@@ -276,6 +276,60 @@ const (
 	LegUnavailable LegProvenance = "unavailable"
 )
 
+// VCSURLBinding says whether the repository a VCS cross-verification leg cloned
+// is one the module coordinate itself determines.
+//
+// The leg reproduces a module's zip from a git checkout, so it can only be as
+// strong as the claim that the repository it cloned is the module's upstream.
+// Two things can settle that claim, and they are not the same assurance:
+//
+//   - The module path determines the URL. github.com/spf13/cobra names its own
+//     repository, so the coordinate fixes what will be cloned and nothing
+//     untrusted gets to choose it. This holds whether kanonarion derived the URL
+//     itself or the proxy supplied one that matched what the coordinate derives
+//     — either way the coordinate independently confirms the repository.
+//   - Only the proxy knows the URL. A vanity path like go.uber.org/zap lives at
+//     github.com/uber-go/zap, and no rule derives that from the coordinate, so
+//     the URL comes from the proxy's Origin block. The proxy is untrusted, so
+//     the leg says the zip and the cloned tree agree about whatever repository
+//     the proxy pointed at — not that the repository is the module's upstream.
+//
+// Recording which one held is the whole point. Without it both land on the same
+// Verified status and a reader cannot tell the weaker assurance from the
+// stronger. This is an attribution, not a verdict: it moves no status, and it
+// asserts nothing about whether any proxy has ever named a wrong repository.
+//
+// The comparison is made once, when the module is measured, and the answer is
+// sealed into the record. It is deliberately not re-derived when the record is
+// read: the function that derives a URL from a module path is live code, so a
+// record whose meaning was recomputed on every read would change what it says
+// about a past measurement whenever that code was edited.
+type VCSURLBinding string
+
+const (
+	// VCSURLBindingAbsent is the zero value: no VCS cross-verification leg was
+	// established by this measurement, so no repository was cloned and there is
+	// nothing to attribute. It is also what a record written before this field
+	// existed carries, where the leg may well have run and the record simply
+	// cannot say. Those two cases are alike in the one way that matters here —
+	// the record does not know — and neither may be read as a negative finding.
+	VCSURLBindingAbsent VCSURLBinding = ""
+
+	// VCSURLBindingCoordinateDerived means the cloned URL is the one the module
+	// path determines.
+	VCSURLBindingCoordinateDerived VCSURLBinding = "coordinate-derived"
+
+	// VCSURLBindingProxyNamed means the cloned URL came from the untrusted
+	// proxy and is not one the coordinate derives. This is the weaker of the two
+	// bindings, and every vanity module path reaches cross-verification this way.
+	//
+	// The comparison behind it is exact. A URL that differs from the derived one
+	// only cosmetically — a trailing .git, say — is attributed here rather than
+	// to the stronger binding, because the only safe direction for this report to
+	// err in is understating assurance.
+	VCSURLBindingProxyNamed VCSURLBinding = "proxy-named"
+)
+
 // RecordLegs projects a record's persisted leg provenance onto ValidationLeg
 // values, omitting legs the measurement neither performed nor inherited. It is a
 // free function on the same terms as RecordDigests: leg composition is fetch

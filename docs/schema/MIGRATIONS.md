@@ -84,6 +84,55 @@ consumer nowhere.
 
 The rows themselves are unchanged.
 
+## Fetch store: module `fetch`, migration 10 - which repository the VCS check cloned
+
+`FactRecord` gains `vcs_url_binding`, and the `fetch_records` table gains a
+column of the same name:
+
+```sql
+ALTER TABLE fetch_records ADD COLUMN vcs_url_binding TEXT NOT NULL DEFAULT ''
+```
+
+**What it records.** VCS cross-verification reproduces a module's zip from a git
+checkout, so it is only as strong as the claim that the repository it cloned is
+the module's upstream. Two things can settle that claim. Most module paths name
+their own repository, so the coordinate fixes what gets cloned. A vanity path
+does not - `go.uber.org/zap` lives at `github.com/uber-go/zap`, and no rule
+derives the second from the first - so its clone URL can only come from the
+`Origin` block the untrusted module proxy serves. Both reached the same
+`Verified` status and the record could not say which. The field says which:
+`coordinate-derived` or `proxy-named`.
+
+The comparison is exact, is made when the module is fetched, and is sealed into
+the record. It is never re-derived on read.
+
+**No pipeline-version bump and no purge.** The field is `omitempty`, so a record
+written before it existed produces byte-identical canonical JSON and still
+verifies its content hash. Nothing is re-derived and no stored record is
+invalidated.
+
+**A record written before the column existed reads as `''`**, meaning "the
+binding was not recorded". That is deliberately not a guess: the stored `git_url`
+plus the module path would allow one, and a guess would be wrong twice over - the
+function that derives a URL from a module path is live code, so a sealed record's
+meaning would move whenever it is edited, and a `git_url` is recorded even on a
+run that skipped cross-verification, so the guess would attribute a binding to a
+leg that never ran.
+
+**Cost of the additive field, stated rather than discovered.** An OLDER
+kanonarion build cannot verify a record written by this one: it drops the unknown
+field when it re-marshals, so the recomputed hash differs. The store reports that
+correctly as a record written by a different canonical shape that should be
+re-extracted - never as a tamper. This is the ordinary consequence of an additive
+field, not a defect.
+
+**`verification-coverage` splits `cross_verified` three ways** to match:
+`cross_verified_module_path_url`, `cross_verified_proxy_named_url` and
+`cross_verified_binding_unrecorded`. The three sum to `cross_verified`, which is
+unchanged, so a gate reading it keeps working. Each module's row in `modules[]`
+carries `vcs_url_binding`. No verification status moves - this is an attribution,
+not a downgrade.
+
 ## A route hop says how control reached it: no migration and no bump
 
 Each hop of a stored reachability route — `findings[].reachable.routes[][]` on a
