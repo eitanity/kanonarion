@@ -250,6 +250,28 @@ type CallGraphStore interface {
 	FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]CallEdgeRef, error)
 }
 
+// CallGraphFrontierFinder is the optional capability of answering an edge query
+// for a whole SET of symbols in one statement. A frontier is one level of a
+// transitive traversal — the symbols it is about to expand, all known before it
+// asks anything.
+//
+// It is optional rather than part of CallGraphStore, on the precedent of
+// InterfaceRecordLister and NativeRecordLister, so the five in-memory doubles
+// that have nothing to batch are not made to implement one. Callers type-assert
+// and fall back to the single-symbol read, which gives the same answer at the
+// old cost: this is a cost boundary, never a correctness one.
+type CallGraphFrontierFinder interface {
+	// FindCallersOfEach returns the union of what FindCallers returns for each
+	// id, with no edge repeated; scope and opts behave as they do there. It must
+	// answer for EVERY id — a subset would silently shorten a traversal, which
+	// the caller has no way to detect. Repeated ids are answered once, and no
+	// ids at all is no edges and no error.
+	FindCallersOfEach(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]CallEdgeRef, error)
+
+	// FindCalleesOfEach is the same for FindCallees.
+	FindCalleesOfEach(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]CallEdgeRef, error)
+}
+
 // EdgeQueryOptions narrows a caller/callee query. The zero value is the
 // unrestricted query.
 type EdgeQueryOptions struct {

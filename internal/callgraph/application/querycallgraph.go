@@ -190,7 +190,7 @@ func (uc *QueryCallGraphUseCase) FindCallees(ctx context.Context, symbolID, pipe
 // mistake.
 func (uc *QueryCallGraphUseCase) TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error) {
 	return uc.traverseTransitive(ctx, symbolID, pipelineVersion, maxDepth, scope, opts,
-		uc.store.FindCallers,
+		uc.callersOfFrontier(),
 		func(e cgports.CallEdgeRef) string { return e.FromID },
 	)
 }
@@ -200,38 +200,91 @@ func (uc *QueryCallGraphUseCase) TraverseCallers(ctx context.Context, symbolID, 
 // scope is applied at every hop, as in TraverseCallers.
 func (uc *QueryCallGraphUseCase) TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error) {
 	return uc.traverseTransitive(ctx, symbolID, pipelineVersion, maxDepth, scope, opts,
-		uc.store.FindCallees,
+		uc.calleesOfFrontier(),
 		func(e cgports.CallEdgeRef) string { return e.ToID },
 	)
 }
 
+// frontierQuery answers one level of a traversal: every edge reaching, or
+// reached from, any symbol in the frontier.
+type frontierQuery func(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
+
+// callersOfFrontier picks how a caller level is asked for: one statement when
+// the store offers the set query, otherwise one symbol at a time. Chosen once
+// per traversal, so a store cannot answer some levels one way and some the
+// other.
+func (uc *QueryCallGraphUseCase) callersOfFrontier() frontierQuery {
+	if f, ok := uc.store.(cgports.CallGraphFrontierFinder); ok {
+		return f.FindCallersOfEach
+	}
+	return perSymbol(uc.store.FindCallers)
+}
+
+// calleesOfFrontier is callersOfFrontier for the other direction.
+func (uc *QueryCallGraphUseCase) calleesOfFrontier() frontierQuery {
+	if f, ok := uc.store.(cgports.CallGraphFrontierFinder); ok {
+		return f.FindCalleesOfEach
+	}
+	return perSymbol(uc.store.FindCallees)
+}
+
+// perSymbol is the frontier query for a store with no set query: ask the
+// single-symbol one per symbol. Same answer, at the cost the set query exists to
+// avoid. Ids are de-duplicated because the set query answers a repeated id once
+// and the two routes must not differ.
+func perSymbol(query func(context.Context, string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)) frontierQuery {
+	return func(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
+		var out []cgports.CallEdgeRef
+		seen := make(map[string]bool, len(symbolIDs))
+		for _, sym := range symbolIDs {
+			if seen[sym] {
+				continue
+			}
+			seen[sym] = true
+			hops, err := query(ctx, sym, pipelineVersion, scope, opts)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, hops...)
+		}
+		return out, nil
+	}
+}
+
 // traverseTransitive performs a BFS from root using queryFn. neighborOf extracts
 // the "next hop" symbol from each returned edge. maxDepth 0 means unlimited.
+//
+// queryFn is asked ONCE PER LEVEL, with the whole frontier, which queue holds
+// before anything is asked. Asking per symbol instead cost a store round trip
+// per visited node.
+//
+// The set is the same either way: visited is checked before a symbol is queued,
+// so the per-symbol queries were over disjoint endpoints and their union is what
+// one statement returns. The arrival order differs and does not matter, because
+// the canonical sort below is total over every field a ref carries.
 func (uc *QueryCallGraphUseCase) traverseTransitive(
 	ctx context.Context,
 	root, pipelineVersion string,
 	maxDepth int,
 	scope coordinate.ModuleSet,
 	opts cgports.EdgeQueryOptions,
-	queryFn func(context.Context, string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error),
+	queryFn frontierQuery,
 	neighborOf func(cgports.CallEdgeRef) string,
 ) (edges []cgports.CallEdgeRef, nodes []string, err error) {
 	visited := map[string]bool{root: true}
 	queue := []string{root}
 
 	for depth := 0; len(queue) > 0 && (maxDepth == 0 || depth < maxDepth); depth++ {
+		hops, qerr := queryFn(ctx, queue, pipelineVersion, scope, opts)
+		if qerr != nil {
+			return nil, nil, fmt.Errorf("querying at depth %d: %w", depth+1, qerr)
+		}
 		var next []string
-		for _, sym := range queue {
-			hops, qerr := queryFn(ctx, sym, pipelineVersion, scope, opts)
-			if qerr != nil {
-				return nil, nil, fmt.Errorf("querying at depth %d: %w", depth+1, qerr)
-			}
-			for _, e := range hops {
-				edges = append(edges, e)
-				if nb := neighborOf(e); !visited[nb] {
-					visited[nb] = true
-					next = append(next, nb)
-				}
+		for _, e := range hops {
+			edges = append(edges, e)
+			if nb := neighborOf(e); !visited[nb] {
+				visited[nb] = true
+				next = append(next, nb)
 			}
 		}
 		queue = next
