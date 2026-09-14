@@ -214,3 +214,43 @@ func TestNegativeSoundness_TheWholeGraphClaimIsStatedAndDoesNotDecide(t *testing
 		t.Errorf("the reason reads ungrammatically: %q", reason)
 	}
 }
+
+// TestReachableReflectiveDispatch_CountsOnlyWhatAnEntryPointReaches pins the
+// derivation behind the number a reader weighs a negative on.
+//
+// Both counts a surface prints — how many reflective calls the search could not
+// follow, and how many of those anything can reach — must come from one list, or
+// a reader can be shown a total and a subset that disagree.
+func TestReachableReflectiveDispatch_CountsOnlyWhatAnEntryPointReaches(t *testing.T) {
+	t.Parallel()
+
+	search := &domain.NegativeSearch{ReflectiveDispatch: []domain.ReflectiveDispatchSite{
+		{Caller: "example.com/m.bind", Callee: "reflect.(Value).FieldByName", CallSite: "bind.go:10", ReachableFromEntryPoint: true},
+		{Caller: "example.com/m.bind", Callee: "reflect.(Value).FieldByName", CallSite: "bind.go:31", ReachableFromEntryPoint: true},
+		{Caller: "example.com/m/internal/testenv.helper", Callee: "reflect.(Value).MethodByName", CallSite: "exec.go:80"},
+	}}
+	if got := search.ReachableReflectiveDispatch(); got != 2 {
+		t.Errorf("ReachableReflectiveDispatch() = %d over 3 sites, 1 of them in code nothing reaches; want 2", got)
+	}
+
+	// A search that found none states a measured zero. It is a different fact
+	// from the two below it and all three must be sayable.
+	none := &domain.NegativeSearch{}
+	if got := none.ReachableReflectiveDispatch(); got != 0 {
+		t.Errorf("a search that found no reflective dispatch reports %d reachable", got)
+	}
+	unreached := &domain.NegativeSearch{ReflectiveDispatch: []domain.ReflectiveDispatchSite{
+		{Caller: "example.com/m/internal/testenv.helper", Callee: "reflect.(Value).MethodByName"},
+	}}
+	if got := unreached.ReachableReflectiveDispatch(); got != 0 {
+		t.Errorf("a site no entry point reaches is counted as reachable: %d", got)
+	}
+
+	// A nil search has measured nothing at all. It must answer rather than
+	// panic: every caller here reaches it through a pointer that is nil on the
+	// commonest finding in a store.
+	var absent *domain.NegativeSearch
+	if got := absent.ReachableReflectiveDispatch(); got != 0 {
+		t.Errorf("a nil search reports %d reachable sites", got)
+	}
+}

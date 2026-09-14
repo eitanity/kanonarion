@@ -1,0 +1,386 @@
+{
+  "schema_version": "13",
+  "coordinate": {
+    "path": "github.com/klauspost/compress",
+    "version": "local"
+  },
+  "algorithm": "CHA",
+  "completeness": "BUILT_WITH_BODIES",
+  "analysis_source": "worktree",
+  "artifact_kind": "Library",
+  "toolchain": "go1.26.5",
+  "toolchain_stated": "go1.26.5",
+  "worktree_digest": "analysed-sha256:feb999d3f20082c159c4b7a713bfac557cba0dcc886d8ccceaa830abe8f28998",
+  "worktree_scan_digest": "scanned-sha256:feb999d3f20082c159c4b7a713bfac557cba0dcc886d8ccceaa830abe8f28998",
+  "nodes": [
+    {
+      "id": "github.com/klauspost/compress/zstd.NewDict",
+      "module": "github.com/klauspost/compress",
+      "package": "github.com/klauspost/compress/zstd",
+      "symbol": "NewDict",
+      "is_external": false,
+      "is_exported_api": true,
+      "position_file": "zstd/zstd.go",
+      "position_line": 19,
+      "is_test": false,
+      "role": "api"
+    },
+    {
+      "id": "github.com/klauspost/compress/zstd.apply",
+      "module": "github.com/klauspost/compress",
+      "package": "github.com/klauspost/compress/zstd",
+      "symbol": "apply",
+      "is_external": false,
+      "is_exported_api": false,
+      "position_file": "zstd/zstd.go",
+      "position_line": 28,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "github.com/klauspost/compress/zstd.bindFields",
+      "module": "github.com/klauspost/compress",
+      "package": "github.com/klauspost/compress/zstd",
+      "symbol": "bindFields",
+      "is_external": false,
+      "is_exported_api": false,
+      "position_file": "zstd/zstd.go",
+      "position_line": 32,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "github.com/klauspost/compress/zstd.configure",
+      "module": "github.com/klauspost/compress",
+      "package": "github.com/klauspost/compress/zstd",
+      "symbol": "configure",
+      "is_external": false,
+      "is_exported_api": false,
+      "position_file": "zstd/zstd.go",
+      "position_line": 25,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "github.com/klauspost/compress/zstd.init",
+      "module": "github.com/klauspost/compress",
+      "package": "github.com/klauspost/compress/zstd",
+      "symbol": "init",
+      "is_external": false,
+      "is_exported_api": false,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "github.com/klauspost/compress/zstd.orphan",
+      "module": "github.com/klauspost/compress",
+      "package": "github.com/klauspost/compress/zstd",
+      "symbol": "orphan",
+      "is_external": false,
+      "is_exported_api": false,
+      "position_file": "zstd/zstd.go",
+      "position_line": 44,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "github.com/klauspost/compress/zstd.prepare",
+      "module": "github.com/klauspost/compress",
+      "package": "github.com/klauspost/compress/zstd",
+      "symbol": "prepare",
+      "is_external": false,
+      "is_exported_api": false,
+      "position_file": "zstd/zstd.go",
+      "position_line": 26,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "github.com/klauspost/compress/zstd.resolve",
+      "module": "github.com/klauspost/compress",
+      "package": "github.com/klauspost/compress/zstd",
+      "symbol": "resolve",
+      "is_external": false,
+      "is_exported_api": false,
+      "position_file": "zstd/zstd.go",
+      "position_line": 27,
+      "is_test": false,
+      "role": "internal"
+    },
+    {
+      "id": "reflect.(Value).Call",
+      "module": "",
+      "package": "reflect",
+      "symbol": "Call",
+      "receiver": "Value",
+      "is_external": true,
+      "is_exported_api": false,
+      "position_file": "usr/local/go/src/reflect/value.go",
+      "position_line": 366,
+      "is_test": false,
+      "role": "external"
+    },
+    {
+      "id": "reflect.(Value).CanSet",
+      "module": "",
+      "package": "reflect",
+      "symbol": "CanSet",
+      "receiver": "Value",
+      "is_external": true,
+      "is_exported_api": false,
+      "position_file": "usr/local/go/src/reflect/value.go",
+      "position_line": 353,
+      "is_test": false,
+      "role": "external"
+    },
+    {
+      "id": "reflect.(Value).Elem",
+      "module": "",
+      "package": "reflect",
+      "symbol": "Elem",
+      "receiver": "Value",
+      "is_external": true,
+      "is_exported_api": false,
+      "position_file": "usr/local/go/src/reflect/value.go",
+      "position_line": 1220,
+      "is_test": false,
+      "role": "external"
+    },
+    {
+      "id": "reflect.(Value).FieldByName",
+      "module": "",
+      "package": "reflect",
+      "symbol": "FieldByName",
+      "receiver": "Value",
+      "is_external": true,
+      "is_exported_api": false,
+      "position_file": "usr/local/go/src/reflect/value.go",
+      "position_line": 1354,
+      "is_test": false,
+      "role": "external"
+    },
+    {
+      "id": "reflect.(Value).IsValid",
+      "module": "",
+      "package": "reflect",
+      "symbol": "IsValid",
+      "receiver": "Value",
+      "is_external": true,
+      "is_exported_api": false,
+      "position_file": "usr/local/go/src/reflect/value.go",
+      "position_line": 1657,
+      "is_test": false,
+      "role": "external"
+    },
+    {
+      "id": "reflect.(Value).MethodByName",
+      "module": "",
+      "package": "reflect",
+      "symbol": "MethodByName",
+      "receiver": "Value",
+      "is_external": true,
+      "is_exported_api": false,
+      "position_file": "usr/local/go/src/reflect/value.go",
+      "position_line": 1939,
+      "is_test": false,
+      "role": "external"
+    },
+    {
+      "id": "reflect.(Value).SetString",
+      "module": "",
+      "package": "reflect",
+      "symbol": "SetString",
+      "receiver": "Value",
+      "is_external": true,
+      "is_exported_api": false,
+      "position_file": "usr/local/go/src/reflect/value.go",
+      "position_line": 2315,
+      "is_test": false,
+      "role": "external"
+    },
+    {
+      "id": "reflect.ValueOf",
+      "module": "",
+      "package": "reflect",
+      "symbol": "ValueOf",
+      "is_external": true,
+      "is_exported_api": false,
+      "position_file": "usr/local/go/src/reflect/value.go",
+      "position_line": 3119,
+      "is_test": false,
+      "role": "external"
+    },
+    {
+      "id": "reflect.init",
+      "module": "",
+      "package": "reflect",
+      "symbol": "init",
+      "is_external": true,
+      "is_exported_api": false,
+      "is_test": false,
+      "role": "external"
+    }
+  ],
+  "edges": [
+    {
+      "from_id": "github.com/klauspost/compress/zstd.NewDict",
+      "to_id": "github.com/klauspost/compress/zstd.configure",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 21,
+      "confidence": "Direct",
+      "kind": "Call",
+      "reflect_dispatch": false
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.apply",
+      "to_id": "github.com/klauspost/compress/zstd.bindFields",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 28,
+      "confidence": "Direct",
+      "kind": "Call",
+      "reflect_dispatch": false
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.bindFields",
+      "to_id": "reflect.(Value).CanSet",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 36,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.bindFields",
+      "to_id": "reflect.(Value).Elem",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 33,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.bindFields",
+      "to_id": "reflect.(Value).FieldByName",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 35,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.bindFields",
+      "to_id": "reflect.(Value).IsValid",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 36,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.bindFields",
+      "to_id": "reflect.(Value).SetString",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 37,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.bindFields",
+      "to_id": "reflect.ValueOf",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 33,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.configure",
+      "to_id": "github.com/klauspost/compress/zstd.prepare",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 25,
+      "confidence": "Direct",
+      "kind": "Call",
+      "reflect_dispatch": false
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.init",
+      "to_id": "reflect.init",
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.orphan",
+      "to_id": "reflect.(Value).Call",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 47,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.orphan",
+      "to_id": "reflect.(Value).IsValid",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 46,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.orphan",
+      "to_id": "reflect.(Value).MethodByName",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 45,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.orphan",
+      "to_id": "reflect.ValueOf",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 45,
+      "confidence": "Unknown",
+      "kind": "Call",
+      "reflect_dispatch": true
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.prepare",
+      "to_id": "github.com/klauspost/compress/zstd.resolve",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 26,
+      "confidence": "Direct",
+      "kind": "Call",
+      "reflect_dispatch": false
+    },
+    {
+      "from_id": "github.com/klauspost/compress/zstd.resolve",
+      "to_id": "github.com/klauspost/compress/zstd.apply",
+      "call_site_file": "zstd/zstd.go",
+      "call_site_line": 27,
+      "confidence": "Direct",
+      "kind": "Call",
+      "reflect_dispatch": false
+    }
+  ],
+  "overall_status": "Extracted",
+  "node_count": 17,
+  "edge_count": 16,
+  "extracted_at": "2026-09-14T02:02:29.165716066Z",
+  "pipeline_version": "0.6.0",
+  "content_hash": "sha256:5f063f50d3e560baf3bcb9aa4820c5be1bcaec8e4200733f4ee65eca914c1492",
+  "test_scope": "Analysed",
+  "test_node_count": 0,
+  "reference_scope": "Analysed",
+  "reference_edge_count": 0,
+  "interface_count": 0,
+  "implementation_count": 0,
+  "analyser": {
+    "module": "golang.org/x/tools",
+    "version": "v0.49.0",
+    "provenance": "observed",
+    "inferred": false
+  }
+}

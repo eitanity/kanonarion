@@ -3,6 +3,8 @@ package reachability
 import (
 	"context"
 	"errors"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -59,7 +61,12 @@ type cachedProjection struct {
 	// root set an absence is certified against, and it is empty when the graph
 	// offers none — in which case nothing is certified.
 	entryRoots []string
-	loaded     bool
+	// reflectSites is every reflective dispatch site in the graph, each already
+	// told whether the entry-point roots reach it. It is computed once per graph
+	// beside the root sets, for the same reason they are: the reachable set costs
+	// one walk of the graph, and a record can hold many findings.
+	reflectSites []domain.ReflectiveDispatchSite
+	loaded       bool
 	// loadErr is why the load failed, kept so the refusal a reader is shown names
 	// the cause rather than asserting the commonest one.
 	loadErr error
@@ -147,6 +154,12 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 			// a different build when the record was measured inside a consumer's.
 			// domain.NegativeSearch.InRecordedFrame says what each case may mean.
 			InRecordedFrame: rec.Rooting.IsRootedAtPath(rec.Coordinate.Path()),
+			// What the traversal below could NOT follow. It is the same list for
+			// every finding over this graph, because it is a property of the graph
+			// rather than of the advisory, and it is stated even when empty: empty
+			// here means the search looked and found none, which is a different
+			// fact from the search never having run.
+			ReflectiveDispatch: graph.reflectSites,
 		}
 		// Two searches over one graph, because they are two claims. The
 		// entry-point search is the one that may confirm or contradict the
@@ -162,6 +175,62 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 		}
 		f.NegativeSearch = result
 	}
+}
+
+// reflectiveDispatchSites renders the graph's reflective dispatch sites for a
+// reader, each told whether the named entry points reach its CALLER.
+//
+// The reachable set is what separates a site worth reporting from one that only
+// makes a negative look weaker. A reflective call in code no entry point reaches
+// cannot be on a route into this module, so it qualifies nothing — and on the
+// store this was measured against, every site there is is of that kind: two
+// calls in a test-harness package, neither reachable from anything the analysis
+// can name.
+//
+// The graph walk is skipped entirely where there are no sites, which is the
+// common case. Nothing is computed for a graph with none.
+func reflectiveDispatchSites(proj ports.CallGraphProjection, entryRoots []string) []domain.ReflectiveDispatchSite {
+	if len(proj.ReflectiveDispatch) == 0 {
+		return nil
+	}
+	reached := reachableFrom(proj, entryRoots)
+	sites := make([]domain.ReflectiveDispatchSite, 0, len(proj.ReflectiveDispatch))
+	for _, s := range proj.ReflectiveDispatch {
+		sites = append(sites, domain.ReflectiveDispatchSite{
+			Caller:                  s.CallerID,
+			Callee:                  s.CalleeID,
+			CallSite:                reflectSitePosition(s),
+			ReachableFromEntryPoint: reached[s.CallerID],
+		})
+	}
+	// Sorted on every field that distinguishes two sites, not on the caller
+	// alone: two calls from one function to one reflect method differ only in
+	// their line, and a sort that cannot tell them apart leaves their order to
+	// whatever the store happened to return.
+	sort.Slice(sites, func(i, j int) bool {
+		a, b := sites[i], sites[j]
+		if a.Caller != b.Caller {
+			return a.Caller < b.Caller
+		}
+		if a.Callee != b.Callee {
+			return a.Callee < b.Callee
+		}
+		return a.CallSite < b.CallSite
+	})
+	return sites
+}
+
+// reflectSitePosition renders a site's position the way a hop renders its call
+// site: "file:line", the file alone where no line was recorded, and empty where
+// the edge carried no position at all.
+func reflectSitePosition(s ports.CallGraphReflectSite) string {
+	if s.File == "" {
+		return ""
+	}
+	if s.Line == 0 {
+		return s.File
+	}
+	return s.File + ":" + strconv.Itoa(s.Line)
 }
 
 // searchableNegative reports whether this finding's negative is one the search
@@ -233,6 +302,7 @@ func (s *NegativeSearcher) graphFor(ctx context.Context, coord coordinate.Module
 		entry.projection = proj
 		entry.shippedRoots = collectEntryPoints(proj)
 		entry.entryRoots = collectNamedEntryPoints(proj)
+		entry.reflectSites = reflectiveDispatchSites(proj, entry.entryRoots)
 		entry.loaded = true
 	}
 	s.cache[coord] = entry

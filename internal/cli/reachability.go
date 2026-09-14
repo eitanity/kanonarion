@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -639,6 +640,49 @@ type negativeSearchOutput struct {
 	// emitted always, never inferred from the fields above.
 	InRecordedFrame bool                      `json:"in_recorded_frame"`
 	Routes          []reachabilityRouteOutput `json:"routes,omitempty"`
+	// ReflectiveDispatch is what the search could NOT follow. Where a search ran,
+	// its zero counts are evidence — the graph was looked at and holds no such
+	// site — which an absent key cannot say, so it is emitted rather than omitted.
+	//
+	// It is emitted under NotSearched too, on the same terms as every field above
+	// it: present, zero, and meaning nothing was measured. NotSearched is the one
+	// key that says which of the two a zero here is, and it says it once for the
+	// whole object rather than each field carrying its own absence.
+	ReflectiveDispatch reflectiveDispatchOutput `json:"reflective_dispatch"`
+}
+
+// reflectiveDispatchOutput is the reflective dispatch sites in the graph the
+// search ran over, in the curated JSON shape.
+//
+// The two counts are both here and neither is the other's summary. SiteCount is
+// how many calls the analysis could not bound; ReachableSiteCount is how many of
+// those sit in code anything the analysis can name as an entry point reaches. A
+// site nothing reaches hides no route into the module, so a consumer that weighs
+// a negative on the first number alone will weaken it for no reason. On the
+// store this was built against, every site found is of exactly that kind.
+//
+// A "reflective dispatch site" is a call to one of the five reflect.Value
+// methods that choose their target at run time: Call, CallSlice, Method,
+// MethodByName, FieldByName. It is NOT a call into package reflect — almost all
+// of those name one callee and bound perfectly, and counting them here would
+// overstate this by about two orders of magnitude.
+type reflectiveDispatchOutput struct {
+	SiteCount          int `json:"site_count"`
+	ReachableSiteCount int `json:"reachable_site_count"`
+	// Sites names each one so a reader can go and look. Absent when there are
+	// none, which the counts above have already stated.
+	Sites []reflectiveDispatchSiteOutput `json:"sites,omitempty"`
+}
+
+// reflectiveDispatchSiteOutput is one such call site.
+type reflectiveDispatchSiteOutput struct {
+	Caller   string `json:"caller"`
+	Callee   string `json:"callee"`
+	CallSite string `json:"call_site,omitempty"`
+	// ReachableFromEntryPoint is emitted on every site, false included: it is the
+	// field that says whether the site qualifies anything, and it was derived for
+	// every site listed.
+	ReachableFromEntryPoint bool `json:"reachable_from_entry_point"`
 }
 
 // negativeSearchToOutput renders the search, or nil when none ran.
@@ -654,6 +698,7 @@ func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc)
 		EntryPointPathFound: s.PathFound,
 		WholeGraphPathFound: s.ShippedCodePathFound,
 		InRecordedFrame:     s.InRecordedFrame,
+		ReflectiveDispatch:  reflectiveDispatchToOutput(s),
 	}
 	// Every route the search found, from either rooting. A route this tool
 	// computed and did not publish is the one outcome a reachability surface must
@@ -666,6 +711,26 @@ func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc)
 		routes = append(routes, s.ShippedCodeRoute)
 	}
 	out.Routes = routesToOutput(routes, classify)
+	return out
+}
+
+// reflectiveDispatchToOutput renders the search's reflective dispatch sites.
+//
+// The reachable count is asked of the domain rather than counted again here, so
+// the number beside the list can never disagree with the list.
+func reflectiveDispatchToOutput(s *vuldomain.NegativeSearch) reflectiveDispatchOutput {
+	out := reflectiveDispatchOutput{
+		SiteCount:          len(s.ReflectiveDispatch),
+		ReachableSiteCount: s.ReachableReflectiveDispatch(),
+	}
+	for _, site := range s.ReflectiveDispatch {
+		out.Sites = append(out.Sites, reflectiveDispatchSiteOutput{
+			Caller:                  site.Caller,
+			Callee:                  site.Callee,
+			CallSite:                site.CallSite,
+			ReachableFromEntryPoint: site.ReachableFromEntryPoint,
+		})
+	}
 	return out
 }
 
@@ -1133,6 +1198,64 @@ func printSoundness(stdout io.Writer, res vulnReachabilityQuery) {
 	_, _ = fmt.Fprintf(stdout, "  soundness: %s — %s\n", res.Soundness, res.SoundnessReason)
 }
 
+// printReflectiveDispatch prints what the read-time search could not follow.
+//
+// It prints under a negative because that is the verdict it qualifies — or, far
+// more often, declines to qualify. A reflective dispatch site is a call to one
+// of the five reflect.Value methods that pick their target at run time, so the
+// analysis cannot say where it goes and a route could hide behind it.
+//
+// Three things are said, in this order, because each is useless without the one
+// before it. How many sites there are. How many of those anything the analysis
+// can name as an entry point actually reaches — a site nothing reaches cannot be
+// on a route INTO this module, and saying only the first number would make a
+// negative look weaker for no reason. Then the sites themselves, so a reader can
+// go and look rather than take the count on trust.
+//
+// A search that never ran prints nothing at all. There is a difference between
+// "the graph holds none" and "no graph was searched", and the second is already
+// stated on the rung above.
+func printReflectiveDispatch(stdout io.Writer, search *negativeSearchOutput) {
+	if search == nil || search.NotSearched != "" {
+		return
+	}
+	d := search.ReflectiveDispatch
+	if d.SiteCount == 0 {
+		_, _ = fmt.Fprintln(stdout,
+			"  reflective dispatch: none — the graph searched holds no call to a reflect method that picks its target at run time,"+
+				" so no reflective call site could be hiding a route this search failed to follow")
+		return
+	}
+	_, _ = fmt.Fprintf(stdout, "  reflective dispatch: %d %s the search could not follow, %s\n",
+		d.SiteCount, pluralise(d.SiteCount, "call site", "call sites"), reachableSitesPhrase(d.ReachableSiteCount))
+	for _, site := range d.Sites {
+		where := ""
+		if site.CallSite != "" {
+			where = " at " + site.CallSite
+		}
+		_, _ = fmt.Fprintf(stdout, "    %s -> %s%s — %s\n",
+			site.Caller, site.Callee, where, reachableSiteNote(site.ReachableFromEntryPoint))
+	}
+}
+
+// reachableSitesPhrase states how many of the sites are reachable, and what that
+// means for the negative printed above it.
+func reachableSitesPhrase(reachable int) string {
+	if reachable == 0 {
+		return "none of them reachable from an entry point the analysis can name — none can be on a route into this module, so they do not qualify this answer"
+	}
+	return strconv.Itoa(reachable) + " of them " + pluralise(reachable, "is", "are") +
+		" reachable from an entry point the analysis can name, so a route could hide there"
+}
+
+// reachableSiteNote says which of the two a single site is.
+func reachableSiteNote(reachable bool) string {
+	if reachable {
+		return "reachable from an entry point"
+	}
+	return "not reachable from any entry point the analysis can name"
+}
+
 // frameLine renders one hop, omitting the parts the analyser could not supply.
 func frameLine(f reachabilityFrameOutput) string {
 	var b strings.Builder
@@ -1191,6 +1314,7 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 		// negative is the one an operator acts on by NOT upgrading.
 		_, _ = fmt.Fprintf(stdout, "%s affects %s but is NOT reachable [confidence: %s, %s]\n", res.VulnID, coord, res.Confidence, derivationLine(res))
 		printSoundness(stdout, res)
+		printReflectiveDispatch(stdout, res.NegativeSearch)
 	case verdictPackageLevelOnly:
 		// Says plainly that the module IS affected, then that the question of
 		// whether the vulnerable code runs has no answer here and why. The route is

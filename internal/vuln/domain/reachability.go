@@ -359,6 +359,22 @@ type NegativeSearch struct {
 	// is worse than one reported with its rooting named.
 	ShippedCodePathFound bool
 	ShippedCodeRoute     ReachabilityRoute
+	// ReflectiveDispatch is every call site in the graph searched whose callee is
+	// one of the reflect.Value methods that choose their target at run time —
+	// Call, CallSlice, Method, MethodByName, FieldByName. Those are the calls the
+	// traversal above could not follow, so a route could hide behind one.
+	//
+	// It is narrow on purpose, and the narrowness is the whole point. The edge
+	// attribute the analyser records, reflect_dispatch, marks any call into
+	// package reflect, and nearly all of those bound perfectly: reflect.TypeOf
+	// has exactly one callee. Counting them here would qualify every negative
+	// with a number about two orders of magnitude too large. See
+	// IsReflectDispatcher, which is the one list both readers share.
+	//
+	// Empty is the usual answer and it is a measurement: the search ran and found
+	// no such site. A reader must be able to tell that from a search that never
+	// looked, which is what NotSearched above says.
+	ReflectiveDispatch []ReflectiveDispatchSite
 	// InRecordedFrame reports whether the graph searched is a graph OF the frame
 	// the record was measured in — the analysed module's own build — rather than
 	// a graph of the module standing alone inside someone else's.
@@ -372,6 +388,46 @@ type NegativeSearch struct {
 	// another build asked, and contradicting that record with it would report a
 	// disagreement that does not exist.
 	InRecordedFrame bool
+}
+
+// ReflectiveDispatchSite is one call the search could not follow: a call site in
+// the graph searched whose callee picks what runs at run time.
+//
+// ReachableFromEntryPoint is the field that decides what the site is worth to a
+// reader, and it is why a bare count is not enough. A reflective call sitting in
+// code nothing entered from outside the module can reach hides no route INTO the
+// module, so naming it as a qualification on a negative would make that negative
+// look weaker without it being weaker. Measured on a working store, where the
+// only such sites are in a test-harness package: two sites, neither reachable
+// from any entry point the analysis can name.
+type ReflectiveDispatchSite struct {
+	// Caller and Callee are the call graph's own node ids for the two ends.
+	Caller string
+	Callee string
+	// CallSite is "file:line" in the calling module's source, the file alone
+	// where the edge recorded no line, and empty where it recorded no position.
+	CallSite string
+	// ReachableFromEntryPoint says whether a traversal from the entry points the
+	// analysis can name — the same roots EntryPointRoots counts — reaches the
+	// CALLER. It is about the site, not about the vulnerable symbol: a site
+	// nothing reaches cannot be on any route into this module.
+	ReachableFromEntryPoint bool
+}
+
+// ReachableReflectiveDispatch counts the reflective dispatch sites a traversal
+// from the named entry points reaches. It is derived rather than stored so the
+// two numbers a reader compares can never disagree.
+func (s *NegativeSearch) ReachableReflectiveDispatch() int {
+	if s == nil {
+		return 0
+	}
+	n := 0
+	for _, site := range s.ReflectiveDispatch {
+		if site.ReachableFromEntryPoint {
+			n++
+		}
+	}
+	return n
 }
 
 // disputedReason states a contradiction between two analysers in full, naming

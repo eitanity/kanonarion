@@ -24,7 +24,11 @@ exit 0
     "entry_point_roots": 0,
     "entry_point_path_found": false,
     "whole_graph_path_found": false,
-    "in_recorded_frame": false
+    "in_recorded_frame": false,
+    "reflective_dispatch": {
+      "site_count": 0,
+      "reachable_site_count": 0
+    }
   },
   "scanned_at": "2026-02-20T09:00:00Z"
 }

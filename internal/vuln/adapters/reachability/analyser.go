@@ -273,6 +273,39 @@ func bfsPath(cg ports.CallGraphProjection, entryPoints []string, targets map[str
 	return nil
 }
 
+// reachableFrom returns every node a traversal from roots reaches, the roots
+// themselves included.
+//
+// It answers a different question from bfsPath and cannot be built out of it:
+// bfsPath stops at the first target and returns one path, while this needs the
+// whole reached set so many nodes can be tested against it at once. Running
+// bfsPath once per node would re-walk the graph each time.
+func reachableFrom(cg ports.CallGraphProjection, roots []string) map[string]bool {
+	adj := make(map[string][]string, len(cg.Edges))
+	for _, e := range cg.Edges {
+		adj[e.FromID] = append(adj[e.FromID], e.ToID)
+	}
+	seen := make(map[string]bool, len(roots))
+	queue := make([]string, 0, len(roots))
+	for _, r := range roots {
+		if !seen[r] {
+			seen[r] = true
+			queue = append(queue, r)
+		}
+	}
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+		for _, next := range adj[curr] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return seen
+}
+
 // reconstructPath walks prev pointers from end back to a root entry point.
 func reconstructPath(prev map[string]string, end string) []string {
 	var path []string

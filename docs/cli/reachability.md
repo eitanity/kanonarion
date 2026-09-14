@@ -193,6 +193,61 @@ A graph that names no entry point at all confirms nothing. The search would star
 nowhere, so of course it finds nothing, and `entry_point_roots: 0` in the JSON is
 what says that happened.
 
+### What the search could not follow
+
+A negative says no route was found. It cannot say no route exists, and one of the
+ways a route hides is a call whose target is chosen while the program runs. So the
+search names those calls.
+
+A **reflective dispatch site** is a call to one of the five `reflect.Value` methods
+that pick what runs at run time: `Call`, `CallSlice`, `Method`, `MethodByName`,
+`FieldByName`. The analysis cannot say where such a call goes, so a route could be
+hiding behind it.
+
+It is **not** a call into package `reflect`. `reflect.TypeOf` has exactly one
+callee and conceals nothing, and nearly every call into `reflect` is of that sort:
+on one 74,797-edge graph, 162 edges are calls into `reflect` and 2 of them are
+dispatch sites. Counting the first number would qualify every negative with a
+figure roughly eighty times too large.
+
+Two counts are reported and neither is the other's summary:
+
+- `site_count` — how many such calls are in the graph that was searched.
+- `reachable_site_count` — how many of those sit in code that something the
+  analysis can name as an entry point actually reaches.
+
+**The second is the one that decides whether a negative is worth doubting.** A
+reflective call in code nothing enters cannot be on a route into the module, so it
+qualifies nothing. Test helpers are the usual case:
+
+```
+GO-2026-6303 affects golang.org/x/crypto@v0.54.0 but is NOT reachable [...]
+  soundness: inferred — [...]
+  reflective dispatch: 2 call sites the search could not follow, none of them reachable from an entry point the analysis can name — none can be on a route into this module, so they do not qualify this answer
+    golang.org/x/crypto/internal/testenv.CommandContext -> reflect.(Value).FieldByName at internal/testenv/exec.go:80 — not reachable from any entry point the analysis can name
+    golang.org/x/crypto/internal/testenv.CommandContext -> reflect.(Value).FieldByName at internal/testenv/exec.go:99 — not reachable from any entry point the analysis can name
+```
+
+Finding none is the common answer, and it is stated rather than left out. A search
+that ran over a graph and found no such call has measured something; an absent
+number has not:
+
+```
+  reflective dispatch: none — the graph searched holds no call to a reflect method that picks its target at run time, so no reflective call site could be hiding a route this search failed to follow
+```
+
+A search that never ran prints nothing here at all, because it measured nothing.
+`not_searched` above says why.
+
+Two calls from one function to one `reflect` method on two lines are two sites, not
+one, so each carries its own `call_site` and a reader can go and look. The raw
+attribute each site is filtered from is on every `callgraph-show --json` edge as
+`reflect_dispatch` — see [callgraph](callgraph.md), which explains why reading it
+unfiltered gives a number roughly eighty times too large.
+
+This states what a search could not follow. It does not change what the search
+concluded: no verdict and no soundness rung moves because of it.
+
 ### A search that could not be made says so
 
 There are four reasons the search declines to run, and every one of them is
@@ -231,6 +286,7 @@ the coordinate, or the graph names none of the advisory's symbols — which is n
 | `whole_graph_path_found` | Whether a path was found with the module's whole graph rooted. A different claim; it never decides the rung and is never dropped. |
 | `in_recorded_frame` | Whether the graph searched is a graph of the build this record was measured in. A clean search confirms in any frame; a found path contradicts only in this one. |
 | `routes` | Every route the search found, from either rooting, each naming its own root. |
+| `reflective_dispatch` | What the search could not follow: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
 
 The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
 line and in `--json`, so you can see which rooting a graph will get before you ask

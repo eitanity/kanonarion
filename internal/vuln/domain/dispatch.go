@@ -240,7 +240,7 @@ func DispatchKindOfEdge(calleeID, confidence string, reflectDispatch, reference 
 	switch {
 	case reference:
 		return DispatchReference
-	case reflectDispatch && isReflectDispatcher(calleeID):
+	case reflectDispatch && IsReflectDispatcher(calleeID):
 		return DispatchReflect
 	}
 	switch confidence {
@@ -255,14 +255,20 @@ func DispatchKindOfEdge(calleeID, confidence string, reflectDispatch, reference 
 	}
 }
 
-// isReflectDispatcher reports whether a call-graph node id names one of the
+// IsReflectDispatcher reports whether a call-graph node id names one of the
 // reflect.Value methods that pick their target at run time, from a name string
 // or from the value itself, so a static analysis cannot bound the callee.
 //
 // reflect.Type's Method, MethodByName and FieldByName are deliberately absent:
 // they return a descriptor rather than something to call, and the graph spells
 // them with the *rtype receiver.
-func isReflectDispatcher(calleeID string) bool {
+//
+// It is exported because two readers need the same answer: the hop annotator
+// above, and the read-time negative search that reports which sites in a graph
+// it could not follow. A second list would drift, and the first version of this
+// question counted every call into package reflect and overstated the
+// population by two orders of magnitude.
+func IsReflectDispatcher(calleeID string) bool {
 	switch calleeID {
 	case "reflect.(Value).Call",
 		"reflect.(Value).CallSlice",

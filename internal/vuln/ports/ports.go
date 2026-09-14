@@ -853,6 +853,16 @@ type CallGraphProjection struct {
 	// kind the analysis could not establish takes the library roots, and the
 	// answer states that it did.
 	ArtifactKind string
+	// ReflectiveDispatch is every edge in this graph the analyser recorded as a
+	// call into package reflect AND whose callee picks its target at run time.
+	// Both conditions are applied here, once, against the vuln domain's own list
+	// — see domain.IsReflectDispatcher — so no consumer has to re-derive them and
+	// get the population wrong.
+	//
+	// It is a small derived slice rather than a flag on every edge because the
+	// edge list is the hot part of this projection: a real graph holds hundreds of
+	// thousands of edges and a handful of reflective dispatch sites.
+	ReflectiveDispatch []CallGraphReflectSite
 	// ServableAsCacheHit reports whether the stored graph this projection came
 	// from may stand in for a fresh analysis, or whether the coordinate must be
 	// analysed again. It is false for a record that failed because the analysis
@@ -884,6 +894,22 @@ type CallGraphNode struct {
 type CallGraphEdge struct {
 	FromID string
 	ToID   string
+}
+
+// CallGraphReflectSite is one call site the analysis could not bound: the callee
+// is one of the reflect.Value methods that choose what runs at run time.
+//
+// It carries the call site's position, which CallGraphEdge does not, because a
+// reader told only "this module reflects somewhere" cannot go and look. Two
+// edges from one function to reflect.(Value).FieldByName at different lines are
+// two sites, not one.
+type CallGraphReflectSite struct {
+	CallerID string
+	CalleeID string
+	// File and Line are where in the calling module's source the graph recorded
+	// the site. Both are zero when the edge carried no position.
+	File string
+	Line int
 }
 
 // CallSiteKey names one directed call site: the caller node and the callee node,
