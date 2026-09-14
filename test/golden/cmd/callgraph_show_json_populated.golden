@@ -71,7 +71,8 @@ exit 0
       "from_id": "example.com/mod.Handle",
       "to_id": "example.com/mod.Parse",
       "confidence": "Direct",
-      "kind": "Call"
+      "kind": "Call",
+      "reflect_dispatch": false
     }
   ],
   "overall_status": "Extracted",

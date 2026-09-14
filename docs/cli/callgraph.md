@@ -1135,9 +1135,20 @@ where each is a leaf soundness sink that downgrades a negative answer.
 | `Framework` | An edge bound by a framework model or thunk rather than observed in source |
 | `Unknown` | An edge the analyser cannot resolve. A soundness sink: an answer reaching one is `UNRESOLVED` |
 
-Reflect-dispatched calls carry `Unknown` plus a separate `reflect_dispatch`
-attribute, so the reflect provenance is preserved without inventing a
-confidence rank for it.
+A call into package `reflect` carries `Unknown` plus a separate
+`reflect_dispatch` attribute, so the reflect provenance is preserved without
+inventing a confidence rank for it. Every edge states it in `--json`, `true` or
+`false`, spelled out on both for the reason `kind` is: an absent field puts the
+reader back where they started.
+
+**`reflect_dispatch` means the callee is in package `reflect`, and nothing
+narrower.** It is not a count of calls the analysis could not follow. An edge to
+`reflect.TypeOf` carries it and has exactly one callee. The calls that really are
+unbounded are the five `reflect.Value` methods that pick their target at run time
+— `Call`, `CallSlice`, `Method`, `MethodByName`, `FieldByName` — so filter on
+`to_id` as well as on the attribute. On one 74,797-edge graph the attribute is set
+on 162 edges and 2 of them are of that kind, so reading the attribute alone
+overstates them by about eighty times.
 
 Confidence answers *how was the target resolved*, a different question from
 *what kind of edge is it*. A reference edge is usually `Direct` — the analyser

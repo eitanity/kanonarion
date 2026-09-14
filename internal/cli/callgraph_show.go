@@ -419,6 +419,24 @@ type callEdgeJSON struct {
 	// The domain's zero value is a call and every edge stored before the axis
 	// existed is one, so "Call" is a true statement about all of them.
 	Kind string `json:"kind"`
+	// ReflectDispatch is the analyser's reflect attribute, spelled out on every
+	// edge for the reason Kind is: it is provenance about what the analysis could
+	// see, and an absent field would put the reader back where they started. It
+	// reached no reader at all before, so the one thing the graph records about
+	// reflection could not be read back out of it.
+	//
+	// It means THE CALLEE IS IN PACKAGE reflect, and nothing narrower. It is not
+	// a count of reflective dispatches: an edge to reflect.TypeOf carries it and
+	// has exactly one callee, and summing this field overstates the calls an
+	// analysis cannot bound by about two orders of magnitude. The calls that
+	// really are unbounded are the five reflect.Value methods that choose their
+	// target at run time — Call, CallSlice, Method, MethodByName, FieldByName —
+	// so a reader after those must filter on to_id as well.
+	//
+	// There is no third state. Migration v6 purged every row written before the
+	// column existed, so a false here is measured-and-not-reflect and never
+	// predates-the-attribute.
+	ReflectDispatch bool `json:"reflect_dispatch"`
 }
 
 // edgeKindJSON renders an edge kind for the curated shape, naming the zero
@@ -753,12 +771,13 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 	edges := make([]callEdgeJSON, len(r.Edges))
 	for i, e := range r.Edges {
 		edges[i] = callEdgeJSON{
-			FromID:       e.FromID,
-			ToID:         e.ToID,
-			CallSiteFile: e.CallSite.File,
-			CallSiteLine: e.CallSite.Line,
-			Confidence:   string(e.Confidence),
-			Kind:         edgeKindJSON(e.Kind),
+			FromID:          e.FromID,
+			ToID:            e.ToID,
+			CallSiteFile:    e.CallSite.File,
+			CallSiteLine:    e.CallSite.Line,
+			Confidence:      string(e.Confidence),
+			Kind:            edgeKindJSON(e.Kind),
+			ReflectDispatch: e.ReflectDispatch,
 		}
 	}
 	testNodes := 0
