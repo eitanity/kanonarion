@@ -686,3 +686,42 @@ showing first 3 native records at generation ` + nativedomain.PipelineFingerprin
 		})
 	}
 }
+
+// A transitive traversal bounded by --depth is the same convention on a
+// different shape, and it is asserted here so the two sit together.
+//
+// The bound is stated the same way — a trailing notice on the text path, a
+// `truncated` field and a remedy in the JSON document — and, like every listing
+// above, the command answers 0. ExitPartial(1) means the artefact is
+// known-incomplete: an extraction stage that failed, a module that went
+// unanalysed, a component with no licence identity. An answer bounded at
+// --depth 2 has no hole in it — a narrower question was asked and answered
+// completely — and a governance step that reads 1 as "the evidence is not whole"
+// would flag an intact evidence base because somebody chose a depth.
+func TestTraversalTruncation_StatesTheBoundAndStillAnswersZero(t *testing.T) {
+	for _, jsonOut := range []bool{false, true} {
+		var stdout bytes.Buffer
+		err := runCallersTransitive(context.Background(), "example.com/m.Target", 2, jsonOut,
+			truncatableFake(t, true), &stdout, buildScope{}, cgports.EdgeQueryOptions{}, nil)
+		if err != nil {
+			t.Fatalf("jsonOut=%v: a truncated traversal must answer 0, got %v (exit %d)",
+				jsonOut, err, ExitCodeForError(err))
+		}
+		if jsonOut {
+			var doc struct {
+				Truncated bool   `json:"truncated"`
+				Remedy    string `json:"remedy"`
+			}
+			if derr := json.Unmarshal(stdout.Bytes(), &doc); derr != nil {
+				t.Fatalf("decoding the answer: %v", derr)
+			}
+			if !doc.Truncated || doc.Remedy != "--depth 0" {
+				t.Errorf("the document does not state the bound: %+v", doc)
+			}
+			continue
+		}
+		if !strings.Contains(stdout.String(), "showing transitive callers to depth 2 — more exist beyond it (--depth 0 for the whole closure)") {
+			t.Errorf("the text answer does not state the bound:\n%s", stdout.String())
+		}
+	}
+}

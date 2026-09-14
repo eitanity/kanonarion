@@ -993,11 +993,12 @@ kanonarion callers <symbol-id> [flags]
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit callers declared in `_test.go` files and external test packages |
 | `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
-| `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited) |
+| `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited). A negative value is refused with exit `20` |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
 | `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
+| `--no-progress` | `false` | Suppress the stderr progress lines a `--transitive` traversal writes |
 
 ```
 $ kanonarion callers 'github.com/org/repo/internal/license/adapters/store/sqlite.(*Store).PutLicenseRecord'
@@ -1012,10 +1013,82 @@ $ kanonarion callers '...sqlite.(*Store).PutLicenseRecord' --exclude-tests
 scope: test callers omitted (--exclude-tests was given)
 ```
 
+#### A bounded traversal says it is bounded
+
+`--depth N` stops the walk after N levels. When it stops while symbols are still
+waiting to be followed, the answer is **not** the closure, and it says so on
+both surfaces:
+
+```
+$ kanonarion callers '...cli.currentWalkBuildEnv' --transitive --depth 6
+Transitive callers of ...cli.currentWalkBuildEnv (depth limit: 6) (502 nodes):
+  ...
+showing transitive callers to depth 6 — more exist beyond it (--depth 0 for the whole closure)
+$ echo $?
+0
+```
+
+This is the [truncated-listing
+convention](conventions.md#the-same-convention-on-a-traversal) on a traversal, and
+like a truncated listing it **exits `0`**. The nodes printed are correct and the
+notice says what was not followed; the evidence has no hole in it. Exit `1` means
+the artefact itself is known-incomplete — a failed extraction stage, an
+unanalysed module — and a bounded answer is not that: a narrower question was
+asked and answered completely.
+
+The signal is the unexpanded frontier, not the flag: a `--depth N` that happens
+to reach the closure is not marked. On the graph above, `--depth 16` is cut and
+`--depth 18` is the whole closure, and both are bounded. `--depth 0` expands its
+last frontier by construction, so it is never marked.
+
+`--depth` counts the levels to follow, so a **negative value is refused** with
+exit `20` before anything is read. It names no traversal — the walk would stop
+before its first level and report no callers at all, which for a symbol that has
+thousands is a wrong answer rather than a thin one.
+
+Under `--json` the same statement rides on the result document, and unlike the
+text line it is stated **whether or not the bound bit** — a consumer cannot read
+a field that is not there, so an absent marker could not be told from a build
+that does not say:
+
+```json
+{"root": "...", "direction": "callers", "max_depth": 6, "truncated": true, "remedy": "--depth 0", "node_count": 502, ...}
+```
+
+This is not the [`partial` caveat](#when-a-module-does-not-load) that names
+packages the analysis could not build. That is a hole in the evidence; this is a
+bound you asked for, over evidence that is whole.
+
+#### Progress on a long traversal
+
+A `--transitive` walk narrates on **stderr** once it has been running longer than
+five seconds, one line every five seconds:
+
+```
+callers progress: depth 7, 812 symbols visited (5s elapsed)
+```
+
+The line is on a clock, not on the levels. A single level is not bounded in time
+— one wide frontier against a large edge table is minutes inside one query — so
+the walk keeps reporting while it is still inside that query, and a walk that
+spends its whole life in its first level says so:
+
+```
+callers progress: depth 1, 0 symbols visited (5s elapsed)
+callers progress: depth 1, 0 symbols visited (10s elapsed)
+```
+
+`depth 1, 0 symbols visited` is a true statement, and the useful one: the first
+level has not come back yet.
+
+A run shorter than the interval prints nothing. `--no-progress` and
+`preferences.progress = false` silence it. It never touches stdout, so `--json`
+output is byte-identical with and without it.
+
 ### `callees`
 
 Find every recorded call site where a symbol is the caller. Same flags as
-`callers`.
+`callers`, including `--no-progress` and the truncation statement above.
 
 ### `implementers`
 

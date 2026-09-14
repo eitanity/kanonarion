@@ -272,6 +272,37 @@ type CallGraphFrontierFinder interface {
 	FindCalleesOfEach(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]CallEdgeRef, error)
 }
 
+// TraversalProgressReporter receives the state of a transitive traversal so a
+// read that runs longer than the operator expects can show proof of life. A
+// read command that prints nothing is indistinguishable from a hung one, and
+// the operator's only recourse is to interrupt an answer that was coming.
+//
+// The traversal calls Advance on a wall-clock interval for as long as it runs,
+// passing the depth it is currently expanding and how many symbols it has
+// visited so far. Depth is reported and not only a count because depth against
+// the bound is what says whether the walk is going to end. A nil reporter
+// narrates nothing.
+//
+// On an interval and not at level boundaries, because a level is not bounded in
+// time: a wide frontier against a large edge table is minutes inside one store
+// query, and a reporter that speaks only between levels is silent for all of it.
+// "depth 1, 0 symbols visited" is therefore a true and useful line — it says the
+// first level has not come back yet, which is exactly what a hung-looking
+// command cannot otherwise tell anyone.
+//
+// Advance is called from the traversal's narration goroutine, not from the
+// traversal itself, so implementations must be safe for concurrent use and must
+// not reach back into the traversal's state.
+//
+// Implementations decide whether and how to surface the signal; the CLI writes
+// one line per call to stderr.
+type TraversalProgressReporter interface {
+	// Advance reports that the traversal is expanding level depth, having
+	// visited visited symbols so far. visited excludes the root, so it is the
+	// node count the finished answer will carry.
+	Advance(depth, visited int)
+}
+
 // EdgeQueryOptions narrows a caller/callee query. The zero value is the
 // unrestricted query.
 type EdgeQueryOptions struct {

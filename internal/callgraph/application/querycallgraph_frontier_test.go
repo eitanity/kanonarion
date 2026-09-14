@@ -119,6 +119,19 @@ func layeredCallers() map[string][]string {
 	}
 }
 
+// traversal is the request every case here makes, varying only the bound. The
+// root and pipeline version are fixtures, and no scope or narration is asked
+// for.
+func traversal(depth int) application.TraversalRequest {
+	return application.TraversalRequest{
+		SymbolID:        "root",
+		PipelineVersion: "0.1.0",
+		MaxDepth:        depth,
+		Scope:           coordinate.ModuleSet{},
+		Opts:            cgports.EdgeQueryOptions{},
+	}
+}
+
 // TestTraverseCallers_QueriesOncePerLevel is the regression for the cost defect:
 // the traversal asked the store once per VISITED NODE. The counts come from the
 // store as it is asked, not from a number written into the fixture.
@@ -127,14 +140,14 @@ func TestTraverseCallers_QueriesOncePerLevel(t *testing.T) {
 	graph := layeredCallers()
 
 	perSymbol := &frontierFake{callers: graph}
-	if _, _, err := application.NewQueryCallGraphUseCase(perSymbol).
-		TraverseCallers(ctx, "root", "0.1.0", 0, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}); err != nil {
+	if _, err := application.NewQueryCallGraphUseCase(perSymbol).
+		TraverseCallers(ctx, traversal(0)); err != nil {
 		t.Fatalf("per-symbol traversal: %v", err)
 	}
 
 	batched := &frontierBatchFake{frontierFake{callers: graph}}
-	if _, _, err := application.NewQueryCallGraphUseCase(batched).
-		TraverseCallers(ctx, "root", "0.1.0", 0, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}); err != nil {
+	if _, err := application.NewQueryCallGraphUseCase(batched).
+		TraverseCallers(ctx, traversal(0)); err != nil {
 		t.Fatalf("batched traversal: %v", err)
 	}
 
@@ -187,21 +200,27 @@ func TestTraverseCallers_BothRoutesGiveTheSameAnswer(t *testing.T) {
 	graph := layeredCallers()
 
 	for _, depth := range []int{0, 1, 2, 3, 4, 5} {
-		wantEdges, wantNodes, err := application.NewQueryCallGraphUseCase(&frontierFake{callers: graph}).
-			TraverseCallers(ctx, "root", "0.1.0", depth, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+		want, err := application.NewQueryCallGraphUseCase(&frontierFake{callers: graph}).
+			TraverseCallers(ctx, traversal(depth))
 		if err != nil {
 			t.Fatalf("depth %d, per-symbol traversal: %v", depth, err)
 		}
-		gotEdges, gotNodes, err := application.NewQueryCallGraphUseCase(&frontierBatchFake{frontierFake{callers: graph}}).
-			TraverseCallers(ctx, "root", "0.1.0", depth, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+		got, err := application.NewQueryCallGraphUseCase(&frontierBatchFake{frontierFake{callers: graph}}).
+			TraverseCallers(ctx, traversal(depth))
 		if err != nil {
 			t.Fatalf("depth %d, batched traversal: %v", depth, err)
 		}
-		if !reflect.DeepEqual(gotNodes, wantNodes) {
-			t.Errorf("depth %d: batched nodes = %v, per-symbol nodes = %v", depth, gotNodes, wantNodes)
+		if !reflect.DeepEqual(got.Nodes, want.Nodes) {
+			t.Errorf("depth %d: batched nodes = %v, per-symbol nodes = %v", depth, got.Nodes, want.Nodes)
 		}
-		if !reflect.DeepEqual(gotEdges, wantEdges) {
-			t.Errorf("depth %d: batched edges = %v, per-symbol edges = %v", depth, gotEdges, wantEdges)
+		if !reflect.DeepEqual(got.Edges, want.Edges) {
+			t.Errorf("depth %d: batched edges = %v, per-symbol edges = %v", depth, got.Edges, want.Edges)
+		}
+		// The completeness marker is part of the answer and must agree too: a
+		// route that batched its way past the bound would report a different
+		// frontier at exit.
+		if got.Truncated != want.Truncated {
+			t.Errorf("depth %d: batched truncated = %v, per-symbol truncated = %v", depth, got.Truncated, want.Truncated)
 		}
 	}
 }
@@ -213,8 +232,8 @@ func TestTraverseCallees_QueriesOncePerLevel(t *testing.T) {
 	graph := layeredCallers()
 
 	batched := &frontierBatchFake{frontierFake{callees: graph}}
-	gotEdges, gotNodes, err := application.NewQueryCallGraphUseCase(batched).
-		TraverseCallees(ctx, "root", "0.1.0", 0, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+	got, err := application.NewQueryCallGraphUseCase(batched).
+		TraverseCallees(ctx, traversal(0))
 	if err != nil {
 		t.Fatalf("batched traversal: %v", err)
 	}
@@ -223,16 +242,15 @@ func TestTraverseCallees_QueriesOncePerLevel(t *testing.T) {
 	}
 
 	perSymbol := &frontierFake{callees: graph}
-	wantEdges, wantNodes, err := application.NewQueryCallGraphUseCase(perSymbol).
-		TraverseCallees(ctx, "root", "0.1.0", 0, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+	want, err := application.NewQueryCallGraphUseCase(perSymbol).
+		TraverseCallees(ctx, traversal(0))
 	if err != nil {
 		t.Fatalf("per-symbol traversal: %v", err)
 	}
 	if perSymbol.symbolCalls != 16 {
 		t.Errorf("per-symbol route made %d queries, want 16", perSymbol.symbolCalls)
 	}
-	if !reflect.DeepEqual(gotNodes, wantNodes) || !reflect.DeepEqual(gotEdges, wantEdges) {
-		t.Errorf("the two routes disagree:\n batched  nodes=%v edges=%v\n per-sym  nodes=%v edges=%v",
-			gotNodes, gotEdges, wantNodes, wantEdges)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the two routes disagree:\n batched  %+v\n per-sym  %+v", got, want)
 	}
 }

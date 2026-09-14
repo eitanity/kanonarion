@@ -60,6 +60,7 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 	var transitive bool
 	var depth int
 	var excludeTests bool
+	var noProgress bool
 	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
@@ -76,6 +77,9 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			if derr := checkDepthFlag(depth); derr != nil {
+				return derr
+			}
 			if berr := scopeFlags.bind(cmd); berr != nil {
 				return berr
 			}
@@ -91,7 +95,8 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 			}
 			opts := ports.EdgeQueryOptions{ExcludeTests: excludeTests, Toolchain: sc.toolchain}
 			if transitive {
-				return runCallersTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
+				progress := newTraversalProgressReporter(stderr, noProgress, activeConfig, "callers")
+				return runCallersTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout, sc, opts, progress)
 			}
 			return runCallers(cmd.Context(), args[0], jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
 		},
@@ -100,6 +105,11 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&transitive, "transitive", false, "traverse the call graph transitively, following all reachable edges")
 	cmd.Flags().IntVar(&depth, "depth", 0, "maximum traversal depth for --transitive (0 = unlimited)")
 	registerEdgeScopeFlag(cmd, &excludeTests)
+	// --transitive narrates on stderr now, so the flag that silences narration
+	// has to be accepted here: registerNoProgressFlag's rule runs both ways, and
+	// a command that emits progress without offering the suppression is the same
+	// mismatch as one that offers it without emitting any.
+	registerNoProgressFlag(cmd, &noProgress)
 	registerBuildScopeFlags(cmd, &scopeFlags)
 
 	return cmd
@@ -182,6 +192,7 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 	var transitive bool
 	var depth int
 	var excludeTests bool
+	var noProgress bool
 	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
@@ -196,6 +207,9 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
+			}
+			if derr := checkDepthFlag(depth); derr != nil {
+				return derr
 			}
 			if berr := scopeFlags.bind(cmd); berr != nil {
 				return berr
@@ -212,7 +226,8 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 			}
 			opts := ports.EdgeQueryOptions{ExcludeTests: excludeTests, Toolchain: sc.toolchain}
 			if transitive {
-				return runCalleesTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
+				progress := newTraversalProgressReporter(stderr, noProgress, activeConfig, "callees")
+				return runCalleesTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout, sc, opts, progress)
 			}
 			return runCallees(cmd.Context(), args[0], jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
 		},
@@ -221,6 +236,8 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&transitive, "transitive", false, "traverse the call graph transitively, following all reachable edges")
 	cmd.Flags().IntVar(&depth, "depth", 0, "maximum traversal depth for --transitive (0 = unlimited)")
 	registerEdgeScopeFlag(cmd, &excludeTests)
+	// Registered for the same reason it is on callers: --transitive narrates.
+	registerNoProgressFlag(cmd, &noProgress)
 	registerBuildScopeFlags(cmd, &scopeFlags)
 
 	return cmd
@@ -397,7 +414,19 @@ type transitiveResult struct {
 	// MaxDepth is the depth limit the traversal ran under, and 0 is the answer
 	// "unlimited" rather than the absence of one — the caller always set it, by
 	// flag or by default, so there is no unmeasured state to encode.
-	MaxDepth  int               `json:"max_depth"`
+	MaxDepth int `json:"max_depth"`
+	// Truncated says the walk stopped at MaxDepth still holding symbols it had
+	// found and not expanded, so these are not all of them.
+	//
+	// It is emitted whether or not the bound bit, for the reason
+	// listTruncationJSON gives: a consumer cannot read a field that is not
+	// there, so an absent marker cannot be told from a build that does not say.
+	// It is false on a --depth that happened to reach the closure — a marker
+	// that fired on every bound would be as wrong as one that never fired.
+	Truncated bool `json:"truncated"`
+	// Remedy is the invocation that returns the whole closure. Stated always,
+	// for the same reason Truncated is.
+	Remedy    string            `json:"remedy"`
 	NodeCount int               `json:"node_count"`
 	EdgeCount int               `json:"edge_count"`
 	Nodes     []string          `json:"nodes"`
@@ -409,7 +438,7 @@ type transitiveResult struct {
 	Scope string `json:"scope"`
 }
 
-func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions) error {
+func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions, progress ports.TraversalProgressReporter) error {
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
@@ -417,10 +446,19 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err != nil {
 		return err
 	}
-	edges, nodes, err := uc.TraverseCallers(ctx, symbolID, cgapp.PipelineVersion, maxDepth, sc.modules, opts)
+	res, err := uc.TraverseCallers(ctx, cgapp.TraversalRequest{
+		SymbolID:         symbolID,
+		PipelineVersion:  cgapp.PipelineVersion,
+		MaxDepth:         maxDepth,
+		Scope:            sc.modules,
+		Opts:             opts,
+		Progress:         progress,
+		ProgressInterval: traversalProgressInterval,
+	})
 	if err != nil {
 		return fmt.Errorf("traversing callers: %w", err)
 	}
+	edges, nodes := res.Edges, res.Nodes
 
 	// A transitive walk is emptied by the same conditions a single hop is —
 	// a module never analysed, a symbol that is not a node, a module served by
@@ -460,7 +498,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
-	if err := printTransitiveResult("callers", symbolID, maxDepth, nodes, edges, jsonOut, stdout, opts); err != nil {
+	if err := printTransitiveResult("callers", symbolID, maxDepth, res, jsonOut, stdout, opts); err != nil {
 		return err
 	}
 	if len(nodes) > 0 && !jsonOut {
@@ -479,7 +517,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	return nil
 }
 
-func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions) error {
+func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions, progress ports.TraversalProgressReporter) error {
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
@@ -487,10 +525,19 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err != nil {
 		return err
 	}
-	edges, nodes, err := uc.TraverseCallees(ctx, symbolID, cgapp.PipelineVersion, maxDepth, sc.modules, opts)
+	res, err := uc.TraverseCallees(ctx, cgapp.TraversalRequest{
+		SymbolID:         symbolID,
+		PipelineVersion:  cgapp.PipelineVersion,
+		MaxDepth:         maxDepth,
+		Scope:            sc.modules,
+		Opts:             opts,
+		Progress:         progress,
+		ProgressInterval: traversalProgressInterval,
+	})
 	if err != nil {
 		return fmt.Errorf("traversing callees: %w", err)
 	}
+	edges, nodes := res.Edges, res.Nodes
 
 	// A transitive walk is emptied by the same conditions a single hop is —
 	// a module never analysed, a symbol that is not a node, a module served by
@@ -530,7 +577,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
-	if err := printTransitiveResult("callees", symbolID, maxDepth, nodes, edges, jsonOut, stdout, opts); err != nil {
+	if err := printTransitiveResult("callees", symbolID, maxDepth, res, jsonOut, stdout, opts); err != nil {
 		return err
 	}
 	if len(nodes) > 0 && !jsonOut {
@@ -549,7 +596,47 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	return nil
 }
 
-func printTransitiveResult(direction, root string, maxDepth int, nodes []string, edges []ports.CallEdgeRef, jsonOut bool, stdout io.Writer, opts ports.EdgeQueryOptions) error {
+// checkDepthFlag refuses a negative --depth.
+//
+// --depth counts the levels a traversal may follow, so a negative value names no
+// traversal at all: the walk stops before its first level, expands nothing, and
+// comes back with no nodes and an unexpanded frontier holding the root. That
+// renders as "No transitive callers found" — a measured absence — for a symbol
+// with thousands of callers, and no caveat printed under that headline makes it
+// true.
+//
+// It is refused where the value enters rather than special-cased in the
+// renderer, because the contradiction cannot arise any other way. A bound of 0
+// is never truncated; under a bound of 1 or more, a walk that exits truncated
+// queued at least one symbol, and a symbol is queued only after it joins the
+// visited set — so its node list is non-empty by construction.
+// Truncated-with-no-nodes is reachable through a negative bound and nothing
+// else, and closing that leaves the renderer no case to handle.
+//
+// ExitConfig, not ExitPartial: nothing was measured and no answer was produced,
+// which is exactly what 20 says. It is checked before the store is opened, for
+// the same reason.
+func checkDepthFlag(depth int) error {
+	if depth >= 0 {
+		return nil
+	}
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+		"--depth %d is not a bound: --depth counts the levels to follow, so it cannot be negative (%s for the whole closure, --depth 1 for one hop)",
+		depth, traversalDepthRemedy)}
+}
+
+// traversalDepthRemedy is the invocation that lifts a depth bound. It is one
+// constant because the JSON field and the text notice must name the same
+// remedy, and two copies is how they come to disagree.
+const traversalDepthRemedy = "--depth 0"
+
+// printTransitiveResult renders one traversal answer on the surface the reader
+// asked for. It takes the whole TraversalResult rather than its parts because
+// the completeness marker is not separable from the nodes it qualifies — and
+// because "truncated" and "jsonOut" as adjacent bool parameters is a call site
+// that compiles when it is transposed.
+func printTransitiveResult(direction, root string, maxDepth int, res cgapp.TraversalResult, jsonOut bool, stdout io.Writer, opts ports.EdgeQueryOptions) error {
+	nodes, edges, truncated := res.Nodes, res.Edges, res.Truncated
 	if jsonOut {
 		if nodes == nil {
 			nodes = []string{}
@@ -558,6 +645,8 @@ func printTransitiveResult(direction, root string, maxDepth int, nodes []string,
 			Root:      root,
 			Direction: direction,
 			MaxDepth:  maxDepth,
+			Truncated: truncated,
+			Remedy:    traversalDepthRemedy,
 			NodeCount: len(nodes),
 			EdgeCount: len(edges),
 			Nodes:     nodes,
@@ -572,6 +661,11 @@ func printTransitiveResult(direction, root string, maxDepth int, nodes []string,
 		return nil
 	}
 
+	// An empty answer is never truncated, so there is no notice to print here:
+	// a walk that exits holding a frontier queued at least one symbol, and a
+	// symbol is queued only after it joins the visited set. The bound that could
+	// have broken that — a negative --depth, which stops the walk before its
+	// first level — is refused at the flag.
 	if len(nodes) == 0 {
 		if _, err := fmt.Fprintf(stdout, "No transitive %s found for %s\n", direction, root); err != nil {
 			return fmt.Errorf("writing output: %w", err)
@@ -590,6 +684,43 @@ func printTransitiveResult(direction, root string, maxDepth int, nodes []string,
 		if _, err := fmt.Fprintf(stdout, "  %s\n", n); err != nil {
 			return fmt.Errorf("writing node: %w", err)
 		}
+	}
+	return writeTraversalTruncationNotice(stdout, direction, maxDepth, truncated)
+}
+
+// writeTraversalTruncationNotice states on the text path that a traversal
+// stopped at the bound the reader gave it, in the register
+// writeListTruncationNotice uses: what was shown, that more exists, and the
+// invocation that lifts the bound.
+//
+// Nothing is written when the walk completed. Silence there already means
+// "these are all of them" to every reader — the defect was that it meant that
+// even when it was false — so a complete answer needs no new line, and now the
+// reading is true.
+//
+// It is deliberately NOT writePartialNotice or writeDroppedEdgesNotice. Those
+// name packages the ANALYSIS could not build: a hole in the evidence. This is a
+// bound the READER asked for, over evidence that is whole. One notice for both
+// would tell an operator the measurement has a gap when it has none, and this
+// tool gives evidence, so a manufactured gap is a wrong answer of its own.
+//
+// For the same reason the command still exits 0. ExitPartial means the artefact
+// is known-incomplete — a failed extraction stage, an unanalysed module, a
+// component with no licence identity — and an answer bounded at --depth 3 has no
+// hole in it: a narrower question was asked and answered completely. The exit
+// code is the most machine-readable thing this tool says about whether its
+// evidence is whole, and a governance step reading 1 as "evidence incomplete"
+// would flag an intact evidence base because somebody chose a depth. This is
+// the listing convention exactly: callgraph-list --limit 5 prints its notice and
+// answers 0.
+func writeTraversalTruncationNotice(stdout io.Writer, direction string, maxDepth int, truncated bool) error {
+	if !truncated {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"showing transitive %s to depth %d — more exist beyond it (%s for the whole closure)\n",
+		direction, maxDepth, traversalDepthRemedy); err != nil {
+		return fmt.Errorf("writing traversal truncation notice: %w", err)
 	}
 	return nil
 }

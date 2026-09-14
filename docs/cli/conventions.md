@@ -532,6 +532,31 @@ This applies to `licence-list`/`license-list`, `interface-list`, `examples-list`
 `callgraph-list`, `native-list`, `vuln-scan-list`, `walk-list`, `extract list`
 and `directives list`. `sbom-list` applies no limit and returns its whole population.
 
+**A truncated listing exits `0`.** The rows it printed are correct and the notice
+says what it withheld; nothing about the evidence is incomplete. Exit `1` is
+reserved for an artefact that is [known-incomplete](#exit-codes) — a failed
+extraction stage, an unanalysed module — which is a different statement.
+
+### The same convention on a traversal
+
+`callers --transitive` and `callees --transitive` bound the walk with `--depth N`
+rather than `--limit`, and state it the same way. The text path prints one
+trailing line **only when the bound bit**:
+
+```
+showing transitive callers to depth 6 — more exist beyond it (--depth 0 for the whole closure)
+```
+
+Under `--json` the [result document](callgraph.md#a-bounded-traversal-says-it-is-bounded)
+carries `truncated` and `remedy` on **every** traversal, true or false, for the
+same reason the listing fields are always stated. The command exits `0` either
+way.
+
+The signal is the frontier the walk had not expanded, not the presence of the
+flag: a `--depth N` that happens to reach the closure is complete and is not
+marked. `--depth 0` follows every hop and is never marked. A **negative**
+`--depth` names no traversal at all and is refused with exit `20`.
+
 ---
 
 ## Paging

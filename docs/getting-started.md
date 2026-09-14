@@ -322,8 +322,12 @@ They do not all cost the same.
   `dependents`) takes tens of milliseconds.
 - Walking the call graph (`callers`, `callees`, `implementers`) takes well under
   a second on this store.
-- Following the graph transitively (`--transitive`) is much slower. A depth-3
-  caller traversal over 544 nodes took 67 seconds. Always pass `--depth`.
+- Following the graph transitively (`--transitive`) costs more. On this store a
+  depth-3 caller traversal takes about two seconds, and following every caller
+  with no depth limit takes about thirteen.
+
+`--depth N` stops after N steps. If there was more to follow, the last line of
+the answer says so. Run it again with `--depth 0` to get all of them.
 
 **Can I ship this module and everything it depends on?**
 

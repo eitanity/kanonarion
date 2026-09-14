@@ -280,7 +280,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `version` | string (read-only) | `"1"` |
 | `preferences.json` | bool | `true` |
 | `preferences.log_level` | string | `debug` / `info` / `warn` / `error` |
-| `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect`/`audit`/`sbom` runs; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
+| `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect`/`audit`/`sbom` runs, and the traversal lines a `callers`/`callees` `--transitive` walk writes; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
 | `license_policy.categories.<name>` | sequence | `[MIT, Apache-2.0]` |
 | `license_policy.rules` | sequence (read-only) | - |
 | `license_policy.rules[].unknown_license` | string (read-only, edit the file) | `allow` / `notify` / `warn` / `block` - see below |

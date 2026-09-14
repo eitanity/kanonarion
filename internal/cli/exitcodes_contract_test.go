@@ -281,6 +281,14 @@ func TestExitCodeContract_UsageAndPreconditionsStayConfig(t *testing.T) {
 		{"store schema newer than binary", ExitConfig, func(t *testing.T) error {
 			return newerStoreError("/tmp/mirror.db", storeSchemaState{unknown: []string{"999_future"}})
 		}},
+		// A negative --depth names no traversal: the walk stops before its
+		// first level and measures nothing. It belongs here and NOT with the
+		// known-incomplete answers above, because there is no answer — it used
+		// to render "No transitive callers found" for a symbol with thousands
+		// of callers, at exit 0.
+		{"callers --transitive --depth -1", ExitConfig, func(_ *testing.T) error {
+			return checkDepthFlag(-1)
+		}},
 	})
 }
 

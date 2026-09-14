@@ -154,10 +154,11 @@ func (d CopyrightDeclaration) Validate() error {
 type Preferences struct {
 	JSON     bool
 	LogLevel string
-	// Progress enables the throttled fetch-phase progress heartbeat on long
-	// walk/inspect runs. Default true; set false (or pass --no-progress) for
-	// fully silent runs. The heartbeat is written to stderr, never stdout, so it
-	// never affects --json output.
+	// Progress enables stderr narration on long runs: the throttled fetch-phase
+	// heartbeat on walk/inspect, and the transitive call-graph traversal's
+	// progress line. Default true; set false (or pass --no-progress) for fully
+	// silent runs. Narration is written to stderr, never stdout, so it never
+	// affects --json output.
 	Progress bool
 }
 
