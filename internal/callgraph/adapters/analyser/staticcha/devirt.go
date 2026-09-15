@@ -27,8 +27,9 @@ import (
 // type implements it, an edge to that type's M is added: if M has a built SSA
 // function the edge targets that node; otherwise a leaf node is synthesised so
 // the edge — and the completeness signal it carries — still exists. Onward
-// edges from an unbuilt body are out of scope; reasoning through an unbuilt
-// body is a completeness/verdict concern, not this pass's.
+// edges from an unbuilt body are out of scope: what an answer may claim when it
+// passes through a body this analysis never built is settled by what the record
+// states about its own completeness, and not by this pass.
 //
 // The pass is additive and sound: it only adds edges the type hierarchy permits
 // and that CHA would itself have added had the body been built, so it cannot
@@ -281,8 +282,9 @@ func implementerMethod(named *types.Named, ifaceMethod *types.Func) *types.Func 
 
 // devirtTargetNode returns the graph node for methodObj: the existing SSA node
 // when the method body was built, or a synthesised leaf node when it was not
-// (type-only dependency / unbuilt package). The leaf carries no onward edges —
-// that is the completeness/verdict concern, not this pass's.
+// (type-only dependency / unbuilt package). The leaf carries no onward edges,
+// because what an answer may claim beyond a body this analysis never built is
+// settled by what the record states about its own completeness, and not here.
 func (a *Analyser) devirtTargetNode(
 	prog *ssa.Program,
 	methodObj *types.Func,
@@ -319,10 +321,7 @@ func leafNodeFromFunc(
 	pos := domain.SourcePosition{}
 	if methodObj.Pos() != token.NoPos && fset != nil {
 		if p := fset.Position(methodObj.Pos()); p.IsValid() {
-			pos = domain.SourcePosition{
-				File: roots.rel(p.Filename),
-				Line: p.Line,
-			}
+			pos = roots.position(p)
 		}
 	}
 
@@ -371,8 +370,9 @@ func fnInModule(fn *ssa.Function, mem moduleMembership) bool {
 	return mem.contains(fn.Package().Pkg.Path())
 }
 
-// sitePosition returns the module-relative file and line of a call
-// instruction's source position, empty/zero when it has none.
+// sitePosition returns the file and line a call instruction's source position
+// is recorded as, empty/zero when it has none a reader could use — which covers
+// both an instruction with no position and one inside the build cache.
 func sitePosition(instr ssa.Instruction, fset *token.FileSet, roots sourceRoots) (string, int) {
 	if fset == nil || instr.Pos() == token.NoPos {
 		return "", 0
@@ -381,7 +381,8 @@ func sitePosition(instr ssa.Instruction, fset *token.FileSet, roots sourceRoots)
 	if !p.IsValid() {
 		return "", 0
 	}
-	return roots.rel(p.Filename), p.Line
+	pos := roots.position(p)
+	return pos.File, pos.Line
 }
 
 // edgeKey is the deduplication key for a call edge: caller, callee, and call

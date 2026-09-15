@@ -567,7 +567,9 @@ version when the stdlib came from a toolchain downloaded as a module (`go1.26.6
 (from the recorded stdlib path)`), the directory when it came from an installed
 GOROOT (`unnamed version at GOROOT /usr/local/go`, which names no version because
 a GOROOT is upgraded in place), and `not recorded` when the graph carries no
-stdlib path at all. Under `--json`, `toolchain` carries that identity — reading
+stdlib path at all. That recovery reads a GOROOT out of an absolute stdlib path,
+so it applies only to those older records: a record whose stdlib positions are
+`GOROOT`-relative names its toolchain outright and has nothing to recover. Under `--json`, `toolchain` carries that identity — reading
 `not recorded` where the record establishes no version, including where a plain
 GOROOT names none — and `toolchain_stated` is `null` unless the record itself
 named one.
@@ -875,9 +877,9 @@ append-only ledger makes permanent and that names no route out is a dead end.
 
 The graph comparison is over the **graph** and nothing else: the node, edge,
 interface and implementation collections and the counts stated with them. Where
-a node **outside** the analysed module is declared is not part of it: that is a
-path in the analysing host's toolchain and module cache, so the same stdlib
-symbol comes back under whichever `GOROOT` loaded it. The module's own
+a node **outside** the analysed module is declared is not part of it: it is a
+position in somebody else's tree, so the same stdlib symbol comes back at a
+different line under whichever toolchain loaded it. The module's own
 declaration positions are relative to its root and are compared. Two
 generations that recorded the same graph and described their run differently —
 different `failure_cause`, `failure_detail` or failed-package set — are **not**
@@ -1193,10 +1195,43 @@ constructing them by hand.
 | `uses_unsafe_pointer` | The body performs an `unsafe.Pointer` conversion |
 | `is_assembly_or_linkname` | The function has no Go body (assembly or `//go:linkname`) |
 | `uses_plugin` | The body references the Go `plugin` package |
+| `position_file`, `position_line` | Where the symbol is declared. Absent when the record states no position — see below |
 
-The last three are body-level facts a callee-identity map cannot witness. They
+The three body-level facts are ones a callee-identity map cannot witness. They
 are used by [`capability`](capability.md) analysis and by the answer layer,
 where each is a leaf soundness sink that downgrades a negative answer.
+
+### Where a position points
+
+A position names a file the way the record can state it without naming the host
+that ran the analysis, because a record is a checkable statement about one
+measurement and a path through somebody's home directory is not checkable by
+anyone else. Four cases, and a reader can tell them apart by looking:
+
+| The file is | It reads as | Example |
+|-------------|-------------|---------|
+| the analysed module's own source | relative to the module root | `active_help.go`, `lib/hooks.go` |
+| a dependency's source | relative to the module cache: the module, its version, the file | `github.com/spf13/pflag@v1.0.10/flag.go` |
+| the standard library | relative to `GOROOT` | `src/fmt/print.go` |
+| generated into the Go build cache | **nothing — the node carries no position** | |
+
+The build-cache case is the one that is omitted rather than rewritten. A
+build-cache entry is content-addressed, so its name changes every time the entry
+is rebuilt and it identifies no file a reader could open. Recording it made a
+record that changed when nothing about the module had changed, which is a
+generation appended for ever and, once two of them disagreed, a coordinate that
+could not be read at all. Every cgo-generated symbol and every synthetic
+`.test` main is declared there.
+
+A node with no position carries **no position at all** — not a line number with
+an empty file. `--json` omits `position_file` and `position_line` together; the
+text surfaces that print a location print `(position not recorded)`.
+
+A path that belongs to none of the four — an analysis whose toolchain could not
+be asked where its directories are — is recorded exactly as the loader reported
+it, leading `/` and all. It is not made to look relative. A record that shows an
+absolute path is telling you it names a place on the analysing host, which is
+what a reader needs to know.
 
 ## Edge confidence
 

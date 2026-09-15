@@ -488,6 +488,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
 	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
+	// Where the analysis's own toolchain keeps the standard library, the module
+	// cache and the files it generates. The analyser renders every recorded source
+	// position against those roots, so that nothing about this host reaches the
+	// seal and a build-cache entry — content-addressed, and a different path every
+	// time it is rebuilt — is given no position at all.
+	cganalyser.SetSourceDirsProbe(goSourceDirsProbe)
 	// The analyser narrates its phases to the same place the spawners copy a
 	// child's to. This process is one or the other, never both: as a child it
 	// writes the lines its parent's stall detector reads, and as a parent it

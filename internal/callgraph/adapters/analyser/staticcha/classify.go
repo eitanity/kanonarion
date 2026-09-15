@@ -21,12 +21,8 @@ func buildNode(fn *ssa.Function, mem moduleMembership, fset *token.FileSet, root
 
 	pos := domain.SourcePosition{}
 	if fn.Pos() != token.NoPos && fset != nil {
-		p := fset.Position(fn.Pos())
-		if p.IsValid() {
-			pos = domain.SourcePosition{
-				File: roots.rel(p.Filename),
-				Line: p.Line,
-			}
+		if p := fset.Position(fn.Pos()); p.IsValid() {
+			pos = roots.position(p)
 		}
 	}
 
@@ -309,62 +305,147 @@ func isMainPkg(fn *ssa.Function) bool {
 }
 
 // sourceRoots are the per-run directories a file the loader resolved may sit
-// under, and relativising against them is what keeps a directory name this
-// process invented out of the record.
+// under, and rendering a path against them is what keeps the analysing host out
+// of the record.
 //
 // It is not cosmetic, and the reason is the one moduleRelative states for
 // failure detail: a node position is inside the record's canonical form, so a
-// random component in one means no two analyses of an unchanged module ever
-// produce the same record. Every repeat then appends a generation, for ever.
-// Foreign positions reached that shape the moment the analysis stopped reading
-// the host's module cache and started reading one it had built.
+// component that moves between two runs means no two analyses of an unchanged
+// module ever produce the same record. Every repeat then appends a generation,
+// for ever, and once two generations disagree the coordinate stops being
+// readable at all.
 //
-// module is the extracted module, whose own files are recorded relative to it —
-// api.go, lib/hooks.go. moduleCache is the materialised GOMODCACHE, whose files
-// are recorded relative to IT, which spells a dependency's file as
-// github.com/json-iterator/go@v1.1.9/adapter.go: the module, its version and the
-// file, and nothing about where this run put them. It is empty when the analysis
-// reads a cache this run did not create — a working tree's, or the operator's
-// under --from-modcache — where the path is a real place a reader can open.
+// Four roots, each with its own answer:
+//
+//   - module is the extracted module, whose own files are recorded relative to
+//     it — api.go, lib/hooks.go.
+//   - buildCache is the Go build cache. A file under it is recorded with NO
+//     position at all: the entry is content-addressed, so its path names no file
+//     a reader can open and changes whenever the entry is rebuilt. Every
+//     cgo-generated symbol and every synthetic .test main is positioned there.
+//   - goroot holds the standard library, recorded relative to GOROOT —
+//     src/fmt/print.go. It is tried before the module cache because a toolchain
+//     fetched as a module lives INSIDE the cache, and spelling its files against
+//     the cache would put the toolchain version into the position as well, where
+//     the record already states it on its own axis.
+//   - moduleCache is the GOMODCACHE the load resolved from, whose files are
+//     recorded relative to IT, which spells a dependency's file as
+//     github.com/json-iterator/go@v1.1.9/adapter.go: the module, its version and
+//     the file, and nothing about where this host keeps them. It holds whichever
+//     cache the run read — one it materialised, the operator's under
+//     --from-modcache, or the host's — because the same analysis run two ways
+//     has to record the same bytes.
 type sourceRoots struct {
 	module      string
 	moduleCache []string
+	goroot      []string
+	buildCache  []string
 }
 
-// newSourceRoots states the roots for one analysis. Both spellings of the cache
-// root are held: the loader reports the path it resolved, which on a host whose
-// temporary directory is a symlink is not the path this process created.
-func newSourceRoots(module, moduleCache string) sourceRoots {
-	r := sourceRoots{module: module}
-	if moduleCache == "" {
-		return r
-	}
-	r.moduleCache = append(r.moduleCache, moduleCache)
-	if resolved, err := filepath.EvalSymlinks(moduleCache); err == nil && resolved != moduleCache {
-		r.moduleCache = append(r.moduleCache, resolved)
-	}
-	return r
+// SourceDirs are the directories the toolchain THIS analysis drives resolves
+// files from, as that toolchain itself names them: `go env GOROOT GOCACHE
+// GOMODCACHE`.
+//
+// They are asked for rather than guessed. A build-cache path is recognised
+// because the toolchain says where its cache is, never because a path contains
+// "go-build": the cache moves with GOCACHE, and a rule that read a directory
+// name would both miss a cache that had moved and claim one that had not.
+//
+// It is exported because the probe that fills it is implemented at the
+// composition root — this package must not spawn processes — and a caller there
+// has to be able to name what it is answering.
+type SourceDirs struct {
+	GOROOT      string
+	BuildCache  string
+	ModuleCache string
 }
 
-// rel renders one resolved path as the record states it.
-func (r sourceRoots) rel(path string) string {
-	for _, root := range r.moduleCache {
-		if trimmed := strings.TrimPrefix(path, root+string(filepath.Separator)); trimmed != path && trimmed != "" {
-			return trimmed
+// newSourceRoots states the roots for one analysis.
+//
+// Both spellings of each root are held: the loader reports the path it resolved,
+// which on a host whose directory is reached through a symlink is not the path
+// this process or the toolchain named.
+func newSourceRoots(module, moduleCache string, dirs SourceDirs) sourceRoots {
+	return sourceRoots{
+		module: module,
+		// Both the cache the run named and the one the toolchain resolved: the same
+		// directory whenever the run set GOMODCACHE itself, and different exactly
+		// when the analysis reads a cache it did not create — the host's, or the
+		// operator's under --from-modcache. Those have to be spelled the way a
+		// materialised cache is, or one analysis run two ways records two records.
+		moduleCache: append(bothSpellings(moduleCache), bothSpellings(dirs.ModuleCache)...),
+		goroot:      bothSpellings(dirs.GOROOT),
+		buildCache:  bothSpellings(dirs.BuildCache),
+	}
+}
+
+// bothSpellings names a root the way it was given and the way the filesystem
+// resolves it, so a loader that reports either one is recognised.
+func bothSpellings(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	out := []string{dir}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != dir {
+		out = append(out, resolved)
+	}
+	return out
+}
+
+// rel renders one resolved path as the record states it, and reports whether the
+// record states it at all. A false means the file has no position a reader could
+// use and none is recorded — not an empty string in a field that elsewhere holds
+// a path.
+func (r sourceRoots) rel(path string) (string, bool) {
+	if _, under := relativeToAny(r.buildCache, path); under {
+		return "", false
+	}
+	if rel, ok := relativeToAny(r.goroot, path); ok {
+		return rel, true
+	}
+	if rel, ok := relativeToAny(r.moduleCache, path); ok {
+		return rel, true
+	}
+	if rel, ok := relativeToRoot(r.module, path); ok {
+		return rel, true
+	}
+	// No root this run knows contains it. The path stays exactly as the loader
+	// reported it, absolute leading separator and all. Trimming that separator is
+	// what disguised an absolute path as a repo-relative one and hid this for as
+	// long as it hid: a path that cannot be made relative must stay visibly
+	// absolute, so a reader can see that it names a place on someone else's host.
+	return path, true
+}
+
+// relativeToAny renders path against the first of roots that contains it.
+func relativeToAny(roots []string, path string) (string, bool) {
+	for _, root := range roots {
+		if rel, ok := relativeToRoot(root, path); ok {
+			return rel, true
 		}
 	}
-	return relativePath(path, r.module)
+	return "", false
 }
 
-// relativePath strips tempDir prefix from path for cleaner output.
-func relativePath(path, tempDir string) string {
-	if tempDir == "" {
-		return path
+// relativeToRoot renders path relative to root, and reports whether root
+// contains it at all. An empty root contains nothing.
+func relativeToRoot(root, path string) (string, bool) {
+	if root == "" {
+		return "", false
 	}
-	rel := strings.TrimPrefix(path, tempDir)
-	rel = strings.TrimPrefix(rel, string(filepath.Separator))
-	if rel == "" {
-		return path
+	rel := strings.TrimPrefix(path, root+string(filepath.Separator))
+	if rel == path || rel == "" {
+		return "", false
 	}
-	return rel
+	return rel, true
+}
+
+// position renders one resolved source position as the record states it, or the
+// zero position when the file it names is one no reader can open.
+func (r sourceRoots) position(p token.Position) domain.SourcePosition {
+	file, ok := r.rel(p.Filename)
+	if !ok {
+		return domain.SourcePosition{}
+	}
+	return domain.SourcePosition{File: file, Line: p.Line}
 }

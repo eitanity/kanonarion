@@ -50,9 +50,10 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	}
 
 	// failedSet accumulates target package import paths whose typecheck or SSA
-	// construction failed. It is the machine-readable companion to LoadErrs:
-	// verdicts over the resulting Partial graph are caveated per package, not by
-	// node/edge totals.
+	// construction failed. It is the machine-readable companion to LoadErrs: an
+	// answer read out of the resulting Partial graph can name the packages it
+	// does not cover, rather than leaving the size of the gap to be inferred
+	// from node and edge totals.
 	failedSet := make(map[string]bool)
 	markFailed := func(pkgPath string) {
 		if pkgPath != "" {
