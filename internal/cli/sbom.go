@@ -68,9 +68,13 @@ Exit codes:
      licence. The document IS written, names them, and names the command
      that supplies each missing record; a licence-less SBOM must never pass
      as complete
-  4  the walk or package scope named does not exist
-  20 bad invocation (missing walk id and --package, unparseable coordinate,
-     unparseable --generated-at, ...)`,
+  20 the command never got as far as a document: a walk id or --package
+     scope that names nothing, a missing walk id and no --package, an
+     unparseable coordinate, an unparseable --generated-at. A walk id is
+     minted by a run and cannot be produced on request, so there is no
+     command to print for it and the invocation is what has to change —
+     which is why it is a 20 here and a 4 on the commands that resolve a
+     record from a coordinate you can name`,
 		Example: `  kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --output sbom.json
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --package ./cmd/kanonarion

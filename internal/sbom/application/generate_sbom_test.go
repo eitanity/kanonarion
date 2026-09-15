@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -106,10 +105,6 @@ func (f *fakeSBOMGenerator) GeneratorMetadata() ports.GeneratorMetadata {
 	return ports.GeneratorMetadata{Name: "fake", Version: "0.0.1"}
 }
 
-type fakeClock struct{}
-
-func (f fakeClock) Now() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-
 // ---- helpers ----
 
 func makeWalk(id string) walkdomain.WalkRecord {
@@ -147,7 +142,6 @@ func makeUCWithLicenses(ws *fakeWalkStore, ls *fakeLicenseStore, ss *fakeSBOMSto
 		ls,
 		ss,
 		gen,
-		fakeClock{},
 		"0.3.0",
 		testLicensePipelineVersion,
 		slog.Default(),

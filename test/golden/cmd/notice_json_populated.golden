@@ -1,0 +1,68 @@
+# THE DOCUMENTED NO-OP: --json returns the same document, by decision. An attribution document has no separate machine-readable projection, and the flag that means machine-readable everywhere else must not be the one that WITHHOLDS the deliverable. Recorded so that adding a second rendering moves a file rather than passing green; its control is notice_text_populated, which it must match byte for byte.
+$ kanonarion notice 01ARZ3NDEKTSV4RRFFQ69G5FB1 --json
+exit 0
+--- stdout ---
+THIRD-PARTY-LICENSES
+
+This project uses the following third-party software.
+
+================================================================================
+Module:  example.com/cgolib@v0.4.2
+License: BSD-3-Clause
+
+Copyright notices:
+  Copyright (c) 2026, Example Cgolib Authors
+
+BSD-3-Clause (LICENSE):
+
+BSD 3-Clause License
+
+Copyright (c) 2026, Example Cgolib Authors
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the above copyright notice is
+retained.
+
+================================================================================
+Module:  example.com/plainlib@v1.1.0
+License: Apache-2.0
+
+Copyright notices:
+  Copyright 2026 Example Plainlib Authors
+
+Apache-2.0 (LICENSE):
+
+Apache License, Version 2.0
+
+Copyright 2026 Example Plainlib Authors
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this file except in compliance with the License.
+
+Notice file (NOTICE):
+
+Example Plainlib
+Copyright 2026 Example Plainlib Authors
+
+This product includes software developed at Example.
+
+================================================================================
+Module:  example.com/product@v1.4.0
+License: MIT
+
+Copyright notices:
+  Copyright (c) 2026 Example Product Authors
+
+MIT (LICENSE):
+
+MIT License
+
+Copyright (c) 2026 Example Product Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction.
+
+================================================================================
+--- stderr ---
+notice: scope: walk 01ARZ3NDEKTSV4RRFFQ69G5FB1 (3 module(s))

@@ -1,0 +1,9 @@
+# error-shaped, and the one that matters most on this command: a positional that is not a walk id is REFUSED by name. Accepted and discarded, notice would fall through to the working tree's go.mod and answer a question nobody asked, with an exit code.
+$ kanonarion notice THIRD-PARTY-LICENSES
+exit 20
+--- error ---
+execute root command: "THIRD-PARTY-LICENSES" is not a walk id: notice takes an optional walk id (a 26-character identifier, as 'kanonarion walk-list' prints), or --gomod <path> / --package <pattern> to scope from the working tree
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

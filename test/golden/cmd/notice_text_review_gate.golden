@@ -1,0 +1,12 @@
+# ERROR-SHAPED: one module in the walk has no licence record, so the document is NOT published. The gate exits 5 — a policy gate on real findings, distinct from 20 for a bad invocation — so a pipeline can route it to a person rather than to a build fixer. The review list names the module and the reason, and stdout stays empty: a partial NOTICE is worse than none.
+$ kanonarion notice 01ARZ3NDEKTSV4RRFFQ69G5FB2
+exit 5
+--- error ---
+execute root command: 1 module(s) require review
+--- stdout ---
+(empty)
+--- stderr ---
+notice: scope: walk 01ARZ3NDEKTSV4RRFFQ69G5FB2 (4 module(s))
+notice: 1 module(s) require human review before publishing:
+
+  example.com/unlicensed@v1.0.0: no license record: run 'kanonarion license' first

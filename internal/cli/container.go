@@ -693,7 +693,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
-		clk, sbomPipelineVersion, licapp.PipelineVersion, logger,
+		sbomPipelineVersion, licapp.PipelineVersion, logger,
 	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil))).
 		// What a component's external references may assert. Without it a
 		// document states no origin for anything rather than guessing one.

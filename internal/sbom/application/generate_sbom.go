@@ -9,7 +9,6 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
@@ -27,7 +26,6 @@ type GenerateSBOMUseCase struct {
 	licenseStore    licenseports.LicenseStore
 	sbomStore       ports.SBOMStore
 	generator       ports.SBOMGenerator
-	clock           fetchports.Clock
 	pipelineVersion string
 	// licensePipelineVersion is the licence extraction pipeline version under
 	// which licence records are persisted. It is distinct from the SBOM's own
@@ -91,12 +89,19 @@ func (uc *GenerateSBOMUseCase) WithVendorTree(r ports.VendorTreeReader) *Generat
 // NewGenerateSBOMUseCase returns a new GenerateSBOMUseCase.
 // licensePipelineVersion names the licence extraction pipeline version used
 // to look up licence records for the walk's modules.
+//
+// It takes NO CLOCK, and that is the decision rather than an omission. The
+// document's metadata.timestamp is either a creation time the caller supplied
+// via --generated-at or the newest licence extraction time among the inputs;
+// nothing in this pipeline reads the wall clock, so re-emitting a document from
+// the same recorded inputs yields the same bytes. A clock was accepted here and
+// never read, which said the opposite of what was settled, and it is what led a
+// later reader to believe the test clock pinned the document's timestamp.
 func NewGenerateSBOMUseCase(
 	walkStore walkports.WalkStore,
 	licenseStore licenseports.LicenseStore,
 	sbomStore ports.SBOMStore,
 	generator ports.SBOMGenerator,
-	clock fetchports.Clock,
 	pipelineVersion string,
 	licensePipelineVersion string,
 	logger *slog.Logger,
@@ -106,7 +111,6 @@ func NewGenerateSBOMUseCase(
 		licenseStore:           licenseStore,
 		sbomStore:              sbomStore,
 		generator:              generator,
-		clock:                  clock,
 		pipelineVersion:        pipelineVersion,
 		licensePipelineVersion: licensePipelineVersion,
 		logger:                 logger,

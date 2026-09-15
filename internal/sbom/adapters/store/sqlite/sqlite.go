@@ -114,6 +114,31 @@ FROM sbom_records WHERE id = ?`, id)
 	return r, nil
 }
 
+// sbomRecency is how every read here orders documents, and it is one clause
+// rather than three so the rule cannot drift between the listing and the cache
+// lookup.
+//
+// generated_at alone is not a total order. A document with no --generated-at is
+// stamped with the newest licence extraction time among its inputs (see
+// documentTimestamp in the CycloneDX generator), so two documents built from one
+// licence basis carry the SAME instant by construction — not by coincidence, and
+// not only when a second happens to be shared. Ordered on that column alone the
+// store returned them in whatever order it liked, and a caller reading "most
+// recent first" was reading an arbitrary one.
+//
+// rowid breaks it, and it is total: this is a rowid table (no WITHOUT ROWID
+// clause above), so every row has one and no two rows share it. It is also the
+// right tiebreak rather than merely an available one — it is append order, so
+// within a shared instant the document produced LATER comes first, which is what
+// "most recent" already meant. Re-generating a document upserts on its id and
+// keeps its rowid, so a re-run does not reshuffle the listing. This is the rule
+// the call-graph generation ladder settled on for the same defect.
+//
+// generated_at is written as RFC3339 in UTC with no fractional part, so it is
+// fixed-width and its lexicographic order is its chronological order; the
+// mixed-precision comparison hazard does not arise on this column.
+const sbomRecency = `ORDER BY generated_at DESC, rowid DESC`
+
 // ListSBOMRecords returns all SBOM records for a walk, most recent first.
 func (s *Store) ListSBOMRecords(ctx context.Context, walkID string) ([]domain.SBOMRecord, error) {
 	var (
@@ -125,13 +150,13 @@ func (s *Store) ListSBOMRecords(ctx context.Context, walkID string) ([]domain.SB
 SELECT id, ecosystem, walk_id, format, pipeline_version, generated_at,
        content_hash, content, operator, licenses_incomplete
 FROM sbom_records
-ORDER BY generated_at DESC`)
+`+sbomRecency)
 	} else {
 		rows, err = s.db.DB().QueryContext(ctx, `
 SELECT id, ecosystem, walk_id, format, pipeline_version, generated_at,
        content_hash, content, operator, licenses_incomplete
 FROM sbom_records WHERE walk_id = ?
-ORDER BY generated_at DESC`, walkID)
+`+sbomRecency, walkID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("listing sbom records: %w", err)
@@ -161,7 +186,7 @@ SELECT id, ecosystem, walk_id, format, pipeline_version, generated_at,
        content_hash, content, operator, licenses_incomplete
 FROM sbom_records
 WHERE walk_id = ? AND format = ? AND pipeline_version = ?
-ORDER BY generated_at DESC LIMIT 1`, walkID, string(format), pipelineVersion)
+`+sbomRecency+` LIMIT 1`, walkID, string(format), pipelineVersion)
 	r, err := scanRecord(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.SBOMRecord{}, false, nil

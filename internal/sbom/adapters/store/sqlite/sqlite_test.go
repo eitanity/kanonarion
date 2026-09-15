@@ -246,3 +246,82 @@ func TestOpenInvalidDSN(t *testing.T) {
 		t.Fatal("expected an error opening a store at an unwritable path")
 	}
 }
+
+// Two documents stamped at ONE instant must list in a fixed order, and it must
+// be append order: the one produced later comes first, which is what "most
+// recent first" already meant.
+//
+// The tie is not contrived. A document generated with no --generated-at is
+// stamped with the newest licence extraction time among its inputs, so two
+// documents built over one licence basis carry the same instant by construction.
+// Before the tiebreak this listing returned whichever order the store felt like,
+// and a golden recorded over it would have frozen an accident.
+//
+// Ten repetitions, not two: an undefined order can agree with itself by luck
+// across a couple of reads on one connection.
+func TestListSBOMRecords_TiedTimestampsOrderByAppend(t *testing.T) {
+	s := openTestStore(t)
+	tied := time.Date(2026, 2, 17, 8, 15, 0, 0, time.UTC)
+
+	first := makeRecord("sbom-tie-first", "walk-A")
+	first.GeneratedAt = tied
+	second := makeRecord("sbom-tie-second", "walk-B")
+	second.GeneratedAt = tied
+
+	for _, rec := range []domain.SBOMRecord{first, second} {
+		if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
+			t.Fatalf("PutSBOMRecord %s: %v", rec.ID, err)
+		}
+	}
+
+	for i := range 10 {
+		got, err := s.ListSBOMRecords(t.Context(), "")
+		if err != nil {
+			t.Fatalf("ListSBOMRecords (read %d): %v", i+1, err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("read %d: want 2 records, got %d", i+1, len(got))
+		}
+		if got[0].ID != second.ID || got[1].ID != first.ID {
+			t.Fatalf("read %d: want the later append first (%s, %s), got (%s, %s)",
+				i+1, second.ID, first.ID, got[0].ID, got[1].ID)
+		}
+	}
+}
+
+// The CONTROL for the tie above: where the instants differ, the timestamp still
+// decides and append order never overrides it. Without this a tiebreak that had
+// swallowed the primary key would pass the test above and be wrong.
+func TestListSBOMRecords_DistinctTimestampsStayNewestFirst(t *testing.T) {
+	s := openTestStore(t)
+
+	// Appended in the order that makes append order DISAGREE with recency: the
+	// older document is written last, so a listing that ignored generated_at
+	// would put it first.
+	newer := makeRecord("sbom-newer", "walk-A")
+	newer.GeneratedAt = time.Date(2026, 2, 17, 8, 15, 0, 0, time.UTC)
+	older := makeRecord("sbom-older", "walk-B")
+	older.GeneratedAt = time.Date(2026, 2, 3, 11, 30, 0, 0, time.UTC)
+
+	for _, rec := range []domain.SBOMRecord{newer, older} {
+		if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
+			t.Fatalf("PutSBOMRecord %s: %v", rec.ID, err)
+		}
+	}
+
+	got, err := s.ListSBOMRecords(t.Context(), "")
+	if err != nil {
+		t.Fatalf("ListSBOMRecords: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != newer.ID || got[1].ID != older.ID {
+		t.Fatalf("want newest first (%s, %s), got %v", newer.ID, older.ID, idsOf(got))
+	}
+}
+
+func idsOf(records []domain.SBOMRecord) []string {
+	out := make([]string, len(records))
+	for i, r := range records {
+		out[i] = r.ID
+	}
+	return out
+}

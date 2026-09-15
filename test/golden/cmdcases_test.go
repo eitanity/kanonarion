@@ -40,12 +40,30 @@ package golden_test
 //	verification-coverage --json.
 //	dependents            --json under --any-build, and the refusal a question that
 //	                      names no build gets.
+//	sbom                  the CycloneDX document itself, which has one channel and
+//	                      not two; POPULATED (every component licensed, including a
+//	                      NON-GO component under pkg:generic with its evidence block
+//	                      and its dependsOn edge), the caller-supplied timestamp
+//	                      basis as its control, the exit-1 document a licence-less
+//	                      component produces, a walk that brought nothing in, an
+//	                      absent walk, and an invocation that names no scope.
+//	sbom-list             --json and text; the records two generations left behind,
+//	                      the zero where none has been generated, and the FILTERED
+//	                      zero that must not read like it.
+//	sbom-show             the absent identifier. Its populated case is deliberately
+//	                      absent — see sbom_show_absent for why.
+//	notice                the THIRD-PARTY-LICENSES document; POPULATED (identity,
+//	                      copyright and verbatim text read back out of each stored
+//	                      artefact, with an Apache NOTICE headed as a notice), the
+//	                      --json no-op that must keep returning the same bytes, the
+//	                      exit-5 review gate that publishes nothing, the walk that
+//	                      brought nothing in, an absent walk, and a positional that
+//	                      is not a walk id.
 //
 // NOT COVERED, and named rather than implied:
 //
 //	interface-show / interface-diff / interface-list
 //	examples-* / symbol-* / implementers / callers / callees
-//	sbom / sbom-show / sbom-list / notice
 //	inspect / vuln-scan / vuln / fetch / walk / extract / license / callgraph
 //	capability / fips / godebug / directives / vendor / provenance / use
 //	store / config / policy / local / vuln-snapshot-list / vuln-snapshot-show
@@ -159,6 +177,10 @@ func commandCases(t *testing.T, emptyStore, project string, audit *auditFixture)
 	cases = append(cases, composedReadCases(emptyStore)...)
 	cases = append(cases, configShowCases(emptyStore)...)
 	cases = append(cases, auditCases(t, gomod, project, unroutable, audit)...)
+	cases = append(cases, sbomCases(t)...)
+	// One store for the read-only document cases. The sbom cases above each
+	// build their own, because generating a document writes one.
+	cases = append(cases, noticeCases(buildDocumentStore(t))...)
 	return cases
 }
 
@@ -777,4 +799,199 @@ func buildFixtureProject(t *testing.T) string {
 		}
 	}
 	return dir
+}
+
+// sbomCases cover the CycloneDX document — the artefact kanonarion exists to
+// hand to somebody else — and the two listings over the records it leaves.
+//
+// It is the strongest instance of the composition argument this file makes
+// elsewhere. An SBOM is assembled from the walk graph, the licence records, the
+// fetch ledger's origin data, the vendored tree, the stdlib custody facts and
+// the native-component records — six sources, combined by rules that live in the
+// generator and in no struct. A change to any of those rules moves no record's
+// shape and no other recorded surface.
+//
+// Every case here gets its OWN store. `sbom` persists a record and appends an
+// assurance event, so a shared root would make the listings answer differently
+// depending on which case ran first — the dependency prime exists to keep inside
+// one case.
+func sbomCases(t *testing.T) []cmdCase {
+	t.Helper()
+	return []cmdCase{
+		{
+			name:      "sbom_populated",
+			args:      []string{"sbom", docWalkID},
+			storeRoot: buildDocumentStore(t),
+			why: "POPULATED: every component carries a licence identity, so the document publishes and the " +
+				"command exits 0. It holds the NON-GO component — a C library a cgo module compiles in from " +
+				"source its own zip ships — as a pkg:generic entry with a CycloneDX evidence block naming the " +
+				"file and the verbatim declaration its version was read from, and a dependsOn edge from the " +
+				"host module. A change to how six sources compose into one inventory moves this file and " +
+				"nothing else in the suite.",
+		},
+		{
+			name:      "sbom_caller_supplied_timestamp",
+			args:      []string{"sbom", docWalkID, "--generated-at", "2026-03-01T09:00:00Z"},
+			storeRoot: buildDocumentStore(t),
+			why: "THE OTHER TIMESTAMP BASIS, and the control for sbom_populated. metadata.timestamp has two " +
+				"sources and the document states which one it used: a creation time the caller supplied, or " +
+				"the newest licence extraction time among its inputs when none was. The generator reads no " +
+				"clock on either path. The pair is what shows the basis property tracks the invocation " +
+				"rather than being a constant. A stamped document is also ephemeral — it is generated, not " +
+				"served, and not stored.",
+		},
+		{
+			name:      "sbom_undetermined_licences",
+			args:      []string{"sbom", docWalkGapID},
+			storeRoot: buildDocumentStore(t),
+			why: "ERROR-SHAPED, and the shape a release pipeline branches on: one component carries no " +
+				"licence identity. The document IS written — exit 1 with the whole inventory on stdout — and " +
+				"the refusal names the component and the command that supplies the record it lacks. The exit " +
+				"code is in this golden, so a change that turned the gap into a silent zero would move it.",
+		},
+		{
+			name:      "sbom_no_dependencies",
+			args:      []string{"sbom", docWalkBareID},
+			storeRoot: buildDocumentStore(t),
+			why: "THE ZERO: a walk that brought nothing in. The document still names its subject and says so " +
+				"in one component rather than answering with an empty list or nothing at all.",
+		},
+		{
+			name:      "sbom_unknown_walk",
+			args:      []string{"sbom", "01ARZ3NDEKTSV4RRFFQ69G5FZZ"},
+			storeRoot: buildDocumentStore(t),
+			why: "error-shaped: no walk with this identifier, so there is no graph to inventory. The exit " +
+				"code is 20, and it was the HELP TEXT that was wrong about it — `sbom --help` stated `4  " +
+				"the walk or package scope named does not exist` while the command returned 20, and the " +
+				"help was corrected in the same change as this case. docs/cli/conventions.md holds the " +
+				"authoritative table and lists neither sbom nor notice in its exit-4 row: a walk id is " +
+				"minted by a run, so a refusal naming one can print no command to produce it and the " +
+				"invocation is what has to change. Pinned here and in the exit-code contract test, " +
+				"because the temptation on reading that mismatch is to correct the other side.",
+		},
+		{
+			name:      "sbom_no_scope",
+			args:      []string{"sbom"},
+			storeRoot: buildDocumentStore(t),
+			why: "error-shaped: neither a walk id nor --package, so the command is not told what to " +
+				"inventory. Refused before the store is opened.",
+		},
+		{
+			name: "sbom_list_json_populated",
+			args: []string{"sbom-list", "--json"},
+			// PRIMED: two documents generated into this case's own store. What
+			// they leave behind is what the listing reads, so the recorded rows
+			// depend on this case and not on declaration order.
+			prime:     [][]string{{"sbom", docWalkID}, {"sbom", docWalkBareID}},
+			storeRoot: buildDocumentStore(t),
+			why: "populated: the records two generations left behind, across walks, and they TIE on " +
+				"generated_at — see sbom_list_text_populated for why that is the fixture's point rather " +
+				"than its accident. licenses_incomplete is written at every row: it is the condition " +
+				"behind the non-zero exit, and a caller that cannot read it per record cannot tell a " +
+				"complete artefact from an incomplete one without opening every document.",
+		},
+		{
+			name:      "sbom_list_text_populated",
+			args:      []string{"sbom-list"},
+			prime:     [][]string{{"sbom", docWalkID}, {"sbom", docWalkBareID}},
+			storeRoot: buildDocumentStore(t),
+			why: "populated, text, OVER A TIE: both documents carry the same generated_at, because a " +
+				"document generated with no --generated-at is stamped with the newest licence extraction " +
+				"time among its inputs and this fixture has one licence basis. That is the state two " +
+				"documents are in by construction, not a coincidence. The listing orders on generated_at " +
+				"and then on append order, so the document produced LATER comes first — and this file is " +
+				"the check that the tie is broken rather than resolved by whatever the store returned.",
+		},
+		{
+			name:      "sbom_list_json_empty",
+			args:      []string{"sbom-list", "--json"},
+			storeRoot: buildDocumentStore(t),
+			why: "empty: the store holds walks and no SBOM has been generated from any of them. The zero " +
+				"says how many records were considered and what to run to produce one, rather than " +
+				"answering [] and leaving the reader to guess whether the filter or the store was empty.",
+		},
+		{
+			name:      "sbom_list_json_unknown_walk",
+			args:      []string{"sbom-list", "--json", "--walk", "01ARZ3NDEKTSV4RRFFQ69G5FZZ"},
+			prime:     [][]string{{"sbom", docWalkID}},
+			storeRoot: buildDocumentStore(t),
+			why: "the FILTERED zero, and the control for sbom_list_json_empty: records exist and none " +
+				"matches this walk. The two zeros must not read alike — one says nothing was generated, the " +
+				"other says nothing matched — and the filtered one names the field it filtered on.",
+		},
+	}
+}
+
+// noticeCases cover the THIRD-PARTY-LICENSES document.
+//
+// It leaves the building the way the SBOM does, and it composes differently: the
+// licence records supply the identity and the copyright, and the verbatim text
+// is read back out of each module's stored artefact. A document that named every
+// licence correctly and reproduced none of the text would satisfy every
+// record-shaped assertion in the suite.
+//
+// The store is shared here because notice only READS. Nothing a notice case does
+// is visible to the next one.
+func noticeCases(docStore string) []cmdCase {
+	return []cmdCase{
+		{
+			name:      "notice_text_populated",
+			args:      []string{"notice", docWalkID},
+			storeRoot: docStore,
+			why: "POPULATED: two dependencies and the subject, each with its identity, its copyright " +
+				"statements and its licence text reproduced verbatim from the stored artefact. One module " +
+				"carries an Apache NOTICE beside its LICENSE, headed as a notice rather than as a grant — " +
+				"section 4(d) makes it travel with the work whether or not the detector classified it.",
+		},
+		{
+			name:      "notice_json_populated",
+			args:      []string{"notice", docWalkID, "--json"},
+			storeRoot: docStore,
+			why: "THE DOCUMENTED NO-OP: --json returns the same document, by decision. An attribution " +
+				"document has no separate machine-readable projection, and the flag that means " +
+				"machine-readable everywhere else must not be the one that WITHHOLDS the deliverable. " +
+				"Recorded so that adding a second rendering moves a file rather than passing green; its " +
+				"control is notice_text_populated, which it must match byte for byte.",
+		},
+		{
+			name:      "notice_text_review_gate",
+			args:      []string{"notice", docWalkGapID},
+			storeRoot: docStore,
+			why: "ERROR-SHAPED: one module in the walk has no licence record, so the document is NOT " +
+				"published. The gate exits 5 — a policy gate on real findings, distinct from 20 for a bad " +
+				"invocation — so a pipeline can route it to a person rather than to a build fixer. The " +
+				"review list names the module and the reason, and stdout stays empty: a partial NOTICE is " +
+				"worse than none.",
+		},
+		{
+			name:      "notice_text_no_dependencies",
+			args:      []string{"notice", docWalkBareID},
+			storeRoot: docStore,
+			why: "THE ZERO: a walk that brought nothing in. The document is the subject's own attribution " +
+				"and nothing else, and the scope line still states which walk answered.",
+		},
+		{
+			name:      "notice_text_unknown_walk",
+			args:      []string{"notice", "01ARZ3NDEKTSV4RRFFQ69G5FZZ"},
+			storeRoot: docStore,
+			why:       "error-shaped: no walk with this identifier, so there is no module set to attribute.",
+		},
+		{
+			name:      "notice_text_not_a_walk_id",
+			args:      []string{"notice", "THIRD-PARTY-LICENSES"},
+			storeRoot: docStore,
+			why: "error-shaped, and the one that matters most on this command: a positional that is not a " +
+				"walk id is REFUSED by name. Accepted and discarded, notice would fall through to the " +
+				"working tree's go.mod and answer a question nobody asked, with an exit code.",
+		},
+		{
+			name:      "sbom_show_absent",
+			args:      []string{"sbom-show", "sbom-000000000000000000000000"},
+			storeRoot: docStore,
+			why: "error-shaped: no stored document with this identifier. sbom-show's POPULATED case is " +
+				"deliberately absent: the record id is derived from the walk id and the SBOM pipeline " +
+				"version, so a literal one here would turn a version bump into a not-found rather than into " +
+				"a readable diff, and the bytes it would print are already recorded by sbom_populated.",
+		},
+	}
 }

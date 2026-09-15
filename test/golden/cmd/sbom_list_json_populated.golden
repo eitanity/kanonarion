@@ -1,0 +1,30 @@
+# populated: the records two generations left behind, across walks, and they TIE on generated_at — see sbom_list_text_populated for why that is the fixture's point rather than its accident. licenses_incomplete is written at every row: it is the condition behind the non-zero exit, and a caller that cannot read it per record cannot tell a complete artefact from an incomplete one without opening every document.
+$ kanonarion sbom-list --json
+exit 0
+--- stdout ---
+[
+  {
+    "id": "sbom-0ed0d446e8b1df79da9df249",
+    "ecosystem": "go",
+    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FB3",
+    "format": "cyclonedx-1.6",
+    "pipeline_version": "0.10.0",
+    "generated_at": "2026-02-03T11:30:00Z",
+    "content_hash": "6351d56adc31e34a7061318b869b3858f44dbb2cebdeac98c070f9cfc58f7e7a",
+    "operator": "",
+    "licenses_incomplete": false
+  },
+  {
+    "id": "sbom-6ab110cfbe74526bbc14ccc9",
+    "ecosystem": "go",
+    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+    "format": "cyclonedx-1.6",
+    "pipeline_version": "0.10.0",
+    "generated_at": "2026-02-03T11:30:00Z",
+    "content_hash": "03f5a152b738f1a820b4ade37605064bd2499c7f990a725458461a070b80ba9f",
+    "operator": "",
+    "licenses_incomplete": false
+  }
+]
+--- stderr ---
+(empty)

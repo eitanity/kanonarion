@@ -1,0 +1,8 @@
+# populated, text, OVER A TIE: both documents carry the same generated_at, because a document generated with no --generated-at is stamped with the newest licence extraction time among its inputs and this fixture has one licence basis. That is the state two documents are in by construction, not a coincidence. The listing orders on generated_at and then on append order, so the document produced LATER comes first — and this file is the check that the tie is broken rather than resolved by whatever the store returned.
+$ kanonarion sbom-list
+exit 0
+--- stdout ---
+sbom-0ed0d446e8b1df79da9df249  walk=01ARZ3NDEKTSV4RRFFQ69G5FB3  format=cyclonedx-1.6   2026-02-03T11:30:00Z
+sbom-6ab110cfbe74526bbc14ccc9  walk=01ARZ3NDEKTSV4RRFFQ69G5FB1  format=cyclonedx-1.6   2026-02-03T11:30:00Z
+--- stderr ---
+(empty)
