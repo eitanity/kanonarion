@@ -673,16 +673,33 @@ means the command did its job and the answer is one a human must accept or
 reject — it must not be routed to whoever fixes broken invocations. A 20 means
 the invocation itself was wrong.
 
+A refusal naming a command is not by itself a 4, and neither is naming a command
+that would produce the record. What decides it is whether the line printed can be
+**run as it stands**.
+
+A 4 names an invocation the reader can copy and run, and running it produces the
+missing record — `kanonarion callgraph example.com/mod@v1.2.0`, `kanonarion
+local`. The request was well-formed and the store was empty.
+
+A 20 is the rest. Either the command named only helps the caller **correct their
+argument** — `kanonarion callgraph-show example.com/mod@v1.2.0` to list a
+module's known symbols, a diagnostic rather than a remedy — or nothing in the
+store can supply the coordinate a producing command needs, so the refusal can
+print only that command's **shape**: `kanonarion callgraph <module>@<version>`.
+A template is not a remedy. [Every remedy printed is an invocation this CLI's own
+parser accepts](#zero-result-listings); where the store cannot name one, the
+code says the invocation is what has to change.
+
 ### Which commands use which codes
 
 | Code | Commands |
 |---|---|
 | 1 | `walk`, `inspect` (partial closure); `extract` (the run is recorded partial — the stages that ran ARE stored, and the failed-stage breakdown names the rest); `callgraph`, `local` (a `Partial` graph — it IS still an answer, and the failed packages line scopes what it does not cover); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs); `use` (some modules with a stored artefact did not reach the module cache); `vuln-scan` (some modules in the walk were not analysed) |
 | 2 | `walk`, `inspect` (target unfetchable); `callgraph`, `local` (no graph at all: `LoadFailed`, or a `Partial` that measured no function); `extract` (the run itself failed and produced no usable stage); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity); `use` (no module reached the module cache); `vuln-scan` (no module in the walk was analysed) |
-| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed) |
+| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree) |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review); `interface-diff --used-by` (the consumer's own code calls a declaration the bump removes or changes) |
 | 10 | any command consuming a record whose content hash does not verify, or that meets two records for one coordinate which disagree — a walk node, a fetched artefact, an extraction run, a call graph, an interface, a licence, an example, a vulnerability record, an advisory snapshot or the stdlib facts. A store-inspection command reports the same condition and exits 0 (see [Store layout](#store-layout)); a consuming command fails closed |
-| 20 | every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)) |
+| 20 | every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)); `callers`, `callees`, `implementers` (a symbol or interface that is in no served graph at all — a typo, unexported or unreachable code, or a module never analysed: the invocation named something that is not there. A module nothing has analysed cannot be named as a coordinate either — the store knows no version for it — so the refusal shows the form of the producing command, `kanonarion callgraph <module>@<version>`, rather than one that can be run; that is why it is a 20 and not a 4) |
 
 A policy gate is only a 5 when it *fired on findings*. A policy **file** that
 cannot be found or parsed is a 20 — that is a broken invocation, not a verdict.

@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
@@ -365,5 +367,152 @@ func TestExitCodeContract_ClassesAreDistinct(t *testing.T) {
 				code, other, name)
 		}
 		seen[code] = name
+	}
+}
+
+// ---- class: a record this build declines to serve -> ExitNotFound(4) ------
+
+// supersededUsageFixture is the usage command's half of the superseded
+// condition: the store holds the project's own call graph and holds it only
+// under superseded extraction logic, so the join has nothing to read.
+func supersededUsageFixture(t *testing.T) usageFixture {
+	t.Helper()
+	fx := newUsageFixture(t, usageFixtureOpts{projectMissing: true, moduleNodes: usageModuleNodes()})
+	fx.cg.AddRecord(usageProjectCoord(t), "0.4.1", builtRecord(usageNodes(), usageDefaultEdges()))
+	return fx
+}
+
+// A pipeline bump makes every record written before it unservable until it is
+// re-derived. That is one condition, and the five commands that serve a
+// call-graph record answered it with two codes: callgraph-show and usage with 4,
+// callers, callees and implementers with 20, because their refusals were built
+// as plain errors and fell through to the catch-all.
+//
+// The rule that decides it is conventions.md: a 4 means the request was
+// well-formed and the named remedy command fixes it, and these refusals name
+// `kanonarion callgraph <coord>` or `kanonarion local`, which produce the
+// missing record. They are asserted together, in one case, so the five cannot
+// drift apart again.
+func TestExitCodeContract_SupersededRecordIsNotFoundEverywhere(t *testing.T) {
+	runExitCases(t, []exitCase{
+		{"callgraph-show", ExitNotFound, func(t *testing.T) error {
+			return runCallGraphShow(context.Background(), "example.com/app@v1.0.0",
+				callGraphShowFlags{}, false, supersededStore(t), &bytes.Buffer{})
+		}},
+		{"usage", ExitNotFound, func(t *testing.T) error {
+			fx := supersededUsageFixture(t)
+			return usageWith(context.Background(), fx.ctr, usageModCoord(),
+				buildScopeFlags{gomod: fx.gomod, gomodSet: true}, &bytes.Buffer{}, &bytes.Buffer{})
+		}},
+		{"callers", ExitNotFound, func(t *testing.T) error {
+			return runCallers(context.Background(), "example.com/app.Root", false,
+				supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})
+		}},
+		{"callees", ExitNotFound, func(t *testing.T) error {
+			return runCallees(context.Background(), "example.com/app.Root", false,
+				supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})
+		}},
+		{"implementers", ExitNotFound, func(t *testing.T) error {
+			return runImplementers(context.Background(), "example.com/app.Store", false,
+				supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})
+		}},
+		// The same condition reached through a build scope: the scope resolves the
+		// module to a version nothing has analysed, and the printed command
+		// analyses that version.
+		{"callers --gomod, in-build version never analysed", ExitNotFound, func(t *testing.T) error {
+			uc := fakeWithRecord("example.com/dep", "v1.0.0", cgapp.PipelineVersion,
+				builtRecord([]cgdomain.CallNode{{ID: "example.com/dep.Foo", Symbol: "Foo"}}, nil))
+			sc := buildScope{
+				modules: coordinate.NewModuleSet([]coordinate.ModuleCoordinate{
+					coordinatetest.MustNew("example.com/dep", "v2.0.0"),
+				}),
+				source: `walk "w1"`,
+			}
+			return checkSymbolInScope(context.Background(), "example.com/dep.Foo", uc, sc)
+		}},
+		// The one superseded refusal that can name no remedy, because the store
+		// holds no version of the module to re-analyse. Still 4: the record does
+		// not exist, and being unable to name what produces it does not make the
+		// caller's invocation wrong.
+		{"callers, superseded with no nameable version", ExitNotFound, func(t *testing.T) error {
+			return supersededPipelineError("example.com/app.Root", "example.com/app", nil)
+		}},
+	})
+}
+
+// Only the code moved. The message an operator reads is the one the ticket
+// measured, byte for byte — it names both pipeline versions, states that the
+// empty answer is for want of a measurement rather than a claim about the code,
+// and picks the remedy from the coordinate.
+func TestExitCodeContract_SupersededMessageIsUnchanged(t *testing.T) {
+	const want = `symbol "example.com/app.Root" belongs to module "example.com/app", ` +
+		`whose every stored call graph was produced by superseded extraction logic: ` +
+		`this build serves pipeline ` + cgapp.PipelineVersion + ` and the store holds v1.0.0 at pipeline 0.4.1. ` +
+		`A superseded record is not served, so this answer is empty for want of a measurement ` +
+		`of this module, not because the code holds nothing. Re-analyse it:` + "\n" +
+		`  kanonarion callgraph example.com/app@v1.0.0`
+
+	err := runCallers(context.Background(), "example.com/app.Root", false,
+		supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})
+	if err == nil {
+		t.Fatal("want the superseded refusal, got nil")
+	}
+	if got := err.Error(); got != want {
+		t.Errorf("the refusal's wording changed; only the exit code was meant to move\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// Control, asserted apart from the malformed-invocation one below: a symbol
+// nothing has ever analysed, and a symbol in a served module that is not a node
+// in its graph, both keep ExitConfig. Their messages name a command that lists
+// what IS there so the reader can correct what they typed — a diagnostic, not a
+// remedy that produces the missing measurement. Collapsing these into 4 is the
+// opposite defect.
+func TestExitCodeContract_UnknownSymbolStaysConfig(t *testing.T) {
+	served := func(t *testing.T) *testfakes.FakeQueryCallGraph {
+		t.Helper()
+		rec := builtRecord([]cgdomain.CallNode{{ID: "example.com/dep.Foo", Symbol: "Foo"}}, nil)
+		rec.Interfaces = []cgdomain.InterfaceType{
+			{ID: "example.com/dep.Store", Package: "example.com/dep", Name: "Store", Methods: []string{"Put"}},
+		}
+		return fakeWithRecord("example.com/dep", "v1.0.0", cgapp.PipelineVersion, rec)
+	}
+
+	for name, err := range map[string]error{
+		"callers, module never analysed": runCallers(context.Background(), "example.com/never/analysed.Foo", false,
+			served(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{}),
+		"callers, symbol is not a node in a served graph": runCallers(context.Background(), "example.com/dep.Typo", false,
+			served(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{}),
+		"callees, symbol is not a node in a served graph": runCallees(context.Background(), "example.com/dep.Typo", false,
+			served(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{}),
+		"implementers, interface not declared by a served module": runImplementers(context.Background(), "example.com/dep.NoSuch", false,
+			served(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{}),
+	} {
+		if err == nil {
+			t.Errorf("%s: want a refusal, got nil", name)
+			continue
+		}
+		if code := ExitCodeForError(err); code != ExitConfig {
+			t.Errorf("%s answers exit %d; a symbol that is genuinely not in a served graph is %d, not the not-found class",
+				name, code, ExitConfig)
+		}
+	}
+}
+
+// Control, asserted apart from the unknown-symbol one above: an invocation that
+// never named a query keeps ExitConfig.
+func TestExitCodeContract_MalformedCallGraphInvocationStaysConfig(t *testing.T) {
+	for name, err := range map[string]error{
+		"callgraph-show, unparseable coordinate": runCallGraphShow(context.Background(), "not a coordinate at all",
+			callGraphShowFlags{}, false, supersededStore(t), &bytes.Buffer{}),
+		"callers --transitive --depth -1": checkDepthFlag(-1),
+	} {
+		if err == nil {
+			t.Errorf("%s: want a refusal, got nil", name)
+			continue
+		}
+		if code := ExitCodeForError(err); code != ExitConfig {
+			t.Errorf("%s answers exit %d, want %d: the invocation itself was wrong", name, code, ExitConfig)
+		}
 	}
 }

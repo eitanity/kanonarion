@@ -129,10 +129,16 @@ func supersededPipelineError(symbolID, modulePath string, stored []ports.CallGra
 		// No stored version for this module path: there is no coordinate to name a
 		// re-analysis of, and inventing one would print an invocation that resolves
 		// to nothing.
-		return fmt.Errorf(
+		//
+		// Still ExitNotFound, and not the invocation-error code, even though this
+		// is the one superseded refusal that names no remedy: the record this
+		// build serves does not exist, which is what the code reports. Being
+		// unable to name what would produce it does not make the caller's
+		// invocation wrong.
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"symbol %q belongs to module %q, whose stored call graphs were produced by "+
 				"superseded extraction logic and name no version this build can re-analyse",
-			symbolID, modulePath)
+			symbolID, modulePath)}
 	}
 	remedyCoord, cErr := coordinate.NewModuleCoordinate(modulePath, versions[0])
 	if local {
@@ -142,13 +148,16 @@ func supersededPipelineError(symbolID, modulePath string, stored []ports.CallGra
 		return fmt.Errorf("naming the re-analysis of module %q: %w", modulePath, cErr)
 	}
 	remedy := "  " + domain.ReanalysisInstruction(remedyCoord, "")
-	return fmt.Errorf(
+	// ExitNotFound, the same code callgraph-show and usage already answer for
+	// this condition: the request is well-formed and the named command produces
+	// the record it asks for.
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 		"symbol %q belongs to module %q, whose every stored call graph was produced by "+
 			"superseded extraction logic: this build serves pipeline %s and the store holds "+
 			"%s at pipeline %s. A superseded record is not served, so this answer is empty for want "+
 			"of a measurement of this module, not because the code holds nothing. Re-analyse it:\n%s",
 		symbolID, modulePath, cgapp.PipelineVersion,
-		strings.Join(versions, ", "), strings.Join(was, ", "), remedy)
+		strings.Join(versions, ", "), strings.Join(was, ", "), remedy)}
 }
 
 // moduleServedAtThisPipeline reports whether any served record covers
@@ -225,12 +234,15 @@ func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphU
 			symbolID, modulePath, sc.source, strings.Join(versions, ", "),
 			modulePath, versions[0])
 	default:
-		return fmt.Errorf(
+		// ExitNotFound: the build names a version, nothing has analysed it, and
+		// the printed command produces exactly that record. Nothing about the
+		// invocation is wrong.
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"symbol %q belongs to module %q, which %s resolves to %s — a version that "+
 				"has not been analysed; analysed versions are %s. Analyse the version "+
 				"the build uses:\n  kanonarion callgraph %s@%s",
 			symbolID, modulePath, sc.source, strings.Join(inBuild, ", "),
-			strings.Join(versions, ", "), modulePath, inBuild[0])
+			strings.Join(versions, ", "), modulePath, inBuild[0])}
 	}
 }
 
@@ -827,6 +839,10 @@ func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, 
 // carried because callgraph-show takes a coordinate: naming the path alone
 // prints a line that exits 20, and where the store holds several versions the
 // reader also has to be told which ones exist to pick between them.
+//
+// It stays on ExitConfig, unlike the superseded refusals above. The command it
+// names lists the symbols that ARE there so the reader can correct what they
+// typed; it produces no missing measurement, and a diagnostic is not a remedy.
 func unknownNodeMessage(symbolID, modulePath string, versions []string) string {
 	held := ""
 	if len(versions) > 1 {

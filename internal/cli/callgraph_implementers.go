@@ -556,6 +556,10 @@ func methodNodeID(impl domain.InterfaceImplementation, method string) string {
 // versions are the analysed versions of the module, newest first: callgraph-show
 // takes a coordinate, so the line needs one, and where several were analysed the
 // reader is told which.
+//
+// It stays on ExitConfig: the command it names lists what was analysed so the
+// reader can correct the interface they typed, which is a diagnostic rather than
+// a remedy that produces the missing record.
 func implementersUnknownError(interfaceID, modulePath string, moduleAnalysed bool, versions []string) error {
 	if !moduleAnalysed || len(versions) == 0 {
 		return unresolvedSymbolError(interfaceID)
