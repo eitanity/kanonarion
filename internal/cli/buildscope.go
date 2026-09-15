@@ -82,6 +82,37 @@ func (f *buildScopeFlags) bind(cmd *cobra.Command) error {
 	return resolveReadTarget(cmd.Context(), f.target, cmd.Name(), f.gomodSet && f.walkID == "", f.gomod)
 }
 
+// toolchainPreference settles the toolchain this read prefers where a
+// coordinate's generations disagree about which one built them.
+//
+// Settled HERE, where the flag is read, so the ComposeRequests built downstream
+// inherit it without any of them knowing a config file exists — a command that
+// could forget to consult the config would have had to forget the flag too.
+func (f buildScopeFlags) toolchainPreference() gotoolchain.Version {
+	return toolchainPreferenceOf(f.toolchain)
+}
+
+// toolchainPreferenceOf is toolchainPreference for the commands that bind
+// --toolchain on their own rather than through buildScopeFlags: usage, which
+// resolves its build through bindConsumer, and interface-diff --used-by.
+//
+// The flag wins outright; the stored value answers only where the invocation
+// did not.
+func toolchainPreferenceOf(flag string) gotoolchain.Version {
+	if flag != "" {
+		return gotoolchain.Version(flag)
+	}
+	return storedToolchainPreference()
+}
+
+// storedToolchainPreference is the callgraph.toolchain setting in force for this
+// invocation. It only ever breaks a toolchain tie and never narrows a read — see
+// cgdomain.ComposeRequest.ToolchainPreference — so a store holding no
+// two-toolchain coordinate is served identically with it set and unset.
+func storedToolchainPreference() gotoolchain.Version {
+	return activeConfig.Callgraph.Toolchain
+}
+
 // requested reports whether the caller named a build at all.
 func (f buildScopeFlags) requested() bool {
 	return f.walkID != "" || f.gomodSet
@@ -119,7 +150,7 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 	if !f.requested() {
 		// A toolchain preference is not a build: it narrows WHICH measurement of a
 		// module answers, not which versions are in scope, so it stands on its own.
-		return buildScope{toolchain: gotoolchain.Version(f.toolchain)}, nil
+		return buildScope{toolchain: f.toolchainPreference()}, nil
 	}
 
 	walkID := f.walkID
@@ -151,7 +182,7 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 		modules:   walkModuleSet(rec),
 		source:    fmt.Sprintf("walk %q (%s, frame %s)", walkID, walkScopeLabel(rec.Scope), rec.Graph.Frame()),
 		staleness: staleness,
-		toolchain: gotoolchain.Version(f.toolchain),
+		toolchain: f.toolchainPreference(),
 	}, nil
 }
 

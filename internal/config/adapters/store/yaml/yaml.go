@@ -18,6 +18,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ConfigStore loads a Config from a YAML file at a fixed path.
@@ -130,6 +131,10 @@ type policyRuleYAML struct {
 
 type callgraphYAML struct {
 	Exclude []string `yaml:"exclude"`
+	// Toolchain is a string on the wire and a gotoolchain.Version once loaded, so
+	// a file naming something no record could hold is refused here rather than
+	// stored as a preference that never fires.
+	Toolchain string `yaml:"toolchain"`
 }
 
 // stalenessYAML is a pointer in configYAML so an absent block inherits the
@@ -255,6 +260,14 @@ func Parse(data []byte) (domain.Config, error) {
 			Exclude: y.Callgraph.Exclude,
 		},
 		Staleness: defaults.Staleness,
+	}
+
+	if y.Callgraph.Toolchain != "" {
+		tc, terr := gotoolchain.ParseVersion(y.Callgraph.Toolchain)
+		if terr != nil {
+			return domain.Config{}, fmt.Errorf("callgraph.toolchain: %w", terr)
+		}
+		cfg.Callgraph.Toolchain = tc
 	}
 
 	decls, err := parseCopyrightDeclarations(y.CopyrightDeclarations)

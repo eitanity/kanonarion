@@ -94,6 +94,14 @@ callgraph:
   # uncomment to exclude specific packages.
   # exclude:
   #   - github.com/some/huge/package
+  #
+  # The Go toolchain a read prefers when one coordinate holds graphs built by
+  # two of them. A graph carries its toolchain's own stdlib, so two toolchains
+  # are two answers with no ladder between them and the read refuses rather than
+  # picking; this names which one you mean, once, instead of passing --toolchain
+  # on every command. It only ever breaks that tie — a coordinate naming one
+  # toolchain, or none, is served exactly as it is with this unset.
+  # toolchain: go1.26.6
 `,
 	"staleness": `
 staleness:

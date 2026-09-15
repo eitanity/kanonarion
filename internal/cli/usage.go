@@ -182,7 +182,7 @@ func usageWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoord
 	sel := consumerSelector{
 		gomod:     f.gomod,
 		walkID:    f.walkID,
-		toolchain: gotoolchain.Version(f.toolchain),
+		toolchain: f.toolchainPreference(),
 	}
 	bound, err := bindConsumer(ctx, ctr.QueryWalks, ctr.QueryCallGraph, sel)
 	if err != nil {

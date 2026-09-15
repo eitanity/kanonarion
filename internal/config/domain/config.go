@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // SupportedSchemaVersion is the config schema version this implementation
@@ -202,6 +204,18 @@ func DefaultUnknownLicense(normalisedScope string) UnknownLicensePolicy {
 // CallgraphConfig holds call-graph extraction settings.
 type CallgraphConfig struct {
 	Exclude []string // package import paths excluded from analysis
+
+	// Toolchain is the Go toolchain a composed read prefers where a coordinate's
+	// generations disagree about which one built them.
+	//
+	// It BREAKS A TIE and never narrows a read. Two toolchains are two answers to
+	// two questions with no ladder between them, so the only route past such a
+	// coordinate is naming one — and naming it per invocation means naming it
+	// forever. A coordinate whose generations agree, or state no toolchain at all,
+	// is served exactly as it is with this unset: a preference that filtered would
+	// answer "no record" for the hundreds of modules that name no toolchain. The
+	// zero value states no preference.
+	Toolchain gotoolchain.Version
 }
 
 // StalenessConfig governs the store-backed ledger of latest-version lookups.
@@ -288,6 +302,9 @@ func DefaultConfig() Config {
 		CopyrightDeclarations: map[string]CopyrightDeclaration{},
 		Callgraph: CallgraphConfig{
 			Exclude: []string{},
+			// No preference: a toolchain disagreement refuses, which is the
+			// behaviour of every store that has not chosen otherwise.
+			Toolchain: gotoolchain.Unrecorded,
 		},
 		Staleness: StalenessConfig{
 			TTL:              DefaultStalenessTTL,

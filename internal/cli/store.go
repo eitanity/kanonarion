@@ -421,6 +421,11 @@ type configFileResult struct {
 
 type configCGResult struct {
 	Exclude []string `json:"exclude"`
+	// Toolchain is the stored composition preference, empty when none is set.
+	// Emitted as the bare version rather than through Version.String(), because a
+	// consumer comparing it against a record's toolchain needs the value, and
+	// "not recorded" is not one.
+	Toolchain string `json:"toolchain,omitempty"`
 }
 
 // configStalenessResult reports the resolved latest-version ledger TTL.
@@ -499,7 +504,10 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 			},
 			LicenseOverrides:      cfg.LicenseOverrides,
 			CopyrightDeclarations: copyrightDeclarationsResult(cfg.CopyrightDeclarations),
-			Callgraph:             configCGResult{Exclude: cfg.Callgraph.Exclude},
+			Callgraph: configCGResult{
+				Exclude:   cfg.Callgraph.Exclude,
+				Toolchain: string(cfg.Callgraph.Toolchain),
+			},
 			Staleness: configStalenessResult{
 				TTL:              cfg.Staleness.TTL.String(),
 				ProbeConcurrency: cfg.Staleness.ProbeConcurrency,

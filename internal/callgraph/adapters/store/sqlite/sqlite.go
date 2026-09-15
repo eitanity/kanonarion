@@ -1096,10 +1096,29 @@ func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinat
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	if err != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: %w", ports.ErrCallGraphConflict, err)
+		return domain2.CallGraphRecord{}, false, markConflict(err)
 	}
 	return composed, true, nil
 }
+
+// markConflict tags err as ports.ErrCallGraphConflict for callers that route on
+// the sentinel, WITHOUT restating its text.
+//
+// Wrapping with "%w: %w" did both at once, and the sentence an operator read
+// paid for it: the wrapper, the omission summary and the conflict itself each
+// prefixed "conflicting call graph records", so a refused traversal said it
+// three times in one line before naming the coordinate. The domain's own message
+// opens with the phrase and names the coordinate, the pipeline, the field, the
+// values and the remedy, so nothing is lost by the sentinel staying silent.
+func markConflict(err error) error { return conflictError{err: err} }
+
+// conflictError renders as the error it carries and unwraps to the sentinel
+// beside it, so errors.Is(err, ports.ErrCallGraphConflict) holds on a message
+// that never mentions it.
+type conflictError struct{ err error }
+
+func (c conflictError) Error() string   { return c.err.Error() }
+func (c conflictError) Unwrap() []error { return []error{ports.ErrCallGraphConflict, c.err} }
 
 // latestWorktreeGeneration answers a compose request from the newest row alone,
 // when the coordinate's generations are a working-tree sequence.
@@ -2609,8 +2628,10 @@ func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pip
 		out = append(out, c.ref)
 	}
 	if len(conflicts) > 0 {
-		return out, fmt.Errorf("%w: %d module(s) omitted: %w",
-			ports.ErrCallGraphConflict, len(conflicts), errors.Join(conflicts...))
+		// The summary counts what was withheld and the conflicts name it; the
+		// sentinel rides along without adding its own sentence. See markConflict.
+		return out, markConflict(fmt.Errorf("%d module(s) omitted: %w",
+			len(conflicts), errors.Join(conflicts...)))
 	}
 	return out, nil
 }

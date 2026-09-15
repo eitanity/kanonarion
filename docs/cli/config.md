@@ -287,6 +287,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `license_overrides.<module>` | string | `MIT` |
 | `copyright_declarations.<module>` | mapping (read-only, edit the file) | see below |
 | `callgraph.exclude` | sequence | `[github.com/foo/bar]` |
+| `callgraph.toolchain` | string | `go1.26.6` - the toolchain a read prefers when one coordinate holds graphs built by two of them. It only breaks that tie: a coordinate naming one toolchain, or none, is served exactly as it is with this unset. An explicit `--toolchain` wins over it. See [`callgraph`](callgraph.md#naming-a-toolchain-on-a-query) |
 | `staleness.ttl` | duration | `1h` |
 | `staleness.probe_concurrency` | int | `16` - newer-major probe requests in flight at once. Wider is not simply faster: past the default the proxy answers `200` with an empty body, which is a lost answer rather than an error. `0` is serial. |
 | `fetch_policy.allowed_vcs_hosts` | sequence | `[github.com, git.example.org]` - absent leaves the built-in host set advisory; naming it switches to enforcing |
@@ -410,6 +411,7 @@ kanonarion config set preferences.log_level debug
 kanonarion config set license_policy.categories.permissive '[MIT, Apache-2.0, ISC]'
 kanonarion config set license_overrides.golang.org/x/mod MIT
 kanonarion config set callgraph.exclude '[]'
+kanonarion config set callgraph.toolchain go1.26.6
 kanonarion config set staleness.ttl 6h
 ```
 
