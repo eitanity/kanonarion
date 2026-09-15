@@ -50,7 +50,7 @@ func TestCallGraphShowJSON_EdgeStatesItsReflectAttribute(t *testing.T) {
 
 	out := toCallGraphJSON(reflectAxisRecord())
 	byTo := map[string]callEdgeJSON{}
-	for _, e := range out.Edges {
+	for _, e := range *out.Edges {
 		byTo[e.ToID] = e
 	}
 	if byTo["example.com/m.helper"].ReflectDispatch {

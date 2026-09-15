@@ -96,8 +96,8 @@ func wantCap(t *testing.T, got *arrayCapJSON, want arrayCapJSON) {
 func TestRunCallGraphShow_JSONAppliesAnExplicitNodeCap(t *testing.T) {
 	got, _ := showCappedJSON(t, callGraphShowFlags{limitNodes: 5, limitNodesSet: true})
 
-	if len(got.Nodes) != 5 {
-		t.Errorf("nodes returned = %d, want the 5 asked for", len(got.Nodes))
+	if len(*got.Nodes) != 5 {
+		t.Errorf("nodes returned = %d, want the 5 asked for", len(*got.Nodes))
 	}
 	if got.NodeCount != 12 {
 		t.Errorf("node_count = %d, want the record's true total 12", got.NodeCount)
@@ -106,8 +106,8 @@ func TestRunCallGraphShow_JSONAppliesAnExplicitNodeCap(t *testing.T) {
 		Truncated: true, Limit: 5, Subject: "nodes", Returned: 5, Available: 12, Remedy: "--limit-nodes 0",
 	})
 	// The edge array was not asked about and must be untouched and unclaimed.
-	if len(got.Edges) != 20 || got.EdgeCap != nil {
-		t.Errorf("edges = %d with edge_cap %+v, want all 20 and no statement", len(got.Edges), got.EdgeCap)
+	if len(*got.Edges) != 20 || got.EdgeCap != nil {
+		t.Errorf("edges = %d with edge_cap %+v, want all 20 and no statement", len(*got.Edges), got.EdgeCap)
 	}
 }
 
@@ -116,8 +116,8 @@ func TestRunCallGraphShow_JSONAppliesAnExplicitNodeCap(t *testing.T) {
 func TestRunCallGraphShow_JSONAppliesAnExplicitEdgeCap(t *testing.T) {
 	got, _ := showCappedJSON(t, callGraphShowFlags{limitEdges: 10, limitEdgesSet: true})
 
-	if len(got.Edges) != 10 {
-		t.Errorf("edges returned = %d, want the 10 asked for", len(got.Edges))
+	if len(*got.Edges) != 10 {
+		t.Errorf("edges returned = %d, want the 10 asked for", len(*got.Edges))
 	}
 	if got.EdgeCount != 20 {
 		t.Errorf("edge_count = %d, want the record's true total 20", got.EdgeCount)
@@ -125,8 +125,8 @@ func TestRunCallGraphShow_JSONAppliesAnExplicitEdgeCap(t *testing.T) {
 	wantCap(t, got.EdgeCap, arrayCapJSON{
 		Truncated: true, Limit: 10, Subject: "edges", Returned: 10, Available: 20, Remedy: "--limit-edges 0",
 	})
-	if len(got.Nodes) != 12 || got.NodeCap != nil {
-		t.Errorf("nodes = %d with node_cap %+v, want all 12 and no statement", len(got.Nodes), got.NodeCap)
+	if len(*got.Nodes) != 12 || got.NodeCap != nil {
+		t.Errorf("nodes = %d with node_cap %+v, want all 12 and no statement", len(*got.Nodes), got.NodeCap)
 	}
 }
 
@@ -137,8 +137,8 @@ func TestRunCallGraphShow_JSONCapsTheTwoArraysIndependently(t *testing.T) {
 		limitNodes: 3, limitNodesSet: true, limitEdges: 7, limitEdgesSet: true,
 	})
 
-	if len(got.Nodes) != 3 || len(got.Edges) != 7 {
-		t.Fatalf("returned %d nodes and %d edges, want 3 and 7", len(got.Nodes), len(got.Edges))
+	if len(*got.Nodes) != 3 || len(*got.Edges) != 7 {
+		t.Fatalf("returned %d nodes and %d edges, want 3 and 7", len(*got.Nodes), len(*got.Edges))
 	}
 	wantCap(t, got.NodeCap, arrayCapJSON{
 		Truncated: true, Limit: 3, Subject: "nodes", Returned: 3, Available: 12, Remedy: "--limit-nodes 0",
@@ -153,8 +153,8 @@ func TestRunCallGraphShow_JSONCapsTheTwoArraysIndependently(t *testing.T) {
 func TestRunCallGraphShow_JSONExplicitZeroCapReturnsEverythingAndSaysSo(t *testing.T) {
 	got, _ := showCappedJSON(t, callGraphShowFlags{limitNodes: 0, limitNodesSet: true})
 
-	if len(got.Nodes) != 12 {
-		t.Errorf("nodes returned = %d, want every one of the 12", len(got.Nodes))
+	if len(*got.Nodes) != 12 {
+		t.Errorf("nodes returned = %d, want every one of the 12", len(*got.Nodes))
 	}
 	wantCap(t, got.NodeCap, arrayCapJSON{
 		Truncated: false, Limit: 0, Subject: "nodes", Returned: 12, Available: 12, Remedy: "--limit-nodes 0",
@@ -169,8 +169,8 @@ func TestRunCallGraphShow_JSONCapLargerThanTheRecordReportsItDidNotBite(t *testi
 		limitNodes: 1000, limitNodesSet: true, limitEdges: 1000, limitEdgesSet: true,
 	})
 
-	if len(got.Nodes) != 12 || len(got.Edges) != 20 {
-		t.Fatalf("returned %d nodes and %d edges, want the record whole", len(got.Nodes), len(got.Edges))
+	if len(*got.Nodes) != 12 || len(*got.Edges) != 20 {
+		t.Fatalf("returned %d nodes and %d edges, want the record whole", len(*got.Nodes), len(*got.Edges))
 	}
 	wantCap(t, got.NodeCap, arrayCapJSON{
 		Truncated: false, Limit: 1000, Subject: "nodes", Returned: 12, Available: 12, Remedy: "--limit-nodes 0",
@@ -194,8 +194,8 @@ func TestRunCallGraphShow_JSONUnsetCapsLeaveTheDocumentUnchanged(t *testing.T) {
 	if !bytes.Equal(withDefaults, withoutCaps) {
 		t.Errorf("the flag defaults changed the document:\n%s\nwant:\n%s", withDefaults, withoutCaps)
 	}
-	if len(got.Nodes) != 12 || len(got.Edges) != 20 {
-		t.Errorf("returned %d nodes and %d edges, want the whole record", len(got.Nodes), len(got.Edges))
+	if len(*got.Nodes) != 12 || len(*got.Edges) != 20 {
+		t.Errorf("returned %d nodes and %d edges, want the whole record", len(*got.Nodes), len(*got.Edges))
 	}
 	if got.NodeCap != nil || got.EdgeCap != nil {
 		t.Errorf("caps claimed on a read that asked for none: %+v %+v", got.NodeCap, got.EdgeCap)
@@ -220,8 +220,8 @@ func TestRunCallGraphShow_JSONNodeFilterAndCapBothReportThemselves(t *testing.T)
 		t.Errorf("node_filter candidates/matched = %d/%d, want 12/10",
 			got.NodeFilter.CandidateNodes, got.NodeFilter.MatchedNodes)
 	}
-	if len(got.Nodes) != 2 {
-		t.Fatalf("nodes returned = %d, want the 2 asked for", len(got.Nodes))
+	if len(*got.Nodes) != 2 {
+		t.Fatalf("nodes returned = %d, want the 2 asked for", len(*got.Nodes))
 	}
 	// available is the filtered array, not the record: the cap is a statement
 	// about the rows in front of the reader.

@@ -688,14 +688,14 @@ func TestToCallGraphJSON_WrapsNodes(t *testing.T) {
 		NodeCount: 2,
 	}
 	j := toCallGraphJSON(r)
-	if len(j.Nodes) != 2 {
-		t.Fatalf("expected 2 nodes, got %d", len(j.Nodes))
+	if len(*j.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(*j.Nodes))
 	}
-	if j.Nodes[0].Role != "api" {
-		t.Errorf("node[0].Role = %q, want 'api'", j.Nodes[0].Role)
+	if (*j.Nodes)[0].Role != "api" {
+		t.Errorf("node[0].Role = %q, want 'api'", (*j.Nodes)[0].Role)
 	}
-	if j.Nodes[1].Role != "external" {
-		t.Errorf("node[1].Role = %q, want 'external'", j.Nodes[1].Role)
+	if (*j.Nodes)[1].Role != "external" {
+		t.Errorf("node[1].Role = %q, want 'external'", (*j.Nodes)[1].Role)
 	}
 }
 

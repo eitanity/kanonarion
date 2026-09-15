@@ -289,7 +289,7 @@ kanonarion callgraph <module>@<version> [flags]
 | `--from-walk` | _(auto-discovered)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. Unset, the walk of a build that consumes the module is used; where the store holds it in more than one build, no build list is discovered and the builds are named on stderr so you can pin one. See [Modules published before Go modules](#modules-published-before-go-modules). |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--no-progress` | `false` | Suppress the per-phase narration on stderr |
-| `--json` | `false` | Emit the record as JSON to stdout |
+| `--json` | `false` | Emit this run's summary as a JSON document (the record's scalars, without `nodes` and `edges`) |
 
 ```
 $ kanonarion callgraph golang.org/x/mod@v0.30.0
@@ -309,6 +309,55 @@ The same lines are what a parent process reads to tell a working child from a
 stalled one - see [extract](extract.md#how-long-a-subprocess-may-run) - so a spawned
 child always writes them whatever this store's `preferences.progress` says. The
 flag silences them for a run you started by hand.
+
+#### What `--json` returns
+
+`callgraph` **summarises**, and the document says the same thing the line does.
+Under `--json` it carries every scalar of the record — `coordinate`,
+`overall_status`, `node_count`, `edge_count`, `algorithm`, `completeness`,
+`analysis_source`, `artifact_kind`, `toolchain`, `extracted_at`,
+`content_hash`, `schema_version`, `pipeline_version`, the test and reference
+axes, the analyser identity, and on an incomplete graph `failure_detail`,
+`failure_cause` and `failed_packages` — at exactly the keys
+[`callgraph-show`](#callgraph-show) uses for them.
+
+It does **not** carry `nodes` or `edges`. The graph is a property of the record
+rather than of the run that wrote it, and it is large:
+`github.com/spf13/pflag@v1.0.10` holds 1,512 nodes and 5,172 edges — 84 bytes as
+the summary line, and about 2 MB as a node-and-edge document.
+`github.com/eitanity/kanonarion@local`, at 17,940 nodes and 255,135 edges, is
+about 81 MB. A document that size is one to ask for deliberately, and `--json`
+is not a deliberate enough ask: it is inherited from
+[`preferences.json`](config.md), so it can be in force with no flag typed.
+
+The two keys are **absent**, not empty. A record that measured no function at
+all is a real recorded state — it is the one these commands
+[exit `2`](#exit-codes) on — and `callgraph-show` renders it as `"nodes": []`.
+An omitted key and an empty array therefore mean two different things, and a
+consumer can tell the run's summary from a graph that is genuinely empty.
+
+What the summary answers that no later read can: whether **this** invocation
+measured the module or served a record the store already held. That is a fact
+about the run — `callgraph-show` serves a stored record and states nothing about
+how anyone got it — and it is why these commands return a document rather than
+nothing. `local` carries it under `derivations`; see
+[`local`](local.md#unchanged-trees).
+
+#### Reading the whole graph
+
+The record, and the graph in it, are read with `callgraph-show`:
+
+```sh
+kanonarion callgraph-show <module>@<version> --json
+kanonarion callgraph-show <module>@<version> --limit-nodes 0 --limit-edges 0 --json
+```
+
+The first returns the record document with the arrays capped at the printing
+defaults — which under `--json` do not truncate unless you pass the flags. The
+second states the caps explicitly and `0` means unlimited, so it returns every
+node and every edge; that is the invocation to use when you intend to consume
+the whole document. Each cap states what it did, in `node_cap` and `edge_cap` —
+see [`callgraph-show`](#callgraph-show).
 
 ### Exit codes
 

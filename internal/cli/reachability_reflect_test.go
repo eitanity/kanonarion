@@ -470,14 +470,14 @@ func loadCapturedGraph(t *testing.T, raw []byte) cgdomain.CallGraphRecord {
 		Completeness: cgdomain.CompletenessLevel(doc.Completeness),
 		ArtifactKind: kind,
 	}
-	for _, n := range doc.Nodes {
+	for _, n := range *doc.Nodes {
 		rec.Nodes = append(rec.Nodes, cgdomain.CallNode{
 			ID: n.ID, Module: n.Module, Package: n.Package, Symbol: n.Symbol,
 			Receiver: n.Receiver, IsExternal: n.IsExternal,
 			IsExportedAPI: n.IsExportedAPI, IsTest: n.IsTest,
 		})
 	}
-	for _, e := range doc.Edges {
+	for _, e := range *doc.Edges {
 		rec.Edges = append(rec.Edges, cgdomain.CallEdge{
 			FromID:          e.FromID,
 			ToID:            e.ToID,

@@ -39,7 +39,7 @@ func TestCallGraphShowJSON_EdgeStatesItsKind(t *testing.T) {
 	out := toCallGraphJSON(referenceAxisRecord())
 
 	byTo := map[string]callEdgeJSON{}
-	for _, e := range out.Edges {
+	for _, e := range *out.Edges {
 		byTo[e.ToID] = e
 	}
 	if got := byTo["example.com/m.helper"].Kind; got != "Call" {

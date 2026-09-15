@@ -179,10 +179,12 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		// saying what the record holds, which is the number the cap is read
 		// against.
 		if f.limitNodesSet {
-			j.Nodes, j.NodeCap = applyArrayCap(j.Nodes, limitNodes, "nodes", "--limit-nodes 0")
+			kept, capped := applyArrayCap(*j.Nodes, limitNodes, "nodes", "--limit-nodes 0")
+			j.Nodes, j.NodeCap = &kept, capped
 		}
 		if f.limitEdgesSet {
-			j.Edges, j.EdgeCap = applyArrayCap(j.Edges, limitEdges, "edges", "--limit-edges 0")
+			kept, capped := applyArrayCap(*j.Edges, limitEdges, "edges", "--limit-edges 0")
+			j.Edges, j.EdgeCap = &kept, capped
 		}
 		if disagrees {
 			j.AnalyserDisagreement = toAnalyserDisagreementJSON(disagreement)
@@ -571,10 +573,15 @@ type callGraphRecordJSON struct {
 	// analysed tree can differ from the published one. Absent means every directive
 	// the module published was in force.
 	DroppedReplaces []droppedReplaceJSON `json:"dropped_replaces,omitempty"`
-	Nodes           []callNodeJSON       `json:"nodes"`
-	Edges           []callEdgeJSON       `json:"edges"`
-	OverallStatus   string               `json:"overall_status"`
-	FailureDetail   string               `json:"failure_detail,omitempty"`
+	// Nodes and Edges are pointers so that absent and measured-empty are two
+	// different documents. A record that resolved no function is a real state —
+	// the one 'callgraph' and 'local' exit 2 on — and plain `omitempty` would
+	// render it identically to a surface that does not carry the graph.
+	// 'callgraph-show' always sets both; the run surfaces leave them nil.
+	Nodes         *[]callNodeJSON `json:"nodes,omitempty"`
+	Edges         *[]callEdgeJSON `json:"edges,omitempty"`
+	OverallStatus string          `json:"overall_status"`
+	FailureDetail string          `json:"failure_detail,omitempty"`
 	// FailureCause says what the status is a statement about — the module, or the
 	// run that tried to analyse it — and it is the axis that decides whether this
 	// record answers a later extraction. A consumer reading only the detail reads
@@ -840,8 +847,8 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod, r.BuildListSource),
 		DroppedReplaces:  droppedReplacesToJSON(r.DroppedReplaces),
 
-		Nodes:           nodes,
-		Edges:           edges,
+		Nodes:           &nodes,
+		Edges:           &edges,
 		OverallStatus:   r.OverallStatus.String(),
 		FailureDetail:   r.FailureDetail,
 		FailureCause:    string(r.FailureCause),

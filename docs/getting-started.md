@@ -581,8 +581,6 @@ Then answer questions from these. All of them read the local store.
                                                    # queries above resolve internal
                                                    # symbols. ~11s; an unchanged tree is
                                                    # served from the stored record.
-                                                   # Do NOT add --json here: it emits
-                                                   # 77 MB for a one-line result
     kanonarion context . --symbol --json           # which dependency symbols this tree uses
     kanonarion reachability --local . --json       # can a stored finding be reached from
                                                    # this tree? ~30s when there is
