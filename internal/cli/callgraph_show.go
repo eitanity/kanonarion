@@ -20,11 +20,17 @@ import (
 type callGraphShowFlags struct {
 	limitNodes int
 	limitEdges int
-	nodeFilter string
-	history    bool
-	diff       bool
-	source     string
-	toolchain  string
+	// limitNodesSet and limitEdgesSet say whether the caller TYPED the cap or
+	// took the default. The two are one instruction on the text path and two
+	// different ones under --json, where an unset cap must not truncate: see
+	// applyArrayCap.
+	limitNodesSet bool
+	limitEdgesSet bool
+	nodeFilter    string
+	history       bool
+	diff          bool
+	source        string
+	toolchain     string
 }
 
 func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -49,6 +55,8 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			f.limitNodesSet = cmd.Flags().Changed("limit-nodes")
+			f.limitEdgesSet = cmd.Flags().Changed("limit-edges")
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
@@ -105,7 +113,17 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		return runCallGraphDiff(ctx, coord, f, jsonOut, uc, stdout)
 	}
 
-	req := domain.ComposeRequest{Source: source, Toolchain: gotoolchain.Version(f.toolchain)}
+	// The two ways a toolchain reaches this read are different requests.
+	// --toolchain NARROWS, because the reader named one coordinate and "the ledger
+	// holds nothing built by that toolchain" is the answer they asked for — the
+	// miss below says exactly that. A STORED preference only breaks a tie, so a
+	// coordinate naming one toolchain, or none, is served as it is with it unset.
+	req := domain.ComposeRequest{Source: source}
+	if f.toolchain != "" {
+		req.Toolchain = gotoolchain.Version(f.toolchain)
+	} else {
+		req.ToolchainPreference = storedToolchainPreference()
+	}
 	r, found, err := uc.GetCallGraphRecordFrom(ctx, coord, cgapp.PipelineVersion, req)
 	if err != nil {
 		return fmt.Errorf("getting callgraph record: %w", err)
@@ -156,6 +174,16 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		enc.SetIndent("", "  ")
 		j := toCallGraphJSON(r)
 		j.NodeFilter = filter.toJSON()
+		// The caps travel into the document, as --node already did five lines
+		// above. They are applied to the ARRAYS: node_count and edge_count go on
+		// saying what the record holds, which is the number the cap is read
+		// against.
+		if f.limitNodesSet {
+			j.Nodes, j.NodeCap = applyArrayCap(j.Nodes, limitNodes, "nodes", "--limit-nodes 0")
+		}
+		if f.limitEdgesSet {
+			j.Edges, j.EdgeCap = applyArrayCap(j.Edges, limitEdges, "edges", "--limit-edges 0")
+		}
 		if disagrees {
 			j.AnalyserDisagreement = toAnalyserDisagreementJSON(disagreement)
 		}
@@ -592,6 +620,17 @@ type callGraphRecordJSON struct {
 	// the record is unfiltered, which is a different statement from a filter
 	// that matched nothing.
 	NodeFilter *nodeFilterJSON `json:"node_filter,omitempty"`
+	// NodeCap and EdgeCap are what this rendering did with --limit-nodes and
+	// --limit-edges. They are two statements and not one because the two arrays
+	// cap independently: the flag that widens one does not widen the other.
+	//
+	// Each is present only when its own flag was SET, and then present whether or
+	// not the cap bit — a consumer that asked for a cap can always read what
+	// became of it, and one that asked for nothing reads the document it always
+	// did. Absence is therefore "no cap was requested", never "this build does
+	// not say".
+	NodeCap *arrayCapJSON `json:"node_cap,omitempty"`
+	EdgeCap *arrayCapJSON `json:"edge_cap,omitempty"`
 	// Analyser names the golang.org/x/tools that parsed the module, and how the
 	// store came to state it. It is always present, including when nothing is
 	// known: an absent object would read as "no analyser", which is the reading
@@ -1054,6 +1093,57 @@ func (o nodeFilterOutcome) toJSON() *nodeFilterJSON {
 // nodeFilterComparand names, in one phrase reused by both renderings, what the
 // --node pattern is matched against.
 const nodeFilterComparand = "fully-qualified node ID (package path + symbol)"
+
+// arrayCapJSON is the machine-readable form of the line the text path prints
+// over each array — "Nodes (1512 total, showing 5)" — and it carries what that
+// line carries: the instruction, whether it withheld anything, and what it was
+// applied to.
+//
+// It is fielded rather than rendered for the reason node_filter beside it is: a
+// consumer has to be able to place the rows it got inside the rows that existed
+// without parsing a sentence.
+type arrayCapJSON struct {
+	// Truncated is whether the cap actually withheld anything, measured against
+	// the array rather than assumed from the limit: an array holding exactly its
+	// cap withheld nothing and must not claim to.
+	Truncated bool `json:"truncated"`
+	// Limit is the cap as given. Zero is a cap explicitly set to unlimited, which
+	// is a different statement from the flag never being passed — that one is the
+	// whole field's absence.
+	Limit int `json:"limit"`
+	// Subject names the rows in the reader's terms, as the listing documents do,
+	// so the statement reads on its own and not only by the key it hangs off.
+	Subject string `json:"subject"`
+	// Returned is how many entries the array carries and Available how many this
+	// rendering drew them from. Available is the population AFTER --node, so the
+	// statement is about the array in front of the reader; node_count and
+	// edge_count go on reporting what the record says about itself.
+	Returned  int `json:"returned"`
+	Available int `json:"available"`
+	// Remedy is the invocation that lifts this cap and no other.
+	Remedy string `json:"remedy"`
+}
+
+// applyArrayCap trims one of the document's arrays to the caller's cap and
+// states what it did.
+//
+// It is called only for a cap the caller SET. An unset --limit-nodes or
+// --limit-edges must not truncate a document: the defaults exist to keep a
+// terminal readable — the help says "max nodes to print" — so applying them here
+// would silently start withholding rows from every consumer that never asked for
+// a cap, which is a worse defect than discarding the ones that did.
+func applyArrayCap[T any](rows []T, limit int, subject, remedy string) ([]T, *arrayCapJSON) {
+	available := len(rows)
+	kept, truncated := truncateList(rows, limit)
+	return kept, &arrayCapJSON{
+		Truncated: truncated,
+		Limit:     limit,
+		Subject:   subject,
+		Returned:  len(kept),
+		Available: available,
+		Remedy:    remedy,
+	}
+}
 
 // writeNodeFilterNotice states an unmatched --node filter instead of letting the
 // empty node and edge lists speak for it.

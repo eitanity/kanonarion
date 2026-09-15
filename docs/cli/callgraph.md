@@ -406,8 +406,8 @@ kanonarion callgraph-show <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--node` | _(all)_ | Filter to nodes whose fully-qualified ID contains this substring (case-insensitive), plus everything directly connected to them |
-| `--limit-nodes` | `50` | Maximum nodes to print (`0` = unlimited) |
-| `--limit-edges` | `100` | Maximum edges to print (`0` = unlimited) |
+| `--limit-nodes` | `50` | Maximum nodes to print (`0` = unlimited). Under `--json` it applies only when you pass it; the default does not truncate the document |
+| `--limit-edges` | `100` | Maximum edges to print (`0` = unlimited). Under `--json` it applies only when you pass it; the default does not truncate the document |
 | `--history` | `false` | List every stored generation for the module instead of the composed answer |
 | `--diff` | `false` | Report what the distinct stored measurements for the module differ about, instead of the composed answer |
 | `--source` | _(default)_ | Restrict to graphs built from one source: `zip` or `worktree` |
@@ -551,6 +551,32 @@ example.com/mod/render.(*Engine).Render)
 Under `--json` the same statement is the `node_filter` object (`pattern`,
 `compared_against`, `candidate_nodes`, `matched_nodes`), present only when
 `--node` was given.
+
+`--limit-nodes` and `--limit-edges` apply under `--json` too, and each states
+itself the same way. `node_cap` and `edge_cap` are separate objects because the
+two arrays cap independently: each carries `limit` (the cap as given), `subject`,
+`truncated` (whether it withheld anything), `returned`, `available` (the rows it
+was drawn from, after any `--node` filter) and `remedy`.
+
+```
+$ kanonarion callgraph-show example.com/mod@v1.0.0 --limit-nodes 5 --json
+{
+  "nodes": [ ... 5 entries ... ],
+  "node_count": 1512,
+  "node_cap": {"truncated": true, "limit": 5, "subject": "nodes",
+               "returned": 5, "available": 1512, "remedy": "--limit-nodes 0"}
+}
+```
+
+`node_count` and `edge_count` go on reporting what the record holds, so the
+number the cap was applied against stays readable beside the rows it returned.
+
+A cap object is present whenever you passed its flag, **including when the cap
+did not bite** — `truncated: false` and "no cap object" are different statements,
+and a consumer cannot read a field that is not there. The object is absent only
+when you passed no such flag: the defaults exist to keep a terminal readable, so
+a `--json` read that asks for no cap gets the whole record, exactly as it always
+did.
 
 The `fidelity:` line reports how much of the module was actually built and what
 the analysis read. Both matter to how an empty answer should be taken: only
@@ -834,7 +860,12 @@ toolchain's own stdlib and its vendored trees, so two toolchains that produced
 DIFFERENT graphs produced two answers about two builds and neither supersedes the
 other: composition names the toolchain and refuses rather than serving whichever
 ran last. `--toolchain go1.26.6` asks for one of them, and `callers`, `callees`,
-`implementers` and `interface-diff` take it too.
+`implementers` and `interface-diff` take it too. **No re-analysis clears it.** The
+ledger is append-only, so analysing again under either toolchain appends another
+generation of that one and leaves the other standing; the refusal names
+`--history` and `--toolchain` and nothing else, because there is nothing else to
+run. `kanonarion config set callgraph.toolchain go1.26.6` records the choice so it
+does not have to be typed on every later read.
 
 The graph difference is what makes it a disagreement. Two toolchains that
 produced the **same** nodes and edges produced the same answer, so the read
@@ -1443,3 +1474,54 @@ $ kanonarion callers 'golang.org/x/tools/go/packages.Load' --toolchain go1.26.6
 297 callers of golang.org/x/tools/go/packages.Load:
   ...
 ```
+
+### Seeing what the two toolchains disagree about
+
+`--diff` answers that, and it **answers while the composed read is still
+refusing** — the command used to diagnose the conflict is not one that fails
+because of it:
+
+```
+$ kanonarion callgraph-show github.com/oklog/ulid/v2@v2.1.1 --diff
+3 generation(s) ... stating 2 distinct measurement(s) and 2 distinct graph(s)
+  left   sha256:b0508e4c…  231 node(s) / 590 edge(s)
+  right  sha256:d951af94…  232 node(s) / 591 edge(s)
+fields:
+  toolchain                go1.26.5
+                           go1.27.1
+nodes:
+  + encoding/json.checkValid
+  ~ fmt.Fprintf  position: {"file":"src/fmt/print.go","line":222} -> {"file":"src/fmt/print.go","line":214}
+  0 only in left, 1 only in right, 13 described differently
+edges:
+  + …TestMarshalingErrors$1 encoding/json.checkValid {"file":"ulid_test.go","line":201}
+```
+
+Read it before choosing, because the two answers are rarely equally useful. Here
+one toolchain resolves a call the other does not — `encoding/json.checkValid`,
+one real edge — while the thirteen `~` nodes are the same functions at different
+line numbers, the standard library's own files having moved between releases. A
+difference that is only positions tells you the graphs agree about the code; a
+`+` node or edge tells you they do not.
+
+### Recording the choice once
+
+`--toolchain` is per invocation, so a store holding one disputed coordinate needs
+it on every read that crosses that coordinate. `callgraph.toolchain` records it:
+
+```
+$ kanonarion config set callgraph.toolchain go1.26.6
+$ kanonarion callers 'golang.org/x/tools/go/packages.Load'
+297 callers of golang.org/x/tools/go/packages.Load:
+  ...
+```
+
+It disambiguates on exactly the terms the flag does on a query, and never
+restricts: it is consulted only where one coordinate's generations disagree about
+the toolchain, so a store holding no such coordinate is served byte-for-byte as it
+is with the setting unset — including when the version named is one the store has
+never held. `callers`, `callees`, `implementers`, `usage`, `callgraph-show` and
+`interface-diff --used-by` all honour it, and an explicit `--toolchain` on the
+command line wins over it. `config show` lists it with its source; an unparseable
+value is refused by `config set`. `callgraph-show --history` is unaffected: it
+shows every generation, which is what it is for.
