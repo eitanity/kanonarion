@@ -485,7 +485,13 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	writeScanRecordFaults(summary.readErrors, stdout)
 	writeSupersededScanRecords(summary.superseded, run.PipelineVersion, stdout)
 	writeMissingScanRecords(summary.missing, stdout)
-	writeNativeRollup(stdout, nativeCov)
+	// The coverage line and its exceptions, not the exceptions alone: this is
+	// the surface a release vulnerability statement is read from, and a run that
+	// examined no module for native code had nothing to print under the old
+	// gate — the one case where the silence reads as an all-clear.
+	if nerr := writeNativeCoverageSummary(stdout, nativeCov); nerr != nil {
+		return nerr
+	}
 	writeScanModuleFindings(stdout, "Affected modules", affected)
 	// Printed after the affected list and separately from it: a reader scanning for
 	// what to act on sees the affected set alone, and a reader asking why a module

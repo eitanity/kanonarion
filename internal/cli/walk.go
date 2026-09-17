@@ -80,6 +80,10 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 			// rather than inherent. The declaration moved with the flag.
 			annotationNetworkUse:   NetworkAvoidable,
 			annotationOfflineFlags: "--from-modcache",
+			// The flag applies to the go.mod form only — a positional coordinate
+			// has no project go.sum to verify the cache against, and refuses it —
+			// so the remedy names the form, not the flag on its own.
+			annotationOfflineAlternative: "kanonarion walk --gomod ./go.mod --from-modcache",
 		},
 		Short: "Walk the dependency graph for a module and persist the walk record",
 		Example: `  kanonarion walk github.com/spf13/cobra@v1.8.1

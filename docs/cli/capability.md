@@ -191,6 +191,20 @@ with a caveat and the added/removed sets are provisional. JSON output adds
 - **Requires:** `kanonarion callgraph <module>@<version>` - the stored call
   graph the analysis reads.
 
+A coordinate the store has no call graph for exits `4`, not `20`: the request
+was well formed and the store was empty. The message names the invocation that
+produces the record, with the coordinate filled in, so it can be run as printed.
+
+```
+$ kanonarion capability example.com/mod@v1.2.0
+no callgraph record for example.com/mod@v1.2.0 - analyse it first:
+  kanonarion callgraph example.com/mod@v1.2.0
+$ echo $?
+4
+```
+
+A malformed coordinate, an unreadable store or an unknown flag stays `20`.
+
 ## If you also run capslock
 
 The taxonomy is modelled on capslock (`github.com/google/capslock`) but the two

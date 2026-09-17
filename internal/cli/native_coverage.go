@@ -373,6 +373,10 @@ type nativeWalkRollup struct {
 	// record at all. A count rather than a list: on a build where nothing has
 	// been examined this is every module, and the number is the statement.
 	NotExamined int `json:"not_examined"`
+	// anExaminable names one module the run did not look at, so the remedy can
+	// be an invocation rather than a template. Typed rather than a string so the
+	// remedy guard can see the value is held. Unexported: the JSON must not move.
+	anExaminable coordinate.ModuleCoordinate
 	// Components is the total number of identified native components across
 	// Unsearched — the single number an agent reads to learn that this scan's
 	// verdict does not cover everything in the binary.
@@ -430,6 +434,9 @@ func nativeRollupOver(
 		switch cov.State {
 		case nativeStateNotExamined:
 			out.NotExamined++
+			if out.anExaminable.IsZero() {
+				out.anExaminable = coord
+			}
 		case nativeStateUnidentified:
 			out.Unidentified = append(out.Unidentified, coord.String())
 		case nativeStateIdentified:
@@ -463,6 +470,17 @@ func (r *nativeWalkRollup) empty() bool {
 	return r == nil || (len(r.Unsearched) == 0 && len(r.Unidentified) == 0 && len(r.LinkedNotShipped) == 0)
 }
 
+// incomplete reports whether this build holds native code the findings do not
+// cover — an exception the rollup names, or a module nobody looked at.
+//
+// The two are one statement. Gating on the exceptions alone suppressed the
+// no-non-Go-advisory-source sentence in the case that needs it most: with
+// Examined == 0 every exception list is empty by construction, so a scan that
+// examined nothing printed nothing.
+func (r *nativeWalkRollup) incomplete() bool {
+	return r != nil && (!r.empty() || r.NotExamined > 0)
+}
+
 // writeNativeCoverageSummary states a build's native coverage in one line, then
 // prints the exceptions beneath it.
 //
@@ -481,10 +499,13 @@ func writeNativeCoverageSummary(w io.Writer, r *nativeWalkRollup) error {
 		r.Examined, r.Examined+r.NotExamined,
 		len(r.Unsearched), len(r.Unidentified), len(r.LinkedNotShipped))
 	if r.Examined < r.Examined+r.NotExamined {
-		line += "\n  a module holding no native record was not looked at; that is not a finding of no native code — " +
-			"run: kanonarion native <module>@<version>, or list what is held: kanonarion native-list"
+		line += "\n  a module holding no native record was not looked at; that is not a finding of no native code"
+		if !r.anExaminable.IsZero() {
+			line += "\n  examine one: kanonarion native " + r.anExaminable.String()
+		}
+		line += "\n  or list what is held: kanonarion native-list"
 	}
-	if !r.empty() {
+	if r.incomplete() {
 		line += "\n  Kanonarion has no non-Go advisory source, so no advisories were searched for any of it"
 	}
 	if _, err := fmt.Fprintln(w, line); err != nil {

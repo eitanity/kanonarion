@@ -1030,7 +1030,13 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 	// and must never be added to one. What it is, is the part of this binary the
 	// scan did not cover — stated here so the findings list above cannot be read
 	// as covering it.
-	writeNativeRollup(stdout, native)
+	//
+	// The coverage line, not the exceptions alone. A scan where no module was
+	// examined has no exception to print, and printing nothing said the findings
+	// covered the whole build when nothing had looked.
+	if nerr := writeNativeCoverageSummary(stdout, native); nerr != nil {
+		return nerr
+	}
 
 	return nil
 }

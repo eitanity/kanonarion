@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	capapp "github.com/eitanity/kanonarion/internal/capability/application"
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
 )
 
@@ -521,5 +522,74 @@ func TestCapabilityRootsLineWording(t *testing.T) {
 		if got := capabilityRootScopeLine(scope); got != want {
 			t.Errorf("roots line = %q, want %q", got, want)
 		}
+	}
+}
+
+// TestRunCapability_MissingRecordIsNotFoundWithARunnableRemedy: a coordinate the
+// store has no call graph for is a record that is absent, not an invocation that
+// was wrong, and the remedy has to name the coordinate the caller asked about.
+// It exited 20 with a "<module>@<version>" placeholder, which routed a
+// populate-then-retry to whoever fixes broken command lines.
+func TestRunCapability_MissingRecordIsNotFoundWithARunnableRemedy(t *testing.T) {
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.2.0")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	uc := fakeCapAnalyser{err: &capapp.NoCallGraphError{Coord: coord}}
+
+	var buf bytes.Buffer
+	err = runCapability(context.Background(), "example.com/mod@v1.2.0", uc, cgdomain.RootScopeProduction, false, &buf)
+	if err == nil {
+		t.Fatal("a missing call graph returned no error")
+	}
+	if got := ExitCodeForError(err); got != ExitNotFound {
+		t.Errorf("exit code = %d, want %d: the request was well formed and the store was empty", got, ExitNotFound)
+	}
+	if !strings.Contains(err.Error(), "kanonarion callgraph example.com/mod@v1.2.0") {
+		t.Errorf("the remedy does not name the coordinate the caller asked about:\n%s", err.Error())
+	}
+	if strings.Contains(err.Error(), "<module>@<version>") {
+		t.Errorf("the remedy is a placeholder no parser accepts:\n%s", err.Error())
+	}
+}
+
+// TestRunCapabilityDiff_MissingRecordNamesTheSideThatMissed: a diff reads two
+// coordinates and either may be the absent one, so the remedy is built from the
+// coordinate the refusal is actually about rather than from the first argument.
+func TestRunCapabilityDiff_MissingRecordNamesTheSideThatMissed(t *testing.T) {
+	to, err := coordinate.NewModuleCoordinate("example.com/mod", "v2.0.0")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	uc := fakeCapAnalyser{err: &capapp.NoCallGraphError{Coord: to}}
+
+	var buf bytes.Buffer
+	err = runCapabilityDiff(context.Background(), "example.com/mod@v1.0.0", "example.com/mod@v2.0.0",
+		uc, cgdomain.RootScopeProduction, false, &buf)
+	if err == nil {
+		t.Fatal("a missing call graph returned no error")
+	}
+	if got := ExitCodeForError(err); got != ExitNotFound {
+		t.Errorf("exit code = %d, want %d", got, ExitNotFound)
+	}
+	if !strings.Contains(err.Error(), "kanonarion callgraph example.com/mod@v2.0.0") {
+		t.Errorf("the remedy names a side other than the one that missed:\n%s", err.Error())
+	}
+}
+
+// TestRunCapability_OtherFailuresKeepTheirCode: only the missing-record refusal
+// moves. A store read that failed is not a record that is absent, and giving it
+// the not-found code would tell a script to populate and retry something no
+// populate fixes.
+func TestRunCapability_OtherFailuresKeepTheirCode(t *testing.T) {
+	uc := fakeCapAnalyser{err: errors.New("reading the store: disk on fire")}
+
+	var buf bytes.Buffer
+	err := runCapability(context.Background(), "example.com/mod@v1.2.0", uc, cgdomain.RootScopeProduction, false, &buf)
+	if err == nil {
+		t.Fatal("a store failure returned no error")
+	}
+	if got := ExitCodeForError(err); got == ExitNotFound {
+		t.Errorf("a store failure exited %d: that code means the record is absent and the remedy fixes it", got)
 	}
 }

@@ -1,0 +1,10 @@
+# THE REFUSAL: a well-formed coordinate the store has no call graph for. It must exit 4, not 20 — the request was fine and the store was empty — and the remedy must name THIS coordinate rather than a <module>@<version> placeholder, because a template is not something a caller can run.
+$ kanonarion capability example.com/clean@v1.0.0
+exit 4
+--- error ---
+execute root command: no callgraph record for example.com/clean@v1.0.0 — analyse it first:
+  kanonarion callgraph example.com/clean@v1.0.0
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

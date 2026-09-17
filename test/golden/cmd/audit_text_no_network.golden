@@ -11,18 +11,18 @@ stdlib@$GOVERSION                                           VerifiedLocalToolcha
 latest as of 2026-02-28 23:50 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
 --- stderr ---
 notice: code scope resolved 2 module(s); test-scope dependencies included
-time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching\n  run it offline instead: kanonarion audit accepts --from-modcache, which answers without the network"
 ==> audit: walking project $AUDIT_PROJECT/go.mod (2 code dependencies)
-time=$TIME level=WARN msg=walk.fetch.failed module.path=example.com/clean module.version=v1.0.0 error.type=fetch_failed error="inner fetcher: fetching module: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
-time=$TIME level=WARN msg=walk.fetch.failed module.path=example.com/mod module.version=v1.2.0 error.type=fetch_failed error="inner fetcher: fetching module: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+time=$TIME level=WARN msg=walk.fetch.failed module.path=example.com/clean module.version=v1.0.0 error.type=fetch_failed error="inner fetcher: fetching module: proxy info: GOPROXY=off: the environment declares no module fetching\n  run it offline instead: kanonarion audit accepts --from-modcache, which answers without the network"
+time=$TIME level=WARN msg=walk.fetch.failed module.path=example.com/mod module.version=v1.2.0 error.type=fetch_failed error="inner fetcher: fetching module: proxy info: GOPROXY=off: the environment declares no module fetching\n  run it offline instead: kanonarion audit accepts --from-modcache, which answers without the network"
 ==> audit: extracting licenses for walk $ULID
-time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching\n  run it offline instead: kanonarion audit accepts --from-modcache, which answers without the network"
 Starting extraction for walk $ULID...
 ==> audit: scanning vulnerabilities for walk $ULID
-time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+time=$TIME level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching\n  run it offline instead: kanonarion audit accepts --from-modcache, which answers without the network"
 Scanning walk $ULID...
-time=$TIME level=WARN msg="pre-fetch: failed to fetch module" module=example.com/clean@v1.0.0 error="fetching example.com/clean@v1.0.0: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
-time=$TIME level=WARN msg="pre-fetch: failed to fetch module" module=example.com/mod@v1.2.0 error="fetching example.com/mod@v1.2.0: proxy info: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store"
+time=$TIME level=WARN msg="pre-fetch: failed to fetch module" module=example.com/clean@v1.0.0 error="fetching example.com/clean@v1.0.0: proxy info: GOPROXY=off: the environment declares no module fetching\n  run it offline instead: kanonarion audit accepts --from-modcache, which answers without the network"
+time=$TIME level=WARN msg="pre-fetch: failed to fetch module" module=example.com/mod@v1.2.0 error="fetching example.com/mod@v1.2.0: proxy info: GOPROXY=off: the environment declares no module fetching\n  run it offline instead: kanonarion audit accepts --from-modcache, which answers without the network"
 time=$TIME level=WARN msg="failed to pre-populate GOMODCACHE, govulncheck will download dependencies" requested=2 failures="example.com/clean@v1.0.0: fact record not found for example.com/clean@v1.0.0; example.com/mod@v1.2.0: fact record not found for example.com/mod@v1.2.0"
   [1/4] example.com/app@local — Clean
   [2/4] example.com/clean@v1.0.0 — Clean
@@ -46,4 +46,7 @@ staleness coverage over 3 module(s):
   unmeasured (offline)                   1   33.3%
   unmeasured (toolchain-pinned)          1   33.3%
 native code: 0 of 3 module(s) examined for native code compiled into or linked into the binary; 0 with an identified component, 0 with native source no recipe names, 0 linking an external library it does not ship
-  a module holding no native record was not looked at; that is not a finding of no native code — run: kanonarion native <module>@<version>, or list what is held: kanonarion native-list
+  a module holding no native record was not looked at; that is not a finding of no native code
+  examine one: kanonarion native example.com/clean@v1.0.0
+  or list what is held: kanonarion native-list
+  Kanonarion has no non-Go advisory source, so no advisories were searched for any of it

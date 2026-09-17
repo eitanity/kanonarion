@@ -52,6 +52,12 @@ package golden_test
 //	                      zero that must not read like it.
 //	sbom-show             the absent identifier. Its populated case is deliberately
 //	                      absent — see sbom_show_absent for why.
+//	capability            text; a coordinate the store has analysed, and one it has
+//	                      not — the refusal whose exit code and printed remedy are
+//	                      the subject.
+//	fetch                 text; the GOPROXY=off refusal only. It is here for the
+//	                      REMEDY it prints, which is rendered per command: the
+//	                      shared one named a flag fetch rejects.
 //	notice                the THIRD-PARTY-LICENSES document; POPULATED (identity,
 //	                      copyright and verbatim text read back out of each stored
 //	                      artefact, with an Apache NOTICE headed as a notice), the
@@ -64,8 +70,8 @@ package golden_test
 //
 //	interface-show / interface-diff / interface-list
 //	examples-* / symbol-* / implementers / callers / callees
-//	inspect / vuln-scan / vuln / fetch / walk / extract / license / callgraph
-//	capability / fips / godebug / directives / vendor / provenance / use
+//	inspect / vuln-scan / vuln / walk / extract / license / callgraph
+//	fips / godebug / directives / vendor / provenance / use
 //	store / config / policy / local / vuln-snapshot-list / vuln-snapshot-show
 //	callgraph-list / license-list / license-diff / callgraph traversal reads
 //
@@ -178,6 +184,7 @@ func commandCases(t *testing.T, emptyStore, project string, audit *auditFixture)
 	cases = append(cases, configShowCases(emptyStore)...)
 	cases = append(cases, auditCases(t, gomod, project, unroutable, audit)...)
 	cases = append(cases, sbomCases(t)...)
+	cases = append(cases, printedRemedyCases(t, emptyStore)...)
 	// One store for the read-only document cases. The sbom cases above each
 	// build their own, because generating a document writes one.
 	cases = append(cases, noticeCases(buildDocumentStore(t))...)
@@ -484,6 +491,57 @@ func callGraphShowCases(emptyStore string) []cmdCase {
 			args:      []string{"callgraph-show", "example.com/mod@v1.2.0", "--json"},
 			storeRoot: emptyStore,
 			why:       "error-shaped: there is no store to read a generation from.",
+		},
+	}
+}
+
+// printedRemedyCases record the two things a refusal owes its reader: the exit
+// code that says WHICH kind of refusal it is, and a remedy that runs as printed.
+//
+// They are grouped because one defect produced both. `capability` refused a
+// coordinate nothing had analysed with the code that means "you invoked this
+// wrongly", and named the remedy as a placeholder no parser accepts. `fetch`
+// printed a remedy built from a string shared with the commands that DO define
+// --from-modcache, and rejected it with "unknown flag" when the operator ran it.
+//
+// Both renderings of the offline remedy are recorded, here and in
+// audit_text_no_network: `audit` declares the flag and is told to pass it,
+// `fetch` declares none and is told what to run instead. A shared string that
+// drifted back into both would move one of the two files.
+func printedRemedyCases(t *testing.T, emptyStore string) []cmdCase {
+	t.Helper()
+	return []cmdCase{
+		{
+			name: "capability_text_populated",
+			args: []string{"capability", "example.com/mod@v1.2.0"},
+			why: "populated: the coordinate the fixture store holds a call graph for. It is the CONTROL " +
+				"for the refusal below — the same command, the same store, and the only difference is " +
+				"whether the record is there.",
+		},
+		{
+			name: "capability_text_no_callgraph",
+			args: []string{"capability", "example.com/clean@v1.0.0"},
+			why: "THE REFUSAL: a well-formed coordinate the store has no call graph for. It must exit 4, " +
+				"not 20 — the request was fine and the store was empty — and the remedy must name THIS " +
+				"coordinate rather than a <module>@<version> placeholder, because a template is not " +
+				"something a caller can run.",
+		},
+		{
+			name:      "capability_text_bad_coordinate",
+			args:      []string{"capability", "not-a-coordinate"},
+			storeRoot: emptyStore,
+			why: "the control for the exit code above: a malformed coordinate is the invocation being " +
+				"wrong, and stays 20. Without this case, moving every capability refusal to 4 would look right.",
+		},
+		{
+			name:      "fetch_text_no_network",
+			args:      []string{"fetch", "example.com/mod@v1.2.0"},
+			storeRoot: t.TempDir(),
+			env:       map[string]string{"GOPROXY": "off"},
+			why: "THE REMEDY: GOPROXY=off stops the run, and what it prints must be runnable BY FETCH. " +
+				"fetch defines no --from-modcache, so naming it sent the operator to `unknown flag`. " +
+				"Its control is audit_text_no_network, whose command does define the flag and is told " +
+				"to pass it. A shared string that named one flag to both would move one of these files.",
 		},
 	}
 }

@@ -656,3 +656,49 @@ func TestNativeCoordsOf_SkipsWhatItCannotParse(t *testing.T) {
 		t.Errorf("nativeCoordsOf = %v", got)
 	}
 }
+
+// TestWriteNativeCoverageSummary_NothingExaminedStillSaysNoAdvisoriesWereSearched
+// is the case the old gate suppressed. With Examined == 0 every exception list
+// is empty by construction, so gating the sentence on the exceptions withheld it
+// from the one scan where nothing had looked at all — the reading that a release
+// vulnerability statement is written from.
+func TestWriteNativeCoverageSummary_NothingExaminedStillSaysNoAdvisoriesWereSearched(t *testing.T) {
+	unseen := natCoord(t, "example.com/nobody-looked", "v1.0.0")
+	roll := nativeRollupOver(context.Background(), &fakeNativeReader{}, []coordinate.ModuleCoordinate{unseen})
+
+	var out bytes.Buffer
+	if err := writeNativeCoverageSummary(&out, roll); err != nil {
+		t.Fatalf("writeNativeCoverageSummary: %v", err)
+	}
+	for _, want := range []string{
+		"native code: 0 of 1 module(s) examined",
+		"that is not a finding of no native code",
+		"Kanonarion has no non-Go advisory source",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("a scan that examined nothing does not state %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// TestNativeCoverageIncomplete_EveryModuleMeasuredAndNothingFound is the control
+// for the sentence above: a build wholly measured with nothing native in it has
+// no unsearched code, so claiming none of it was searched would be false.
+func TestNativeCoverageIncomplete_EveryModuleMeasuredAndNothingFound(t *testing.T) {
+	clean := natCoord(t, "example.com/plain", "v1.0.0")
+	reader := &fakeNativeReader{recs: map[coordinate.ModuleCoordinate]nativedomain.Record{
+		clean: natRecord(nativedomain.PresenceAbsent, nil, 0),
+	}}
+	roll := nativeRollupOver(context.Background(), reader, []coordinate.ModuleCoordinate{clean})
+	if roll.incomplete() {
+		t.Fatalf("a fully examined build with nothing native reads as incomplete: %+v", roll)
+	}
+
+	var out bytes.Buffer
+	if err := writeNativeCoverageSummary(&out, roll); err != nil {
+		t.Fatalf("writeNativeCoverageSummary: %v", err)
+	}
+	if strings.Contains(out.String(), "no non-Go advisory source") {
+		t.Errorf("a build with no native code was told none of it was searched:\n%s", out.String())
+	}
+}

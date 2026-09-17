@@ -78,10 +78,27 @@ Surfaces that carry it:
 
 - **`vuln` and `vuln-show`** — a `Native code:` block under the record, and
   `native_coverage` in `--json`.
-- **`vuln-scan` and `vuln-scan-show`** — a walk-level roll-up naming the modules
-  whose native components were not searched and the modules whose native source
-  could not be identified, and `native_coverage` in `--json`. Modules nobody
-  examined are a count, not a list.
+- **`vuln-scan` and `vuln-scan-show`** — a coverage line stating how many of the
+  walk's modules were examined at all, then a roll-up naming the modules whose
+  native components were not searched and the modules whose native source could
+  not be identified, and `native_coverage` in `--json`. Modules nobody examined
+  are a count, not a list.
+
+The coverage line prints whatever the answer, including the two shapes with no
+roll-up beneath them. A scan that examined **no** module for native code has no
+exception to name, and the sentence saying so is exactly what a reader writing a
+release statement needs:
+
+```
+native code: 0 of 128 module(s) examined for native code compiled into or linked
+into the binary; 0 with an identified component, 0 with native source no recipe
+names, 0 linking an external library it does not ship
+  a module holding no native record was not looked at; that is not a finding of
+  no native code — run: kanonarion native <module>@<version>, or list what is
+  held: kanonarion native-list
+  Kanonarion has no non-Go advisory source, so no advisories were searched for
+  any of it
+```
 
 Matching a native component against an upstream advisory database is a separate
 question, with its own cost: it needs a non-Go advisory source, a version

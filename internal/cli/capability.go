@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -131,6 +132,9 @@ func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, scope
 	}
 	report, err := uc.Analyse(ctx, coord, cgapp.PipelineVersion, scope)
 	if err != nil {
+		if missing := capabilityMissingRecord(err); missing != nil {
+			return missing
+		}
 		return fmt.Errorf("analysing capabilities: %w", err)
 	}
 	if jsonOut {
@@ -150,12 +154,35 @@ func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capability
 	}
 	fromReport, toReport, diff, err := uc.Diff(ctx, from, to, cgapp.PipelineVersion, scope)
 	if err != nil {
+		if missing := capabilityMissingRecord(err); missing != nil {
+			return missing
+		}
 		return fmt.Errorf("diffing capabilities: %w", err)
 	}
 	if jsonOut {
 		return encodeJSON(stdout, capabilityDiffToJSON(from, to, fromReport, toReport, diff, scope))
 	}
 	return printCapabilityDiff(stdout, from, to, diff, scope)
+}
+
+// capabilityMissingRecord turns "this coordinate has no call graph" into the
+// refusal a caller can act on, and returns nil for anything else.
+//
+// ExitNotFound, not the invocation-error code: the request was well formed and
+// the store was empty, which is the distinction a script branches on. The
+// remedy is built from the coordinate that actually missed — a diff reads two —
+// so what is printed is an invocation this CLI's own parser accepts.
+//
+// The wording is callgraph-show's, deliberately: both refuse for the absence of
+// the same record, and two spellings of one refusal read as two conditions.
+func capabilityMissingRecord(err error) error {
+	missing, ok := errors.AsType[*capapp.NoCallGraphError](err)
+	if !ok {
+		return nil
+	}
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+		"no callgraph record for %s — analyse it first:\n  %s",
+		missing.Coord, cgdomain.ReanalysisInstruction(missing.Coord, ""))}
 }
 
 func encodeJSON(stdout io.Writer, v any) error {

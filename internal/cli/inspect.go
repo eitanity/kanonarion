@@ -54,6 +54,10 @@ func newInspectCmd(stdout, stderr io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationStoreIntent: StoreIntentCreate,
 			annotationNetworkUse:  NetworkAlways,
+			// inspect acquires before it analyses and defines no --from-modcache
+			// of its own, so the offline route is the walk that can read the
+			// cache; the analysis stages then run over the walk it records.
+			annotationOfflineAlternative: "kanonarion walk --gomod ./go.mod --from-modcache",
 		},
 		Short: "Run the full pipeline (walk → extract → vuln-scan → context); no args: code deps of ./go.mod",
 		Long: `Run the full pipeline (walk → extract → vuln-scan → context) for a module.

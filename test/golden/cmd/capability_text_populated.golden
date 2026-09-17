@@ -1,0 +1,9 @@
+# populated: the coordinate the fixture store holds a call graph for. It is the CONTROL for the refusal below — the same command, the same store, and the only difference is whether the record is there.
+$ kanonarion capability example.com/mod@v1.2.0
+exit 0
+--- stdout ---
+example.com/mod@v1.2.0 capabilities:
+  roots: all of this module's own code; test functions excluded (widen with --include-tests)
+  (no sensitive capabilities witnessed)
+--- stderr ---
+(empty)

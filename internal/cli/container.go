@@ -369,6 +369,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 			// fetching, and the refusal arrives at the attempt — before any
 			// network I/O — rather than being quietly re-pointed at the
 			// default proxy, which is what breached the gap.
+			//
+			// The refusal carries this command's own offline remedy from here
+			// on: it is what every later fetch attempt will print, and the
+			// adapter that raised it cannot know which command is running.
+			perr = withOfflineRemedy(perr)
 			logger.Warn("module fetching refused by the environment; reads continue, fetches will fail", "reason", perr)
 			proxyAdapter = fetchproxy.Refusing(perr)
 		case perr != nil:
