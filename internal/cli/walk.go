@@ -417,6 +417,21 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		}
 	}
 
+	// Stated on the walk line's own channel: an operator reading "N nodes, 0
+	// failed" has nothing else that distinguishes a resolved build list from the
+	// require directives that stood in for one. Under --json stdout is the
+	// record's bytes, which carry the gap themselves, so the prose goes beside
+	// them. Gated on the same nil reader the other disclosures are.
+	if records != nil {
+		channel := stdout
+		if jsonOut {
+			channel = stderr
+		}
+		if bErr := writeBuildListUnavailable(channel, rec.Graph); bErr != nil {
+			return result, bErr
+		}
+	}
+
 	// A root ingest that did not happen is stated outright. The walk is
 	// otherwise complete — the node count and failure count both read clean —
 	// so without this line nothing in the output says the project's own
@@ -430,12 +445,34 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		}
 	}
 
-	partialMsg := "walk partial: some dependencies could not be fetched"
-	if rootIngestErr != "" {
-		partialMsg = "walk partial: the dependency graph is complete, but the project's own packages were not ingested"
-	}
 	return result, walkExit(rec.OverallStatus, allowPartial,
-		"walk failed: project go.mod could not be resolved", partialMsg)
+		"walk failed: project go.mod could not be resolved",
+		walkPartialMessage(rec, rootIngestErr))
+}
+
+// walkPartialMessage says what this walk is partial FOR. A walk can be
+// incomplete for reasons that have nothing to do with fetching, and the one
+// message this used to carry — "some dependencies could not be fetched" — is a
+// false sentence over every one of them.
+//
+// The order is most specific first. The last arm is the honest catch-all: it
+// quotes the reason the record carries rather than guessing at one, so a reason
+// added after this was written is stated instead of mis-described.
+func walkPartialMessage(rec domain.WalkRecord, rootIngestErr string) string {
+	switch {
+	case rec.Graph.BuildListUnavailable != "":
+		// The set being the wrong set outranks gaps IN a set: the others describe
+		// a graph resolved from the build, and this says the build was never it.
+		return buildListUnavailablePartialMsg
+	case rootIngestErr != "":
+		return "walk partial: the dependency graph is complete, but the project's own packages were not ingested"
+	case countFailures(rec) > 0:
+		return "walk partial: some dependencies could not be fetched"
+	case rec.Graph.PartialReason != "":
+		return "walk partial: the dependency graph is incomplete — " + rec.Graph.PartialReason
+	default:
+		return "walk partial: the dependency graph is incomplete, and the record states no reason"
+	}
 }
 
 // walkExit maps the recorded walk status onto the process exit code.

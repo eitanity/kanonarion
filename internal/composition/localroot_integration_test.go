@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -196,5 +197,15 @@ func TestLocalWalkExtract_DefaultRootStaysSkipped(t *testing.T) {
 	}
 	if sr := modRes.Stages["license"]; sr.Status.String() != "skipped" {
 		t.Errorf("license stage = %s, want skipped when root analysis is off", sr.Status)
+	}
+	// Without root analysis nothing hands the Go toolchain the last word, so the
+	// module set is the internal resolver's approximation of the build. The walk
+	// records that as incomplete: a consumer of this driver reads OverallStatus,
+	// and succeeded would tell them they have the set that compiles.
+	if !strings.Contains(res.Walk.Graph.PartialReason, "build_list_approximate") {
+		t.Errorf("PartialReason = %q, want the approximate-set reason", res.Walk.Graph.PartialReason)
+	}
+	if res.Walk.OverallStatus != walkdomain.WalkPartial {
+		t.Errorf("walk status = %s, want partial", res.Walk.OverallStatus)
 	}
 }

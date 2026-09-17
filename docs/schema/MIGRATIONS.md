@@ -1118,6 +1118,33 @@ an affected row is served as a cache hit and keeps its old answer forever:
 Rows are not migrated, rewritten or deleted; the fingerprint moves and they stop
 being read.
 
+## Walk record: pipeline `1.10.0` → `1.11.0`, no migration
+
+**Record shape changes; no DDL and no store migration.** A project walk whose
+build list the Go toolchain could not compute now records the toolchain's own
+reason on the graph as `build_list_unavailable`, and the walk's overall status is
+`partial` rather than `succeeded` — the module set is the go.mod require
+directives, not the set that compiles.
+
+The new key is `omitempty`, so a walk whose build list resolved marshals exactly
+as it did at `1.10.0` and still verifies against its written hash. Walks that
+took the fallback are the ones that change: they are sealed as `succeeded` at
+`1.10.0`, and the bump is what stops one being served as a complete answer.
+
+The status rule widened with it: **any** graph marked `Partial` now makes the
+walk partial, with `shallow` the one exemption (the closure the operator asked
+for, and the walk line says `depth=shallow`). A reason absent from that exemption
+list degrades, so a reason added later fails safe. Measured as unchanged by the
+widening: `fetch_failed`, `parse_failed` and `depth_bounded` already produced
+failed node results and were partial before it; `cancelled` already produced a
+cancelled walk. The one live path it moves is `build_list_approximate` — a
+`pkg/kanonarion` driver run without root analysis, whose module set is the
+internal resolver's approximation of the build.
+
+**The pipeline version moves because the answer changed**, not only its shape.
+Rows at `1.10.0` are not migrated, rewritten or deleted; they stay as the record
+of what was reported then, and are re-resolved rather than read.
+
 ## Purging a table other rows point at
 
 A migration that deletes rows must state what happens to the rows that reference

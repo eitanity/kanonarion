@@ -21,6 +21,48 @@ func DepthBoundedReason(maxDepth int) string {
 	return fmt.Sprintf("depth_bounded: max_depth=%d", maxDepth)
 }
 
+// The reasons a graph can be Partial for. They are named here, not spelled at
+// the point each is raised, because the rule that turns a partial graph into a
+// walk status has to enumerate them — a reason only the resolver knows about is
+// a reason that rule cannot be written against.
+const (
+	// FetchFailedReason: a module in the closure could not be fetched.
+	FetchFailedReason = "fetch_failed"
+	// ParseFailedReason: a fetched module's go.mod could not be parsed.
+	ParseFailedReason = "parse_failed"
+	// CancelledReason: resolution stopped before the closure was complete.
+	CancelledReason = "cancelled"
+	// ShallowReason: the operator asked for the target alone, so the closure was
+	// never walked. The requirement list is recorded as unresolved nodes.
+	ShallowReason = "shallow"
+)
+
+// PartialReasonTokens splits a PartialReason into the reason names it is made
+// of. Reasons accumulate as "a; b" and each may carry a payload after a colon
+// ("depth_bounded: max_depth=3"), so the name is what is left of the first one.
+// An empty reason yields no tokens — a caller must decide what that means rather
+// than read it as "nothing is wrong".
+func PartialReasonTokens(partialReason string) []string {
+	if strings.TrimSpace(partialReason) == "" {
+		return nil
+	}
+	parts := strings.Split(partialReason, "; ")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		name, _, _ := strings.Cut(strings.TrimSpace(p), ":")
+		if name = strings.TrimSpace(name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// BuildListUnavailableReason is the PartialReason token recorded when the Go
+// toolchain could not compute a project's build list and the module set came
+// from the go.mod require directives instead. The token is what a caller keys
+// on; the toolchain's own words are on Graph.BuildListUnavailable.
+const BuildListUnavailableReason = "build_list_unavailable: module set is the go.mod require directives, not the resolved build"
+
 // ResolutionSource describes how a node's version was selected during MVS resolution.
 type ResolutionSource string
 
@@ -182,6 +224,12 @@ type Graph struct {
 	// PartialReason is a machine-readable summary of why the graph is partial:
 	// "fetch_failed", "parse_failed", "cancelled", or a combination.
 	PartialReason string
+	// BuildListUnavailable is the Go toolchain's own reason for failing to
+	// compute this project's build list. Non-empty means Nodes is the go.mod
+	// require closure rather than the module set that compiles, so every reader
+	// of the record states it. Empty when the build list was used, or when no
+	// toolchain was consulted at all.
+	BuildListUnavailable string
 	// HasLocalReplace is true when the target's go.mod contains at least one
 	// replace directive pointing to a local filesystem path. Such replacements
 	// are recorded but not followed, since local paths have no standalone fetch

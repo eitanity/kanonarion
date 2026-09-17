@@ -350,9 +350,13 @@ addressable scope (`--tool`) - never folded silently into the code view, never
 dropped.
 
 **Toolchain-unavailable fallback.** If `go` is absent or `go list` fails
-(incomplete `go.sum`, restricted network), the walk falls back to the internal
-resolver and is marked `partial` with reason `build_list_approximate: …`, so an
-approximate set is never presented as authoritative.
+(incomplete `go.sum`, restricted network, a vendor-only tree), the walk falls
+back to the go.mod require directives. That set is not the set that compiles, so
+the walk is recorded `partial` with reason `build_list_unavailable: …` and the
+command exits `1`. The toolchain's own reason is printed under
+`build list unavailable:` and recorded on the walk at
+`.graph.build_list_unavailable`, so `walk-show` states it too. `--allow-partial`
+exits `0` as it does for any partial walk.
 
 **Why `local`?** The main module is unpublished, so it has no semver to pin. The
 synthetic `local` marker anchors the record and the SBOM subject. (The Go-native
@@ -695,7 +699,7 @@ only on completion.
 | Value | Meaning |
 |-------|---------|
 | `succeeded` | Every module in the closure fetched successfully |
-| `partial` | Target fetched but at least one dependency failed |
+| `partial` | Target fetched, but the walk is known-incomplete. Any incomplete graph makes the walk partial — a dependency failed, `--analyse-root` did not ingest, the module set came from the go.mod require directives, or the graph states some other reason. `--shallow` is the one exemption: it is the closure you asked for, and the line says `depth=shallow`. The exit message names which |
 | `failed` | The target module itself could not be fetched |
 | `cancelled` | Context cancelled before the walk completed |
 

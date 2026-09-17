@@ -16,4 +16,9 @@
 // and the graph's Partial flag is set. Resolution continues for sibling nodes.
 // - Context cancellation produces a partial graph with PartialReason = "cancelled".
 // - Every error that propagates out of Resolve is wrapped with call-site context.
+//
+// Completeness:
+// - A graph marked Partial makes the WALK partial too, whatever the reason.
+// partialReasonsKeepingSucceeded is the sole exemption list; a reason absent from
+// it degrades, so a reason added here without an argument there fails safe.
 package application

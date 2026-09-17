@@ -472,8 +472,10 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 
 	// Step 6: aggregate overall status.
 	outcome.CompletedAt = w.clock.Now()
-	outcome.OverallStatus = degradeForRootIngest(
-		aggregateStatus(ctx, outcome.PerNodeResults, req.Target), rootIngested)
+	outcome.OverallStatus = degradeForIncompleteGraph(
+		degradeForRootIngest(
+			aggregateStatus(ctx, outcome.PerNodeResults, req.Target), rootIngested),
+		outcome.Graph)
 
 	log.InfoContext(ctx, "walker.end",
 		slog.String("status", outcome.OverallStatus.String()),
@@ -664,6 +666,41 @@ func (w *Walker) fetchOne(
 func degradeForRootIngest(status domain2.WalkStatus, rootIngested bool) domain2.WalkStatus {
 	if !rootIngested && status == domain2.WalkSucceeded {
 		return domain2.WalkPartial
+	}
+	return status
+}
+
+// partialReasonsKeepingSucceeded names the reasons a graph can be marked Partial
+// for and still be the answer the operator asked for. Membership is the
+// exemption, never the rule: a reason absent from this map degrades the walk, so
+// a reason added later fails safe until someone argues it in here.
+var partialReasonsKeepingSucceeded = map[string]bool{
+	// A shallow walk is the target alone because that is what was asked for, and
+	// the walk line prints depth=shallow, so the operator is already told.
+	domain2.ShallowReason: true,
+}
+
+// degradeForIncompleteGraph downgrades an otherwise-clean walk whose graph is
+// marked incomplete for a reason that is not exempt.
+//
+// Every node may have fetched and verified, so nothing in the per-node results
+// is anything but succeeded; what the graph says is that the set they were drawn
+// from is not the whole one, and succeeded says the opposite. A status already
+// worse than succeeded carries its own reason and is left alone.
+func degradeForIncompleteGraph(status domain2.WalkStatus, graph domain2.Graph) domain2.WalkStatus {
+	if status != domain2.WalkSucceeded || !graph.Partial {
+		return status
+	}
+	reasons := domain2.PartialReasonTokens(graph.PartialReason)
+	// A graph marked incomplete that states no reason is the one case that must
+	// not read as an exemption: nothing was argued, so nothing is excused.
+	if len(reasons) == 0 {
+		return domain2.WalkPartial
+	}
+	for _, reason := range reasons {
+		if !partialReasonsKeepingSucceeded[reason] {
+			return domain2.WalkPartial
+		}
 	}
 	return status
 }
