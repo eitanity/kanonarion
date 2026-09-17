@@ -459,6 +459,8 @@ kanonarion callgraph-show <module>@<version> [flags]
 | `--limit-edges` | `100` | Maximum edges to print (`0` = unlimited). Under `--json` it applies only when you pass it; the default does not truncate the document |
 | `--history` | `false` | List every stored generation for the module instead of the composed answer |
 | `--diff` | `false` | Report what the distinct stored measurements for the module differ about, instead of the composed answer |
+| `--diff-from` | _(the older of the two most recent measurements)_ | With `--diff`: the generation on the left of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
+| `--diff-to` | _(the most recent measurement)_ | With `--diff`: the generation on the right of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
 | `--source` | _(default)_ | Restrict to graphs built from one source: `zip` or `worktree` |
 | `--toolchain` | _(default)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. `go1.26.6`). A coordinate holding none of them reports no record |
 
@@ -986,8 +988,52 @@ available, and where the pair is already `BUILT_WITH_BODIES` it sends you to
 generations by what they measured, validates each by its own content hash — the
 hash is sealed over `extracted_at`, so it can answer "is this record intact" and
 never "do these two agree" — and then reports the record fields, nodes, edges,
-interfaces and implementations the first two measurements differ about. Where
-the graphs agree and only the inputs differ, it says so.
+interfaces and implementations two of those measurements differ about. Where the
+graphs agree and only the inputs differ, it says so.
+
+#### Which two measurements `--diff` compares
+
+With no selector it compares the **two most recent distinct measurements**,
+older on the left. That is what "what changed" means for a coordinate that has
+been re-ingested — every working tree, since `local` pins the tree on each run —
+and it puts the generation the composed read serves on the right. Within a
+measurement it takes the first generation, which is when the ledger first saw
+that measurement; the generations of one measurement state the same record apart
+from when it was taken.
+
+Either side can be named instead, by the `record:` hash `--history` prints for
+each generation:
+
+```
+$ kanonarion callgraph-show example.com/mod@local --diff --diff-to sha256:e0dd5e71
+comparing the first generation of the measurement before it against the generation you named:
+  left   sha256:ffa6878b…  2026-09-15T21:29:10.657514306Z  6 node(s) / 4 edge(s)
+  right  sha256:e0dd5e71…  2026-09-15T21:29:11.758393460Z  7 node(s) / 5 edge(s)
+```
+
+- A unique **prefix** of the hash names the same generation; an ambiguous one is
+  refused listing what it matched.
+- Naming **one** side leaves the other at its default neighbour — the adjacent
+  measurement, older than a `--diff-to` and newer than a `--diff-from` — and the
+  line above the pair says which neighbour it took. Where the named generation
+  is already at that end of the ladder, the neighbour is the one on the other
+  side and the line says so.
+- Naming **both** compares exactly those two, in whichever order of age you put
+  them: the flags decide which record is on the left, not the clock.
+- A hash that names no generation **of this coordinate** — unknown, or belonging
+  to another module — is refused naming `--history`, and exits `20`. So is an
+  ambiguous prefix, and so is a side selector passed without `--diff`. What the
+  refusal prints is a diagnostic that lists the hashes, not a command that
+  produces the missing record, which is the line
+  [conventions.md](conventions.md#exit-codes) draws between `20` and `4`.
+
+Under `--json` each side carries `selected_by`, so a consumer can tell a default
+comparison from one the caller asked for: `most_recent` on both sides for the
+default pair, `named` for a side the caller named, and `neighbour_older` /
+`neighbour_newer` for the side that took the default neighbour. A coordinate
+holding exactly two distinct measurements offers one pair and nothing was
+chosen, so neither side carries the field and the statement above the pair reads
+`comparing the first generation of the first two measurements`.
 
 ### `callgraph-list`
 
@@ -1545,6 +1591,12 @@ nodes:
 edges:
   + …TestMarshalingErrors$1 encoding/json.checkValid {"file":"ulid_test.go","line":201}
 ```
+
+Where the coordinate holds only those two measurements this is the pair `--diff`
+takes by default. A later re-analysis adds a third, and the two sides of the
+toolchain disagreement are then named directly — `--diff-from` and `--diff-to`
+take the `record:` hashes `--history` prints beside each toolchain — rather than
+being pushed out of the default pair.
 
 Read it before choosing, because the two answers are rarely equally useful. Here
 one toolchain resolves a call the other does not — `encoding/json.checkValid`,

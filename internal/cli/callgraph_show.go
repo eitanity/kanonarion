@@ -29,8 +29,13 @@ type callGraphShowFlags struct {
 	nodeFilter    string
 	history       bool
 	diff          bool
-	source        string
-	toolchain     string
+	// diffFrom and diffTo name one side of the comparison each, by the record
+	// hash --history prints. Empty means the side takes its default: see
+	// selectDiffPair.
+	diffFrom  string
+	diffTo    string
+	source    string
+	toolchain string
 }
 
 func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -49,6 +54,7 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node github.com/spf13/pflag
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --history
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff
+  kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff --diff-to sha256:d951af94
   kanonarion callgraph-show example.com/mod@local --source worktree
   kanonarion callgraph-show golang.org/x/tools@v0.49.0 --toolchain go1.26.6`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,6 +78,8 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&f.limitEdges, "limit-edges", 100, "max edges to print (0=unlimited)")
 	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of the composed answer")
 	cmd.Flags().BoolVar(&f.diff, "diff", false, "report what the distinct stored measurements for the module differ about, instead of the composed answer")
+	cmd.Flags().StringVar(&f.diffFrom, "diff-from", "", "with --diff: compare from this stored generation, the older side of the pair — a record `hash` as --history prints it, or a unique prefix of one")
+	cmd.Flags().StringVar(&f.diffTo, "diff-to", "", "with --diff: compare to this stored generation, the newer side of the pair — a record `hash` as --history prints it, or a unique prefix of one")
 	cmd.Flags().StringVar(&f.source, "source", "", "restrict to graphs built from one source: zip or worktree")
 	cmd.Flags().StringVar(&f.toolchain, "toolchain", "", "restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
 
@@ -105,6 +113,21 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	source, err := parseAnalysisSource(f.source)
 	if err != nil {
 		return err
+	}
+	// A side selector that cannot apply is refused by name rather than accepted
+	// and ignored: the reader asked for a specific pair, and a read that quietly
+	// answered a different question is the defect these flags exist to fix.
+	if !f.diff {
+		switch {
+		case f.diffFrom != "":
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--diff-from names one side of a comparison and applies only with --diff — run:\n  kanonarion callgraph-show %s --diff --diff-from %s",
+				coord, f.diffFrom)}
+		case f.diffTo != "":
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--diff-to names one side of a comparison and applies only with --diff — run:\n  kanonarion callgraph-show %s --diff --diff-to %s",
+				coord, f.diffTo)}
+		}
 	}
 	if f.history {
 		return runCallGraphHistory(ctx, coord, uc, stdout)
