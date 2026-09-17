@@ -171,10 +171,9 @@ const (
 	// re-establish it.
 	VCSInherited
 
-	// VCSNever means the record carries legs — so it was written under the
-	// ledger and could have recorded a VCS leg — and has none. This is the only
-	// class where no cross-verification evidence exists at all, and the one that
-	// matters most.
+	// VCSNever means the record was written under the ledger — so it could have
+	// recorded a VCS leg — and has none. This is the only class where no
+	// cross-verification evidence exists at all, and the one that matters most.
 	VCSNever
 
 	// VCSUnavailable means the check was attempted and could not run: the host
@@ -186,11 +185,18 @@ const (
 	VCSUnavailable
 )
 
-// VCSEvidenceOf reads a record's validation legs. A record with no legs at all
-// cannot speak to the question and reports VCSNotMeasured; a record with legs
-// but no VCS leg is a genuine absence.
-func VCSEvidenceOf(legs []ValidationLeg) VCSEvidence {
-	if len(legs) == 0 {
+// VCSEvidenceOf reads a record's validation legs. underLedger says whether the
+// measurement was written after validation legs existed; a record from before
+// them cannot speak to the question and reports VCSNotMeasured, while one
+// written under the ledger with no VCS leg is a genuine absence.
+//
+// It used to infer that from the legs alone — no legs meant pre-ledger. That
+// held only while every ledger-era measurement performed at least one leg, and a
+// --from-modcache run performs neither: it anchors on the local go.sum and skips
+// cross-verification, so an air-gapped run's honest measured absence read as a
+// record that predates the ledger.
+func VCSEvidenceOf(legs []ValidationLeg, underLedger bool) VCSEvidence {
+	if len(legs) == 0 && !underLedger {
 		return VCSNotMeasured
 	}
 	for _, l := range legs {
@@ -227,6 +233,11 @@ type CoverageObservation struct {
 	Bucket VerificationBucket
 	// Legs are the record's validation legs, empty for a pre-ledger record.
 	Legs []ValidationLeg
+	// UnderLedger is true when the measurement was written after validation legs
+	// existed, so empty Legs is a measured absence rather than a record that
+	// cannot say. A vocabulary with no ledger of its own — the standard library's
+	// — leaves it false and reports as not measured, which is what it is.
+	UnderLedger bool
 	// Recorded is false when the graph holds this module but no measurement of
 	// it could be found.
 	Recorded bool
@@ -317,7 +328,7 @@ func VerificationCoverageOf(obs []CoverageObservation) VerificationCoverage {
 		if o.Bucket == BucketLocalSource {
 			continue
 		}
-		switch VCSEvidenceOf(o.Legs) {
+		switch VCSEvidenceOf(o.Legs, o.UnderLedger) {
 		case VCSRechecked:
 			c.VCSRechecked++
 		case VCSInherited:

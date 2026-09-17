@@ -193,6 +193,10 @@ func seedFetch(
 		GoModLocation:      "gomod:" + coord.Path() + "@" + coord.Version(),
 		FetchedAt:          fetchedAt,
 		MeasurementKind:    fetchdomain.MeasurementAcquired,
+		// A Verified record reached both anchors, so it carries both legs. A
+		// fixture without them claims cross-verification the ledger cannot show.
+		SumDBCheck: fetchdomain.LegRechecked,
+		VCSCheck:   fetchdomain.LegRechecked,
 	})
 	if err != nil {
 		t.Fatalf("sealing fixture fetch record for %s: %v", coord, err)
@@ -226,16 +230,25 @@ func (readCloser) Close() error { return nil }
 // seedGoModOnly files the shallow measurement: a verified go.mod and no module
 // zip. It is the fixture a per-finding go.sum classification needs in order to
 // report anything other than one uniform value.
+//
+// Its status is VerifiedBySumDBOnly, which is what the go.mod-only path produces
+// on a match: there is no zip, so there is nothing to reproduce from git and the
+// cross-verified class cannot apply. It used to claim Verified with no legs at
+// all — a record asserting a git anchor it could not have had, and the coverage
+// report duly counted it as cross-verified.
 func seedGoModOnly(t testing.TB, facts *fetchsqlite.Store, coord coordinate.ModuleCoordinate) {
 	t.Helper()
 	sealed, err := fetchdomain.Seal(fetchdomain.FetchedModule{
 		Coordinate:         coord,
 		GoModHash:          fixtureGoModHash(t, coord, "gomod-only"),
-		VerificationStatus: fetchdomain.Verified,
+		VerificationStatus: fetchdomain.VerifiedBySumDBOnly,
 		PipelineVersion:    fetchapp.PipelineVersion,
 		GoModLocation:      "gomod:" + coord.Path() + "@" + coord.Version(),
 		FetchedAt:          fixtureWalkAt,
 		MeasurementKind:    fetchdomain.MeasurementAcquired,
+		// No zip was fetched, so there is nothing to reproduce from git: the
+		// checksum-database leg alone, and a measured VCS absence.
+		SumDBCheck: fetchdomain.LegRechecked,
 	})
 	if err != nil {
 		t.Fatalf("sealing go.mod-only record for %s: %v", coord, err)

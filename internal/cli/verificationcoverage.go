@@ -148,8 +148,12 @@ func graphVerificationRows(
 						fetchdomain.VerificationStatus(rec.VerificationStatus),
 						fetchdomain.VCSURLBinding(rec.VCSURLBinding),
 					),
-					Legs:     rec.Legs,
-					Recorded: true,
+					Legs: rec.Legs,
+					// The leg columns and the measurement kind arrived in one
+					// migration, so a recorded kind is what says the record could
+					// have carried legs at all.
+					UnderLedger: rec.MeasurementKind != "",
+					Recorded:    true,
 				}
 				row.Status = rec.VerificationStatus
 				row.Reason = rec.VerificationDetail

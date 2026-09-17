@@ -871,8 +871,9 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 				fetchdomain.VerificationStatus(frec.VerificationStatus),
 				fetchdomain.VCSURLBinding(frec.VCSURLBinding),
 			),
-			Legs:     frec.Legs,
-			Recorded: true,
+			Legs:        frec.Legs,
+			UnderLedger: frec.MeasurementKind != "",
+			Recorded:    true,
 		}
 	} else if !found {
 		res.Verification = "(not fetched)"

@@ -549,9 +549,11 @@ coordinate has none)
 The record says what the bytes were checked against, and does not claim the
 anchor a network walk would have established. Each module fetched this way
 records `acquisition_mode: modcache`, verification status
-`VerifiedBySumDBOnly`, the detail `verified against local go.sum (modcache
-mode); VCS cross-verification skipped`, and no VCS leg on its fetch-ledger
-entry. That is a weaker anchor than a cross-verified network fetch, so a
+`VerifiedByGoSum`, the detail `verified against local go.sum (modcache
+mode); VCS cross-verification skipped`, and neither a checksum-database nor a
+VCS leg on its fetch-ledger entry - no transparency log was queried. It counts
+under `local go.sum only` in [`verification-coverage`](verification-coverage.md),
+never under `checksum database only`. That is a weaker anchor than a cross-verified network fetch, so a
 `--from-modcache` re-measurement of a module the store already holds a stronger
 record for is refused unless `--allow-verification-downgrade` is passed. See
 [Re-measuring with a weaker

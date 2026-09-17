@@ -788,8 +788,9 @@ In this mode `audit`:
 - **Verifies each module's `h1` hash against the local `go.sum`**, fully offline
   - no `sum.golang.org`. A hash that does not match, or a module with no `go.sum`
   entry, is a **hard failure**: `audit` exits non-zero (code `10`) naming the
-  offending modules. Verified modules report `VerifiedBySumDBOnly` (VCS
-  cross-verification is skipped in this mode).
+  offending modules. Verified modules report `VerifiedByGoSum`, the status for
+  an artefact whose only anchor is a local `go.sum`; no transparency log is
+  queried and VCS cross-verification is skipped in this mode.
 - **Asks nothing upstream about staleness.** The run makes **zero** network
   calls to `proxy.golang.org`/`sum.golang.org`, so no module's latest version is
   probed and rows carry `major_probed: false`. The column reports what that

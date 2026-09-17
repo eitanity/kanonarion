@@ -2,8 +2,8 @@
 $ kanonarion audit --gomod $AUDIT_PROJECT/go.mod --from-modcache=$MODCACHE
 exit 0
 --- stdout ---
-example.com/clean@v1.0.0                                 VerifiedBySumDBOnly     BSD-3-Clause  unmeasured (offline)                                    Clean                  allow [permissive]
-example.com/mod@v1.2.0                                   VerifiedBySumDBOnly     MIT           latest: v1.3.0 (273 days ago) [from ledger, 10m0s old]  Affected (1 findings)  allow [permissive]
+example.com/clean@v1.0.0                                 VerifiedByGoSum         BSD-3-Clause  unmeasured (offline)                                    Clean                  allow [permissive]
+example.com/mod@v1.2.0                                   VerifiedByGoSum         MIT           latest: v1.3.0 (273 days ago) [from ledger, 10m0s old]  Affected (1 findings)  allow [permissive]
 stdlib@$GOVERSION                                           VerifiedLocalToolchain  BSD-3-Clause  unmeasured (toolchain-pinned)                           Clean                  allow [permissive]
 
 latest as of 2026-02-28 23:50 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
@@ -20,8 +20,7 @@ toolchain:
   $GOVERSION was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
 verification coverage over 3 module(s):
   cross-verified (checksum db + VCS)     0    0.0%
-  checksum database only                 2   66.7%
-  local go.sum only                      1   33.3%
+  local go.sum only                      3  100.0%
   cross-verified 0 of 3 module(s) where it applies (0.0%)
   VCS evidence (fetch ledger): 0 rechecked by this run, 0 inherited, 2 never established, 1 not measured, 0 could not run (no git on the measuring host)
   note: no module in this graph carries a VCS anchor — cross-verification covered none of it

@@ -23,7 +23,7 @@ exit 0
       },
       "verification": {
         "extracted_at": "2026-01-15T08:00:00Z",
-        "status": "Verified",
+        "status": "VerifiedBySumDBOnly",
         "retracted": false
       },
       "provenance": {

@@ -646,3 +646,30 @@ func TestFindDivergence_FewerThanTwoRecordsCannotDisagree(t *testing.T) {
 		})
 	}
 }
+
+// Dating an inherited leg walks the chain of records it was copied through. Two
+// of its refusals are not reachable from Compose on healthy data, and both must
+// answer "cannot be dated" rather than falling through to a nearby timestamp: a
+// substituted date reads as a measurement.
+func TestEstablishedAtOfSource_UndatableChains(t *testing.T) {
+	// A pair of records that name each other. Append-only storage should make
+	// this impossible; the guard is what stops it spinning if it ever is not.
+	a := FactRecord{ContentHash: "sha256:a", VCSCheck: string(LegInherited), VCSCheckSource: "sha256:b", FetchedAt: time.Now()}
+	b := FactRecord{ContentHash: "sha256:b", VCSCheck: string(LegInherited), VCSCheckSource: "sha256:a", FetchedAt: time.Now()}
+	byHash := map[string]FactRecord{a.ContentHash: a, b.ContentHash: b}
+
+	if got := establishedAtOfSource(byHash, LegVCS, "sha256:a"); got != "" {
+		t.Errorf("a cycle dated the leg %q; no record in it performed the check", got)
+	}
+	// A copy that names nothing: the trail ends without reaching a measurement.
+	orphan := FactRecord{ContentHash: "sha256:c", VCSCheck: string(LegInherited), FetchedAt: time.Now()}
+	if got := establishedAtOfSource(map[string]FactRecord{orphan.ContentHash: orphan}, LegVCS, "sha256:c"); got != "" {
+		t.Errorf("an unnamed source dated the leg %q", got)
+	}
+	// A leg kind this build has never heard of. No column on the record answers
+	// for it, so there is no date to report — and it must not be read off the
+	// record anyway, which would date a check the record does not describe.
+	if got := establishedAtOfSource(byHash, ValidationLegKind("attestation"), "sha256:a"); got != "" {
+		t.Errorf("an unknown leg kind dated the leg %q from a record that says nothing about it", got)
+	}
+}

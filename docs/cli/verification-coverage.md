@@ -200,7 +200,7 @@ speak to it at all.
 | `rechecked` | This measurement performed the VCS check itself. |
 | `inherited` | Carried forward from an earlier measurement of the same artefact, which the record names. The module **is** backed by cross-verification evidence; this run simply did not re-establish it. |
 | `never` | The record was written under the ledger, could have recorded a VCS leg, and has none. The only class where no cross-verification evidence exists. |
-| `not_measured` | The record predates the ledger and carries no legs at all. **Not** the same as `never`: the check may well have run, the record simply cannot say. A gate that treats the two alike calls an unmigrated store a collapse. |
+| `not_measured` | The record predates the ledger, or the node keeps no fetch ledger of its own - the standard library. **Not** the same as `never`: the check may well have run, the record simply cannot say. A gate that treats the two alike calls an unmigrated store a collapse. |
 | `unavailable` | The check was attempted and could not run because the host that fetched the module had no `git`. That is a fault of the measuring machine, not an absence of anchor for the module. Install `git` and re-run: such a record is not served from cache, so the answer is re-established without `--force`. |
 
 ## JSON output

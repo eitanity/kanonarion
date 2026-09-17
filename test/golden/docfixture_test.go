@@ -256,6 +256,8 @@ func seedDocFetch(
 		FetchedAt:          fixtureWalkAt,
 		MeasurementKind:    fetchdomain.MeasurementAcquired,
 		GitReference:       git,
+		SumDBCheck:         fetchdomain.LegRechecked,
+		VCSCheck:           fetchdomain.LegRechecked,
 	})
 	if err != nil {
 		t.Fatalf("sealing document fixture fetch record for %s: %v", coord, err)

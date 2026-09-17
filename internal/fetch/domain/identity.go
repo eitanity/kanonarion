@@ -232,9 +232,15 @@ type ValidationLeg struct {
 	Source string
 
 	// EstablishedAt is the fetch time of the measurement that actually performed
-	// the check — this record's own time when rechecked, the source record's
-	// time when inherited. On an unavailable leg it is the time of the attempt,
-	// since nothing was established.
+	// the check — this record's own time when rechecked. On an unavailable leg it
+	// is the time of the attempt, since nothing was established.
+	//
+	// On an INHERITED leg it is the time of the measurement at the end of the
+	// inheritance chain, which only Compose can resolve: the record names the
+	// copy it took the result from, not when that result was established. A leg
+	// read off one record therefore carries no date, and so does a composed one
+	// whose chain leaves the set. Empty means "this cannot be dated from what is
+	// here", never "now".
 	EstablishedAt string
 }
 
@@ -334,6 +340,13 @@ const (
 // values, omitting legs the measurement neither performed nor inherited. It is a
 // free function on the same terms as RecordDigests: leg composition is fetch
 // policy, not read-shape plumbing the public alias is allowed to carry.
+//
+// An INHERITED leg carries no date. The record names the measurement it copied
+// the result from and not when that measurement ran, so one record alone cannot
+// date the check; Compose fills it in, having the set to resolve the source
+// against. Dating it from this record's own FetchedAt — which is what it used to
+// do — asserts that a check was established on a day it was not, and let a copy
+// outrank the recheck it was copied from.
 func RecordLegs(r FactRecord) []ValidationLeg {
 	at := canonicalTime(r.FetchedAt)
 	var legs []ValidationLeg
@@ -341,10 +354,19 @@ func RecordLegs(r FactRecord) []ValidationLeg {
 		{Kind: LegSumDB, Provenance: LegProvenance(r.SumDBCheck), Source: r.SumDBCheckSource},
 		{Kind: LegVCS, Provenance: LegProvenance(r.VCSCheck), Source: r.VCSCheckSource},
 	} {
-		if l.Provenance == LegAbsent {
+		switch l.Provenance {
+		case LegAbsent:
 			continue
+		case LegInherited:
+			// Left empty: see above. Resolved by Compose.
+		case LegRechecked, LegUnavailable:
+			// This measurement performed the check, or attempted it and the host
+			// could not run it. Either way the moment is this record's own.
+			l.EstablishedAt = at
+		default:
+			// A provenance this build has never heard of. It is not this record's
+			// own moment to claim, so it is left unstated rather than guessed.
 		}
-		l.EstablishedAt = at
 		legs = append(legs, l)
 	}
 	return legs
