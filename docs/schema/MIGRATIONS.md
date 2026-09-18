@@ -109,7 +109,7 @@ the record. It is never re-derived on read.
 **No pipeline-version bump and no purge.** The field is `omitempty`, so a record
 written before it existed produces byte-identical canonical JSON and still
 verifies its content hash. Nothing is re-derived and no stored record is
-invalidated.
+invalidated. Store `v84` -> `v85`.
 
 **A record written before the column existed reads as `''`**, meaning "the
 binding was not recorded". That is deliberately not a guess: the stored `git_url`
@@ -705,6 +705,31 @@ than failing the migration.
 
 Note: walk migrations 4 and 5 are `DELETE FROM walks`. This one deliberately is
 not — the blob already holds the value, so back-filling it is the point.
+
+## Walk store: module `walk`, migration 10
+
+**No column changes.** Re-derives `walks.failure_count` from every stored row's
+own record. Store `v85` -> `v86`.
+
+The column counted every node whose status was not "succeeded". One of the four
+node statuses is `local_replace`: a require redirected to a local filesystem path
+by a `replace` directive, with no remote artefact to fetch. The walk is not
+partial because of these nodes — the domain says so where the status is declared
+— so counting them told the operator that a dependency of their own project had
+failed. A 396-node walk of a project with one local `replace` listed `1 failed`.
+
+The rule now names the two statuses that are failures (`fetch_failed`,
+`internal_panic`) and is computed in one place, which both the printed line and
+this column read.
+
+**Back-fill: every row.** Rows written under the old rule keep answering
+`walk-list` with a count their own record does not support, so the column is
+re-derived rather than left to be corrected one re-walk at a time. Decompresses
+each stored walk once and recounts from its per-node results; a row this build
+cannot decode is skipped rather than failing the migration.
+
+Additive: no purge, no pipeline bump, no record shape change. The blob is read,
+never rewritten, and every stored walk still verifies against its written hash.
 
 ## Call graph store: module `callgraph`, migration 12
 

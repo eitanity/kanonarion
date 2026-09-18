@@ -16,6 +16,18 @@ import (
 // "Clean". These tests lock the five readings apart, and lock the rule that
 // stating them moves no verdict.
 
+// natSubject is the module the coverage statements in these tests are about.
+// It is a parameter of nativeCoverageOf because the not-examined statement has
+// no record to read the coordinate from and still owes the reader a command
+// that runs.
+var natSubject = func() coordinate.ModuleCoordinate {
+	c, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	if err != nil {
+		panic(err)
+	}
+	return c
+}()
+
 func natCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
 	c, err := coordinate.NewModuleCoordinate(path, version)
@@ -81,7 +93,7 @@ func TestNativeCoverage_FiveReadingsAreDistinct(t *testing.T) {
 	seenStatement := map[string]string{}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := nativeCoverageOf(tc.rec, tc.found)
+			got := nativeCoverageOf(natSubject, tc.rec, tc.found)
 			if got.State != tc.wantState {
 				t.Errorf("state = %q, want %q", got.State, tc.wantState)
 			}
@@ -106,7 +118,7 @@ func TestNativeCoverage_FiveReadingsAreDistinct(t *testing.T) {
 // TestNativeCoverage_NotExaminedIsNeverReportedAsAbsent. The two answers carry
 // opposite instructions, and collapsing them is this product's own defect class.
 func TestNativeCoverage_NotExaminedIsNeverReportedAsAbsent(t *testing.T) {
-	got := nativeCoverageOf(nativedomain.Record{}, false)
+	got := nativeCoverageOf(natSubject, nativedomain.Record{}, false)
 	if got.State == nativeStateAbsent {
 		t.Fatal("an unexamined module reported as absent")
 	}
@@ -128,7 +140,7 @@ func TestNativeCoverage_NotExaminedIsNeverReportedAsAbsent(t *testing.T) {
 // TestNativeCoverage_IdentifiedNamesTheComponentAndThePURL. The purl is the
 // string a reader joins this statement to the SBOM component on.
 func TestNativeCoverage_IdentifiedNamesTheComponentAndThePURL(t *testing.T) {
-	got := nativeCoverageOf(natRecord(nativedomain.PresenceIdentified, sqliteComponent("3.53.0"), 4), true)
+	got := nativeCoverageOf(natSubject, natRecord(nativedomain.PresenceIdentified, sqliteComponent("3.53.0"), 4), true)
 	if len(got.Components) != 1 {
 		t.Fatalf("got %d components, want 1", len(got.Components))
 	}
@@ -154,7 +166,7 @@ func TestNativeCoverage_IdentifiedNamesTheComponentAndThePURL(t *testing.T) {
 // build does not know is not an absence, and guessing which neighbour it is
 // closest to is how a coverage gap becomes an all-clear.
 func TestNativeCoverage_UnrecognisedPresenceIsReportedAsItself(t *testing.T) {
-	got := nativeCoverageOf(natRecord(nativedomain.Presence("from_the_future"), nil, 0), true)
+	got := nativeCoverageOf(natSubject, natRecord(nativedomain.Presence("from_the_future"), nil, 0), true)
 	if got.State != nativeCoverageState("from_the_future") {
 		t.Errorf("state = %q, want it echoed back as itself", got.State)
 	}
@@ -172,7 +184,7 @@ func TestNativeCoverage_ComponentsSerialiseAsAnArrayNeverNull(t *testing.T) {
 	for _, p := range []nativedomain.Presence{
 		nativedomain.PresenceAbsent, nativedomain.PresenceLinkedNotShipped, nativedomain.PresenceUnidentified,
 	} {
-		b, err := json.Marshal(nativeCoverageOf(natRecord(p, nil, 1), true))
+		b, err := json.Marshal(nativeCoverageOf(natSubject, natRecord(p, nil, 1), true))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -181,7 +193,7 @@ func TestNativeCoverage_ComponentsSerialiseAsAnArrayNeverNull(t *testing.T) {
 		}
 	}
 	// And the two keys a machine reads are on the wire in every state.
-	b, _ := json.Marshal(nativeCoverageOf(natRecord(nativedomain.PresenceAbsent, nil, 0), true))
+	b, _ := json.Marshal(nativeCoverageOf(natSubject, natRecord(nativedomain.PresenceAbsent, nil, 0), true))
 	for _, key := range []string{`"state"`, `"unsearched_components"`, `"statement"`} {
 		if !strings.Contains(string(b), key) {
 			t.Errorf("%s is missing from the payload: %s", key, b)
@@ -234,7 +246,7 @@ func TestPrintNativeCoverage_PrintsInEveryState(t *testing.T) {
 		nativedomain.PresenceUnidentified, nativedomain.PresenceIdentified,
 	} {
 		var out bytes.Buffer
-		cov := nativeCoverageOf(natRecord(p, sqliteComponent("3.53.0"), 4), true)
+		cov := nativeCoverageOf(natSubject, natRecord(p, sqliteComponent("3.53.0"), 4), true)
 		printNativeCoverage(&out, &cov)
 		if !strings.Contains(out.String(), "Native code:") {
 			t.Errorf("%s printed no native line:\n%s", p, out.String())
@@ -251,7 +263,7 @@ func TestPrintNativeCoverage_PrintsInEveryState(t *testing.T) {
 // TestPrintNativeCoverage_TextAndJSONStateTheSameClaim. Two surfaces disagreeing
 // about one record is worse than either being terse.
 func TestPrintNativeCoverage_TextAndJSONStateTheSameClaim(t *testing.T) {
-	cov := nativeCoverageOf(natRecord(nativedomain.PresenceIdentified, sqliteComponent("3.53.0"), 4), true)
+	cov := nativeCoverageOf(natSubject, natRecord(nativedomain.PresenceIdentified, sqliteComponent("3.53.0"), 4), true)
 	var out bytes.Buffer
 	printNativeCoverage(&out, &cov)
 	text := out.String()
@@ -380,8 +392,9 @@ func TestWriteNativeRollup_PrintsOnlyTheExceptionsAndNeverCallsThemFindings(t *t
 	writeNativeRollup(&out, &nativeWalkRollup{
 		Unsearched: []nativeWalkModule{{Module: "example.com/a@v1.0.0",
 			Components: []nativeCoverageComponent{{Name: "SQLite", Version: "3.38.0", Confidence: "declared", PURL: "pkg:generic/sqlite@3.38.0"}}}},
-		Unidentified: []string{"example.com/b@v1.0.0"},
-		Components:   1,
+		Unidentified:   []string{"example.com/b@v1.0.0"},
+		anUnidentified: natCoord(t, "example.com/b", "v1.0.0"),
+		Components:     1,
 	})
 	got := out.String()
 	for _, want := range []string{
@@ -417,7 +430,8 @@ func TestWriteNativeUnidentifiedCaveat_NamesTheModulesAndTheRemedy(t *testing.T)
 
 	var out bytes.Buffer
 	if err := writeNativeUnidentifiedCaveat(&out, &nativeWalkRollup{
-		Unidentified: []string{"example.com/a@v1.0.0", "example.com/b@v2.0.0"},
+		Unidentified:   []string{"example.com/a@v1.0.0", "example.com/b@v2.0.0"},
+		anUnidentified: natCoord(t, "example.com/a", "v1.0.0"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +483,7 @@ func natLinked(names ...string) nativedomain.Record {
 // native library" names nothing a reader can go and look up, and the directive
 // named it, so the statement can too.
 func TestNativeCoverage_LinkedNotShippedNamesTheLibraries(t *testing.T) {
-	cov := nativeCoverageOf(natLinked("libxml-2.0"), true)
+	cov := nativeCoverageOf(natSubject, natLinked("libxml-2.0"), true)
 
 	if cov.State != nativeStateLinkedNotShipped {
 		t.Fatalf("state = %q, want %q", cov.State, nativeStateLinkedNotShipped)
@@ -490,7 +504,7 @@ func TestNativeCoverage_IdentifiedAlsoStatesWhatItLinks(t *testing.T) {
 	rec.LinkedLibraries = []nativedomain.LinkedLibrary{
 		{Name: "icuuc", Kind: nativedomain.LinkedLibraryExternal, Directive: "#cgo LDFLAGS: -licuuc", File: "a.go"},
 	}
-	cov := nativeCoverageOf(rec, true)
+	cov := nativeCoverageOf(natSubject, rec, true)
 	if len(cov.LinkedLibraries) != 1 || cov.LinkedLibraries[0] != "icuuc" {
 		t.Fatalf("LinkedLibraries = %v, want [icuuc]", cov.LinkedLibraries)
 	}
@@ -502,7 +516,7 @@ func TestNativeCoverage_IdentifiedAlsoStatesWhatItLinks(t *testing.T) {
 	}
 	// The linked_not_shipped statement already names them, so the extra line
 	// would say it twice there.
-	linked := nativeCoverageOf(natLinked("icuuc"), true)
+	linked := nativeCoverageOf(natSubject, natLinked("icuuc"), true)
 	var lout bytes.Buffer
 	printNativeCoverage(&lout, &linked)
 	if strings.Contains(lout.String(), "also links") {
@@ -518,7 +532,7 @@ func TestNativeCoverage_LinkedLibrariesSerialiseAsAnArrayNeverNull(t *testing.T)
 		natRecord(nativedomain.PresenceAbsent, nil, 0),
 		natRecord(nativedomain.PresenceUnidentified, nil, 2),
 	} {
-		cov := nativeCoverageOf(rec, true)
+		cov := nativeCoverageOf(natSubject, rec, true)
 		raw, err := json.Marshal(cov)
 		if err != nil {
 			t.Fatalf("marshalling coverage: %v", err)
@@ -528,7 +542,7 @@ func TestNativeCoverage_LinkedLibrariesSerialiseAsAnArrayNeverNull(t *testing.T)
 		}
 	}
 	// And at "nobody looked", where there is no record to read them from.
-	cov := nativeCoverageOf(nativedomain.Record{}, false)
+	cov := nativeCoverageOf(natSubject, nativedomain.Record{}, false)
 	raw, err := json.Marshal(cov)
 	if err != nil {
 		t.Fatalf("marshalling coverage: %v", err)
@@ -674,9 +688,49 @@ func TestWriteNativeCoverageSummary_NothingExaminedStillSaysNoAdvisoriesWereSear
 		"native code: 0 of 1 module(s) examined",
 		"that is not a finding of no native code",
 		"Kanonarion has no non-Go advisory source",
+		// The remedy is an invocation, not a form: the rollup kept one of the
+		// coordinates it did not look at so the reader can run the line as printed.
+		"examine one: kanonarion native example.com/nobody-looked@v1.0.0",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("a scan that examined nothing does not state %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// TestNativeUnidentifiedRemediesNameAModule is the same rule on the other
+// exception: a walk holding modules whose native source no recipe could name
+// knows their coordinates, so both places that offer to show the files name one
+// instead of printing a template the reader has to fill in.
+func TestNativeUnidentifiedRemediesNameAModule(t *testing.T) {
+	first := natCoord(t, "example.com/aaa", "v1.0.0")
+	second := natCoord(t, "example.com/zzz", "v2.0.0")
+	reader := &fakeNativeReader{recs: map[coordinate.ModuleCoordinate]nativedomain.Record{
+		first:  natRecord(nativedomain.PresenceUnidentified, nil, 2),
+		second: natRecord(nativedomain.PresenceUnidentified, nil, 3),
+	}}
+	roll := nativeRollupOver(context.Background(), reader, []coordinate.ModuleCoordinate{second, first})
+	if roll.anUnidentified.IsZero() {
+		t.Fatal("the rollup named no unidentified module, so neither remedy can be an invocation")
+	}
+	want := "kanonarion native " + roll.anUnidentified.String()
+
+	var rollup bytes.Buffer
+	writeNativeRollup(&rollup, roll)
+	if !strings.Contains(rollup.String(), want) {
+		t.Errorf("the rollup does not offer %q:\n%s", want, rollup.String())
+	}
+
+	var caveat bytes.Buffer
+	if err := writeNativeUnidentifiedCaveat(&caveat, roll); err != nil {
+		t.Fatalf("writeNativeUnidentifiedCaveat: %v", err)
+	}
+	if !strings.Contains(caveat.String(), want) {
+		t.Errorf("the caveat does not offer %q:\n%s", want, caveat.String())
+	}
+	for _, out := range []string{rollup.String(), caveat.String()} {
+		if strings.Contains(out, "<module>") || strings.Contains(out, "<version>") {
+			t.Errorf("a placeholder survived in output whose builder holds the coordinate:\n%s", out)
 		}
 	}
 }

@@ -27,7 +27,7 @@ func nativeJSONRecord(t *testing.T) vuldomain.VulnerabilityRecord {
 // TestVulnRecordNativeJSON_AddsTheStatementAndMovesNothingElse.
 func TestVulnRecordNativeJSON_AddsTheStatementAndMovesNothingElse(t *testing.T) {
 	rec := nativeJSONRecord(t)
-	cov := nativeCoverageOf(natRecord(nativedomain.PresenceIdentified, sqliteComponent("3.38.0"), 4), true)
+	cov := nativeCoverageOf(natSubject, natRecord(nativedomain.PresenceIdentified, sqliteComponent("3.38.0"), 4), true)
 
 	plain, err := json.Marshal(toVulnRecordJSON(rec, nil))
 	if err != nil {
@@ -104,7 +104,7 @@ func TestVulnRecordNativeJSON_EveryStateReachesTheWire(t *testing.T) {
 		{true, nativedomain.PresenceUnidentified, nativeStateUnidentified},
 		{true, nativedomain.PresenceIdentified, nativeStateIdentified},
 	} {
-		cov := nativeCoverageOf(natRecord(tc.p, sqliteComponent("3.38.0"), 4), tc.found)
+		cov := nativeCoverageOf(natSubject, natRecord(tc.p, sqliteComponent("3.38.0"), 4), tc.found)
 		b, err := json.Marshal(toVulnRecordNativeJSON(rec, nil, &cov))
 		if err != nil {
 			t.Fatal(err)

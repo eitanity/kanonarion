@@ -883,7 +883,7 @@ func walkSummaryOf(rec domain.WalkRecord) walkports.WalkSummary {
 		Depth:         rec.Depth,
 		OverallStatus: rec.OverallStatus,
 		NodeCount:     len(rec.Graph.Nodes),
-		FailureCount:  countFailures(rec),
+		FailureCount:  domain.CountNodeFailures(rec),
 		GOOS:          rec.Graph.BuildEnv.GOOS,
 		GOARCH:        rec.Graph.BuildEnv.GOARCH,
 	}

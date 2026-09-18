@@ -42,6 +42,19 @@ const (
 	WalkDepthShallow WalkDepth = "shallow"
 )
 
+// CountNodeFailures is how many of a record's nodes failed, and there is one of
+// it. The printed line and the store's summary each carried their own copy of
+// this loop, and so were wrong in the same way independently.
+func CountNodeFailures(rec WalkRecord) int {
+	n := 0
+	for _, r := range rec.PerNodeResults {
+		if r.Status.IsFailure() {
+			n++
+		}
+	}
+	return n
+}
+
 // WalkRecord is the persisted, tamper-evident representation of a completed
 // Walk. It is an aggregate root: once written it is immutable.
 //

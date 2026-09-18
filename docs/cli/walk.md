@@ -637,6 +637,12 @@ outcome of its underlying fetch:
 | `status` | `succeeded`, `fetch_failed`, `internal_panic`, or `local_replace` |
 | `fetch_record` | The full `FactRecord` for the successful fetch (null on failure) |
 
+The `N failed` on the walk line, and the `failures=` column in `walk-list`, count
+`fetch_failed` and `internal_panic` only. A `local_replace` node is a require
+redirected to a directory: there is no remote artefact to fetch, so it is not a
+fetch that failed and the walk is not partial because of one. A project with a
+local `replace` of its own subpackage reports `0 failed`.
+
 `from_cache` and `duration_ms` reflect the *first* call to the underlying
 fetcher for each coordinate during the walk. This means the cold-fetch
 fraction of a walk is readable from the record: count

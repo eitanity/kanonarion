@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"io"
@@ -64,12 +65,102 @@ type printedMessage struct {
 
 // scopeFacts says which kinds of value the function building a message could
 // have substituted. It is read from the enclosing function's parameters,
-// receiver and named results only: those are the values the message is
+// receiver and named results — those are the values the message is
 // unambiguously built from, and widening it to every identifier in the body
-// would call a value "in hand" that is computed after the message is built.
+// would call a value "in hand" that is computed after the message is built —
+// and from one level inside a struct among them, because a builder handed a
+// struct holds what the struct holds.
+//
+// The three facts stay separate all the way to the verdict. Disjoining them at
+// the point of judgement is what made the obvious version of the struct reach
+// unusable: it read a path out of a struct, called it "a value", and then
+// reported a <version> placeholder printed by a builder that has no version.
 type scopeFacts struct {
 	hasCoordinate bool
+	hasPath       bool
 	hasVersion    bool
+}
+
+func (s *scopeFacts) observe(o scopeFacts) {
+	s.hasCoordinate = s.hasCoordinate || o.hasCoordinate
+	s.hasPath = s.hasPath || o.hasPath
+	s.hasVersion = s.hasVersion || o.hasVersion
+}
+
+// slotFact is the one fact that would fill a given placeholder. A coordinate
+// fills a path slot and a version slot; neither of them alone fills the other,
+// and neither alone fills a whole-coordinate slot.
+type slotFact int
+
+const (
+	fillNothing slotFact = iota
+	fillPath
+	fillVersion
+	fillCoordinate
+)
+
+func (f slotFact) String() string {
+	switch f {
+	case fillPath:
+		return "the module path"
+	case fillVersion:
+		return "the version"
+	case fillCoordinate:
+		return "the coordinate"
+	case fillNothing:
+		return "nothing the guard can name"
+	}
+	return "nothing the guard can name"
+}
+
+func (s scopeFacts) holds(f slotFact) bool {
+	switch f {
+	case fillCoordinate:
+		return s.hasCoordinate
+	case fillVersion:
+		return s.hasVersion || s.hasCoordinate
+	case fillPath:
+		return s.hasPath || s.hasCoordinate
+	case fillNothing:
+		return false
+	}
+	return false
+}
+
+// placeholdersIn returns the <…> slots written into one argument, lowercased.
+func placeholdersIn(arg string) []string {
+	var out []string
+	for i := 0; i < len(arg); i++ {
+		if arg[i] != '<' {
+			continue
+		}
+		j := strings.IndexByte(arg[i:], '>')
+		if j < 0 {
+			break
+		}
+		out = append(out, strings.ToLower(arg[i+1:i+j]))
+		i += j
+	}
+	return out
+}
+
+// placeholderWants says which fact would have filled a placeholder, read off
+// the word the author wrote inside the angle brackets. A slot the guard cannot
+// place wants nothing and is never reported: a guard that failed on a correct
+// message would be suppressed, and a hole is the cheaper failure.
+func placeholderWants(name string) slotFact {
+	wantsVersion := strings.Contains(name, "version")
+	wantsPath := strings.Contains(name, "mod") || strings.Contains(name, "path") ||
+		strings.Contains(name, "dir")
+	switch {
+	case strings.Contains(name, "coord") || (wantsPath && wantsVersion):
+		return fillCoordinate
+	case wantsVersion:
+		return fillVersion
+	case wantsPath:
+		return fillPath
+	}
+	return fillNothing
 }
 
 var (
@@ -306,11 +397,16 @@ func coordinateSlotViolation(arg string, scope scopeFacts) string {
 	switch {
 	case strings.ContainsAny(arg, "<>"):
 		// A placeholder is a gap the reader fills. That is legitimate where there
-		// is nothing to fill it from — a store holding no records at all can only
-		// describe the command that makes one — and it is the defect where the
-		// value was in hand and discarded.
-		if scope.hasCoordinate || scope.hasVersion {
-			return fmt.Sprintf("prints the placeholder %q while its builder holds the value", arg)
+		// is nothing to fill THAT slot from — a store holding no records at all can
+		// only describe the command that makes one — and it is the defect where the
+		// value was in hand and discarded. Each placeholder is matched to the fact
+		// that would fill it, so "give a version and run: … @<version>", printed by
+		// a builder holding a path and no version, is not reported against the path.
+		for _, name := range placeholdersIn(arg) {
+			if want := placeholderWants(name); scope.holds(want) {
+				return fmt.Sprintf("prints the placeholder <%s> in %q while its builder holds %s",
+					name, arg, want)
+			}
 		}
 		return ""
 	case strings.Contains(arg, standInOpaque):
@@ -743,7 +839,14 @@ func isCoordinateType(p *packages.Package, e ast.Expr) bool {
 	if !ok || tv.Type == nil {
 		return false
 	}
-	named, ok := tv.Type.(*types.Named)
+	return isCoordinateGoType(tv.Type)
+}
+
+func isCoordinateGoType(t types.Type) bool {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
 	if !ok {
 		return false
 	}
@@ -752,6 +855,63 @@ func isCoordinateType(p *packages.Package, e ast.Expr) bool {
 		return false
 	}
 	return obj.Pkg().Path()+"."+obj.Name() == coordinateTypeName
+}
+
+// nameFacts reads what a parameter or field name says it holds. It is
+// standInForName's vocabulary, split into the separate facts the verdict keeps
+// apart: a name that says "path" establishes a path and NOT a version.
+func nameFacts(name string) scopeFacts {
+	switch standInForName(name) {
+	case standInCoordinate:
+		return scopeFacts{hasCoordinate: true}
+	case standInVersion:
+		return scopeFacts{hasVersion: true}
+	case standInPath:
+		return scopeFacts{hasPath: true}
+	}
+	return scopeFacts{}
+}
+
+// typeFacts reads what a parameter's TYPE says it holds, one level deep.
+//
+// One level, not a closure: a builder handed a struct holds what that struct's
+// own fields hold — the native rollup carries the coordinate it names in a
+// field, and reading only the parameter list called its placeholder legitimate —
+// while chasing further would call a value "in hand" that the builder would have
+// to go and fetch.
+func typeFacts(p *packages.Package, e ast.Expr) scopeFacts {
+	tv, ok := p.TypesInfo.Types[e]
+	if !ok || tv.Type == nil {
+		return scopeFacts{}
+	}
+	if isCoordinateGoType(tv.Type) {
+		return scopeFacts{hasCoordinate: true}
+	}
+	t := tv.Type
+	if ptr, isPtr := t.(*types.Pointer); isPtr {
+		t = ptr.Elem()
+	}
+	st, isStruct := t.Underlying().(*types.Struct)
+	if !isStruct {
+		return scopeFacts{}
+	}
+	var s scopeFacts
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.Field(i)
+		// A pointer-typed field is optional by construction — a filter's *Target is
+		// nil whenever the operator named none — so the struct declaring it is not
+		// the builder holding a value. Reporting it would fail the zero-result
+		// notices, which name the filter when there was one and print the form when
+		// there was not.
+		if _, optional := f.Type().(*types.Pointer); optional {
+			continue
+		}
+		if isCoordinateGoType(f.Type()) {
+			s.hasCoordinate = true
+		}
+		s.observe(nameFacts(f.Name()))
+	}
+	return s
 }
 
 // -- the enclosing function --------------------------------------------------
@@ -841,36 +1001,46 @@ func scopeOf(p *packages.Package, fn *ast.FuncDecl, pos token.Pos) scopeFacts {
 	if fn == nil || fn.Type == nil {
 		return s
 	}
-	consider := func(fields *ast.FieldList) {
+	// reach says whether to look inside a struct here. It is true for what the
+	// function was HANDED and false for what it returns: a result is the value
+	// being built, and reading a coordinate out of the struct this function is on
+	// its way to constructing would report every builder that has not filled it in
+	// yet — resolveLicenceBasis returns a licenceBasis carrying a coord field, and
+	// its "give a version" line is correct precisely because it has neither.
+	consider := func(fields *ast.FieldList, reach bool) {
 		if fields == nil {
 			return
 		}
 		for _, f := range fields.List {
-			if isCoordinateType(p, f.Type) {
+			if reach {
+				s.observe(typeFacts(p, f.Type))
+			} else if isCoordinateType(p, f.Type) {
 				s.hasCoordinate = true
 			}
 			for _, n := range f.Names {
 				if emptiedBefore(fn, n.Name, pos) {
 					continue
 				}
-				switch standInForName(n.Name) {
-				case standInVersion:
-					s.hasVersion = true
-				case standInCoordinate:
-					s.hasCoordinate = true
-				}
+				s.observe(nameFacts(n.Name))
 			}
 		}
 	}
-	consider(fn.Recv)
-	consider(fn.Type.Params)
-	consider(fn.Type.Results)
+	consider(fn.Recv, true)
+	consider(fn.Type.Params, true)
+	consider(fn.Type.Results, false)
 	return s
 }
 
-// emptiedBefore reports whether control flow has established that name is the
-// empty string by the time pos is reached: the function guarded on it being set
-// and that guard returned, so everything after it runs without the value.
+// emptiedBefore reports whether control flow has already dealt with the case
+// where name holds a usable value, by the time pos is reached: the function
+// guarded on it being set and that branch returned, so everything after it runs
+// without a value to substitute.
+//
+// The return may sit anywhere inside the guarded branch, not only at its end.
+// unresolvedSymbolMessage guards on the local module path, returns from inside
+// that branch when the symbol belongs to it, and reaches its own placeholder
+// only having established that the path it holds is not the one the reader
+// needs — the same fact as an empty one, reached a statement deeper.
 func emptiedBefore(fn *ast.FuncDecl, name string, pos token.Pos) bool {
 	emptied := false
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -890,11 +1060,12 @@ func emptiedBefore(fn *ast.FuncDecl, name string, pos token.Pos) bool {
 		if !ok || lit.Kind != token.STRING || literalValue(lit) != "" {
 			return true
 		}
-		if body := stmt.Body; body != nil && len(body.List) > 0 {
-			if _, isReturn := body.List[len(body.List)-1].(*ast.ReturnStmt); isReturn {
+		ast.Inspect(stmt.Body, func(inner ast.Node) bool {
+			if _, isReturn := inner.(*ast.ReturnStmt); isReturn {
 				emptied = true
 			}
-		}
+			return true
+		})
 		return true
 	})
 	return emptied
@@ -925,6 +1096,14 @@ func TestRemedyGuardCatchesAPlantedInvocation(t *testing.T) {
 		{"a version placeholder whose value was in hand", "reported by: kanonarion license example.com/mod@<version>", scopeFacts{hasVersion: true}, true},
 		{"the same placeholder with nothing to fill it from", "make one:\n  kanonarion license example.com/mod@<version>", scopeFacts{}, false},
 		{"a whole-coordinate placeholder with nothing to fill it from", "make one:\n  kanonarion callgraph <module>@<version>", scopeFacts{}, false},
+		// Each placeholder is judged against the fact that would fill IT. These
+		// four are the reason: the version site in provenance_basis.go is printed
+		// by a builder holding a path, and disjoining the facts reported it.
+		{"a version placeholder in a builder holding only a path", "make one:\n  kanonarion license example.com/mod@<version>", scopeFacts{hasPath: true}, false},
+		{"a module placeholder in a builder holding only a path", "make one:\n  kanonarion license <module>@<version>", scopeFacts{hasPath: true}, true},
+		{"a module placeholder in a builder holding only a version", "make one:\n  kanonarion license <module>@v1.0.0", scopeFacts{hasVersion: true}, false},
+		{"both placeholders in a builder holding the whole coordinate", "examine one:\n  kanonarion native <module>@<version>", scopeFacts{hasCoordinate: true}, true},
+		{"a version placeholder in a builder holding the whole coordinate", "make one:\n  kanonarion license example.com/mod@<version>", scopeFacts{hasCoordinate: true}, true},
 		{"a runtime value the source does not describe", "run:\n  kanonarion license " + standInOpaque, scopeFacts{}, true},
 		{"a runtime value carrying the coordinate's shape", "run:\n  kanonarion license " + standInOpaque + "@" + standInOpaque, scopeFacts{}, false},
 		{"a coordinate in a walk id's slot", "re-scan it:\n  kanonarion vuln-scan example.com/mod@v1.0.0", scopeFacts{}, true},
@@ -1036,5 +1215,194 @@ func TestRemedyGuardReadsTheWholeTree(t *testing.T) {
 	if outside < 5 {
 		t.Fatalf("only %d of %d files carrying a printed invocation sit outside internal/cli; the scan is too narrow",
 			outside, len(files))
+	}
+}
+
+// TestRemedyGuardReachesAValueHeldInAStructParameter is the control for the
+// reach itself. The planted table above is handed its scopeFacts, so it proves
+// the verdict and nothing about the derivation; this plants source instead and
+// requires scopeOf to read the facts out of it.
+//
+// Three builders print the same line. One is handed a struct carrying a
+// coordinate, one a struct carrying only a path, one neither — and the verdict
+// on an identical message differs in all three, which is the whole claim.
+func TestRemedyGuardReachesAValueHeldInAStructParameter(t *testing.T) {
+	const src = `package planted
+
+import "github.com/eitanity/kanonarion/internal/coordinate"
+
+type rollup struct {
+	notExamined  int
+	anExaminable coordinate.ModuleCoordinate
+}
+
+type pathOnly struct {
+	modulePath string
+}
+
+type optional struct {
+	target *coordinate.ModuleCoordinate
+}
+
+func fromRollup(r *rollup) string   { return "examine one:\n  kanonarion native <module>@<version>" }
+func fromPath(p pathOnly) string    { return "examine one:\n  kanonarion native <module>@<version>" }
+func fromOptional(o optional) string { return "examine one:\n  kanonarion native <module>@<version>" }
+func fromNothing(n int) string      { return "examine one:\n  kanonarion native <module>@<version>" }
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "planted.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing the planted source: %v", err)
+	}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	conf := types.Config{Importer: repoImporter(t)}
+	if _, err = conf.Check("planted", fset, []*ast.File{file}, info); err != nil {
+		t.Fatalf("type-checking the planted source: %v", err)
+	}
+	pkg := &packages.Package{Fset: fset, TypesInfo: info, Syntax: []*ast.File{file}}
+	fns := enclosingFunctions(file)
+
+	slots := coordinateSlots(t)
+	for _, tc := range []struct {
+		fn        string
+		want      scopeFacts
+		wantFault bool
+	}{
+		{"fromRollup", scopeFacts{hasCoordinate: true}, true},
+		{"fromPath", scopeFacts{hasPath: true}, true},
+		// A pointer field is optional by construction, so the struct declaring it
+		// is not a builder holding a value.
+		{"fromOptional", scopeFacts{}, false},
+		{"fromNothing", scopeFacts{}, false},
+	} {
+		t.Run(tc.fn, func(t *testing.T) {
+			decl := namedFuncDecl(t, file, tc.fn)
+			lit := returnedLiteral(t, decl)
+			got := scopeOf(pkg, fns.at(lit.Pos()), lit.Pos())
+			if got != tc.want {
+				t.Fatalf("scopeOf(%s) = %+v, want %+v", tc.fn, got, tc.want)
+			}
+			var faults []string
+			for _, inv := range invocationsIn(literalValue(lit)) {
+				line, cmdName, positionals, ok := readInvocation(t, inv.line)
+				if !ok {
+					t.Fatalf("the planted line was not read as an invocation: %q", inv.line)
+				}
+				faults = append(faults, invocationViolations(t, slots, line, cmdName, positionals, inv.presented, got)...)
+			}
+			if reported := len(faults) > 0; reported != tc.wantFault {
+				t.Errorf("reported %v, want %v (%v)", reported, tc.wantFault, faults)
+			}
+		})
+	}
+}
+
+// repoImporter resolves the planted source's one import from the packages this
+// test binary has already type-checked, so the coordinate value object in the
+// fixture is the same named type the guard recognises.
+func repoImporter(t *testing.T) types.Importer {
+	t.Helper()
+	found := map[string]*types.Package{}
+	seen := map[string]bool{}
+	var visit func(p *packages.Package)
+	visit = func(p *packages.Package) {
+		if p == nil || seen[p.PkgPath] {
+			return
+		}
+		seen[p.PkgPath] = true
+		if p.Types != nil {
+			found[p.PkgPath] = p.Types
+		}
+		for _, imp := range p.Imports {
+			visit(imp)
+		}
+	}
+	for _, p := range loadRepoPackages(t) {
+		visit(p)
+	}
+	if _, ok := found[strings.TrimSuffix(coordinateTypeName, ".ModuleCoordinate")]; !ok {
+		t.Fatal("the coordinate package is not among the type-checked packages; the fixture cannot be built")
+	}
+	return importerFunc(func(path string) (*types.Package, error) {
+		if p, ok := found[path]; ok {
+			return p, nil
+		}
+		return nil, fmt.Errorf("the planted fixture may not import %q", path)
+	})
+}
+
+type importerFunc func(path string) (*types.Package, error)
+
+func (f importerFunc) Import(path string) (*types.Package, error) { return f(path) }
+
+func namedFuncDecl(t *testing.T, file *ast.File, name string) *ast.FuncDecl {
+	t.Helper()
+	for _, d := range file.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == name {
+			return fn
+		}
+	}
+	t.Fatalf("the planted source has no function %q", name)
+	return nil
+}
+
+func returnedLiteral(t *testing.T, fn *ast.FuncDecl) *ast.BasicLit {
+	t.Helper()
+	var lit *ast.BasicLit
+	ast.Inspect(fn, func(n ast.Node) bool {
+		if l, ok := n.(*ast.BasicLit); ok && l.Kind == token.STRING && lit == nil {
+			lit = l
+		}
+		return true
+	})
+	if lit == nil {
+		t.Fatalf("%s returns no string literal", fn.Name.Name)
+	}
+	return lit
+}
+
+// TestTheLegitimateVersionPlaceholderStaysLegitimate pins the site the guard
+// must NOT report, because a guard that fails on a correct message gets
+// suppressed and then catches nothing at all.
+//
+// The message is resolveLicenceBasis's miss with no version named. Its builder
+// holds a path and has already returned for every case where a version was in
+// hand, so "give a version and run: … @<version>" is an instruction the reader
+// can act on, not a value thrown away. It is found by its own words rather than
+// by file and line, so it stays pinned when the file moves.
+func TestTheLegitimateVersionPlaceholderStaysLegitimate(t *testing.T) {
+	const words = "give a version and run"
+	slots := coordinateSlots(t)
+	found := 0
+	for _, m := range allPrintedMessages(t) {
+		if !strings.Contains(m.text, words) {
+			continue
+		}
+		found++
+		if !m.scope.hasPath {
+			t.Errorf("%s:%d: the builder holds no path, so the guard is reading the wrong scope", m.file, m.line)
+		}
+		if m.scope.hasVersion || m.scope.hasCoordinate {
+			t.Errorf("%s:%d: the builder is read as holding a version (%+v); it returned for that case already",
+				m.file, m.line, m.scope)
+		}
+		for _, inv := range invocationsIn(m.text) {
+			for _, conjunct := range strings.Split(inv.line, " && ") {
+				line, cmdName, positionals, ok := readInvocation(t, strings.TrimSpace(conjunct))
+				if !ok {
+					continue
+				}
+				for _, v := range invocationViolations(t, slots, line, cmdName, positionals, inv.presented, m.scope) {
+					t.Errorf("%s:%d reports a correct message: %s", m.file, m.line, v)
+				}
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatalf("no shipped message contains %q; the pin is measuring nothing", words)
 	}
 }

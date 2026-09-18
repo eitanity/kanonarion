@@ -91,7 +91,7 @@ exit 0
       "native_coverage": {
         "state": "not_examined",
         "unsearched_components": 0,
-        "statement": "this module's artefact was not examined for native code compiled into the binary, so nothing is known either way — run: kanonarion native \u003cmodule\u003e@\u003cversion\u003e",
+        "statement": "this module's artefact was not examined for native code compiled into the binary, so nothing is known either way — run: kanonarion native example.com/clean@v1.0.0",
         "components": [],
         "linked_libraries": []
       }

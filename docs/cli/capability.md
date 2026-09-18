@@ -111,9 +111,17 @@ semantics.
 
 ## Partial graphs
 
-When the call graph did not fully resolve (`OverallStatus` other than
-`Extracted`), the report is flagged `Partial` and carries a caveat: the
-capability set is a lower bound, never presented as clean.
+A report is flagged `Partial` and carries a caveat whenever it does not rest on a
+fully extracted graph. The caveat says which of two things happened, because they
+send a reader to different places:
+
+- **The analysis could not finish** — `Partial`, `LoadFailed`, `OutOfMemory`,
+  `Cancelled`, `ExtractionFailed` or an unrecorded status. The capability set is
+  a lower bound, never presented as clean.
+- **The module was excluded from call-graph analysis by configuration**
+  (`callgraph.exclude`). No graph was produced and nothing was searched for, so
+  the empty set is not a measurement. It is the operator's own decision, not a
+  tool failure to investigate.
 
 ## Flags
 

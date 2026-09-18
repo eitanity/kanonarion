@@ -19,7 +19,7 @@ import (
 // key, so a consumer reads one name wherever it meets the fact. An agent cannot
 // read prose, and a key that differs per command is a key nobody can look up.
 func TestComposites_PublishNativeCoverageUnderOneKey(t *testing.T) {
-	cov := nativeCoverageOf(natRecord(nativedomain.PresenceAbsent, nil, 0), true)
+	cov := nativeCoverageOf(natSubject, natRecord(nativedomain.PresenceAbsent, nil, 0), true)
 	roll := &nativeWalkRollup{}
 
 	for _, tc := range []struct {
@@ -93,11 +93,11 @@ func TestContextText_StatesTheNativeReading(t *testing.T) {
 		{
 			name: "nobody looked",
 			held: false,
-			want: []string{"Native code:     not_examined", "kanonarion native <module>@<version>"},
+			want: []string{"Native code:     not_examined", "kanonarion native " + natSubject.String()},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cov := nativeCoverageOf(tc.rec, tc.held)
+			cov := nativeCoverageOf(natSubject, tc.rec, tc.held)
 			out := makeNotRunOutput(contextCommands{})
 			out.Native = &cov
 

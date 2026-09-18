@@ -415,7 +415,7 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
 			rec.ID, rec.OverallStatus.String(), string(rec.Depth),
 			len(rec.Graph.Nodes),
-			countFailures(rec),
+			domain.CountNodeFailures(rec),
 		); pErr != nil {
 			return result, fmt.Errorf("writing output: %w", pErr)
 		}
@@ -470,7 +470,7 @@ func walkPartialMessage(rec domain.WalkRecord, rootIngestErr string) string {
 		return buildListUnavailablePartialMsg
 	case rootIngestErr != "":
 		return "walk partial: the dependency graph is complete, but the project's own packages were not ingested"
-	case countFailures(rec) > 0:
+	case domain.CountNodeFailures(rec) > 0:
 		return "walk partial: some dependencies could not be fetched"
 	case rec.Graph.PartialReason != "":
 		return "walk partial: the dependency graph is incomplete — " + rec.Graph.PartialReason
@@ -589,7 +589,7 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
 			rec.ID, rec.OverallStatus.String(), string(rec.Depth),
 			len(rec.Graph.Nodes),
-			countFailures(rec),
+			domain.CountNodeFailures(rec),
 		); pErr != nil {
 			return result, fmt.Errorf("writing output: %w", pErr)
 		}

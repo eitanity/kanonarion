@@ -81,6 +81,34 @@ func (s VerificationStatus) IsVerified() bool {
 	}
 }
 
+// ConfirmsVCSOrigin reports whether the status means the bytes were read out of
+// the recorded repository at the recorded commit — the claim an external VCS
+// reference in a shipped document makes.
+//
+// Only Verified does. This is a deliberate one-member answer, not the fail-open
+// "!= Verified" it replaces: every other status leaves the git leg unconfirmed,
+// and a fact record can carry a git URL that nothing checked, because the URL is
+// inferred from the module path when the proxy supplies no Origin metadata and
+// survives in the record when the VCS leg could not run. VerifiedBySumDBOnly is
+// the case that makes the point — authentic against the transparency log, and
+// still no evidence at all about the repository.
+//
+// It is narrower than IsVerified on purpose. IsVerified asks whether the bytes
+// are anchored to trust at all; this asks whether one specific binding was
+// measured.
+func (s VerificationStatus) ConfirmsVCSOrigin() bool {
+	switch s {
+	case Verified:
+		return true
+	case VerifiedBySumDBOnly, VerifiedByGoSum, LocalSource,
+		UnverifiedNoSumDB, UnverifiedMissingOrigin, UnverifiedHashMismatch,
+		UnverifiedGoModInconsistent, UnverifiedNoVCS, UnverifiedVCSToolMissing:
+		return false
+	}
+	// A status this build does not recognise has not confirmed anything.
+	return false
+}
+
 // FetchedModule is the aggregate root for the fetch bounded context.
 // It captures everything known about a module at a pinned version after
 // ingestion: the artefacts, their hashes, the git provenance, and the

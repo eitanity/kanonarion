@@ -241,6 +241,24 @@ func TestWalkPartialMessage_SaysWhatTheWalkIsPartialFor(t *testing.T) {
 		}
 	})
 
+	// A require redirected to a local path is not a fetch that failed, so a walk
+	// whose only non-succeeded node is one must not be told dependencies could
+	// not be fetched. It is the project's own subpackage.
+	t.Run("a local replace is not a failed fetch", func(t *testing.T) {
+		local, cErr := coordinate.NewModuleCoordinate("example.com/app/sub", "v0.0.0-20250630054201-94c0ba7b0952")
+		if cErr != nil {
+			t.Fatal(cErr)
+		}
+		r := rec(walkdomain.Graph{Partial: true, PartialReason: "shallow_depth: bounded at 2"}, 0)
+		r.PerNodeResults[local] = walkdomain.NodeResult{Coordinate: local, Status: walkdomain.NodeLocalReplace}
+		if n := walkdomain.CountNodeFailures(r); n != 0 {
+			t.Errorf("CountNodeFailures = %d, want 0", n)
+		}
+		if got := walkPartialMessage(r, ""); strings.Contains(got, "could not be fetched") {
+			t.Errorf("message = %q; nothing failed to fetch", got)
+		}
+	})
+
 	t.Run("a root ingest failure outranks a fetch failure", func(t *testing.T) {
 		got := walkPartialMessage(rec(walkdomain.Graph{Partial: true}, 1), "an ingest failure")
 		if !strings.Contains(got, "project's own packages were not ingested") {

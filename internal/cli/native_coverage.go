@@ -119,15 +119,20 @@ type nativeCoverage struct {
 
 // nativeCoverageOf derives the statement for one module from its stored record.
 //
+// coord is the module the statement is ABOUT, and is passed separately because
+// the not-examined case has no record to read it from: the remedy there named a
+// placeholder the reader had to substitute while every caller held the
+// coordinate.
+//
 // found is false when no record is held. That is a different answer from every
 // presence a record can carry, and it gets its own state rather than the
 // nearest one.
-func nativeCoverageOf(rec nativedomain.Record, found bool) nativeCoverage {
+func nativeCoverageOf(coord coordinate.ModuleCoordinate, rec nativedomain.Record, found bool) nativeCoverage {
 	out := nativeCoverage{Components: []nativeCoverageComponent{}, LinkedLibraries: []string{}}
 	if !found {
 		out.State = nativeStateNotExamined
 		out.Statement = "this module's artefact was not examined for native code compiled into the binary, " +
-			"so nothing is known either way — run: kanonarion native <module>@<version>"
+			"so nothing is known either way — run: kanonarion native " + coord.String()
 		return out
 	}
 	out.Generation = rec.PipelineVersion + "+recipes." + rec.RecipeCatalogueVersion
@@ -332,7 +337,7 @@ func deriveNativeCoverage(
 	if err != nil {
 		return nil
 	}
-	cov := nativeCoverageOf(rec, found)
+	cov := nativeCoverageOf(coord, rec, found)
 	return &cov
 }
 
@@ -373,10 +378,12 @@ type nativeWalkRollup struct {
 	// record at all. A count rather than a list: on a build where nothing has
 	// been examined this is every module, and the number is the statement.
 	NotExamined int `json:"not_examined"`
-	// anExaminable names one module the run did not look at, so the remedy can
-	// be an invocation rather than a template. Typed rather than a string so the
-	// remedy guard can see the value is held. Unexported: the JSON must not move.
-	anExaminable coordinate.ModuleCoordinate
+	// anExaminable names one module the run did not look at, and anUnidentified
+	// one whose native source no recipe could name, so each remedy can be an
+	// invocation rather than a template. Typed rather than strings so the remedy
+	// guard can see the value is held. Unexported: the JSON must not move.
+	anExaminable   coordinate.ModuleCoordinate
+	anUnidentified coordinate.ModuleCoordinate
 	// Components is the total number of identified native components across
 	// Unsearched — the single number an agent reads to learn that this scan's
 	// verdict does not cover everything in the binary.
@@ -427,7 +434,7 @@ func nativeRollupOver(
 		if err != nil {
 			continue
 		}
-		cov := nativeCoverageOf(rec, found)
+		cov := nativeCoverageOf(coord, rec, found)
 		if cov.State != nativeStateNotExamined {
 			out.Examined++
 		}
@@ -439,6 +446,9 @@ func nativeRollupOver(
 			}
 		case nativeStateUnidentified:
 			out.Unidentified = append(out.Unidentified, coord.String())
+			if out.anUnidentified.IsZero() {
+				out.anUnidentified = coord
+			}
 		case nativeStateIdentified:
 			out.Unsearched = append(out.Unsearched, nativeWalkModule{Module: coord.String(), Components: cov.Components})
 			out.Components += len(cov.Components)
@@ -555,10 +565,12 @@ func writeNativeRollup(w io.Writer, r *nativeWalkRollup) {
 		_, _ = fmt.Fprintf(w, "Native source compiled in but not identified (%d module(s)):\n", len(r.Unidentified))
 		_, _ = fmt.Fprintln(w,
 			"  These modules compile native source into the binary and no recipe names the library it belongs to,")
-		_, _ = fmt.Fprintln(w,
-			"  so no component could be named. Run 'kanonarion native <module>@<version>' to see the files.")
+		_, _ = fmt.Fprintln(w, "  so no component could be named.")
 		for _, m := range r.Unidentified {
 			_, _ = fmt.Fprintf(w, "  %s\n", m)
+		}
+		if !r.anUnidentified.IsZero() {
+			_, _ = fmt.Fprintf(w, "  see the files one of them compiles in: kanonarion native %s\n", r.anUnidentified)
 		}
 	}
 }
@@ -586,8 +598,11 @@ func writeNativeUnidentifiedCaveat(w io.Writer, r *nativeWalkRollup) error {
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}
-	if _, err := fmt.Fprintln(w,
-		"  Run 'kanonarion native <module>@<version>' to see the files it compiles in."); err != nil {
+	if r.anUnidentified.IsZero() {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w,
+		"  see the files one of them compiles in: kanonarion native %s\n", r.anUnidentified); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	return nil
