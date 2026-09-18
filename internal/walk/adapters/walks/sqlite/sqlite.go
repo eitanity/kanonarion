@@ -122,6 +122,14 @@ func Migrations() []sqlitestore.Migration {
 		// supposed to fetch. See backfillFailureCount. No purge and no pipeline
 		// bump — the blob is read, never rewritten.
 		{Module: "walk", Version: 10, SQL: `SELECT 1`, Fn: backfillFailureCount},
+		// No column changes, and the same kind of correction as 10: the node count
+		// is re-derived from each row's own record because the rule that produced
+		// it counted the per-node results rather than the graph's nodes. The two
+		// differ exactly where a walk leaves a node unfetched on purpose — a
+		// shallow walk, or one bounded by a depth policy — and those rows listed a
+		// smaller graph than the record they came from holds. No purge and no
+		// pipeline bump: the blob is read, never rewritten.
+		{Module: "walk", Version: 11, SQL: `SELECT 1`, Fn: backfillNodeCount},
 	}
 }
 
@@ -222,6 +230,30 @@ func backfillFailureCount(tx *sql.Tx) error {
 	return nil
 }
 
+// backfillNodeCount recomputes the node_count column of every stored row from
+// its own record, under the rules scanWalkRecords states.
+//
+// The column is a projection of the graph already inside the sealed blob, and it
+// was computed as the number of per-node results — the nodes the walk fetched
+// something for, not the nodes it resolved. A walk that leaves a node unfetched
+// by design lists a graph smaller than its own record and smaller than the walk
+// line printed for it, so the column is re-derived rather than left to be
+// corrected one re-walk at a time. No purge and no pipeline bump: every stored
+// row still hashes to exactly what it did.
+func backfillNodeCount(tx *sql.Tx) error {
+	walks, err := scanWalkRecords(tx)
+	if err != nil {
+		return err
+	}
+	for _, w := range walks {
+		if _, err := tx.Exec(`UPDATE walks SET node_count = ? WHERE id = ?`,
+			len(w.rec.Graph.Nodes), w.id); err != nil {
+			return fmt.Errorf("back-filling node count for walk %s: %w", w.id, err)
+		}
+	}
+	return nil
+}
+
 // backfillBuildEnv fills the goos/goarch columns of migration 8 from each
 // stored walk's own record. See scanWalkBuildEnvs for the two rules it reads
 // under: the blob is decoded but not re-verified, and a row that cannot be
@@ -287,7 +319,12 @@ func (s *Store) PutWalk(ctx context.Context, rec domain.WalkRecord) error {
 	}
 	blob := blobcodec.Encode(raw)
 
-	nodeCount, failureCount := len(rec.PerNodeResults), domain.CountNodeFailures(rec)
+	// The node count is the graph's, which is what the word means everywhere else
+	// it is printed: the walk line and the single-walk lookup both state
+	// len(Graph.Nodes). Counting the per-node results instead answered a
+	// different question — how many nodes something was fetched for — so a walk
+	// that deliberately leaves a node unfetched was listed as smaller than it is.
+	nodeCount, failureCount := len(rec.Graph.Nodes), domain.CountNodeFailures(rec)
 
 	scope := string(rec.Scope)
 	if scope == "" {

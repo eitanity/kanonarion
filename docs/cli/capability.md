@@ -211,6 +211,20 @@ $ echo $?
 4
 ```
 
+"Absent" is asked of the store rather than asserted over it. Where the store
+does hold the coordinate, but only under a pipeline version this build no longer
+serves, the refusal says which - the same sentence `callgraph-show` prints from
+the same rows, because it is the same fact. The exit code and the remedy do not
+change; re-analysing is what fixes both.
+
+```
+$ kanonarion capability golang.org/x/sys@v0.47.0
+no callgraph record for golang.org/x/sys@v0.47.0 at pipeline 0.7.0 - the store
+holds it at superseded pipeline 0.5.0, 0.6.0, which this build does not serve.
+Re-analyse it:
+  kanonarion callgraph golang.org/x/sys@v0.47.0
+```
+
 A malformed coordinate, an unreadable store or an unknown flag stays `20`.
 
 ## If you also run capslock

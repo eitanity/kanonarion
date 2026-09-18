@@ -99,6 +99,12 @@ const (
 	// the local-FS fetcher. Downstream stages (extract, vuln-scan) treat these
 	// nodes the same as ResolutionMVS nodes.
 	ResolutionLocalAnalysed ResolutionSource = "local_analysed"
+	// ResolutionDepthBounded marks a requirement the depth policy stopped the BFS
+	// from following: it is a real edge of the build, so it is recorded as a node
+	// and the graph is marked Partial with DepthBoundedReason, but nothing was
+	// fetched for it and nothing should have been. Its own requirements are
+	// unknown for the same reason.
+	ResolutionDepthBounded ResolutionSource = "depth_bounded"
 	// ResolutionStdlib marks the synthetic Go standard-library node injected into a
 	// project walk. The standard library is a genuine build dependency — the code
 	// links against it — but it ships with the toolchain rather than as a fetchable
@@ -110,24 +116,27 @@ const (
 	ResolutionStdlib ResolutionSource = "stdlib"
 )
 
-// HasFetchedArtefact reports whether a node resolved this way names a module
-// the fetch pipeline could ever have acquired bytes for.
+// HasFetchedArtefact reports whether a node resolved this way owes the walk that
+// resolved it a set of fetched bytes — so that a missing fetch record is a gap
+// in the run rather than an absence the run itself created.
 //
-// Three resolution sources never do. A project walk's local main module is the
+// Four resolution sources owe none. A project walk's local main module is the
 // caller's own checkout; a local replace redirects a require at a directory on
 // disk, so the node keeps the original require coordinate that nothing
-// published; and the standard library ships with the toolchain. None of the
-// three has a module zip in the blob store, none ever will, and a fetch-record
-// lookup for one can only miss. A consumer that treats that miss as a failure
-// reports an absence that is there by construction as something that went
-// wrong, and cannot then tell it from bytes that should be in the store and are
-// not.
+// published; and the standard library ships with the toolchain. None of those
+// three has a module zip in the blob store and none ever will. The fourth is a
+// requirement the depth policy stopped the walk from following: its bytes are
+// published and a later walk may well acquire them, but this walk was told not
+// to, so a lookup for one can only miss here too. A consumer that treats any of
+// those misses as a failure reports an absence that is there by construction as
+// something that went wrong, and cannot then tell it from bytes that should be
+// in the store and are not.
 //
 // A source this build does not recognise answers true: an unknown resolution is
 // assumed to owe an artefact, so a genuine miss is reported rather than hidden.
 func (s ResolutionSource) HasFetchedArtefact() bool {
 	switch s {
-	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionStdlib:
+	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionStdlib, ResolutionDepthBounded:
 		return false
 	default:
 		return true
@@ -146,6 +155,8 @@ func (s ResolutionSource) ArtefactAbsenceNoun() string {
 		return "local replace"
 	case ResolutionStdlib:
 		return "Go standard library"
+	case ResolutionDepthBounded:
+		return "requirement beyond the depth bound"
 	default:
 		return ""
 	}

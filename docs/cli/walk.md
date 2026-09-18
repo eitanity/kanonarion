@@ -627,8 +627,10 @@ the `go.mod` file supplied via `--gomod`.
 
 ## Per-node fetch results
 
-Every module in the closure is recorded in `per_node_results` with the
-outcome of its underlying fetch:
+Every module the walk actually followed is recorded in `per_node_results` with
+the outcome of its underlying fetch. A module the walk deliberately did not
+follow is a graph node with no entry here at all — see *Nodes the walk did not
+follow* below:
 
 | Field | Meaning |
 |-------|---------|
@@ -653,6 +655,29 @@ The recorder that captures these outcomes also memoises per-coordinate
 fetches inside the walk, so a coordinate is downloaded at most once per
 walk even when the resolver and walker would otherwise both call the
 fetcher.
+
+## Nodes the walk did not follow
+
+Two things stop a walk before a requirement it can see: `--shallow`, and a
+policy `max_depth` on the fetch stage (`stages.fetch.max_depth`; there is no
+flag for it — see [policy](policy.md)). Either way the requirement is still a
+graph node, because the edge is real and the walk knows it exists, and it has
+**no entry in `per_node_results`**: nothing was fetched for it, so there is no
+outcome to report. It is counted neither as a success nor as a failure, and
+`N failed` on the walk line stays 0 if nothing else went wrong.
+
+A node stopped at a `max_depth` bound carries `resolution_source:
+"depth_bounded"`, so it is distinguishable from one whose version was selected
+normally. `--shallow` leaves its listed requires at the source they were
+resolved with; the graph's `shallow` reason already says none of them was
+followed.
+
+The graph is `partial` either way, and the walk's exit message names which:
+`depth_bounded: max_depth=N` for the bound, and the `shallow` reason keeps the
+walk `succeeded` because it is the closure you asked for. Running the extraction
+stages over such a walk will report the unfollowed modules as not fetched, with
+`kanonarion fetch` as the remedy — that is accurate, not a failure of the walk:
+raise or drop the bound and re-walk if you want them covered.
 
 ## Large graphs: authentication, rate limits, and concurrency
 

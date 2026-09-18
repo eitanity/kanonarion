@@ -203,11 +203,11 @@ func TestStdlibVerificationStatusClassification(t *testing.T) {
 // inferring it from a missing table row would be the same silence this file
 // exists to break.
 //
-// Both rules read one enum, so a member joins both tables or neither. The next
-// resolution source to be added is one for a node the depth bound left
-// untraversed: nothing was fetched for it and nothing should have been, and
-// under the documented default of HasFetchedArtefact it would arrive owing an
-// artefact.
+// Both rules read one enum, so a member joins both tables or neither. That is
+// not hypothetical: the source for a node the depth bound left untraversed was
+// added after this file, and under the documented default of HasFetchedArtefact
+// it would have arrived owing an artefact — which is the answer that had the
+// walk reporting a policy decision as a failed fetch in the first place.
 func TestResolutionSourceArtefactClassification(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -227,6 +227,13 @@ func TestResolutionSourceArtefactClassification(t *testing.T) {
 		// Ingested from disk into the blob store, so it does have a zip.
 		{"ResolutionLocalAnalysed", walkdomain.ResolutionLocalAnalysed, true, ""},
 		{"ResolutionStdlib", walkdomain.ResolutionStdlib, false, "Go standard library"},
+		// The depth policy stopped the walk before this requirement. Its bytes are
+		// published and another walk may hold them, so the classification is not
+		// "no artefact exists" but "this walk was told not to acquire one": the
+		// missing fetch record is an absence the run created on purpose, and the
+		// predicate exists to separate exactly that from bytes that are owed and
+		// missing.
+		{"ResolutionDepthBounded", walkdomain.ResolutionDepthBounded, false, "requirement beyond the depth bound"},
 	}
 	named := make([]string, 0, len(cases))
 	for _, tc := range cases {

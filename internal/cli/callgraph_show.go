@@ -165,17 +165,7 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		// Nothing is served: composition answers not-found only where the reading
 		// leg decoded no generation at all, since neither source nor toolchain is
 		// restricted on this path.
-		note, nerr := supersededGenerationsNote(ctx, coord, uc, nil)
-		if nerr != nil {
-			return nerr
-		}
-		if note != "" {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-				"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
-				coord, cgapp.PipelineVersion, note, domain.ReanalysisInstruction(coord, ""))}
-		}
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisInstruction(coord, ""))}
+		return missingCallGraphRefusal(ctx, coord, uc)
 	}
 	// Asked before --node narrows the record: the disagreement is between whole
 	// generations of this coordinate, and a filtered view of the served one says
@@ -1356,6 +1346,32 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 	return nil
 }
 
+// missingCallGraphRefusal is what every command that reads a stored call graph
+// returns when nothing is served for a coordinate.
+//
+// It is one function because the refusal is one fact. Two commands refusing for
+// the absence of the same record used to say different things about it: one had
+// the store's own listing in hand and named the superseded generations it holds,
+// the other stated a bare absence its own store contradicts, and a reader told
+// the record does not exist has no reason to go looking for a pipeline bump.
+//
+// The exit code and the remedy are the same either way — the coordinate has to
+// be analysed by this build — so only the diagnosis differs, and it differs on
+// what the store says rather than on which command asked.
+func missingCallGraphRefusal(ctx context.Context, coord coordinate.ModuleCoordinate, uc ports.CallGraphCoordinateLister) error {
+	note, err := supersededGenerationsNote(ctx, coord, uc, nil)
+	if err != nil {
+		return err
+	}
+	if note != "" {
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
+			coord, cgapp.PipelineVersion, note, domain.ReanalysisInstruction(coord, ""))}
+	}
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+		"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisInstruction(coord, ""))}
+}
+
 // supersededGenerationsNote describes the generations the store holds for a
 // coordinate that this build will not serve, or "" when it holds none. It is the
 // difference between "this was never analysed" and "this was analysed by logic
@@ -1384,7 +1400,7 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 func supersededGenerationsNote(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
-	uc QueryCallGraphUseCase,
+	uc ports.CallGraphCoordinateLister,
 	servable []domain.CallGraphRecord,
 ) (string, error) {
 	sums, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})

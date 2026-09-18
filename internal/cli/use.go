@@ -53,11 +53,16 @@ selected module with its outcome — copied, already present, failed, or having 
 artefact to copy. A module that failed to land is in that document rather than
 on stderr, so a consumer reading stdout is not left with only the successes.
 
-Some selected nodes have no artefact anywhere in the store and never will: a
-project walk's own root at @local, the standard library, and a require
-redirected by a local replace. A build reads all three from somewhere other than
-the module cache, so they are counted apart, named in the summary, and do not
-make the run report a loss.
+Some selected nodes have no artefact in the store for this walk to copy. Three
+never will: a project walk's own root at @local, the standard library, and a
+require redirected by a local replace — a build reads all three from somewhere
+other than the module cache. The fourth is a requirement the walk's own depth
+policy stopped it from following, which was never fetched because it was never
+asked for; raise or drop stages.fetch.max_depth and re-walk to cover it.
+
+All four are counted apart, named in the summary, and do not make the run report
+a loss: nothing was owed, so nothing was lost. The summary line says how many of
+the selection they were and what they are, on every run.
 
 Exit codes:
   0  every module with a stored artefact reached the cache (including when

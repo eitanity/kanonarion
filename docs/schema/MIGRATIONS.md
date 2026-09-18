@@ -731,6 +731,31 @@ cannot decode is skipped rather than failing the migration.
 Additive: no purge, no pipeline bump, no record shape change. The blob is read,
 never rewritten, and every stored walk still verifies against its written hash.
 
+## Walk store: module `walk`, migration 11
+
+**No column changes.** Re-derives `walks.node_count` from every stored row's own
+record. Store `v86` -> `v87`.
+
+The column counted the walk's per-node results, while every other surface that
+prints the word "nodes" for a walk — the line `walk` writes, and `walk-list
+--walk-id` — counts the graph's nodes. The two are the same number only when the
+walk fetched something for every node it resolved. They differ wherever a walk
+leaves a node unfetched on purpose: a `--shallow` walk records one result and
+resolves the target's whole require set, so a 5-node graph listed as `nodes=1`;
+a walk bounded by a `max_depth` policy now does the same for the requirements
+the bound stops it from following.
+
+The rule now reads the graph, so the listing and the walk line state one number.
+
+**Back-fill: every row.** Rows written under the old rule keep answering
+`walk-list` with a node count smaller than their own record's graph, so the
+column is re-derived rather than left to be corrected one re-walk at a time.
+Decompresses each stored walk once and counts its graph nodes; a row this build
+cannot decode is skipped rather than failing the migration.
+
+Additive: no purge, no pipeline bump, no record shape change. The blob is read,
+never rewritten, and every stored walk still verifies against its written hash.
+
 ## Call graph store: module `callgraph`, migration 12
 
 Adds `callgraph_edges.kind`: whether an edge is a call, or a REFERENCE to a

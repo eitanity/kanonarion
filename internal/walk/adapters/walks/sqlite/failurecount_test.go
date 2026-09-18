@@ -20,17 +20,27 @@ func walkRecordWithNodeStatuses(t testing.TB, id string, statuses ...domain.Node
 	target := mustCoord("github.com/example/target", "v1.0.0")
 	started := time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC)
 	results := map[coordinate.ModuleCoordinate]domain.NodeResult{}
+	// Each status also gets its graph node. The two counts the stored summary
+	// carries project different parts of one record — the graph's size and the
+	// failures among its outcomes — so a fixture that supplies only one of them
+	// cannot say what either column should hold.
+	nodes := make([]domain.GraphNode, 0, len(statuses))
 	for i, s := range statuses {
 		c, err := coordinate.NewModuleCoordinate("example.com/dep"+string(rune('a'+i)), "v1.0.0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		results[c] = domain.NodeResult{Coordinate: c, Status: s}
+		source := domain.ResolutionMVS
+		if s == domain.NodeLocalReplace {
+			source = domain.ResolutionLocalReplace
+		}
+		nodes = append(nodes, domain.GraphNode{Coordinate: c, ResolutionSource: source})
 	}
 	outcome := domain.WalkOutcome{
 		Target: target,
 		Graph: domain.Graph{
-			Target: target, ResolvedAt: started, PipelineVersion: "0.3.0",
+			Target: target, ResolvedAt: started, PipelineVersion: "0.3.0", Nodes: nodes,
 		},
 		PerNodeResults: results,
 		StartedAt:      started,

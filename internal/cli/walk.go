@@ -595,9 +595,14 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 		}
 	}
 
+	// Through the same helper the project walk uses. A coordinate walk is partial
+	// for the same range of reasons — a depth bound, a truncated closure — and
+	// this arm used to state the fetch sentence over all of them, which is the
+	// one sentence walkPartialMessage exists to stop being said unconditionally.
+	// No root is ingested on this path, so there is no ingest failure to pass.
 	return result, walkExit(rec.OverallStatus, allowPartial,
 		"walk failed: target module could not be fetched",
-		"walk partial: some dependencies could not be fetched")
+		walkPartialMessage(rec, ""))
 }
 
 // ---- what a walk states about how its graph was verified ----

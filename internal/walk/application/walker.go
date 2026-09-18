@@ -337,6 +337,15 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 				Coordinate: node.Coordinate,
 				Status:     domain2.NodeSucceeded,
 			}
+		case domain2.ResolutionDepthBounded:
+			// The depth policy stopped the walk before this requirement, so no
+			// fetch was attempted and none was owed. It gets no per-node result at
+			// all — the shape a shallow walk already produces for the requirements
+			// it does not follow: present in the graph, absent from the outcomes,
+			// counted neither as a success nor as a failure. The graph carries the
+			// bound on its own PartialReason, which is where a reader learns why
+			// the node is bare.
+			continue
 		case domain2.ResolutionFetchFailed, domain2.ResolutionParseFailed:
 			// Preserve panic-vs-regular-failure distinction: a transitive that
 			// panicked during fetch is recorded by the recorder with panicked=true

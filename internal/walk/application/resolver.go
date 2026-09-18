@@ -1539,13 +1539,20 @@ func enqueueTransitive(
 		// requirement: a real requirement the bound stops us from following. Record
 		// the boundary node but flag the closure as truncated so the graph is marked
 		// Partial and never consumed as a complete audit.
+		//
+		// The node's source is the bound itself, not how its version was picked.
+		// Nothing is fetched for it and nothing should be, and a node carrying mvs
+		// or replace here is indistinguishable from one the resolver was meant to
+		// fetch and did not — which is how the walker came to record a policy
+		// decision as a failed fetch. OriginalCoordinate still carries the require
+		// a replace acted on, so a replaced boundary node is not silently flattened.
 		st.depthTruncated = true
 		if st.selected[key] == "" {
 			st.selected[key] = req.Coordinate.Version()
 			st.nodes[key] = domain3.GraphNode{
 				Coordinate:         effective,
 				DirectDependency:   false,
-				ResolutionSource:   source,
+				ResolutionSource:   domain3.ResolutionDepthBounded,
 				OriginalCoordinate: original,
 			}
 		}

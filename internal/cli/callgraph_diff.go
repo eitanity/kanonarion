@@ -24,9 +24,11 @@ func runCallGraphDiff(ctx context.Context, coord coordinate.ModuleCoordinate, f 
 		return fmt.Errorf("reading callgraph history: %w", err)
 	}
 	if len(recs) == 0 {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"no callgraph records for %s at pipeline %s — analyse it first:\n  %s",
-			coord, cgapp.PipelineVersion, domain.ReanalysisInstruction(coord, ""))}
+		// Asked of the store, not asserted over it. This is the same question
+		// callgraph-show's own miss answers — what does the ledger hold for this
+		// coordinate — so it is the same refusal, and a coordinate held only under
+		// a superseded pipeline version is diagnosed rather than called absent.
+		return missingCallGraphRefusal(ctx, coord, uc)
 	}
 
 	measurements := groupBy(recs, domain.MeasurementDigest)

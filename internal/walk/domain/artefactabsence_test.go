@@ -6,14 +6,17 @@ import (
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
-// Three resolution sources name a module that no fetch ever acquired bytes for.
-// A consumer looking a fetch record up for one of them can only miss, and a miss
-// there is an absence by construction rather than something that went wrong.
+// Four resolution sources name a module this walk acquired no bytes for and
+// owed none: three because no published artefact exists at all, and one because
+// the depth policy stopped the walk before that requirement. A consumer looking
+// a fetch record up for any of them can only miss, and a miss there is an
+// absence by construction rather than something that went wrong.
 func TestHasFetchedArtefact(t *testing.T) {
 	unfetched := map[domain.ResolutionSource]string{
 		domain.ResolutionLocalMainModule: "local main module",
 		domain.ResolutionLocalReplace:    "local replace",
 		domain.ResolutionStdlib:          "Go standard library",
+		domain.ResolutionDepthBounded:    "requirement beyond the depth bound",
 	}
 	for source, noun := range unfetched {
 		if source.HasFetchedArtefact() {
