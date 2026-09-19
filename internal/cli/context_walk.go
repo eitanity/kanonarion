@@ -78,7 +78,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 
 	// --size-only with --walk-id: accumulate per-module JSON sizes.
 	if f.sizeOnly {
-		return runContextWalkSizeOnly(ctx, f, nodes, compact, ctr.QueryVuln, vulnBatch, ctr.QueryFetch, ctr.QueryLicense, ctr.StdlibCustody, ctr.QueryInterface, ctr.QueryCallGraph, ctr.QueryExamples, ctr.QueryWalks, basis, stdout)
+		return runContextWalkSizeOnly(ctx, f, nodes, compact, ctr.QueryVuln, vulnBatch, ctr.QueryFetch, ctr.QueryLicense, ctr.StdlibCustody, ctr.QueryInterface, ctr.QueryCallGraph, ctr.QueryExamples, ctr.QueryWalks, ctr.QueryNative, basis, stdout)
 	}
 
 	if !jsonOut && !f.stream {
@@ -102,6 +102,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 				CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 				Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 				Vulnerabilities: vulns,
+				Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
 				Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 			}
 			if err := printContextText(out, compact, stdout); err != nil {
@@ -148,6 +149,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
+			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 		}
 		if f.stream {
@@ -307,6 +309,7 @@ func runContextWalkSizeOnly(
 	cgUC QueryCallGraphUseCase,
 	exUC QueryExamplesUseCase,
 	walkUC QueryWalksUseCase,
+	nativeUC nativeRecordReader,
 	basis basisWalk,
 	stdout io.Writer,
 ) error {
@@ -332,6 +335,7 @@ func runContextWalkSizeOnly(
 			CallGraph:       buildCallGraph(ctx, coord, cgUC, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, exUC, compact, f.packageFilter),
 			Vulnerabilities: vulns,
+			Native:          deriveNativeCoverage(ctx, nativeUC, coord),
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 		}
 		if err := report.add(coord.String(), out); err != nil {

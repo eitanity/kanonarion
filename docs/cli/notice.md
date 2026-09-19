@@ -10,6 +10,9 @@ review before the document can be published. Where a module genuinely carries no
 copyright statement, record the one you read upstream as a
 `copyright_declarations` entry; see
 [Recording a copyright a human read](#recording-a-copyright-a-human-read).
+Where it carries no licence the detector can identify, record your own
+determination as a `license_overrides` entry; see
+[Recording a licence you determined](#recording-a-licence-you-determined).
 
 The document also covers third-party code **copied into first-party source**,
 which has no `go.mod` entry and so is invisible to module licence extraction.
@@ -225,8 +228,9 @@ The embedded component list is derived from `EffectiveSet.Components` on the
 stored `LicenseRecord` (see [`licence`](license-compat.md#effective-licence-set)).
 Only components with a classified SPDX identifier and a readable licence file
 are included. Components whose licence is unclassified appear in the extraction
-record but are not reproduced in the NOTICE document - add a licence override in
-`config.yaml` if manual classification is needed.
+record but are not reproduced in the NOTICE document. A `license_overrides`
+entry settles the MODULE's identity, not a bundled component's, so a component
+you have classified by hand is attributed by hand.
 
 ### Directories the Go toolchain never compiles are not components
 
@@ -379,19 +383,24 @@ notice: 2 module(s) require human review before publishing:
 ```
 
 Resolve by checking the module manually and either:
-- Adding a licence override in `config.yaml` (for ambiguous identifications), or
+- Recording your own licence determination as a `license_overrides` entry (for
+  an ambiguous identification, or for a module carrying no licence the detector
+  could identify), or
 - Recording the copyright you read upstream as a `copyright_declarations` entry
   (for a missing copyright notice), and filing an issue with the upstream
   project to add one.
 
-When a missing copyright is among the reasons, the refusal prints the
-`copyright_declarations` block to fill in, keyed to the first module that needs
-it. It is not printed for any other refusal: recording a copyright settles
-nothing for an ambiguous licence.
+Each refusal prints the block to fill in, keyed to the first module that needs
+it, and only for the gate that actually fired: a copyright settles nothing for
+an ambiguous licence, and a licence determination settles nothing for a missing
+copyright. The two gates are independent — a module that carries neither a
+licence the detector could identify nor a copyright statement needs both
+entries.
 
-A missing **licence** is a different gate. `no license found` means the module
-carries no grant kanonarion could identify, and no copyright declaration
-resolves it - a copyright line is an attribution, not a grant.
+Neither block is offered where **extraction has not run**. `no license record:
+run 'kanonarion license' first` means nothing has been measured for that
+module, and a determination recorded ahead of the measurement is a guess; run
+the extraction the message names.
 
 Under `--walk-id` the **standard library** (`stdlib@v<toolchain>`) is in scope
 and always lands in the review list. It holds no licence record and never will:
@@ -401,6 +410,61 @@ stdlib@v<toolchain>` reports it as `BSD-3-Clause`). No stage extracts the
 toolchain's licence text, so verbatim attribution for it has to be supplied by
 hand. The `--gomod` and `--package` scopes do not raise it: `go list` marks
 standard-library packages as `Standard` and they carry no module coordinate.
+
+## Recording a licence you determined
+
+Some modules ship no licence text anywhere extraction can reach it - the grant
+is one line in a README, or in the repository description - and some ship text
+the detector reads as two competing licences and will not guess between. Both
+settle at a person reading the module. Record what you determined in
+`<store-root>/config.yaml`:
+
+```yaml
+license_overrides:
+  github.com/example/mod:
+    spdx: "Apache-2.0"
+    declared_by: "you@example.com"
+    declared_on: "2026-01-31"
+    basis: "README.md at github.com/example/mod v1.2.3, read 2026-01-31"
+```
+
+The key may be pinned to a version (`github.com/example/mod@v1.2.3`), which
+wins over a module-level entry. It is the same block `license-compat` and
+`audit` read, so one recorded decision settles the module everywhere. See
+[`config`](config.md#license_overrides---the-licence-you-determined).
+
+The module is then attributed, and the document says the identity is yours
+rather than the detector's - and what the detector itself found:
+
+```
+================================================================================
+Module:  github.com/example/mod@v1.2.3
+License: Apache-2.0
+
+Licence determination (operator-recorded; not a detection):
+  Apache-2.0, recorded as license_overrides.github.com/example/mod
+    declared by you@example.com on 2026-01-31
+    basis: README.md at github.com/example/mod v1.2.3, read 2026-01-31
+  the licence detector identified: no licence identified in any file it read
+```
+
+An entry written as a bare identifier (`github.com/example/mod: Apache-2.0`)
+settles the module too, and the block then reads `no declarer, date or basis
+was recorded with this determination`. Where the module ships no licence text,
+there is nothing for a reader to check the identifier against, so the
+attributed form is what makes the entry auditable.
+
+**The detector's record is untouched.** `kanonarion licence
+github.com/example/mod@v1.2.3` keeps reporting what the detector read.
+
+**Licence text is not invented.** An override supplies an identity, never a
+grant: nothing is printed under a licence heading that the module does not
+ship. Where the module carries files the detector could not classify, they stay
+recorded - path, size, hash - and unreproduced, as they were.
+
+**A failed extraction is not settled this way.** `licence extraction failed`
+means nothing was measured, so there is no answer for a determination to
+supersede; the remedy is to re-run the extraction.
 
 ## Recording a copyright a human read
 

@@ -6,6 +6,12 @@ execute root command: no vulnerability record for example.com/mod@v1.2.0: the mo
   kanonarion walk example.com/mod@v1.2.0
   kanonarion vuln-scan --module example.com/mod@v1.2.0 --reachability
 --- stdout ---
-(empty)
+{
+  "module": "example.com/mod",
+  "version": "v1.2.0",
+  "vuln_id": "GO-2026-0001",
+  "answered": false,
+  "refusal": "no vulnerability record for example.com/mod@v1.2.0: the module has not been vuln-scanned. Run:\n  kanonarion walk example.com/mod@v1.2.0\n  kanonarion vuln-scan --module example.com/mod@v1.2.0 --reachability"
+}
 --- stderr ---
 (empty)

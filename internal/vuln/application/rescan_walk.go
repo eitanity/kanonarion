@@ -35,6 +35,9 @@ type RescanWalkUseCase struct {
 	// reproduce the frame the run it re-scans was analysed in — see
 	// projectFrameDir, which refuses rather than re-deriving under another one.
 	vendoredClosure ports.VendoredClosureReader
+	// routeAnnotator is propagated to the delegated scan, so a re-scan's records
+	// carry the dispatch annotation the scan path's do.
+	routeAnnotator ports.RouteAnnotator
 }
 
 // FrameNotReproducibleError reports that a re-scan would have to change the
@@ -120,6 +123,12 @@ func NewRescanWalkUseCase(
 // for chaining.
 func (uc *RescanWalkUseCase) WithAudit(sink ports.AuditSink) *RescanWalkUseCase {
 	uc.audit = sink
+	return uc
+}
+
+// WithRouteAnnotator sets the annotator the delegated scan gives its records.
+func (uc *RescanWalkUseCase) WithRouteAnnotator(annotator ports.RouteAnnotator) *RescanWalkUseCase {
+	uc.routeAnnotator = annotator
 	return uc
 }
 
@@ -301,7 +310,11 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		uc.pipelineVersion,
 		uc.logger,
 	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir).WithHostMemory(uc.hostMemory).
-		WithVCSHosts(uc.vcsHosts).WithVendoredClosure(uc.vendoredClosure)
+		WithVCSHosts(uc.vcsHosts).WithVendoredClosure(uc.vendoredClosure).
+		// Forwarded, not re-derived. A re-scan seals new records and a record
+		// sealed without the annotation is one whose routes stay silent about
+		// dispatch until something scans them again.
+		WithRouteAnnotator(uc.routeAnnotator)
 
 	run, err := scanWalk.Scan(ctx, ScanWalkParams{
 		WalkID:             req.WalkID,

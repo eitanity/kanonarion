@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
@@ -82,3 +84,50 @@ func runToolchainNamer(ctx context.Context) gotoolchain.Version {
 	}
 	return gotoolchain.Version(v)
 }
+
+// goSourceDirsProbe asks the go command on PATH to name the directories it
+// resolves source files from, and returns them.
+//
+// It is the production implementation of the staticcha analyser's source-dirs
+// probe, wired in by the container for the same reason the toolchain probe is:
+// the analyser is an extraction package and must not carry process-spawning
+// capability itself, so the one command it needs the environment to answer lives
+// here.
+//
+// One command for all three values, not three. They are read as the roots a
+// recorded path is rendered against, and three separate questions could be
+// answered by three different toolchains — a switch between them would spell one
+// record's paths against a GOROOT that never held the standard library it loaded.
+//
+// dir and env are the load's own, for the reason goToolchainVersionProbe states.
+func goSourceDirsProbe(ctx context.Context, dir string, env []string) (cganalyser.SourceDirs, error) {
+	// Through childproc, like every other child an analysis spawns.
+	cmd := childproc.CommandContext(ctx, "go", "env", "GOROOT", "GOCACHE", "GOMODCACHE") // #nosec G204 -- fixed command and arguments; the binary is resolved through the analysis PATH by design
+	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = env
+	}
+	// Output, not CombinedOutput: a toolchain that writes a warning to stderr
+	// would otherwise have it read as one of the directories.
+	out, err := cmd.Output()
+	if err != nil {
+		return cganalyser.SourceDirs{}, err //nolint:wrapcheck // the error is disclosed by the caller, never rendered
+	}
+	// `go env` with names prints one value per line, in the order asked. A
+	// toolchain that answered with fewer lines than it was asked about has not
+	// answered the question, and guessing which of the three it dropped would put
+	// the build cache in the GOROOT slot.
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		return cganalyser.SourceDirs{}, fmt.Errorf("%w: got %d", errUnreadableSourceDirs, len(lines))
+	}
+	return cganalyser.SourceDirs{
+		GOROOT:      strings.TrimSpace(lines[0]),
+		BuildCache:  strings.TrimSpace(lines[1]),
+		ModuleCache: strings.TrimSpace(lines[2]),
+	}, nil
+}
+
+// errUnreadableSourceDirs is returned when the go command exits zero without
+// naming all three directories it was asked about.
+var errUnreadableSourceDirs = errors.New("go env GOROOT GOCACHE GOMODCACHE did not name three directories")

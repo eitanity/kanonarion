@@ -50,6 +50,59 @@ the same additive rule (consumers ignore unknown fields). No store table and no
 store migration: a human-supplied copyright is an operator assertion, not a
 measurement, so it lives in configuration rather than in the measurement ledger.
 
+### Additive within v2 - attributed `license_overrides`
+
+**Additive in the config file, breaking in one JSON view, no version bump.** An
+entry under `license_overrides` may now be written either as the bare SPDX
+identifier it has always been
+
+```yaml
+license_overrides:
+  golang.org/x/mod: MIT
+```
+
+or as a mapping that records who determined the licence, when, and what they
+read:
+
+```yaml
+license_overrides:
+  github.com/example/mod:
+    spdx: "Apache-2.0"
+    declared_by: "you@example.com"
+    declared_on: "2026-01-31"
+    basis: "README.md at v1.2.3, read 2026-01-31"
+```
+
+The attributed form exists because `notice` now honours these entries. An
+identifier a reviewer can check against the licence text the module ships needs
+no provenance; where the module ships no text — the case the operator is
+settling — the three fields are the only thing that makes the determination
+auditable, and the attribution document reproduces them.
+
+Provenance is all-or-nothing: an entry giving some of `declared_by`,
+`declared_on` and `basis` but not all is refused at config load, naming the
+coordinate and the field. `declared_on` is an ISO 8601 date. A mapping form
+without `spdx` is refused for the same reason. A key written with no value at
+all is still a no-op, as it has always been.
+
+Migration for existing configs: **none required.** Every existing file keeps
+loading and resolving identically, and `config get license_overrides.<module>`
+still answers with the bare identifier for an entry recorded as one. `config
+set license_overrides.<module>` writes the bare form and now refuses, rather
+than silently deleting the provenance, when the entry it would replace carries
+any.
+
+**Breaking:** `store config show --json` reports each `license_overrides` entry
+as an object (`spdx`, plus `declared_by` / `declared_on` / `basis` where
+recorded) rather than as a string. A consumer reading that value as a string
+reads `.spdx` instead. The text view is unchanged in shape: the value is the
+identifier, with the provenance appended in parentheses where it exists.
+
+No store table and no store migration: an operator's determination is an
+assertion, not a measurement, so it lives in configuration rather than in the
+measurement ledger, and the extraction record it supersedes is left exactly as
+the detector wrote it.
+
 ## JSON output sections
 
 The following top-level `--json` sections are introduced **additively** by the
@@ -83,6 +136,91 @@ consumer nowhere.
 ```
 
 The rows themselves are unchanged.
+
+## Fetch store: module `fetch`, migration 10 - which repository the VCS check cloned
+
+`FactRecord` gains `vcs_url_binding`, and the `fetch_records` table gains a
+column of the same name:
+
+```sql
+ALTER TABLE fetch_records ADD COLUMN vcs_url_binding TEXT NOT NULL DEFAULT ''
+```
+
+**What it records.** VCS cross-verification reproduces a module's zip from a git
+checkout, so it is only as strong as the claim that the repository it cloned is
+the module's upstream. Two things can settle that claim. Most module paths name
+their own repository, so the coordinate fixes what gets cloned. A vanity path
+does not - `go.uber.org/zap` lives at `github.com/uber-go/zap`, and no rule
+derives the second from the first - so its clone URL can only come from the
+`Origin` block the untrusted module proxy serves. Both reached the same
+`Verified` status and the record could not say which. The field says which:
+`coordinate-derived` or `proxy-named`.
+
+The comparison is exact, is made when the module is fetched, and is sealed into
+the record. It is never re-derived on read.
+
+**No pipeline-version bump and no purge.** The field is `omitempty`, so a record
+written before it existed produces byte-identical canonical JSON and still
+verifies its content hash. Nothing is re-derived and no stored record is
+invalidated. Store `v84` -> `v85`.
+
+**A record written before the column existed reads as `''`**, meaning "the
+binding was not recorded". That is deliberately not a guess: the stored `git_url`
+plus the module path would allow one, and a guess would be wrong twice over - the
+function that derives a URL from a module path is live code, so a sealed record's
+meaning would move whenever it is edited, and a `git_url` is recorded even on a
+run that skipped cross-verification, so the guess would attribute a binding to a
+leg that never ran.
+
+**Cost of the additive field, stated rather than discovered.** An OLDER
+kanonarion build cannot verify a record written by this one: it drops the unknown
+field when it re-marshals, so the recomputed hash differs. The store reports that
+correctly as a record written by a different canonical shape that should be
+re-extracted - never as a tamper. This is the ordinary consequence of an additive
+field, not a defect.
+
+**`verification-coverage` splits `cross_verified` three ways** to match:
+`cross_verified_module_path_url`, `cross_verified_proxy_named_url` and
+`cross_verified_binding_unrecorded`. The three sum to `cross_verified`, which is
+unchanged, so a gate reading it keeps working. Each module's row in `modules[]`
+carries `vcs_url_binding`. No verification status moves - this is an attribution,
+not a downgrade.
+
+## A route hop says how control reached it: no migration and no bump
+
+Each hop of a stored reachability route — `findings[].reachable.routes[][]` on a
+`VulnerabilityRecord` — gains a `dispatch` object saying how control reached that
+hop: a direct call, an interface dispatch (with the interface crossed, the module
+supplying the implementation that ran, and how many concrete types satisfy it), a
+reflection edge, a framework-bound edge, an unresolved one, a function value
+taken rather than called, the route's own entry point, or a stated refusal
+carrying the reason the call graph could not corroborate the hop.
+
+The values are READ off the call-graph edge that reaches the hop — its own
+confidence and reflect-origin fields — in the call graph of the module the CALL
+SITE is in, which is the caller's module and not the hop's own.
+
+**No migration, no purge, no pipeline bump, no schema-version bump.** `dispatch`
+is `omitzero` and absent from every route already written, so stored hashes still
+verify: measured on a working store, 38 generations of one coordinate reaching
+back a month all verify unchanged under the new build.
+
+**It is computed at scan time and sealed with the record**, unlike the derived
+soundness rung and route-root classification, which are computed at read time and
+change no bytes. A route is inside the content hash, so annotating at read time
+would either mutate a sealed record or produce two renderings of one stored route
+that disagree.
+
+**Cost: a route already in the store stays unannotated until its finding is
+re-scanned.** Nothing is superseded and nothing stops being served — an
+unannotated hop reads as "this route does not say", which every surface states
+rather than rendering as a direct call.
+
+**An OLDER build cannot verify a record written by this one.** That is the
+ordinary consequence of an additive field under a canonical-shape seal, in the
+direction the hash-transparency rule does not cover, and the store already names
+it: such a record is reported as "written by a different canonical shape … should
+be re-extracted rather than investigated", never as a tamper.
 
 ## Coverage gaps say what they are a statement about: no migration and no bump
 
@@ -621,6 +759,56 @@ than failing the migration.
 Note: walk migrations 4 and 5 are `DELETE FROM walks`. This one deliberately is
 not — the blob already holds the value, so back-filling it is the point.
 
+## Walk store: module `walk`, migration 10
+
+**No column changes.** Re-derives `walks.failure_count` from every stored row's
+own record. Store `v85` -> `v86`.
+
+The column counted every node whose status was not "succeeded". One of the four
+node statuses is `local_replace`: a require redirected to a local filesystem path
+by a `replace` directive, with no remote artefact to fetch. The walk is not
+partial because of these nodes — the domain says so where the status is declared
+— so counting them told the operator that a dependency of their own project had
+failed. A 396-node walk of a project with one local `replace` listed `1 failed`.
+
+The rule now names the two statuses that are failures (`fetch_failed`,
+`internal_panic`) and is computed in one place, which both the printed line and
+this column read.
+
+**Back-fill: every row.** Rows written under the old rule keep answering
+`walk-list` with a count their own record does not support, so the column is
+re-derived rather than left to be corrected one re-walk at a time. Decompresses
+each stored walk once and recounts from its per-node results; a row this build
+cannot decode is skipped rather than failing the migration.
+
+Additive: no purge, no pipeline bump, no record shape change. The blob is read,
+never rewritten, and every stored walk still verifies against its written hash.
+
+## Walk store: module `walk`, migration 11
+
+**No column changes.** Re-derives `walks.node_count` from every stored row's own
+record. Store `v86` -> `v87`.
+
+The column counted the walk's per-node results, while every other surface that
+prints the word "nodes" for a walk — the line `walk` writes, and `walk-list
+--walk-id` — counts the graph's nodes. The two are the same number only when the
+walk fetched something for every node it resolved. They differ wherever a walk
+leaves a node unfetched on purpose: a `--shallow` walk records one result and
+resolves the target's whole require set, so a 5-node graph listed as `nodes=1`;
+a walk bounded by a `max_depth` policy now does the same for the requirements
+the bound stops it from following.
+
+The rule now reads the graph, so the listing and the walk line state one number.
+
+**Back-fill: every row.** Rows written under the old rule keep answering
+`walk-list` with a node count smaller than their own record's graph, so the
+column is re-derived rather than left to be corrected one re-walk at a time.
+Decompresses each stored walk once and counts its graph nodes; a row this build
+cannot decode is skipped rather than failing the migration.
+
+Additive: no purge, no pipeline bump, no record shape change. The blob is read,
+never rewritten, and every stored walk still verifies against its written hash.
+
 ## Call graph store: module `callgraph`, migration 12
 
 Adds `callgraph_edges.kind`: whether an edge is a call, or a REFERENCE to a
@@ -735,6 +923,59 @@ value is a node with ZERO in-edges in a record whose `ReferenceScope` is
 `Analysed`, so `callers` answers `RESOLVED-ABSENT` — a measured "nothing calls
 this" — for a method every request runs. Re-extract to correct it.
 
+## Call graph record: pipeline `0.6.0` → `0.7.0`
+
+**Behaviour change in what a position states; no record shape change, no schema
+bump, no store migration.** Records are keyed `(module, version,
+pipeline_version)`, so the bump is the migration: `0.6.0` rows stay, become
+unreachable, and are never served for a `0.7.0` request. Cost is one
+re-extraction per coordinate on its next `callgraph` run, and no flag is needed
+because no record exists at the new version.
+
+Ingested working trees are stranded on the same terms and are not re-derived by
+`callgraph`: run `kanonarion local .` in each tree whose `callers`, `callees`,
+`implementers` or `usage` answers you rely on.
+
+**A node position no longer names the host that ran the analysis.** Four cases,
+and a reader can tell them apart by looking:
+
+| The file is | It reads as | Example |
+|-------------|-------------|---------|
+| the analysed module's own source | relative to the module root | `lib/hooks.go` |
+| a dependency's source | relative to the module cache | `github.com/spf13/pflag@v1.0.10/flag.go` |
+| the standard library | relative to `GOROOT` | `src/fmt/print.go` |
+| generated into the Go build cache | **nothing — the node carries no position** | |
+
+The build cache is the case that forced the bump. A symbol generated by cgo is
+declared in a file the toolchain writes into a content-addressed cache, and the
+record stored that path. It names a place only the analysing host had, under a
+directory whose name changes whenever the entry is rebuilt. Two analyses of
+`github.com/mattn/go-sqlite3@v1.14.12` differing in nothing but `GOCACHE`
+recorded 99 nodes at different files — same cache entry, same line, different
+cache root — and composed to `exit 10`, `call_graph disagrees`. At most one of
+such a pair can be true and neither is checkable by anyone else.
+
+The other three cases named the host in the same way and were invisible because
+the leading separator was stripped, so an absolute path read as a relative one:
+180 of `github.com/spf13/cobra@v1.10.2`'s 226 distinct files. A path that no root
+contains now stays visibly absolute rather than being disguised.
+
+Measured on one store before the change: 275 of the 597 coordinates at `0.6.0`
+carry a non-external build-cache position, four had already recorded divergence,
+and six refused outright.
+
+**Without the bump this fix would break working coordinates.** A re-derivation
+lands beside the old generation at the same completeness, and composition —
+correctly — reports two graphs of one artefact as non-determinism in the
+analyser. Measured: `cobra@v1.10.2`, which contains no cgo at all, goes to
+`exit 10` on nothing but its two synthetic `.test` mains. The bump is what tells
+the ledger the analyser changed, and it also recovers the six coordinates that
+are unreadable today.
+
+Node and edge counts are unchanged by the position change itself, but a graph
+whose cgo call sites lose their positions collapses edges that differed only in
+the position they carried: `go-sqlite3@v1.14.12` goes from 17223 to 17141 edges.
+
 ## Call graph record: pipeline `0.5.0` → `0.6.0`
 
 **Behaviour change in what gets analysed, plus one additive record field; no
@@ -811,6 +1052,28 @@ What it fixes: two `vuln-scan --force` runs of one walk against one snapshot
 produced different records for the same coordinate. Over a 128-module walk, 6 of
 128 differed between passes, every difference a reordering of the same values.
 After the change, 0 of 128.
+
+## SBOM: pipeline `0.9.0` → `0.10.0`
+
+**Document bytes change; no store migration.** SBOM records are cached on
+`(walk id, scan run id, format, pipeline version)`, so the bump makes stored
+`0.9.0` documents unreachable and a request regenerates. Nothing is purged.
+Eleven stored records go dark at once, of which **three** would come back
+different — the two `cortezaproject/corteza/server` walks and the
+`pbinitiative/zenbpm` one, each carrying a cgo module whose C library has been
+identified. The other eight regenerate byte-identical.
+
+The behaviour that forced it: the document could not previously contain a
+component that is not a Go module. A cgo module ships C source inside its own
+zip and compiles it into the binary, and where that library has been identified
+it is now emitted as a `pkg:generic` component, carrying the declaration it was
+read from and a `dependsOn` edge from the Go module that ships it. A `0.9.0`
+document of such a walk lists the Go module and not the library inside it, so it
+understates what the binary contains.
+
+A walk with no identified native component produces byte-identical bytes at both
+versions, so the bump costs those documents a regeneration and changes nothing
+about them.
 
 ## SBOM: pipeline `0.8.0` → `0.9.0`
 
@@ -958,6 +1221,33 @@ an affected row is served as a cache hit and keeps its old answer forever:
 Rows are not migrated, rewritten or deleted; the fingerprint moves and they stop
 being read.
 
+## Walk record: pipeline `1.10.0` → `1.11.0`, no migration
+
+**Record shape changes; no DDL and no store migration.** A project walk whose
+build list the Go toolchain could not compute now records the toolchain's own
+reason on the graph as `build_list_unavailable`, and the walk's overall status is
+`partial` rather than `succeeded` — the module set is the go.mod require
+directives, not the set that compiles.
+
+The new key is `omitempty`, so a walk whose build list resolved marshals exactly
+as it did at `1.10.0` and still verifies against its written hash. Walks that
+took the fallback are the ones that change: they are sealed as `succeeded` at
+`1.10.0`, and the bump is what stops one being served as a complete answer.
+
+The status rule widened with it: **any** graph marked `Partial` now makes the
+walk partial, with `shallow` the one exemption (the closure the operator asked
+for, and the walk line says `depth=shallow`). A reason absent from that exemption
+list degrades, so a reason added later fails safe. Measured as unchanged by the
+widening: `fetch_failed`, `parse_failed` and `depth_bounded` already produced
+failed node results and were partial before it; `cancelled` already produced a
+cancelled walk. The one live path it moves is `build_list_approximate` — a
+`pkg/kanonarion` driver run without root analysis, whose module set is the
+internal resolver's approximation of the build.
+
+**The pipeline version moves because the answer changed**, not only its shape.
+Rows at `1.10.0` are not migrated, rewritten or deleted; they stay as the record
+of what was reported then, and are re-resolved rather than read.
+
 ## Purging a table other rows point at
 
 A migration that deletes rows must state what happens to the rows that reference
@@ -1002,6 +1292,7 @@ Event types added since `callgraph_extracted`, none needing a migration:
 | `sbom_served` | stored SBOM document handed back from the cache |
 | `advisory_snapshot_recorded` | persisted advisory database snapshot |
 | `vuln_scan_served` | stored walk scan run handed back instead of measured |
+| `native_components_recorded` | persisted native-component measurement of one module artefact |
 
 Each is emitted only where the write happened, so a cache hit appends nothing.
 `sbom_served` and `vuln_scan_served` are the deliberate exceptions: they witness

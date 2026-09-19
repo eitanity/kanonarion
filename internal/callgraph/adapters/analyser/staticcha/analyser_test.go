@@ -92,8 +92,9 @@ func TestAnalyse_BasicCallGraph(t *testing.T) {
 		t.Fatalf("unexpected status %s: %s", rec.OverallStatus, rec.FailureDetail)
 	}
 
-	// A clean extraction is built with bodies, the only level a confident
-	// negative verdict may rest on.
+	// A clean extraction is built with bodies, which is the only level at which
+	// a reported absence is a measured one rather than an artefact of a body
+	// that was never built.
 	if rec.Completeness != domain.CompletenessBuiltWithBodies {
 		t.Errorf("expected Completeness BUILT_WITH_BODIES, got %s", rec.Completeness)
 	}
@@ -471,8 +472,8 @@ func(  // intentional syntax error
 // typecheck (an undefined symbol,
 // which parses cleanly but does not type-check), while the root package
 // compiles. The record must be Partial and must name exactly the failing
-// package in FailedPackages, so verdicts can be scoped to it rather than
-// inferred from node/edge totals.
+// package in FailedPackages, so an answer can say which package it does not
+// cover rather than leaving the gap to be inferred from node and edge totals.
 func TestAnalyse_FailedPackagesRecordedOnTypecheckError(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",

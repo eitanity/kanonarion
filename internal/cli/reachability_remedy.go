@@ -65,7 +65,11 @@ func walkInvocation(coord coordinate.ModuleCoordinate) string {
 // holds as "<path>@<version>" text rather than as a value.
 func walkInvocationForRendered(coord string) string {
 	if strings.HasSuffix(coord, "@"+coordinate.LocalVersion) {
-		return "kanonarion walk --gomod ./go.mod"
+		// The project form carries the declaration this read was made under, so
+		// running the printed line records the walk the read was asking about. A
+		// positional coordinate walk takes no target: it resolves no build list
+		// and records no build environment for one to reach.
+		return "kanonarion walk --gomod ./go.mod" + targetFlagHint()
 	}
 	return "kanonarion walk " + coord
 }
@@ -182,8 +186,8 @@ func remedyProjectRooted() reachabilityRemedy {
 	return reachabilityRemedy{
 		lead: "Only a scan rooted at the consuming project can produce a consumer route. From the project's own directory, run",
 		lines: []string{
-			"kanonarion walk --gomod ./go.mod",
-			"kanonarion vuln-scan --gomod ./go.mod --reachability",
+			"kanonarion walk --gomod ./go.mod" + targetFlagHint(),
+			"kanonarion vuln-scan --gomod ./go.mod" + targetFlagHint() + " --reachability",
 			"kanonarion reachability --local .",
 		},
 	}
@@ -201,8 +205,8 @@ func remedyScanUncovered() reachabilityRemedy {
 	return reachabilityRemedy{
 		lead: "These modules carry no stored record, so re-running the probe cannot widen the answer. Scan the build first, from the project's own directory",
 		lines: []string{
-			"kanonarion walk --gomod ./go.mod",
-			"kanonarion vuln-scan --gomod ./go.mod --reachability",
+			"kanonarion walk --gomod ./go.mod" + targetFlagHint(),
+			"kanonarion vuln-scan --gomod ./go.mod" + targetFlagHint() + " --reachability",
 		},
 	}
 }
@@ -227,7 +231,7 @@ func remedyRescanProject(dir string) reachabilityRemedy {
 	return reachabilityRemedy{
 		lead: "Re-scan rooted at the project itself, from a machine that holds its working tree",
 		lines: []string{
-			"kanonarion vuln-scan --gomod " + goMod + " --reachability",
+			"kanonarion vuln-scan --gomod " + goMod + targetFlagHint() + " --reachability",
 		},
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
@@ -84,8 +85,7 @@ func TestTransitiveJSON_MaxDepthIsEmittedAtZero(t *testing.T) {
 	render := func(depth int) map[string]any {
 		t.Helper()
 		var stdout bytes.Buffer
-		if err := printTransitiveResult("callers", "example.com/mod.Root", depth,
-			[]string{"example.com/mod.Root"}, []cgports.CallEdgeRef{}, true, &stdout, cgports.EdgeQueryOptions{}); err != nil {
+		if err := printTransitiveResult("callers", "example.com/mod.Root", depth, cgapp.TraversalResult{Nodes: []string{"example.com/mod.Root"}, Edges: []cgports.CallEdgeRef{}}, true, &stdout, cgports.EdgeQueryOptions{}); err != nil {
 			t.Fatalf("printing transitive result: %v", err)
 		}
 		var decoded map[string]any

@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -28,4 +29,27 @@ func (uc *QueryNativeUseCase) Get(ctx context.Context, coord coordinate.ModuleCo
 		return domain.Record{}, false, fmt.Errorf("querying native record: %w", err)
 	}
 	return rec, found, nil
+}
+
+// ErrNoNativeSurvey is returned when the store this build was wired with cannot
+// survey its own records. It is a different answer from "the store holds none",
+// which is why it is an error and not an empty list.
+var ErrNoNativeSurvey = errors.New("this native store cannot list its records")
+
+// List returns summaries of the stored native records matching the filter.
+//
+// It is the read that answers "which modules ship or link native code" without
+// asking about each module in turn. The generation restriction lives in the
+// filter and defaults to the generation this build serves; see
+// ports.NativeFilter.
+func (uc *QueryNativeUseCase) List(ctx context.Context, filter ports.NativeFilter) ([]ports.NativeSummary, error) {
+	lister, ok := uc.store.(ports.NativeRecordLister)
+	if !ok {
+		return nil, ErrNoNativeSurvey
+	}
+	sums, err := lister.ListNativeRecords(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("listing native records: %w", err)
+	}
+	return sums, nil
 }

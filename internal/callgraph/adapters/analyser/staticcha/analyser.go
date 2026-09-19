@@ -579,6 +579,13 @@ func (a *Analyser) analyseDirOnce(
 	toolchain := probeToolchainVersion(ctx, tempDir, env)
 	defer func() { rec.Toolchain = toolchain }()
 
+	// Where that toolchain keeps the standard library and the files it generates.
+	// Asked of the loader's own directory and environment, in the same breath and
+	// for the same reason as the version above: these are the roots a resolved
+	// path is rendered against, and roots read off a different toolchain would
+	// render against directories the load never touched. See sourceRoots.
+	dirs := a.probeSourceDirs(ctx, tempDir, env)
+
 	// New Architecture: Multi-pass load to bypass go/packages memory limitations.
 	// Step 1: Discover ALL packages in the transitive dependency graph (metadata only).
 	// This ensures we know about every package that might be imported.
@@ -744,10 +751,12 @@ func (a *Analyser) analyseDirOnce(
 	runtime.GC()
 
 	// How a resolved file path is written into the record. The extracted module's
-	// own files stay module-relative; a dependency's are written relative to the
-	// cache this run materialised, so nothing about where this process put it
-	// reaches the record. See sourceRoots.
-	roots := newSourceRoots(tempDir, goModCache)
+	// own files stay module-relative, a dependency's are written relative to the
+	// module cache and the standard library's relative to GOROOT, so nothing about
+	// where this host keeps them reaches the record — and a file in the build
+	// cache is given no position at all, because a content-addressed entry names
+	// nothing a reader can open and moves whenever it is rebuilt. See sourceRoots.
+	roots := newSourceRoots(tempDir, goModCache, dirs)
 
 	a.step(coord, fmt.Sprintf("walking the call graph (%d caller nodes)", len(recordedCallers)))
 	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, roots)
@@ -832,8 +841,9 @@ func (a *Analyser) analyseDirOnce(
 		rec = classifyIncompleteGraph(rec, tempDir, metaErrs, allLoadErrs, build.UnobtainableImports)
 	}
 	// FailedPackages scopes the incompleteness to the exact packages that did
-	// not typecheck, so callers/callees/reachability verdicts over this Partial
-	// graph can be caveated per package rather than by node/edge totals.
+	// not typecheck, so an answer read out of this Partial graph can name the
+	// packages it does not cover, instead of leaving a reader to infer the size
+	// of the gap from node and edge totals.
 	rec.FailedPackages = failedPkgs
 	// Every package this analysis admitted to the module by path prefix, because
 	// the toolchain placed it in no module at all. Empty is the ordinary case and

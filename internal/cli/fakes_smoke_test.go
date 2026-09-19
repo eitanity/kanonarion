@@ -231,14 +231,15 @@ func TestFakeQueryCallGraph_AllMethods(t *testing.T) {
 		t.Fatalf("FindCallees: %v %v", callees, err)
 	}
 
-	edges, nodes, err := f.TraverseCallers(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
-	if err != nil || edges != nil || nodes != nil {
-		t.Fatalf("TraverseCallers: %v %v %v", edges, nodes, err)
+	req := cgapp.TraversalRequest{SymbolID: "sym", PipelineVersion: "0.1.0", MaxDepth: 5}
+	res, err := f.TraverseCallers(context.Background(), req)
+	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
+		t.Fatalf("TraverseCallers: %+v %v", res, err)
 	}
 
-	edges, nodes, err = f.TraverseCallees(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
-	if err != nil || edges != nil || nodes != nil {
-		t.Fatalf("TraverseCallees: %v %v %v", edges, nodes, err)
+	res, err = f.TraverseCallees(context.Background(), req)
+	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
+		t.Fatalf("TraverseCallees: %+v %v", res, err)
 	}
 
 	f.Err = errTest

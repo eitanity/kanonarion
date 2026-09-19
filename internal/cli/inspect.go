@@ -40,6 +40,7 @@ type inspectFlags struct {
 	noProgress      bool
 	stdlibFromGoMod bool
 	policyPath      string
+	target          buildTargetFlags
 	// excludeTests is parsed only so the refusal can name it. inspect drives a
 	// project walk; see refuseTestScopeOnRecordingCommand.
 	excludeTests bool
@@ -53,6 +54,10 @@ func newInspectCmd(stdout, stderr io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationStoreIntent: StoreIntentCreate,
 			annotationNetworkUse:  NetworkAlways,
+			// inspect acquires before it analyses and defines no --from-modcache
+			// of its own, so the offline route is the walk that can read the
+			// cache; the analysis stages then run over the walk it records.
+			annotationOfflineAlternative: "kanonarion walk --gomod ./go.mod --from-modcache",
 		},
 		Short: "Run the full pipeline (walk → extract → vuln-scan → context); no args: code deps of ./go.mod",
 		Long: `Run the full pipeline (walk → extract → vuln-scan → context) for a module.
@@ -76,7 +81,8 @@ that is tight on memory.`,
   kanonarion inspect
   kanonarion inspect --gomod ./go.mod
   kanonarion inspect --tool
-  kanonarion inspect --project`,
+  kanonarion inspect --project
+  kanonarion inspect --target wasip1/wasm`,
 		Args: cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scope, serr := scopeFromFlags(f.tool, f.project)
@@ -134,6 +140,7 @@ that is tight on memory.`,
 	registerCallgraphMemoryCeilingFlag(cmd)
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -315,6 +322,18 @@ type inspectSummary struct {
 	// field is about the modules; without this one the document reports an
 	// analysis without saying what performed it.
 	Run inspectRunSection `json:"run"`
+	// Native is what this build compiles into or links into the binary from
+	// native source, in the shape vuln-scan-show and audit publish under the
+	// same key. A run whose walk produced no record derives it over an empty
+	// module set and reports zeros, beside the zero module count the summary
+	// already carries; the counts are emitted either way, so a consumer reads
+	// one key rather than branching on whether the walk answered.
+	//
+	// inspect does not measure it — 'native' is not an extraction stage, so a
+	// pipeline run puts no wall time on it — and this reports what the store
+	// already holds. A module holding no record counts as not examined, which is
+	// the honest answer and not an absence of native code.
+	Native *nativeWalkRollup `json:"native_coverage"`
 }
 
 // ---- what inspect states about the run it just performed ----
@@ -592,6 +611,11 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	if err := refuseInspectGoModFlags(f); err != nil {
 		return err
 	}
+	// Settled before the scope closure below, which is the first thing that
+	// resolves for it.
+	if terr := resolveBuildTarget(ctx, f.target, f.goBinary, filepath.Dir(f.gomodPath)); terr != nil {
+		return terr
+	}
 
 	// For code and tool scopes, check whether the scope is empty before
 	// spinning up the project walk. An empty import closure is valid but
@@ -704,6 +728,12 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	affectedCount, snapshotVersion, scanStatus := readInspectScanRun(ctx, ctr, walkID, stderr)
 
+	// What the pipeline above did NOT cover: the C libraries this build's
+	// modules compile into, or link into, the binary. Read from the records the
+	// store already holds; nothing is measured here.
+	//
+	native := nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, walkID))
+
 	walkIDs := []string{}
 	if walkID != "" {
 		walkIDs = []string{walkID}
@@ -769,6 +799,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 				Snapshot:  scanFacts.Snapshot,
 				Toolchain: inspectToolchain(scanFacts, scanState),
 			},
+			Native: native,
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}
@@ -791,6 +822,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	if snapshotVersion != "" {
 		_, _ = fmt.Fprintf(stdout, "Snapshot: %s\n", snapshotVersion)
 	}
+	// Write errors on this tail are ignored exactly as the lines above ignore
+	// them: the summary is the last thing printed, and a stdout that has stopped
+	// accepting bytes is not something the exit code can usefully re-report.
+	_ = writeNativeCoverageSummary(stdout, native)
 	if walkID != "" {
 		_, _ = fmt.Fprintf(stdout, "Walk ID:  %s\n", walkID)
 		_, _ = fmt.Fprintf(stdout, "Frame:    %s\n", projectWalk.BuildFrame())
@@ -848,7 +883,7 @@ func walkSummaryOf(rec domain.WalkRecord) walkports.WalkSummary {
 		Depth:         rec.Depth,
 		OverallStatus: rec.OverallStatus,
 		NodeCount:     len(rec.Graph.Nodes),
-		FailureCount:  countFailures(rec),
+		FailureCount:  domain.CountNodeFailures(rec),
 		GOOS:          rec.Graph.BuildEnv.GOOS,
 		GOARCH:        rec.Graph.BuildEnv.GOARCH,
 	}

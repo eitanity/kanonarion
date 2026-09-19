@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/eitanity/kanonarion/internal/config/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // effectiveSetting is one resolved configuration value: the dotted key an
@@ -127,7 +128,12 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 	}
 
 	for _, mod := range sortedKeys(cfg.LicenseOverrides) {
-		add("license_overrides."+mod, cfg.LicenseOverrides[mod], true)
+		o := cfg.LicenseOverrides[mod]
+		value := o.SPDX
+		if o.Attributed() {
+			value = o.SPDX + " (determined by " + o.DeclaredBy + " on " + o.DeclaredOn + "; basis: " + o.Basis + ")"
+		}
+		add("license_overrides."+mod, value, true)
 	}
 
 	for _, mod := range sortedKeys(cfg.CopyrightDeclarations) {
@@ -138,6 +144,7 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 	}
 
 	add("callgraph.exclude", "["+strings.Join(cfg.Callgraph.Exclude, ", ")+"]", raw.isSet("callgraph", "exclude"))
+	add("callgraph.toolchain", callgraphToolchainDisplay(cfg.Callgraph.Toolchain), raw.isSet("callgraph", "toolchain"))
 	add("staleness.ttl", cfg.Staleness.TTL.String(), raw.isSet("staleness", "ttl"))
 	add("staleness.probe_concurrency", strconv.Itoa(cfg.Staleness.ProbeConcurrency),
 		raw.isSet("staleness", "probe_concurrency"))
@@ -173,6 +180,21 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 	add("fetch_policy.allowed_vcs_hosts", hosts, raw.isSet("fetch_policy", "allowed_vcs_hosts"))
 
 	return out
+}
+
+// callgraphToolchainDisplay renders the stored toolchain preference for a
+// reader, in the terms the rest of the effective view uses for an unset
+// preference: absent is a distinct posture from any version, and it says what
+// the store does instead rather than leaving a blank.
+//
+// `config show` and `config get` both render through this, because the two
+// disagreeing about what "no preference" looks like is how a reader comes to
+// believe one of them is reporting a value.
+func callgraphToolchainDisplay(v gotoolchain.Version) string {
+	if !v.Recorded() {
+		return "(unset: a two-toolchain coordinate refuses)"
+	}
+	return string(v)
 }
 
 // ruleCategoryIsSet reports whether the file names category under

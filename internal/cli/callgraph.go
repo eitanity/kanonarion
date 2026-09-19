@@ -202,6 +202,12 @@ func printCallGraphSummary(
 		enc.SetIndent("", "  ")
 		doc := toCallGraphJSON(r)
 		doc.callGraphRunJSON = run
+		// No nodes and no edges. These commands report what the RUN did — the
+		// one fact no later read can recover — and the graph belongs to the
+		// record, read with 'callgraph-show --limit-nodes 0 --limit-edges 0
+		// --json'. Every scalar stays at the key it had. Nil and not empty, so
+		// this is never read as a graph that measured nothing.
+		doc.Nodes, doc.Edges = nil, nil
 		if err := enc.Encode(doc); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ConfigStore loads a Config from a YAML file at a fixed path.
@@ -45,10 +46,12 @@ func (s *ConfigStore) LoadConfig(_ context.Context) (domain.Config, error) {
 
 // configYAML is the YAML wire format for Config.
 type configYAML struct {
-	Version          string            `yaml:"version"`
-	Preferences      preferencesYAML   `yaml:"preferences"`
-	LicensePolicy    licensePolicyYAML `yaml:"license_policy"`
-	LicenseOverrides map[string]string `yaml:"license_overrides"`
+	Version       string            `yaml:"version"`
+	Preferences   preferencesYAML   `yaml:"preferences"`
+	LicensePolicy licensePolicyYAML `yaml:"license_policy"`
+	// LicenseOverrides accepts two forms per entry, and they are not the same
+	// claim; see licenseOverrideYAML.UnmarshalYAML.
+	LicenseOverrides map[string]licenseOverrideYAML `yaml:"license_overrides"`
 	// CopyrightDeclarations is a map so an entry is addressed by coordinate,
 	// and a struct value rather than a string because the line alone is not
 	// auditable. Every field is required; see parseCopyrightDeclarations.
@@ -63,6 +66,52 @@ type configYAML struct {
 	VendorPolicy    *vendorPolicyYAML    `yaml:"vendor_policy"`
 	FIPSPolicy      *fipsPolicyYAML      `yaml:"fips_policy"`
 	FetchPolicy     *fetchPolicyYAML     `yaml:"fetch_policy"`
+}
+
+// licenseOverrideYAML is the wire form of one operator-recorded licence
+// determination.
+type licenseOverrideYAML struct {
+	SPDX       string `yaml:"spdx"`
+	DeclaredBy string `yaml:"declared_by"`
+	DeclaredOn string `yaml:"declared_on"`
+	Basis      string `yaml:"basis"`
+}
+
+// UnmarshalYAML accepts an entry written either as a bare SPDX identifier
+//
+//	golang.org/x/mod: MIT
+//
+// or as the attributed form that records who determined it, when, and what they
+// read
+//
+//	github.com/example/mod:
+//	  spdx: MIT
+//	  declared_by: "you@example.com"
+//	  declared_on: "2026-01-31"
+//	  basis: "README.md at v1.2.3, read 2026-01-31"
+//
+// The scalar form is the one `config set license_overrides.<module> <SPDX>`
+// writes and the one every existing config file holds, so it keeps parsing
+// exactly as before. The attributed form exists because an identifier a
+// reviewer cannot check against a licence text the module does not ship is only
+// auditable through its provenance.
+func (o *licenseOverrideYAML) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		var spdx string
+		if err := node.Decode(&spdx); err != nil {
+			return fmt.Errorf("not an SPDX identifier or a mapping: %w", err)
+		}
+		*o = licenseOverrideYAML{SPDX: spdx}
+		return nil
+	}
+	// A named type, so decoding the mapping does not re-enter this method.
+	type wire licenseOverrideYAML
+	var w wire
+	if err := node.Decode(&w); err != nil {
+		return fmt.Errorf("not an SPDX identifier or a mapping: %w", err)
+	}
+	*o = licenseOverrideYAML(w)
+	return nil
 }
 
 // copyrightDeclarationYAML is the wire form of one operator-recorded copyright.
@@ -130,6 +179,10 @@ type policyRuleYAML struct {
 
 type callgraphYAML struct {
 	Exclude []string `yaml:"exclude"`
+	// Toolchain is a string on the wire and a gotoolchain.Version once loaded, so
+	// a file naming something no record could hold is refused here rather than
+	// stored as a preference that never fires.
+	Toolchain string `yaml:"toolchain"`
 }
 
 // stalenessYAML is a pointer in configYAML so an absent block inherits the
@@ -196,6 +249,36 @@ func parseStalenessTTL(s string) (time.Duration, error) {
 	return d, nil
 }
 
+// parseLicenseOverrides converts and validates the license_overrides block.
+//
+// An entry whose value is blank is dropped rather than refused: a key written
+// with no value has always resolved to no override, and a file that loads today
+// must keep loading. Anything an operator actually wrote is validated here, at
+// load, for the reason parseCopyrightDeclarations gives.
+func parseLicenseOverrides(in map[string]licenseOverrideYAML) (map[string]domain.LicenseOverride, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]domain.LicenseOverride, len(in))
+	for _, key := range slices.Sorted(maps.Keys(in)) {
+		y := in[key]
+		if y == (licenseOverrideYAML{}) {
+			continue
+		}
+		o := domain.LicenseOverride{
+			SPDX:       y.SPDX,
+			DeclaredBy: y.DeclaredBy,
+			DeclaredOn: y.DeclaredOn,
+			Basis:      y.Basis,
+		}
+		if err := o.Validate(); err != nil {
+			return nil, fmt.Errorf("license_overrides.%s: %w", key, err)
+		}
+		out[key] = o
+	}
+	return out, nil
+}
+
 // parseCopyrightDeclarations converts and validates the copyright_declarations
 // block. Validation happens here, at load, rather than at first use: an entry
 // missing its author or its basis is an unfinished edit, and discovering that
@@ -250,12 +333,25 @@ func Parse(data []byte) (domain.Config, error) {
 			// nil (key absent) applies the default; explicit false suppresses.
 			Progress: y.Preferences.Progress == nil || *y.Preferences.Progress,
 		},
-		LicenseOverrides: y.LicenseOverrides,
 		Callgraph: domain.CallgraphConfig{
 			Exclude: y.Callgraph.Exclude,
 		},
 		Staleness: defaults.Staleness,
 	}
+
+	if y.Callgraph.Toolchain != "" {
+		tc, terr := gotoolchain.ParseVersion(y.Callgraph.Toolchain)
+		if terr != nil {
+			return domain.Config{}, fmt.Errorf("callgraph.toolchain: %w", terr)
+		}
+		cfg.Callgraph.Toolchain = tc
+	}
+
+	overrides, err := parseLicenseOverrides(y.LicenseOverrides)
+	if err != nil {
+		return domain.Config{}, err
+	}
+	cfg.LicenseOverrides = overrides
 
 	decls, err := parseCopyrightDeclarations(y.CopyrightDeclarations)
 	if err != nil {

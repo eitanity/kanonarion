@@ -14,6 +14,14 @@ call graph into the store. Unlike `callgraph <module@version>`, which only sees
 packages**, so `callers` / `callees` can answer questions about symbols defined
 in the working tree.
 
+**What it is for.** `local` pins the tree at a chosen moment. The queries that
+follow - `callers`, `callees`, `implementers`, `usage` - then answer against a
+tree that is not moving and not half-edited, rather than against whatever the
+editor happens to have saved when each one runs. It is a side effect with a
+confirmation, not a query with a payload: the answer it produces is a record in
+the store, and the record is read by the query commands and by
+[`callgraph-show`](callgraph.md#callgraph-show).
+
 The tree is stored under the module's own path at the version `local`. The
 record additionally names its **analysis source** as `worktree`, carries a
 **worktree digest** and records the **directory it analysed**, so two checkouts
@@ -56,9 +64,12 @@ derivation:
   analysed 2026-08-12T00:48:14Z; that record was reused (--force to re-measure)
 ```
 
-stdout carries the result: the summary line, or under `--json` the record
-document. The `--json` document carries the same distinction as fields, under
-`derivations`, so a consumer never has to read the stderr sentence:
+stdout carries the result: the summary line, or under `--json` a **summary
+document** - every scalar the record carries, and **not** its `nodes` and
+`edges` arrays. The graph is a property of the record, not of the run, and it is
+read with [`callgraph-show`](callgraph.md#reading-the-whole-graph). The `--json`
+document carries the derivation as fields, under `derivations`, so a consumer
+never has to read the stderr sentence:
 
 ```json
 "derivations": [
@@ -74,8 +85,13 @@ document. The `--json` document carries the same distinction as fields, under
 `derived_by_this_run` is `true` where this run analysed the tree; the record
 date and the remedy flag are then absent, because there is no earlier record to
 name and nothing to force. To capture the answer and keep the statement,
-redirect them separately (`kanonarion local . --json > graph.json 2>
+redirect them separately (`kanonarion local . --json > run.json 2>
 derivation.txt`); to discard the statement, `2>/dev/null`.
+
+This is the one answer no later read can recover: whether an invocation measured
+the tree or served a record it already held is a fact about the run, and
+`callgraph-show` - which serves a stored record - says nothing about it. That is
+why the command returns a document at all rather than nothing.
 
 The `(cached)` marker on the summary line is on stdout with the rest of the
 result: it is a property of the answer, not a statement about it.
@@ -105,8 +121,29 @@ runs reuse.
 
 ## Output
 
-Prints the same call-graph summary as `callgraph` (node/edge counts and status;
-`--json` for the full record). After it runs, query internal symbols directly:
+Prints the same call-graph summary as `callgraph`: coordinate, status, node and
+edge counts, and the algorithm. Under `--json` the same facts are a document -
+coordinate, `overall_status`, `node_count`, `edge_count`, `algorithm`,
+`completeness`, `analysis_source`, `worktree_digest`, `worktree_scan_digest`,
+`extracted_at`, `content_hash`, `toolchain`, the failure fields on a `Partial`
+graph, and `derivations`. Every key is the one the record document uses, so a
+field read out of this summary is the same field read out of `callgraph-show`.
+
+The document does **not** carry `nodes` or `edges`. Those keys are absent rather
+than empty, so a graph that genuinely measured no functions - which renders
+`"nodes": []` on `callgraph-show` - is never confused with a surface that does
+not carry the graph. To read the graph itself, name the coordinate the summary
+printed:
+
+```sh
+kanonarion callgraph-show 'example.com/mod@local' --json
+kanonarion callgraph-show 'example.com/mod@local' --limit-nodes 0 --limit-edges 0 --json
+```
+
+The first is the record's own facts; the second is every node and every edge.
+See [Reading the whole graph](callgraph.md#reading-the-whole-graph).
+
+After `local` runs, query internal symbols directly:
 
 ```sh
 kanonarion local
@@ -139,7 +176,7 @@ graph at all, `3` for a cancelled run.
 | `[dir]` | `.` | Directory of the Go module to analyse (must contain `go.mod`) |
 | `--force` | false | Re-analyse even when the tree is unchanged since the stored record |
 | `--go-binary <path>` | _(PATH)_ | Path to the `go` binary if it is not on `PATH` |
-| `--json` | false | Emit the call-graph record as JSON |
+| `--json` | false | Emit this run's summary as a JSON document (the record's scalars, without `nodes` and `edges`) |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 
 ## Assurance log

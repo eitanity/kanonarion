@@ -37,6 +37,10 @@ type contextFlags struct {
 	// to true, so its value alone cannot distinguish "asked for compact" from
 	// "did not ask"; a path that has to refuse the flag needs the difference.
 	compactSet bool
+	// target is the platform the --gomod form selects its anchoring walk for.
+	// The other three forms name their own module set — a coordinate, a walk id,
+	// a working tree — and none of them chooses a walk by platform.
+	target buildTargetFlags
 }
 
 // -- output types --
@@ -70,6 +74,15 @@ type contextOutput struct {
 	CallGraph       contextCallGraph       `json:"call_graph"`
 	Examples        contextExamples        `json:"examples"`
 	Vulnerabilities contextVulnerabilities `json:"vulnerabilities"`
+	// Native is what this module's own artefact compiles into the binary from
+	// native source it ships, and what its cgo directives link from outside it.
+	//
+	// It is the same object `vuln-show --json` publishes under the same key, so
+	// a consumer reads one shape wherever it meets it. Null only when the
+	// producer could not derive it — the store holding two records that describe
+	// different artefacts for this pinned version — because every module has a
+	// native state, "nobody looked" included.
+	Native *nativeCoverage `json:"native_coverage"`
 }
 
 // contextForkIndicator is one caveated name-path fork inference.
@@ -631,6 +644,7 @@ working-tree document, which reports a tree rather than a set of modules.`,
 	cmd.Flags().BoolVar(&f.symbol, "symbol", false, "with a local path: enable symbol-level analysis (go/packages type-check, ~2-5s)")
 	cmd.Flags().BoolVar(&f.reachability, "reachability", false, "with a local path: probe the binary for CVE-affected symbols (~30s)")
 	cmd.Flags().BoolVar(&f.excludeTests, testScopeFlagName, false, "narrow to production code: with --gomod, resolve the scope without test imports; with a local path, omit dependency users declared in _test.go files")
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -700,6 +714,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 		Vulnerabilities: vulns,
+		Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
 		Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 	}
 

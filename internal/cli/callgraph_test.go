@@ -208,7 +208,7 @@ func TestPrintEdgeRefs_JSON(t *testing.T) {
 
 func TestPrintTransitiveResult_Empty(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printTransitiveResult("callers", "x.F", 0, nil, nil, false, &buf, cgports.EdgeQueryOptions{}); err != nil {
+	if err := printTransitiveResult("callers", "x.F", 0, cgapp.TraversalResult{}, false, &buf, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "No transitive callers") {
@@ -219,7 +219,7 @@ func TestPrintTransitiveResult_Empty(t *testing.T) {
 func TestPrintTransitiveResult_WithNodes(t *testing.T) {
 	nodes := []string{"a.F", "b.G"}
 	var buf bytes.Buffer
-	if err := printTransitiveResult("callers", "x.F", 3, nodes, nil, false, &buf, cgports.EdgeQueryOptions{}); err != nil {
+	if err := printTransitiveResult("callers", "x.F", 3, cgapp.TraversalResult{Nodes: nodes}, false, &buf, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -233,7 +233,7 @@ func TestPrintTransitiveResult_WithNodes(t *testing.T) {
 
 func TestPrintTransitiveResult_JSON(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printTransitiveResult("callees", "x.F", 0, []string{"a.F"}, nil, true, &buf, cgports.EdgeQueryOptions{}); err != nil {
+	if err := printTransitiveResult("callees", "x.F", 0, cgapp.TraversalResult{Nodes: []string{"a.F"}}, true, &buf, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), `"root"`) {
@@ -450,7 +450,7 @@ func TestRunCallersTransitive_WithResults(t *testing.T) {
 		[]string{"example.com/app.Helper", "example.com/app.Main"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCallersTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestRunCallersTransitive_DepthLimit(t *testing.T) {
 		[]string{"example.com/app.Helper"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 1, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCallersTransitive(context.Background(), "fmt.Println", 1, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -500,7 +500,7 @@ func TestRunCallersTransitive_NoResults(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Main"}},
 	})
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -516,7 +516,7 @@ func TestRunCallersTransitive_NoResults(t *testing.T) {
 func TestRunCallersTransitive_NeverAnalysedIsAnError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err == nil {
 		t.Fatalf("expected an error, got output: %q", buf.String())
 	}
@@ -535,7 +535,7 @@ func TestRunCallersTransitive_JSON(t *testing.T) {
 		[]string{"example.com/app.Helper", "example.com/app.Main"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 0, true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCallersTransitive(context.Background(), "fmt.Println", 0, true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestRunCalleesTransitive_WithResults(t *testing.T) {
 		[]string{"example.com/app.Helper", "fmt.Println"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -582,7 +582,7 @@ func TestRunCalleesTransitive_DepthLimit(t *testing.T) {
 		[]string{"example.com/app.Helper"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 1, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 1, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestRunCalleesTransitive_NoResults(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Main"}},
 	})
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestRunCalleesTransitive_NoResults(t *testing.T) {
 func TestRunCalleesTransitive_NeverAnalysedIsAnError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err == nil {
 		t.Fatalf("expected an error, got output: %q", buf.String())
 	}
@@ -642,7 +642,7 @@ func TestRunCalleesTransitive_JSON(t *testing.T) {
 		[]string{"example.com/app.Helper", "fmt.Println"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -688,14 +688,14 @@ func TestToCallGraphJSON_WrapsNodes(t *testing.T) {
 		NodeCount: 2,
 	}
 	j := toCallGraphJSON(r)
-	if len(j.Nodes) != 2 {
-		t.Fatalf("expected 2 nodes, got %d", len(j.Nodes))
+	if len(*j.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(*j.Nodes))
 	}
-	if j.Nodes[0].Role != "api" {
-		t.Errorf("node[0].Role = %q, want 'api'", j.Nodes[0].Role)
+	if (*j.Nodes)[0].Role != "api" {
+		t.Errorf("node[0].Role = %q, want 'api'", (*j.Nodes)[0].Role)
 	}
-	if j.Nodes[1].Role != "external" {
-		t.Errorf("node[1].Role = %q, want 'external'", j.Nodes[1].Role)
+	if (*j.Nodes)[1].Role != "external" {
+		t.Errorf("node[1].Role = %q, want 'external'", (*j.Nodes)[1].Role)
 	}
 }
 
@@ -986,7 +986,7 @@ func TestRunCallees_RootInFailedPackage_Unmeasured(t *testing.T) {
 func TestRunCallersTransitive_RootInFailedPackage_Unmeasured(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	if err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+	if err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil); err != nil {
 		t.Fatalf("a dropped-edge package was refused rather than reported: %v", err)
 	}
 	out := buf.String()

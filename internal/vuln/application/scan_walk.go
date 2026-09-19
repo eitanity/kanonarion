@@ -88,6 +88,12 @@ type ScanWalkUseCase struct {
 	// CPU-only cap, which is what every caller had before the memory budget
 	// existed. Set via WithHostMemory.
 	hostMemory ports.HostMemory
+
+	// routeAnnotator states how control reached each hop of the routes a record
+	// carries. Optional: without one every route is stored exactly as the
+	// producing analyser reported it, with no hop claiming a dispatch kind —
+	// which is what an unannotated route means and never "direct".
+	routeAnnotator ports.RouteAnnotator
 }
 
 // NewScanWalkUseCase returns a new ScanWalkUseCase.
@@ -161,6 +167,15 @@ func NewScanWalkUseCase(
 // receiver for chaining, mirroring the other optional-dependency builders.
 func (uc *ScanWalkUseCase) WithAudit(sink ports.AuditSink) *ScanWalkUseCase {
 	uc.audit = sink
+	return uc
+}
+
+// WithRouteAnnotator sets the annotator that states how control reached each
+// hop of a stored route, for the records this walk seals itself. The per-module
+// scanner is given its own on the same wiring, because the two paths seal
+// different records.
+func (uc *ScanWalkUseCase) WithRouteAnnotator(annotator ports.RouteAnnotator) *ScanWalkUseCase {
+	uc.routeAnnotator = annotator
 	return uc
 }
 

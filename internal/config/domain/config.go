@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // SupportedSchemaVersion is the config schema version this implementation
@@ -62,10 +64,12 @@ const (
 
 // Config is the root configuration type loaded from <store-root>/config.yaml.
 type Config struct {
-	Version          string
-	Preferences      Preferences
-	LicensePolicy    LicensePolicy
-	LicenseOverrides map[string]string // module path → SPDX license expression
+	Version       string
+	Preferences   Preferences
+	LicensePolicy LicensePolicy
+	// LicenseOverrides records, per module path (optionally @version), the
+	// operator's licence determination for that module.
+	LicenseOverrides map[string]LicenseOverride
 	// CopyrightDeclarations records, per module path (optionally @version), a
 	// copyright line a human read upstream for a module whose archive carries
 	// none. It is an operator assertion, not a measurement, which is why it
@@ -99,6 +103,68 @@ type FetchPolicy struct {
 	// mode, and a host outside the named set is refused. Empty is rejected at
 	// load time rather than read as "trust nobody" — that is --skip-vcs-verify.
 	AllowedVCSHosts []string
+}
+
+// LicenseOverride is one operator-recorded licence determination: the SPDX
+// identifier a person asserts for a module, and optionally who determined it,
+// when, and what they read.
+//
+// The provenance is optional, and the two forms are not the same claim. A bare
+// identifier is a correction a reviewer checks against the licence text the
+// module ships. Where the module ships no text there is nothing to check it
+// against, and who decided, when and on what basis is the only thing that makes
+// the determination auditable — so an attribution document reproduces those
+// fields where they are recorded and says they are absent where they are not.
+// Recording some of the three but not all is an unfinished edit, refused at
+// load rather than carried into a document nobody can audit.
+//
+// The yaml tags are for `config get`, which marshals the loaded value straight
+// back out: without them the output spells keys as Go field names and is not
+// valid config to paste back into the file.
+type LicenseOverride struct {
+	// SPDX is the identifier the operator asserts for the module.
+	SPDX string `yaml:"spdx"`
+	// DeclaredBy names the person accountable for the determination.
+	DeclaredBy string `yaml:"declared_by,omitempty"`
+	// DeclaredOn is the date they read the basis, as an ISO 8601 date.
+	DeclaredOn string `yaml:"declared_on,omitempty"`
+	// Basis cites what they read: the upstream file, commit or repository page.
+	Basis string `yaml:"basis,omitempty"`
+}
+
+// Attributed reports whether the determination names who made it. An
+// unattributed override is still a determination and still settles the module;
+// a document publishing it just cannot say whose it is.
+func (o LicenseOverride) Attributed() bool {
+	return o.DeclaredBy != "" || o.DeclaredOn != "" || o.Basis != ""
+}
+
+// Validate reports why a determination cannot be used. The caller prefixes the
+// coordinate, so the message names which entry is at fault.
+func (o LicenseOverride) Validate() error {
+	if strings.TrimSpace(o.SPDX) == "" {
+		return fmt.Errorf("spdx is required: an override names the identifier the operator determines for the module")
+	}
+	if !o.Attributed() {
+		return nil
+	}
+	for _, f := range []struct {
+		name, value string
+	}{
+		{"declared_by", o.DeclaredBy},
+		{"declared_on", o.DeclaredOn},
+		{"basis", o.Basis},
+	} {
+		if strings.TrimSpace(f.value) == "" {
+			return fmt.Errorf(
+				"%s is required once any of declared_by, declared_on or basis is given: "+
+					"a determination is only auditable with who made it, when, and the basis they cite", f.name)
+		}
+	}
+	if _, err := time.Parse(declarationDateLayout, o.DeclaredOn); err != nil {
+		return fmt.Errorf("declared_on %q: must be an ISO 8601 date (YYYY-MM-DD)", o.DeclaredOn)
+	}
+	return nil
 }
 
 // CopyrightDeclaration is one operator-recorded copyright line for a module
@@ -154,10 +220,11 @@ func (d CopyrightDeclaration) Validate() error {
 type Preferences struct {
 	JSON     bool
 	LogLevel string
-	// Progress enables the throttled fetch-phase progress heartbeat on long
-	// walk/inspect runs. Default true; set false (or pass --no-progress) for
-	// fully silent runs. The heartbeat is written to stderr, never stdout, so it
-	// never affects --json output.
+	// Progress enables stderr narration on long runs: the throttled fetch-phase
+	// heartbeat on walk/inspect, and the transitive call-graph traversal's
+	// progress line. Default true; set false (or pass --no-progress) for fully
+	// silent runs. Narration is written to stderr, never stdout, so it never
+	// affects --json output.
 	Progress bool
 }
 
@@ -201,6 +268,18 @@ func DefaultUnknownLicense(normalisedScope string) UnknownLicensePolicy {
 // CallgraphConfig holds call-graph extraction settings.
 type CallgraphConfig struct {
 	Exclude []string // package import paths excluded from analysis
+
+	// Toolchain is the Go toolchain a composed read prefers where a coordinate's
+	// generations disagree about which one built them.
+	//
+	// It BREAKS A TIE and never narrows a read. Two toolchains are two answers to
+	// two questions with no ladder between them, so the only route past such a
+	// coordinate is naming one — and naming it per invocation means naming it
+	// forever. A coordinate whose generations agree, or state no toolchain at all,
+	// is served exactly as it is with this unset: a preference that filtered would
+	// answer "no record" for the hundreds of modules that name no toolchain. The
+	// zero value states no preference.
+	Toolchain gotoolchain.Version
 }
 
 // StalenessConfig governs the store-backed ledger of latest-version lookups.
@@ -283,10 +362,13 @@ func DefaultConfig() Config {
 				},
 			},
 		},
-		LicenseOverrides:      map[string]string{},
+		LicenseOverrides:      map[string]LicenseOverride{},
 		CopyrightDeclarations: map[string]CopyrightDeclaration{},
 		Callgraph: CallgraphConfig{
 			Exclude: []string{},
+			// No preference: a toolchain disagreement refuses, which is the
+			// behaviour of every store that has not chosen otherwise.
+			Toolchain: gotoolchain.Unrecorded,
 		},
 		Staleness: StalenessConfig{
 			TTL:              DefaultStalenessTTL,

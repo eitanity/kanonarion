@@ -295,3 +295,103 @@ func TestCompose_NoRecordsIsAnError(t *testing.T) {
 		t.Error("composing nothing succeeded; absence is the store's answer, not a composition")
 	}
 }
+
+// TestComposeDatesAnInheritedLegFromTheMeasurementThatRan is the guard for a
+// date asserted about a measurement that did not happen then.
+//
+// An inherited leg is a COPY: the later run did not perform the check, it carried
+// the earlier result forward and named the record it came from. The leg used to
+// be dated from the copying run's own fetch time, so the copy always carried a
+// later date than the recheck it came from and always displaced it — and the
+// composed answer named a run that performed no check as the one that
+// established the anchor, on a day nothing was established.
+//
+// It also made legIsBetter's own tie-break unreachable: "a rechecked leg beats an
+// inherited one of the same date" can only fire once the dates can be equal.
+func TestComposeDatesAnInheritedLegFromTheMeasurementThatRan(t *testing.T) {
+	performed := fetchtest.Record(t,
+		fetchtest.Coordinate(composeCoord),
+		fetchtest.Status(domain.Verified),
+		fetchtest.SumDBCheck(domain.LegRechecked, ""),
+		fetchtest.VCSCheck(domain.LegRechecked, ""),
+		fetchtest.FetchedAt(at(1)))
+	copied := fetchtest.Record(t,
+		fetchtest.Coordinate(composeCoord),
+		fetchtest.Status(domain.Verified),
+		fetchtest.SumDBCheck(domain.LegInherited, performed.ContentHash),
+		fetchtest.VCSCheck(domain.LegInherited, performed.ContentHash),
+		fetchtest.FetchedAt(at(9)))
+
+	c, err := domain.Compose([]domain.FactRecord{performed, copied})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if len(c.Legs) != 2 {
+		t.Fatalf("composed legs = %+v, want one per kind", c.Legs)
+	}
+	want := at(1).UTC().Format(time.RFC3339)
+	for _, l := range c.Legs {
+		if l.Provenance != domain.LegRechecked {
+			t.Errorf("%s leg = %q, want the recheck the copy was taken from", l.Kind, l.Provenance)
+		}
+		if l.EstablishedAt != want {
+			t.Errorf("%s leg established_at = %q, want %q — the day the check actually ran",
+				l.Kind, l.EstablishedAt, want)
+		}
+	}
+}
+
+// A copy whose source is not in the composed set cannot be dated by it. The leg
+// still names where it came from, and an absent date says this set cannot say —
+// where substituting the copying run's own time would read as a measurement.
+func TestComposeLeavesAnInheritedLegUndatedWhenItsSourceIsAbsent(t *testing.T) {
+	copied := fetchtest.Record(t,
+		fetchtest.Coordinate(composeCoord),
+		fetchtest.Status(domain.Verified),
+		fetchtest.VCSCheck(domain.LegInherited, "sha256:"+"00"),
+		fetchtest.FetchedAt(at(9)))
+
+	c, err := domain.Compose([]domain.FactRecord{copied})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if len(c.Legs) != 1 {
+		t.Fatalf("composed legs = %+v, want the one inherited leg", c.Legs)
+	}
+	if got := c.Legs[0].EstablishedAt; got != "" {
+		t.Errorf("established_at = %q, want empty: the set holds no record able to date this copy", got)
+	}
+	if c.Legs[0].Source == "" {
+		t.Error("the leg dropped the source it was inherited from; an unnamed inheritance is unfalsifiable")
+	}
+}
+
+// An inheritance chain — a copy of a copy — is followed to the measurement that
+// performed the check, not stopped at the first hop, which is itself a copy and
+// no more the moment of establishment than the last one.
+func TestComposeFollowsAnInheritanceChainToTheRecheck(t *testing.T) {
+	performed := fetchtest.Record(t,
+		fetchtest.Coordinate(composeCoord),
+		fetchtest.Status(domain.Verified),
+		fetchtest.VCSCheck(domain.LegRechecked, ""),
+		fetchtest.FetchedAt(at(1)))
+	middle := fetchtest.Record(t,
+		fetchtest.Coordinate(composeCoord),
+		fetchtest.Status(domain.Verified),
+		fetchtest.VCSCheck(domain.LegInherited, performed.ContentHash),
+		fetchtest.FetchedAt(at(5)))
+	last := fetchtest.Record(t,
+		fetchtest.Coordinate(composeCoord),
+		fetchtest.Status(domain.Verified),
+		fetchtest.VCSCheck(domain.LegInherited, middle.ContentHash),
+		fetchtest.FetchedAt(at(9)))
+
+	c, err := domain.Compose([]domain.FactRecord{middle, last, performed})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	want := at(1).UTC().Format(time.RFC3339)
+	if got := c.Legs[0].EstablishedAt; got != want {
+		t.Errorf("established_at = %q, want %q — the end of the chain, not a hop along it", got, want)
+	}
+}

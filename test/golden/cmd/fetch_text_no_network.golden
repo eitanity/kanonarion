@@ -1,0 +1,11 @@
+# THE REMEDY: GOPROXY=off stops the run, and what it prints must be runnable BY FETCH. fetch defines no --from-modcache, so naming it sent the operator to `unknown flag`. Its control is audit_text_no_network, whose command does define the flag and is told to pass it. A shared string that named one flag to both would move one of these files.
+$ kanonarion fetch example.com/mod@v1.2.0
+exit 20
+--- error ---
+execute root command: GOPROXY=off: the environment declares no module fetching
+  kanonarion fetch reaches the network on every invocation and has no flag that withdraws it; to do this offline, run:
+    kanonarion walk --gomod ./go.mod --from-modcache
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

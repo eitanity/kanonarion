@@ -16,6 +16,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/config"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 func newConfigCmd(stdout io.Writer) *cobra.Command {
@@ -160,6 +161,7 @@ func newConfigGetCmd(stdout io.Writer) *cobra.Command {
   kanonarion config get license_policy.categories.permissive
   kanonarion config get copyright_declarations
   kanonarion config get callgraph.exclude
+  kanonarion config get callgraph.toolchain
   kanonarion config get staleness.ttl`,
 		// Exempt from the rejected-config refusal: it reports a single value in
 		// force, which with a rejected file is the built-in default. That is a
@@ -258,6 +260,8 @@ func configKeyPath(key string) ([]string, bool) {
 		return []string{"copyright_declarations", strings.TrimPrefix(key, "copyright_declarations.")}, true
 	case key == "callgraph.exclude":
 		return []string{"callgraph", "exclude"}, true
+	case key == "callgraph.toolchain":
+		return []string{"callgraph", "toolchain"}, true
 	case strings.HasPrefix(key, "staleness."):
 		return []string{"staleness", strings.TrimPrefix(key, "staleness.")}, true
 	case key == "fetch_policy.allowed_vcs_hosts":
@@ -296,7 +300,14 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 		if !ok {
 			return "", &exitError{code: ExitConfig, msg: fmt.Sprintf("no license override for %q", module)}
 		}
-		return val, nil
+		// An entry recorded as a bare identifier reads back as one, so every
+		// config that predates the attributed form answers exactly as before.
+		// An attributed one reads back as the mapping it was written as: the
+		// identifier alone would drop the provenance that makes it auditable.
+		if !val.Attributed() {
+			return val.SPDX, nil
+		}
+		return marshalConfigYAML(val)
 	case key == "copyright_declarations":
 		return marshalConfigYAML(cfg.CopyrightDeclarations)
 	case strings.HasPrefix(key, "copyright_declarations."):
@@ -308,6 +319,10 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 		return marshalConfigYAML(d)
 	case key == "callgraph.exclude":
 		return marshalConfigYAML(cfg.Callgraph.Exclude)
+	case key == "callgraph.toolchain":
+		// Rendered through the same helper `config show` uses, so the two never
+		// disagree about what "no preference" looks like.
+		return callgraphToolchainDisplay(cfg.Callgraph.Toolchain), nil
 	case key == "staleness.ttl":
 		return cfg.Staleness.TTL.String(), nil
 	case key == "staleness.probe_concurrency":
@@ -322,6 +337,47 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 	default:
 		return "", &exitError{code: ExitConfig, msg: fmt.Sprintf("unknown config key %q", key)}
 	}
+}
+
+// validateToolchainPreference refuses a callgraph.toolchain value no record
+// could hold.
+//
+// Validated on the way in by the domain that owns the rule, the way the VCS host
+// allowlist below is: the preference is compared against what records state and
+// against nothing else, so a value outside that form is a setting that silently
+// never fires — the operator writes it, the refusal it was written for carries
+// on, and nothing anywhere says why.
+func validateToolchainPreference(key, value string, node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+			"%s requires a Go toolchain version in `go env GOVERSION` form (e.g. go1.26.6), got %q", key, value)}
+	}
+	if _, err := gotoolchain.ParseVersion(node.Value); err != nil {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %v", key, err)}
+	}
+	return nil
+}
+
+// validateVCSHostAllowlist refuses a fetch_policy.allowed_vcs_hosts value the
+// domain cannot build a list from.
+//
+// Validated on the way in, by the domain that owns the rule, so an unusable list
+// is refused while the operator is typing it rather than halfway through the
+// next walk. Setting it switches the host check from advisory to enforcing,
+// which is worth saying out loud in the error when the list cannot be used.
+func validateVCSHostAllowlist(key, value string, node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+			"%s requires a YAML sequence of bare hostnames (e.g. '[github.com, git.example.org]'), got %q", key, value)}
+	}
+	hosts := make([]string, 0, len(node.Content))
+	for _, n := range node.Content {
+		hosts = append(hosts, n.Value)
+	}
+	if _, err := fetchdomain.NewVCSHostAllowlist(hosts); err != nil {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %v", key, err)}
+	}
+	return nil
 }
 
 func marshalConfigYAML(v any) (string, error) {
@@ -343,6 +399,7 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
   kanonarion config set license_policy.categories.permissive '[MIT, Apache-2.0, ISC]'
   kanonarion config set license_overrides.golang.org/x/mod MIT
   kanonarion config set callgraph.exclude '[]'
+  kanonarion config set callgraph.toolchain go1.26.6
   kanonarion config set staleness.ttl 6h`,
 		// Exempt from the rejected-config refusal: it is the repair. It edits
 		// the YAML document directly and never consults the loaded
@@ -409,6 +466,10 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	// configuration was rejected.
 	prevValue, prevSource := previousConfigValue(&doc, yamlPath, key)
 
+	if err := refuseProvenanceLoss(&doc, yamlPath, key); err != nil {
+		return err
+	}
+
 	if err := setYAMLNode(&doc, yamlPath, valueNode); err != nil {
 		return err
 	}
@@ -444,6 +505,28 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	return nil
+}
+
+// refuseProvenanceLoss stops `config set` from replacing an attributed licence
+// determination with a bare identifier.
+//
+// `config set` writes scalars, and the write is a whole-node replacement, so
+// setting a module that carries declared_by/declared_on/basis would delete the
+// provenance an attribution document reproduces — silently, and reported as a
+// successful set. The entry is edited in the file instead, which is how the
+// attributed form is written in the first place.
+func refuseProvenanceLoss(doc *yaml.Node, yamlPath []string, key string) error {
+	if !strings.HasPrefix(key, "license_overrides.") {
+		return nil
+	}
+	node, ok := lookupYAMLNode(doc, yamlPath)
+	if !ok || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+		"%s records who determined the licence, when, and on what basis; "+
+			"setting it here would write a bare identifier and drop that provenance. "+
+			"Edit the entry in config.yaml instead", key)}
 }
 
 // previousConfigValue reports the value the write is about to displace and
@@ -516,6 +599,8 @@ func configSetPath(key string) ([]string, error) {
 		return []string{"license_overrides", module}, nil
 	case key == "callgraph.exclude":
 		return []string{"callgraph", "exclude"}, nil
+	case key == "callgraph.toolchain":
+		return []string{"callgraph", "toolchain"}, nil
 	case key == "staleness.ttl":
 		return []string{"staleness", "ttl"}, nil
 	case key == "staleness.probe_concurrency":
@@ -562,6 +647,10 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 		if node.Kind != yaml.SequenceNode {
 			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("%s requires a YAML sequence (e.g. '[MIT, Apache-2.0]'), got %q", key, value)}
 		}
+	case key == "callgraph.toolchain":
+		if err := validateToolchainPreference(key, value, node); err != nil {
+			return nil, err
+		}
 	case key == "staleness.ttl":
 		if node.Kind != yaml.ScalarNode {
 			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl requires a duration string (e.g. 1h, 30m, 0), got %q", value)}
@@ -583,21 +672,8 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 				"staleness.probe_concurrency must not be negative (use 0 for a serial probe), got %q", value)}
 		}
 	case key == "fetch_policy.allowed_vcs_hosts":
-		if node.Kind != yaml.SequenceNode {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"%s requires a YAML sequence of bare hostnames (e.g. '[github.com, git.example.org]'), got %q", key, value)}
-		}
-		// Validated on the way in, by the domain that owns the rule, so an
-		// unusable list is refused while the operator is typing it rather than
-		// halfway through the next walk. Setting it switches the host check
-		// from advisory to enforcing, which is worth saying out loud in the
-		// error when the list cannot be used.
-		hosts := make([]string, 0, len(node.Content))
-		for _, n := range node.Content {
-			hosts = append(hosts, n.Value)
-		}
-		if _, err := fetchdomain.NewVCSHostAllowlist(hosts); err != nil {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %v", key, err)}
+		if err := validateVCSHostAllowlist(key, value, node); err != nil {
+			return nil, err
 		}
 	case strings.HasPrefix(key, "license_overrides."):
 		if node.Kind != yaml.ScalarNode {

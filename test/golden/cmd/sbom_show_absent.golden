@@ -1,0 +1,9 @@
+# error-shaped: no stored document with this identifier. sbom-show's POPULATED case is deliberately absent: the record id is derived from the walk id and the SBOM pipeline version, so a literal one here would turn a version bump into a not-found rather than into a readable diff, and the bytes it would print are already recorded by sbom_populated.
+$ kanonarion sbom-show sbom-000000000000000000000000
+exit 20
+--- error ---
+execute root command: retrieving sbom "sbom-000000000000000000000000": getting sbom sbom-000000000000000000000000: sbom record not found
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

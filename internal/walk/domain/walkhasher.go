@@ -69,15 +69,18 @@ type canonicalStageDepth struct {
 type canonicalWalkGraph struct {
 	// BuildEnv is omitempty so records created before the field existed continue
 	// to hash and verify identically (a nil pointer is absent from the JSON).
-	BuildEnv        *canonicalBuildEnv  `json:"build_env,omitempty"`
-	Edges           []canonicalWalkEdge `json:"edges"`
-	HasLocalReplace bool                `json:"has_local_replace"`
-	Nodes           []canonicalWalkNode `json:"nodes"`
-	Partial         bool                `json:"partial"`
-	PartialReason   string              `json:"partial_reason"`
-	PipelineVersion string              `json:"pipeline_version"`
-	ResolvedAt      string              `json:"resolved_at"`
-	Target          canonicalWalkCoord  `json:"target"`
+	BuildEnv *canonicalBuildEnv `json:"build_env,omitempty"`
+	// BuildListUnavailable is omitempty for the same reason, and because the
+	// key is absent from every walk whose build list resolved.
+	BuildListUnavailable string              `json:"build_list_unavailable,omitempty"`
+	Edges                []canonicalWalkEdge `json:"edges"`
+	HasLocalReplace      bool                `json:"has_local_replace"`
+	Nodes                []canonicalWalkNode `json:"nodes"`
+	Partial              bool                `json:"partial"`
+	PartialReason        string              `json:"partial_reason"`
+	PipelineVersion      string              `json:"pipeline_version"`
+	ResolvedAt           string              `json:"resolved_at"`
+	Target               canonicalWalkCoord  `json:"target"`
 }
 
 // canonicalBuildEnv is the fixed-field-order form of BuildEnv, in sorted
@@ -203,14 +206,18 @@ type canonicalWalkIdentity struct {
 
 // canonicalIdentityGraph is canonicalWalkGraph without ResolvedAt.
 type canonicalIdentityGraph struct {
-	BuildEnv        *canonicalBuildEnv  `json:"build_env,omitempty"`
-	Edges           []canonicalWalkEdge `json:"edges"`
-	HasLocalReplace bool                `json:"has_local_replace"`
-	Nodes           []canonicalWalkNode `json:"nodes"`
-	Partial         bool                `json:"partial"`
-	PartialReason   string              `json:"partial_reason"`
-	PipelineVersion string              `json:"pipeline_version"`
-	Target          canonicalWalkCoord  `json:"target"`
+	BuildEnv *canonicalBuildEnv `json:"build_env,omitempty"`
+	// A walk that fell back for one reason is not the walk that fell back for
+	// another, so the toolchain's reason names the analysis rather than only
+	// describing it.
+	BuildListUnavailable string              `json:"build_list_unavailable,omitempty"`
+	Edges                []canonicalWalkEdge `json:"edges"`
+	HasLocalReplace      bool                `json:"has_local_replace"`
+	Nodes                []canonicalWalkNode `json:"nodes"`
+	Partial              bool                `json:"partial"`
+	PartialReason        string              `json:"partial_reason"`
+	PipelineVersion      string              `json:"pipeline_version"`
+	Target               canonicalWalkCoord  `json:"target"`
 }
 
 // canonicalIdentityNodeResult is the identity-bearing part of a NodeResult:
@@ -253,14 +260,15 @@ func (WalkRecordHasher) IdentityHash(r WalkRecord) (string, error) {
 		Depth:     depth,
 		Ecosystem: r.Ecosystem,
 		Graph: canonicalIdentityGraph{
-			BuildEnv:        toCanonicalBuildEnv(r.Graph.BuildEnv),
-			Edges:           canonicalWalkEdges(r.Graph.Edges),
-			HasLocalReplace: r.Graph.HasLocalReplace,
-			Nodes:           canonicalWalkNodes(r.Graph.Nodes),
-			Partial:         r.Graph.Partial,
-			PartialReason:   r.Graph.PartialReason,
-			PipelineVersion: r.Graph.PipelineVersion,
-			Target:          toCanonicalCoord(r.Graph.Target),
+			BuildEnv:             toCanonicalBuildEnv(r.Graph.BuildEnv),
+			BuildListUnavailable: r.Graph.BuildListUnavailable,
+			Edges:                canonicalWalkEdges(r.Graph.Edges),
+			HasLocalReplace:      r.Graph.HasLocalReplace,
+			Nodes:                canonicalWalkNodes(r.Graph.Nodes),
+			Partial:              r.Graph.Partial,
+			PartialReason:        r.Graph.PartialReason,
+			PipelineVersion:      r.Graph.PipelineVersion,
+			Target:               toCanonicalCoord(r.Graph.Target),
 		},
 		NodeResults:     canonicalIdentityNodeResults(r.PerNodeResults),
 		OverallStatus:   int(r.OverallStatus),
@@ -377,15 +385,16 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 		Depth:       depth,
 		Ecosystem:   r.Ecosystem,
 		Graph: canonicalWalkGraph{
-			BuildEnv:        toCanonicalBuildEnv(r.Graph.BuildEnv),
-			Edges:           edges,
-			HasLocalReplace: r.Graph.HasLocalReplace,
-			Nodes:           nodes,
-			Partial:         r.Graph.Partial,
-			PartialReason:   r.Graph.PartialReason,
-			PipelineVersion: r.Graph.PipelineVersion,
-			ResolvedAt:      recordstamp.Format(r.Graph.ResolvedAt),
-			Target:          toCanonicalCoord(r.Graph.Target),
+			BuildEnv:             toCanonicalBuildEnv(r.Graph.BuildEnv),
+			BuildListUnavailable: r.Graph.BuildListUnavailable,
+			Edges:                edges,
+			HasLocalReplace:      r.Graph.HasLocalReplace,
+			Nodes:                nodes,
+			Partial:              r.Graph.Partial,
+			PartialReason:        r.Graph.PartialReason,
+			PipelineVersion:      r.Graph.PipelineVersion,
+			ResolvedAt:           recordstamp.Format(r.Graph.ResolvedAt),
+			Target:               toCanonicalCoord(r.Graph.Target),
 		},
 		ID:              r.ID,
 		Operator:        r.Operator,
@@ -694,15 +703,16 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 		Scope:         scope,
 		Depth:         depth,
 		Graph: Graph{
-			Target:          graphTarget,
-			Nodes:           nodes,
-			Edges:           edges,
-			ResolvedAt:      resolvedAt.UTC(),
-			PipelineVersion: c.Graph.PipelineVersion,
-			Partial:         c.Graph.Partial,
-			PartialReason:   c.Graph.PartialReason,
-			HasLocalReplace: c.Graph.HasLocalReplace,
-			BuildEnv:        fromCanonicalBuildEnv(c.Graph.BuildEnv),
+			Target:               graphTarget,
+			Nodes:                nodes,
+			Edges:                edges,
+			ResolvedAt:           resolvedAt.UTC(),
+			PipelineVersion:      c.Graph.PipelineVersion,
+			Partial:              c.Graph.Partial,
+			PartialReason:        c.Graph.PartialReason,
+			BuildListUnavailable: c.Graph.BuildListUnavailable,
+			HasLocalReplace:      c.Graph.HasLocalReplace,
+			BuildEnv:             fromCanonicalBuildEnv(c.Graph.BuildEnv),
 		},
 		PerNodeResults:  perNode,
 		StartedAt:       startedAt.UTC(),

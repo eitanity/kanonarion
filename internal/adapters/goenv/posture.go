@@ -26,14 +26,14 @@ var postures = map[string]Posture{
 	// extracted-module analysis needs is layered on top of it.
 	"extracted-module": {
 		Require: map[string]string{"GOWORK": "off"},
-		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED"},
+		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	"extracted-module-analysis": {
 		Require: map[string]string{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
 			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod",
 		},
-		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED"},
+		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	// The same analysis pointed at a module cache the run decided on: one
 	// materialised from the store for this module, or the operator's own under
@@ -45,7 +45,7 @@ var postures = map[string]Posture{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
 			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod", "GOMODCACHE": ModCache,
 		},
-		Forbid: []string{"GOGC", "CGO_ENABLED"},
+		Forbid: []string{"GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	// -mod=readonly on both worktree postures. The tree belongs to the developer,
 	// and -mod=mod lets the go command close a missing go.sum entry from the
@@ -55,14 +55,14 @@ var postures = map[string]Posture{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
 			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
 		},
-		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED"},
+		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	"worktree-workspace": {
 		Require: map[string]string{
 			"GOPROXY": "off", "GOSUMDB": "off",
 			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
 		},
-		Forbid: []string{"GOWORK", "GOMODCACHE", "GOGC", "CGO_ENABLED"},
+		Forbid: []string{"GOWORK", "GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	// The vendored surface reads no module cache and runs no MVS, so it leaves
 	// the checksum database on and the toolchain unpinned: it completes a
@@ -72,18 +72,18 @@ var postures = map[string]Posture{
 		Require: map[string]string{
 			"GOGC": "30", "GOWORK": "off", "GOFLAGS": "-mod=vendor", "GOPROXY": "off",
 		},
-		Forbid: []string{"GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED"},
+		Forbid: []string{"GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	"scan-fetched": {
 		Require: map[string]string{"GOGC": "30", "GOWORK": "off"},
-		Forbid:  []string{"GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED"},
+		Forbid:  []string{"GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	"scan-fetched-modcache": {
 		Require: map[string]string{
 			"GOGC": "30", "GOWORK": "off", "GOMODCACHE": ModCache,
 			"GOFLAGS": "-mod=mod", "GOSUMDB": "off", "GOTOOLCHAIN": "local", "GOPROXY": "off",
 		},
-		Forbid: []string{"CGO_ENABLED"},
+		Forbid: []string{"CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	// The binary-mode test build, and the only environment in this table that
 	// turns cgo off. It is the one analysis child that compiles an untrusted
@@ -99,6 +99,7 @@ var postures = map[string]Posture{
 			"GOFLAGS": "-mod=mod", "GOSUMDB": "off", "GOTOOLCHAIN": "local", "GOPROXY": "off",
 			"CGO_ENABLED": "0",
 		},
+		Forbid: []string{"GOOS", "GOARCH"},
 	},
 	// The one escalation any of the three pinned analysis postures may take: the
 	// installed toolchain is older than the analysed module's go directive and a
@@ -110,14 +111,14 @@ var postures = map[string]Posture{
 	// PATH is absent from both lists because moving it is the whole mechanism.
 	"on-disk-toolchain": {
 		Require: map[string]string{"GOTOOLCHAIN": "path"},
-		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOWORK", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED"},
+		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOWORK", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	// A project that has a vendor tree and a caller declining it: Go selects
 	// -mod=vendor from the tree's mere presence, so the fetched surface has to
 	// say otherwise, and that flag is refused in workspace mode.
 	"project-fetched-over-vendor": {
 		Require: map[string]string{"GOGC": "30", "GOWORK": "off", "GOFLAGS": "-mod=mod"},
-		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED"},
+		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	// The project surface with no vendor tree, and the one posture in this table
 	// that overrides nothing about resolution. It analyses a live working tree
@@ -141,7 +142,29 @@ var postures = map[string]Posture{
 	// the analysis does not need to spend.
 	"scan-project": {
 		Require: map[string]string{"GOGC": "30"},
-		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED"},
+		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED", "GOOS", "GOARCH"},
+	},
+	// The declaration a resolving command layers onto whichever posture it
+	// chose, stated against the UNDECLARED environment as its base — the same
+	// shape as on-disk-toolchain, and for the same reason: it is one statement
+	// added to an environment somebody else built, so its Forbid list is what it
+	// must leave exactly where it found it.
+	//
+	// GOOS and GOARCH are required by this posture and by no other, and that is
+	// the whole distinction the table now draws. Every surface above forbids
+	// them, which says the target is not that surface's to choose; Target.Apply
+	// is the one producer that names it, and it is applied only to the children
+	// whose record can say which platform it is about — the walk's, whose
+	// identity hash covers the pair it resolved under, and the scan the walk
+	// roots. The extraction children are deliberately not among them: a
+	// call-graph record carries no platform field, so two analyses of one
+	// coordinate under two targets would both persist with no dimension a reader
+	// could pick between. Giving the extract stage a target means a new record
+	// field and a pipeline-version bump, which is a decision this table cannot
+	// make on its own.
+	"declared-target": {
+		Require: map[string]string{"GOOS": PostureTarget.GOOS(), "GOARCH": PostureTarget.GOARCH()},
+		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "GOGC", "CGO_ENABLED"},
 	},
 }
 

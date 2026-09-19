@@ -299,14 +299,19 @@ const (
 // read — it just read different bytes, which is why the route separates it before
 // this function is ever reached.
 //
-// UnverifiedGoDevUnavailable is the only rung below them: the anchor was not
-// consulted at all, so the measurement states nothing about the published
-// checksum.
+// The two unverified statuses share the rung below them. Neither matched the
+// bytes against a published checksum, so neither states anything about one:
+// UnverifiedGoDevUnavailable could not read the manifest, and
+// UnverifiedGoDevNotPublished read it and found no checksum published for this
+// version. That difference is why they are separate values — it tells a reader
+// what to do next — but it does not order them, because it says nothing about
+// the artefact. Ranking either above the other would make composition serve an
+// answer on the strength of a cause rather than of evidence.
 func anchorRung(f Facts) int {
 	switch f.VerificationStatus {
 	case VerifiedGoDevChecksum, GoDevChecksumMismatch, VerifiedLocalToolchain:
 		return rungDefinite
-	case UnverifiedGoDevUnavailable:
+	case UnverifiedGoDevUnavailable, UnverifiedGoDevNotPublished:
 		return rungAbsent
 	default:
 		return rungUnknown

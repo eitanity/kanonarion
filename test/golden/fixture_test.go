@@ -193,6 +193,10 @@ func seedFetch(
 		GoModLocation:      "gomod:" + coord.Path() + "@" + coord.Version(),
 		FetchedAt:          fetchedAt,
 		MeasurementKind:    fetchdomain.MeasurementAcquired,
+		// A Verified record reached both anchors, so it carries both legs. A
+		// fixture without them claims cross-verification the ledger cannot show.
+		SumDBCheck: fetchdomain.LegRechecked,
+		VCSCheck:   fetchdomain.LegRechecked,
 	})
 	if err != nil {
 		t.Fatalf("sealing fixture fetch record for %s: %v", coord, err)
@@ -226,16 +230,25 @@ func (readCloser) Close() error { return nil }
 // seedGoModOnly files the shallow measurement: a verified go.mod and no module
 // zip. It is the fixture a per-finding go.sum classification needs in order to
 // report anything other than one uniform value.
+//
+// Its status is VerifiedBySumDBOnly, which is what the go.mod-only path produces
+// on a match: there is no zip, so there is nothing to reproduce from git and the
+// cross-verified class cannot apply. It used to claim Verified with no legs at
+// all — a record asserting a git anchor it could not have had, and the coverage
+// report duly counted it as cross-verified.
 func seedGoModOnly(t testing.TB, facts *fetchsqlite.Store, coord coordinate.ModuleCoordinate) {
 	t.Helper()
 	sealed, err := fetchdomain.Seal(fetchdomain.FetchedModule{
 		Coordinate:         coord,
 		GoModHash:          fixtureGoModHash(t, coord, "gomod-only"),
-		VerificationStatus: fetchdomain.Verified,
+		VerificationStatus: fetchdomain.VerifiedBySumDBOnly,
 		PipelineVersion:    fetchapp.PipelineVersion,
 		GoModLocation:      "gomod:" + coord.Path() + "@" + coord.Version(),
 		FetchedAt:          fixtureWalkAt,
 		MeasurementKind:    fetchdomain.MeasurementAcquired,
+		// No zip was fetched, so there is nothing to reproduce from git: the
+		// checksum-database leg alone, and a measured VCS absence.
+		SumDBCheck: fetchdomain.LegRechecked,
 	})
 	if err != nil {
 		t.Fatalf("sealing go.mod-only record for %s: %v", coord, err)
@@ -440,18 +453,38 @@ func seedFixtureCallGraph(
 ) {
 	t.Helper()
 	rec := cgdomain.CallGraphRecord{
-		SchemaVersion:  cgdomain.CallGraphSchemaVersion,
-		Ecosystem:      fetchdomain.EcosystemGo,
-		Coordinate:     mod,
-		Algorithm:      cgdomain.AlgorithmCHA,
+		SchemaVersion: cgdomain.CallGraphSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    mod,
+		Algorithm:     cgdomain.AlgorithmCHA,
+		// An application, which is what almost every graph in a working store is
+		// classified as — a module is one if any package in it declares func main.
+		// It is also the case a negative could never be confirmed under: the
+		// whole-graph rule roots an application at every function it owns, so the
+		// vulnerable symbol is its own root.
+		ArtifactKind:   cgdomain.ArtifactApplication,
 		OverallStatus:  cgdomain.CallGraphStatusExtracted,
 		TestScope:      cgdomain.TestScopeAnalysed,
 		ReferenceScope: cgdomain.ReferenceScopeAnalysed,
 		Nodes: []cgdomain.CallNode{
-			{ID: "example.com/mod.Handle", Package: "example.com/mod", Symbol: "Handle", IsExportedAPI: true},
-			{ID: "example.com/mod.Parse", Package: "example.com/mod", Symbol: "Parse", IsExportedAPI: true},
+			// Module is set on every owned node, as a real extraction sets it: the
+			// advisory's symbols are scoped to the module they are filed against, so
+			// a node that does not say which module it belongs to matches nothing.
+			{ID: "example.com/mod.Handle", Module: "example.com/mod", Package: "example.com/mod", Symbol: "Handle", IsExportedAPI: true},
+			{ID: "example.com/mod.Parse", Module: "example.com/mod", Package: "example.com/mod", Symbol: "Parse", IsExportedAPI: true},
+			// An unexported symbol no exported function, no init and no main
+			// reaches. It is what a CONFIRMABLE negative looks like: the advisory
+			// names a symbol the module ships and nothing entering the module can
+			// get to. Under whole-graph rooting it would be a root of the
+			// traversal and could never be absent from one.
+			{ID: "example.com/mod.parseInternal", Module: "example.com/mod", Package: "example.com/mod", Symbol: "parseInternal"},
+			// The command that makes this module an application, and the main the go
+			// command synthesises to run its tests. Both are receiverless mains and
+			// only one of them is an entry point of anything a consumer builds.
+			{ID: "example.com/mod/cmd/tool.main", Module: "example.com/mod", Package: "example.com/mod/cmd/tool", Symbol: "main"},
+			{ID: "example.com/mod.test.main", Module: "example.com/mod", Package: "example.com/mod.test", Symbol: "main"},
 		},
-		NodeCount:        2,
+		NodeCount:        5,
 		ExtractedAt:      extractedAt,
 		PipelineVersion:  cgapp.PipelineVersion,
 		Completeness:     completeness,
@@ -488,10 +521,42 @@ func seedFixtureVuln(t *testing.T, store *vulnsqlite.Store, mod, shallow, clean 
 		t.Fatalf("filing fixture snapshot two: %v", err)
 	}
 
+	// The route carries all three answers the dispatch annotation gives, because
+	// every surface that publishes a route renders them and a fixture that only
+	// exercised the happy one would pin a third of the rendering. The entry point
+	// says it is one; the hop out of the unanalysed root says why it could not be
+	// read; the last hop is an interface dispatch read off the edge.
 	route := vulndomain.ReachabilityRoute{
-		{ModulePath: "example.com/app", Package: "example.com/app", Symbol: "main"},
-		{ModulePath: "example.com/mod", ModuleVersion: "v1.2.0", Package: "example.com/mod", Symbol: "Handle"},
-		{ModulePath: "example.com/mod", ModuleVersion: "v1.2.0", Package: "example.com/mod", Symbol: "Parse"},
+		{
+			ModulePath: "example.com/app", Package: "example.com/app", Symbol: "main",
+			Dispatch: vulndomain.HopDispatch{
+				Kind:   vulndomain.DispatchRouteEntry,
+				Reason: "this is the route's first hop: no hop above it, so there is no call site to read",
+			},
+		},
+		{
+			ModulePath: "example.com/mod", ModuleVersion: "v1.2.0", Package: "example.com/mod", Symbol: "Handle",
+			Dispatch: vulndomain.HopDispatch{
+				Kind:  vulndomain.DispatchNotAnnotated,
+				Graph: "example.com/app@local",
+				Reason: "no call graph is held for example.com/app@local, the module this call site is in, " +
+					"so there is no edge to read; the route stands as the analyser reported it",
+			},
+		},
+		{
+			ModulePath: "example.com/mod", ModuleVersion: "v1.2.0", Package: "example.com/mod", Symbol: "Parse",
+			Dispatch: vulndomain.HopDispatch{
+				Kind:                 vulndomain.DispatchInterface,
+				Confidence:           "CHA-overapprox",
+				Graph:                "example.com/mod@v1.2.0",
+				GraphCompleteness:    "BUILT_WITH_BODIES",
+				CallSite:             "handle.go:42",
+				Interface:            "example.com/mod.Parser",
+				ImplementationModule: "example.com/mod",
+				Implementers:         3,
+				ImplementersQuery:    "kanonarion implementers 'example.com/mod.Parser'",
+			},
+		},
 	}
 	finding := vulndomain.VulnerabilityFinding{
 		ID:              "GO-2026-0001",
@@ -543,9 +608,35 @@ func seedFixtureVuln(t *testing.T, store *vulnsqlite.Store, mod, shallow, clean 
 	withdrawn.WithdrawnAt = time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC)
 	withdrawn.Reachable = nil
 	withdrawn.ReachabilityNote = ""
+	// A negative recorded from govulncheck's silence, against a symbol the module
+	// ships and no entry point reaches. It is the case a working store could not
+	// supply: every searchable negative in one sat on a coordinate with no call
+	// graph at all, so the search that would confirm it never ran.
+	confirmable := finding
+	confirmable.ID = "GO-2026-0003"
+	confirmable.Aliases = []string{"CVE-2026-00003"}
+	confirmable.Summary = "unreached advisory for example.com/mod"
+	confirmable.AffectedSymbols = []string{"parseInternal"}
+	confirmable.Reachable = &vulndomain.ReachabilityResult{
+		IsReachable: false,
+		Confidence:  vulndomain.ConfidenceHigh,
+		DerivedBy: vulndomain.ReachabilityDerivation{
+			Analyser: vulndomain.AnalyserGovulncheck,
+			Fidelity: "source",
+			Rooting:  vulndomain.RootingTargetRooted,
+		},
+	}
+	// A searchable negative whose advisory names a symbol this module's graph does
+	// not hold. No search can be made for it, and the answer has to say so rather
+	// than publish a rung with nothing behind it.
+	unsearched := confirmable
+	unsearched.ID = "GO-2026-0004"
+	unsearched.Aliases = []string{"CVE-2026-00004"}
+	unsearched.Summary = "advisory naming a symbol this build does not hold"
+	unsearched.AffectedSymbols = []string{"neverDeclared"}
 	recTwo := recOne
 	recTwo.DatabaseSnapshot = snapTwo
-	recTwo.Findings = []vulndomain.VulnerabilityFinding{finding, withdrawn}
+	recTwo.Findings = []vulndomain.VulnerabilityFinding{finding, withdrawn, confirmable, unsearched}
 	recTwo.ScannedAt = fixtureScannedAt2
 
 	shallowRec := vulndomain.VulnerabilityRecord{

@@ -81,6 +81,27 @@ const (
 	NodeLocalReplace
 )
 
+// IsFailure reports whether a node status is a fetch that should have happened
+// and did not.
+//
+// It names the failures rather than testing "not succeeded". NodeLocalReplace is
+// neither: the require was redirected to a local path, so there is no remote
+// artefact to fetch and the walk is complete without one — which is why the
+// walk is not partial because of these nodes, and why counting them told the
+// operator a dependency of their own project had failed.
+//
+// An unrecognised status counts as a failure. A record this build cannot read
+// the outcome of is the one case a reader must be told about.
+func (s NodeStatus) IsFailure() bool {
+	switch s {
+	case NodeFetchFailed, NodeInternalPanic:
+		return true
+	case NodeSucceeded, NodeLocalReplace:
+		return false
+	}
+	return true
+}
+
 func (s NodeStatus) String() string {
 	switch s {
 	case NodeSucceeded:

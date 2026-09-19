@@ -60,17 +60,36 @@ func TestBucketForVerification_UnknownStatusIsNotAssurance(t *testing.T) {
 	}
 }
 
+// TestVCSEvidenceOf_LeglessLedgerRecordIsNever pins the half of the distinction
+// that leg emptiness alone cannot carry. A --from-modcache measurement anchors on
+// the local go.sum and skips cross-verification, so it performs NEITHER leg and
+// is legless while being written under the ledger. Reading that as pre-ledger
+// would report an honest measured absence as a record that cannot say, and hide
+// the one class of gap this report exists to surface.
+func TestVCSEvidenceOf_LeglessLedgerRecordIsNever(t *testing.T) {
+	if got := VCSEvidenceOf(nil, true); got != VCSNever {
+		t.Errorf("a legless ledger-era record reported %v, want VCSNever", got)
+	}
+	c := VerificationCoverageOf([]CoverageObservation{
+		{Bucket: BucketGoSumOnly, UnderLedger: true, Recorded: true},
+	})
+	if c.VCSNever != 1 || c.VCSNotMeasured != 0 {
+		t.Errorf("coverage = %+v, want the air-gapped module counted as never cross-verified", c)
+	}
+}
+
 // The distinction the fetch ledger exists to draw, and the one this report must
-// not blur: a record with no legs cannot speak to cross-verification, which is a
-// different claim from a record that could have recorded a VCS leg and has none.
-// Conflating them makes a store of pre-ledger records look like a collapse.
+// not blur: a record from before the ledger cannot speak to cross-verification,
+// which is a different claim from a record that could have recorded a VCS leg
+// and has none. Conflating them makes a store of pre-ledger records look like a
+// collapse.
 func TestVCSEvidenceOf_NotMeasuredIsNotNever(t *testing.T) {
-	if got := VCSEvidenceOf(nil); got != VCSNotMeasured {
+	if got := VCSEvidenceOf(nil, false); got != VCSNotMeasured {
 		t.Errorf("a legless record reported %v, want VCSNotMeasured — it predates the ledger and cannot say", got)
 	}
 	// Legs present, but none of them the VCS check: a genuine absence.
 	sumdbOnly := []ValidationLeg{{Kind: LegSumDB, Provenance: LegRechecked}}
-	if got := VCSEvidenceOf(sumdbOnly); got != VCSNever {
+	if got := VCSEvidenceOf(sumdbOnly, true); got != VCSNever {
 		t.Errorf("a record with legs and no VCS leg reported %v, want VCSNever", got)
 	}
 	for _, tc := range []struct {
@@ -81,7 +100,7 @@ func TestVCSEvidenceOf_NotMeasuredIsNotNever(t *testing.T) {
 		{LegInherited, VCSInherited},
 	} {
 		legs := []ValidationLeg{{Kind: LegVCS, Provenance: tc.prov}}
-		if got := VCSEvidenceOf(legs); got != tc.want {
+		if got := VCSEvidenceOf(legs, true); got != tc.want {
 			t.Errorf("VCS leg %q reported %v, want %v", tc.prov, got, tc.want)
 		}
 	}
@@ -178,7 +197,7 @@ func TestVCSEvidenceOf_AbsentLegIsNever(t *testing.T) {
 	got := VCSEvidenceOf([]ValidationLeg{
 		{Kind: LegSumDB, Provenance: LegRechecked},
 		{Kind: LegVCS, Provenance: LegAbsent},
-	})
+	}, true)
 	if got != VCSNever {
 		t.Errorf("VCSEvidenceOf = %v, want VCSNever: an absent leg is a measured absence, not an unmeasured one", got)
 	}

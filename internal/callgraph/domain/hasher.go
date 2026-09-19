@@ -385,7 +385,11 @@ type canonicalEdge struct {
 	FromID     string       `json:"from_id"`
 	// Kind is omitted for a call edge, which is what every edge sealed before
 	// the kind existed is. See EdgeKind.
-	Kind            string `json:"kind,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	// ReflectDispatch marks an edge whose callee is in package reflect. It is not
+	// a count of reflective dispatches — most of what it marks bounds perfectly —
+	// and the tag is load-bearing: it is inside the content hash of every sealed
+	// record, so renaming it darkens all of them.
 	ReflectDispatch bool   `json:"reflect_dispatch"`
 	ToID            string `json:"to_id"`
 }

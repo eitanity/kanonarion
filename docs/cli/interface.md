@@ -249,6 +249,10 @@ kanonarion symbol-find <name> [flags]
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
 
+Also takes the build-scope flags `--gomod`, `--walk-id`, `--toolchain` and
+`--target GOOS/GOARCH` — see [Declaring the build
+target](walk.md#declaring-the-build-target---target).
+
 **Example:**
 
 ```

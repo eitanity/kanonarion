@@ -721,8 +721,11 @@ type FakeQueryCallGraph struct {
 	callees             []cgports.CallEdgeRef
 	traverseCallers     []cgports.CallEdgeRef
 	traverseCallerNodes []string
+	traverseCallersCut  bool
 	traverseCallees     []cgports.CallEdgeRef
 	traverseCalleeNodes []string
+	traverseCalleesCut  bool
+	traverseRequests    []cgapp.TraversalRequest
 	history             map[string][]cgdomain.CallGraphRecord
 	getErr              error
 	Err                 error
@@ -1121,22 +1124,77 @@ func (f *FakeQueryCallGraph) SetTraverseCallees(edges []cgports.CallEdgeRef, nod
 	f.traverseCalleeNodes = nodes
 }
 
-func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, []string, error) {
-	if f.Err != nil {
-		return nil, nil, f.Err
-	}
+// SetTraverseCallersTruncated makes the next caller traversal report that it
+// stopped holding an unexpanded frontier. It is a separate setter from the
+// answer itself because the two are independent: the same nodes and edges are
+// returned whether or not the walk had more to follow, which is the whole
+// difference the marker exists to state.
+func (f *FakeQueryCallGraph) SetTraverseCallersTruncated(truncated bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return scopeEdgeRefs(f.traverseCallers, scope), f.traverseCallerNodes, nil
+	f.traverseCallersCut = truncated
 }
 
-func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, []string, error) {
+// SetTraverseCalleesTruncated is SetTraverseCallersTruncated for the other
+// direction.
+func (f *FakeQueryCallGraph) SetTraverseCalleesTruncated(truncated bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.traverseCalleesCut = truncated
+}
+
+// TraversalRequests returns every request the fake was asked, in order, so a
+// test can assert what the command plumbed through — the depth bound and the
+// progress reporter included.
+func (f *FakeQueryCallGraph) TraversalRequests() []cgapp.TraversalRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]cgapp.TraversalRequest(nil), f.traverseRequests...)
+}
+
+// narrateTraversal reports one level per node the fake is about to return.
+//
+// The fake narrates for the same reason scopeEdgeRefs applies the scope rather
+// than returning everything: a double that ignored req.Progress would pass
+// whether or not the command plumbed the reporter through, which is precisely
+// the wiring a test of the progress output is checking.
+func narrateTraversal(req cgapp.TraversalRequest, nodes []string) {
+	if req.Progress == nil {
+		return
+	}
+	for i := range nodes {
+		req.Progress.Advance(i+1, i)
+	}
+}
+
+func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, req cgapp.TraversalRequest) (cgapp.TraversalResult, error) {
 	if f.Err != nil {
-		return nil, nil, f.Err
+		return cgapp.TraversalResult{}, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return scopeEdgeRefs(f.traverseCallees, scope), f.traverseCalleeNodes, nil
+	f.traverseRequests = append(f.traverseRequests, req)
+	narrateTraversal(req, f.traverseCallerNodes)
+	return cgapp.TraversalResult{
+		Edges:     scopeEdgeRefs(f.traverseCallers, req.Scope),
+		Nodes:     f.traverseCallerNodes,
+		Truncated: f.traverseCallersCut,
+	}, nil
+}
+
+func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, req cgapp.TraversalRequest) (cgapp.TraversalResult, error) {
+	if f.Err != nil {
+		return cgapp.TraversalResult{}, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.traverseRequests = append(f.traverseRequests, req)
+	narrateTraversal(req, f.traverseCalleeNodes)
+	return cgapp.TraversalResult{
+		Edges:     scopeEdgeRefs(f.traverseCallees, req.Scope),
+		Nodes:     f.traverseCalleeNodes,
+		Truncated: f.traverseCalleesCut,
+	}, nil
 }
 
 // ---- example context ----

@@ -71,7 +71,12 @@ func TestNew_GOPROXY_DirectRefuses(t *testing.T) {
 
 // TestNew_GOPROXY_OffRefuses: GOPROXY=off is the environment declaring no
 // module fetching. Construction fails, so no fetch-capable command gets as far
-// as a socket, and the message names the offline ways to proceed.
+// as a socket, and the message states the fact and nothing more.
+//
+// It names NO flag. This adapter is built by commands that define different
+// ones, and the single string it used to append named --from-modcache to every
+// caller — including `fetch` and `inspect`, which reject it. Whoever built the
+// adapter knows which command is running and renders the remedy there.
 func TestNew_GOPROXY_OffRefuses(t *testing.T) {
 	t.Setenv("GOPROXY", "off")
 	p, err := proxyadapter.New("", false)
@@ -81,10 +86,12 @@ func TestNew_GOPROXY_OffRefuses(t *testing.T) {
 	if p != nil {
 		t.Error("expected no proxy adapter alongside the refusal")
 	}
-	for _, remedy := range []string{"--from-modcache", "use --recursive"} {
-		if !strings.Contains(err.Error(), remedy) {
-			t.Errorf("refusal does not name the remedy %q: %v", remedy, err)
-		}
+	if !strings.Contains(err.Error(), "no module fetching") {
+		t.Errorf("refusal does not state the fact that stopped the run: %v", err)
+	}
+	if strings.Contains(err.Error(), "--") {
+		t.Errorf("refusal names a flag: this adapter cannot know which command is asking, "+
+			"and a flag one caller accepts another rejects with \"unknown flag\": %v", err)
 	}
 }
 

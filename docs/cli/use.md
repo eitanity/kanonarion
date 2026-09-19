@@ -131,7 +131,7 @@ summary - it says in both modes, and the exit code is the same.
 | `copied` | This run wrote the module into the cache |
 | `already_present` | The module was in the cache before this run; its files were left untouched and its recorded hash was re-verified |
 | `failed` | The module owed bytes and did not get them; `error` says why |
-| `no_artefact` | There is nothing to copy and never will be; `no_artefact_reason` says what the module is |
+| `no_artefact` | This walk holds nothing to copy for the module; `no_artefact_reason` says what the module is |
 
 `cache_path` is relative to `mod_cache`, and is present for the modules the
 cache holds. `in_cache` is `copied` + `already_present` - the numerator of the
@@ -142,18 +142,22 @@ the reader to tell an empty answer from an unmeasured one.
 
 ## Modules with no artefact to copy
 
-A `--recursive` run over a project walk selects modules that have no artefact
-anywhere in the store, and never will:
+A run selects nodes the store holds no artefact for. Three of the four kinds have
+none anywhere and never will:
 
 | Selected node | Why there is nothing to copy | Does the build need it? |
 |---|---|---|
 | the project's own root at `@local` | it is your checkout; nothing published it | no - `go` reads it from the working tree |
 | `stdlib@v<toolchain>` | ships with the toolchain, not as a module | no - `go` reads it from `GOROOT` |
 | a require redirected by a local `replace` | the coordinate names the original require, which was never fetched | no - `go` reads the replacement from disk |
+| a requirement beyond the walk's depth bound | `stages.fetch.max_depth` stopped the walk before it, so it was never fetched | **yes** - raise or drop the bound and re-walk |
 
 These are counted separately, named in the summary line, and do **not** make the
-run report a loss or change the exit code. A cache missing only these is
-complete for a `go build`.
+run report a loss or change the exit code: the run copied everything it had, and
+reporting a loss for bytes nothing ever acquired would hide a real one. A cache
+missing only the first three is complete for a `go build`. One missing a
+depth-bounded requirement is not — the walk that fed it says so too, exiting 1
+with `depth_bounded: max_depth=N`.
 
 ## Exit codes
 

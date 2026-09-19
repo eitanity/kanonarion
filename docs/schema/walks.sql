@@ -43,9 +43,13 @@ CREATE TABLE IF NOT EXISTS walks (
     -- Verified on every read. A mismatch is treated as an integrity failure.
     content_hash     TEXT NOT NULL,
 
-    -- node_count and failure_count are denormalised summaries for list views.
-    -- They are computed from PerNodeResults at write time and stored to avoid
-    -- deserialising the full BLOB for summary queries.
+    -- node_count and failure_count are denormalised summaries for list views,
+    -- computed at write time to avoid deserialising the full BLOB for summary
+    -- queries. node_count is the GRAPH's node count, which is what the walk line
+    -- and walk-show print; failure_count is the per-node results that are
+    -- failures. A walk that leaves a node unfetched on purpose — shallow, or
+    -- bounded by a max_depth policy — has more graph nodes than results, so the
+    -- two are read off different parts of the record.
     node_count       INTEGER NOT NULL DEFAULT 0,
     failure_count    INTEGER NOT NULL DEFAULT 0,
 

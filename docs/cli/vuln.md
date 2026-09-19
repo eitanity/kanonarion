@@ -43,6 +43,68 @@ nothing in it says how many entries it should have had.
 
 The module must be fetched first (`kanonarion walk` or `kanonarion fetch`).
 
+### The scan covers Go code, and says where it does not
+
+A cgo module can compile a whole C library into your binary from source its own
+published zip ships — `github.com/mattn/go-sqlite3` carries the entire SQLite
+amalgamation. `govulncheck` does not look at that C, and kanonarion has no
+non-Go advisory source to check it against. So the scan's verdict for such a
+module covers its Go code and nothing else.
+
+Until now that gap was silent: a module shipping SQLite and a module with no C
+in it both read `Clean`, and no reader could tell them apart. Every read now
+states which of **five** situations a module is in, on the text surface and as
+a `native_coverage` field in `--json`:
+
+| `state` | what it means |
+|---|---|
+| `not_examined` | no native record is held — **nobody looked**. Not an absence. Run `kanonarion native <module>@<version>` |
+| `absent` | measured: the module compiles no native source of its own and links nothing external |
+| `linked_not_shipped` | it links an external native library the host provides; no version can be read from these bytes |
+| `present_unidentified` | it compiles native source in and no recipe names the library, so no component could be named |
+| `present_identified` | it compiles a **named** library in — the component is stated, and its advisories were **not** searched |
+
+`unsearched_components` beside it is the number a machine acts on: how many
+identified native components in this module were never checked against any
+advisory database. It is zero in every state but `present_identified`.
+
+**This states a gap; it never creates a finding.** No `overall_status`, no
+`findings_status` and no finding changes because of it. The statement is derived
+at read time from the module's own native record, so **no scan pipeline version
+is owed** and no stored record is rewritten — a vulnerability record's content
+hash covers what the scan measured, and the scan did not measure this.
+
+Surfaces that carry it:
+
+- **`vuln` and `vuln-show`** — a `Native code:` block under the record, and
+  `native_coverage` in `--json`.
+- **`vuln-scan` and `vuln-scan-show`** — a coverage line stating how many of the
+  walk's modules were examined at all, then a roll-up naming the modules whose
+  native components were not searched and the modules whose native source could
+  not be identified, and `native_coverage` in `--json`. Modules nobody examined
+  are a count, not a list.
+
+The coverage line prints whatever the answer, including the two shapes with no
+roll-up beneath them. A scan that examined **no** module for native code has no
+exception to name, and the sentence saying so is exactly what a reader writing a
+release statement needs:
+
+```
+native code: 0 of 128 module(s) examined for native code compiled into or linked
+into the binary; 0 with an identified component, 0 with native source no recipe
+names, 0 linking an external library it does not ship
+  a module holding no native record was not looked at; that is not a finding of
+  no native code — run: kanonarion native <module>@<version>, or list what is
+  held: kanonarion native-list
+  Kanonarion has no non-Go advisory source, so no advisories were searched for
+  any of it
+```
+
+Matching a native component against an upstream advisory database is a separate
+question, with its own cost: it needs a non-Go advisory source, a version
+comparator that is not semver, and an identity scheme. It is deliberately not
+begun. What is offered here is the truthful statement kanonarion can make today.
+
 
 ### Coverage decides the exit code
 
@@ -399,19 +461,22 @@ mutually exclusive with a positional walk-id and with `--module`.
 has drifted, and a walk record names its scope but not its test axis. See
 [Test scope](walk.md#test-scope---exclude-tests).
 
-**The walk must match this platform.** Selection filters on the current
-environment's `go env GOOS`/`GOARCH`, because build constraints select which
-files compile and reachability follows those files. A store holding walks for
-several platforms therefore never answers a scan from another platform's walk;
-when this platform has no matching walk the scan refuses and names the remedy:
+**The walk must match the declared target.** Selection filters on `--target`,
+which defaults to this host's platform and is never taken from the environment,
+because build constraints select which files compile and reachability follows
+those files. A store holding walks for several platforms therefore never answers
+a scan from another platform's walk; when the declared target has no matching
+walk the scan refuses and names the remedy:
 
 ```
 no succeeded code project walk for example.com/myapp on darwin/arm64 — run: kanonarion walk --gomod ./go.mod
 ```
 
-To scan another platform's walk deliberately, name it by ID:
-`kanonarion vuln-scan <walk-id>`. The progress line states the frame the
-selected walk was resolved in.
+To scan another platform's walk deliberately, declare that platform —
+`kanonarion vuln-scan --target windows/amd64` — or name the walk by ID:
+`kanonarion vuln-scan <walk-id>`, which refuses a target because it has already
+named the walk. The progress line states the frame the selected walk was
+resolved in.
 
 **The walk must still describe this manifest.** The lookup above finds a walk by
 the project's module path, which does not change when the `go.mod` does, so
@@ -519,6 +584,7 @@ the current resolution, and scanning that walk gives a reachability answer again
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it (not platform-filtered; such walks record no platform) |
+| `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. Selects the project walk a scope scan reads, and is the platform govulncheck analyses for. Refused beside a positional walk id or `--module`, which already name the walk. Unknown pairs are refused against `go tool dist list`. `--goos`/`--goarch` set the two halves separately. See [Declaring the build target](walk.md#declaring-the-build-target---target). |
 | `--gomod` | `./go.mod` | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
@@ -1046,6 +1112,16 @@ registration rather than a call. The text form has printed all of it under
 `root:` since the classification existed; `--json` states it under one key so a
 consumer need not parse prose.
 
+Each hop of a stored route also carries a `dispatch` block saying how control
+reached it — a direct call, an interface dispatch naming the interface crossed
+and the module supplying the implementation, a reflection edge, or a stated
+refusal with the reason the call graph could not corroborate it. See
+[`reachability`](reachability.md#how-control-reached-each-hop) for the full
+vocabulary. Unlike `route_root` it is computed at SCAN time and sealed with the
+record, because a route is inside the content hash: **routes already in the store
+stay unannotated until their finding is re-scanned** with `vuln-scan --force`. A
+hop that says nothing is never a direct call.
+
 `route_root` is **null**, never absent, on a finding that records no route:
 there is no root to classify, and an advisory that names no symbols for the
 module path explains that absence already. The key missing entirely is a
@@ -1092,6 +1168,8 @@ counts them: those rows are history, not the answer a scan would give today. In
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
 | `--gomod <path>` | _(none)_ | Answer in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The notice names the walk's scope and frame, and states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--history` | `false` | List all scan records across walks, snapshots and pipeline generations, marking superseded rows |
 | `--json` | `false` | Emit record as JSON |
 

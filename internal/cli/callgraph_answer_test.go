@@ -128,7 +128,7 @@ func TestRunCallersTransitive_UnresolvedInterfaceDispatch(t *testing.T) {
 	)
 	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	if err := runCallersTransitive(context.Background(), "example.com/m.(*Target).Do", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+	if err := runCallersTransitive(context.Background(), "example.com/m.(*Target).Do", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "answer: UNRESOLVED") {
@@ -142,7 +142,7 @@ func TestRunCalleesTransitive_ResolvedAbsent(t *testing.T) {
 	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Leaf", Symbol: "Leaf"}}, nil))
 	var buf bytes.Buffer
-	if err := runCalleesTransitive(context.Background(), "example.com/m.Leaf", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+	if err := runCalleesTransitive(context.Background(), "example.com/m.Leaf", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "answer: RESOLVED-ABSENT") {

@@ -133,8 +133,8 @@ func TestVulnShow_ServesTheConsumerFrameNotTheIsolatedStandDown(t *testing.T) {
 	uc.AddRecords(coord, twoFrameLedger(t, vulntest.MustNew("test", "v1"))...)
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf)
+	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, &buf)
 	if err != nil {
 		t.Fatalf("runVulnShow: %v", err)
 	}
@@ -156,8 +156,8 @@ func TestVulnShow_ReportsTheDeclinedIsolatedFrameAsAnAside(t *testing.T) {
 	uc.AddRecords(coord, twoFrameLedger(t, vulntest.MustNew("test", "v1"))...)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
+	if err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, &buf); err != nil {
 		t.Fatalf("runVulnShow: %v", err)
 	}
 	got := buf.String()
@@ -184,8 +184,8 @@ func TestVulnShow_NoAsideWhenOnlyOneFrameWasMeasured(t *testing.T) {
 	}))
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
+	if err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, &buf); err != nil {
 		t.Fatalf("runVulnShow: %v", err)
 	}
 	if strings.Contains(buf.String(), "Isolated frame") {
@@ -307,8 +307,8 @@ func TestVulnShow_NoAsideWhenTheIsolatedRecordAnsweredNoReachabilityQuestion(t *
 	uc.AddRecords(coord, sealed, consumer)
 
 	var buf bytes.Buffer
-	if rerr := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); rerr != nil {
+	if rerr := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, &buf); rerr != nil {
 		t.Fatalf("runVulnShow: %v", rerr)
 	}
 	if strings.Contains(buf.String(), "Isolated frame") {

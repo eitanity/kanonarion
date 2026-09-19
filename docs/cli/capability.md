@@ -111,9 +111,17 @@ semantics.
 
 ## Partial graphs
 
-When the call graph did not fully resolve (`OverallStatus` other than
-`Extracted`), the report is flagged `Partial` and carries a caveat: the
-capability set is a lower bound, never presented as clean.
+A report is flagged `Partial` and carries a caveat whenever it does not rest on a
+fully extracted graph. The caveat says which of two things happened, because they
+send a reader to different places:
+
+- **The analysis could not finish** — `Partial`, `LoadFailed`, `OutOfMemory`,
+  `Cancelled`, `ExtractionFailed` or an unrecorded status. The capability set is
+  a lower bound, never presented as clean.
+- **The module was excluded from call-graph analysis by configuration**
+  (`callgraph.exclude`). No graph was produced and nothing was searched for, so
+  the empty set is not a measurement. It is the operator's own decision, not a
+  tool failure to investigate.
 
 ## Flags
 
@@ -190,6 +198,34 @@ with a caveat and the added/removed sets are provisional. JSON output adds
 
 - **Requires:** `kanonarion callgraph <module>@<version>` - the stored call
   graph the analysis reads.
+
+A coordinate the store has no call graph for exits `4`, not `20`: the request
+was well formed and the store was empty. The message names the invocation that
+produces the record, with the coordinate filled in, so it can be run as printed.
+
+```
+$ kanonarion capability example.com/mod@v1.2.0
+no callgraph record for example.com/mod@v1.2.0 - analyse it first:
+  kanonarion callgraph example.com/mod@v1.2.0
+$ echo $?
+4
+```
+
+"Absent" is asked of the store rather than asserted over it. Where the store
+does hold the coordinate, but only under a pipeline version this build no longer
+serves, the refusal says which - the same sentence `callgraph-show` prints from
+the same rows, because it is the same fact. The exit code and the remedy do not
+change; re-analysing is what fixes both.
+
+```
+$ kanonarion capability golang.org/x/sys@v0.47.0
+no callgraph record for golang.org/x/sys@v0.47.0 at pipeline 0.7.0 - the store
+holds it at superseded pipeline 0.5.0, 0.6.0, which this build does not serve.
+Re-analyse it:
+  kanonarion callgraph golang.org/x/sys@v0.47.0
+```
+
+A malformed coordinate, an unreadable store or an unknown flag stays `20`.
 
 ## If you also run capslock
 

@@ -146,7 +146,9 @@ the store already holds and refuses a module it has not fetched.`,
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			scopeFlags.bind(cmd)
+			if berr := scopeFlags.bind(cmd); berr != nil {
+				return berr
+			}
 			return runUsage(cmd.Context(), args[0], scopeFlags, stdout, stderr)
 		},
 	}
@@ -180,7 +182,7 @@ func usageWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoord
 	sel := consumerSelector{
 		gomod:     f.gomod,
 		walkID:    f.walkID,
-		toolchain: gotoolchain.Version(f.toolchain),
+		toolchain: f.toolchainPreference(),
 	}
 	bound, err := bindConsumer(ctx, ctr.QueryWalks, ctr.QueryCallGraph, sel)
 	if err != nil {

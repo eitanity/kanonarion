@@ -48,24 +48,33 @@ func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
+			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout)
 		},
 	}
 
 	return cmd
 }
 
-func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
+func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, natives nativeRecordReader, stdout io.Writer) error {
 	// runs is unused on this path — it only explains a walk-scoped miss, and
 	// this command names no walk — but it is threaded rather than nil so the
 	// two entry points cannot drift into different behaviour. walks is used:
 	// the no-record refusal names a succeeded walk if one exists.
-	return runVulnShow(ctx, arg, "", "", false, jsonOut, false, uc, runs, walks, graphs, stdout)
+	// `vuln` names no build, so it declares no target: the zero value settles
+	// nothing and leaves the composed read exactly as it was.
+	return runVulnShow(ctx, arg, "", "", buildTargetFlags{}, false, jsonOut, false, uc, runs, walks, graphs, natives, stdout)
 }
 
 // printVulnRecord renders a single VulnerabilityRecord in human-readable form;
 // shared between `vuln`, `vuln-show`, and any future text presenter.
-func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc) {
+//
+// cov is what the module's own artefact was measured to compile into the binary
+// from native source it ships. It is derived at read time from the native
+// record, never from this record: a vulnerability record says what the scan
+// measured, and the scan measured Go code. Nil means the caller derives no such
+// statement, and no native line is printed — an absent line is "this surface
+// does not say", never "there is no native code".
+func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc, cov *nativeCoverage) {
 	if classify == nil {
 		classify = unclassifiedRoutes
 	}
@@ -122,6 +131,11 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 			rec.DatabaseSnapshot.RetrievedAt().UTC().Format(time.RFC3339),
 			vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt()))
 	}
+	// The native statement sits above the findings, not below them. A module that
+	// ships a C library nobody searched advisories for can have a long, clean Go
+	// findings list, and a reader who has scrolled past it has already formed the
+	// verdict the statement exists to qualify.
+	printNativeCoverage(stdout, cov)
 	// The coverage caveat is printed from the coverage axis, and printing it does
 	// not end the record: a coverage gap and an advisory match are independent
 	// facts, and a record carrying both owes both lines. Returning after the reason
@@ -297,8 +311,20 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 				caveat = " (hops carry no module version)"
 			}
 			_, _ = fmt.Fprintf(stdout, "      route:    entry point first%s\n", caveat)
+			// How control reached each hop, printed under it. A route renders a
+			// direct call and an interface dispatch identically without it, and the
+			// second is the one where the module that supplied the implementation
+			// need not be on the route at all.
+			annotated := routeStatesHopDispatch(route)
+			if !annotated {
+				_, _ = fmt.Fprintln(stdout, "        (no hop says how control reached it: this route was stored before the "+
+					"dispatch annotation was recorded, so no hop here is a direct call unless a re-scan says so)")
+			}
 			for _, hop := range route {
 				_, _ = fmt.Fprintf(stdout, "        %s\n", hop)
+				if annotated {
+					_, _ = fmt.Fprintf(stdout, "          reached by: %s\n", hopDispatchLine(hop.Dispatch))
+				}
 			}
 			// The evidence behind the tag on the heading, printed where the route it
 			// describes is. Naming the root kind is a fact about what starts the
@@ -347,4 +373,16 @@ func firstScannedAtAnchorNote(coord coordinate.ModuleCoordinate) string {
 	return "anchored per (module, version, pipeline_version, snapshot): first validation against this " +
 		"advisory snapshot at this pipeline version, not first awareness — a new snapshot starts a new " +
 		"anchor. For the first observation across snapshots and generations run: " + firstObservationCommand(coord)
+}
+
+// routeStatesHopDispatch reports whether any hop of a stored route says how
+// control reached it. It is routeStatesDispatch over the domain type, for the
+// surface that renders the record's own frames rather than the curated ones.
+func routeStatesHopDispatch(route vuldomain.ReachabilityRoute) bool {
+	for _, hop := range route {
+		if hop.Dispatch.IsRecorded() {
+			return true
+		}
+	}
+	return false
 }

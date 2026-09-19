@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -171,6 +172,10 @@ type reachabilityFlags struct {
 	vulnID    string
 	walkID    string
 	gomod     string
+	// target is the platform the --gomod frame selects its walk for. --local
+	// measures the tree in front of it and --walk-id names a walk that recorded
+	// its own platform, so neither can act on a declaration.
+	target buildTargetFlags
 }
 
 func newReachabilityCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -233,6 +238,7 @@ frame — never another project's — and states that restriction in its output.
 	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "answer the stored query in the frame of this walk's scans")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "",
 		"answer the stored query in the frame of the latest project walk for this go.mod; takes a path, e.g. --gomod "+defaultGoModPath)
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -264,6 +270,12 @@ func runReachabilityStoredQuery(ctx context.Context, coordArg string, f reachabi
 	if coordArg == "" {
 		return fmt.Errorf("reachability --vuln requires a <module>@<version> argument")
 	}
+	// The frame this query answers in is selected by platform when --gomod names
+	// it. A walk id names one walk, whose record already says which platform it
+	// resolved under, so the declaration is refused there rather than ignored.
+	if terr := resolveReadTarget(ctx, f.target, "reachability --vuln", f.walkID == "" && gomodSet, f.gomod); terr != nil {
+		return terr
+	}
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
@@ -283,6 +295,12 @@ func runReachabilityLocalProbe(ctx context.Context, coordArg string, f reachabil
 	if coordArg != "" {
 		return fmt.Errorf("reachability --local does not take a module argument; use '<module>@<version> --vuln <id>' to query a stored module")
 	}
+	// The probe measures the tree in front of it, in the frame that tree builds
+	// in. There is no stored walk for a declaration to select, so it is refused
+	// by name on the same terms as --walk-id and --gomod below.
+	if terr := resolveReadTarget(ctx, f.target, "reachability --local", false, ""); terr != nil {
+		return terr
+	}
 	// The local probe measures the working tree it was pointed at, so it
 	// already has a build: accepting a second name for one would invite the
 	// reader to think the probe was filtered by it. Both the value and cobra's
@@ -300,6 +318,66 @@ func runReachabilityLocalProbe(ctx context.Context, coordArg string, f reachabil
 // surfaced as a non-zero, actionable diagnostic (never a false "not reachable"),
 // distinguishing "not analysed" from "analysed, genuinely not affected/reachable".
 func runVulnReachability(
+	ctx context.Context,
+	arg, vulnID, walkID, gomod string,
+	gomodSet, jsonOut bool,
+	uc QueryVulnUseCase,
+	walks QueryWalksUseCase,
+	graphs QueryCallGraphUseCase,
+	stdout io.Writer,
+) error {
+	err := runVulnReachabilityQuery(ctx, arg, vulnID, walkID, gomod, gomodSet, jsonOut, uc, walks, graphs, stdout)
+	if err == nil || !jsonOut {
+		return err
+	}
+	// A --json run that refuses still has something to say, and it was saying it
+	// on stderr alone: stdout was EMPTY for every coordinate the store holds no
+	// verdict for. A consumer reading stdout could not tell that from a crash, so
+	// the refusal is published in the shape the surface's other answers take,
+	// with the same exit code as before. The message is the one the text surface
+	// prints, so the two cannot drift.
+	if encErr := writeReachabilityRefusalJSON(stdout, arg, vulnID, err); encErr != nil {
+		return encErr
+	}
+	return err
+}
+
+// reachabilityRefusalJSON is a refusal published as data.
+//
+// It carries no reachability_state. There is no verdict to render, and putting a
+// word in that field is precisely the false stand-down every refusal on this
+// surface exists to prevent — an absent answer is not "not affected".
+type reachabilityRefusalJSON struct {
+	Module  string `json:"module"`
+	Version string `json:"version,omitempty"`
+	VulnID  string `json:"vuln_id"`
+	// Answered is always false. It is emitted rather than implied by the absent
+	// verdict so a consumer can branch on one key instead of on which keys are
+	// missing.
+	Answered bool `json:"answered"`
+	// Refusal is the operator-facing sentence, verbatim, including the remedy it
+	// names. A machine reader gets the same words as a human one.
+	Refusal string `json:"refusal"`
+}
+
+// writeReachabilityRefusalJSON publishes a refusal on stdout.
+func writeReachabilityRefusalJSON(stdout io.Writer, arg, vulnID string, refusal error) error {
+	out := reachabilityRefusalJSON{Module: arg, VulnID: vulnID, Refusal: refusal.Error()}
+	if coord, perr := parseCoordinate(arg); perr == nil {
+		out.Module, out.Version = coord.Path(), coord.Version()
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		return fmt.Errorf("encoding reachability refusal: %w", err)
+	}
+	return nil
+}
+
+// runVulnReachabilityQuery is the query itself. It is separate from the function
+// above only so that every one of its refusals reaches the --json publisher,
+// rather than each return site having to remember.
+func runVulnReachabilityQuery(
 	ctx context.Context,
 	arg, vulnID, walkID, gomod string,
 	gomodSet, jsonOut bool,
@@ -514,6 +592,13 @@ type vulnReachabilityQuery struct {
 	// root is exported-api is still reachable, and naming the root kind is not a
 	// statement that anything is exploitable.
 	RouteRoot *routeRootOutput `json:"route_root,omitempty"`
+	// NegativeSearch is what kanonarion's own read-time call-graph search says
+	// about this negative, and it is on the same payload as the verdict because a
+	// soundness rung is meaningless without the root set it was made against. It
+	// is absent where no search ran — no graph is held for the coordinate, or the
+	// graph names none of the advisory's symbols — which is never "searched and
+	// found nothing".
+	NegativeSearch *negativeSearchOutput `json:"negative_search,omitempty"`
 	// IsolatedAside is what an isolated-frame scan of this module says about the
 	// same advisory, when the answer above came from a consumer-rooted record and
 	// the two frames both hold a verdict. Absent otherwise: an aside beside an
@@ -524,6 +609,129 @@ type vulnReachabilityQuery struct {
 	// negative the reader has to take on trust.
 	WithdrawnAt string `json:"withdrawn_at,omitempty"`
 	ScannedAt   string `json:"scanned_at,omitempty"`
+}
+
+// negativeSearchOutput is the read-time search's own claims, in the curated
+// JSON shape.
+//
+// It exists so a consumer can see WHICH ROOTING produced the rung beside it.
+// ArtifactKind decides how the graph is rooted and was on no read surface at
+// all, so a reader could not tell an answer rooted at a library's public API
+// from one rooted at every function an application ships — which is exactly the
+// difference between a negative that can be confirmed and one that cannot.
+//
+// EntryPointRoots is emitted even when zero, because zero is the answer "this
+// graph named no entry point" and is the reason a clean search did not confirm.
+// The two path fields are two claims and are never collapsed: the entry-point
+// one decides the rung, the whole-graph one is what the shipped code does.
+type negativeSearchOutput struct {
+	// NotSearched is why no search stands behind the rung, and is absent where
+	// one does. Its presence means every field below it is a zero value because
+	// nothing was measured, not because the measurement came back empty — the two
+	// were indistinguishable while a skipped search published no object at all.
+	NotSearched         string `json:"not_searched,omitempty"`
+	ArtifactKind        string `json:"artifact_kind"`
+	Fidelity            string `json:"fidelity,omitempty"`
+	EntryPointRoots     int    `json:"entry_point_roots"`
+	EntryPointPathFound bool   `json:"entry_point_path_found"`
+	WholeGraphPathFound bool   `json:"whole_graph_path_found"`
+	// InRecordedFrame says whether the graph searched is a graph of the build the
+	// record was measured in. It decides what a found path may mean and is
+	// emitted always, never inferred from the fields above.
+	InRecordedFrame bool                      `json:"in_recorded_frame"`
+	Routes          []reachabilityRouteOutput `json:"routes,omitempty"`
+	// ReflectiveDispatch is what the search could NOT follow. Where a search ran,
+	// its zero counts are evidence — the graph was looked at and holds no such
+	// site — which an absent key cannot say, so it is emitted rather than omitted.
+	//
+	// It is emitted under NotSearched too, on the same terms as every field above
+	// it: present, zero, and meaning nothing was measured. NotSearched is the one
+	// key that says which of the two a zero here is, and it says it once for the
+	// whole object rather than each field carrying its own absence.
+	ReflectiveDispatch reflectiveDispatchOutput `json:"reflective_dispatch"`
+}
+
+// reflectiveDispatchOutput is the reflective dispatch sites in the graph the
+// search ran over, in the curated JSON shape.
+//
+// The two counts are both here and neither is the other's summary. SiteCount is
+// how many calls the analysis could not bound; ReachableSiteCount is how many of
+// those sit in code anything the analysis can name as an entry point reaches. A
+// site nothing reaches hides no route into the module, so a consumer that weighs
+// a negative on the first number alone will weaken it for no reason. On the
+// store this was built against, every site found is of exactly that kind.
+//
+// A "reflective dispatch site" is a call to one of the five reflect.Value
+// methods that choose their target at run time: Call, CallSlice, Method,
+// MethodByName, FieldByName. It is NOT a call into package reflect — almost all
+// of those name one callee and bound perfectly, and counting them here would
+// overstate this by about two orders of magnitude.
+type reflectiveDispatchOutput struct {
+	SiteCount          int `json:"site_count"`
+	ReachableSiteCount int `json:"reachable_site_count"`
+	// Sites names each one so a reader can go and look. Absent when there are
+	// none, which the counts above have already stated.
+	Sites []reflectiveDispatchSiteOutput `json:"sites,omitempty"`
+}
+
+// reflectiveDispatchSiteOutput is one such call site.
+type reflectiveDispatchSiteOutput struct {
+	Caller   string `json:"caller"`
+	Callee   string `json:"callee"`
+	CallSite string `json:"call_site,omitempty"`
+	// ReachableFromEntryPoint is emitted on every site, false included: it is the
+	// field that says whether the site qualifies anything, and it was derived for
+	// every site listed.
+	ReachableFromEntryPoint bool `json:"reachable_from_entry_point"`
+}
+
+// negativeSearchToOutput renders the search, or nil when none ran.
+func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc) *negativeSearchOutput {
+	if s == nil {
+		return nil
+	}
+	out := &negativeSearchOutput{
+		NotSearched:         s.NotSearched,
+		ArtifactKind:        s.ArtifactKind,
+		Fidelity:            s.Fidelity,
+		EntryPointRoots:     s.EntryPointRoots,
+		EntryPointPathFound: s.PathFound,
+		WholeGraphPathFound: s.ShippedCodePathFound,
+		InRecordedFrame:     s.InRecordedFrame,
+		ReflectiveDispatch:  reflectiveDispatchToOutput(s),
+	}
+	// Every route the search found, from either rooting. A route this tool
+	// computed and did not publish is the one outcome a reachability surface must
+	// not produce.
+	var routes []vuldomain.ReachabilityRoute
+	if s.PathFound {
+		routes = append(routes, s.Route)
+	}
+	if s.ShippedCodePathFound {
+		routes = append(routes, s.ShippedCodeRoute)
+	}
+	out.Routes = routesToOutput(routes, classify)
+	return out
+}
+
+// reflectiveDispatchToOutput renders the search's reflective dispatch sites.
+//
+// The reachable count is asked of the domain rather than counted again here, so
+// the number beside the list can never disagree with the list.
+func reflectiveDispatchToOutput(s *vuldomain.NegativeSearch) reflectiveDispatchOutput {
+	out := reflectiveDispatchOutput{
+		SiteCount:          len(s.ReflectiveDispatch),
+		ReachableSiteCount: s.ReachableReflectiveDispatch(),
+	}
+	for _, site := range s.ReflectiveDispatch {
+		out.Sites = append(out.Sites, reflectiveDispatchSiteOutput{
+			Caller:                  site.Caller,
+			Callee:                  site.Callee,
+			CallSite:                site.CallSite,
+			ReachableFromEntryPoint: site.ReachableFromEntryPoint,
+		})
+	}
+	return out
 }
 
 // reachabilityRouteOutput is one route in the curated JSON shape. Versioned
@@ -619,12 +827,20 @@ func rootToOutput(root vuldomain.RouteRoot) *routeRootOutput {
 }
 
 // reachabilityFrameOutput is one hop.
+//
+// Dispatch is how control reached it, as the scan sealed it into the record. It
+// is emitted on every hop that states one and omitted on every hop that does
+// not, and the omission is the answer "this route does not say" — never "a
+// direct call". A machine cannot read the prose the text surface prints beside a
+// route, so a hop annotated there and bare here would be a route whose meaning
+// depends on which surface you read it from.
 type reachabilityFrameOutput struct {
-	Module   string `json:"module,omitempty"`
-	Version  string `json:"version,omitempty"`
-	Package  string `json:"package,omitempty"`
-	Receiver string `json:"receiver,omitempty"`
-	Symbol   string `json:"symbol,omitempty"`
+	Module   string                `json:"module,omitempty"`
+	Version  string                `json:"version,omitempty"`
+	Package  string                `json:"package,omitempty"`
+	Receiver string                `json:"receiver,omitempty"`
+	Symbol   string                `json:"symbol,omitempty"`
+	Dispatch vuldomain.HopDispatch `json:"dispatch,omitzero"`
 }
 
 // routesToOutput renders stored routes for the curated JSON shape, classifying
@@ -645,6 +861,7 @@ func routesToOutput(routes []vuldomain.ReachabilityRoute, classify routeRootFunc
 			frames = append(frames, reachabilityFrameOutput{
 				Module: f.ModulePath, Version: f.ModuleVersion,
 				Package: f.Package, Receiver: f.Receiver, Symbol: f.Symbol,
+				Dispatch: f.Dispatch,
 			})
 		}
 		out = append(out, reachabilityRouteOutput{
@@ -814,6 +1031,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		SoundnessReason:   soundnessReason,
 		Routes:            routes,
 		RouteRoot:         firstRouteRoot(routes),
+		NegativeSearch:    negativeSearchToOutput(f.NegativeSearch, classify),
 		ScannedAt:         ledgerStamp(rec.ScannedAt),
 	}, nil
 }
@@ -924,8 +1142,16 @@ func printRoute(stdout io.Writer, res vulnReachabilityQuery) {
 		label = "  route (entry point first; hops carry no module version, so it cannot be checked against another build):"
 	}
 	_, _ = fmt.Fprintln(stdout, label)
+	annotated := routeStatesDispatch(r.Frames)
+	if !annotated {
+		_, _ = fmt.Fprintln(stdout, "    (no hop on this route says how control reached it: the route was stored before the "+
+			"dispatch annotation was recorded, so no hop here is a direct call unless a re-scan says so)")
+	}
 	for _, f := range r.Frames {
 		_, _ = fmt.Fprintf(stdout, "    %s\n", frameLine(f))
+		if annotated {
+			_, _ = fmt.Fprintf(stdout, "      reached by: %s\n", hopDispatchLine(f.Dispatch))
+		}
 	}
 	printRouteRoot(stdout, r.Root)
 	if len(res.Routes) > 1 {
@@ -970,6 +1196,64 @@ func printSoundness(stdout io.Writer, res vulnReachabilityQuery) {
 		return
 	}
 	_, _ = fmt.Fprintf(stdout, "  soundness: %s — %s\n", res.Soundness, res.SoundnessReason)
+}
+
+// printReflectiveDispatch prints what the read-time search could not follow.
+//
+// It prints under a negative because that is the verdict it qualifies — or, far
+// more often, declines to qualify. A reflective dispatch site is a call to one
+// of the five reflect.Value methods that pick their target at run time, so the
+// analysis cannot say where it goes and a route could hide behind it.
+//
+// Three things are said, in this order, because each is useless without the one
+// before it. How many sites there are. How many of those anything the analysis
+// can name as an entry point actually reaches — a site nothing reaches cannot be
+// on a route INTO this module, and saying only the first number would make a
+// negative look weaker for no reason. Then the sites themselves, so a reader can
+// go and look rather than take the count on trust.
+//
+// A search that never ran prints nothing at all. There is a difference between
+// "the graph holds none" and "no graph was searched", and the second is already
+// stated on the rung above.
+func printReflectiveDispatch(stdout io.Writer, search *negativeSearchOutput) {
+	if search == nil || search.NotSearched != "" {
+		return
+	}
+	d := search.ReflectiveDispatch
+	if d.SiteCount == 0 {
+		_, _ = fmt.Fprintln(stdout,
+			"  reflective dispatch: none — the graph searched holds no call to a reflect method that picks its target at run time,"+
+				" so no reflective call site could be hiding a route this search failed to follow")
+		return
+	}
+	_, _ = fmt.Fprintf(stdout, "  reflective dispatch: %d %s the search could not follow, %s\n",
+		d.SiteCount, pluralise(d.SiteCount, "call site", "call sites"), reachableSitesPhrase(d.ReachableSiteCount))
+	for _, site := range d.Sites {
+		where := ""
+		if site.CallSite != "" {
+			where = " at " + site.CallSite
+		}
+		_, _ = fmt.Fprintf(stdout, "    %s -> %s%s — %s\n",
+			site.Caller, site.Callee, where, reachableSiteNote(site.ReachableFromEntryPoint))
+	}
+}
+
+// reachableSitesPhrase states how many of the sites are reachable, and what that
+// means for the negative printed above it.
+func reachableSitesPhrase(reachable int) string {
+	if reachable == 0 {
+		return "none of them reachable from an entry point the analysis can name — none can be on a route into this module, so they do not qualify this answer"
+	}
+	return strconv.Itoa(reachable) + " of them " + pluralise(reachable, "is", "are") +
+		" reachable from an entry point the analysis can name, so a route could hide there"
+}
+
+// reachableSiteNote says which of the two a single site is.
+func reachableSiteNote(reachable bool) string {
+	if reachable {
+		return "reachable from an entry point"
+	}
+	return "not reachable from any entry point the analysis can name"
 }
 
 // frameLine renders one hop, omitting the parts the analyser could not supply.
@@ -1030,6 +1314,7 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 		// negative is the one an operator acts on by NOT upgrading.
 		_, _ = fmt.Fprintf(stdout, "%s affects %s but is NOT reachable [confidence: %s, %s]\n", res.VulnID, coord, res.Confidence, derivationLine(res))
 		printSoundness(stdout, res)
+		printReflectiveDispatch(stdout, res.NegativeSearch)
 	case verdictPackageLevelOnly:
 		// Says plainly that the module IS affected, then that the question of
 		// whether the vulnerable code runs has no answer here and why. The route is
@@ -1296,4 +1581,38 @@ func ancestryLine(a *rootAncestryOutput) string {
 		line += "; at least one hop is a reference, so the value was registered rather than invoked"
 	}
 	return line
+}
+
+// routeStatesDispatch reports whether any hop of a rendered route says how
+// control reached it.
+//
+// It decides between two renderings rather than two labels. A route where every
+// hop is silent was stored before the annotation existed, and saying that once
+// under the route is worth more than repeating "not recorded" on every hop; a
+// route where some hops speak needs the per-hop lines, because there the silence
+// of one hop is a measurement about that hop.
+func routeStatesDispatch(frames []reachabilityFrameOutput) bool {
+	for _, f := range frames {
+		if f.Dispatch.IsRecorded() {
+			return true
+		}
+	}
+	return false
+}
+
+// hopDispatchLine renders one hop's dispatch annotation for a person.
+//
+// Every branch says something. Nothing here may render as a direct call on the
+// strength of an absence — the route's first hop says it is the first hop, a hop
+// the call graph could not corroborate says so and why, and a hop carrying
+// nothing at all says that too.
+func hopDispatchLine(d vuldomain.HopDispatch) string {
+	switch {
+	case !d.IsRecorded():
+		return "not recorded — this hop was stored before the dispatch annotation existed; it is not a direct call"
+	case d.Kind == vuldomain.DispatchRouteEntry:
+		return "the route's entry point — there is no hop above it, so there is no call site to read"
+	default:
+		return d.String()
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -137,6 +138,34 @@ func (s *fakeNativeStore) GetNativeRecord(_ context.Context, coord coordinate.Mo
 	}
 	rec, ok := s.records[coord]
 	return rec, ok, nil
+}
+
+// fakeAuditSink collects the assurance-log events a run appended, so a test can
+// assert both that a write was witnessed and that a cache hit witnessed
+// nothing.
+type fakeAuditSink struct {
+	events []audit.Event
+	err    error
+}
+
+func (s *fakeAuditSink) RecordEvent(e audit.Event) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.events = append(s.events, e)
+	return nil
+}
+
+// typed returns the events of one type, which is what every assertion here is
+// about: the sink is shared with whatever else a run might append.
+func (s *fakeAuditSink) typed(t audit.EventType) []audit.Event {
+	out := []audit.Event{}
+	for _, e := range s.events {
+		if e.Type == t {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // failingSourceReader stands in for a Go file whose header cannot be parsed.

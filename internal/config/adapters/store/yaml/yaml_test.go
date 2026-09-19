@@ -47,8 +47,8 @@ callgraph:
 	if cfg.Preferences.LogLevel != "debug" {
 		t.Errorf("log_level: got %q, want %q", cfg.Preferences.LogLevel, "debug")
 	}
-	if got := cfg.LicenseOverrides["golang.org/x/mod"]; got != "MIT" {
-		t.Errorf("license_overrides: got %q, want MIT", got)
+	if got := cfg.LicenseOverrides["golang.org/x/mod"]; got.SPDX != "MIT" {
+		t.Errorf("license_overrides: got %+v, want MIT", got)
 	}
 	if len(cfg.Callgraph.Exclude) != 1 || cfg.Callgraph.Exclude[0] != "github.com/some/large/pkg" {
 		t.Errorf("callgraph.exclude: got %v", cfg.Callgraph.Exclude)

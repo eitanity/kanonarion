@@ -141,7 +141,7 @@ func TestVCSEvidenceOf_Unavailable(t *testing.T) {
 	legs := domain2.RecordLegs(fetchtest.Record(t,
 		fetchtest.SumDBCheck(domain2.LegRechecked, ""),
 		fetchtest.VCSCheck(domain2.LegUnavailable, "")))
-	if got := domain2.VCSEvidenceOf(legs); got != domain2.VCSUnavailable {
+	if got := domain2.VCSEvidenceOf(legs, true); got != domain2.VCSUnavailable {
 		t.Errorf("VCSEvidenceOf = %v, want VCSUnavailable", got)
 	}
 	c := domain2.VerificationCoverageOf([]domain2.CoverageObservation{
@@ -171,7 +171,7 @@ func TestComposeKeepsEstablishedLegOverUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compose: %v", err)
 	}
-	if got := domain2.VCSEvidenceOf(c.Legs); got != domain2.VCSRechecked {
+	if got := domain2.VCSEvidenceOf(c.Legs, true); got != domain2.VCSRechecked {
 		t.Errorf("composed VCS evidence = %v, want VCSRechecked: the run without git erased the evidence", got)
 	}
 	if c.VerificationStatus != string(domain2.Verified) {

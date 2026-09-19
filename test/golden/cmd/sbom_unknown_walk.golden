@@ -1,0 +1,9 @@
+# error-shaped: no walk with this identifier, so there is no graph to inventory. The exit code is 20, and it was the HELP TEXT that was wrong about it — `sbom --help` stated `4  the walk or package scope named does not exist` while the command returned 20, and the help was corrected in the same change as this case. docs/cli/conventions.md holds the authoritative table and lists neither sbom nor notice in its exit-4 row: a walk id is minted by a run, so a refusal naming one can print no command to produce it and the invocation is what has to change. Pinned here and in the exit-code contract test, because the temptation on reading that mismatch is to correct the other side.
+$ kanonarion sbom 01ARZ3NDEKTSV4RRFFQ69G5FZZ
+exit 20
+--- error ---
+execute root command: generating sbom: loading walk "01ARZ3NDEKTSV4RRFFQ69G5FZZ": walk record not found
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

@@ -23,7 +23,7 @@ exit 0
       },
       "verification": {
         "extracted_at": "2026-01-15T08:00:00Z",
-        "status": "Verified",
+        "status": "VerifiedBySumDBOnly",
         "retracted": false
       },
       "provenance": {
@@ -72,6 +72,13 @@ exit 0
         "pipeline_version": "v25",
         "snapshot_retrieved_at": "2026-02-14T00:00:00Z",
         "snapshot_age_days": 6
+      },
+      "native_coverage": {
+        "state": "not_examined",
+        "unsearched_components": 0,
+        "statement": "this module's artefact was not examined for native code compiled into the binary, so nothing is known either way — run: kanonarion native example.com/shallow@v1.0.0",
+        "components": [],
+        "linked_libraries": []
       }
     }
   ]

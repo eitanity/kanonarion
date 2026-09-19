@@ -262,11 +262,17 @@ func TestUseSelection_CarriesTheWalkNodesResolutionSource(t *testing.T) {
 
 // The predicate is the class test, so it is pinned directly: an unrecognised
 // source answers "owes an artefact" so a genuine miss is reported, never hidden.
-func TestHasFetchedArtefact_OnlyTheThreeUnfetchedSourcesAreExempt(t *testing.T) {
+// The exempt set is not a fixed size — test/enum_classification_test.go is the
+// table that has to grow with the enum — but every member of it owes a noun,
+// because the run tells the operator what it found nothing to copy for.
+func TestHasFetchedArtefact_ExemptSourcesOweNoArtefactAndNameThemselves(t *testing.T) {
 	for _, s := range []walkdomain.ResolutionSource{
 		walkdomain.ResolutionLocalMainModule,
 		walkdomain.ResolutionLocalReplace,
 		walkdomain.ResolutionStdlib,
+		// Nothing was fetched for it and nothing should have been: the walk's own
+		// depth policy stopped before it.
+		walkdomain.ResolutionDepthBounded,
 	} {
 		if s.HasFetchedArtefact() {
 			t.Errorf("%q never has a fetched artefact", s)

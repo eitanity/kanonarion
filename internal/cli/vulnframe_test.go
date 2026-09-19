@@ -157,8 +157,8 @@ func TestVulnShow_WalkIDIsHonouredAndNotSubstituted(t *testing.T) {
 	uc, walks := twoProjectFakes(t)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), coord.String(), walkA, "", false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &buf); err != nil {
+	if err := runVulnShow(context.Background(), coord.String(), walkA, "", buildTargetFlags{}, false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -178,8 +178,8 @@ func TestVulnShow_PinnedWalkWithNoRecordInItsFrameRefusesRatherThanSubstituting(
 	uc, walks := twoProjectFakes(t)
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), coord.String(), walkC, "", false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &buf)
+	err := runVulnShow(context.Background(), coord.String(), walkC, "", buildTargetFlags{}, false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf)
 	if err == nil {
 		t.Fatalf("want a refusal for a walk holding no record in its own frame, got output:\n%s", buf.String())
 	}
@@ -200,8 +200,8 @@ func TestVulnShow_UnanchoredRefusesNamingEveryConsumerFrame(t *testing.T) {
 	uc, walks := twoProjectFakes(t)
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &buf)
+	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf)
 	if err == nil {
 		t.Fatalf("want a refusal on a two-consumer store, got output:\n%s", buf.String())
 	}
@@ -233,13 +233,13 @@ func TestVulnShow_SingleConsumerFrameIsUnchanged(t *testing.T) {
 	uc.AddRecords(coord, only...)
 
 	var got bytes.Buffer
-	if err := runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &got); err != nil {
+	if err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, &got); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	var want bytes.Buffer
-	printVulnRecord(&want, only[0], nil)
+	printVulnRecord(&want, only[0], nil, nil)
 	if got.String() != want.String() {
 		t.Errorf("single-frame output changed:\ngot:\n%s\nwant:\n%s", got.String(), want.String())
 	}

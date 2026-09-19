@@ -30,7 +30,7 @@ func (unfetchedQueryFetch) ComposeFetchRecord(context.Context, coordinate.Module
 // auditRowForLicence builds one audit row for a module carrying the given
 // licence record under the shipped default policy, so the disjunction cases can
 // be exercised through the same path the command uses.
-func auditRowForLicence(t *testing.T, path, version string, rec licdomain.LicenseRecord, overrides map[string]string) auditModuleResult {
+func auditRowForLicence(t *testing.T, path, version string, rec licdomain.LicenseRecord, overrides map[string]licdomain.LicenseOverride) auditModuleResult {
 	t.Helper()
 	prev := activeConfig
 	t.Cleanup(func() { activeConfig = prev })
@@ -125,7 +125,7 @@ func TestAuditRow_DisjunctionOutcomes(t *testing.T) {
 	tests := []struct {
 		name         string
 		rec          licdomain.LicenseRecord
-		overrides    map[string]string
+		overrides    map[string]licdomain.LicenseOverride
 		wantOutcome  configdomain.PolicyOutcome
 		wantBlocking bool
 		wantArms     []string
@@ -164,7 +164,7 @@ func TestAuditRow_DisjunctionOutcomes(t *testing.T) {
 		{
 			name:        "a recorded election settles the row wholesale",
 			rec:         multiple("GPL-3.0-only", "Apache-2.0 OR GPL-3.0-only"),
-			overrides:   map[string]string{"example.com/mod": "GPL-3.0-only"},
+			overrides:   map[string]licdomain.LicenseOverride{"example.com/mod": {SPDX: "GPL-3.0-only"}},
 			wantOutcome: configdomain.PolicyOutcomeWarn,
 			// The elected licence is the whole answer: no arms remain to elect.
 			wantCategory: "strong_copyleft",

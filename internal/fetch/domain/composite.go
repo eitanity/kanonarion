@@ -280,10 +280,23 @@ func servesBefore(a, b FactRecord) bool {
 // performed the check. A rechecked leg beats an inherited one of the same date,
 // because the inherited one is a copy of some earlier recheck and the recheck
 // itself is the primary evidence.
+//
+// An inherited leg reaches here undated — one record cannot say when the check it
+// copied was run — so its date is resolved against the set first. Until that was
+// done the tie-break above could never fire: a copy always carried the later
+// date, so it always displaced the recheck it came from, and the composed answer
+// named a run that performed no check as the one that established it.
 func composeLegs(records []FactRecord) []ValidationLeg {
+	byHash := make(map[string]FactRecord, len(records))
+	for _, r := range records {
+		byHash[r.ContentHash] = r
+	}
 	best := map[ValidationLegKind]ValidationLeg{}
 	for _, r := range records {
 		for _, leg := range RecordLegs(r) {
+			if leg.Provenance == LegInherited {
+				leg.EstablishedAt = establishedAtOfSource(byHash, leg.Kind, leg.Source)
+			}
 			cur, ok := best[leg.Kind]
 			if !ok || legIsBetter(leg, cur) {
 				best[leg.Kind] = leg
@@ -300,6 +313,46 @@ func composeLegs(records []FactRecord) []ValidationLeg {
 		return nil
 	}
 	return out
+}
+
+// establishedAtOfSource dates an inherited leg by following it back to the
+// measurement that actually performed the check.
+//
+// Inheritance chains: a run that inherits a leg may itself be inherited from, so
+// one hop lands on another copy rather than on the check. It walks to the first
+// measurement whose own leg of this kind is not itself a copy, and that record's
+// time is the answer.
+//
+// It returns no date when the trail leaves the set — the source was never
+// composed here, or a cycle in what should be an append-only chain. That is not a
+// gap to paper over with the nearest available timestamp: the leg still states
+// which record it came from, and an absent date says this set cannot date it,
+// where a substituted one would read as a measurement.
+func establishedAtOfSource(byHash map[string]FactRecord, kind ValidationLegKind, source string) string {
+	seen := map[string]bool{}
+	for source != "" && !seen[source] {
+		seen[source] = true
+		r, ok := byHash[source]
+		if !ok {
+			return ""
+		}
+		var provenance, next string
+		switch kind {
+		case LegSumDB:
+			provenance, next = r.SumDBCheck, r.SumDBCheckSource
+		case LegVCS:
+			provenance, next = r.VCSCheck, r.VCSCheckSource
+		default:
+			// A leg kind this build does not know. Nothing on the record answers
+			// for it, so there is no date to report.
+			return ""
+		}
+		if LegProvenance(provenance) != LegInherited {
+			return canonicalTime(r.FetchedAt)
+		}
+		source = next
+	}
+	return ""
 }
 
 // legIsBetter reports whether candidate should replace current as the composed

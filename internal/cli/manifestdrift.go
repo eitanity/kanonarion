@@ -182,8 +182,8 @@ func driftAgainstWalk(resolved []string, rec walkdomain.WalkRecord) manifestDrif
 // a full re-resolution on every query; the surface that measures rather than
 // reads (vuln-scan --gomod) pays it instead.
 func manifestStalenessNote(gomodPath string) string {
-	return fmt.Sprintf("; %s was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod %s records the current resolution",
-		gomodPath, gomodPath)
+	return fmt.Sprintf("; %s was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod %s%s records the current resolution",
+		gomodPath, gomodPath, targetFlagHint())
 }
 
 // manifestRequireDisagreement compares the require directives of the go.mod at

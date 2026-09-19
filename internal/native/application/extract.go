@@ -21,6 +21,7 @@ type Config struct {
 	Blobs     fetchports.BlobStore
 	Native    ports.NativeStore
 	Source    ports.GoSourceReader
+	Audit     ports.AuditSink
 	Clock     fetchports.Clock
 	Stopwatch fetchports.Stopwatch
 	Logger    *slog.Logger
@@ -33,6 +34,7 @@ type ExtractNativeUseCase struct {
 	blobs     fetchports.BlobStore
 	native    ports.NativeStore
 	source    ports.GoSourceReader
+	audit     ports.AuditSink
 	clock     fetchports.Clock
 	stopwatch fetchports.Stopwatch
 	logger    *slog.Logger
@@ -45,6 +47,7 @@ func NewExtractNativeUseCase(cfg Config) *ExtractNativeUseCase {
 		blobs:     cfg.Blobs,
 		native:    cfg.Native,
 		source:    cfg.Source,
+		audit:     cfg.Audit,
 		clock:     cfg.Clock,
 		stopwatch: cfg.Stopwatch,
 		logger:    cfg.Logger,
@@ -159,6 +162,18 @@ func (uc *ExtractNativeUseCase) Execute(ctx context.Context, req ExtractRequest)
 		slog.Int("linked_libraries", len(rec.LinkedLibraries)),
 		slog.String("content_hash", rec.ContentHash),
 	)
+
+	// Assurance log: one native_components_recorded event per persisted
+	// measurement. The SBOM's pkg:generic component and a scan's "advisories were
+	// NOT searched" statement both rest on this record, so the generation behind
+	// those published facts is anchored in the append-only log and not only in the
+	// mutable native ledger. It is emitted after the write and only after it: the
+	// cache hit above returned already, and a run that appended nothing must not
+	// be readable as a run that wrote nothing.
+	if err := emitNativeComponentsRecorded(uc.audit, rec); err != nil {
+		return ExtractResult{}, err
+	}
+
 	return ExtractResult{Record: rec, FromCache: false}, nil
 }
 

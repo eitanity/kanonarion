@@ -267,3 +267,39 @@ func TestPresenceOf_PkgConfigLinkWithNoSourcesIsLinkedNotShipped(t *testing.T) {
 		t.Errorf("presence = %q, want %q", got, domain.PresenceLinkedNotShipped)
 	}
 }
+
+// TestExternalLibraryNames_DistinctSortedAndWithoutTheCRuntime holds the rule a
+// count of linked libraries rests on: one library named by several per-platform
+// directives is one library, and the C runtime every cgo binary links is not a
+// component anybody chose.
+func TestExternalLibraryNames_DistinctSortedAndWithoutTheCRuntime(t *testing.T) {
+	libs := []domain.LinkedLibrary{
+		{Name: "icuuc", Kind: domain.LinkedLibraryExternal},
+		{Name: "c", Kind: domain.LinkedLibrarySystem},
+		{Name: "CoreFoundation", Kind: domain.LinkedLibraryExternal},
+		{Name: "icuuc", Kind: domain.LinkedLibraryExternal},
+		{Name: "pthread", Kind: domain.LinkedLibrarySystem},
+	}
+	got := domain.ExternalLibraryNames(libs)
+	want := []string{"CoreFoundation", "icuuc"}
+	if len(got) != len(want) {
+		t.Fatalf("ExternalLibraryNames = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ExternalLibraryNames = %v, want %v", got, want)
+		}
+	}
+}
+
+// An artefact that links nothing external yields an empty slice, never nil: the
+// callers range over it and one of them serialises it.
+func TestExternalLibraryNames_NoneYieldsAnEmptySlice(t *testing.T) {
+	got := domain.ExternalLibraryNames([]domain.LinkedLibrary{{Name: "c", Kind: domain.LinkedLibrarySystem}})
+	if got == nil {
+		t.Fatal("ExternalLibraryNames returned nil rather than an empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("ExternalLibraryNames = %v, want none", got)
+	}
+}

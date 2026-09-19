@@ -54,6 +54,11 @@ license_policy:
       unknown_license: warn
 license_overrides:
   # golang.org/x/mod: MIT
+  # example.com/mod:
+  #   spdx: "Apache-2.0"
+  #   declared_by: "you@example.com"
+  #   declared_on: "2026-01-31"
+  #   basis: "README.md at example.com/mod v1.2.3, read 2026-01-31"
 copyright_declarations:
   # example.com/mod:
   #   copyright: "Copyright 2019 Example Authors"
@@ -101,9 +106,21 @@ same project for several platforms — a cross-compiled release run produces one
 per target — and for several toolchains, because which `go` leads `PATH` decides
 which one a walk records. The two kinds of command behave differently:
 
-**Commands that run analysis over a walk** select the walk resolved in the
-current environment — both the platform and the toolchain — not the newest one.
-This covers `vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan
+The platform comes from the invocation, never from the environment. The
+commands that RESOLVE a build — `walk`, `audit`, `sbom`, `vuln-scan`, `inspect`
+— and the commands that READ one by manifest — `context`, `callers`, `callees`,
+`implementers`, `examples-find`, `symbol-context`, `symbol-find`, `usage`,
+`vuln-show`, `reachability`, `dependents` — all take `--target GOOS/GOARCH` (or
+`--goos`/`--goarch`), and with no flag the platform is the measured host —
+`GOOS` and `GOARCH` exported in the calling shell reach no resolution. See
+[Declaring the build target](walk.md#declaring-the-build-target---target). The
+toolchain is not declarable: it comes from the project's own directory, because
+only the go command knows how the `toolchain` directive and any `GOTOOLCHAIN`
+switch settled.
+
+**Commands that run analysis over a walk** select the walk resolved for the
+declared target — and for the current toolchain — not the newest one. This
+covers `vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan
 <module@version>`, and `sbom --package` without `--force`.
 
 The toolchain is part of the question because the walk names the standard
@@ -127,13 +144,14 @@ the walk it selected was resolved by.
 `sbom --package` builds the missing walk itself in the current frame rather
 than refusing.
 
-To scan or inventory another platform's walk deliberately, name it by ID:
-`kanonarion vuln-scan <walk-id>`.
+To scan or inventory another platform's walk deliberately, declare that
+platform — `kanonarion vuln-scan --target windows/amd64` — or name the walk by
+ID: `kanonarion vuln-scan <walk-id>`.
 
 **Query commands** (`inspect`, `license`, `license-compat`, `context`,
 `dependents`, `interface-diff --used-by`, `callers`/`callees`/`implementers`
-with `--gomod`) answer from one walk of the target whatever its platform, and
-state which frame answered:
+with `--gomod`) answer from one walk of the target and state which frame
+answered:
 
 ```
 Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
@@ -144,6 +162,26 @@ A module-rooted walk resolves no platform and reads `not-platform-scoped`; an
 unknown platform reads `unrecorded`. JSON carries the token in `frame` /
 `walk_frame` and the basis (`platform`, `not_platform_scoped`, `unrecorded`)
 in `frame_basis` / `walk_frame_basis`.
+
+A query that names its build with `--gomod` selects on the platform too: the
+one it declared with `--target`, or the measured host when it declared none. A
+walk of another platform is another build and does not answer, and the refusal
+names both — the platform asked for and the platform the store holds. **Its
+printed remedy carries the declaration**, so running what the tool printed
+records the walk the read was asking about rather than another of this host's:
+
+```
+notice: no walk anchors these vulnerability statuses: no succeeded code project
+walk for example.com/myapp on windows/amd64, though the store holds 1 succeeded
+walk(s) of it (code on linux/amd64); a walk of another scope or platform is a
+different build, so it does not answer here — run: kanonarion walk --gomod
+./go.mod --target windows/amd64
+```
+
+`--target` applies to the `--gomod` route. A read that names its walk with
+`--walk-id`, or that names no build at all, refuses the flag by name rather
+than accepting it and filtering nothing: the walk is already chosen, and its
+record already says which platform it resolved for.
 
 Where such a command chooses among walks that were **resolved by different
 toolchains**, it names the one it chose, because that choice decides which
@@ -329,7 +367,7 @@ is not a listing: a selector that names one record and misses exits `4`, and its
 statement travels on the error (see below).
 
 The listings are `licence-list`/`license-list`, `interface-list`,
-`examples-list`, `callgraph-list`, `vuln-scan-list`, `walk-list`,
+`examples-list`, `callgraph-list`, `native-list`, `vuln-scan-list`, `walk-list`,
 `extract list` and `directives list`. `sbom-list` and `vuln-snapshot-list` apply
 no limit, return their whole population and still answer with a bare array.
 
@@ -407,7 +445,8 @@ record performs no extra read and prints no statement, on either channel.
 
 This applies to every record listing: `callgraph-list`, `vuln-scan-list`,
 `licence-list`/`license-list`, `sbom-list`, `interface-list`, `examples-list`,
-`walk-list`, `extract list`, `directives list` and `vuln-snapshot-list`.
+`native-list`, `walk-list`, `extract list`, `directives list` and
+`vuln-snapshot-list`.
 
 `interface-list`, `examples-list` and `extract list` take no filter, so only the
 empty-store and the paged-past causes can arise on them. Given a module
@@ -419,6 +458,12 @@ coordinate was compared against.
 `vuln-snapshot-list` takes neither a filter nor a `--limit`, so it has exactly
 one cause it can have and states that one: the store holds no snapshot. It does
 not offer a paging remedy, because it cannot page.
+
+`native-list` is the one listing whose paged-past notice counts the FILTERED
+population rather than the store's: `--presence` narrows the rows the offset
+steps through, so a filter that matched two records and a page starting at the
+fifth is a paging zero and says so, naming how many matched. Reporting it as
+"no record matched" would be false about a filter that matched twice.
 
 `directives list` reports one project, and which of the two remaining causes it
 names follows from that project's own scan count. With scans for the project,
@@ -489,8 +534,33 @@ records were withheld costs one extra row, knowing *how many* would cost a secon
 read every listing would then pay.
 
 This applies to `licence-list`/`license-list`, `interface-list`, `examples-list`,
-`callgraph-list`, `vuln-scan-list`, `walk-list`, `extract list` and
-`directives list`. `sbom-list` applies no limit and returns its whole population.
+`callgraph-list`, `native-list`, `vuln-scan-list`, `walk-list`, `extract list`
+and `directives list`. `sbom-list` applies no limit and returns its whole population.
+
+**A truncated listing exits `0`.** The rows it printed are correct and the notice
+says what it withheld; nothing about the evidence is incomplete. Exit `1` is
+reserved for an artefact that is [known-incomplete](#exit-codes) — a failed
+extraction stage, an unanalysed module — which is a different statement.
+
+### The same convention on a traversal
+
+`callers --transitive` and `callees --transitive` bound the walk with `--depth N`
+rather than `--limit`, and state it the same way. The text path prints one
+trailing line **only when the bound bit**:
+
+```
+showing transitive callers to depth 6 — more exist beyond it (--depth 0 for the whole closure)
+```
+
+Under `--json` the [result document](callgraph.md#a-bounded-traversal-says-it-is-bounded)
+carries `truncated` and `remedy` on **every** traversal, true or false, for the
+same reason the listing fields are always stated. The command exits `0` either
+way.
+
+The signal is the frontier the walk had not expanded, not the presence of the
+flag: a `--depth N` that happens to reach the closure is complete and is not
+marked. `--depth 0` follows every hop and is never marked. A **negative**
+`--depth` names no traversal at all and is refused with exit `20`.
 
 ---
 
@@ -608,16 +678,33 @@ means the command did its job and the answer is one a human must accept or
 reject — it must not be routed to whoever fixes broken invocations. A 20 means
 the invocation itself was wrong.
 
+A refusal naming a command is not by itself a 4, and neither is naming a command
+that would produce the record. What decides it is whether the line printed can be
+**run as it stands**.
+
+A 4 names an invocation the reader can copy and run, and running it produces the
+missing record — `kanonarion callgraph example.com/mod@v1.2.0`, `kanonarion
+local`. The request was well-formed and the store was empty.
+
+A 20 is the rest. Either the command named only helps the caller **correct their
+argument** — `kanonarion callgraph-show example.com/mod@v1.2.0` to list a
+module's known symbols, a diagnostic rather than a remedy — or nothing in the
+store can supply the coordinate a producing command needs, so the refusal can
+print only that command's **shape**: `kanonarion callgraph <module>@<version>`.
+A template is not a remedy. [Every remedy printed is an invocation this CLI's own
+parser accepts](#zero-result-listings); where the store cannot name one, the
+code says the invocation is what has to change.
+
 ### Which commands use which codes
 
 | Code | Commands |
 |---|---|
 | 1 | `walk`, `inspect` (partial closure); `extract` (the run is recorded partial — the stages that ran ARE stored, and the failed-stage breakdown names the rest); `callgraph`, `local` (a `Partial` graph — it IS still an answer, and the failed packages line scopes what it does not cover); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs); `use` (some modules with a stored artefact did not reach the module cache); `vuln-scan` (some modules in the walk were not analysed) |
 | 2 | `walk`, `inspect` (target unfetchable); `callgraph`, `local` (no graph at all: `LoadFailed`, or a `Partial` that measured no function); `extract` (the run itself failed and produced no usable stage); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity); `use` (no module reached the module cache); `vuln-scan` (no module in the walk was analysed) |
-| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed) |
+| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `capability` (no call graph is stored for the coordinate, at this build's pipeline version, and the message names the invocation that produces it with the coordinate filled in); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree) |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review); `interface-diff --used-by` (the consumer's own code calls a declaration the bump removes or changes) |
 | 10 | any command consuming a record whose content hash does not verify, or that meets two records for one coordinate which disagree — a walk node, a fetched artefact, an extraction run, a call graph, an interface, a licence, an example, a vulnerability record, an advisory snapshot or the stdlib facts. A store-inspection command reports the same condition and exits 0 (see [Store layout](#store-layout)); a consuming command fails closed |
-| 20 | every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)) |
+| 20 | every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)); `callers`, `callees`, `implementers` (a symbol or interface that is in no served graph at all — a typo, unexported or unreachable code, or a module never analysed: the invocation named something that is not there. A module nothing has analysed cannot be named as a coordinate either — the store knows no version for it — so the refusal shows the form of the producing command, `kanonarion callgraph <module>@<version>`, rather than one that can be run; that is why it is a 20 and not a 4) |
 
 A policy gate is only a 5 when it *fired on findings*. A policy **file** that
 cannot be found or parsed is a 20 — that is a broken invocation, not a verdict.

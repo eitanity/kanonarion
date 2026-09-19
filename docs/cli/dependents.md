@@ -327,6 +327,8 @@ dependency, not both. To find all first-party-relevant entries, filter on
 | Flag | Default | Description |
 |---|---|---|
 | `--gomod <path>` | `./go.mod` | Answer from the latest project walk for this manifest — see [rooting the question](#rooting-the-question) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` `tool` directives' closure) |
 | `--project` | false | Scope to the complete set: the project's code AND tooling |
 | `--walk-id <id>` | _(unset)_ | Walk record ID to query, in place of a manifest. Overrides the manifest rooting |

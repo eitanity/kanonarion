@@ -76,14 +76,14 @@ func TestRunCallees_SupersededPipelineNamesItself(t *testing.T) {
 func TestRunCallersTransitive_SupersededPipelineNamesItself(t *testing.T) {
 	uc := supersededStore(t)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app.Root", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCallersTransitive(context.Background(), "example.com/app.Root", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	assertSupersededDiagnostic(t, err, buf.String())
 }
 
 func TestRunCalleesTransitive_SupersededPipelineNamesItself(t *testing.T) {
 	uc := supersededStore(t)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Root", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCalleesTransitive(context.Background(), "example.com/app.Root", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 	assertSupersededDiagnostic(t, err, buf.String())
 }
 

@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
@@ -106,20 +108,20 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 				testfakes.NewFakeQueryScanRuns(), &bytes.Buffer{}, &bytes.Buffer{})
 		}},
 		{"vuln-show --walk-id (walk never scanned)", ExitNotFound, func(t *testing.T) error {
-			return runVulnShow(context.Background(), coord.String(), missingWalk, "", false, false, false,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
+			return runVulnShow(context.Background(), coord.String(), missingWalk, "", buildTargetFlags{}, false, false, false,
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{})
 		}},
 		{"vuln-show (no record at all)", ExitNotFound, func(t *testing.T) error {
-			return runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
+			return runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{})
 		}},
 		{"vuln-show --history", ExitNotFound, func(t *testing.T) error {
-			return runVulnShow(context.Background(), coord.String(), "", "", false, false, true,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
+			return runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, true,
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{})
 		}},
 		{"scan-show", ExitNotFound, func(t *testing.T) error {
 			return runScanShow(context.Background(), "vscan-missing", false,
-				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), nil, nil, &bytes.Buffer{}, io.Discard)
+				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), nil, nil, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"scan-show (a run this build cannot serve in full)", ExitNotFound, func(t *testing.T) error {
 			// The run itself is found; what is not served is part of its body. A
@@ -133,7 +135,7 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 			vuln := testfakes.NewFakeQueryVuln()
 			vuln.SetRecordGenerations(mustVulnCoord(t, "example.com/app", "v1.0.0"),
 				[]vulnports.VulnerabilityRecordGeneration{{PipelineVersion: "v1", Records: 1, Findings: 0}})
-			return runScanShow(context.Background(), fixtureScanID, false, runs, vuln, nil, nil, &bytes.Buffer{}, io.Discard)
+			return runScanShow(context.Background(), fixtureScanID, false, runs, vuln, nil, nil, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"license-compat (no walk record)", ExitNotFound, func(t *testing.T) error {
 			return licenseCompatWith(context.Background(),
@@ -161,6 +163,45 @@ func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
 		if code := ExitCodeForError(err); code != ExitNotFound {
 			t.Errorf("%s answers a missing walk with exit %d; every walk-by-ID read must answer %d",
 				name, code, ExitNotFound)
+		}
+	}
+}
+
+// The OTHER half of the walk-by-ID rule, and the reason this test exists beside
+// the one above: a walk id a run MINTED cannot be produced on request, so a
+// refusal naming it can print no command to run and the invocation is what has
+// to change. docs/cli/conventions.md draws the 4/20 line there and lists neither
+// sbom nor notice in its exit-4 row.
+//
+// It is pinned because the help text disagreed with it. `sbom --help` stated
+// "4  the walk or package scope named does not exist" while the command returned
+// 20; the help was corrected to match the code and the table. The temptation on
+// reading that sentence is to correct the other side, and this test is what says
+// which side was wrong.
+func TestExitCodeContract_DocumentCommandsAbsentWalkStaysConfig(t *testing.T) {
+	const missingWalk = "01JWALKMISSING0000000001"
+
+	// Asserted through ExitCodeForError rather than through runExitCases: the 20
+	// arrives by FALL-THROUGH, not on an *exitError carrier, and that is part of
+	// what is being pinned. A carrier would be a decision these two commands have
+	// not taken; the catch-all is what they rely on today.
+	for name, err := range map[string]error{
+		"sbom": func() error {
+			ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{Err: walkports.ErrWalkNotFound}}
+			return sbomGenerateWith(context.Background(), ctr, missingWalk, sbomFlags{},
+				time.Time{}, io.Discard, io.Discard)
+		}(),
+		"notice": noticeWith(context.Background(),
+			&Container{QueryWalks: testfakes.NewFakeQueryWalks()},
+			missingWalk, "", "", "", "", io.Discard, io.Discard),
+	} {
+		if err == nil {
+			t.Errorf("%s answered a missing walk with no error at all", name)
+			continue
+		}
+		if code := ExitCodeForError(err); code != ExitConfig {
+			t.Errorf("%s answers a missing walk with exit %d; the help text and the table both say %d",
+				name, code, ExitConfig)
 		}
 	}
 }
@@ -281,6 +322,14 @@ func TestExitCodeContract_UsageAndPreconditionsStayConfig(t *testing.T) {
 		{"store schema newer than binary", ExitConfig, func(t *testing.T) error {
 			return newerStoreError("/tmp/mirror.db", storeSchemaState{unknown: []string{"999_future"}})
 		}},
+		// A negative --depth names no traversal: the walk stops before its
+		// first level and measures nothing. It belongs here and NOT with the
+		// known-incomplete answers above, because there is no answer — it used
+		// to render "No transitive callers found" for a symbol with thousands
+		// of callers, at exit 0.
+		{"callers --transitive --depth -1", ExitConfig, func(_ *testing.T) error {
+			return checkDepthFlag(-1)
+		}},
 	})
 }
 
@@ -295,8 +344,8 @@ func TestExitCodeContract_AmbiguousFrameIsConfig(t *testing.T) {
 	runExitCases(t, []exitCase{
 		{"vuln-show, two consumer frames, no anchor", ExitConfig, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
-			return runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
-				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &bytes.Buffer{})
+			return runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{})
 		}},
 		{"reachability, two consumer frames, no anchor", ExitConfig, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
@@ -305,8 +354,8 @@ func TestExitCodeContract_AmbiguousFrameIsConfig(t *testing.T) {
 		}},
 		{"vuln-show, --walk-id and --gomod together", ExitConfig, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
-			return runVulnShow(context.Background(), coord.String(), walkA, "./go.mod", true, false, false,
-				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &bytes.Buffer{})
+			return runVulnShow(context.Background(), coord.String(), walkA, "./go.mod", buildTargetFlags{}, true, false, false,
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{})
 		}},
 	})
 }
@@ -321,8 +370,8 @@ func TestExitCodeContract_PinnedFrameWithNoRecordIsNotFound(t *testing.T) {
 	runExitCases(t, []exitCase{
 		{"vuln-show --walk-id (walk holds no record in its own frame)", ExitNotFound, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
-			return runVulnShow(context.Background(), coord.String(), walkC, "", false, false, false,
-				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &bytes.Buffer{})
+			return runVulnShow(context.Background(), coord.String(), walkC, "", buildTargetFlags{}, false, false, false,
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{})
 		}},
 		{"reachability --walk-id (walk holds no record in its own frame)", ExitNotFound, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
@@ -357,5 +406,152 @@ func TestExitCodeContract_ClassesAreDistinct(t *testing.T) {
 				code, other, name)
 		}
 		seen[code] = name
+	}
+}
+
+// ---- class: a record this build declines to serve -> ExitNotFound(4) ------
+
+// supersededUsageFixture is the usage command's half of the superseded
+// condition: the store holds the project's own call graph and holds it only
+// under superseded extraction logic, so the join has nothing to read.
+func supersededUsageFixture(t *testing.T) usageFixture {
+	t.Helper()
+	fx := newUsageFixture(t, usageFixtureOpts{projectMissing: true, moduleNodes: usageModuleNodes()})
+	fx.cg.AddRecord(usageProjectCoord(t), "0.4.1", builtRecord(usageNodes(), usageDefaultEdges()))
+	return fx
+}
+
+// A pipeline bump makes every record written before it unservable until it is
+// re-derived. That is one condition, and the five commands that serve a
+// call-graph record answered it with two codes: callgraph-show and usage with 4,
+// callers, callees and implementers with 20, because their refusals were built
+// as plain errors and fell through to the catch-all.
+//
+// The rule that decides it is conventions.md: a 4 means the request was
+// well-formed and the named remedy command fixes it, and these refusals name
+// `kanonarion callgraph <coord>` or `kanonarion local`, which produce the
+// missing record. They are asserted together, in one case, so the five cannot
+// drift apart again.
+func TestExitCodeContract_SupersededRecordIsNotFoundEverywhere(t *testing.T) {
+	runExitCases(t, []exitCase{
+		{"callgraph-show", ExitNotFound, func(t *testing.T) error {
+			return runCallGraphShow(context.Background(), "example.com/app@v1.0.0",
+				callGraphShowFlags{}, false, supersededStore(t), &bytes.Buffer{})
+		}},
+		{"usage", ExitNotFound, func(t *testing.T) error {
+			fx := supersededUsageFixture(t)
+			return usageWith(context.Background(), fx.ctr, usageModCoord(),
+				buildScopeFlags{gomod: fx.gomod, gomodSet: true}, &bytes.Buffer{}, &bytes.Buffer{})
+		}},
+		{"callers", ExitNotFound, func(t *testing.T) error {
+			return runCallers(context.Background(), "example.com/app.Root", false,
+				supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})
+		}},
+		{"callees", ExitNotFound, func(t *testing.T) error {
+			return runCallees(context.Background(), "example.com/app.Root", false,
+				supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})
+		}},
+		{"implementers", ExitNotFound, func(t *testing.T) error {
+			return runImplementers(context.Background(), "example.com/app.Store", false,
+				supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})
+		}},
+		// The same condition reached through a build scope: the scope resolves the
+		// module to a version nothing has analysed, and the printed command
+		// analyses that version.
+		{"callers --gomod, in-build version never analysed", ExitNotFound, func(t *testing.T) error {
+			uc := fakeWithRecord("example.com/dep", "v1.0.0", cgapp.PipelineVersion,
+				builtRecord([]cgdomain.CallNode{{ID: "example.com/dep.Foo", Symbol: "Foo"}}, nil))
+			sc := buildScope{
+				modules: coordinate.NewModuleSet([]coordinate.ModuleCoordinate{
+					coordinatetest.MustNew("example.com/dep", "v2.0.0"),
+				}),
+				source: `walk "w1"`,
+			}
+			return checkSymbolInScope(context.Background(), "example.com/dep.Foo", uc, sc)
+		}},
+		// The one superseded refusal that can name no remedy, because the store
+		// holds no version of the module to re-analyse. Still 4: the record does
+		// not exist, and being unable to name what produces it does not make the
+		// caller's invocation wrong.
+		{"callers, superseded with no nameable version", ExitNotFound, func(t *testing.T) error {
+			return supersededPipelineError("example.com/app.Root", "example.com/app", nil)
+		}},
+	})
+}
+
+// Only the code moved. The message an operator reads is the one the ticket
+// measured, byte for byte — it names both pipeline versions, states that the
+// empty answer is for want of a measurement rather than a claim about the code,
+// and picks the remedy from the coordinate.
+func TestExitCodeContract_SupersededMessageIsUnchanged(t *testing.T) {
+	const want = `symbol "example.com/app.Root" belongs to module "example.com/app", ` +
+		`whose every stored call graph was produced by superseded extraction logic: ` +
+		`this build serves pipeline ` + cgapp.PipelineVersion + ` and the store holds v1.0.0 at pipeline 0.4.1. ` +
+		`A superseded record is not served, so this answer is empty for want of a measurement ` +
+		`of this module, not because the code holds nothing. Re-analyse it:` + "\n" +
+		`  kanonarion callgraph example.com/app@v1.0.0`
+
+	err := runCallers(context.Background(), "example.com/app.Root", false,
+		supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})
+	if err == nil {
+		t.Fatal("want the superseded refusal, got nil")
+	}
+	if got := err.Error(); got != want {
+		t.Errorf("the refusal's wording changed; only the exit code was meant to move\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// Control, asserted apart from the malformed-invocation one below: a symbol
+// nothing has ever analysed, and a symbol in a served module that is not a node
+// in its graph, both keep ExitConfig. Their messages name a command that lists
+// what IS there so the reader can correct what they typed — a diagnostic, not a
+// remedy that produces the missing measurement. Collapsing these into 4 is the
+// opposite defect.
+func TestExitCodeContract_UnknownSymbolStaysConfig(t *testing.T) {
+	served := func(t *testing.T) *testfakes.FakeQueryCallGraph {
+		t.Helper()
+		rec := builtRecord([]cgdomain.CallNode{{ID: "example.com/dep.Foo", Symbol: "Foo"}}, nil)
+		rec.Interfaces = []cgdomain.InterfaceType{
+			{ID: "example.com/dep.Store", Package: "example.com/dep", Name: "Store", Methods: []string{"Put"}},
+		}
+		return fakeWithRecord("example.com/dep", "v1.0.0", cgapp.PipelineVersion, rec)
+	}
+
+	for name, err := range map[string]error{
+		"callers, module never analysed": runCallers(context.Background(), "example.com/never/analysed.Foo", false,
+			served(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{}),
+		"callers, symbol is not a node in a served graph": runCallers(context.Background(), "example.com/dep.Typo", false,
+			served(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{}),
+		"callees, symbol is not a node in a served graph": runCallees(context.Background(), "example.com/dep.Typo", false,
+			served(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{}),
+		"implementers, interface not declared by a served module": runImplementers(context.Background(), "example.com/dep.NoSuch", false,
+			served(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{}),
+	} {
+		if err == nil {
+			t.Errorf("%s: want a refusal, got nil", name)
+			continue
+		}
+		if code := ExitCodeForError(err); code != ExitConfig {
+			t.Errorf("%s answers exit %d; a symbol that is genuinely not in a served graph is %d, not the not-found class",
+				name, code, ExitConfig)
+		}
+	}
+}
+
+// Control, asserted apart from the unknown-symbol one above: an invocation that
+// never named a query keeps ExitConfig.
+func TestExitCodeContract_MalformedCallGraphInvocationStaysConfig(t *testing.T) {
+	for name, err := range map[string]error{
+		"callgraph-show, unparseable coordinate": runCallGraphShow(context.Background(), "not a coordinate at all",
+			callGraphShowFlags{}, false, supersededStore(t), &bytes.Buffer{}),
+		"callers --transitive --depth -1": checkDepthFlag(-1),
+	} {
+		if err == nil {
+			t.Errorf("%s: want a refusal, got nil", name)
+			continue
+		}
+		if code := ExitCodeForError(err); code != ExitConfig {
+			t.Errorf("%s answers exit %d, want %d: the invocation itself was wrong", name, code, ExitConfig)
+		}
 	}
 }

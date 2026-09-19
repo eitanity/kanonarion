@@ -68,12 +68,6 @@ var ErrProxyOff = fmt.Errorf("%w: the environment declares no module fetching", 
 // what an operator who wrote `direct` was specifically avoiding.
 var ErrProxyDirectUnsupported = errors.New("GOPROXY=direct: direct VCS-origin module fetching is not supported by this adapter")
 
-// offlineRemedies names the ways to proceed without the network. It is
-// appended to every no-network refusal so the message that stops the run also
-// says what to run instead.
-const offlineRemedies = "run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, " +
-	"and `kanonarion use --recursive` reconstitutes a module from the store"
-
 const (
 	defaultProxy = "https://proxy.golang.org"
 	// maxZipBytes matches Go's own limit for module zips (500 MB).
@@ -169,9 +163,14 @@ func resolveProxyValue(value string) (string, error) {
 	case "":
 		return defaultProxy, nil
 	case "off":
-		return "", fmt.Errorf("%w; %s", ErrProxyOff, offlineRemedies)
+		// The refusal states the fact and names no remedy. A remedy names FLAGS,
+		// and this adapter is built by commands that define different ones: the
+		// one string it used to append named --from-modcache to `fetch` and
+		// `inspect`, which reject it. The caller renders the remedy for the
+		// command it is actually running.
+		return "", ErrProxyOff
 	case "direct":
-		return "", fmt.Errorf("%w; set GOPROXY to a module proxy URL, or %s", ErrProxyDirectUnsupported, offlineRemedies)
+		return "", fmt.Errorf("%w; set GOPROXY to a module proxy URL", ErrProxyDirectUnsupported)
 	default:
 		return entry, nil
 	}

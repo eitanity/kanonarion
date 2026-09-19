@@ -116,15 +116,29 @@ cross-verification runs; to skip the git leg entirely use `--skip-vcs-verify`.
 `GOPROXY=off` is Go's declaration that this environment does no module
 fetching. kanonarion honours it: every fetch-capable command - `fetch`,
 `walk`, `latest`, `audit`, `inspect` against `@latest` - refuses before it
-opens a socket and exits `20`, naming the offline ways to proceed:
+opens a socket and exits `20`, naming the offline way to proceed.
+
+The remedy is rendered **per command**, and names only what the command it
+stopped will accept. `fetch` defines no `--from-modcache`, so it is told what
+to run instead:
 
 ```
 $ GOPROXY=off kanonarion fetch github.com/spf13/cobra@v1.8.1
-GOPROXY=off: the environment declares no module fetching; run offline instead:
---from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use
---recursive` reconstitutes a module from the store
+GOPROXY=off: the environment declares no module fetching
+  kanonarion fetch reaches the network on every invocation and has no flag
+  that withdraws it; to do this offline, run:
+    kanonarion walk --gomod ./go.mod --from-modcache
 $ echo $?
 20
+```
+
+`walk`, `audit` and `sbom` do define the flag, and are told to pass it:
+
+```
+$ GOPROXY=off kanonarion audit --gomod ./go.mod
+GOPROXY=off: the environment declares no module fetching
+  run it offline instead: kanonarion audit accepts --from-modcache, which
+  answers without the network
 ```
 
 The refusal withdraws **fetching**, not the store. Reading what has already

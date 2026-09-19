@@ -245,10 +245,14 @@ type configShowResult struct {
 	// reading only the values cannot tell that from an operator who wrote them.
 	ConfigFile configFileResult `json:"config_file"`
 
-	Version          string             `json:"version"`
-	Preferences      configPrefsResult  `json:"preferences"`
-	LicensePolicy    configPolicyResult `json:"license_policy"`
-	LicenseOverrides map[string]string  `json:"license_overrides"`
+	Version       string             `json:"version"`
+	Preferences   configPrefsResult  `json:"preferences"`
+	LicensePolicy configPolicyResult `json:"license_policy"`
+	// LicenseOverrides is the operator's recorded licence determinations, keyed
+	// by module path (optionally @version). Each entry names the identifier and,
+	// where the operator recorded it, who determined it, when, and on what
+	// basis — the fields an attribution document reproduces.
+	LicenseOverrides map[string]configOverrideResult `json:"license_overrides"`
 	// CopyrightDeclarations is the operator's recorded copyright lines, keyed by
 	// module path (optionally @version). Surfaced here because an attribution
 	// document built with one is only auditable if the assertion behind it is
@@ -324,6 +328,33 @@ type configCopyrightResult struct {
 	DeclaredBy string `json:"declared_by"`
 	DeclaredOn string `json:"declared_on"`
 	Basis      string `json:"basis"`
+}
+
+// configOverrideResult is one operator-recorded licence determination in the
+// effective configuration view. The provenance fields are omitted where the
+// entry was recorded as a bare identifier, so the view distinguishes a
+// determination that names its author from one that does not.
+type configOverrideResult struct {
+	SPDX       string `json:"spdx"`
+	DeclaredBy string `json:"declared_by,omitempty"`
+	DeclaredOn string `json:"declared_on,omitempty"`
+	Basis      string `json:"basis,omitempty"`
+}
+
+// licenseOverridesResult maps the loaded determinations to the view. An empty
+// map stays empty rather than becoming nil: the key has always been present in
+// this document.
+func licenseOverridesResult(in map[string]domain.LicenseOverride) map[string]configOverrideResult {
+	out := make(map[string]configOverrideResult, len(in))
+	for k, o := range in {
+		out[k] = configOverrideResult{
+			SPDX:       o.SPDX,
+			DeclaredBy: o.DeclaredBy,
+			DeclaredOn: o.DeclaredOn,
+			Basis:      o.Basis,
+		}
+	}
+	return out
 }
 
 // copyrightDeclarationsResult maps the loaded declarations to the view. A nil
@@ -421,6 +452,11 @@ type configFileResult struct {
 
 type configCGResult struct {
 	Exclude []string `json:"exclude"`
+	// Toolchain is the stored composition preference, empty when none is set.
+	// Emitted as the bare version rather than through Version.String(), because a
+	// consumer comparing it against a record's toolchain needs the value, and
+	// "not recorded" is not one.
+	Toolchain string `json:"toolchain,omitempty"`
 }
 
 // configStalenessResult reports the resolved latest-version ledger TTL.
@@ -497,9 +533,12 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 				Categories: cfg.LicensePolicy.Categories,
 				Rules:      rules,
 			},
-			LicenseOverrides:      cfg.LicenseOverrides,
+			LicenseOverrides:      licenseOverridesResult(cfg.LicenseOverrides),
 			CopyrightDeclarations: copyrightDeclarationsResult(cfg.CopyrightDeclarations),
-			Callgraph:             configCGResult{Exclude: cfg.Callgraph.Exclude},
+			Callgraph: configCGResult{
+				Exclude:   cfg.Callgraph.Exclude,
+				Toolchain: string(cfg.Callgraph.Toolchain),
+			},
 			Staleness: configStalenessResult{
 				TTL:              cfg.Staleness.TTL.String(),
 				ProbeConcurrency: cfg.Staleness.ProbeConcurrency,

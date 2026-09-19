@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
 func TestStore_LoadOverrides(t *testing.T) {
-	s := New(map[string]string{
-		"golang.org/x/mod":          "MIT",
-		"github.com/old/pkg@v1.2.3": "BSD-2-Clause",
+	s := New(map[string]domain.LicenseOverride{
+		"golang.org/x/mod":          {SPDX: "MIT"},
+		"github.com/old/pkg@v1.2.3": {SPDX: "BSD-2-Clause"},
 	})
 	set, err := s.LoadOverrides(context.Background())
 	if err != nil {

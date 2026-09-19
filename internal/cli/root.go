@@ -44,6 +44,10 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			// defect is not the wrong answer but the directory: a check made
 			// after the open would still leave a store behind.
 			storeIntent = storeIntentOf(cmd)
+			// Rendered here, from this command's own declaration, because the
+			// sites that print a no-network refusal — the proxy adapter is
+			// built in a dozen of them — have no command to ask.
+			offlineRemedy = renderOfflineRemedy(cmd)
 			if err := requireStoreRoot(storeRoot); err != nil {
 				return err
 			}
@@ -153,6 +157,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newVendorCmd(stdout, stderr),
 		newFIPSCmd(stdout, stderr),
 		newNativeCmd(stdout, stderr),
+		newNativeListCmd(stdout, stderr),
 		newLatestCmd(stdout, stderr),
 		newProvenanceCmd(stdout, stderr),
 		newUseCmd(stdout, stderr),

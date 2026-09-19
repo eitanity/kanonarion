@@ -97,13 +97,16 @@ func (b licenceRemedyBuild) replacesLocally(coord coordinate.ModuleCoordinate) b
 // module that is analysed by coordinate.
 func missingLicenceRecordRemedy(coord coordinate.ModuleCoordinate, build licenceRemedyBuild) string {
 	if coord.IsLocal() {
-		return "run 'kanonarion walk --gomod ./go.mod --analyse-root' then " +
+		// The declaration this run was made under rides along, so the walk the
+		// reader is told to take is a walk of the platform they asked about
+		// rather than of this host.
+		return "run 'kanonarion walk --gomod ./go.mod --analyse-root" + targetFlagHint() + "' then " +
 			"'kanonarion extract <walk-id>' to analyse the project's own licence"
 	}
 	if build.replacesLocally(coord) {
-		return fmt.Sprintf("run 'kanonarion walk --gomod %s --analyse-local' then "+
+		return fmt.Sprintf("run 'kanonarion walk --gomod %s --analyse-local%s' then "+
 			"'kanonarion extract <walk-id>' to analyse %s from the local path this build replaces it with",
-			build.goModPath, coord.Path())
+			build.goModPath, targetFlagHint(), coord.Path())
 	}
 	return fmt.Sprintf("run 'kanonarion license %s'", coord)
 }

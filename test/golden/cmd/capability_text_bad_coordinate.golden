@@ -1,0 +1,9 @@
+# the control for the exit code above: a malformed coordinate is the invocation being wrong, and stays 20. Without this case, moving every capability refusal to 4 would look right.
+$ kanonarion capability not-a-coordinate
+exit 20
+--- error ---
+execute root command: invalid coordinate "not-a-coordinate": expected module@version, got "not-a-coordinate"
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

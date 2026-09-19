@@ -14,7 +14,27 @@ import (
 // ErrNoCallGraph is returned when no call graph record exists for the requested
 // module. Capability analysis needs the graph, so this is actionable, not a
 // silent empty result.
-var ErrNoCallGraph = errors.New("no call graph record: run 'kanonarion callgraph <module>@<version>' first")
+//
+// It names no remedy. Which invocation re-derives a graph is decided by the
+// coordinate — a published module is analysed, a working tree is ingested — and
+// a use case that guessed printed a placeholder no parser accepts. The
+// coordinate travels on NoCallGraphError so the caller can name the real one.
+var ErrNoCallGraph = errors.New("no call graph record")
+
+// NoCallGraphError is the missing-record refusal, carrying the coordinate it is
+// about. A diff reads two coordinates and either may be the absent one, so the
+// remedy has to be built from the side that actually missed.
+type NoCallGraphError struct {
+	Coord coordinate.ModuleCoordinate
+}
+
+func (e *NoCallGraphError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Coord, ErrNoCallGraph)
+}
+
+// Unwrap keeps errors.Is(err, ErrNoCallGraph) answering for callers that only
+// need the class.
+func (e *NoCallGraphError) Unwrap() error { return ErrNoCallGraph }
 
 // CallGraphSource reads stored call graph records. QueryCallGraphUseCase
 // satisfies it; the capability context depends only on this narrow method.
@@ -72,7 +92,7 @@ func (uc *AnalyseCapabilitiesUseCase) load(ctx context.Context, coord coordinate
 		return cgdomain.CallGraphRecord{}, fmt.Errorf("getting call graph record for %s: %w", coord, err)
 	}
 	if !found {
-		return cgdomain.CallGraphRecord{}, fmt.Errorf("%s: %w", coord, ErrNoCallGraph)
+		return cgdomain.CallGraphRecord{}, &NoCallGraphError{Coord: coord}
 	}
 	return rec, nil
 }

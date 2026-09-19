@@ -100,7 +100,8 @@ func TestNegativeSoundness_AOneHopRouteIsNotACallChain(t *testing.T) {
 			DerivedBy:   domain.ReachabilityDerivation{Analyser: domain.AnalyserGovulncheck, Fidelity: "Complete"},
 		},
 		NegativeSearch: &domain.NegativeSearch{
-			Fidelity: "Complete", PathFound: true, InRecordedFrame: true,
+			EntryPointRoots: 3,
+			Fidelity:        "Complete", PathFound: true, InRecordedFrame: true,
 			Route: domain.ReachabilityRoute{symbol},
 		},
 	}
@@ -135,7 +136,7 @@ func TestNegativeSoundness_ACrossFrameRouteIsStatedWithItsFrameNamed(t *testing.
 			IsReachable: false,
 			DerivedBy:   domain.ReachabilityDerivation{Analyser: domain.AnalyserGovulncheck, Fidelity: "Complete"},
 		},
-		NegativeSearch: &domain.NegativeSearch{Fidelity: "Complete", PathFound: true, Route: route},
+		NegativeSearch: &domain.NegativeSearch{EntryPointRoots: 3, Fidelity: "Complete", PathFound: true, Route: route},
 	}
 
 	_, reason := domain.NegativeSoundness(f)

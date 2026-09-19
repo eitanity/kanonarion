@@ -41,6 +41,7 @@ type vulnScanFlags struct {
 	policyPath         string
 	noVendor           bool
 	noProgress         bool
+	target             buildTargetFlags
 	// excludeTests is parsed only so the refusal can name it. A scope scan
 	// re-walks when the manifest has drifted; see
 	// refuseTestScopeOnRecordingCommand.
@@ -70,7 +71,8 @@ it. It is reported on its own and counted in no roll-up.`,
   kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln-scan --binary-pre-pass 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan --tool
-  kanonarion vuln-scan --tool --gomod ./go.mod`,
+  kanonarion vuln-scan --tool --gomod ./go.mod
+  kanonarion vuln-scan --target windows/amd64`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// With neither a walk-id nor --module the scan is the project in
@@ -110,6 +112,7 @@ it. It is reported on its own and counted in no roll-up.`,
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerCallgraphTimeoutFlag(cmd)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
+	registerBuildTargetFlags(cmd, &f.target)
 
 	return cmd
 }
@@ -148,6 +151,12 @@ func runVulnScanScope(ctx context.Context, f vulnScanFlags, stdout, stderr io.Wr
 	gomodPath, err := resolveGoModPath(f.gomod)
 	if err != nil {
 		return err
+	}
+	// The platform this scan is about: it selects the project walk to scan and
+	// is the platform govulncheck analyses for, since build constraints decide
+	// which files are in the package graph at all.
+	if terr := resolveBuildTarget(ctx, f.target, f.goBinary, filepath.Dir(gomodPath)); terr != nil {
+		return terr
 	}
 	// The scope path resolves the project walk and scans it in source mode; the
 	// pre-pass is a lens on a named walk and this path has never passed it on.
@@ -286,8 +295,8 @@ func selectProjectWalkToScan(
 		return walkports.WalkSummary{}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
 	}
 	if len(walks) == 0 {
-		return walkports.WalkSummary{}, fmt.Errorf("no succeeded %s project walk for %s on %s — run: kanonarion walk --gomod %s%s",
-			scope, coord.Path(), env, gomodPath, scopeWalkFlagHint(scope))
+		return walkports.WalkSummary{}, fmt.Errorf("no succeeded %s project walk for %s on %s — run: kanonarion walk --gomod %s%s%s",
+			scope, coord.Path(), env, gomodPath, scopeWalkFlagHint(scope), targetFlagHint())
 	}
 	return walks[0], nil
 }
@@ -646,7 +655,8 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain,
+		nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID)), jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: false,
@@ -791,7 +801,8 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain,
+		nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID)), jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: true,
@@ -938,7 +949,7 @@ func scanCompletionSummary(run vuldomain.WalkScanRun) string {
 // the run's stored shape is unchanged and the keys are added beside it, so a
 // consumer that cannot read the stderr statements still learns what the
 // reachability verdicts rest on and what the toolchain was judged to be.
-func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, toolchain vulnScanToolchainJSON, jsonOut bool, stdout io.Writer) error {
+func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, toolchain vulnScanToolchainJSON, native *nativeWalkRollup, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -946,6 +957,7 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 			vulnScanDocument: vulnScanDocument{
 				WalkScanRun: run, Reachability: reach,
 				StartedAt: recordstamp.Format(run.StartedAt), CompletedAt: recordstamp.Format(run.CompletedAt),
+				Native: native,
 			},
 			Toolchain: toolchain,
 		}); err != nil {
@@ -1013,6 +1025,18 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 	// Sections stay separate rather than merged because the direction line
 	// belongs to one reason only.
 	writeUnscannableRollup(unscannable, stdout)
+
+	// Last, and outside every count above: a native component is not a finding
+	// and must never be added to one. What it is, is the part of this binary the
+	// scan did not cover — stated here so the findings list above cannot be read
+	// as covering it.
+	//
+	// The coverage line, not the exceptions alone. A scan where no module was
+	// examined has no exception to print, and printing nothing said the findings
+	// covered the whole build when nothing had looked.
+	if nerr := writeNativeCoverageSummary(stdout, native); nerr != nil {
+		return nerr
+	}
 
 	return nil
 }

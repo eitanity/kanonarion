@@ -86,7 +86,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 			CompletedAt:   rec.CompletedAt,
 			OverallStatus: rec.OverallStatus,
 			NodeCount:     len(rec.Graph.Nodes),
-			FailureCount:  countFailures(rec),
+			FailureCount:  domain.CountNodeFailures(rec),
 		}
 		if jsonOut {
 			enc := json.NewEncoder(stdout)
@@ -422,13 +422,4 @@ func parseWalkScope(s string) (domain.WalkScope, error) {
 	default:
 		return "", fmt.Errorf("unknown scope %q; want code|tool|complete", s)
 	}
-}
-func countFailures(rec domain.WalkRecord) int {
-	n := 0
-	for _, r := range rec.PerNodeResults {
-		if r.Status != domain.NodeSucceeded {
-			n++
-		}
-	}
-	return n
 }
