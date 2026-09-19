@@ -38,10 +38,11 @@ func TestStdlibCoverageObservation_UsesItsOwnVocabulary(t *testing.T) {
 	}
 
 	for status, want := range map[stdlibdomain.VerificationStatus]fetchdomain.VerificationBucket{
-		stdlibdomain.VerifiedGoDevChecksum:      fetchdomain.BucketCrossVerified,
-		stdlibdomain.VerifiedLocalToolchain:     fetchdomain.BucketGoSumOnly,
-		stdlibdomain.GoDevChecksumMismatch:      fetchdomain.BucketUnverified,
-		stdlibdomain.UnverifiedGoDevUnavailable: fetchdomain.BucketUnverified,
+		stdlibdomain.VerifiedGoDevChecksum:       fetchdomain.BucketCrossVerified,
+		stdlibdomain.VerifiedLocalToolchain:      fetchdomain.BucketGoSumOnly,
+		stdlibdomain.GoDevChecksumMismatch:       fetchdomain.BucketUnverified,
+		stdlibdomain.UnverifiedGoDevUnavailable:  fetchdomain.BucketUnverified,
+		stdlibdomain.UnverifiedGoDevNotPublished: fetchdomain.BucketUnverified,
 	} {
 		got := stdlibCoverageObservation(node(string(status)))
 		if !got.Recorded {

@@ -18,6 +18,7 @@ import (
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
+	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -340,6 +341,7 @@ func listingSurfaces(t *testing.T) []listingSurface {
 	return []listingSurface{
 		licenseSurface(), interfaceSurface(), examplesSurface(), callGraphSurface(),
 		vulnScanSurface(), walkSurface(t), extractSurface(), directivesSurface(),
+		nativeSurface(t),
 	}
 }
 
@@ -647,6 +649,18 @@ showing first 3 directive scans — more exist (--limit 0 for all, --offset 3 fo
 `,
 			firstRecord: `{"id":"scan-0","project":"example.com/proj","completed_at":"2026-01-01T00:00:00Z","directive_count":0,"content_hash":"sha256:abc","pipeline_version":"dir-1"}`,
 		},
+		"native-list": {
+			text: `example.com/mod0@v1.0.0                                 absent                 —
+example.com/mod1@v1.0.0                                 absent                 —
+example.com/mod2@v1.0.0                                 absent                 —
+listing native records at generation ` + nativedomain.PipelineFingerprint() + `, the generation this build serves; records from a superseded generation are not shown (--all-generations)
+showing first 3 native records at generation ` + nativedomain.PipelineFingerprint() + ` — more exist (--limit 0 for all, --offset 3 for the next page)
+`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","presence":"absent","generation":"` +
+				nativedomain.PipelineFingerprint() +
+				`","superseded":false,"artefact_identity":"zip:h1:example.com/mod0","components":[],` +
+				`"linked_libraries":[],"source_count":0,"extracted_at":"2026-01-01T00:00:00Z","content_hash":"sha256:abc"}`,
+		},
 	}
 	for _, s := range listingSurfaces(t) {
 		t.Run(s.name, func(t *testing.T) {
@@ -670,5 +684,44 @@ showing first 3 directive scans — more exist (--limit 0 for all, --offset 3 fo
 				t.Errorf("the record object moved\n got: %s\nwant: %s", compact.String(), pinned.firstRecord)
 			}
 		})
+	}
+}
+
+// A transitive traversal bounded by --depth is the same convention on a
+// different shape, and it is asserted here so the two sit together.
+//
+// The bound is stated the same way — a trailing notice on the text path, a
+// `truncated` field and a remedy in the JSON document — and, like every listing
+// above, the command answers 0. ExitPartial(1) means the artefact is
+// known-incomplete: an extraction stage that failed, a module that went
+// unanalysed, a component with no licence identity. An answer bounded at
+// --depth 2 has no hole in it — a narrower question was asked and answered
+// completely — and a governance step that reads 1 as "the evidence is not whole"
+// would flag an intact evidence base because somebody chose a depth.
+func TestTraversalTruncation_StatesTheBoundAndStillAnswersZero(t *testing.T) {
+	for _, jsonOut := range []bool{false, true} {
+		var stdout bytes.Buffer
+		err := runCallersTransitive(context.Background(), "example.com/m.Target", 2, jsonOut,
+			truncatableFake(t, true), &stdout, buildScope{}, cgports.EdgeQueryOptions{}, nil)
+		if err != nil {
+			t.Fatalf("jsonOut=%v: a truncated traversal must answer 0, got %v (exit %d)",
+				jsonOut, err, ExitCodeForError(err))
+		}
+		if jsonOut {
+			var doc struct {
+				Truncated bool   `json:"truncated"`
+				Remedy    string `json:"remedy"`
+			}
+			if derr := json.Unmarshal(stdout.Bytes(), &doc); derr != nil {
+				t.Fatalf("decoding the answer: %v", derr)
+			}
+			if !doc.Truncated || doc.Remedy != "--depth 0" {
+				t.Errorf("the document does not state the bound: %+v", doc)
+			}
+			continue
+		}
+		if !strings.Contains(stdout.String(), "showing transitive callers to depth 2 — more exist beyond it (--depth 0 for the whole closure)") {
+			t.Errorf("the text answer does not state the bound:\n%s", stdout.String())
+		}
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"golang.org/x/mod/modfile"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
@@ -250,6 +251,11 @@ func findPolicyFile() string {
 func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
 	cmd := childproc.CommandContext(ctx, "go", "list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
 		"{{if not .Standard}}{{.Module.Path}}@{{.Module.Version}}{{end}}", pattern)
+	// The allow-list is the import closure of one package, and the Go toolchain
+	// resolves that against the build target. It is stated here rather than
+	// inherited so the closure and the walk it is filtered against agree on the
+	// platform by construction.
+	cmd.Env = declaredTarget.Apply(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -257,9 +263,9 @@ func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
 		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return nil, fmt.Errorf("go list %s: %s", pattern, strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("go list %s%s: %s", pattern, targetClause(), strings.TrimSpace(string(ee.Stderr)))
 		}
-		return nil, fmt.Errorf("go list %s: %w", pattern, err)
+		return nil, fmt.Errorf("go list %s%s: %w", pattern, targetClause(), err)
 	}
 	seen := make(map[string]bool)
 	var coords []string
@@ -558,6 +564,11 @@ func goListDepsArgs(patterns []string, ts testScope) []string {
 func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
 	cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
 	cmd.Dir = dir
+	// The scope is platform-specific: build constraints select files per target,
+	// so `go list -deps` over one tree answers differently for each. The pair is
+	// written here rather than left to whatever the parent process exported, so
+	// the set this resolves is the one the invocation declared.
+	cmd.Env = declaredTarget.Apply(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -565,9 +576,9 @@ func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
 		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return nil, fmt.Errorf("go %s: %s", strings.Join(args, " "), strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("go %s%s: %s", strings.Join(args, " "), targetClause(), strings.TrimSpace(string(ee.Stderr)))
 		}
-		return nil, fmt.Errorf("go %s: %w", strings.Join(args, " "), err)
+		return nil, fmt.Errorf("go %s%s: %w", strings.Join(args, " "), targetClause(), err)
 	}
 	return out, nil
 }
@@ -845,6 +856,9 @@ func resetInvocationState() {
 	// The safe default, so an invocation that never reaches PersistentPreRunE
 	// cannot inherit the last one's permission to create a store.
 	storeIntent = StoreIntentRead
+	// No remedy, so a refusal raised before a command was resolved names none
+	// rather than the last command's.
+	offlineRemedy = ""
 	// The rendering flags, in the state a command that was passed neither is
 	// entitled to: text on stdout at the default verbosity.
 	jsonOut = false
@@ -863,6 +877,11 @@ func resetInvocationState() {
 	callgraphWorkers = 0
 	callgraphMemoryCeiling = 0
 	callgraphNarration = nil
+	// No declaration, which is the state a command that was passed no target
+	// flag is entitled to: the measured host. A leftover target would have the
+	// next reader in this process filter on a platform nobody asked for, and
+	// record one nobody declared.
+	declaredTarget = goenv.Target{}
 }
 
 // callgraphCeiling is the wall-clock backstop for one call-graph subprocess.
@@ -1066,6 +1085,89 @@ func offlineFlagsOf(cmd *cobra.Command) []string {
 		}
 	}
 	return out
+}
+
+// annotationOfflineAlternative names the whole invocation that answers offline,
+// for the commands where naming the flag is not enough on its own.
+//
+// Two cases need it. A command with no offline flag at all — `fetch` reaches the
+// network by definition — has to name what to run instead. And a command whose
+// flag applies to only one FORM of it does too: `walk --gomod` verifies the
+// cache against the project go.sum, so `walk <module>@<version> --from-modcache`
+// is refused, and a remedy that named the flag alone would cost the reader a
+// second attempt to learn that.
+//
+// It is optional, and forbidden on `never`: naming an alternative that does not
+// exist is the defect this annotation set is here to stop.
+const annotationOfflineAlternative = "kanonarion/offline-alternative"
+
+// offlineAlternativeOf returns the invocation cmd named as its offline
+// substitute, or "" when it named none.
+func offlineAlternativeOf(cmd *cobra.Command) string {
+	if cmd == nil {
+		return ""
+	}
+	return strings.TrimSpace(cmd.Annotations[annotationOfflineAlternative])
+}
+
+// offlineRemedy is how THIS invocation's command proceeds without the network.
+// It is rendered once, in PersistentPreRunE, and read by every site that has to
+// print a no-network refusal — the proxy adapter is built in a dozen places and
+// none of them knows which command is running.
+var offlineRemedy string
+
+// renderOfflineRemedy builds that line from what the command declared about
+// itself.
+//
+// It is per command because a remedy names FLAGS. One shared string in the
+// proxy adapter named --from-modcache to every caller, and `fetch` and
+// `inspect` do not define it, so the line that stopped the run told the
+// operator to run something the same binary rejects with "unknown flag".
+//
+// The switch enumerates every declared value rather than testing for one of
+// them: a value added later is then unhandled visibly, instead of inheriting
+// whichever branch the negation happened to fall into.
+func renderOfflineRemedy(cmd *cobra.Command) string {
+	// CommandPath, not Name: it carries the root and any parent, so a
+	// subcommand's remedy is an invocation rather than a bare word.
+	name := cmd.CommandPath()
+	switch networkUseOf(cmd) {
+	case NetworkAvoidable:
+		flags := offlineFlagsOf(cmd)
+		if len(flags) == 0 {
+			// Declared avoidable and named nothing. The completeness test fails
+			// on it; inventing a flag here would print the defect being fixed.
+			return ""
+		}
+		line := fmt.Sprintf("run it offline instead: %s accepts %s, which answers without the network",
+			name, strings.Join(flags, " or "))
+		if alt := offlineAlternativeOf(cmd); alt != "" {
+			line += ":\n    " + alt
+		}
+		return line
+	case NetworkAlways:
+		line := fmt.Sprintf("%s reaches the network on every invocation and has no flag that withdraws it", name)
+		if alt := offlineAlternativeOf(cmd); alt != "" {
+			line += "; to do this offline, run:\n    " + alt
+		}
+		return line
+	case NetworkNever:
+		// Opens no socket, so no no-network refusal can be about it.
+		return ""
+	default:
+		// Undeclared, or a value this build does not know. Say nothing rather
+		// than name a remedy for a decision nobody made.
+		return ""
+	}
+}
+
+// withOfflineRemedy appends this invocation's offline remedy to a no-network
+// refusal, and leaves every other error alone.
+func withOfflineRemedy(err error) error {
+	if err == nil || offlineRemedy == "" || !proxyadapter.IsRefusal(err) {
+		return err
+	}
+	return fmt.Errorf("%w\n  %s", err, offlineRemedy)
 }
 
 // storeIntentOf returns the intent cmd declared, or StoreIntentRead when it
@@ -1558,7 +1660,7 @@ func (e *exitError) Error() string { return e.msg }
 // proxy URL keeps the wiring prefix; that one IS about the adapter.
 func proxyAdapterError(err error) error {
 	if proxyadapter.IsRefusal(err) {
-		return &exitError{code: ExitConfig, msg: err.Error()}
+		return &exitError{code: ExitConfig, msg: withOfflineRemedy(err).Error()}
 	}
 	return fmt.Errorf("creating proxy adapter: %w", err)
 }

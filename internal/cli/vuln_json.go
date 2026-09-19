@@ -188,6 +188,41 @@ func toVulnRecordJSON(rec vuldomain.VulnerabilityRecord, bind recordRootFunc) vu
 	return out
 }
 
+// vulnRecordNativeJSON is a stored record published by a producer that also
+// read what the module's own artefact compiles into the binary from native
+// source it ships — the C library a cgo module amalgamates into its zip.
+//
+// It is a type of its own rather than a field on vulnRecordJSON, for the reason
+// RouteRoot is: a producer that does not derive the statement emits no key at
+// all, and a producer that does derive it always emits a complete one. The two
+// absences say different things. A record read through --history is the case
+// that matters: that read spans pipeline generations, and the native statement
+// is a fact about the artefact NOW, so attaching it to a scan taken months ago
+// would read as something that scan established. It did not.
+//
+// NativeCoverage is never null here. Every module has a native state, including
+// "nobody looked", so a producer that derives the statement always has one to
+// publish.
+type vulnRecordNativeJSON struct {
+	vulnRecordJSON
+	NativeCoverage nativeCoverage `json:"native_coverage"`
+}
+
+// toVulnRecordNativeJSON projects one record together with the native statement
+// derived for its coordinate.
+//
+// A nil cov means the caller holds no native reader, and the result is the
+// plain record projection — the key is then absent, saying this producer does
+// not derive it, rather than present and empty, which would assert an absence
+// nothing measured.
+func toVulnRecordNativeJSON(rec vuldomain.VulnerabilityRecord, bind recordRootFunc, cov *nativeCoverage) any {
+	base := toVulnRecordJSON(rec, bind)
+	if cov == nil {
+		return base
+	}
+	return vulnRecordNativeJSON{vulnRecordJSON: base, NativeCoverage: *cov}
+}
+
 // toVulnRecordsJSON projects a record list, preserving order. An empty input
 // yields an empty slice rather than nil, so a command that promises a JSON array
 // still emits "[]".

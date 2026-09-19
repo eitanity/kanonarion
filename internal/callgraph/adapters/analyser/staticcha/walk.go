@@ -183,10 +183,9 @@ func (a *Analyser) walkGraph(
 		sitePosFile := ""
 		sitePosLine := 0
 		if edge.Site != nil {
-			p := fset.Position(edge.Site.Pos())
-			if p.IsValid() {
-				sitePosFile = roots.rel(p.Filename)
-				sitePosLine = p.Line
+			if p := fset.Position(edge.Site.Pos()); p.IsValid() {
+				pos := roots.position(p)
+				sitePosFile, sitePosLine = pos.File, pos.Line
 			}
 		}
 

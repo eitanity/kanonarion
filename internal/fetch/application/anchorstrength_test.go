@@ -92,8 +92,8 @@ func storedRecord(t *testing.T, facts *fakeFacts) domain2.FactRecord {
 // not read.
 //
 // It sweeps every verification status a stored record can carry against the one
-// status the module-cache path can produce (VerifiedBySumDBOnly — local go.sum is
-// its only anchor), and runs each case twice: unforced and forced. --force means
+// status the module-cache path can produce (VerifiedByGoSum — local go.sum is its
+// only anchor), and runs each case twice: unforced and forced. --force means
 // "re-measure this module now", never "permit a weaker anchor to replace a
 // stronger fact", so the outcome must be identical both ways. The full
 // (existing, incoming) matrix over the strength order is covered in the domain,
@@ -104,8 +104,8 @@ func TestModcacheReMeasurementNeverDemotesAStoredRecord(t *testing.T) {
 		wantOverwrite bool
 	}{
 		{domain2.Verified, false},                   // stronger: transparency log AND git source
-		{domain2.VerifiedBySumDBOnly, true},         // equal: a genuine re-measurement still lands
-		{domain2.VerifiedByGoSum, true},             // weaker: an upgrade still lands
+		{domain2.VerifiedBySumDBOnly, false},        // stronger: a live transparency-log query
+		{domain2.VerifiedByGoSum, true},             // equal: a genuine re-measurement still lands
 		{domain2.LocalSource, true},                 // weaker
 		{domain2.UnverifiedNoSumDB, true},           // weakest
 		{domain2.UnverifiedHashMismatch, true},      // weakest
@@ -137,7 +137,7 @@ func TestModcacheReMeasurementNeverDemotesAStoredRecord(t *testing.T) {
 				if tc.wantOverwrite {
 					if stored.ContentHash == seeded.ContentHash {
 						t.Errorf("an equal-or-stronger re-measurement did not overwrite the stored record: "+
-							"existing=%q incoming=%q", tc.existing, domain2.VerifiedBySumDBOnly)
+							"existing=%q incoming=%q", tc.existing, domain2.VerifiedByGoSum)
 					}
 					if stored.AcquisitionMode != string(domain2.AcquisitionModcache) {
 						t.Errorf("stored AcquisitionMode = %q, want %q", stored.AcquisitionMode, domain2.AcquisitionModcache)
@@ -248,7 +248,7 @@ func TestRefusedDowngradeLogsBothStatusesAndModes(t *testing.T) {
 	for _, want := range []string{
 		"record_write_refused_weaker_verification",
 		"existing_verification_status=Verified",
-		"incoming_verification_status=VerifiedBySumDBOnly",
+		"incoming_verification_status=VerifiedByGoSum",
 		"existing_acquisition_mode=proxy",
 		"incoming_acquisition_mode=modcache",
 		"force=false",
@@ -282,7 +282,7 @@ func TestRefusedDowngradeIsAuditedWithTheForceFlag(t *testing.T) {
 		"module":                       testCoord.Path(),
 		"version":                      testCoord.Version(),
 		"existing_verification_status": string(domain2.Verified),
-		"incoming_verification_status": string(domain2.VerifiedBySumDBOnly),
+		"incoming_verification_status": string(domain2.VerifiedByGoSum),
 		"existing_acquisition_mode":    string(domain2.AcquisitionProxy),
 		"incoming_acquisition_mode":    string(domain2.AcquisitionModcache),
 		"force":                        true,
@@ -312,8 +312,8 @@ func TestExplicitDowngradeFlagIsTheOnlyWayToWeakenAnAnchor(t *testing.T) {
 		t.Fatal("the explicit downgrade flag did not replace the stronger record")
 	}
 	stored := storedRecord(t, facts)
-	if stored.VerificationStatus != string(domain2.VerifiedBySumDBOnly) {
-		t.Errorf("stored VerificationStatus = %q, want %q", stored.VerificationStatus, domain2.VerifiedBySumDBOnly)
+	if stored.VerificationStatus != string(domain2.VerifiedByGoSum) {
+		t.Errorf("stored VerificationStatus = %q, want %q", stored.VerificationStatus, domain2.VerifiedByGoSum)
 	}
 	if stored.AcquisitionMode != string(domain2.AcquisitionModcache) {
 		t.Errorf("stored AcquisitionMode = %q, want %q", stored.AcquisitionMode, domain2.AcquisitionModcache)

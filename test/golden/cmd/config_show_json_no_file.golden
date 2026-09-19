@@ -206,6 +206,11 @@ exit 0
       "source": "default"
     },
     {
+      "key": "callgraph.toolchain",
+      "value": "(unset: a two-toolchain coordinate refuses)",
+      "source": "default"
+    },
+    {
       "key": "staleness.ttl",
       "value": "1h0m0s",
       "source": "default"

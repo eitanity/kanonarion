@@ -1,0 +1,7 @@
+# empty: the store holds walks and no SBOM has been generated from any of them. The zero says how many records were considered and what to run to produce one, rather than answering [] and leaving the reader to guess whether the filter or the store was empty.
+$ kanonarion sbom-list --json
+exit 0
+--- stdout ---
+[]
+--- stderr ---
+{"subject":"SBOM record","records_considered":0,"store_empty":true,"paged_past":false,"remedy":["kanonarion sbom \u003cwalk-id\u003e"]}

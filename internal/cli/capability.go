@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	capapp "github.com/eitanity/kanonarion/internal/capability/application"
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
 )
@@ -78,9 +80,9 @@ It reads stored call graphs; run 'kanonarion callgraph <module>@<version>' first
 			uc := capapp.NewAnalyseCapabilitiesUseCase(ctr.QueryCallGraph)
 			scope := capabilityRootScope(includeTests)
 			if against != "" {
-				return runCapabilityDiff(cmd.Context(), args[0], against, uc, scope, jsonOut, stdout)
+				return runCapabilityDiff(cmd.Context(), args[0], against, uc, ctr.QueryCallGraph, scope, jsonOut, stdout)
 			}
-			return runCapability(cmd.Context(), args[0], uc, scope, jsonOut, stdout)
+			return runCapability(cmd.Context(), args[0], uc, ctr.QueryCallGraph, scope, jsonOut, stdout)
 		},
 	}
 
@@ -124,13 +126,16 @@ type capabilityAnalyser interface {
 	Diff(ctx context.Context, from, to coordinate.ModuleCoordinate, pipelineVersion string, scope cgdomain.RootScope) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error)
 }
 
-func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, scope cgdomain.RootScope, jsonOut bool, stdout io.Writer) error {
+func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, generations cgports.CallGraphCoordinateLister, scope cgdomain.RootScope, jsonOut bool, stdout io.Writer) error {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
 	}
 	report, err := uc.Analyse(ctx, coord, cgapp.PipelineVersion, scope)
 	if err != nil {
+		if missing := capabilityMissingRecord(ctx, err, generations); missing != nil {
+			return missing
+		}
 		return fmt.Errorf("analysing capabilities: %w", err)
 	}
 	if jsonOut {
@@ -139,7 +144,7 @@ func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, scope
 	return printCapabilityReport(stdout, coord, report, scope)
 }
 
-func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capabilityAnalyser, scope cgdomain.RootScope, jsonOut bool, stdout io.Writer) error {
+func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capabilityAnalyser, generations cgports.CallGraphCoordinateLister, scope cgdomain.RootScope, jsonOut bool, stdout io.Writer) error {
 	from, err := parseCoordinate(fromArg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", fromArg, err)
@@ -150,12 +155,37 @@ func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capability
 	}
 	fromReport, toReport, diff, err := uc.Diff(ctx, from, to, cgapp.PipelineVersion, scope)
 	if err != nil {
+		if missing := capabilityMissingRecord(ctx, err, generations); missing != nil {
+			return missing
+		}
 		return fmt.Errorf("diffing capabilities: %w", err)
 	}
 	if jsonOut {
 		return encodeJSON(stdout, capabilityDiffToJSON(from, to, fromReport, toReport, diff, scope))
 	}
 	return printCapabilityDiff(stdout, from, to, diff, scope)
+}
+
+// capabilityMissingRecord turns "this coordinate has no call graph" into the
+// refusal a caller can act on, and returns nil for anything else.
+//
+// ExitNotFound, not the invocation-error code: the request was well formed and
+// the store was empty, which is the distinction a script branches on. The
+// remedy is built from the coordinate that actually missed — a diff reads two —
+// so what is printed is an invocation this CLI's own parser accepts.
+//
+// It is callgraph-show's own refusal, not a restatement of it: both refuse for
+// the absence of the same record, so the store is asked what it holds for the
+// coordinate instead of an absence being asserted over it. Saying the record
+// does not exist where the store holds two superseded generations of it is a
+// claim the store itself contradicts, and it leaves a reader with no reason to
+// suspect the pipeline bump that is the actual answer.
+func capabilityMissingRecord(ctx context.Context, err error, generations cgports.CallGraphCoordinateLister) error {
+	missing, ok := errors.AsType[*capapp.NoCallGraphError](err)
+	if !ok {
+		return nil
+	}
+	return missingCallGraphRefusal(ctx, missing.Coord, generations)
 }
 
 func encodeJSON(stdout io.Writer, v any) error {

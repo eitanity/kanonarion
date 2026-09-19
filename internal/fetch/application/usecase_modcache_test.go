@@ -106,7 +106,7 @@ func TestExecuteModcache_RecordsTheSameIdentityAsEveryOtherMode(t *testing.T) {
 	if res.FromCache {
 		t.Errorf("FromCache = true, want false on first fetch")
 	}
-	if got, want := res.Record.VerificationStatus, string(domain2.VerifiedBySumDBOnly); got != want {
+	if got, want := res.Record.VerificationStatus, string(domain2.VerifiedByGoSum); got != want {
 		t.Errorf("VerificationStatus = %q, want %q", got, want)
 	}
 	wantZip := fetchtest.Blob(ports.BlobKindZip, zipHash)
@@ -157,7 +157,7 @@ func TestExecuteGoModOnlyModcache_RecordsGoModOnly(t *testing.T) {
 	if got := res.Record.GoModLocation; got != wantGoMod.String() {
 		t.Errorf("GoModLocation = %q, want the measured go.mod identity %q", got, wantGoMod)
 	}
-	if got, want := res.Record.VerificationStatus, string(domain2.VerifiedBySumDBOnly); got != want {
+	if got, want := res.Record.VerificationStatus, string(domain2.VerifiedByGoSum); got != want {
 		t.Errorf("VerificationStatus = %q, want %q", got, want)
 	}
 	if _, ok, _ := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); !ok {
@@ -282,5 +282,94 @@ func TestExecuteModcache_CacheHitSkipsDownload(t *testing.T) {
 	}
 	if !res.FromCache {
 		t.Errorf("FromCache = false, want true")
+	}
+}
+
+// TestExecuteModcache_ClaimsNoAnchorItDidNotReach is the regression guard for
+// the reported defect. A --from-modcache run verifies against the local go.sum
+// and queries no transparency log, but recorded VerifiedBySumDBOnly and a
+// rechecked checksum-database leg — so an air-gapped measurement reported as
+// checksum-database coverage, and ranked level with a run that had really
+// reached the log.
+//
+// Two consequences it pins. The status buckets as local-go.sum-only, which is
+// what the run actually has; and the absent leg means a later composition cannot
+// take this measurement's date as when the log was last consulted.
+func TestExecuteModcache_ClaimsNoAnchorItDidNotReach(t *testing.T) {
+	coord := modcacheCoord(t)
+	zipHash := fetchtest.H1("zip-abc=")
+	goModHash := fetchtest.H1("mod-abc=")
+
+	for _, tc := range []struct {
+		name      string
+		goModOnly bool
+	}{
+		{"full", false},
+		{"go.mod-only", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := newFakeFacts()
+			uc := newUseCaseWithSumDB(
+				downloadWithHashes(coord, zipHash, goModHash),
+				&fakeVCS{}, newModcacheBlob(t), facts,
+				&fakeSumDB{result: ports.SumDBResult{Available: true, ZipHash: zipHash, GoModHash: goModHash}},
+			).WithModcacheMode()
+
+			res, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: coord, GoModOnly: tc.goModOnly})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if got, want := res.Record.VerificationStatus, string(domain2.VerifiedByGoSum); got != want {
+				t.Errorf("VerificationStatus = %q, want %q — the local go.sum is this mode's only anchor", got, want)
+			}
+			if got := domain2.BucketForVerification(domain2.VerificationStatus(res.Record.VerificationStatus)); got != domain2.BucketGoSumOnly {
+				t.Errorf("coverage bucket = %v, want BucketGoSumOnly", got)
+			}
+			if got := domain2.LegProvenance(res.Record.SumDBCheck); got != domain2.LegAbsent {
+				t.Errorf("checksum-database leg = %q, want absent: no transparency log was queried", got)
+			}
+			for _, l := range domain2.RecordLegs(res.Record.FactRecord) {
+				if l.Kind == domain2.LegSumDB {
+					t.Errorf("record projects a checksum-database leg %+v it never established", l)
+				}
+			}
+		})
+	}
+}
+
+// A module-cache measurement performs neither validation leg, so it is legless
+// while being written under the ledger. The coverage report must read that as a
+// measured absence of cross-verification — the gap it exists to surface — and
+// not as a record that predates the ledger and cannot say.
+func TestExecuteModcache_LeglessRecordStillReportsAMeasuredVCSAbsence(t *testing.T) {
+	coord := modcacheCoord(t)
+	zipHash := fetchtest.H1("zip-abc=")
+	goModHash := fetchtest.H1("mod-abc=")
+	facts := newFakeFacts()
+	uc := newUseCaseWithSumDB(
+		downloadWithHashes(coord, zipHash, goModHash),
+		&fakeVCS{}, newModcacheBlob(t), facts,
+		&fakeSumDB{result: ports.SumDBResult{Available: true, ZipHash: zipHash, GoModHash: goModHash}},
+	).WithModcacheMode()
+
+	res, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: coord})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	rec := res.Record
+	if len(rec.Legs) != 0 {
+		t.Fatalf("composed legs = %+v, want none", rec.Legs)
+	}
+	c := domain2.VerificationCoverageOf([]domain2.CoverageObservation{{
+		Bucket:      domain2.BucketForVerification(domain2.VerificationStatus(rec.VerificationStatus)),
+		Legs:        rec.Legs,
+		UnderLedger: rec.MeasurementKind != "",
+		Recorded:    true,
+	}})
+	if c.GoSumOnly != 1 || c.ChecksumDBOnly != 0 {
+		t.Errorf("coverage = %+v, want the module under local go.sum only", c)
+	}
+	if c.VCSNever != 1 || c.VCSNotMeasured != 0 {
+		t.Errorf("coverage = %+v, want a measured VCS absence, not an unmeasured one", c)
 	}
 }

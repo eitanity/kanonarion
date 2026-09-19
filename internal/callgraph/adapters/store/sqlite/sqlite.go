@@ -247,6 +247,10 @@ CREATE TABLE callgraph_edges_ledger (
     confidence          TEXT    NOT NULL,
     call_site_file      TEXT    NOT NULL DEFAULT '',
     call_site_line      INTEGER NOT NULL DEFAULT 0,
+    -- reflect_dispatch marks an edge whose callee is in package reflect. It is
+    -- not a count of reflective dispatches: nearly all of what it marks bounds
+    -- perfectly, so summing it overstates that population by two orders of
+    -- magnitude.
     reflect_dispatch    INTEGER NOT NULL DEFAULT 0,
     is_test             INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (record_content_hash, from_id, to_id, call_site_file, call_site_line)
@@ -1092,10 +1096,29 @@ func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinat
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	if err != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: %w", ports.ErrCallGraphConflict, err)
+		return domain2.CallGraphRecord{}, false, markConflict(err)
 	}
 	return composed, true, nil
 }
+
+// markConflict tags err as ports.ErrCallGraphConflict for callers that route on
+// the sentinel, WITHOUT restating its text.
+//
+// Wrapping with "%w: %w" did both at once, and the sentence an operator read
+// paid for it: the wrapper, the omission summary and the conflict itself each
+// prefixed "conflicting call graph records", so a refused traversal said it
+// three times in one line before naming the coordinate. The domain's own message
+// opens with the phrase and names the coordinate, the pipeline, the field, the
+// values and the remedy, so nothing is lost by the sentinel staying silent.
+func markConflict(err error) error { return conflictError{err: err} }
+
+// conflictError renders as the error it carries and unwraps to the sentinel
+// beside it, so errors.Is(err, ports.ErrCallGraphConflict) holds on a message
+// that never mentions it.
+type conflictError struct{ err error }
+
+func (c conflictError) Error() string   { return c.err.Error() }
+func (c conflictError) Unwrap() []error { return []error{ports.ErrCallGraphConflict, c.err} }
 
 // latestWorktreeGeneration answers a compose request from the newest row alone,
 // when the coordinate's generations are a working-tree sequence.
@@ -2407,15 +2430,108 @@ func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersio
 	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope, opts.Toolchain)
 }
 
-// queryEdges runs an edge query and drops rows whose owning module is outside
-// scope. The filter is applied here rather than in SQL because a build's version
-// set is a list of pairs, not a range: expressing it as a WHERE clause means one
-// bound parameter per module, and a full-depth walk can hold thousands. Both
-// queries are already driven by an index on the symbol ID, so the rows reaching
-// this loop are the matches for one symbol — a set small enough that filtering
-// in Go costs nothing the parameter list would not cost more of.
+// FindCallersOfEach returns every edge whose callee is any of symbolIDs
+// (see ports.CallGraphFrontierFinder).
+func (s *Store) FindCallersOfEach(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
+	return s.frontierEdges(ctx, "to_id", "from_id", symbolIDs, pipelineVersion, scope, opts)
+}
+
+// FindCalleesOfEach returns every edge whose caller is any of symbolIDs
+// (see ports.CallGraphFrontierFinder).
+func (s *Store) FindCalleesOfEach(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
+	return s.frontierEdges(ctx, "from_id", "to_id", symbolIDs, pipelineVersion, scope, opts)
+}
+
+// frontierEdges is FindCallers/FindCallees with the equality on the matched
+// endpoint widened to a set: `to_id = ?` becomes `to_id IN (?, ?, …)`, against
+// the same index, with everything after it unchanged.
+//
+// The larger saving is not the statement count but servedEdges running once over
+// every row: it memoises which generation serves a module per call, so resolving
+// per symbol re-composed the same coordinate's generations for every symbol in
+// the level, and that composition dominates on a coordinate with many
+// generations.
+//
+// matchCol and orderCol are literals from the two callers above, never query
+// input; the symbol ids are bound parameters.
+func (s *Store) frontierEdges(ctx context.Context, matchCol, orderCol string, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
+	// Distinct, because the per-symbol fallback would answer a repeated id twice
+	// and this answers it once; the two routes have to agree.
+	seen := make(map[string]bool, len(symbolIDs))
+	ids := make([]string, 0, len(symbolIDs))
+	for _, id := range symbolIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		// No symbols has an answer — no edges — and returning here also keeps
+		// `IN ()`, a syntax error, from ever being built.
+		return nil, nil
+	}
+
+	// SQLite caps a statement's bound parameters (999 by default), so a wide
+	// frontier is chunked, as the walk store chunks for the same reason. Well
+	// under the cap, with room for the pipeline-version parameter beside it.
+	const chunk = 400
+	var candidates []edgeCandidate
+	for start := 0; start < len(ids); start += chunk {
+		end := min(start+chunk, len(ids))
+		batch := ids[start:end]
+		args := make([]any, 0, len(batch)+1)
+		placeholders := make([]string, len(batch))
+		for i, id := range batch {
+			args = append(args, id)
+			placeholders[i] = "?"
+		}
+		args = append(args, pipelineVersion)
+
+		q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
+	                   from_id, to_id, confidence, is_test, kind
+	            FROM callgraph_edges
+	            WHERE ` + matchCol + ` IN (` + strings.Join(placeholders, ",") + `) AND pipeline_version = ?`
+		if opts.ExcludeTests {
+			q += ` AND is_test = 0`
+		}
+		q += ` ORDER BY from_module, from_version, ` + orderCol
+
+		batchCandidates, err := s.edgeCandidates(ctx, q, args, scope)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, batchCandidates...)
+	}
+
+	// Over every chunk together, not once per chunk: the modules repeat across
+	// chunks, and resolving per chunk would put back a smaller copy of the cost
+	// this method exists to remove.
+	return s.servedEdges(ctx, candidates, pipelineVersion, opts.Toolchain)
+}
+
+// queryEdges is the single-symbol edge query: the rows for one symbol, narrowed
+// to the generation that serves each.
+//
+// Scope is filtered in Go rather than in SQL because a build's version set is a
+// list of pairs, not a range: as a WHERE clause it is one bound parameter per
+// module, and a full-depth walk can hold thousands. The queries are driven by an
+// index on the symbol ID, so the rows to filter are few.
 func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion string, scope coordinate.ModuleSet, toolchain gotoolchain.Version) ([]ports.CallEdgeRef, error) {
-	rows, err := s.db.DB().QueryContext(ctx, q, symbolID, pipelineVersion)
+	candidates, err := s.edgeCandidates(ctx, q, []any{symbolID, pipelineVersion}, scope)
+	if err != nil {
+		return nil, err
+	}
+	return s.servedEdges(ctx, candidates, pipelineVersion, toolchain)
+}
+
+// edgeCandidates runs one edge statement and returns the in-scope rows, still
+// paired with the record each belongs to. Resolving WHICH generation serves them
+// is left to servedEdges: a frontier query issues several statements and must
+// resolve them together, or it pays that resolution once per chunk for the same
+// modules. args binds q's placeholders in order.
+func (s *Store) edgeCandidates(ctx context.Context, q string, args []any, scope coordinate.ModuleSet) ([]edgeCandidate, error) {
+	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying callgraph edges: %w", err)
 	}
@@ -2445,14 +2561,13 @@ func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion str
 		_ = rows.Close() //nolint:errcheck // returning the iteration error
 		return nil, fmt.Errorf("iterating callgraph edge refs: %w", err)
 	}
-	// Drained and closed before resolving the served generation: the store runs on
-	// a single connection, so issuing the resolution query while this result set
-	// is still open deadlocks.
+	// Closed before the caller resolves the served generation: the store runs on
+	// one connection, and querying while this result set is open deadlocks.
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("closing callgraph edge rows: %w", err)
 	}
 
-	return s.servedEdges(ctx, candidates, pipelineVersion, toolchain)
+	return candidates, nil
 }
 
 // edgeCandidate is one edge row together with the record it belongs to.
@@ -2513,8 +2628,10 @@ func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pip
 		out = append(out, c.ref)
 	}
 	if len(conflicts) > 0 {
-		return out, fmt.Errorf("%w: %d module(s) omitted: %w",
-			ports.ErrCallGraphConflict, len(conflicts), errors.Join(conflicts...))
+		// The summary counts what was withheld and the conflicts name it; the
+		// sentinel rides along without adding its own sentence. See markConflict.
+		return out, markConflict(fmt.Errorf("%d module(s) omitted: %w",
+			len(conflicts), errors.Join(conflicts...)))
 	}
 	return out, nil
 }
@@ -2527,4 +2644,5 @@ var (
 	_ ports.CallGraphCoordinateLister = (*Store)(nil)
 	_ ports.CallGraphSourceReader     = (*Store)(nil)
 	_ ports.CallGraphWorktreeRouter   = (*Store)(nil)
+	_ ports.CallGraphFrontierFinder   = (*Store)(nil)
 )

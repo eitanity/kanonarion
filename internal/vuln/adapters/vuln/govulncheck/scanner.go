@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
@@ -15,7 +16,13 @@ import (
 type Scanner struct {
 	pipelineVersion string
 	vulnStore       ports.VulnerabilityStore
-	logger          *slog.Logger
+	// target is the platform every child of a scan resolves and analyses for.
+	// Reachability is platform-specific — build constraints decide which files
+	// are in the package graph at all — so a scan of a walk taken for one target
+	// must be analysed for that same target. The zero value is the measured
+	// host, which is also what it writes into the children: see goenv.Target.
+	target goenv.Target
+	logger *slog.Logger
 }
 
 // New returns a new Scanner.
@@ -25,6 +32,16 @@ func New(pipelineVersion string, vulnStore ports.VulnerabilityStore) *Scanner {
 		vulnStore:       vulnStore,
 		logger:          slog.Default(),
 	}
+}
+
+// WithTarget returns a copy of the Scanner whose children resolve and analyse
+// for the declared target. It is layered onto each scan environment exactly as
+// the toolchain escalation is: the posture says what the child may do, the
+// toolchain says which Go does it, and this says which platform it is about.
+func (s *Scanner) WithTarget(t goenv.Target) *Scanner {
+	copy := *s
+	copy.target = t
+	return &copy
 }
 
 // WithLogger returns a copy of the Scanner using the given logger.

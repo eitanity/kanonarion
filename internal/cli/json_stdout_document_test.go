@@ -293,6 +293,7 @@ var jsonStdoutCases = map[string]jsonStdoutCase{
 	"license-list":   {},
 	"local":          {argsFn: localTreeArgs},
 	"native":         {args: []string{jsonDocDepCoord}},
+	"native-list":    {},
 	"notice": {skip: "renders one form by design: stdout is the THIRD-PARTY-LICENSES attribution document, the deliverable artefact itself, and --json is a documented no-op that returns the same bytes. " +
 		"There is no machine-readable projection and there will not be one; the underlying data is served by license-list --json and sbom"},
 	"policy":                {skip: "command group: cobra prints its help text; it renders no answer of its own"},

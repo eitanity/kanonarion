@@ -1,0 +1,9 @@
+# error-shaped: no walk with this identifier, so there is no module set to attribute.
+$ kanonarion notice 01ARZ3NDEKTSV4RRFFQ69G5FZZ
+exit 20
+--- error ---
+execute root command: loading walk 01ARZ3NDEKTSV4RRFFQ69G5FZZ: getting walk 01ARZ3NDEKTSV4RRFFQ69G5FZZ: walk record not found
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -135,4 +136,117 @@ func TestNetworkUse_IsNotStoreIntent(t *testing.T) {
 	}
 	t.Logf("creates the store, opens no network: %v", createsButNeverDials)
 	t.Logf("reads only, still reaches the network: %v", dialsButOnlyReads)
+}
+
+// TestOfflineRemedyNamesOnlyWhatTheCommandAccepts is the guard for the defect
+// that produced this rendering: one shared string in the proxy adapter named
+// --from-modcache to every command that built it, and `fetch` and `inspect` do
+// not define it. An operator inside an air gap read the line that stopped the
+// run, typed it, and got "unknown flag".
+//
+// It walks the tree rather than naming commands, so a command added later is
+// held to the same rule, and it reads the flags out of the rendered text rather
+// than out of the annotation: the annotation is already checked above, and what
+// the operator is told is the text.
+func TestOfflineRemedyNamesOnlyWhatTheCommandAccepts(t *testing.T) {
+	root := newRootCmd(io.Discard, io.Discard)
+	byPath := commandsByPath(root)
+
+	flagToken := regexp.MustCompile(`--[a-z0-9][a-z0-9-]*`)
+	checked := 0
+	for p, cmd := range byPath {
+		remedy := renderOfflineRemedy(cmd)
+		if remedy == "" {
+			continue
+		}
+		checked++
+		// Only the lead-in sentence is about this command. A named alternative
+		// is a DIFFERENT command's invocation — that is what makes it an
+		// alternative — so its flags belong to the command it names.
+		lead, _, _ := strings.Cut(remedy, "\n")
+		for _, f := range flagToken.FindAllString(lead, -1) {
+			if cmd.Flags().Lookup(strings.TrimPrefix(f, "--")) == nil {
+				t.Errorf("the offline remedy for %q names %q, which %q does not register: "+
+					"an operator who runs the line that stopped them gets \"unknown flag\"", p, f, p)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no command rendered an offline remedy; this test asserted nothing")
+	}
+	t.Logf("%d command(s) render an offline remedy", checked)
+}
+
+// TestOfflineAlternativeResolvesAgainstTheCommandItNames is the other half of
+// the remedy guard. The flag check above reads the lead-in sentence, which is
+// about the command that was stopped; a declared alternative is a DIFFERENT
+// command's invocation, and one nobody resolved is the same defect displaced by
+// one command.
+//
+// `never` is refused outright: a command that opens no socket is not stopped by
+// a no-network refusal, so an alternative on it names a remedy for a problem it
+// does not have.
+func TestOfflineAlternativeResolvesAgainstTheCommandItNames(t *testing.T) {
+	root := newRootCmd(io.Discard, io.Discard)
+	checked := 0
+	for p, cmd := range commandsByPath(root) {
+		alt := offlineAlternativeOf(cmd)
+		if alt == "" {
+			continue
+		}
+		checked++
+		if use := networkUseOf(cmd); use == NetworkNever {
+			t.Errorf("command %q declares %q and names the offline alternative %q: it opens no socket, "+
+				"so no no-network refusal is about it", p, use, alt)
+		}
+		if !strings.HasPrefix(alt, "kanonarion ") {
+			t.Errorf("command %q names the offline alternative %q: write it as the caller types it, "+
+				"a whole invocation starting `kanonarion`", p, alt)
+			continue
+		}
+		// The alternative is checked against the command it names, which is the
+		// half the flag guard above cannot do: those flags belong to a different
+		// command, and an alternative nobody resolved is the same defect one
+		// command further along.
+		fields := strings.Fields(strings.TrimPrefix(alt, "kanonarion "))
+		named, _, ferr := root.Find(fields[:1])
+		if ferr != nil || named == root {
+			t.Errorf("command %q names the offline alternative %q, whose command %q is not in this tree",
+				p, alt, fields[0])
+			continue
+		}
+		for _, f := range fields[1:] {
+			if !strings.HasPrefix(f, "--") {
+				continue
+			}
+			flag := strings.TrimPrefix(strings.SplitN(f, "=", 2)[0], "--")
+			if named.Flags().Lookup(flag) == nil {
+				t.Errorf("command %q names the offline alternative %q, but %q does not register --%s",
+					p, alt, fields[0], flag)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no command names an offline alternative; this test asserted nothing")
+	}
+}
+
+// TestRenderOfflineRemedy_UndeclaredNamesNothing: an undeclared or
+// never-dialling command gets no remedy at all. The switch enumerates the
+// values it means rather than negating one of them, so a value added later is
+// unhandled visibly instead of inheriting whichever branch it fell into.
+func TestRenderOfflineRemedy_UndeclaredNamesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cmd  *cobra.Command
+	}{
+		{"undeclared", &cobra.Command{Use: "u"}},
+		{"unknown value", &cobra.Command{Use: "u", Annotations: map[string]string{annotationNetworkUse: "sometimes"}}},
+		{"never", &cobra.Command{Use: "u", Annotations: map[string]string{annotationNetworkUse: NetworkNever}}},
+		{"avoidable, no flags named", &cobra.Command{Use: "u", Annotations: map[string]string{annotationNetworkUse: NetworkAvoidable}}},
+	} {
+		if got := renderOfflineRemedy(tc.cmd); got != "" {
+			t.Errorf("%s rendered %q, want no remedy: a remedy nobody declared is one nobody can run", tc.name, got)
+		}
+	}
 }

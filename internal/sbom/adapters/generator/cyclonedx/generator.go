@@ -216,12 +216,53 @@ func (g *Generator) buildBOM(
 		}
 		components = append(components, comp)
 	}
+
+	// The licence-completeness statement below is measured over THESE components
+	// — the ones assembled from the walk graph — and the count is taken before
+	// any native component joins the list.
+	//
+	// A native component carries no licence, and it is not a gap in the licence
+	// extraction: that pipeline reads the LICENSE files of a Go module's
+	// artefact, and this component is a C library inside one of those artefacts
+	// that it never set out to cover. Counting it as undetermined would move the
+	// document's licence gate — which is a non-zero exit — onto a question with
+	// no remedy the operator could run, and a refusal that names an impossible
+	// remedy is worse than the silence it replaces. The component states its own
+	// undetermined licence on itself instead.
+	goComponentCount := len(components)
+
+	// Native components — the C libraries a cgo module ships inside its own zip
+	// and compiles into the binary. They are APPENDED after the Go components,
+	// never merged into their ordering, so every existing component keeps not
+	// only its fields and its purl but its index in the array. A document with no
+	// identified native component is therefore byte-identical to the one this
+	// generator produced before they existed.
+	//
+	// Go components are assembled from graph nodes and asserted to be
+	// `pkg:golang/`; these are assembled from native records and asserted to be
+	// `pkg:generic/`. Two lists, two schemes, one assertion each.
+	natives, _ := collectNativeComponents(walk.Graph.Nodes, req.NativeRecords, func(c coordinate.ModuleCoordinate) string {
+		return modulePURL(subj.rewrite(moduleRef(c)))
+	})
+	for _, n := range natives {
+		comp := buildNativeComponent(n, req.PipelineVersion)
+		if err := assertNativePURL(comp.PackageURL); err != nil {
+			return nil, nil, err
+		}
+		components = append(components, comp)
+	}
 	bom.Components = &components
 
 	// Dependency graph — an entry per component with the root at the metadata
 	// component. Edges come from the resolved walk graph (From → To), already
 	// deterministic. bom-refs are the component purls.
-	deps := buildDependencies(components, bom.Metadata.Component, walk.Graph, subj)
+	//
+	// A native component has no graph edge of its own — it is not a module and
+	// the walk never resolved it — so the edge that reaches it is supplied here:
+	// the Go module whose artefact ships it depends on it. Without that the
+	// library would sit in the component list unreachable from the subject, and a
+	// consumer walking the graph to find what ships would not find it.
+	deps := buildDependencies(components, bom.Metadata.Component, walk.Graph, subj, nativeDependencyEdges(natives))
 	bom.Dependencies = &deps
 
 	// The document's subject is the artefact being shipped, so it is judged by
@@ -259,7 +300,7 @@ func (g *Generator) buildBOM(
 		annotations = append(annotations, vendorScopeAnnotation(*req.VendorScope, req.ComponentsScopedToBinary, req.PipelineVersion, ts, documentSubject(bom)))
 	}
 	if len(undetermined) > 0 {
-		annotations = append(annotations, licenceCompletenessAnnotation(undetermined, len(components), req.PipelineVersion, ts))
+		annotations = append(annotations, licenceCompletenessAnnotation(undetermined, goComponentCount, req.PipelineVersion, ts))
 	}
 	if len(annotations) > 0 {
 		bom.Annotations = &annotations
@@ -509,7 +550,18 @@ func digestHashes(d fetchdomain.ArtifactDigests) *[]cdx.Hash {
 // unprojected, the array carried two entries for the subject — its stamped
 // bom-ref and its graph coordinate — each repeating the whole dependency set,
 // and a consumer resolving the document saw two artefacts where there is one.
-func buildDependencies(components []cdx.Component, root *cdx.Component, graph walkdomain.Graph, subj subject) []cdx.Dependency {
+// extra carries edges the walk graph cannot supply, keyed by the SOURCE
+// component's bom-ref: today, the native libraries a Go module's own artefact
+// ships. They are merged into the same adjacency the graph edges build, so a
+// host module's dependsOn lists its modules and its C library together and
+// nothing downstream has to know the difference.
+func buildDependencies(
+	components []cdx.Component,
+	root *cdx.Component,
+	graph walkdomain.Graph,
+	subj subject,
+	extra map[string][]string,
+) []cdx.Dependency {
 	purlOf := func(c coordinate.ModuleCoordinate) string {
 		return modulePURL(subj.rewrite(moduleRef(c)))
 	}
@@ -521,6 +573,14 @@ func buildDependencies(components []cdx.Component, root *cdx.Component, graph wa
 			adjacency[from] = make(map[string]struct{})
 		}
 		adjacency[from][to] = struct{}{}
+	}
+	for from, tos := range extra {
+		if adjacency[from] == nil {
+			adjacency[from] = make(map[string]struct{})
+		}
+		for _, to := range tos {
+			adjacency[from][to] = struct{}{}
+		}
 	}
 	dependsOn := func(adjKey string) *[]string {
 		on := make([]string, 0, len(adjacency[adjKey]))

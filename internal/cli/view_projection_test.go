@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
 // This is the structural guard on every CLI view that replaced a published
@@ -47,6 +48,16 @@ func projectionViews() []projectionView {
 		{
 			name: "scanRunDiffDocument",
 			root: reflect.TypeOf(scanRunDiffDocument{}),
+			admitted: map[reflect.Type]bool{
+				// The hop dispatch annotation is a wire value: every field carries an
+				// explicit snake_case tag, the one enum on it is a string, and it holds
+				// no collection. It is admitted rather than projected so the annotation
+				// has ONE spelling across every surface that publishes a route — a
+				// hand-copied field list here would go short the first time the
+				// annotation grew a field, and a diff whose dispatch object differs from
+				// reachability's is worse than no diff at all.
+				reflect.TypeOf(vuldomain.HopDispatch{}): true,
+			},
 		},
 	}
 }

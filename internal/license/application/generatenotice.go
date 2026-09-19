@@ -53,6 +53,12 @@ type NoticeRequest struct {
 	// invocation's configuration, not of the store the use case reads. The zero
 	// value never matches, so a caller that has none passes nothing.
 	Declarations licensedomain.CopyrightDeclarationSet
+	// Overrides carries the operator's recorded licence determinations, an input
+	// on the same terms as Declarations and for the same reason: it is a
+	// property of the invocation's configuration, not of the store this use case
+	// reads. The CLI loads it through the LicenseOverrideStore port license-compat
+	// and audit read, so every surface resolves one set of decisions.
+	Overrides licensedomain.LicenseOverrideSet
 }
 
 // NoticeResult is the output of Generate.
@@ -68,7 +74,7 @@ type NoticeResult struct {
 func (uc *GenerateNoticeUseCase) Generate(ctx context.Context, req NoticeRequest) (NoticeResult, error) {
 	var result NoticeResult
 	for _, coord := range req.Coordinates {
-		entry, review, err := uc.processModule(ctx, coord, req.Declarations)
+		entry, review, err := uc.processModule(ctx, coord, req)
 		if err != nil {
 			return NoticeResult{}, fmt.Errorf("processing %s: %w", coord, err)
 		}
@@ -85,8 +91,9 @@ func (uc *GenerateNoticeUseCase) Generate(ctx context.Context, req NoticeRequest
 func (uc *GenerateNoticeUseCase) processModule(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
-	declarations licensedomain.CopyrightDeclarationSet,
+	req NoticeRequest,
 ) (*licensedomain.NoticeEntry, *licensedomain.ReviewItem, error) {
+	declarations := req.Declarations
 	rec, found, err := uc.licenses.GetLicenseRecord(ctx, coord, uc.pipelineVersion)
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting license record: %w", err)
@@ -112,15 +119,33 @@ func (uc *GenerateNoticeUseCase) processModule(
 		}, nil
 	}
 
+	// The operator's recorded determination, resolved before the gate: it is the
+	// one thing that can settle an identity the detector could not, and where it
+	// applies it is already the module's licence for license-compat, audit and
+	// license-list. Publishing the detector's answer instead would put this
+	// command alone in disagreement with the rest.
+	override, overridden := req.Overrides.Resolve(coord)
+
 	// Statuses that block automated NOTICE generation per.
 	// LicenseStatusMultiple is not blocked: verbatim inclusion of all root-level
 	// license texts satisfies attribution for both single-file compound licenses
 	// (e.g. yaml.v3 "MIT and Apache") and multi-file distributions.
+	//
+	// Ambiguous and None are the two the operator can settle: extraction ran to
+	// completion and produced an answer the operator is superseding — an
+	// election between the arms it read, or an identity for files it could not
+	// classify. ExtractionFailed is not such an answer. Nothing was measured
+	// there, so there is nothing for a determination to supersede, and the
+	// remedy remains to make the measurement.
 	switch rec.OverallStatus {
 	case licensedomain.LicenceStatusAmbiguous:
-		return nil, &licensedomain.ReviewItem{Coordinate: coord, Reason: ambiguousReason(rec)}, nil
+		if !overridden {
+			return nil, &licensedomain.ReviewItem{Coordinate: coord, Reason: ambiguousReason(rec), UndeterminedLicence: true}, nil
+		}
 	case licensedomain.LicenseStatusNone:
-		return nil, &licensedomain.ReviewItem{Coordinate: coord, Reason: "no license found"}, nil
+		if !overridden {
+			return nil, &licensedomain.ReviewItem{Coordinate: coord, Reason: "no license found", UndeterminedLicence: true}, nil
+		}
 	case licensedomain.LicenseStatusExtractionFailed:
 		detail := rec.FailureDetail
 		if detail == "" {
@@ -176,10 +201,25 @@ func (uc *GenerateNoticeUseCase) processModule(
 	// the identity is still reproduced verbatim. Attribution travels with the
 	// artefact; naming a Go library after the font it embeds does not.
 	coveredSPDX, coveredExpression := licensedomain.NoticeIdentity(rec)
+	var determination *licensedomain.NoticeDetermination
+	if overridden {
+		// The identity published is the operator's. The expression is dropped
+		// with it — an expression read off the record would describe the
+		// detection the determination replaced, which is the one reading a
+		// reader must not be given. The TEXTS are untouched: they are selected
+		// by file above, so whatever the module ships is still reproduced, and
+		// the block below says what the detector made of it.
+		determination = &licensedomain.NoticeDetermination{
+			Override:        override,
+			DetectorFinding: detectorFinding(rec),
+		}
+		coveredSPDX, coveredExpression = override.SPDX, ""
+	}
 	entry := &licensedomain.NoticeEntry{
 		Coordinate:         coord,
 		SPDX:               coveredSPDX,
 		Expression:         coveredExpression,
+		Determination:      determination,
 		LicenseTexts:       licenseTexts,
 		Copyrights:         copyrights,
 		EmbeddedComponents: embeddedComps,
@@ -195,6 +235,13 @@ func (uc *GenerateNoticeUseCase) readLicenseTexts(
 	coord coordinate.ModuleCoordinate,
 	rec licensedomain.LicenseRecord,
 ) ([]licensedomain.NoticeLicenseFile, []licensedomain.NoticeEmbeddedComponent, error) {
+	// A record naming no file has nothing in the archive to reproduce, so the
+	// archive is not opened: requiring the module zip to produce an empty list
+	// failed the document for a coordinate that has none.
+	if len(rec.LicenseFiles) == 0 && len(rec.EffectiveSet.Components) == 0 {
+		return nil, nil, nil
+	}
+
 	factRecord, err := uc.noticeRequireFetchRecord(ctx, coord)
 	if err != nil {
 		return nil, nil, err
@@ -375,6 +422,27 @@ func embeddedComponentPrefix(relPath string) string {
 		return relPath[:idx]
 	}
 	return relPath
+}
+
+// detectorFinding says what the licence detector made of the module, in the
+// words the review list would have used, so the document reports the
+// measurement a determination replaced rather than only the replacement.
+func detectorFinding(rec licensedomain.LicenseRecord) string {
+	switch rec.OverallStatus {
+	case licensedomain.LicenceStatusAmbiguous:
+		return ambiguousReason(rec)
+	case licensedomain.LicenseStatusNone:
+		return "no licence identified in any file it read"
+	}
+	covered := licensedomain.ReadCoverage(rec)
+	switch {
+	case covered.Expression != "" && covered.Expression != covered.PrimarySPDX:
+		return covered.Expression
+	case covered.PrimarySPDX != "":
+		return covered.PrimarySPDX
+	default:
+		return "no identifier (status: " + rec.OverallStatus.String() + ")"
+	}
 }
 
 // ambiguousReason builds a human-readable review reason listing the competing

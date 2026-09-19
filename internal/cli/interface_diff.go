@@ -171,7 +171,7 @@ func interfaceDiffWith(
 
 	var used *usedByResult
 	if f.usedBy != "" {
-		used, err = joinUsedBy(ctx, ctr, diff, f.usedBy, gotoolchain.Version(f.toolchain))
+		used, err = joinUsedBy(ctx, ctr, diff, f.usedBy, toolchainPreferenceOf(f.toolchain))
 		if err != nil {
 			return err
 		}

@@ -111,9 +111,9 @@ func TestInterfaces_EmptyInterfaceIsNotRecorded(t *testing.T) {
 	}
 }
 
-// TestInterfaces_DeclaredButUnimplemented pins the distinction the verdict
-// rests on: an interface with no implementers is a measured empty set, and must
-// still be reported as declared rather than as unknown.
+// TestInterfaces_DeclaredButUnimplemented pins the distinction a reader has to
+// be able to make: an interface with no implementers is a measured empty set,
+// and is reported as declared rather than as unknown.
 func TestInterfaces_DeclaredButUnimplemented(t *testing.T) {
 	files := testScopeFiles()
 	files["ports/unused.go"] = "package ports\n\ntype Unused interface {\n\tNothingImplementsThis() error\n}\n"

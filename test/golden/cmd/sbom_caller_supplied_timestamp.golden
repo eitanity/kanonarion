@@ -1,0 +1,275 @@
+# THE OTHER TIMESTAMP BASIS, and the control for sbom_populated. metadata.timestamp has two sources and the document states which one it used: a creation time the caller supplied, or the newest licence extraction time among its inputs when none was. The generator reads no clock on either path. The pair is what shows the basis property tracks the invocation rather than being a constant. A stamped document is also ephemeral — it is generated, not served, and not stored.
+$ kanonarion sbom 01ARZ3NDEKTSV4RRFFQ69G5FB1 --generated-at 2026-03-01T09:00:00Z
+exit 0
+--- stdout ---
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:golang/example.com/cgolib@v0.4.2",
+      "copyright": "Copyright (c) 2026, Example Cgolib Authors",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a7d884ecbb9cf4bd84ea469e0954e93101a98d8193b96924b0c6e098890aeb46"
+        },
+        {
+          "alg": "SHA-384",
+          "content": "d36efde0e88936d5f85938377b6b79405cf8b2b52cc148d6749469865695854ccabfdd6d5e54e7ff0e2b2075bfdbd301"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "45ebdbecaf93bad70540316a0c8250b166fe13db6b746c796659a6b7886411a6189902486e15598dc210bc54f2552096397c1d31a6018937d886b6f569942782"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "example.com/cgolib",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.10.0"
+        }
+      ],
+      "purl": "pkg:golang/example.com/cgolib@v0.4.2",
+      "type": "library",
+      "version": "v0.4.2"
+    },
+    {
+      "bom-ref": "pkg:golang/example.com/plainlib@v1.1.0",
+      "copyright": "Copyright 2026 Example Plainlib Authors",
+      "externalReferences": [
+        {
+          "comment": "the module zip was cross-verified against refs/tags/v1.1.0 at commit 0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+          "type": "vcs",
+          "url": "https://example.com/plainlib"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dd0707d654cb912b21fc199692c2d3ab0896e62809cddd4e9dcfb5591a9081cb"
+        },
+        {
+          "alg": "SHA-384",
+          "content": "4f84de598c1abbe787df48acb97886d3fc112928b2083468ddcbd639fff71e280e2bab4ed9c9d0e1241e202074aa30c4"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "00a1807c26956dff2cc36d8cc9126e575899016f949dceaa41009f92dbb66b3472fa35d0508a8e1f370bc4f8149c9f7ae9355d18b980a6d3a63cf294fe00150a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "example.com/plainlib",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.10.0"
+        }
+      ],
+      "purl": "pkg:golang/example.com/plainlib@v1.1.0",
+      "type": "library",
+      "version": "v1.1.0"
+    },
+    {
+      "bom-ref": "pkg:golang/example.com/product@v1.4.0",
+      "copyright": "Copyright (c) 2026 Example Product Authors",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "fc7a432cbe4564c3fa8e6c5aac5cb84a9cd13519db6f55d89d7b756b84619dac"
+        },
+        {
+          "alg": "SHA-384",
+          "content": "e4f65b616a8565d3ba0038d057ad4cdc54bd734cceb3488dcd60e1fbd286f9a1910927e4cff101a751e1b1ff341532af"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "85f769787a06b879a482e19fcc988273d0e180a5c90961b25b0ab4248235b2780c447d1b128c76a2b10e6ce1a7a2a8eaf86dac2e58908b4ddab7c1f47fa0cb5d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "example.com/product",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.10.0"
+        }
+      ],
+      "purl": "pkg:golang/example.com/product@v1.4.0",
+      "type": "library",
+      "version": "v1.4.0"
+    },
+    {
+      "bom-ref": "pkg:generic/sqlite@3.45.1",
+      "description": "Native library compiled into the binary from source shipped inside the published zip of Go module example.com/cgolib@v0.4.2. Not a Go module and not fetched from any registry: its version was read verbatim from a declaration in that source. Its advisories were not searched.",
+      "evidence": {
+        "identity": [
+          {
+            "concludedValue": "3.45.1",
+            "confidence": 1,
+            "field": "version",
+            "methods": [
+              {
+                "confidence": 1,
+                "technique": "source-code-analysis",
+                "value": "#define SQLITE_VERSION        \"3.45.1\""
+              }
+            ]
+          }
+        ],
+        "occurrences": [
+          {
+            "additionalContext": "#define SQLITE_VERSION        \"3.45.1\"",
+            "location": "example.com/cgolib@v0.4.2:sqlite3-binding.c"
+          }
+        ]
+      },
+      "name": "SQLite",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "native"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.10.0"
+        },
+        {
+          "name": "kanonarion:component:native",
+          "value": "true"
+        },
+        {
+          "name": "kanonarion:native:host_module",
+          "value": "example.com/cgolib@v0.4.2"
+        },
+        {
+          "name": "kanonarion:native:host_artefact",
+          "value": "zip:h1:5AEBzJNMZ8lwvRAbBIkz3xjCCw3wlSXyoVW/8hI9+1k="
+        },
+        {
+          "name": "kanonarion:native:confidence",
+          "value": "declared"
+        },
+        {
+          "name": "kanonarion:native:generation",
+          "value": "0.3.0+recipes.1"
+        },
+        {
+          "name": "kanonarion:native:advisories_searched",
+          "value": "false"
+        },
+        {
+          "name": "kanonarion:native:licence_determined",
+          "value": "false"
+        }
+      ],
+      "purl": "pkg:generic/sqlite@3.45.1",
+      "type": "library",
+      "version": "3.45.1"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:generic/sqlite@3.45.1"
+    },
+    {
+      "dependsOn": [
+        "pkg:generic/sqlite@3.45.1"
+      ],
+      "ref": "pkg:golang/example.com/cgolib@v0.4.2"
+    },
+    {
+      "ref": "pkg:golang/example.com/plainlib@v1.1.0"
+    },
+    {
+      "dependsOn": [
+        "pkg:golang/example.com/cgolib@v0.4.2",
+        "pkg:golang/example.com/plainlib@v1.1.0"
+      ],
+      "ref": "pkg:golang/example.com/product@v1.4.0"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "pkg:golang/example.com/product@v1.4.0",
+      "copyright": "Copyright (c) 2026 Example Product Authors",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "example.com/product",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.10.0"
+        }
+      ],
+      "purl": "pkg:golang/example.com/product@v1.4.0",
+      "type": "library",
+      "version": "v1.4.0"
+    },
+    "properties": [
+      {
+        "name": "kanonarion:document:timestamp_basis",
+        "value": "caller-supplied document creation time"
+      },
+      {
+        "name": "kanonarion:licence:newest_extraction",
+        "value": "2026-02-03T11:30:00Z"
+      }
+    ],
+    "timestamp": "2026-03-01T09:00:00Z",
+    "tools": {
+      "components": [
+        {
+          "name": "kanonarion",
+          "type": "application",
+          "version": "0.10.0"
+        }
+      ]
+    }
+  },
+  "serialNumber": "urn:uuid:32dd7bfd-92d2-b9b4-a3d4-d8f0272fab63",
+  "specVersion": "1.6",
+  "version": 1
+}
+--- stderr ---
+(empty)

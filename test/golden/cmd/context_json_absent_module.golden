@@ -56,6 +56,13 @@ exit 0
       "vulnerabilities": {
         "status": "not_run",
         "snapshot_age_days": null
+      },
+      "native_coverage": {
+        "state": "not_examined",
+        "unsearched_components": 0,
+        "statement": "this module's artefact was not examined for native code compiled into the binary, so nothing is known either way — run: kanonarion native example.com/absent@v9.9.9",
+        "components": [],
+        "linked_libraries": []
       }
     }
   ]

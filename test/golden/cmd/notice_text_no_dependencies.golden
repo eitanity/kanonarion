@@ -1,0 +1,28 @@
+# THE ZERO: a walk that brought nothing in. The document is the subject's own attribution and nothing else, and the scope line still states which walk answered.
+$ kanonarion notice 01ARZ3NDEKTSV4RRFFQ69G5FB3
+exit 0
+--- stdout ---
+THIRD-PARTY-LICENSES
+
+This project uses the following third-party software.
+
+================================================================================
+Module:  example.com/product@v1.4.0
+License: MIT
+
+Copyright notices:
+  Copyright (c) 2026 Example Product Authors
+
+MIT (LICENSE):
+
+MIT License
+
+Copyright (c) 2026 Example Product Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction.
+
+================================================================================
+--- stderr ---
+notice: scope: walk 01ARZ3NDEKTSV4RRFFQ69G5FB3 (1 module(s))

@@ -289,7 +289,7 @@ kanonarion callgraph <module>@<version> [flags]
 | `--from-walk` | _(auto-discovered)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. Unset, the walk of a build that consumes the module is used; where the store holds it in more than one build, no build list is discovered and the builds are named on stderr so you can pin one. See [Modules published before Go modules](#modules-published-before-go-modules). |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--no-progress` | `false` | Suppress the per-phase narration on stderr |
-| `--json` | `false` | Emit the record as JSON to stdout |
+| `--json` | `false` | Emit this run's summary as a JSON document (the record's scalars, without `nodes` and `edges`) |
 
 ```
 $ kanonarion callgraph golang.org/x/mod@v0.30.0
@@ -309,6 +309,55 @@ The same lines are what a parent process reads to tell a working child from a
 stalled one - see [extract](extract.md#how-long-a-subprocess-may-run) - so a spawned
 child always writes them whatever this store's `preferences.progress` says. The
 flag silences them for a run you started by hand.
+
+#### What `--json` returns
+
+`callgraph` **summarises**, and the document says the same thing the line does.
+Under `--json` it carries every scalar of the record — `coordinate`,
+`overall_status`, `node_count`, `edge_count`, `algorithm`, `completeness`,
+`analysis_source`, `artifact_kind`, `toolchain`, `extracted_at`,
+`content_hash`, `schema_version`, `pipeline_version`, the test and reference
+axes, the analyser identity, and on an incomplete graph `failure_detail`,
+`failure_cause` and `failed_packages` — at exactly the keys
+[`callgraph-show`](#callgraph-show) uses for them.
+
+It does **not** carry `nodes` or `edges`. The graph is a property of the record
+rather than of the run that wrote it, and it is large:
+`github.com/spf13/pflag@v1.0.10` holds 1,512 nodes and 5,172 edges — 84 bytes as
+the summary line, and about 2 MB as a node-and-edge document.
+`github.com/eitanity/kanonarion@local`, at 17,940 nodes and 255,135 edges, is
+about 81 MB. A document that size is one to ask for deliberately, and `--json`
+is not a deliberate enough ask: it is inherited from
+[`preferences.json`](config.md), so it can be in force with no flag typed.
+
+The two keys are **absent**, not empty. A record that measured no function at
+all is a real recorded state — it is the one these commands
+[exit `2`](#exit-codes) on — and `callgraph-show` renders it as `"nodes": []`.
+An omitted key and an empty array therefore mean two different things, and a
+consumer can tell the run's summary from a graph that is genuinely empty.
+
+What the summary answers that no later read can: whether **this** invocation
+measured the module or served a record the store already held. That is a fact
+about the run — `callgraph-show` serves a stored record and states nothing about
+how anyone got it — and it is why these commands return a document rather than
+nothing. `local` carries it under `derivations`; see
+[`local`](local.md#unchanged-trees).
+
+#### Reading the whole graph
+
+The record, and the graph in it, are read with `callgraph-show`:
+
+```sh
+kanonarion callgraph-show <module>@<version> --json
+kanonarion callgraph-show <module>@<version> --limit-nodes 0 --limit-edges 0 --json
+```
+
+The first returns the record document with the arrays capped at the printing
+defaults — which under `--json` do not truncate unless you pass the flags. The
+second states the caps explicitly and `0` means unlimited, so it returns every
+node and every edge; that is the invocation to use when you intend to consume
+the whole document. Each cap states what it did, in `node_cap` and `edge_cap` —
+see [`callgraph-show`](#callgraph-show).
 
 ### Exit codes
 
@@ -406,17 +455,19 @@ kanonarion callgraph-show <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--node` | _(all)_ | Filter to nodes whose fully-qualified ID contains this substring (case-insensitive), plus everything directly connected to them |
-| `--limit-nodes` | `50` | Maximum nodes to print (`0` = unlimited) |
-| `--limit-edges` | `100` | Maximum edges to print (`0` = unlimited) |
+| `--limit-nodes` | `50` | Maximum nodes to print (`0` = unlimited). Under `--json` it applies only when you pass it; the default does not truncate the document |
+| `--limit-edges` | `100` | Maximum edges to print (`0` = unlimited). Under `--json` it applies only when you pass it; the default does not truncate the document |
 | `--history` | `false` | List every stored generation for the module instead of the composed answer |
 | `--diff` | `false` | Report what the distinct stored measurements for the module differ about, instead of the composed answer |
+| `--diff-from` | _(the older of the two most recent measurements)_ | With `--diff`: the generation on the left of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
+| `--diff-to` | _(the most recent measurement)_ | With `--diff`: the generation on the right of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
 | `--source` | _(default)_ | Restrict to graphs built from one source: `zip` or `worktree` |
 | `--toolchain` | _(default)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. `go1.26.6`). A coordinate holding none of them reports no record |
 
 ```
 $ kanonarion callgraph-show golang.org/x/mod@v0.30.0 --limit-nodes 2 --limit-edges 2
 golang.org/x/mod@v0.30.0  [CHA]  Extracted
-  fidelity: BUILT_WITH_BODIES   source: zip   toolchain: go1.26.6
+  fidelity: BUILT_WITH_BODIES   source: zip   kind: Library   toolchain: go1.26.6
   analyser: golang.org/x/tools v0.49.0
   test scope: analysed — 290 of 1039 nodes are test declarations
   interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
@@ -435,6 +486,17 @@ not measured — silence there would read as "there was no test code". Under
 `--json`, `test_scope` is always present and reads `not recorded` on a record
 that makes no claim, for the same reason: an empty string there reads as an
 absence of test code rather than an absence of a measurement.
+
+The `kind:` field is what the analysis established the module to be —
+`Application` (some package in it declares `func main`), `Library` (every package
+loaded and none does), or `NotEstablished` (some package did not load, so a
+command may sit in the part that never resolved). It is on the record because it
+decides how a reachability traversal over this graph is rooted, and therefore
+what a *negative* reachability answer over it can be worth: see
+[reachability](reachability.md#which-roots-the-confirming-search-uses). Under
+`--json` it is `artifact_kind`, always present and always a named value — a
+library's stored form is an empty string, which would otherwise read as a
+measurement that never happened.
 
 A `reference scope:` line is printed on every record for the same reason, and it
 is the axis a confident negative rests on:
@@ -541,6 +603,32 @@ Under `--json` the same statement is the `node_filter` object (`pattern`,
 `compared_against`, `candidate_nodes`, `matched_nodes`), present only when
 `--node` was given.
 
+`--limit-nodes` and `--limit-edges` apply under `--json` too, and each states
+itself the same way. `node_cap` and `edge_cap` are separate objects because the
+two arrays cap independently: each carries `limit` (the cap as given), `subject`,
+`truncated` (whether it withheld anything), `returned`, `available` (the rows it
+was drawn from, after any `--node` filter) and `remedy`.
+
+```
+$ kanonarion callgraph-show example.com/mod@v1.0.0 --limit-nodes 5 --json
+{
+  "nodes": [ ... 5 entries ... ],
+  "node_count": 1512,
+  "node_cap": {"truncated": true, "limit": 5, "subject": "nodes",
+               "returned": 5, "available": 1512, "remedy": "--limit-nodes 0"}
+}
+```
+
+`node_count` and `edge_count` go on reporting what the record holds, so the
+number the cap was applied against stays readable beside the rows it returned.
+
+A cap object is present whenever you passed its flag, **including when the cap
+did not bite** — `truncated: false` and "no cap object" are different statements,
+and a consumer cannot read a field that is not there. The object is absent only
+when you passed no such flag: the defaults exist to keep a terminal readable, so
+a `--json` read that asks for no cap gets the whole record, exactly as it always
+did.
+
 The `fidelity:` line reports how much of the module was actually built and what
 the analysis read. Both matter to how an empty answer should be taken: only
 `BUILT_WITH_BODIES` supports a confident negative, and a `worktree` graph
@@ -556,7 +644,9 @@ version when the stdlib came from a toolchain downloaded as a module (`go1.26.6
 (from the recorded stdlib path)`), the directory when it came from an installed
 GOROOT (`unnamed version at GOROOT /usr/local/go`, which names no version because
 a GOROOT is upgraded in place), and `not recorded` when the graph carries no
-stdlib path at all. Under `--json`, `toolchain` carries that identity — reading
+stdlib path at all. That recovery reads a GOROOT out of an absolute stdlib path,
+so it applies only to those older records: a record whose stdlib positions are
+`GOROOT`-relative names its toolchain outright and has nothing to recover. Under `--json`, `toolchain` carries that identity — reading
 `not recorded` where the record establishes no version, including where a plain
 GOROOT names none — and `toolchain_stated` is `null` unless the record itself
 named one.
@@ -821,7 +911,12 @@ toolchain's own stdlib and its vendored trees, so two toolchains that produced
 DIFFERENT graphs produced two answers about two builds and neither supersedes the
 other: composition names the toolchain and refuses rather than serving whichever
 ran last. `--toolchain go1.26.6` asks for one of them, and `callers`, `callees`,
-`implementers` and `interface-diff` take it too.
+`implementers` and `interface-diff` take it too. **No re-analysis clears it.** The
+ledger is append-only, so analysing again under either toolchain appends another
+generation of that one and leaves the other standing; the refusal names
+`--history` and `--toolchain` and nothing else, because there is nothing else to
+run. `kanonarion config set callgraph.toolchain go1.26.6` records the choice so it
+does not have to be typed on every later read.
 
 The graph difference is what makes it a disagreement. Two toolchains that
 produced the **same** nodes and edges produced the same answer, so the read
@@ -864,9 +959,9 @@ append-only ledger makes permanent and that names no route out is a dead end.
 
 The graph comparison is over the **graph** and nothing else: the node, edge,
 interface and implementation collections and the counts stated with them. Where
-a node **outside** the analysed module is declared is not part of it: that is a
-path in the analysing host's toolchain and module cache, so the same stdlib
-symbol comes back under whichever `GOROOT` loaded it. The module's own
+a node **outside** the analysed module is declared is not part of it: it is a
+position in somebody else's tree, so the same stdlib symbol comes back at a
+different line under whichever toolchain loaded it. The module's own
 declaration positions are relative to its root and are compared. Two
 generations that recorded the same graph and described their run differently —
 different `failure_cause`, `failure_detail` or failed-package set — are **not**
@@ -893,8 +988,52 @@ available, and where the pair is already `BUILT_WITH_BODIES` it sends you to
 generations by what they measured, validates each by its own content hash — the
 hash is sealed over `extracted_at`, so it can answer "is this record intact" and
 never "do these two agree" — and then reports the record fields, nodes, edges,
-interfaces and implementations the first two measurements differ about. Where
-the graphs agree and only the inputs differ, it says so.
+interfaces and implementations two of those measurements differ about. Where the
+graphs agree and only the inputs differ, it says so.
+
+#### Which two measurements `--diff` compares
+
+With no selector it compares the **two most recent distinct measurements**,
+older on the left. That is what "what changed" means for a coordinate that has
+been re-ingested — every working tree, since `local` pins the tree on each run —
+and it puts the generation the composed read serves on the right. Within a
+measurement it takes the first generation, which is when the ledger first saw
+that measurement; the generations of one measurement state the same record apart
+from when it was taken.
+
+Either side can be named instead, by the `record:` hash `--history` prints for
+each generation:
+
+```
+$ kanonarion callgraph-show example.com/mod@local --diff --diff-to sha256:e0dd5e71
+comparing the first generation of the measurement before it against the generation you named:
+  left   sha256:ffa6878b…  2026-09-15T21:29:10.657514306Z  6 node(s) / 4 edge(s)
+  right  sha256:e0dd5e71…  2026-09-15T21:29:11.758393460Z  7 node(s) / 5 edge(s)
+```
+
+- A unique **prefix** of the hash names the same generation; an ambiguous one is
+  refused listing what it matched.
+- Naming **one** side leaves the other at its default neighbour — the adjacent
+  measurement, older than a `--diff-to` and newer than a `--diff-from` — and the
+  line above the pair says which neighbour it took. Where the named generation
+  is already at that end of the ladder, the neighbour is the one on the other
+  side and the line says so.
+- Naming **both** compares exactly those two, in whichever order of age you put
+  them: the flags decide which record is on the left, not the clock.
+- A hash that names no generation **of this coordinate** — unknown, or belonging
+  to another module — is refused naming `--history`, and exits `20`. So is an
+  ambiguous prefix, and so is a side selector passed without `--diff`. What the
+  refusal prints is a diagnostic that lists the hashes, not a command that
+  produces the missing record, which is the line
+  [conventions.md](conventions.md#exit-codes) draws between `20` and `4`.
+
+Under `--json` each side carries `selected_by`, so a consumer can tell a default
+comparison from one the caller asked for: `most_recent` on both sides for the
+default pair, `named` for a side the caller named, and `neighbour_older` /
+`neighbour_newer` for the side that took the default neighbour. A coordinate
+holding exactly two distinct measurements offers one pair and nothing was
+chosen, so neither side carries the field and the statement above the pair reads
+`comparing the first generation of the first two measurements`.
 
 ### `callgraph-list`
 
@@ -982,9 +1121,12 @@ kanonarion callers <symbol-id> [flags]
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit callers declared in `_test.go` files and external test packages |
 | `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
-| `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited) |
+| `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited). A negative value is refused with exit `20` |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
+| `--no-progress` | `false` | Suppress the stderr progress lines a `--transitive` traversal writes |
 
 ```
 $ kanonarion callers 'github.com/org/repo/internal/license/adapters/store/sqlite.(*Store).PutLicenseRecord'
@@ -999,10 +1141,82 @@ $ kanonarion callers '...sqlite.(*Store).PutLicenseRecord' --exclude-tests
 scope: test callers omitted (--exclude-tests was given)
 ```
 
+#### A bounded traversal says it is bounded
+
+`--depth N` stops the walk after N levels. When it stops while symbols are still
+waiting to be followed, the answer is **not** the closure, and it says so on
+both surfaces:
+
+```
+$ kanonarion callers '...cli.currentWalkBuildEnv' --transitive --depth 6
+Transitive callers of ...cli.currentWalkBuildEnv (depth limit: 6) (502 nodes):
+  ...
+showing transitive callers to depth 6 — more exist beyond it (--depth 0 for the whole closure)
+$ echo $?
+0
+```
+
+This is the [truncated-listing
+convention](conventions.md#the-same-convention-on-a-traversal) on a traversal, and
+like a truncated listing it **exits `0`**. The nodes printed are correct and the
+notice says what was not followed; the evidence has no hole in it. Exit `1` means
+the artefact itself is known-incomplete — a failed extraction stage, an
+unanalysed module — and a bounded answer is not that: a narrower question was
+asked and answered completely.
+
+The signal is the unexpanded frontier, not the flag: a `--depth N` that happens
+to reach the closure is not marked. On the graph above, `--depth 16` is cut and
+`--depth 18` is the whole closure, and both are bounded. `--depth 0` expands its
+last frontier by construction, so it is never marked.
+
+`--depth` counts the levels to follow, so a **negative value is refused** with
+exit `20` before anything is read. It names no traversal — the walk would stop
+before its first level and report no callers at all, which for a symbol that has
+thousands is a wrong answer rather than a thin one.
+
+Under `--json` the same statement rides on the result document, and unlike the
+text line it is stated **whether or not the bound bit** — a consumer cannot read
+a field that is not there, so an absent marker could not be told from a build
+that does not say:
+
+```json
+{"root": "...", "direction": "callers", "max_depth": 6, "truncated": true, "remedy": "--depth 0", "node_count": 502, ...}
+```
+
+This is not the [`partial` caveat](#when-a-module-does-not-load) that names
+packages the analysis could not build. That is a hole in the evidence; this is a
+bound you asked for, over evidence that is whole.
+
+#### Progress on a long traversal
+
+A `--transitive` walk narrates on **stderr** once it has been running longer than
+five seconds, one line every five seconds:
+
+```
+callers progress: depth 7, 812 symbols visited (5s elapsed)
+```
+
+The line is on a clock, not on the levels. A single level is not bounded in time
+— one wide frontier against a large edge table is minutes inside one query — so
+the walk keeps reporting while it is still inside that query, and a walk that
+spends its whole life in its first level says so:
+
+```
+callers progress: depth 1, 0 symbols visited (5s elapsed)
+callers progress: depth 1, 0 symbols visited (10s elapsed)
+```
+
+`depth 1, 0 symbols visited` is a true statement, and the useful one: the first
+level has not come back yet.
+
+A run shorter than the interval prints nothing. `--no-progress` and
+`preferences.progress = false` silence it. It never touches stdout, so `--json`
+output is byte-identical with and without it.
+
 ### `callees`
 
 Find every recorded call site where a symbol is the caller. Same flags as
-`callers`.
+`callers`, including `--no-progress` and the truncation statement above.
 
 ### `implementers`
 
@@ -1032,6 +1246,8 @@ method — an ID `callers` and `callees` also accept.
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
 | `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest **code-scope** project walk for this `go.mod`, resolved for this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The scope notice names that walk, its scope, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 | `--json` | `false` | Emit the result, its `answer` and the scope as JSON |
 
@@ -1105,10 +1321,43 @@ constructing them by hand.
 | `uses_unsafe_pointer` | The body performs an `unsafe.Pointer` conversion |
 | `is_assembly_or_linkname` | The function has no Go body (assembly or `//go:linkname`) |
 | `uses_plugin` | The body references the Go `plugin` package |
+| `position_file`, `position_line` | Where the symbol is declared. Absent when the record states no position — see below |
 
-The last three are body-level facts a callee-identity map cannot witness. They
+The three body-level facts are ones a callee-identity map cannot witness. They
 are used by [`capability`](capability.md) analysis and by the answer layer,
 where each is a leaf soundness sink that downgrades a negative answer.
+
+### Where a position points
+
+A position names a file the way the record can state it without naming the host
+that ran the analysis, because a record is a checkable statement about one
+measurement and a path through somebody's home directory is not checkable by
+anyone else. Four cases, and a reader can tell them apart by looking:
+
+| The file is | It reads as | Example |
+|-------------|-------------|---------|
+| the analysed module's own source | relative to the module root | `active_help.go`, `lib/hooks.go` |
+| a dependency's source | relative to the module cache: the module, its version, the file | `github.com/spf13/pflag@v1.0.10/flag.go` |
+| the standard library | relative to `GOROOT` | `src/fmt/print.go` |
+| generated into the Go build cache | **nothing — the node carries no position** | |
+
+The build-cache case is the one that is omitted rather than rewritten. A
+build-cache entry is content-addressed, so its name changes every time the entry
+is rebuilt and it identifies no file a reader could open. Recording it made a
+record that changed when nothing about the module had changed, which is a
+generation appended for ever and, once two of them disagreed, a coordinate that
+could not be read at all. Every cgo-generated symbol and every synthetic
+`.test` main is declared there.
+
+A node with no position carries **no position at all** — not a line number with
+an empty file. `--json` omits `position_file` and `position_line` together; the
+text surfaces that print a location print `(position not recorded)`.
+
+A path that belongs to none of the four — an analysis whose toolchain could not
+be asked where its directories are — is recorded exactly as the loader reported
+it, leading `/` and all. It is not made to look relative. A record that shows an
+absolute path is telling you it names a place on the analysing host, which is
+what a reader needs to know.
 
 ## Edge confidence
 
@@ -1120,9 +1369,20 @@ where each is a leaf soundness sink that downgrades a negative answer.
 | `Framework` | An edge bound by a framework model or thunk rather than observed in source |
 | `Unknown` | An edge the analyser cannot resolve. A soundness sink: an answer reaching one is `UNRESOLVED` |
 
-Reflect-dispatched calls carry `Unknown` plus a separate `reflect_dispatch`
-attribute, so the reflect provenance is preserved without inventing a
-confidence rank for it.
+A call into package `reflect` carries `Unknown` plus a separate
+`reflect_dispatch` attribute, so the reflect provenance is preserved without
+inventing a confidence rank for it. Every edge states it in `--json`, `true` or
+`false`, spelled out on both for the reason `kind` is: an absent field puts the
+reader back where they started.
+
+**`reflect_dispatch` means the callee is in package `reflect`, and nothing
+narrower.** It is not a count of calls the analysis could not follow. An edge to
+`reflect.TypeOf` carries it and has exactly one callee. The calls that really are
+unbounded are the five `reflect.Value` methods that pick their target at run time
+— `Call`, `CallSlice`, `Method`, `MethodByName`, `FieldByName` — so filter on
+`to_id` as well as on the attribute. On one 74,797-edge graph the attribute is set
+on 162 edges and 2 of them are of that kind, so reading the attribute alone
+overstates them by about eighty times.
 
 Confidence answers *how was the target resolved*, a different question from
 *what kind of edge is it*. A reference edge is usually `Direct` — the analyser
@@ -1309,3 +1569,60 @@ $ kanonarion callers 'golang.org/x/tools/go/packages.Load' --toolchain go1.26.6
 297 callers of golang.org/x/tools/go/packages.Load:
   ...
 ```
+
+### Seeing what the two toolchains disagree about
+
+`--diff` answers that, and it **answers while the composed read is still
+refusing** — the command used to diagnose the conflict is not one that fails
+because of it:
+
+```
+$ kanonarion callgraph-show github.com/oklog/ulid/v2@v2.1.1 --diff
+3 generation(s) ... stating 2 distinct measurement(s) and 2 distinct graph(s)
+  left   sha256:b0508e4c…  231 node(s) / 590 edge(s)
+  right  sha256:d951af94…  232 node(s) / 591 edge(s)
+fields:
+  toolchain                go1.26.5
+                           go1.27.1
+nodes:
+  + encoding/json.checkValid
+  ~ fmt.Fprintf  position: {"file":"src/fmt/print.go","line":222} -> {"file":"src/fmt/print.go","line":214}
+  0 only in left, 1 only in right, 13 described differently
+edges:
+  + …TestMarshalingErrors$1 encoding/json.checkValid {"file":"ulid_test.go","line":201}
+```
+
+Where the coordinate holds only those two measurements this is the pair `--diff`
+takes by default. A later re-analysis adds a third, and the two sides of the
+toolchain disagreement are then named directly — `--diff-from` and `--diff-to`
+take the `record:` hashes `--history` prints beside each toolchain — rather than
+being pushed out of the default pair.
+
+Read it before choosing, because the two answers are rarely equally useful. Here
+one toolchain resolves a call the other does not — `encoding/json.checkValid`,
+one real edge — while the thirteen `~` nodes are the same functions at different
+line numbers, the standard library's own files having moved between releases. A
+difference that is only positions tells you the graphs agree about the code; a
+`+` node or edge tells you they do not.
+
+### Recording the choice once
+
+`--toolchain` is per invocation, so a store holding one disputed coordinate needs
+it on every read that crosses that coordinate. `callgraph.toolchain` records it:
+
+```
+$ kanonarion config set callgraph.toolchain go1.26.6
+$ kanonarion callers 'golang.org/x/tools/go/packages.Load'
+297 callers of golang.org/x/tools/go/packages.Load:
+  ...
+```
+
+It disambiguates on exactly the terms the flag does on a query, and never
+restricts: it is consulted only where one coordinate's generations disagree about
+the toolchain, so a store holding no such coordinate is served byte-for-byte as it
+is with the setting unset — including when the version named is one the store has
+never held. `callers`, `callees`, `implementers`, `usage`, `callgraph-show` and
+`interface-diff --used-by` all honour it, and an explicit `--toolchain` on the
+command line wins over it. `config show` lists it with its source; an unparseable
+value is refused by `config set`. `callgraph-show --history` is unaffected: it
+shows every generation, which is what it is for.

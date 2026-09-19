@@ -1,0 +1,9 @@
+# error-shaped: neither a walk id nor --package, so the command is not told what to inventory. Refused before the store is opened.
+$ kanonarion sbom
+exit 20
+--- error ---
+execute root command: a walk ID argument or --package is required
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

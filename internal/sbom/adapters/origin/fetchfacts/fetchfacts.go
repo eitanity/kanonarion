@@ -51,7 +51,7 @@ func (r *Reader) ModuleOrigin(ctx context.Context, coord coordinate.ModuleCoordi
 	if !found {
 		return sbomports.ModuleOrigin{}, false, nil
 	}
-	if fetchdomain.VerificationStatus(rec.VerificationStatus) != fetchdomain.Verified {
+	if !fetchdomain.VerificationStatus(rec.VerificationStatus).ConfirmsVCSOrigin() {
 		return sbomports.ModuleOrigin{}, false, nil
 	}
 	if rec.GitURL == "" || rec.GitCommitHash == "" {

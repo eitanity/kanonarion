@@ -63,7 +63,7 @@ func TestAuditRunFactsStateAReusedRun(t *testing.T) {
 		scanRun:                  reusedRunForBasis(),
 		scanReachabilityVerdicts: 4,
 	}
-	run := newAuditRunJSON(d, nil, time.Hour, time.Now())
+	run := newAuditRunJSON(d, nil, time.Hour, time.Now(), nil)
 	fields := auditRunFields(t, run)
 
 	var sentence bytes.Buffer
@@ -113,7 +113,7 @@ func TestAuditRunFactsStateADerivedRun(t *testing.T) {
 		Reachability: vulnScanReachability{Answers: 7, SourceReadByThisRun: true},
 	}
 	d := auditDerivation{walkRecord: auditWalkForFacts(), scanFacts: facts}
-	run := newAuditRunJSON(d, nil, time.Hour, time.Now())
+	run := newAuditRunJSON(d, nil, time.Hour, time.Now(), nil)
 
 	if !run.Walk.Resolved || run.Walk.Reused {
 		t.Errorf("walk = %+v, want a walk this run derived", run.Walk)
@@ -235,7 +235,7 @@ func TestAuditOutputCarriesTheRunBesideTheRows(t *testing.T) {
 			Snapshot: vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z"),
 		},
 	}
-	out := newAuditOutput(unscopedEnvelope(1), newAuditRunJSON(d, nil, time.Hour, time.Now()),
+	out := newAuditOutput(unscopedEnvelope(1), newAuditRunJSON(d, nil, time.Hour, time.Now(), nil),
 		[]auditModuleResult{{Coordinate: "example.com/a@v1.0.0"}})
 	raw, err := json.Marshal(out)
 	if err != nil {

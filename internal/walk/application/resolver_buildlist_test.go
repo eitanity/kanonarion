@@ -289,9 +289,10 @@ func TestResolveProject_BuildList_Deterministic(t *testing.T) {
 }
 
 // TestResolveProject_BuildList_FallbackOnToolchainError asserts that when the Go
-// toolchain is unavailable the walk completes via the internal resolver and is
-// marked Partial with the build-list-approximate caveat (never presenting the
-// approximate set as authoritative).
+// toolchain cannot compute the build list the walk completes via the internal
+// resolver, is marked Partial, and carries the toolchain's own reason on the
+// graph — so the approximate set is never presented as authoritative and every
+// later reader of the record can say why.
 func TestResolveProject_BuildList_FallbackOnToolchainError(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
@@ -309,9 +310,11 @@ func TestResolveProject_BuildList_FallbackOnToolchainError(t *testing.T) {
 	if !g.Partial {
 		t.Fatalf("toolchain-absent walk should be Partial")
 	}
-	if !strings.Contains(g.PartialReason, "build_list_approximate") ||
-		!strings.Contains(g.PartialReason, "go toolchain unavailable") {
-		t.Errorf("PartialReason = %q, want it to name the toolchain unavailability", g.PartialReason)
+	if g.PartialReason != domain3.BuildListUnavailableReason {
+		t.Errorf("PartialReason = %q, want %q", g.PartialReason, domain3.BuildListUnavailableReason)
+	}
+	if !strings.Contains(g.BuildListUnavailable, "executable file not found") {
+		t.Errorf("BuildListUnavailable = %q, want the toolchain's own reason", g.BuildListUnavailable)
 	}
 	// The internal resolver still produced the closure.
 	var depPresent bool

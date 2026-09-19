@@ -31,6 +31,12 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
 		return err
 	}
+	// The platform this read selects its anchoring walk for, settled before the
+	// store is opened. This is the only context form that chooses a walk, so it
+	// is the only one a declaration can act on.
+	if terr := resolveReadTarget(ctx, f.target, "context --gomod", true, f.gomodPath); terr != nil {
+		return terr
+	}
 	// The complete scope has no test partition to narrow, so the flag is refused
 	// against it rather than parsed and dropped: accepting it would emit
 	// byte-identical output and report the narrowing as honoured.
@@ -177,6 +183,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
 			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
 			Vulnerabilities: vulns,
+			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
 		}
 
 		if eerr := emitContextDocument(coordStr, out, f.sizeOnly, array, stream, compact, &arr, &report, stdout); eerr != nil {

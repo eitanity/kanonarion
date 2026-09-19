@@ -9,13 +9,13 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -26,7 +26,6 @@ type GenerateSBOMUseCase struct {
 	licenseStore    licenseports.LicenseStore
 	sbomStore       ports.SBOMStore
 	generator       ports.SBOMGenerator
-	clock           fetchports.Clock
 	pipelineVersion string
 	// licensePipelineVersion is the licence extraction pipeline version under
 	// which licence records are persisted. It is distinct from the SBOM's own
@@ -46,6 +45,20 @@ type GenerateSBOMUseCase struct {
 	// references are built from. Optional: nil means no origin is asserted for
 	// any component, which is what a document with nothing to read should say.
 	origins ports.ModuleOriginReader
+	// natives reads what each module's artefact was measured to compile into the
+	// binary from native source it ships itself, so a C library that ships can
+	// reach the document that lists what ships. Optional: nil means no module
+	// contributes a native component, which is the same document as before.
+	natives ports.NativeRecordReader
+}
+
+// WithNativeComponents wires the reader that lets an identified native
+// component — a C library a cgo module compiles in from source its own zip
+// carries — appear in the document as a component of its own. Nil (the default)
+// leaves the component list Go-only. Returns the use case for chaining.
+func (uc *GenerateSBOMUseCase) WithNativeComponents(r ports.NativeRecordReader) *GenerateSBOMUseCase {
+	uc.natives = r
+	return uc
 }
 
 // WithModuleOrigins wires the reader that lets a component carry a reference to
@@ -76,12 +89,19 @@ func (uc *GenerateSBOMUseCase) WithVendorTree(r ports.VendorTreeReader) *Generat
 // NewGenerateSBOMUseCase returns a new GenerateSBOMUseCase.
 // licensePipelineVersion names the licence extraction pipeline version used
 // to look up licence records for the walk's modules.
+//
+// It takes NO CLOCK, and that is the decision rather than an omission. The
+// document's metadata.timestamp is either a creation time the caller supplied
+// via --generated-at or the newest licence extraction time among the inputs;
+// nothing in this pipeline reads the wall clock, so re-emitting a document from
+// the same recorded inputs yields the same bytes. A clock was accepted here and
+// never read, which said the opposite of what was settled, and it is what led a
+// later reader to believe the test clock pinned the document's timestamp.
 func NewGenerateSBOMUseCase(
 	walkStore walkports.WalkStore,
 	licenseStore licenseports.LicenseStore,
 	sbomStore ports.SBOMStore,
 	generator ports.SBOMGenerator,
-	clock fetchports.Clock,
 	pipelineVersion string,
 	licensePipelineVersion string,
 	logger *slog.Logger,
@@ -91,7 +111,6 @@ func NewGenerateSBOMUseCase(
 		licenseStore:           licenseStore,
 		sbomStore:              sbomStore,
 		generator:              generator,
-		clock:                  clock,
 		pipelineVersion:        pipelineVersion,
 		licensePipelineVersion: licensePipelineVersion,
 		logger:                 logger,
@@ -240,6 +259,14 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		return domain.SBOMRecord{}, err
 	}
 
+	// 2c. Load the native-component measurements. A module with none recorded is
+	// absent from the map, and the document then states nothing about native code
+	// in it — which is "not examined", not "none".
+	natives, err := uc.nativeRecords(ctx, walk)
+	if err != nil {
+		return domain.SBOMRecord{}, err
+	}
+
 	// 3. Generate. The document is an inventory of components and their identity,
 	// hashes and licences; it carries no vulnerability list, so no scan run is
 	// read here and none can be attached.
@@ -252,6 +279,7 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		MainComponentLicense: req.MainComponentLicense,
 		VendorScope:          uc.vendorScope(ctx, walk),
 		ModuleOrigins:        origins,
+		NativeRecords:        natives,
 		// A package-scoped run has already filtered walk.Graph above, so the
 		// scope arithmetic is measured against the components this document
 		// actually carries. Flagging it lets the statement say why so much of
@@ -310,6 +338,34 @@ func (uc *GenerateSBOMUseCase) moduleOrigins(
 		}
 		if ok {
 			out[node.Coordinate] = origin
+		}
+	}
+	return out, nil
+}
+
+// nativeRecords reads the native-component measurement for every module in the
+// walk.
+//
+// A read failure is returned rather than skipped, for the reason moduleOrigins
+// gives: the store disagreeing with itself about which artefact a coordinate's
+// facts describe is a contradiction in the evidence, and a document that
+// quietly drops the modules it could not read is indistinguishable from one
+// where nothing was recorded.
+func (uc *GenerateSBOMUseCase) nativeRecords(
+	ctx context.Context,
+	walk walkdomain.WalkRecord,
+) (map[coordinate.ModuleCoordinate]nativedomain.Record, error) {
+	if uc.natives == nil {
+		return nil, nil
+	}
+	out := make(map[coordinate.ModuleCoordinate]nativedomain.Record, len(walk.Graph.Nodes))
+	for _, node := range walk.Graph.Nodes {
+		rec, ok, err := uc.natives.NativeRecord(ctx, node.Coordinate)
+		if err != nil {
+			return nil, fmt.Errorf("loading native-component record for %s: %w", node.Coordinate, err)
+		}
+		if ok {
+			out[node.Coordinate] = rec
 		}
 	}
 	return out, nil

@@ -139,10 +139,10 @@ func TestDroppedEdgePackage_EveryEdgeCommandAnswers(t *testing.T) {
 			return runCallees(context.Background(), "example.com/dep.FuncMap", false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{})
 		},
 		"transitive callers": func(uc *testfakes.FakeQueryCallGraph, buf *bytes.Buffer) error {
-			return runCallersTransitive(context.Background(), "example.com/dep.FuncMap", 0, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{})
+			return runCallersTransitive(context.Background(), "example.com/dep.FuncMap", 0, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 		},
 		"transitive callees": func(uc *testfakes.FakeQueryCallGraph, buf *bytes.Buffer) error {
-			return runCalleesTransitive(context.Background(), "example.com/dep.FuncMap", 0, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{})
+			return runCalleesTransitive(context.Background(), "example.com/dep.FuncMap", 0, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 		},
 	}
 	for name, run := range cmds {

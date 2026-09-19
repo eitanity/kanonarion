@@ -189,15 +189,19 @@ func TestQueryCallGraphUseCase_TraverseCallers(t *testing.T) {
 	}
 	uc := application.NewQueryCallGraphUseCase(store)
 
-	edges, nodes, err := uc.TraverseCallers(context.Background(), "A", "0.1.0", 0, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+	res, err := uc.TraverseCallers(context.Background(), application.TraversalRequest{SymbolID: "A", PipelineVersion: "0.1.0"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(nodes) != 2 {
-		t.Errorf("got %d nodes, want 2: %v", len(nodes), nodes)
+	if len(res.Nodes) != 2 {
+		t.Errorf("got %d nodes, want 2: %v", len(res.Nodes), res.Nodes)
 	}
-	if len(edges) != 2 {
-		t.Errorf("got %d edges, want 2", len(edges))
+	if len(res.Edges) != 2 {
+		t.Errorf("got %d edges, want 2", len(res.Edges))
+	}
+	// An unbounded walk expands its last frontier, so it is never truncated.
+	if res.Truncated {
+		t.Error("an unbounded traversal reported itself truncated")
 	}
 }
 
@@ -210,12 +214,16 @@ func TestQueryCallGraphUseCase_TraverseCallers_MaxDepth(t *testing.T) {
 	}
 	uc := application.NewQueryCallGraphUseCase(store)
 
-	_, nodes, err := uc.TraverseCallers(context.Background(), "A", "0.1.0", 1, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+	res, err := uc.TraverseCallers(context.Background(), application.TraversalRequest{SymbolID: "A", PipelineVersion: "0.1.0", MaxDepth: 1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(nodes) != 1 || nodes[0] != "B" {
-		t.Errorf("got nodes %v, want [B]", nodes)
+	if len(res.Nodes) != 1 || res.Nodes[0] != "B" {
+		t.Errorf("got nodes %v, want [B]", res.Nodes)
+	}
+	// B was discovered and not expanded, so C is missing and the answer says so.
+	if !res.Truncated {
+		t.Error("a walk that stopped with B unexpanded did not report itself truncated")
 	}
 }
 
@@ -228,14 +236,17 @@ func TestQueryCallGraphUseCase_TraverseCallees(t *testing.T) {
 	}
 	uc := application.NewQueryCallGraphUseCase(store)
 
-	edges, nodes, err := uc.TraverseCallees(context.Background(), "A", "0.1.0", 0, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+	res, err := uc.TraverseCallees(context.Background(), application.TraversalRequest{SymbolID: "A", PipelineVersion: "0.1.0"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(nodes) != 2 {
-		t.Errorf("got %d nodes, want 2: %v", len(nodes), nodes)
+	if len(res.Nodes) != 2 {
+		t.Errorf("got %d nodes, want 2: %v", len(res.Nodes), res.Nodes)
 	}
-	if len(edges) != 2 {
-		t.Errorf("got %d edges, want 2", len(edges))
+	if len(res.Edges) != 2 {
+		t.Errorf("got %d edges, want 2", len(res.Edges))
+	}
+	if res.Truncated {
+		t.Error("an unbounded traversal reported itself truncated")
 	}
 }

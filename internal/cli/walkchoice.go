@@ -320,8 +320,8 @@ func (c walkChoice) statement() string {
 		if c.probed < c.candidates {
 			scanned = fmt.Sprintf("none of the %d most recent records", c.probed)
 		}
-		return fmt.Sprintf("notice: %s: walk %q (frame %s), the most recent — %s the resolution %s has now (it disagrees on %s); %s, or run 'kanonarion walk --gomod %s' to record the current resolution\n",
-			head, c.summary.ID, c.summary.BuildFrame(), scanned, c.manifestPath, driftSample(c.disagreements), pin, c.manifestPath)
+		return fmt.Sprintf("notice: %s: walk %q (frame %s), the most recent — %s the resolution %s has now (it disagrees on %s); %s, or run 'kanonarion walk --gomod %s%s' to record the current resolution\n",
+			head, c.summary.ID, c.summary.BuildFrame(), scanned, c.manifestPath, driftSample(c.disagreements), pin, c.manifestPath, targetFlagHint())
 	default:
 		return fmt.Sprintf("notice: %s: walk %q (frame %s), the most recent — their recorded resolutions could not be compared against a manifest (%s); %s\n",
 			head, c.summary.ID, c.summary.BuildFrame(), c.uncheckable, pin)
@@ -343,8 +343,8 @@ func (c walkChoice) stalenessNote() string {
 	case walkChosenManifestMatch:
 		return fmt.Sprintf("; the require directives in %s agree with that walk, though the manifest was not re-resolved through the toolchain for this read", c.manifestPath)
 	case walkChosenRecencyNoMatch:
-		return fmt.Sprintf("; no walk of this target records the resolution %s has now — the one used disagrees on %s, so kanonarion walk --gomod %s records the current resolution",
-			c.manifestPath, driftSample(c.disagreements), c.manifestPath)
+		return fmt.Sprintf("; no walk of this target records the resolution %s has now — the one used disagrees on %s, so kanonarion walk --gomod %s%s records the current resolution",
+			c.manifestPath, driftSample(c.disagreements), c.manifestPath, targetFlagHint())
 	case walkChosenSole, walkChosenRecencyUnchecked:
 	}
 	// A caller who named a walk named no manifest, so there is no manifest this

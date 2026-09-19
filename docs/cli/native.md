@@ -4,6 +4,7 @@
 
 ```
 kanonarion native <module>@<version> [--json] [--force]
+kanonarion native-list [--presence <values>] [--all-generations] [--limit N] [--offset M] [--json]
 ```
 
 ## Description
@@ -44,6 +45,17 @@ sqlite3ext.h                 36970    688a910adf085a17cc9c1beebffcba987d0bd02a1e
 The module's licence record says MIT, which is the Go wrapper's licence. The
 8.4 MB of SQLite it compiles is a separate component with a separate version and
 its own advisories, and this is where the store records it.
+
+Where that record then goes:
+
+- **[`sbom`](sbom.md)** lists an identified component as a component of its own,
+  under a `pkg:generic/…` purl, with the evidence that named it. A
+  `present_unidentified` record emits no component and the run says so on stderr.
+- **[`vuln-show` and `vuln-scan-show`](vuln.md)** state which of five native
+  situations a module is in and, for an identified component, that its
+  advisories were **not** searched. Kanonarion has no non-Go advisory source;
+  what it can do is say so rather than let a Go-only `Clean` stand for the whole
+  binary.
 
 (The real output ends with a **Linked libraries** table as well - this module
 also names `sqlite3`, `icuuc`, `icui18n` and the C runtime in its `#cgo LDFLAGS`
@@ -341,6 +353,194 @@ kanonarion native github.com/mattn/go-sqlite3@v1.14.12 --json
 
 `components`, `sources` and `linked_libraries` are always arrays, never `null`,
 so a consumer iterates uniformly whatever the answer was.
+
+## `native-list` - reading the records back in bulk
+
+`native` records one module. `native-list` reads back every record the store
+holds, so the question the fact exists to answer can be asked of a whole
+dependency set at once.
+
+```
+kanonarion native-list --presence linked_not_shipped,present_identified,present_unidentified
+```
+
+```
+github.com/rqlite/go-sqlite3@v1.47.0                    present_identified     4 native source file(s); SQLite 3.53.0; links icui18n, icuuc, sqlite3
+rsc.io/qr@v0.2.0                                        linked_not_shipped     links qrencode
+golang.org/x/text@v0.21.0                               linked_not_shipped     links CoreFoundation, icui18n, icui18n.57, icuuc, icuuc.57
+golang.org/x/sys@v0.28.0                                present_unidentified   1 native source file(s)
+golang.org/x/text@v0.17.0                               linked_not_shipped     links CoreFoundation, icui18n, icui18n.57, icuuc, icuuc.57
+gonum.org/v1/gonum@v0.17.0                              present_unidentified   49 native source file(s)
+github.com/moby/moby/v2@v2.0.0-beta.21                  linked_not_shipped     links libnftables, libsystemd
+github.com/mattn/go-sqlite3@v1.14.12                    present_identified     4 native source file(s); SQLite 3.38.0; links icui18n, icuuc, mingw32, mingwex, sqlite3
+github.com/terminalstatic/go-xsd-validate@v0.1.6        linked_not_shipped     links libxml-2.0
+go.mongodb.org/mongo-driver/v2@v2.6.0                   present_unidentified   4 native source file(s); links GSS, gssapi_krb5, krb5, libmongocrypt, mongocrypt
+listing native records at generation 0.3.0+recipes.1, the generation this build serves; records from a superseded generation are not shown (--all-generations)
+```
+
+Measured on a store holding 186 records at this generation: **176 read `absent`
+and 10 report something.** The listing is how you find those 10 without opening
+186.
+
+`--presence` takes one or more of the four values, comma-separated or repeated,
+and lists a record matching any of them. The three that are not `absent` are the
+answer to "which of my dependencies ship or link native code", which is the
+invocation above. A value outside the four is **refused**, not matched: inside a
+list a typo would otherwise narrow the answer with nothing in the output to say
+so.
+
+Each row names what was found rather than counting it - the component and its
+version for `present_identified`, the external libraries for anything that links
+some, the file count for `present_unidentified` - so a reader does not have to
+open a module to learn which library it is. An `absent` row prints an em dash,
+because a measured absence is an answer and not an empty cell.
+
+### Which generation you are reading
+
+A record is stored under a **generation**: the detection logic folded with the
+recipe catalogue, e.g. `0.3.0+recipes.1`. A record taken at an earlier
+generation answers no query - it was measured by logic this build has replaced -
+so `native-list` lists only the generation this build serves, and says so on
+every listing.
+
+`--all-generations` includes the rest and marks each one:
+
+```
+github.com/terminalstatic/go-xsd-validate@v0.1.6        absent                 —  [superseded generation 0.2.0+recipes.1]
+github.com/mattn/go-sqlite3@v1.14.12                    present_identified     4 native source file(s); SQLite 3.38.0  [superseded generation 0.1.0+recipes.1]
+16 of 202 listed record(s) were taken at a superseded detection generation; this build serves 0.3.0+recipes.1 and answers no query from them. Re-measure one:
+  kanonarion native <module>@<version>
+```
+
+The first row is why this matters. At generation `0.2.0` that module read
+`absent`; `0.3.0` added `#cgo pkg-config` as a fourth operand form, and at the
+generation this build serves the same module reads `linked_not_shipped` and
+names `libxml-2.0`. Listing the old record beside the new one would show the
+module as carrying nothing.
+
+Under `--json` every row carries `generation` and `superseded`, whether or not
+the record is superseded, so a consumer reads one field rather than inferring a
+fact from a key's absence.
+
+### Two records for one version
+
+If the store holds two records describing **different artefacts** for one pinned
+version, they disagree about what that version's bytes are. `native <coord>`
+refuses to answer for it. `native-list` lists both, marks both, and exits
+non-zero - every other row still answers, and a store that disagrees with itself
+must not read as a clean run.
+
+### Paging and zeros
+
+`native-list` follows the listing rules in
+[`conventions.md`](conventions.md#listing-documents): `--limit` (default 50) with
+`--offset`, a truncation line whenever the limit bit, and a zero-result notice
+that says which of three things happened - the store holds no native record, the
+presence filter matched none of the ones it does hold, or the page starts past
+the last match.
+
+```
+$ kanonarion native-list --presence present_identified --offset 5
+no native record on this page — the store holds 186 native record(s), and --offset 5 starts past the last of the 2 matching presence "present_identified"
+  to list from the start: kanonarion native-list
+```
+
+### `native-list` JSON
+
+```
+kanonarion native-list --presence present_identified --json
+```
+
+```json
+{
+  "records": [
+    {
+      "module": "github.com/mattn/go-sqlite3",
+      "version": "v1.14.12",
+      "presence": "present_identified",
+      "generation": "0.3.0+recipes.1",
+      "superseded": false,
+      "artefact_identity": "zip:h1:TJ1bhYJPV44phC+IMu1u2K/i5RriLTPe+yc68XDJ1Z0=",
+      "components": [
+        { "name": "SQLite", "version": "3.38.0", "confidence": "declared" }
+      ],
+      "linked_libraries": ["icui18n", "icuuc", "mingw32", "mingwex", "sqlite3"],
+      "source_count": 4,
+      "extracted_at": "2026-08-29T22:20:22Z",
+      "content_hash": "sha256:605bab75e041c4ac49a81ead9552100bb6bddc1368dedd3e7eb6fed675230fa4"
+    }
+  ],
+  "truncated": false,
+  "limit": 50,
+  "subject": "native records at generation 0.3.0+recipes.1",
+  "remedy": "--limit 0",
+  "offset": 0,
+  "next_offset": 50
+}
+```
+
+`components` and `linked_libraries` are always arrays, never `null`.
+`linked_libraries` holds the **distinct** external libraries the cgo directives
+name: one library named by five per-platform directives is one library, and the
+C runtime every cgo binary links is excluded. A row for a disputed coordinate
+carries a `conflict` string; no other row does.
+
+### `native-list` flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--presence` | (none) | List only records with one of these presences, comma-separated or repeated |
+| `--all-generations` | `false` | Also list records taken at a superseded detection generation |
+| `--limit` | `50` | Maximum records to return (`0` = unlimited) |
+| `--offset` | `0` | Skip this many records |
+| `--json` | `false` | Emit the listing document |
+
+## Where the composite commands report it
+
+`audit`, `inspect` and `context` state the native fact as part of their own
+answer, so a reader does not have to know the command exists to be told a build
+links libxml2.
+
+- **[`context`](context.md)** carries a `Native code:` line per module, and a
+  `native_coverage` object per module under `--json`. It is the same object
+  [`vuln-show`](vuln.md) publishes, so a consumer reads one shape.
+- **[`audit`](audit.md)** states the build-level roll-up beside its other basis
+  lines, and publishes it under `native_coverage` inside the run object of
+  `audit --json`.
+- **[`inspect --gomod`](inspect.md)** states the same roll-up in its summary and
+  publishes the same key.
+
+The roll-up states its own coverage first - how many modules were examined at
+all - and then the exceptions. From an `audit` over this repository's own
+go.mod, with four of its modules examined:
+
+```
+native code: 4 of 21 module(s) examined for native code compiled into or linked into the binary; 0 with an identified component, 1 with native source no recipe names, 0 linking an external library it does not ship
+  a module holding no native record was not looked at; that is not a finding of no native code — run: kanonarion native <module>@<version>, or list what is held: kanonarion native-list
+  Kanonarion has no non-Go advisory source, so no advisories were searched for any of it
+Native source compiled in but not identified (1 module(s)):
+  These modules compile native source into the binary and no recipe names the library it belongs to,
+  so no component could be named. Run 'kanonarion native <module>@<version>' to see the files.
+  golang.org/x/sys@v0.47.0
+```
+
+A build that links a library it does not ship gets its own section, naming the
+library. This one is from a 474-module walk in which exactly one module links
+one:
+
+```
+External native library this build links but does not ship (1 in 1 module(s)):
+  These modules compile no native source of their own and link a library the host provides. Which build of it
+  the linker finds is a property of the build machine, not of these bytes, so no version was read and no
+  advisories were searched. These are not findings.
+  github.com/terminalstatic/go-xsd-validate@v0.1.6
+    libxml-2.0
+```
+
+**A module holding no record is "nobody looked", never "no native code".**
+`native` is not an extraction stage - `inspect` does not measure it, and puts no
+wall time on it - so a freshly walked project reports every module as not
+examined until `native` has been run over them.
 
 ## Prerequisites
 

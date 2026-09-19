@@ -74,7 +74,10 @@ func FilterGraphToScope(g Graph, mainPath string, keep []string) Graph {
 		PipelineVersion: g.PipelineVersion,
 		Partial:         g.Partial,
 		PartialReason:   g.PartialReason,
-		HasLocalReplace: g.HasLocalReplace,
+		// The module set a scope is a projection OF is the whole graph's, so a
+		// scoped view of a require-list fallback is a require-list fallback too.
+		BuildListUnavailable: g.BuildListUnavailable,
+		HasLocalReplace:      g.HasLocalReplace,
 		// The build environment is a property of the whole resolution, not of any
 		// node, so it survives scope filtering — a code- or tool-scoped SBOM states
 		// the same platform as the complete-scope one.

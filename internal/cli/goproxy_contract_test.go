@@ -70,23 +70,43 @@ func (r *dialRecorder) dialed() []string {
 	return append([]string(nil), r.addrs...)
 }
 
+// fetchCapableInvocation is one command line that can acquire a module over the
+// network, with what its refusal owes the reader.
+type fetchCapableInvocation struct {
+	name string
+	args []string
+	// wantPhrases must appear in the refusal. They differ per command because
+	// the remedy is rendered per command: a shared one named --from-modcache to
+	// every caller, and the caller that does not define it rejected the line it
+	// had just printed with "unknown flag".
+	wantPhrases []string
+	// rejectPhrases must NOT appear. This is the half that catches the drift:
+	// a remedy re-shared across commands puts one of these back.
+	rejectPhrases []string
+}
+
 // fetchCapableInvocations are the command lines that can acquire a module over
 // the network. Each is run with a dial-failing transport installed, so the
 // assertion is that none of them opens a socket — not that each of them
 // produces some error.
-func fetchCapableInvocations() []struct {
-	name string
-	args []string
-} {
-	return []struct {
-		name string
-		args []string
-	}{
-		{"fetch a pinned version", []string{"fetch", "example.com/mod@v1.0.0"}},
-		{"fetch @latest", []string{"fetch", "example.com/mod@latest"}},
-		{"fetch --list-versions", []string{"fetch", "example.com/mod", "--list-versions"}},
-		{"latest", []string{"latest", "example.com/mod"}},
-		{"walk @latest", []string{"walk", "example.com/mod@latest"}},
+func fetchCapableInvocations() []fetchCapableInvocation {
+	// fetch defines no --from-modcache, so its refusal must name the command
+	// that can read a cache rather than a flag it will reject.
+	fetchWants := []string{"GOPROXY=off", "kanonarion walk --gomod ./go.mod --from-modcache"}
+	fetchRejects := []string{"fetch --from-modcache", "use --recursive"}
+	return []fetchCapableInvocation{
+		{"fetch a pinned version", []string{"fetch", "example.com/mod@v1.0.0"}, fetchWants, fetchRejects},
+		{"fetch @latest", []string{"fetch", "example.com/mod@latest"}, fetchWants, fetchRejects},
+		{"fetch --list-versions", []string{"fetch", "example.com/mod", "--list-versions"}, fetchWants, fetchRejects},
+		// latest wants an @latest version, which no module-bytes remedy
+		// produces. It names the ledger it serves from instead.
+		{"latest", []string{"latest", "example.com/mod"},
+			[]string{"no proxy fetching", "staleness.ttl"},
+			[]string{"--from-modcache", "use --recursive"}},
+		// walk DOES define the flag, and names it — with the form it applies
+		// to, because a positional walk has no project go.sum and refuses it.
+		{"walk @latest", []string{"walk", "example.com/mod@latest"},
+			[]string{"GOPROXY=off", "--from-modcache", "kanonarion walk --gomod ./go.mod --from-modcache"}, nil},
 	}
 }
 
@@ -96,13 +116,13 @@ func fetchCapableInvocations() []struct {
 // supposed to hold only what the enclave can see. Every fetch-capable command
 // must stop before the socket, and say how to proceed offline.
 //
-// `latest` says something different, and the difference is the point. The other
-// commands want module BYTES, and --from-modcache and `use --recursive` are the
-// two ways to get bytes without the network. `latest` wants an @latest version,
-// which neither produces; what it has instead is the staleness ledger, so it
-// serves a recorded lookup inside the TTL and refuses — naming THAT — when there
-// is none. Both refusals still stop before the socket, which is the contract
-// this file actually guards.
+// Each refusal names a way out that ITS OWN command accepts, which is why the
+// expected phrases are per case. `walk` defines --from-modcache and is told to
+// pass it, in the go.mod form it applies to; `fetch` defines nothing of the
+// kind and is told which command can read a cache instead; `latest` wants an
+// @latest version, which no module-bytes remedy produces, so it names the
+// staleness ledger it serves from. All of them still stop before the socket,
+// which is the contract this file actually guards.
 //
 // `audit` is the second exception and is not listed here at all, because it no
 // longer refuses: its proxy served one column, so a construction refusal took
@@ -127,16 +147,18 @@ func TestGOPROXYOff_EveryFetchCapableCommandRefusesBeforeAnyNetworkIO(t *testing
 			if got := ExitCodeForError(err); got != ExitConfig {
 				t.Errorf("exit code = %d, want ExitConfig(%d): %v", got, ExitConfig, err)
 			}
-			// The refusal has to name the contract it is honouring and the
-			// ways to proceed without the network; an operator who is told
-			// only "no" has to guess.
-			want := []string{"GOPROXY=off", "--from-modcache", "use --recursive"}
-			if tc.name == "latest" {
-				want = []string{"no proxy fetching", "staleness.ttl"}
-			}
-			for _, phrase := range want {
+			// The refusal has to name the contract it is honouring and a way
+			// to proceed without the network that THIS command will accept;
+			// an operator who is told only "no" has to guess, and one told to
+			// pass a flag this command rejects loses an attempt to finding out.
+			for _, phrase := range tc.wantPhrases {
 				if !strings.Contains(err.Error(), phrase) {
 					t.Errorf("refusal does not mention %q: %v", phrase, err)
+				}
+			}
+			for _, phrase := range tc.rejectPhrases {
+				if strings.Contains(err.Error(), phrase) {
+					t.Errorf("refusal names %q, which this command does not accept: %v", phrase, err)
 				}
 			}
 			if dialed := rec.dialed(); len(dialed) != 0 {

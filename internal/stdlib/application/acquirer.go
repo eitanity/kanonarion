@@ -89,10 +89,12 @@ func (a *Acquirer) WithAudit(sink ports.AuditSink) *Acquirer {
 // BSD-3-Clause licence, caches the tarball and facts, and returns them.
 //
 // A checksum mismatch is recorded as GoDevChecksumMismatch, not an error — the
-// evidence is preserved for the SBOM rather than hidden. A missing manifest is
-// recorded as UnverifiedGoDevUnavailable. Only an undeterminable version or a
-// failed tarball download is a hard error, since without the bytes there are no
-// digests to record.
+// evidence is preserved for the SBOM rather than hidden. A manifest that could
+// not be read is recorded as UnverifiedGoDevUnavailable, and a manifest that was
+// read and publishes no checksum for this version as
+// UnverifiedGoDevNotPublished. Only an undeterminable version or a failed
+// tarball download is a hard error, since without the bytes there are no digests
+// to record.
 func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Options) (domain.Facts, error) {
 	version := domain.CanonicalGoVersion(goVersionRaw)
 	if version == "" {
@@ -121,7 +123,7 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 		}
 	}
 
-	publishedSHA := a.publishedChecksum(ctx, version)
+	publishedSHA, lookupErr := a.publishedChecksum(ctx, version)
 
 	url := domain.SourceTarballURL(version)
 	tarball, err := a.tarballs.Download(ctx, url)
@@ -130,14 +132,15 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 	}
 
 	digests := fetchdomain.ComputeArtifactDigests(tarball)
-	status, detail := verifyChecksum(version, digests.SHA256, publishedSHA)
+	status, detail := verifyChecksum(version, digests.SHA256, publishedSHA, lookupErr)
+	licenseSPDX, licenseResult := a.identifyLicense(ctx, version, tarball)
 
 	facts := domain.Facts{
 		GoVersion:          version,
 		Digests:            digests,
 		PublishedSHA256:    publishedSHA,
 		VerificationStatus: status,
-		LicenseSPDX:        a.identifyLicense(ctx, version, tarball),
+		LicenseSPDX:        licenseSPDX,
 		SourceURL:          url,
 		VCSURL:             domain.VCSRepoURL,
 		VCSRef:             version,
@@ -151,7 +154,7 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 	if !opts.SkipVCS {
 		facts.VCSCommit = a.resolveCommit(ctx, version)
 	}
-	facts.VerificationDetail = detail + vcsDetail(opts.SkipVCS, facts.VCSCommit)
+	facts.VerificationDetail = detail + vcsDetail(opts.SkipVCS, facts.VCSCommit) + licenseDetail(licenseResult)
 	facts.ContentLocation = a.cacheTarball(ctx, version, tarball)
 
 	// Sealed last, over the finished measurement: every field above is inside the
@@ -184,40 +187,99 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 }
 
 // publishedChecksum returns the SHA-256 Go publishes for version's source
-// tarball, or "" when the manifest is unavailable or the version is absent —
-// a benign coverage gap the caller records as UnverifiedGoDevUnavailable.
-func (a *Acquirer) publishedChecksum(ctx context.Context, version string) string {
+// tarball. The returned error is why there is none, and it is the caller's
+// input rather than a failure: the acquisition continues either way.
+//
+// It distinguishes the two causes that used to arrive as one empty string.
+// Wrapping domain.ErrReleaseNotFound or domain.ErrSourceFileMissing means the
+// manifest was read and publishes no checksum for this version; any other error
+// means the manifest itself could not be read. Those need different actions
+// from whoever reads the record, so the record has to be able to say which
+// happened, and a log line cannot — nothing stores it and no report shows it.
+func (a *Acquirer) publishedChecksum(ctx context.Context, version string) (string, error) {
 	releases, err := a.manifest.FetchReleases(ctx)
 	if err != nil {
 		a.logger.WarnContext(ctx, "stdlib.manifest.unavailable",
 			slog.String("go_version", version), slog.String("error", err.Error()))
-		return ""
+		return "", fmt.Errorf("reading the go.dev/dl release manifest: %w", err)
 	}
 	file, err := domain.FindSourceChecksum(releases, version)
 	if err != nil {
 		a.logger.WarnContext(ctx, "stdlib.manifest.release_absent",
 			slog.String("go_version", version), slog.String("error", err.Error()))
-		return ""
+		return "", fmt.Errorf("looking up %s in the go.dev/dl release manifest: %w", version, err)
 	}
-	return file.SHA256
+	return file.SHA256, nil
 }
 
-// identifyLicense extracts and classifies the tarball's LICENSE file. A missing
-// or unclassifiable licence is a coverage gap (empty SPDX), never a failure.
-func (a *Acquirer) identifyLicense(ctx context.Context, version string, tarball []byte) string {
+// licenseOutcome names what happened when an acquirer tried to identify the
+// standard library's licence.
+//
+// Three different things leave the SPDX identifier empty, and a reader given
+// one blank field cannot tell them apart or act on any of them. They are
+// distinct values so the record can say which one it was.
+type licenseOutcome int
+
+const (
+	// licenseIdentified: the LICENSE text was read and classified.
+	licenseIdentified licenseOutcome = iota
+	// licenseTextUnavailable: there was no LICENSE text to classify. The source
+	// tarball carries no LICENSE file, or the toolchain's LICENSE could not be
+	// read.
+	licenseTextUnavailable
+	// licenseClassifierFailed: the classifier could not run over the text, so
+	// nothing has yet judged it.
+	licenseClassifierFailed
+	// licenseUnrecognised: the classifier ran over the text and matched no
+	// licence it knows. This is a statement about the text, not a gap in the
+	// measurement.
+	licenseUnrecognised
+)
+
+// licenseDetail renders the clause the stdlib record carries about the licence.
+//
+// An identified licence adds nothing: the record already carries the SPDX
+// identifier, so the sentence would repeat it. That is also what keeps the
+// detail of a healthy measurement exactly the words it had before this
+// distinction existed.
+func licenseDetail(o licenseOutcome) string {
+	switch o {
+	case licenseTextUnavailable:
+		return "; no LICENSE text was found to classify, so no licence is recorded"
+	case licenseClassifierFailed:
+		return "; the licence classifier could not run over the LICENSE text, so no licence is recorded"
+	case licenseUnrecognised:
+		return "; the licence classifier read the LICENSE text and matched no licence it knows"
+	case licenseIdentified:
+	}
+	return ""
+}
+
+// identifyLicense extracts and classifies the tarball's LICENSE file. It returns
+// the SPDX identifier and which of the outcomes above produced it. None of them
+// is a failure: the tarball is still acquired, hashed and recorded.
+func (a *Acquirer) identifyLicense(ctx context.Context, version string, tarball []byte) (string, licenseOutcome) {
 	text, err := domain.ExtractLicense(tarball)
 	if err != nil {
 		a.logger.WarnContext(ctx, "stdlib.license.extract_failed",
 			slog.String("go_version", version), slog.String("error", err.Error()))
-		return ""
+		return "", licenseTextUnavailable
 	}
 	spdx, err := a.licenses.Identify(ctx, text)
 	if err != nil {
 		a.logger.WarnContext(ctx, "stdlib.license.identify_failed",
 			slog.String("go_version", version), slog.String("error", err.Error()))
-		return ""
+		return "", licenseClassifierFailed
 	}
-	return spdx
+	if spdx == "" {
+		// The classifier returns "" with no error when it recognises nothing. That
+		// left the one outcome where something had actually read the text with no
+		// trace anywhere — not in the record, and not even in the log.
+		a.logger.WarnContext(ctx, "stdlib.license.unrecognised",
+			slog.String("go_version", version))
+		return "", licenseUnrecognised
+	}
+	return spdx, licenseIdentified
 }
 
 // resolveCommit looks up the release tag's commit in the Go source repository.
@@ -265,9 +327,31 @@ func (a *Acquirer) cacheTarball(ctx context.Context, version string, tarball []b
 
 // verifyChecksum classifies the tarball checksum against the published value and
 // returns the status plus the leading half of the verification detail.
-func verifyChecksum(version, computedSHA, publishedSHA string) (domain.VerificationStatus, string) {
+//
+// lookupErr is why there is no published checksum, and it decides between two
+// statuses that used to be one. A manifest that could not be read leaves the
+// anchor unconsulted and go.dev/dl genuinely unavailable. A manifest that WAS
+// read and publishes no checksum for this version is a real answer about the
+// version: the service was available, and reporting it as unavailable is a
+// wrong sentence rather than a vague one.
+//
+// The last unverified case — no error, and still no checksum — is a manifest
+// entry that named a source tarball without a digest. It keeps the wording it
+// has always had, because it is what that wording says: no published checksum
+// came back. It is guarded explicitly so it can never fall through to the
+// comparison below and be reported as a MISMATCH, which is tamper evidence and
+// must never be manufactured out of a missing value.
+func verifyChecksum(version, computedSHA, publishedSHA string, lookupErr error) (domain.VerificationStatus, string) {
 	switch {
-	case publishedSHA == "":
+	case errors.Is(lookupErr, domain.ErrReleaseNotFound):
+		return domain.UnverifiedGoDevNotPublished,
+			fmt.Sprintf("go.dev/dl lists no release %s, so no published checksum exists for %s",
+				version, domain.SourceTarballName(version))
+	case errors.Is(lookupErr, domain.ErrSourceFileMissing):
+		return domain.UnverifiedGoDevNotPublished,
+			fmt.Sprintf("go.dev/dl lists release %s but publishes no source tarball for it, so no published checksum exists for %s",
+				version, domain.SourceTarballName(version))
+	case lookupErr != nil || publishedSHA == "":
 		return domain.UnverifiedGoDevUnavailable,
 			fmt.Sprintf("go.dev/dl published checksum unavailable for %s.src.tar.gz", version)
 	case computedSHA == publishedSHA:

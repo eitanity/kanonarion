@@ -166,6 +166,21 @@ func TestExecute_ForceAppendsWithoutDestroyingTheEarlierMeasurement(t *testing.T
 // the zip's actual hash. Revalidation re-hashes the bytes it holds, so a proxy
 // serving placeholder bytes cannot exercise it — the placeholder fails to hash
 // and the run correctly declines to revalidate.
+// zipHashOf is the h1 of a module zip, for wiring a checksum database that
+// agrees with the bytes the fake proxy serves.
+func zipHashOf(t *testing.T, zipData []byte) domain2.ModuleHash {
+	t.Helper()
+	s, err := ziparchive.HashModuleZip(zipData)
+	if err != nil {
+		t.Fatalf("hashing test zip: %v", err)
+	}
+	h, err := domain2.ParseModuleHash(s)
+	if err != nil {
+		t.Fatalf("parsing test zip hash: %v", err)
+	}
+	return h
+}
+
 func realZipProxy(t *testing.T, coord coordinateFor) (*fakeProxy, []byte) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -242,8 +257,11 @@ func (b *countingBlob) Put(ctx context.Context, identity ports.BlobIdentity, r i
 func TestExecute_ForceOverIntactArtefactsRevalidatesWithoutTransferring(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := &countingBlob{fakeBlob: newFakeBlob()}
-	proxy, _ := realZipProxy(t, testCoord)
-	uc := newUseCase(proxy, &fakeVCS{}, blobs, facts)
+	proxy, zipData := realZipProxy(t, testCoord)
+	// A checksum database that ANSWERS. The leg below reports whether this run
+	// got an answer, so a disabled database would make the assertion vacuous: it
+	// would be asserting an absence of anchor, not that a revalidation re-queries.
+	uc := newUseCaseWithSumDB(proxy, &fakeVCS{}, blobs, facts, availableSumDB(zipHashOf(t, zipData)))
 	ctx := context.Background()
 
 	if _, err := uc.Execute(ctx, application.FetchRequest{Coordinate: testCoord}); err != nil {
@@ -427,4 +445,77 @@ func TestExecute_RecordsAnIdentityAddressNotAStoreChosenHandle(t *testing.T) {
 	if err != nil || !present {
 		t.Errorf("the recorded identity does not resolve in the store: present=%v err=%v", present, err)
 	}
+}
+
+// A checksum-database lookup that returns no answer establishes nothing, so the
+// measurement records no checksum-database leg — and the earlier real lookup is
+// then carried forward by inheritance, named, rather than being displaced by a
+// claim about nothing.
+//
+// The leg used to be a constant in the record literal, two lines below
+// SumDBLookupFailed, so a record whose lookup had just failed asserted in the
+// same breath that the check was performed on it. Its neighbour VCSCheck was
+// computed from its conditions all along; this is the same treatment.
+func TestExecute_UnansweredSumDBLookupRecordsNoLegAndInheritsTheRealOne(t *testing.T) {
+	facts := newFakeFacts()
+	proxy, zipData := realZipProxy(t, testCoord)
+	ctx := context.Background()
+
+	// A lone run whose lookup never answered records no leg at all — there is
+	// nothing prior to inherit, and the guard is not involved.
+	alone := newUseCase(proxy, &fakeVCS{}, newFakeBlob(), newFakeFacts())
+	lone, err := alone.Execute(ctx, application.FetchRequest{Coordinate: testCoord})
+	if err != nil {
+		t.Fatalf("lone Execute: %v", err)
+	}
+	if got := domain2.LegProvenance(lone.Record.SumDBCheck); got != domain2.LegAbsent {
+		t.Errorf("a lookup that never answered recorded leg %q, want absent", got)
+	}
+
+	// Run 1: the database answers.
+	answering := newUseCaseWithSumDB(proxy, &fakeVCS{}, newFakeBlob(), facts, availableSumDB(zipHashOf(t, zipData)))
+	first, err := answering.Execute(ctx, application.FetchRequest{Coordinate: testCoord})
+	if err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	if got := domain2.LegProvenance(first.Record.SumDBCheck); got != domain2.LegRechecked {
+		t.Fatalf("an answered lookup recorded leg %q, want rechecked", got)
+	}
+
+	// Run 2: same coordinate, same artefact, database unreachable. Its anchor is
+	// weaker, so the write is only permitted by the operator flag; the flag is
+	// what puts the record in the store where its leg can be read.
+	silent := newUseCase(proxy, &fakeVCS{}, newFakeBlob(), facts).WithAllowVerificationDowngrade(true)
+	if _, err := silent.Execute(ctx, application.FetchRequest{Coordinate: testCoord, Force: true}); err != nil {
+		t.Fatalf("second Execute: %v", err)
+	}
+	stored := latestRecordFor(t, facts, first.Record.ContentHash)
+	if got := domain2.LegProvenance(stored.SumDBCheck); got != domain2.LegInherited {
+		t.Errorf("a lookup that never answered recorded leg %q, want inherited: it established nothing of its own", got)
+	}
+	if stored.SumDBCheckSource != first.Record.ContentHash {
+		t.Errorf("inherited leg names source %q, want the record that performed the lookup %q",
+			stored.SumDBCheckSource, first.Record.ContentHash)
+	}
+	// What composition then does with the two — serving the recheck rather than
+	// the copy, and dating it when the recheck ran — is the domain's job and is
+	// pinned there: see TestComposeDatesAnInheritedLegFromTheMeasurementThatRan.
+}
+
+// latestRecordFor returns the appended measurement that is NOT the named one, so
+// a test can inspect what the second run wrote rather than what composition
+// chose to serve.
+func latestRecordFor(t *testing.T, facts *fakeFacts, excluding string) domain2.FactRecord {
+	t.Helper()
+	all, err := facts.ListFetchRecords(context.Background(), testCoord, "test-0.1.0")
+	if err != nil {
+		t.Fatalf("listing records: %v", err)
+	}
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].ContentHash != excluding {
+			return all[i]
+		}
+	}
+	t.Fatalf("no record other than %q was appended", excluding)
+	return domain2.FactRecord{}
 }

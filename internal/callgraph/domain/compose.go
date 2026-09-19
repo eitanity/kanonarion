@@ -196,18 +196,26 @@ func (c CallGraphConflict) Remedy() Remedy {
 		// ledger actually holds. Values are the identities that disagreed, and the
 		// first is a version whenever any of them is: a GOROOT that names no version
 		// cannot be asked for, so it is never offered as the selector.
+		//
+		// NO RE-ANALYSIS LINE, and this is the one field where that is so. Re-
+		// analysing under toolchain A appends another A record and leaves B standing,
+		// so the set the gate fires on is unchanged however many times it is run.
 		lines := []string{"kanonarion callgraph-show " + coord + " --history"}
+		lead := "Two Go toolchains built this coordinate and produced different graphs, and a graph carries " +
+			"the toolchain's own stdlib and vendored trees, so neither answer supersedes the other, and " +
+			"no re-analysis settles it. Name the toolchain you mean — callers, callees, implementers and " +
+			"interface-diff take --toolchain too"
 		if sel := selectableToolchain(c.Values); sel != "" {
 			lines = append(lines, "kanonarion callgraph-show "+coord+" --toolchain "+sel)
+			// The prose names the SAME selector the line above does, so the two cannot
+			// disagree about which toolchain to record, and both run as printed. A
+			// template is not a remedy: the ledger holds the value, so the sentence
+			// prints it. Where nothing is selectable the --toolchain line is omitted,
+			// and this sentence goes with it rather than degrading to a placeholder.
+			lead += ", and `kanonarion config set callgraph.toolchain " + sel +
+				"` records the choice for every later read"
 		}
-		lines = append(lines, ForcedReanalysisInstruction(c.Coordinate, c.AnalysisRoot))
-		return Remedy{
-			Lead: "Two Go toolchains built this coordinate and produced different graphs, and a graph carries " +
-				"the toolchain's own stdlib and vendored trees, so neither answer supersedes the other. Name " +
-				"the toolchain you mean — callers, callees, implementers and interface-diff take --toolchain " +
-				"too — or measure again under the one you are using",
-			Lines: lines,
-		}
+		return Remedy{Lead: lead, Lines: lines}
 	case ConflictFieldArtefactIdentity:
 		if !IsReFetchable(c.Coordinate) {
 			// A project coordinate names a working tree, not published bytes. There

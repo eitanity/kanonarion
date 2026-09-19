@@ -143,11 +143,11 @@ The rungs, most to least sound:
 
 | `soundness` | What was searched |
 |---|---|
-| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path. The only rung a clean negative may rest on. |
+| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, an `http.Handler`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
 | `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
-| `disputed` | The recorded negative is contradicted: a call-graph search over the module's own graph found a path to the symbol. Both answers stand; neither is discarded. Treat the finding as open. |
+| `disputed` | The recorded negative is contradicted: a search from one of those entry points found a path to the symbol. Both answers stand; neither is discarded. Treat the finding as open. |
 
 Two consequences worth knowing before you read a negative:
 
@@ -162,12 +162,135 @@ Two consequences worth knowing before you read a negative:
   is what can raise it to `confirmed` or `disputed` with no re-scan. A search over
   a dependency's own graph can confirm a negative in any frame, but contradicts
   one only in the frame it was measured in; a path found in another frame is
-  reported in the reason and does not change the rung.
+  reported in the reason and does not change the rung. Which roots that search
+  starts from is what decides whether it can confirm at all — see below.
 - **A reachable answer states no soundness.** A route is its own evidence, so the
   text prints no rung for a positive. The JSON still carries the `soundness` key,
   with the value `"not stated"`: the key present says this producer derived the
   rung and found no absence to qualify; the key absent says it states no rung at
   all. An omitted key rendered those identically.
+
+### Which roots the confirming search uses
+
+An absence is only as good as the set of starting points it was searched from, so
+the rung names it. The confirming search starts at what the analysis can name as a
+way INTO the module — its public API, its package initialisers, a command's
+`main`, an `http.Handler` — because those are the only ways a consumer's build
+enters it. The `main` the go command synthesises to run a test binary is not one
+of them, and neither is a dependency's `_test.go` file, which your build does not
+compile.
+
+That is a narrower set than the one a *positive* is found from. Reachability roots
+an application at every function it ships, deliberately, because an application is
+entered by framework dispatch, registered callbacks and goroutine entry points
+that no static analysis enumerates — and under-reporting a positive is the worse
+failure. The two are different claims and the answer keeps them apart: where
+nothing you can enter reaches the vulnerable symbol but some function the module
+ships does, the rung is `confirmed` against the entry points, **and the reason
+says so and names the route**. Read both before acting on it.
+
+A graph that names no entry point at all confirms nothing. The search would start
+nowhere, so of course it finds nothing, and `entry_point_roots: 0` in the JSON is
+what says that happened.
+
+### What the search could not follow
+
+A negative says no route was found. It cannot say no route exists, and one of the
+ways a route hides is a call whose target is chosen while the program runs. So the
+search names those calls.
+
+A **reflective dispatch site** is a call to one of the five `reflect.Value` methods
+that pick what runs at run time: `Call`, `CallSlice`, `Method`, `MethodByName`,
+`FieldByName`. The analysis cannot say where such a call goes, so a route could be
+hiding behind it.
+
+It is **not** a call into package `reflect`. `reflect.TypeOf` has exactly one
+callee and conceals nothing, and nearly every call into `reflect` is of that sort:
+on one 74,797-edge graph, 162 edges are calls into `reflect` and 2 of them are
+dispatch sites. Counting the first number would qualify every negative with a
+figure roughly eighty times too large.
+
+Two counts are reported and neither is the other's summary:
+
+- `site_count` — how many such calls are in the graph that was searched.
+- `reachable_site_count` — how many of those sit in code that something the
+  analysis can name as an entry point actually reaches.
+
+**The second is the one that decides whether a negative is worth doubting.** A
+reflective call in code nothing enters cannot be on a route into the module, so it
+qualifies nothing. Test helpers are the usual case:
+
+```
+GO-2026-6303 affects golang.org/x/crypto@v0.54.0 but is NOT reachable [...]
+  soundness: inferred — [...]
+  reflective dispatch: 2 call sites the search could not follow, none of them reachable from an entry point the analysis can name — none can be on a route into this module, so they do not qualify this answer
+    golang.org/x/crypto/internal/testenv.CommandContext -> reflect.(Value).FieldByName at internal/testenv/exec.go:80 — not reachable from any entry point the analysis can name
+    golang.org/x/crypto/internal/testenv.CommandContext -> reflect.(Value).FieldByName at internal/testenv/exec.go:99 — not reachable from any entry point the analysis can name
+```
+
+Finding none is the common answer, and it is stated rather than left out. A search
+that ran over a graph and found no such call has measured something; an absent
+number has not:
+
+```
+  reflective dispatch: none — the graph searched holds no call to a reflect method that picks its target at run time, so no reflective call site could be hiding a route this search failed to follow
+```
+
+A search that never ran prints nothing here at all, because it measured nothing.
+`not_searched` above says why.
+
+Two calls from one function to one `reflect` method on two lines are two sites, not
+one, so each carries its own `call_site` and a reader can go and look. The raw
+attribute each site is filtered from is on every `callgraph-show --json` edge as
+`reflect_dispatch` — see [callgraph](callgraph.md), which explains why reading it
+unfiltered gives a number roughly eighty times too large.
+
+This states what a search could not follow. It does not change what the search
+concluded: no verdict and no soundness rung moves because of it.
+
+### A search that could not be made says so
+
+There are four reasons the search declines to run, and every one of them is
+stated on the answer rather than passed over — in `not_searched` under
+`negative_search`, and in the `soundness_reason` the text surface prints. None of
+them changes the rung: a search that did not happen concludes nothing, in either
+direction. What they change is that you can tell them apart from a coordinate the
+search was never owed for, and act on the one that has a remedy.
+
+| Reason | What to do |
+|---|---|
+| The store holds no call graph for the coordinate | The message names the command that extracts one. |
+| The stored graph could not be read | The message carries the store's own refusal. |
+| The graph holds no node the module owns | Nothing to traverse from; the graph is not usable for this question. |
+| The graph holds none of the symbols the advisory names | The two records disagree about what this version contains. Nothing to search **for** — which is not a search that came back empty, and must never read like one. |
+
+The advisory and the graph spell a method differently and both are right: an
+advisory writes `Renderer.renderAutoLink`, a call graph records the receiver as
+the Go type the method is declared on and writes `*Renderer`. They are matched on
+the advisory's form, so a pointer-receiver method is found. It was not always:
+compared literally the two never met, and the target set came up short without
+saying so.
+
+In `--json`, the search rides on the same payload as the verdict, under
+`negative_search`. It is absent where no search ran — no call graph is held for
+the coordinate, or the graph names none of the advisory's symbols — which is never
+"searched and found nothing":
+
+| Key | Means |
+|---|---|
+| `artifact_kind` | What the graph says the module is: `Application`, `Library` or `NotEstablished`. It decides the rooting, so it decides what a negative over this graph can ever be worth. |
+| `fidelity` | The completeness level of the graph searched. Only `BUILT_WITH_BODIES` may confirm. |
+| `not_searched` | Why no search stands behind the rung. Absent where one does; present means every field beside it is a zero value because nothing was measured. |
+| `entry_point_roots` | How many entry points the search started from. Zero confirms nothing. |
+| `entry_point_path_found` | Whether a path was found from one of them. This is the claim that decides the rung. |
+| `whole_graph_path_found` | Whether a path was found with the module's whole graph rooted. A different claim; it never decides the rung and is never dropped. |
+| `in_recorded_frame` | Whether the graph searched is a graph of the build this record was measured in. A clean search confirms in any frame; a found path contradicts only in this one. |
+| `routes` | Every route the search found, from either rooting, each naming its own root. |
+| `reflective_dispatch` | What the search could not follow: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
+
+The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
+line and in `--json`, so you can see which rooting a graph will get before you ask
+a reachability question of it.
 
 The rung is derived at read time, so it appears on records scanned long before it
 existed and improves whenever the analysis behind them does. The search costs one
@@ -262,6 +385,73 @@ kanonarion walk --gomod ./go.mod
 kanonarion vuln-scan --gomod ./go.mod --reachability
 kanonarion reachability --local .
 ```
+
+### How control reached each hop
+
+A route is a **call stack**, not a dependency chain, and without saying more it
+renders a direct call and an interface dispatch identically. The difference
+matters: where a hop crosses an interface, the route names the concrete function
+that ran, and the module that supplied — or installed — that implementation need
+not be on the route at all.
+
+Every hop therefore carries a `dispatch` block saying how control reached it,
+read from the call graph of the module the **call site** is in. That is the
+caller's module, not the hop's own: an edge is recorded by the analysis of the
+module whose source makes the call.
+
+```
+  route (entry point first):
+    example.com/app example.com/app/cluster.Start
+      reached by: the route's entry point — there is no hop above it, so there is no call site to read
+    example.com/mod@v1.2.3 example.com/mod/auto.(*Uploader).upload
+      reached by: not annotated, no call graph is held for example.com/app@local, the module this call site is in, so there is no edge to read; the route stands as the analyser reported it
+    example.com/mod@v1.2.3 example.com/mod/aws.(*S3Client).CurrentID
+      reached by: interface, edge confidence CHA-overapprox, through example.com/mod/auto.StorageClient (4 implementer(s) recorded), implementation from example.com/mod, at auto/uploader.go:167, read from the call graph of example.com/mod@v1.2.3 (BUILT_WITH_BODIES) — list them: kanonarion implementers 'example.com/mod/auto.StorageClient'
+```
+
+| `kind` | Means |
+|---|---|
+| `direct` | The caller named the callee. The edge's own `Direct` confidence, which also covers an interface site the analyser resolved to its sole implementer. |
+| `interface` | The callee was dispatched through an interface. Where the graph can attribute it, the block names the interface crossed, the module supplying the implementation that ran, and how many concrete types satisfy that interface — the **count**, with `implementers_query` naming the command that lists them. |
+| `reflect` | The edge was resolved through reflection: the callee set is not statically knowable. |
+| `framework` | The edge was bound by a framework model or thunk rather than observed in the analysed source. |
+| `unresolved` | The analyser could not resolve the call to a concrete callee, and did not attribute it to reflection. |
+| `reference` | The callee's function **value** was taken at that site. It is not an invocation and never counts as one. |
+| `route-entry` | The route's first hop. There is no hop above it, so there is no call site to read. |
+| `not-annotated` | The call graph could not corroborate this hop. `reason` says which: no graph is held for the module the call site is in, the graph does not name the calling function, or it names it and records no edge to this callee. |
+
+Four rules keep this honest:
+
+- **A hop that could not be read is never rendered as a direct call.** It says
+  `not-annotated` with the reason, and a route whose hops say nothing at all —
+  one stored before the annotation existed — says that once, under the route.
+- **The kind is read, never guessed.** It comes from the edge's own confidence
+  and reflect-origin fields, and `confidence` carries the graph's own word beside
+  it. A confidence this build does not recognise is `unresolved`, never `direct`.
+- **No route is withheld, altered, dropped or reordered** because the call graph
+  could not corroborate it. The analyser that produced the route remains the
+  instrument and the route remains its answer; the annotation is written beside
+  each hop and touches nothing else.
+- **It is computed at scan time**, unlike the root classification below. A route
+  is inside the record's content hash, so annotating at read time would either
+  change a sealed record or produce two renderings of one stored route that
+  disagree. The consequence is that **routes already in the store stay
+  unannotated until their finding is re-scanned** — re-run `vuln-scan --force`.
+
+Two things decide how much of a route can be annotated, and both are about which
+call graphs the store holds:
+
+- The **standard library** has no call graph: the call-graph stage analyses a
+  module zip and the standard library arrives by a different route. Hops whose
+  call site is in `stdlib` are always `not-annotated`.
+- A **project's own root module** is analysed only when its working tree has been
+  ingested — `kanonarion local /path/to/tree`. Until then, every hop out of the
+  project's own code is `not-annotated`, and that is usually the largest single
+  group on a real route.
+
+`reachability --json`, `vuln-show --json`, `vuln-by-id --json` and
+`vuln-scan-diff --json` all publish the same `dispatch` object under the same
+keys, so nothing the text surface says about a hop is missing from the document.
 
 ### Root classification
 
@@ -552,6 +742,8 @@ command is safe to run from the root of a repository with fixture modules under
 | `--vuln` | *(empty)* | Vulnerability ID to query (stored-module mode); requires a `<module>@<version>` argument |
 | `--walk-id` | *(empty)* | Answer the stored query in the frame of this walk's scans |
 | `--gomod <path>` | *(empty)* | Answer the stored query in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform |
+| `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
+| `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
 | `--local` | *(empty)* | Path to the local Go workspace to probe (live local mode) |
 | `--json` | false | Emit output as JSON (global flag) |
 

@@ -348,7 +348,7 @@ func TestRunCallersTransitive_CountsNodesNotEdges(t *testing.T) {
 	}, []string{foreignCaller, ownCaller})
 
 	var buf bytes.Buffer
-	if err := runCallersTransitive(context.Background(), foreignTarget, 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+	if err := runCallersTransitive(context.Background(), foreignTarget, 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}, nil); err != nil {
 		t.Fatalf("runCallersTransitive: %v", err)
 	}
 	if !strings.Contains(buf.String(), "1 of 2 transitive callers") {

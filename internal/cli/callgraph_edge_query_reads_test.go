@@ -35,10 +35,10 @@ func edgeQuerySurfaces() []edgeQuerySurface {
 			return runCallees(ctx, sym, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{})
 		}},
 		{"callers --transitive", rootSymbol, func(ctx context.Context, sym string, uc QueryCallGraphUseCase, buf *bytes.Buffer) error {
-			return runCallersTransitive(ctx, sym, 0, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{})
+			return runCallersTransitive(ctx, sym, 0, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 		}},
 		{"callees --transitive", rootSymbol, func(ctx context.Context, sym string, uc QueryCallGraphUseCase, buf *bytes.Buffer) error {
-			return runCalleesTransitive(ctx, sym, 0, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{})
+			return runCalleesTransitive(ctx, sym, 0, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{}, nil)
 		}},
 		{"implementers", ifaceSymbol, func(ctx context.Context, sym string, uc QueryCallGraphUseCase, buf *bytes.Buffer) error {
 			return runImplementers(ctx, sym, false, uc, buf, buildScope{}, cgports.EdgeQueryOptions{})

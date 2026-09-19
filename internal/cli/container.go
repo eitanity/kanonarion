@@ -77,9 +77,11 @@ import (
 	licoverrides "github.com/eitanity/kanonarion/internal/license/adapters/overrides/yaml"
 	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
+	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
 
 	sbomcdx "github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	sbomnative "github.com/eitanity/kanonarion/internal/sbom/adapters/nativefacts"
 	sbomorigin "github.com/eitanity/kanonarion/internal/sbom/adapters/origin/fetchfacts"
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	sbomvendortree "github.com/eitanity/kanonarion/internal/sbom/adapters/vendortree"
@@ -368,6 +370,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 			// fetching, and the refusal arrives at the attempt — before any
 			// network I/O — rather than being quietly re-pointed at the
 			// default proxy, which is what breached the gap.
+			//
+			// The refusal carries this command's own offline remedy from here
+			// on: it is what every later fetch attempt will print, and the
+			// adapter that raised it cannot know which command is running.
+			perr = withOfflineRemedy(perr)
 			logger.Warn("module fetching refused by the environment; reads continue, fetches will fail", "reason", perr)
 			proxyAdapter = fetchproxy.Refusing(perr)
 		case perr != nil:
@@ -450,7 +457,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(parser, fetcher, blobs, clk, "", logger).
-		WithBuildListResolver(walkbuildlist.New(goBinary, logger))
+		WithBuildListResolver(walkbuildlist.New(goBinary, logger).WithTarget(declaredTarget))
 	// The stdlib chain of custody has two anchors. On the network path it uses
 	// go.dev/dl's published checksum plus a googlesource commit. In --from-modcache
 	// mode the run is fully offline, so it anchors instead to the local toolchain
@@ -487,6 +494,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
 	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
+	// Where the analysis's own toolchain keeps the standard library, the module
+	// cache and the files it generates. The analyser renders every recorded source
+	// position against those roots, so that nothing about this host reaches the
+	// seal and a build-cache entry — content-addressed, and a different path every
+	// time it is rebuilt — is given no position at all.
+	cganalyser.SetSourceDirsProbe(goSourceDirsProbe)
 	// The analyser narrates its phases to the same place the spawners copy a
 	// child's to. This process is one or the other, never both: as a child it
 	// writes the lines its parent's stall detector reads, and as a parent it
@@ -592,10 +605,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	queryExamplesUC := exapp.NewQueryExamplesUseCase(exStore)
 
 	// ---- vuln use cases ----
-	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger)
+	scanner := govulncheck.New("v1", vulnStore).WithLogger(logger).WithTarget(declaredTarget)
 	database := osvdb.New(nil, vulnStore, clk).WithLogger(logger)
 	reach := reachability.New()
 	cgLoader := reachability.NewCallGraphStoreLoader(cgStore, cgapp.PipelineVersion)
+	// One annotator for the whole container, so the module scanner, the walk scan
+	// and the re-scan share its memo of served graphs: serving a graph is a blob
+	// decode and an edge reconstruction, and a walk's records share their routes.
+	routeAnnotator := reachability.NewDispatchAnnotator(
+		reachability.NewCallSiteStoreReader(cgStore, cgapp.PipelineVersion), logger)
 
 	// The same ceiling: a reachability scan spawns the same analysis of the same
 	// module, and a ceiling that applied only on the extract path would leave the
@@ -608,6 +626,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		clk, vulnapp.PipelineVersion, logger,
 	).WithCallGraphLoader(cgLoader).
 		WithCallGraphSpawner(cgSpawner).
+		WithRouteAnnotator(routeAnnotator).
 		// A module scan resolves its own snapshot when no walk scan handed it one,
 		// and that download is a persist like any other. The walk and re-scan use
 		// cases carry the same sink, so an advisory set arriving by any route is
@@ -618,6 +637,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
 	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+		WithRouteAnnotator(routeAnnotator).
 		// A vendored project's analysis surface is its vendor/ tree. The reader is
 		// built over the vendor context's own modules.txt parser rather than a
 		// second one, so the closure the scan analyses and the closure the vendor
@@ -629,6 +649,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
 	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+		WithRouteAnnotator(routeAnnotator).
 		// The same reader the scan gets, for the same reason and one more: a
 		// re-scan reaches for the walk's project directory to reproduce the frame
 		// the run it re-scans was rooted in, and without this it could only
@@ -655,30 +676,39 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// cache keyed on it, so every stored document of a previous shape simply
 	// stops being reachable and is regenerated on demand.
 	//
-	// 0.9.0 changes two things about the document's assertions. A component's
-	// external references are now built only from what the fetch ledger
-	// recorded — the repository the module zip was cross-verified against —
-	// instead of being assembled from the module path, so a 0.8.0 document
-	// carries a VCS URL that may name no repository and a proxy download URL
-	// for bytes the proxy may never have served. And the subject's --main-version
-	// and --main-license stamp now reaches the subject's own entry in the
-	// component list, so a stamped 0.8.0 document describes one module twice at
-	// two versions with the licence on only one of them. Neither shape may be
-	// served for a 0.9.0 request.
+	// 0.10.0 adds a kind of component the document could not previously contain.
+	// A cgo module ships C source inside its own zip and compiles it into the
+	// binary; where that library has been identified, it is now emitted as a
+	// pkg:generic component carrying the declaration it was read from, with a
+	// dependency edge from the Go module that ships it. A 0.9.0 document of the
+	// same walk lists the Go module and not the library inside it, so it
+	// understates what the binary contains and may not be served for a 0.10.0
+	// request. A walk with no identified native component produces byte-identical
+	// bytes either way.
 	//
-	// The preceding bump, for the record: 0.8.0 derived the stdlib component's
-	// anchor_limitation property from the verification status the measurement
-	// reached, instead of stating one fixed sentence naming the go.dev/dl
-	// checksum and the googlesource commit.
-	const sbomPipelineVersion = "0.9.0"
+	// The preceding bump, for the record: 0.9.0 built a component's external
+	// references only from what the fetch ledger recorded, instead of assembling
+	// them from the module path, and carried the subject's --main-version and
+	// --main-license stamp into the subject's own entry in the component list.
+	const sbomPipelineVersion = "0.10.0"
+	// Built here rather than with the other native wiring below, because the SBOM
+	// use case reads it: a C library a cgo module ships inside its own zip is part
+	// of what the binary contains, so it belongs in the document that lists what
+	// ships. The native use cases further down share this handle.
+	nativeStore := nativesqlite.New(dbHandle)
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
-		clk, sbomPipelineVersion, licapp.PipelineVersion, logger,
+		sbomPipelineVersion, licapp.PipelineVersion, logger,
 	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil))).
 		// What a component's external references may assert. Without it a
 		// document states no origin for anything rather than guessing one.
 		WithModuleOrigins(sbomorigin.New(factStore)).
+		// The C library a cgo module compiles into the binary from source its own
+		// zip ships. Without it the document lists the Go module and not the
+		// library inside it, which is a component that ships and is in no
+		// inventory.
+		WithNativeComponents(sbomnative.New(nativeStore)).
 		// The SBOM is the artefact that leaves the building, so both producing one
 		// and handing a stored one back are appended to the assurance log.
 		WithAudit(factStore)
@@ -727,11 +757,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	queryFIPSUC := fipsapp.NewQueryFIPSUseCase(fipsStore)
 
 	// ---- native use cases ----
-	nativeStore := nativesqlite.New(dbHandle)
 	extractNativeUC := nativeapp.NewExtractNativeUseCase(nativeapp.Config{
 		Facts: factStore, Blobs: blobs, Native: nativeStore,
-		Source: nativegosource.New(),
-		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
+		Source: nativegosource.New(), Audit: factStore,
+		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryNativeUC := nativeapp.NewQueryNativeUseCase(nativeStore)
 
@@ -756,7 +785,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		DiffLicense:        diffLicenseUC,
 		GenerateNotice:     generateNoticeUC,
 		CheckCompatibility: checkCompatUC,
-		LicenseOverrides:   licoverrides.New(cfg.LicenseOverrides),
+		LicenseOverrides:   licoverrides.New(licenseOverrideEntries(cfg)),
 
 		ExtractInterface: ifaceExtractUC,
 		QueryInterface:   queryIfaceUC,
@@ -842,4 +871,25 @@ func callerWorktree(logger *slog.Logger) cgports.WorktreePreference {
 		}
 		dir = parent
 	}
+}
+
+// licenseOverrideEntries maps the operator's recorded licence determinations
+// from the config context's types to the licence domain's. The config context
+// keeps its own value types, so the translation happens here, at the one place
+// both are in scope — the same seam noticeDeclarations uses for the operator's
+// recorded copyrights.
+func licenseOverrideEntries(cfg domain.Config) map[string]licdomain.LicenseOverride {
+	if len(cfg.LicenseOverrides) == 0 {
+		return nil
+	}
+	entries := make(map[string]licdomain.LicenseOverride, len(cfg.LicenseOverrides))
+	for key, o := range cfg.LicenseOverrides {
+		entries[key] = licdomain.LicenseOverride{
+			SPDX:       o.SPDX,
+			DeclaredBy: o.DeclaredBy,
+			DeclaredOn: o.DeclaredOn,
+			Basis:      o.Basis,
+		}
+	}
+	return entries
 }

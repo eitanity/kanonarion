@@ -307,7 +307,7 @@ func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 	uc.SetList([]licenseports.LicenseSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "Unknown", OverallStatus: domain.LicenseStatusNone},
 	})
-	ovSet := domain.NewLicenseOverrideSet(map[string]string{"example.com/app": "MIT"})
+	ovSet := domain.NewLicenseOverrideSet(map[string]domain.LicenseOverride{"example.com/app": {SPDX: "MIT"}})
 	var buf bytes.Buffer
 	if err := runLicenseList(context.Background(), "", "", 50, 0, uc, ovSet, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)

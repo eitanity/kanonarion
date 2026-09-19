@@ -15,7 +15,11 @@ const (
 	BucketUnrecognised VerificationBucket = iota
 
 	// BucketCrossVerified is the strongest assurance: the zip matched both the
-	// checksum database and the content extracted from its git commit.
+	// checksum database and the content extracted from its git commit — with the
+	// record not saying which clone URL the git leg used. That is what every
+	// record written before the URL binding was measured carries, and what the
+	// standard library carries, having no module path to derive a URL from. It
+	// is NOT a claim that the binding was weak; it is the absence of the claim.
 	BucketCrossVerified
 
 	// BucketChecksumDBOnly is authentic with respect to the transparency log,
@@ -42,6 +46,25 @@ const (
 	// node that was never fetched, or was fetched under a different pipeline
 	// version. Absence of a measurement, not a failed one.
 	BucketUnrecorded
+
+	// BucketCrossVerifiedModulePathURL is cross-verified against a clone URL the
+	// module path itself determines. Nothing untrusted chose the repository.
+	//
+	// It is listed after BucketUnrecorded rather than beside BucketCrossVerified
+	// so the existing iota values do not shift. Order here is declaration order,
+	// not rank.
+	BucketCrossVerifiedModulePathURL
+
+	// BucketCrossVerifiedProxyNamedURL is cross-verified against a clone URL the
+	// module proxy named in its Origin block. The proxy is untrusted, so this
+	// says the zip and the cloned tree agree about the repository the proxy
+	// pointed at — not that the repository is the coordinate's upstream. Every
+	// vanity module path reaches cross-verification only this way.
+	//
+	// It is a weaker assurance than BucketCrossVerifiedModulePathURL, and
+	// separating the two is this class's whole purpose. It is not a finding: no
+	// proxy is accused of anything by a module landing here.
+	BucketCrossVerifiedProxyNamedURL
 )
 
 // String names the bucket for display. The names are the reader-facing
@@ -51,6 +74,12 @@ func (b VerificationBucket) String() string {
 	switch b {
 	case BucketCrossVerified:
 		return "cross-verified (checksum db + VCS)"
+	// Both names stay inside the width the per-module listing pads its class
+	// column to, so adding them does not shift every existing row.
+	case BucketCrossVerifiedModulePathURL:
+		return "cross-verified (module-path URL)"
+	case BucketCrossVerifiedProxyNamedURL:
+		return "cross-verified (proxy-named URL)"
 	case BucketChecksumDBOnly:
 		return "checksum database only"
 	case BucketGoSumOnly:
@@ -65,6 +94,38 @@ func (b VerificationBucket) String() string {
 		return "unrecognised status"
 	default:
 		return "unrecognised status"
+	}
+}
+
+// BucketForFetchRecord maps a fetch record's status and URL binding onto its
+// coverage class.
+//
+// It is separate from BucketForVerification because the binding only ever
+// refines the strongest class: every other status either has no VCS leg or has
+// one that established nothing, so there is no clone URL to attribute and
+// qualifying the class would invent a distinction. Callers with a vocabulary of
+// their own — the standard library has one — use BucketForVerification and land
+// in the unqualified class, which is the honest answer for a node that has no
+// module path to derive a URL from.
+func BucketForFetchRecord(s VerificationStatus, binding VCSURLBinding) VerificationBucket {
+	bucket := BucketForVerification(s)
+	if bucket != BucketCrossVerified {
+		return bucket
+	}
+	switch binding {
+	case VCSURLBindingCoordinateDerived:
+		return BucketCrossVerifiedModulePathURL
+	case VCSURLBindingProxyNamed:
+		return BucketCrossVerifiedProxyNamedURL
+	case VCSURLBindingAbsent:
+		// The record does not say. Reporting it as either binding would be a
+		// guess presented as a measurement.
+		return BucketCrossVerified
+	default:
+		// A binding this build has never heard of. Leaving it in the strongest
+		// class unqualified is the only safe answer: claiming the derived
+		// binding would overstate the assurance.
+		return BucketCrossVerified
 	}
 }
 
@@ -110,10 +171,9 @@ const (
 	// re-establish it.
 	VCSInherited
 
-	// VCSNever means the record carries legs — so it was written under the
-	// ledger and could have recorded a VCS leg — and has none. This is the only
-	// class where no cross-verification evidence exists at all, and the one that
-	// matters most.
+	// VCSNever means the record was written under the ledger — so it could have
+	// recorded a VCS leg — and has none. This is the only class where no
+	// cross-verification evidence exists at all, and the one that matters most.
 	VCSNever
 
 	// VCSUnavailable means the check was attempted and could not run: the host
@@ -125,11 +185,18 @@ const (
 	VCSUnavailable
 )
 
-// VCSEvidenceOf reads a record's validation legs. A record with no legs at all
-// cannot speak to the question and reports VCSNotMeasured; a record with legs
-// but no VCS leg is a genuine absence.
-func VCSEvidenceOf(legs []ValidationLeg) VCSEvidence {
-	if len(legs) == 0 {
+// VCSEvidenceOf reads a record's validation legs. underLedger says whether the
+// measurement was written after validation legs existed; a record from before
+// them cannot speak to the question and reports VCSNotMeasured, while one
+// written under the ledger with no VCS leg is a genuine absence.
+//
+// It used to infer that from the legs alone — no legs meant pre-ledger. That
+// held only while every ledger-era measurement performed at least one leg, and a
+// --from-modcache run performs neither: it anchors on the local go.sum and skips
+// cross-verification, so an air-gapped run's honest measured absence read as a
+// record that predates the ledger.
+func VCSEvidenceOf(legs []ValidationLeg, underLedger bool) VCSEvidence {
+	if len(legs) == 0 && !underLedger {
 		return VCSNotMeasured
 	}
 	for _, l := range legs {
@@ -166,6 +233,11 @@ type CoverageObservation struct {
 	Bucket VerificationBucket
 	// Legs are the record's validation legs, empty for a pre-ledger record.
 	Legs []ValidationLeg
+	// UnderLedger is true when the measurement was written after validation legs
+	// existed, so empty Legs is a measured absence rather than a record that
+	// cannot say. A vocabulary with no ledger of its own — the standard library's
+	// — leaves it false and reports as not measured, which is what it is.
+	UnderLedger bool
 	// Recorded is false when the graph holds this module but no measurement of
 	// it could be found.
 	Recorded bool
@@ -183,7 +255,19 @@ type CoverageObservation struct {
 type VerificationCoverage struct {
 	Total int
 
-	CrossVerified  int
+	// CrossVerified is every cross-verified module, whatever its URL binding: the
+	// sum of the three counters below it. It stays the answer to "how much of
+	// this graph carries a VCS anchor", which the binding does not change, so a
+	// gate written against it keeps meaning what it meant.
+	CrossVerified int
+	// CrossVerifiedModulePathURL and CrossVerifiedProxyNamedURL split that total
+	// by how strongly the cloned repository is bound to the coordinate, and
+	// CrossVerifiedBindingUnrecorded is the remainder whose record cannot say.
+	// The three sum to CrossVerified.
+	CrossVerifiedModulePathURL     int
+	CrossVerifiedProxyNamedURL     int
+	CrossVerifiedBindingUnrecorded int
+
 	ChecksumDBOnly int
 	GoSumOnly      int
 	Unverified     int
@@ -214,6 +298,13 @@ func VerificationCoverageOf(obs []CoverageObservation) VerificationCoverage {
 		switch o.Bucket {
 		case BucketCrossVerified:
 			c.CrossVerified++
+			c.CrossVerifiedBindingUnrecorded++
+		case BucketCrossVerifiedModulePathURL:
+			c.CrossVerified++
+			c.CrossVerifiedModulePathURL++
+		case BucketCrossVerifiedProxyNamedURL:
+			c.CrossVerified++
+			c.CrossVerifiedProxyNamedURL++
 		case BucketChecksumDBOnly:
 			c.ChecksumDBOnly++
 		case BucketGoSumOnly:
@@ -237,7 +328,7 @@ func VerificationCoverageOf(obs []CoverageObservation) VerificationCoverage {
 		if o.Bucket == BucketLocalSource {
 			continue
 		}
-		switch VCSEvidenceOf(o.Legs) {
+		switch VCSEvidenceOf(o.Legs, o.UnderLedger) {
 		case VCSRechecked:
 			c.VCSRechecked++
 		case VCSInherited:

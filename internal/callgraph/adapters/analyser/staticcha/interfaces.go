@@ -333,7 +333,8 @@ func lookupConcreteMethod(named *types.Named, method string) *types.Func {
 	return nil
 }
 
-// declPosition renders a declaration's module-relative source position.
+// declPosition renders a declaration's source position as the record states it,
+// and the zero position where it names no file a reader can open.
 func declPosition(pos token.Pos, fset *token.FileSet, roots sourceRoots) domain.SourcePosition {
 	if pos == token.NoPos || fset == nil {
 		return domain.SourcePosition{}
@@ -342,5 +343,5 @@ func declPosition(pos token.Pos, fset *token.FileSet, roots sourceRoots) domain.
 	if !p.IsValid() {
 		return domain.SourcePosition{}
 	}
-	return domain.SourcePosition{File: roots.rel(p.Filename), Line: p.Line}
+	return roots.position(p)
 }

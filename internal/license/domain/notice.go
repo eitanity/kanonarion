@@ -42,8 +42,31 @@ type NoticeEntry struct {
 	// one is configured; nil otherwise. It is carried alongside Copyrights, not
 	// merged into it, because the document must be able to say which lines were
 	// measured from the archive and which a person asserted.
-	Declaration        *CopyrightDeclaration
+	Declaration *CopyrightDeclaration
+	// Determination is the operator's recorded licence determination for this
+	// module, when one is configured; nil otherwise. Where it is set, SPDX is
+	// the operator's identifier rather than the detector's, and the document
+	// must say so: a determination presented as a detection is an assertion
+	// about the module's files that nobody measured.
+	Determination      *NoticeDetermination
 	EmbeddedComponents []NoticeEmbeddedComponent // vendored/embedded third-party components
+}
+
+// NoticeDetermination records that an entry's licence identity came from the
+// operator's license_overrides entry rather than from the detector, together
+// with what the detector itself found.
+//
+// The detector's finding is carried, not discarded. An attribution document
+// that replaced "no licence found" with "MIT" and said nothing else would read
+// as a measurement; the reader of a NOTICE is building an obligations list and
+// has to be able to tell which of the two they are holding.
+type NoticeDetermination struct {
+	// Override is the entry that settled the module, with the config key that
+	// matched and any provenance recorded beside it.
+	Override LicenseOverride
+	// DetectorFinding says what the licence detector identified, in the words
+	// the review item would have used. Empty only where no record was read.
+	DetectorFinding string
 }
 
 // NoticeIdentity is the licence identity an attribution document publishes for
@@ -136,6 +159,13 @@ type ReviewItem struct {
 	// recovered by matching Reason, so the remedy the caller prints is keyed to
 	// the gate that fired.
 	MissingCopyright bool
+	// UndeterminedLicence is true when the module was held back because
+	// extraction ran and settled on no usable identity — no licence found, or
+	// an ambiguity it would not guess at. It is the review class an operator
+	// clears by recording their own determination; re-running extraction
+	// produces the same answer forever. Carried as a field, beside
+	// MissingCopyright and for the same reason.
+	UndeterminedLicence bool
 }
 
 // EffectiveSource returns the entry's source, treating the empty zero value as

@@ -20,8 +20,10 @@ const (
 	AcquisitionProxy AcquisitionMode = "proxy"
 
 	// AcquisitionModcache is the --from-modcache path: bytes are read from an
-	// existing Go module cache and the recorded handles are coordinate-derived,
-	// resolvable only by the module-cache blob adapter.
+	// existing Go module cache and anchored on the local go.sum alone, with no
+	// transparency-log query, so such a measurement carries VerifiedByGoSum.
+	// (It once wrote coordinate-derived handles only its own blob adapter could
+	// read; it now addresses by artefact identity like every other path.)
 	AcquisitionModcache AcquisitionMode = "modcache"
 
 	// AcquisitionLocal is the local-source path: the artefact was built from a
@@ -64,11 +66,10 @@ func verificationStrength(s VerificationStatus) int {
 // A fact record is keyed on (module path, version, pipeline version) and nothing
 // else, so a re-measurement of the same coordinate overwrites its predecessor in
 // place — including a re-measurement made in a mode that cannot reach the same
-// anchor. A --from-modcache run tops out at VerifiedBySumDBOnly (local go.sum is
-// its only anchor); replacing a network run's Verified record with it demotes the
-// module's chain of custody and swaps a portable, content-addressed handle for a
-// mode-locked one. The write side consults this before overwriting and keeps the
-// stronger record instead.
+// anchor. A --from-modcache run tops out at VerifiedByGoSum (local go.sum is its
+// only anchor); replacing a network run's Verified or VerifiedBySumDBOnly record
+// with it demotes the module's chain of custody. The write side consults this
+// before overwriting and keeps the stronger record instead.
 //
 // Equal strength is not a weakening: a genuine re-verification, a status upgrade,
 // and a same-mode refresh all still land.

@@ -7,8 +7,11 @@ exit 0
   "total": 4,
   "recorded": 3,
   "cross_verifiable": 3,
-  "cross_verified": 3,
-  "checksum_db_only": 0,
+  "cross_verified": 2,
+  "cross_verified_module_path_url": 0,
+  "cross_verified_proxy_named_url": 0,
+  "cross_verified_binding_unrecorded": 2,
+  "checksum_db_only": 1,
   "go_sum_only": 0,
   "unverified": 0,
   "local_source": 0,
@@ -16,20 +19,22 @@ exit 0
   "unrecognised": 0,
   "collapsed": false,
   "shares": {
-    "cross_verified": 75,
-    "checksum_db_only": 0,
+    "cross_verified": 50,
+    "cross_verified_module_path_url_of_cross_verified": 0,
+    "cross_verified_proxy_named_url_of_cross_verified": 0,
+    "checksum_db_only": 25,
     "go_sum_only": 0,
     "unverified": 0,
     "local_source": 0,
     "unrecorded": 25,
     "unrecognised": 0,
-    "cross_verified_of_applicable": 100
+    "cross_verified_of_applicable": 66.7
   },
   "vcs": {
-    "rechecked": 0,
+    "rechecked": 2,
     "inherited": 0,
-    "never": 0,
-    "not_measured": 3,
+    "never": 1,
+    "not_measured": 0,
     "unavailable": 0
   },
   "build": {
@@ -65,8 +70,8 @@ exit 0
       "coordinate": "example.com/shallow@v1.0.0",
       "path": "example.com/shallow",
       "version": "v1.0.0",
-      "class": "cross-verified (checksum db + VCS)",
-      "status": "Verified"
+      "class": "checksum database only",
+      "status": "VerifiedBySumDBOnly"
     }
   ]
 }

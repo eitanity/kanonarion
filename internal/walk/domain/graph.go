@@ -21,6 +21,48 @@ func DepthBoundedReason(maxDepth int) string {
 	return fmt.Sprintf("depth_bounded: max_depth=%d", maxDepth)
 }
 
+// The reasons a graph can be Partial for. They are named here, not spelled at
+// the point each is raised, because the rule that turns a partial graph into a
+// walk status has to enumerate them — a reason only the resolver knows about is
+// a reason that rule cannot be written against.
+const (
+	// FetchFailedReason: a module in the closure could not be fetched.
+	FetchFailedReason = "fetch_failed"
+	// ParseFailedReason: a fetched module's go.mod could not be parsed.
+	ParseFailedReason = "parse_failed"
+	// CancelledReason: resolution stopped before the closure was complete.
+	CancelledReason = "cancelled"
+	// ShallowReason: the operator asked for the target alone, so the closure was
+	// never walked. The requirement list is recorded as unresolved nodes.
+	ShallowReason = "shallow"
+)
+
+// PartialReasonTokens splits a PartialReason into the reason names it is made
+// of. Reasons accumulate as "a; b" and each may carry a payload after a colon
+// ("depth_bounded: max_depth=3"), so the name is what is left of the first one.
+// An empty reason yields no tokens — a caller must decide what that means rather
+// than read it as "nothing is wrong".
+func PartialReasonTokens(partialReason string) []string {
+	if strings.TrimSpace(partialReason) == "" {
+		return nil
+	}
+	parts := strings.Split(partialReason, "; ")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		name, _, _ := strings.Cut(strings.TrimSpace(p), ":")
+		if name = strings.TrimSpace(name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// BuildListUnavailableReason is the PartialReason token recorded when the Go
+// toolchain could not compute a project's build list and the module set came
+// from the go.mod require directives instead. The token is what a caller keys
+// on; the toolchain's own words are on Graph.BuildListUnavailable.
+const BuildListUnavailableReason = "build_list_unavailable: module set is the go.mod require directives, not the resolved build"
+
 // ResolutionSource describes how a node's version was selected during MVS resolution.
 type ResolutionSource string
 
@@ -57,6 +99,12 @@ const (
 	// the local-FS fetcher. Downstream stages (extract, vuln-scan) treat these
 	// nodes the same as ResolutionMVS nodes.
 	ResolutionLocalAnalysed ResolutionSource = "local_analysed"
+	// ResolutionDepthBounded marks a requirement the depth policy stopped the BFS
+	// from following: it is a real edge of the build, so it is recorded as a node
+	// and the graph is marked Partial with DepthBoundedReason, but nothing was
+	// fetched for it and nothing should have been. Its own requirements are
+	// unknown for the same reason.
+	ResolutionDepthBounded ResolutionSource = "depth_bounded"
 	// ResolutionStdlib marks the synthetic Go standard-library node injected into a
 	// project walk. The standard library is a genuine build dependency — the code
 	// links against it — but it ships with the toolchain rather than as a fetchable
@@ -68,24 +116,27 @@ const (
 	ResolutionStdlib ResolutionSource = "stdlib"
 )
 
-// HasFetchedArtefact reports whether a node resolved this way names a module
-// the fetch pipeline could ever have acquired bytes for.
+// HasFetchedArtefact reports whether a node resolved this way owes the walk that
+// resolved it a set of fetched bytes — so that a missing fetch record is a gap
+// in the run rather than an absence the run itself created.
 //
-// Three resolution sources never do. A project walk's local main module is the
+// Four resolution sources owe none. A project walk's local main module is the
 // caller's own checkout; a local replace redirects a require at a directory on
 // disk, so the node keeps the original require coordinate that nothing
-// published; and the standard library ships with the toolchain. None of the
-// three has a module zip in the blob store, none ever will, and a fetch-record
-// lookup for one can only miss. A consumer that treats that miss as a failure
-// reports an absence that is there by construction as something that went
-// wrong, and cannot then tell it from bytes that should be in the store and are
-// not.
+// published; and the standard library ships with the toolchain. None of those
+// three has a module zip in the blob store and none ever will. The fourth is a
+// requirement the depth policy stopped the walk from following: its bytes are
+// published and a later walk may well acquire them, but this walk was told not
+// to, so a lookup for one can only miss here too. A consumer that treats any of
+// those misses as a failure reports an absence that is there by construction as
+// something that went wrong, and cannot then tell it from bytes that should be
+// in the store and are not.
 //
 // A source this build does not recognise answers true: an unknown resolution is
 // assumed to owe an artefact, so a genuine miss is reported rather than hidden.
 func (s ResolutionSource) HasFetchedArtefact() bool {
 	switch s {
-	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionStdlib:
+	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionStdlib, ResolutionDepthBounded:
 		return false
 	default:
 		return true
@@ -104,6 +155,8 @@ func (s ResolutionSource) ArtefactAbsenceNoun() string {
 		return "local replace"
 	case ResolutionStdlib:
 		return "Go standard library"
+	case ResolutionDepthBounded:
+		return "requirement beyond the depth bound"
 	default:
 		return ""
 	}
@@ -182,6 +235,12 @@ type Graph struct {
 	// PartialReason is a machine-readable summary of why the graph is partial:
 	// "fetch_failed", "parse_failed", "cancelled", or a combination.
 	PartialReason string
+	// BuildListUnavailable is the Go toolchain's own reason for failing to
+	// compute this project's build list. Non-empty means Nodes is the go.mod
+	// require closure rather than the module set that compiles, so every reader
+	// of the record states it. Empty when the build list was used, or when no
+	// toolchain was consulted at all.
+	BuildListUnavailable string
 	// HasLocalReplace is true when the target's go.mod contains at least one
 	// replace directive pointing to a local filesystem path. Such replacements
 	// are recorded but not followed, since local paths have no standalone fetch

@@ -49,10 +49,14 @@ func (uc *FetchModuleUseCase) WithModcacheMode() *FetchModuleUseCase {
 }
 
 // executeModcache runs the fetch-verify-persist pipeline against the module
-// cache. It is the --from-modcache counterpart to Execute: no network proxy, no
-// checksum-database round-trip, no blob writes. Verification is against the
-// local go.sum only and VCS cross-verification is skipped, so the recorded
-// status is VerifiedBySumDBOnly.
+// cache. It is the --from-modcache counterpart to Execute: no network proxy and
+// no checksum-database round-trip. The bytes it reads are still stored, under the
+// artefact identity it measured, so a later ordinary run finds them.
+//
+// The local go.sum is the sole anchor and no transparency-log query is made, so
+// the record states exactly that: VerifiedByGoSum, and no checksum-database
+// validation leg. Recording the log's status here would have an air-gapped run
+// report an anchor it never reached, and rank it level with a run that did.
 func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
 	if req.GoModOnly {
 		return uc.executeGoModOnlyModcache(ctx, req)
@@ -159,7 +163,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		ModuleHash:         dl.ZipHash,
 		GoModHash:          dl.GoModHash,
 		Digests:            dl.Digests,
-		VerificationStatus: domain2.VerifiedBySumDBOnly,
+		VerificationStatus: domain2.VerifiedByGoSum,
 		VerificationDetail: "verified against local go.sum (modcache mode); VCS cross-verification skipped",
 		FetchedAt:          uc.clock.Now().UTC(),
 		PipelineVersion:    uc.pipelineVersion,
@@ -168,12 +172,11 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		Retracted:          retracted,
 		AcquisitionMode:    domain2.AcquisitionModcache,
 		MeasurementKind:    domain2.MeasurementAcquired,
-		SumDBCheck:         domain2.LegRechecked,
 	}
 
 	// Step 6: seal and append. This mode's anchor is the local go.sum alone, so it
-	// can never beat a network run's Verified record; the composed read serves the
-	// stronger measurement and this run adds evidence rather than replacing any.
+	// can never beat a network run's transparency-log record; the composed read
+	// serves the stronger measurement and this run adds evidence, replacing none.
 	stored, err := uc.persistRecord(ctx, log, req, m)
 	if err != nil {
 		return FetchResult{}, err
@@ -190,8 +193,8 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 // executeGoModOnlyModcache is the go.mod-only counterpart to executeModcache:
 // it reads only the module's go.mod from the cache, verifies its h1 against the
 // local go.sum, and records a go.mod-only fact (GoModLocation set,
-// ContentLocation empty) using the module-cache handle deriver — no zip read,
-// no blob write. It is the --from-modcache analogue of executeGoModOnly.
+// ContentLocation empty) — no zip is read. It anchors and records exactly as
+// executeModcache does. It is the --from-modcache analogue of executeGoModOnly.
 func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
 	traceID := ulid.Make().String()
 	lap := uc.stopwatch.Start()
@@ -263,7 +266,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 	m := domain2.FetchedModule{
 		Coordinate:         req.Coordinate,
 		GoModHash:          dl.GoModHash,
-		VerificationStatus: domain2.VerifiedBySumDBOnly,
+		VerificationStatus: domain2.VerifiedByGoSum,
 		VerificationDetail: "go.mod-only fetch (modcache); go.mod verified against local go.sum; zip not read",
 		FetchedAt:          uc.clock.Now().UTC(),
 		PipelineVersion:    uc.pipelineVersion,
@@ -271,7 +274,6 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		Retracted:          retracted,
 		AcquisitionMode:    domain2.AcquisitionModcache,
 		MeasurementKind:    domain2.MeasurementAcquired,
-		SumDBCheck:         domain2.LegRechecked,
 	}
 
 	stored, err := uc.persistRecord(ctx, log, req, m)

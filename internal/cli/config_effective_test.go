@@ -160,7 +160,7 @@ func TestConfigShow_RendersLicenceOverrides(t *testing.T) {
 	prev := activeConfig
 	defer func() { activeConfig = prev }()
 	cfg := domain.DefaultConfig()
-	cfg.LicenseOverrides = map[string]string{"golang.org/x/mod": "MIT"}
+	cfg.LicenseOverrides = map[string]domain.LicenseOverride{"golang.org/x/mod": {SPDX: "MIT"}}
 	activeConfig = cfg
 
 	dir := t.TempDir()

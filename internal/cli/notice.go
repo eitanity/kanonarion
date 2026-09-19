@@ -236,9 +236,22 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 
 	coords, replaced, localReviews := partitionNoticeModules(mods)
 
+	// The operator's recorded licence determinations, read through the same port
+	// license-compat and audit read. A container wired without the override
+	// store (seam tests) carries no determinations.
+	var overrides licensedomain.LicenseOverrideSet
+	if ctr.LicenseOverrides != nil {
+		var oerr error
+		overrides, oerr = ctr.LicenseOverrides.LoadOverrides(ctx)
+		if oerr != nil {
+			return fmt.Errorf("loading license overrides: %w", oerr)
+		}
+	}
+
 	result, err := ctr.GenerateNotice.Generate(ctx, licapp.NoticeRequest{
 		Coordinates:  coords,
 		Declarations: noticeDeclarations(ctr.Config),
+		Overrides:    overrides,
 	})
 	if err != nil {
 		return fmt.Errorf("generating notice: %w", err)
@@ -261,6 +274,9 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 			if _, werr := fmt.Fprintf(stderr, "  %s: %s\n", name, item.Reason); werr != nil {
 				return fmt.Errorf("writing review item: %w", werr)
 			}
+		}
+		if werr := writeLicenceRemedy(reviews, stderr); werr != nil {
+			return werr
 		}
 		if werr := writeCopyrightRemedy(reviews, stderr); werr != nil {
 			return werr
@@ -304,6 +320,46 @@ func noticeDeclarations(cfg domain.Config) licensedomain.CopyrightDeclarationSet
 		}
 	}
 	return licensedomain.NewCopyrightDeclarationSet(entries)
+}
+
+// writeLicenceRemedy names the way out of an undetermined-licence refusal.
+//
+// It is printed only where extraction has already run and settled on no usable
+// identity — no licence found, or an ambiguity it would not guess at. Re-running
+// extraction produces that same answer forever, so the only thing that can
+// settle it is a person reading the module and recording what they found. It is
+// not offered where a record is merely missing: there the answer is to run the
+// extraction, and a determination recorded ahead of one would be a guess.
+func writeLicenceRemedy(reviews []licensedomain.ReviewItem, stderr io.Writer) error {
+	first := ""
+	for _, item := range reviews {
+		if item.UndeterminedLicence {
+			first = item.Coordinate.Path()
+			break
+		}
+	}
+	if first == "" {
+		return nil
+	}
+	const remedy = `
+notice: where extraction has settled and cannot settle further, read the module
+notice: and record your determination in <store-root>/config.yaml:
+notice:
+notice:   license_overrides:
+notice:     %s:
+notice:       spdx: "<SPDX identifier>"
+notice:       declared_by: "you@example.com"
+notice:       declared_on: "YYYY-MM-DD"
+notice:       basis: "the upstream file or page you read, and when"
+notice:
+notice: The key may be pinned to a version ("path@version"). The document then
+notice: publishes your determination, names you as its author, and reports what
+notice: the detector found; the extraction record itself is unchanged.
+`
+	if _, err := fmt.Fprintf(stderr, remedy, first); err != nil {
+		return fmt.Errorf("writing review remedy: %w", err)
+	}
+	return nil
 }
 
 // writeCopyrightRemedy names the way out of a missing-copyright refusal, so the
@@ -504,6 +560,32 @@ func writeNoticeLicenseFile(ew *errWriter, prefix string, lf licensedomain.Notic
 	}
 }
 
+// writeNoticeDetermination says that the identifier on the License: line above
+// was decided by a person, and what the detector itself found — the finding is
+// what a reviewer re-checks the determination against, and without it the block
+// reads as a measurement.
+//
+// An unattributed determination still settles the module, and the block says
+// so: implying an author it does not have would assert the one thing that makes
+// the entry checkable.
+func writeNoticeDetermination(ew *errWriter, e licensedomain.NoticeEntry) {
+	if e.Determination == nil {
+		return
+	}
+	d := e.Determination
+	ew.printf("\nLicence determination (operator-recorded; not a detection):\n")
+	ew.printf("  %s, recorded as license_overrides.%s\n", d.Override.SPDX, d.Override.Key)
+	if d.Override.Attributed() {
+		ew.printf("    declared by %s on %s\n", d.Override.DeclaredBy, d.Override.DeclaredOn)
+		ew.printf("    basis: %s\n", d.Override.Basis)
+	} else {
+		ew.printf("    no declarer, date or basis was recorded with this determination\n")
+	}
+	if d.DetectorFinding != "" {
+		ew.printf("  the licence detector identified: %s\n", d.DetectorFinding)
+	}
+}
+
 // writeNoticeDeclaration renders the operator's recorded copyright, saying which
 // of the two things it is: the attribution itself, where extraction found
 // nothing, or corroboration standing beside a measured notice.
@@ -568,6 +650,10 @@ func writeNoticeDocument(
 		if e.Expression != "" && e.Expression != e.SPDX {
 			ew.printf("License expression: %s\n", e.Expression)
 		}
+		// Immediately under the identity it qualifies: the next lines are read
+		// as evidence for that identifier, and a determination reached three
+		// blocks later would already have been taken for a detection.
+		writeNoticeDetermination(ew, e)
 		if len(e.Copyrights) > 0 {
 			ew.printf("\nCopyright notices:\n")
 			for _, c := range e.Copyrights {

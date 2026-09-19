@@ -88,8 +88,8 @@ type CapabilityReport struct {
 	// false-negative direction, and only for a capability Findings does not
 	// already carry, since a real witness answers the question outright.
 	Observations []CapabilityFinding
-	// Partial is true when the underlying graph did not fully resolve
-	// (OverallStatus != Extracted). A capability set over a Partial graph is a
+	// Partial is true when the report does not rest on a fully extracted graph.
+	// A capability set over a Partial graph is a
 	// soundness caveat, never a clean set (parity with capslock's UNANALYZED).
 	Partial bool
 	// Caveat is a human-readable soundness note; non-empty only when Partial.
@@ -129,10 +129,28 @@ func SelectRoots(rec cgdomain.CallGraphRecord, scope cgdomain.RootScope) []strin
 // so each capability is reported with its strongest available witness and that
 // path's weakest edge.
 func Analyse(rec cgdomain.CallGraphRecord, roots []string) CapabilityReport {
-	partial := rec.OverallStatus != cgdomain.CallGraphStatusExtracted
-	report := CapabilityReport{Partial: partial}
-	if partial {
+	report := CapabilityReport{Partial: true}
+	// Each status is named. Testing "not Extracted" put every member that is
+	// neither into the unresolved-graph sentence, and one of them is not an
+	// analysis outcome at all: ExcludedByConfig is the operator's own decision
+	// not to analyse this module, and telling them the graph would not resolve
+	// sends them to investigate a tool failure they configured.
+	switch rec.OverallStatus {
+	case cgdomain.CallGraphStatusExtracted:
+		report.Partial = false
+	case cgdomain.CallGraphStatusExcludedByConfig:
+		report.Caveat = "this module is excluded from call-graph analysis by configuration, so no graph was " +
+			"produced and no capability was searched for; the empty set here is not a measurement"
+	case cgdomain.CallGraphStatusUnknown,
+		cgdomain.CallGraphStatusPartial,
+		cgdomain.CallGraphStatusLoadFailed,
+		cgdomain.CallGraphStatusOutOfMemory,
+		cgdomain.CallGraphStatusCancelled,
+		cgdomain.CallGraphStatusExtractionFailed:
 		report.Caveat = "call graph did not fully resolve (status " +
+			rec.OverallStatus.String() + "); capability set is a lower bound and may be incomplete"
+	default:
+		report.Caveat = "call graph carries a status this build does not recognise (" +
 			rec.OverallStatus.String() + "); capability set is a lower bound and may be incomplete"
 	}
 

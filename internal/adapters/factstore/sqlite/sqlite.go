@@ -183,6 +183,22 @@ func Migrations() []sqlitestore.Migration {
 
             CREATE INDEX IF NOT EXISTS idx_fetch_records_identity
                 ON fetch_records (module_path, module_version, pipeline_version, module_hash, fetched_at);`},
+		// The VCS cross-verification leg reproduces a zip from a git checkout,
+		// and the clone URL it used arrives by one of two routes: derived from
+		// the module path, or named by the untrusted proxy. Both reached the same
+		// Verified status and the record could not say which, so this column
+		// carries the attribution.
+		//
+		// A record written before the column existed defaults to '', which reads
+		// as "the binding was not recorded" rather than guessing one from the
+		// stored git_url. Guessing would be wrong twice over: the function that
+		// derives a URL from a module path is live code that has already changed
+		// once, so a sealed record's meaning would move when it is edited; and a
+		// git_url is recorded even on a run that skipped cross-verification, so
+		// the guess would attribute a binding to a leg that never ran. The empty
+		// value is omitted from the canonical JSON, so every existing record
+		// verifies its content hash unchanged and nothing is re-derived.
+		{Module: "fetch", Version: 10, SQL: `ALTER TABLE fetch_records ADD COLUMN vcs_url_binding TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -221,7 +237,8 @@ const recordColumns = `schema_version, ecosystem, module_path, module_version, p
        verification_status, verification_detail,
        fetched_at, content_location, go_mod_location, content_hash, retracted,
        zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
-       measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source`
+       measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source,
+       vcs_url_binding`
 
 // PutFetchRecord appends a measurement to the ledger.
 //
@@ -250,8 +267,9 @@ INSERT INTO fetch_records (
     verification_status, verification_detail,
     fetched_at, content_location, go_mod_location, content_hash, retracted,
     zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
-    measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source,
+    vcs_url_binding
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, module_hash, fetched_at, content_hash)
 DO NOTHING`
 
@@ -271,6 +289,7 @@ DO NOTHING`
 				r.ContentLocation, r.GoModLocation, r.ContentHash, r.Retracted,
 				r.ZipSHA256, r.ZipSHA384, r.ZipSHA512, r.SumDBLookupFailed, r.AcquisitionMode,
 				r.MeasurementKind, r.SumDBCheck, r.SumDBCheckSource, r.VCSCheck, r.VCSCheckSource,
+				r.VCSURLBinding,
 			)
 			return err //nolint:wrapcheck // the retry classifies the driver's own error; the caller below names the step
 		}); err != nil {
@@ -453,6 +472,7 @@ func scanRecord(sc rowScanner) (domain2.FactRecord, error) {
 		&fetchedAt, &r.ContentLocation, &r.GoModLocation, &r.ContentHash, &r.Retracted,
 		&r.ZipSHA256, &r.ZipSHA384, &r.ZipSHA512, &r.SumDBLookupFailed, &r.AcquisitionMode,
 		&r.MeasurementKind, &r.SumDBCheck, &r.SumDBCheckSource, &r.VCSCheck, &r.VCSCheckSource,
+		&r.VCSURLBinding,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

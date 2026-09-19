@@ -12,6 +12,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 const testPipeline = "0.3.0"
@@ -30,6 +31,10 @@ type ledgerSpec struct {
 	// different satellite rows.
 	callee string
 	status domain2.CallGraphStatus
+	// toolchain is the Go toolchain the generation says built it. Empty is a
+	// record that establishes none, which is what every generation written before
+	// the axis existed carries.
+	toolchain gotoolchain.Version
 	// nodeCount and edgeCount override the counts the generation STATES about
 	// itself, which is a column and need not agree with the node and edge
 	// collections above. Zero means the default of one each.
@@ -86,6 +91,7 @@ func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
 		ExtractedAt:        at,
 		PipelineVersion:    testPipeline,
 		ArtefactIdentity:   spec.artefact,
+		Toolchain:          spec.toolchain,
 		WorktreeDigest:     spec.worktree,
 		WorktreeScanDigest: spec.scanDigest,
 		AnalysisRoot:       spec.root,

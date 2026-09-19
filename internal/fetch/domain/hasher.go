@@ -66,9 +66,17 @@ type canonicalRecord struct {
 	// omitempty keeps the canonical bytes — and therefore the content hash —
 	// identical to a pre-flag record when false, so records written before the
 	// field existed still verify, on the same terms as the digest fields below.
-	SumDBLookupFailed  bool   `json:"sumdb_lookup_failed,omitempty"`
-	VCSCheck           string `json:"vcs_check,omitempty"`
-	VCSCheckSource     string `json:"vcs_check_source,omitempty"`
+	SumDBLookupFailed bool   `json:"sumdb_lookup_failed,omitempty"`
+	VCSCheck          string `json:"vcs_check,omitempty"`
+	VCSCheckSource    string `json:"vcs_check_source,omitempty"`
+	// VCSURLBinding sorts after VCSCheckSource and before VerificationDetail,
+	// keeping the struct in lexicographic key order. omitempty on the same terms
+	// as the leg fields above: a record written before the field existed omits
+	// it, produces byte-identical canonical JSON, and so still verifies its
+	// stored content hash. When present it is covered by the hash like every
+	// other field, which is what stops the weaker of the two bindings from being
+	// quietly rewritten as the stronger one.
+	VCSURLBinding      string `json:"vcs_url_binding,omitempty"`
 	VerificationDetail string `json:"verification_detail"`
 	VerificationStatus string `json:"verification_status"`
 	// Raw artefact digests. omitempty keeps the canonical bytes — and therefore
@@ -148,6 +156,7 @@ func marshalCanonical(r FactRecord) ([]byte, error) {
 		SumDBLookupFailed:  r.SumDBLookupFailed,
 		VCSCheck:           r.VCSCheck,
 		VCSCheckSource:     r.VCSCheckSource,
+		VCSURLBinding:      r.VCSURLBinding,
 		VerificationDetail: r.VerificationDetail,
 		VerificationStatus: r.VerificationStatus,
 		ZipSHA256:          r.ZipSHA256,
@@ -213,6 +222,7 @@ func (CanonicalHasher) Unmarshal(data []byte) (FactRecord, error) {
 		SumDBCheckSource:   c.SumDBCheckSource,
 		VCSCheck:           c.VCSCheck,
 		VCSCheckSource:     c.VCSCheckSource,
+		VCSURLBinding:      c.VCSURLBinding,
 		ZipSHA256:          c.ZipSHA256,
 		ZipSHA384:          c.ZipSHA384,
 		ZipSHA512:          c.ZipSHA512,

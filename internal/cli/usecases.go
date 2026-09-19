@@ -185,8 +185,13 @@ type QueryCallGraphUseCase interface {
 	ForeignModulesBuilt(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, toolchain gotoolchain.Version) ([]callgraphdomain.ForeignModule, bool, error)
 	FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
 	FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
-	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error)
-	TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error)
+	// TraverseCallers and TraverseCallees walk the graph transitively. The
+	// result carries whether the walk stopped at its depth bound holding
+	// symbols it had not expanded — the CLI states that and must not re-derive
+	// it, because the only thing outside this layer that could stand in for the
+	// unexpanded frontier is a comparison against a second, unbounded run.
+	TraverseCallers(ctx context.Context, req cgapp.TraversalRequest) (cgapp.TraversalResult, error)
+	TraverseCallees(ctx context.Context, req cgapp.TraversalRequest) (cgapp.TraversalResult, error)
 }
 
 // --- example context ---

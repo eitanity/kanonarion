@@ -122,7 +122,7 @@ func TestVulnShowJSONPublishesTheState(t *testing.T) {
 // label tested the stored bit before it tested the advisory.
 func TestVulnShowTextPublishesTheState(t *testing.T) {
 	var buf bytes.Buffer
-	printVulnRecord(&buf, stateRecord(), nil)
+	printVulnRecord(&buf, stateRecord(), nil, nil)
 	out := buf.String()
 
 	for id, want := range wantState {
@@ -226,7 +226,7 @@ func TestTheThreeSurfacesAgreeOnOneFinding(t *testing.T) {
 		t.Fatalf("marshalling projected record: %v", err)
 	}
 	var showText bytes.Buffer
-	printVulnRecord(&showText, rec, nil)
+	printVulnRecord(&showText, rec, nil, nil)
 
 	// context --json and its text form.
 	ctx := vulnRecordToContext(&rec, "", "")
@@ -343,7 +343,7 @@ func TestWithdrawnIsNotServedAsAReachabilityAnswer(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	printVulnRecord(&buf, rec, nil)
+	printVulnRecord(&buf, rec, nil, nil)
 	entry := entryFor(buf.String(), "GO-2026-0005")
 	if strings.Contains(entry, "[not reachable") {
 		t.Errorf("a retracted advisory is still tagged as a negative:\n%s", entry)

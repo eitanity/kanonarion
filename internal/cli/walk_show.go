@@ -51,7 +51,11 @@ func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout, s
 		}
 		// stdout is the record's own sealed bytes and nothing else — a caveat
 		// added there would change what the record hashes over. It goes to stderr,
-		// where it reaches the reader without touching the artefact.
+		// where it reaches the reader without touching the artefact. The document
+		// itself already carries the build-list gap at .graph.build_list_unavailable.
+		if bErr := writeBuildListUnavailable(stderr, rec.Graph); bErr != nil {
+			return bErr
+		}
 		return writeWalkPreModulesCaveat(stderr, rec.Graph)
 	}
 
@@ -63,6 +67,13 @@ func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout, s
 	}
 	if _, pErr := fmt.Fprintf(stdout, "Status: %s\n", rec.OverallStatus.String()); pErr != nil {
 		return fmt.Errorf("writing output: %w", pErr)
+	}
+	// The status line above says "partial" without saying of what. A walk whose
+	// module set is the require directives is incomplete in a way no node result
+	// records, so the reason travels with the record and is stated on every read
+	// of it, not only on the run that produced it.
+	if bErr := writeBuildListUnavailable(stdout, rec.Graph); bErr != nil {
+		return bErr
 	}
 	// The command whose whole job is to show a walk said nothing about the build
 	// that resolved it, while the stdlib node in its graph follows that build. The

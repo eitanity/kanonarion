@@ -52,6 +52,10 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 		Annotations: map[string]string{
 			annotationStoreIntent: StoreIntentCreate,
 			annotationNetworkUse:  NetworkAlways,
+			// fetch exists to acquire bytes this host has not got, so no flag
+			// makes it offline. A project's modules can still be recorded from
+			// a cache the host already holds, and that is a walk, not a fetch.
+			annotationOfflineAlternative: "kanonarion walk --gomod ./go.mod --from-modcache",
 		},
 		Short: "Fetch, verify, and persist a Go module fact record",
 		Example: `  kanonarion fetch github.com/spf13/cobra@v1.8.1

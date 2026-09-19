@@ -286,8 +286,24 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	}
 
 	printVulnerabilitiesSummary(w, out)
+	printNativeSummary(w, out)
 
 	return w.err
+}
+
+// printNativeSummary is the native line of the summary: what this module's own
+// artefact compiles into the binary from native source it ships, and what it
+// links from outside itself.
+//
+// It is stated at every state, the measured absences included — a module that
+// ships SQLite and a module that ships no C at all read identically without it.
+// A document from a producer that derived no statement prints nothing, which
+// says "this producer does not derive it" rather than asserting an absence.
+func printNativeSummary(w *errWriter, out contextOutput) {
+	if w.err != nil {
+		return
+	}
+	printNativeCoverage(w.w, out.Native)
 }
 
 // printVulnerabilitiesSummary is the vulnerabilities line of the summary, split

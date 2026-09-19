@@ -372,6 +372,13 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 	// keeps refusing, with the message that names the mode.
 	proxy, perr := proxyadapter.New(f.goproxy, false)
 	offline := perr != nil && errors.Is(perr, proxyadapter.ErrProxyOff) && !f.fresh
+	if perr != nil && errors.Is(perr, proxyadapter.ErrProxyOff) && f.fresh {
+		// --fresh IS the flag that withdraws the offline answer, so the remedy
+		// is to drop it. The adapter's own refusal can only speak about module
+		// bytes, which is not what this command resolves.
+		return &exitError{code: ExitConfig, msg: "--fresh re-queries the proxy, and this environment does no proxy " +
+			"fetching; drop it to serve a lookup recorded earlier, inside staleness.ttl (" + activeConfig.Staleness.TTL.String() + ")"}
+	}
 	if perr != nil && !offline {
 		return proxyAdapterError(perr)
 	}

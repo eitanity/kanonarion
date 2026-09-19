@@ -20,11 +20,22 @@ import (
 type callGraphShowFlags struct {
 	limitNodes int
 	limitEdges int
-	nodeFilter string
-	history    bool
-	diff       bool
-	source     string
-	toolchain  string
+	// limitNodesSet and limitEdgesSet say whether the caller TYPED the cap or
+	// took the default. The two are one instruction on the text path and two
+	// different ones under --json, where an unset cap must not truncate: see
+	// applyArrayCap.
+	limitNodesSet bool
+	limitEdgesSet bool
+	nodeFilter    string
+	history       bool
+	diff          bool
+	// diffFrom and diffTo name one side of the comparison each, by the record
+	// hash --history prints. Empty means the side takes its default: see
+	// selectDiffPair.
+	diffFrom  string
+	diffTo    string
+	source    string
+	toolchain string
 }
 
 func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -43,12 +54,15 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node github.com/spf13/pflag
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --history
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff
+  kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --diff --diff-to sha256:d951af94
   kanonarion callgraph-show example.com/mod@local --source worktree
   kanonarion callgraph-show golang.org/x/tools@v0.49.0 --toolchain go1.26.6`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			f.limitNodesSet = cmd.Flags().Changed("limit-nodes")
+			f.limitEdgesSet = cmd.Flags().Changed("limit-edges")
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
@@ -64,6 +78,8 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&f.limitEdges, "limit-edges", 100, "max edges to print (0=unlimited)")
 	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of the composed answer")
 	cmd.Flags().BoolVar(&f.diff, "diff", false, "report what the distinct stored measurements for the module differ about, instead of the composed answer")
+	cmd.Flags().StringVar(&f.diffFrom, "diff-from", "", "with --diff: compare from this stored generation, the older side of the pair — a record `hash` as --history prints it, or a unique prefix of one")
+	cmd.Flags().StringVar(&f.diffTo, "diff-to", "", "with --diff: compare to this stored generation, the newer side of the pair — a record `hash` as --history prints it, or a unique prefix of one")
 	cmd.Flags().StringVar(&f.source, "source", "", "restrict to graphs built from one source: zip or worktree")
 	cmd.Flags().StringVar(&f.toolchain, "toolchain", "", "restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. go1.26.6)")
 
@@ -98,6 +114,21 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	if err != nil {
 		return err
 	}
+	// A side selector that cannot apply is refused by name rather than accepted
+	// and ignored: the reader asked for a specific pair, and a read that quietly
+	// answered a different question is the defect these flags exist to fix.
+	if !f.diff {
+		switch {
+		case f.diffFrom != "":
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--diff-from names one side of a comparison and applies only with --diff — run:\n  kanonarion callgraph-show %s --diff --diff-from %s",
+				coord, f.diffFrom)}
+		case f.diffTo != "":
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--diff-to names one side of a comparison and applies only with --diff — run:\n  kanonarion callgraph-show %s --diff --diff-to %s",
+				coord, f.diffTo)}
+		}
+	}
 	if f.history {
 		return runCallGraphHistory(ctx, coord, uc, stdout)
 	}
@@ -105,7 +136,17 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		return runCallGraphDiff(ctx, coord, f, jsonOut, uc, stdout)
 	}
 
-	req := domain.ComposeRequest{Source: source, Toolchain: gotoolchain.Version(f.toolchain)}
+	// The two ways a toolchain reaches this read are different requests.
+	// --toolchain NARROWS, because the reader named one coordinate and "the ledger
+	// holds nothing built by that toolchain" is the answer they asked for — the
+	// miss below says exactly that. A STORED preference only breaks a tie, so a
+	// coordinate naming one toolchain, or none, is served as it is with it unset.
+	req := domain.ComposeRequest{Source: source}
+	if f.toolchain != "" {
+		req.Toolchain = gotoolchain.Version(f.toolchain)
+	} else {
+		req.ToolchainPreference = storedToolchainPreference()
+	}
 	r, found, err := uc.GetCallGraphRecordFrom(ctx, coord, cgapp.PipelineVersion, req)
 	if err != nil {
 		return fmt.Errorf("getting callgraph record: %w", err)
@@ -124,17 +165,7 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		// Nothing is served: composition answers not-found only where the reading
 		// leg decoded no generation at all, since neither source nor toolchain is
 		// restricted on this path.
-		note, nerr := supersededGenerationsNote(ctx, coord, uc, nil)
-		if nerr != nil {
-			return nerr
-		}
-		if note != "" {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-				"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
-				coord, cgapp.PipelineVersion, note, domain.ReanalysisInstruction(coord, ""))}
-		}
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisInstruction(coord, ""))}
+		return missingCallGraphRefusal(ctx, coord, uc)
 	}
 	// Asked before --node narrows the record: the disagreement is between whole
 	// generations of this coordinate, and a filtered view of the served one says
@@ -156,6 +187,18 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		enc.SetIndent("", "  ")
 		j := toCallGraphJSON(r)
 		j.NodeFilter = filter.toJSON()
+		// The caps travel into the document, as --node already did five lines
+		// above. They are applied to the ARRAYS: node_count and edge_count go on
+		// saying what the record holds, which is the number the cap is read
+		// against.
+		if f.limitNodesSet {
+			kept, capped := applyArrayCap(*j.Nodes, limitNodes, "nodes", "--limit-nodes 0")
+			j.Nodes, j.NodeCap = &kept, capped
+		}
+		if f.limitEdgesSet {
+			kept, capped := applyArrayCap(*j.Edges, limitEdges, "edges", "--limit-edges 0")
+			j.Edges, j.EdgeCap = &kept, capped
+		}
 		if disagrees {
 			j.AnalyserDisagreement = toAnalyserDisagreementJSON(disagreement)
 		}
@@ -419,6 +462,24 @@ type callEdgeJSON struct {
 	// The domain's zero value is a call and every edge stored before the axis
 	// existed is one, so "Call" is a true statement about all of them.
 	Kind string `json:"kind"`
+	// ReflectDispatch is the analyser's reflect attribute, spelled out on every
+	// edge for the reason Kind is: it is provenance about what the analysis could
+	// see, and an absent field would put the reader back where they started. It
+	// reached no reader at all before, so the one thing the graph records about
+	// reflection could not be read back out of it.
+	//
+	// It means THE CALLEE IS IN PACKAGE reflect, and nothing narrower. It is not
+	// a count of reflective dispatches: an edge to reflect.TypeOf carries it and
+	// has exactly one callee, and summing this field overstates the calls an
+	// analysis cannot bound by about two orders of magnitude. The calls that
+	// really are unbounded are the five reflect.Value methods that choose their
+	// target at run time — Call, CallSlice, Method, MethodByName, FieldByName —
+	// so a reader after those must filter on to_id as well.
+	//
+	// There is no third state. Migration v6 purged every row written before the
+	// column existed, so a false here is measured-and-not-reflect and never
+	// predates-the-attribute.
+	ReflectDispatch bool `json:"reflect_dispatch"`
 }
 
 // edgeKindJSON renders an edge kind for the curated shape, naming the zero
@@ -488,6 +549,17 @@ type callGraphRecordJSON struct {
 	// ("not recorded") and must be visible as one.
 	Completeness   string `json:"completeness"`
 	AnalysisSource string `json:"analysis_source"`
+	// ArtifactKind is what the analysis established the module to be, and it
+	// decides how a reachability traversal over this graph is rooted: an
+	// application is rooted at every function it owns, a library at its public
+	// API and package init. That makes it the fact deciding whether a negative
+	// reachability answer over this graph could ever be confirmed, and it reached
+	// no read surface at all — a reader could not see which rooting produced
+	// their answer. Always a named value: the library kind's stored form is the
+	// empty string, so emitting the raw field published a measured library as a
+	// blank, and the "not recorded" token every other axis here uses would have
+	// been a second wrong answer for the same reason.
+	ArtifactKind string `json:"artifact_kind"`
 	// Toolchain is the toolchain this record ESTABLISHES, on the same terms: a
 	// consumer that cannot see which Go built the graph cannot tell two
 	// toolchains' answers apart. A record that establishes none says so in the
@@ -514,10 +586,15 @@ type callGraphRecordJSON struct {
 	// analysed tree can differ from the published one. Absent means every directive
 	// the module published was in force.
 	DroppedReplaces []droppedReplaceJSON `json:"dropped_replaces,omitempty"`
-	Nodes           []callNodeJSON       `json:"nodes"`
-	Edges           []callEdgeJSON       `json:"edges"`
-	OverallStatus   string               `json:"overall_status"`
-	FailureDetail   string               `json:"failure_detail,omitempty"`
+	// Nodes and Edges are pointers so that absent and measured-empty are two
+	// different documents. A record that resolved no function is a real state —
+	// the one 'callgraph' and 'local' exit 2 on — and plain `omitempty` would
+	// render it identically to a surface that does not carry the graph.
+	// 'callgraph-show' always sets both; the run surfaces leave them nil.
+	Nodes         *[]callNodeJSON `json:"nodes,omitempty"`
+	Edges         *[]callEdgeJSON `json:"edges,omitempty"`
+	OverallStatus string          `json:"overall_status"`
+	FailureDetail string          `json:"failure_detail,omitempty"`
 	// FailureCause says what the status is a statement about — the module, or the
 	// run that tried to analyse it — and it is the axis that decides whether this
 	// record answers a later extraction. A consumer reading only the detail reads
@@ -563,6 +640,17 @@ type callGraphRecordJSON struct {
 	// the record is unfiltered, which is a different statement from a filter
 	// that matched nothing.
 	NodeFilter *nodeFilterJSON `json:"node_filter,omitempty"`
+	// NodeCap and EdgeCap are what this rendering did with --limit-nodes and
+	// --limit-edges. They are two statements and not one because the two arrays
+	// cap independently: the flag that widens one does not widen the other.
+	//
+	// Each is present only when its own flag was SET, and then present whether or
+	// not the cap bit — a consumer that asked for a cap can always read what
+	// became of it, and one that asked for nothing reads the document it always
+	// did. Absence is therefore "no cap was requested", never "this build does
+	// not say".
+	NodeCap *arrayCapJSON `json:"node_cap,omitempty"`
+	EdgeCap *arrayCapJSON `json:"edge_cap,omitempty"`
 	// Analyser names the golang.org/x/tools that parsed the module, and how the
 	// store came to state it. It is always present, including when nothing is
 	// known: an absent object would read as "no analyser", which is the reading
@@ -742,12 +830,13 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 	edges := make([]callEdgeJSON, len(r.Edges))
 	for i, e := range r.Edges {
 		edges[i] = callEdgeJSON{
-			FromID:       e.FromID,
-			ToID:         e.ToID,
-			CallSiteFile: e.CallSite.File,
-			CallSiteLine: e.CallSite.Line,
-			Confidence:   string(e.Confidence),
-			Kind:         edgeKindJSON(e.Kind),
+			FromID:          e.FromID,
+			ToID:            e.ToID,
+			CallSiteFile:    e.CallSite.File,
+			CallSiteLine:    e.CallSite.Line,
+			Confidence:      string(e.Confidence),
+			Kind:            edgeKindJSON(e.Kind),
+			ReflectDispatch: e.ReflectDispatch,
 		}
 	}
 	testNodes := 0
@@ -762,6 +851,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		Algorithm:          string(r.Algorithm),
 		Completeness:       string(r.Completeness),
 		AnalysisSource:     string(r.AnalysisSource),
+		ArtifactKind:       r.ArtifactKind.String(),
 		Toolchain:          orNotRecorded(domain.RecordToolchain(r).Key()),
 		ToolchainStated:    statedToolchain(r),
 		WorktreeDigest:     r.WorktreeDigest,
@@ -770,8 +860,8 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod, r.BuildListSource),
 		DroppedReplaces:  droppedReplacesToJSON(r.DroppedReplaces),
 
-		Nodes:           nodes,
-		Edges:           edges,
+		Nodes:           &nodes,
+		Edges:           &edges,
 		OverallStatus:   r.OverallStatus.String(),
 		FailureDetail:   r.FailureDetail,
 		FailureCause:    string(r.FailureCause),
@@ -810,8 +900,12 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 // and a record that does not say is reported as not recording it rather than
 // silently reading as a zip.
 func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
-	line := fmt.Sprintf("  fidelity: %s   source: %s   toolchain: %s",
-		r.Completeness.String(), r.AnalysisSource.String(), domain.RecordToolchain(r).String())
+	// The artefact kind is on this line because it is a fidelity fact, not a
+	// label: it decides how a reachability traversal over this graph is rooted,
+	// and therefore whether a negative answer over it could ever be confirmed.
+	line := fmt.Sprintf("  fidelity: %s   source: %s   kind: %s   toolchain: %s",
+		r.Completeness.String(), r.AnalysisSource.String(), r.ArtifactKind.String(),
+		domain.RecordToolchain(r).String())
 	if r.AnalysisSource == domain.AnalysisSourceWorktree && r.WorktreeDigest != "" {
 		line += "  (tree " + r.WorktreeDigest + ")"
 	}
@@ -1020,6 +1114,57 @@ func (o nodeFilterOutcome) toJSON() *nodeFilterJSON {
 // --node pattern is matched against.
 const nodeFilterComparand = "fully-qualified node ID (package path + symbol)"
 
+// arrayCapJSON is the machine-readable form of the line the text path prints
+// over each array — "Nodes (1512 total, showing 5)" — and it carries what that
+// line carries: the instruction, whether it withheld anything, and what it was
+// applied to.
+//
+// It is fielded rather than rendered for the reason node_filter beside it is: a
+// consumer has to be able to place the rows it got inside the rows that existed
+// without parsing a sentence.
+type arrayCapJSON struct {
+	// Truncated is whether the cap actually withheld anything, measured against
+	// the array rather than assumed from the limit: an array holding exactly its
+	// cap withheld nothing and must not claim to.
+	Truncated bool `json:"truncated"`
+	// Limit is the cap as given. Zero is a cap explicitly set to unlimited, which
+	// is a different statement from the flag never being passed — that one is the
+	// whole field's absence.
+	Limit int `json:"limit"`
+	// Subject names the rows in the reader's terms, as the listing documents do,
+	// so the statement reads on its own and not only by the key it hangs off.
+	Subject string `json:"subject"`
+	// Returned is how many entries the array carries and Available how many this
+	// rendering drew them from. Available is the population AFTER --node, so the
+	// statement is about the array in front of the reader; node_count and
+	// edge_count go on reporting what the record says about itself.
+	Returned  int `json:"returned"`
+	Available int `json:"available"`
+	// Remedy is the invocation that lifts this cap and no other.
+	Remedy string `json:"remedy"`
+}
+
+// applyArrayCap trims one of the document's arrays to the caller's cap and
+// states what it did.
+//
+// It is called only for a cap the caller SET. An unset --limit-nodes or
+// --limit-edges must not truncate a document: the defaults exist to keep a
+// terminal readable — the help says "max nodes to print" — so applying them here
+// would silently start withholding rows from every consumer that never asked for
+// a cap, which is a worse defect than discarding the ones that did.
+func applyArrayCap[T any](rows []T, limit int, subject, remedy string) ([]T, *arrayCapJSON) {
+	available := len(rows)
+	kept, truncated := truncateList(rows, limit)
+	return kept, &arrayCapJSON{
+		Truncated: truncated,
+		Limit:     limit,
+		Subject:   subject,
+		Returned:  len(kept),
+		Available: available,
+		Remedy:    remedy,
+	}
+}
+
 // writeNodeFilterNotice states an unmatched --node filter instead of letting the
 // empty node and edge lists speak for it.
 //
@@ -1201,6 +1346,32 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 	return nil
 }
 
+// missingCallGraphRefusal is what every command that reads a stored call graph
+// returns when nothing is served for a coordinate.
+//
+// It is one function because the refusal is one fact. Two commands refusing for
+// the absence of the same record used to say different things about it: one had
+// the store's own listing in hand and named the superseded generations it holds,
+// the other stated a bare absence its own store contradicts, and a reader told
+// the record does not exist has no reason to go looking for a pipeline bump.
+//
+// The exit code and the remedy are the same either way — the coordinate has to
+// be analysed by this build — so only the diagnosis differs, and it differs on
+// what the store says rather than on which command asked.
+func missingCallGraphRefusal(ctx context.Context, coord coordinate.ModuleCoordinate, uc ports.CallGraphCoordinateLister) error {
+	note, err := supersededGenerationsNote(ctx, coord, uc, nil)
+	if err != nil {
+		return err
+	}
+	if note != "" {
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
+			coord, cgapp.PipelineVersion, note, domain.ReanalysisInstruction(coord, ""))}
+	}
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+		"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisInstruction(coord, ""))}
+}
+
 // supersededGenerationsNote describes the generations the store holds for a
 // coordinate that this build will not serve, or "" when it holds none. It is the
 // difference between "this was never analysed" and "this was analysed by logic
@@ -1229,7 +1400,7 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 func supersededGenerationsNote(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
-	uc QueryCallGraphUseCase,
+	uc ports.CallGraphCoordinateLister,
 	servable []domain.CallGraphRecord,
 ) (string, error) {
 	sums, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})

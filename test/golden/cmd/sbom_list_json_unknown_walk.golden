@@ -1,0 +1,7 @@
+# the FILTERED zero, and the control for sbom_list_json_empty: records exist and none matches this walk. The two zeros must not read alike — one says nothing was generated, the other says nothing matched — and the filtered one names the field it filtered on.
+$ kanonarion sbom-list --json --walk 01ARZ3NDEKTSV4RRFFQ69G5FZZ
+exit 0
+--- stdout ---
+[]
+--- stderr ---
+{"subject":"SBOM record","filter":{"name":"walk id","value":"01ARZ3NDEKTSV4RRFFQ69G5FZZ","compared_against":"walk id each SBOM was generated from","match":"for exact equality"},"records_considered":1,"store_empty":false,"paged_past":false,"remedy":["kanonarion sbom-list"]}

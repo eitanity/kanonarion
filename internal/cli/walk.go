@@ -59,6 +59,10 @@ type walkFlags struct {
 	stdlibFromGoMod bool
 	noProgress      bool
 	fromModcache    string
+	// target is the platform this walk resolves for. It is recorded on the
+	// graph's BuildEnv and covered by the walk's identity hash, so two targets
+	// are two walks rather than one walk that changed its mind.
+	target buildTargetFlags
 	// excludeTests is parsed only so the refusal can name it. A walk record names
 	// its scope and not its test axis; see refuseTestScopeOnRecordingCommand.
 	excludeTests bool
@@ -76,6 +80,10 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 			// rather than inherent. The declaration moved with the flag.
 			annotationNetworkUse:   NetworkAvoidable,
 			annotationOfflineFlags: "--from-modcache",
+			// The flag applies to the go.mod form only — a positional coordinate
+			// has no project go.sum to verify the cache against, and refuses it —
+			// so the remedy names the form, not the flag on its own.
+			annotationOfflineAlternative: "kanonarion walk --gomod ./go.mod --from-modcache",
 		},
 		Short: "Walk the dependency graph for a module and persist the walk record",
 		Example: `  kanonarion walk github.com/spf13/cobra@v1.8.1
@@ -89,7 +97,8 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion walk --gomod ./go.mod --project
   kanonarion walk --gomod ./go.mod --analyse-root
   kanonarion walk --gomod ./go.mod --analyse-local
-  kanonarion walk --gomod ./go.mod --from-modcache`,
+  kanonarion walk --gomod ./go.mod --from-modcache
+  kanonarion walk --gomod ./go.mod --target wasip1/wasm`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// With no positional module, default to a go.mod walk; --gomod
 			// defaults to./go.mod via resolveGoModPath.
@@ -139,6 +148,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
+	registerBuildTargetFlags(cmd, &f.target)
 	return cmd
 }
 
@@ -175,6 +185,12 @@ func openWalkRuntime(f walkFlags, stderr io.Writer) (walkRuntime, error) {
 // module bytes come from and what verifies them — the decision --from-modcache
 // makes — before opening the store, then runs the project walk.
 func runWalkGoMod(ctx context.Context, f walkFlags, stdout, stderr io.Writer) error {
+	// The platform this walk is about, settled before anything resolves: it is
+	// recorded on the graph, covered by the walk's identity, and written into
+	// every child that resolves the module set.
+	if terr := resolveBuildTarget(ctx, f.target, "", filepath.Dir(f.gomodPath)); terr != nil {
+		return terr
+	}
 	// --from-modcache is the offline walk: bytes come from an existing module
 	// cache and the go.sum beside this go.mod is their sole anchor. Resolved
 	// first because resolveProjectGoSum is a no-op under it, and because the
@@ -399,9 +415,24 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
 			rec.ID, rec.OverallStatus.String(), string(rec.Depth),
 			len(rec.Graph.Nodes),
-			countFailures(rec),
+			domain.CountNodeFailures(rec),
 		); pErr != nil {
 			return result, fmt.Errorf("writing output: %w", pErr)
+		}
+	}
+
+	// Stated on the walk line's own channel: an operator reading "N nodes, 0
+	// failed" has nothing else that distinguishes a resolved build list from the
+	// require directives that stood in for one. Under --json stdout is the
+	// record's bytes, which carry the gap themselves, so the prose goes beside
+	// them. Gated on the same nil reader the other disclosures are.
+	if records != nil {
+		channel := stdout
+		if jsonOut {
+			channel = stderr
+		}
+		if bErr := writeBuildListUnavailable(channel, rec.Graph); bErr != nil {
+			return result, bErr
 		}
 	}
 
@@ -418,12 +449,34 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		}
 	}
 
-	partialMsg := "walk partial: some dependencies could not be fetched"
-	if rootIngestErr != "" {
-		partialMsg = "walk partial: the dependency graph is complete, but the project's own packages were not ingested"
-	}
 	return result, walkExit(rec.OverallStatus, allowPartial,
-		"walk failed: project go.mod could not be resolved", partialMsg)
+		"walk failed: project go.mod could not be resolved",
+		walkPartialMessage(rec, rootIngestErr))
+}
+
+// walkPartialMessage says what this walk is partial FOR. A walk can be
+// incomplete for reasons that have nothing to do with fetching, and the one
+// message this used to carry — "some dependencies could not be fetched" — is a
+// false sentence over every one of them.
+//
+// The order is most specific first. The last arm is the honest catch-all: it
+// quotes the reason the record carries rather than guessing at one, so a reason
+// added after this was written is stated instead of mis-described.
+func walkPartialMessage(rec domain.WalkRecord, rootIngestErr string) string {
+	switch {
+	case rec.Graph.BuildListUnavailable != "":
+		// The set being the wrong set outranks gaps IN a set: the others describe
+		// a graph resolved from the build, and this says the build was never it.
+		return buildListUnavailablePartialMsg
+	case rootIngestErr != "":
+		return "walk partial: the dependency graph is complete, but the project's own packages were not ingested"
+	case domain.CountNodeFailures(rec) > 0:
+		return "walk partial: some dependencies could not be fetched"
+	case rec.Graph.PartialReason != "":
+		return "walk partial: the dependency graph is incomplete — " + rec.Graph.PartialReason
+	default:
+		return "walk partial: the dependency graph is incomplete, and the record states no reason"
+	}
 }
 
 // walkExit maps the recorded walk status onto the process exit code.
@@ -536,15 +589,20 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
 			rec.ID, rec.OverallStatus.String(), string(rec.Depth),
 			len(rec.Graph.Nodes),
-			countFailures(rec),
+			domain.CountNodeFailures(rec),
 		); pErr != nil {
 			return result, fmt.Errorf("writing output: %w", pErr)
 		}
 	}
 
+	// Through the same helper the project walk uses. A coordinate walk is partial
+	// for the same range of reasons — a depth bound, a truncated closure — and
+	// this arm used to state the fetch sentence over all of them, which is the
+	// one sentence walkPartialMessage exists to stop being said unconditionally.
+	// No root is ingested on this path, so there is no ingest failure to pass.
 	return result, walkExit(rec.OverallStatus, allowPartial,
 		"walk failed: target module could not be fetched",
-		"walk partial: some dependencies could not be fetched")
+		walkPartialMessage(rec, ""))
 }
 
 // ---- what a walk states about how its graph was verified ----

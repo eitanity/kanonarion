@@ -89,7 +89,13 @@ import (
 // embedding an arbitrary one. The embedded shape changed, so the walk record's
 // canonical bytes changed with it; cached 1.9.0 walks are re-resolved rather
 // than read through a second shape.
-const PipelineVersion = "1.10.0"
+// 1.11.0: a project walk whose build list the Go toolchain could not compute
+// records the toolchain's reason on the graph (BuildListUnavailable) instead of
+// only logging it, and is recorded incomplete. The module set is the go.mod
+// require closure rather than the set that compiles, and a cached 1.10.0 walk
+// of that kind is sealed as succeeded, so those are re-resolved rather than
+// served as complete.
+const PipelineVersion = "1.11.0"
 
 // GraphResolver resolves the transitive dependency graph for a target module.
 // It is safe for concurrent use once constructed.
@@ -235,6 +241,8 @@ func (r *GraphResolver) Resolve(ctx context.Context, target coordinate.ModuleCoo
 //
 // A non-nil error is returned only when goModBytes cannot be parsed (and the
 // build list is unavailable); per-dependency failures produce a partial graph.
+// A toolchain failure additionally records the toolchain's reason on the graph,
+// so the walk is recorded incomplete rather than only logged as degraded.
 // scopeModules restricts the resolved graph to a specific dependency scope: it is
 // the set of module paths (the build-list subset the caller computed via the Go
 // toolchain — code or tool scope) to retain, alongside the main anchor. A nil
@@ -249,13 +257,17 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 
 	var g domain3.Graph
 	if r.buildList != nil && projectDir != "" {
-		bl, err := r.buildList.Resolve(ctx, projectDir)
-		if err != nil {
+		bl, blErr := r.buildList.Resolve(ctx, projectDir)
+		if blErr != nil {
 			r.logger.WarnContext(ctx, "walk.build_list.unavailable",
 				slog.String("project_dir", projectDir),
-				slog.String("error", err.Error()),
+				slog.String("error", blErr.Error()),
 			)
-			g, err = r.resolveProjectFallback(ctx, target, goModBytes, depth)
+			// The toolchain's words go on the graph, not only in the log: a log
+			// line reaches nobody reading the record back, and the module set
+			// this walk covers is not the one that compiles.
+			var err error
+			g, err = r.resolveProjectFallback(ctx, target, goModBytes, depth, strings.TrimSpace(blErr.Error()))
 			if err != nil {
 				return domain3.Graph{}, err
 			}
@@ -264,7 +276,7 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 		}
 	} else {
 		var err error
-		g, err = r.resolveProjectFallback(ctx, target, goModBytes, depth)
+		g, err = r.resolveProjectFallback(ctx, target, goModBytes, depth, "")
 		if err != nil {
 			return domain3.Graph{}, err
 		}
@@ -380,16 +392,18 @@ func goModDirective(parsed domain3.ParsedGoMod) string {
 }
 
 // buildListApproxReason is recorded on a project graph whose module set was
-// derived by the internal resolver because the Go toolchain was unavailable.
-const buildListApproxReason = "build_list_approximate: go toolchain unavailable, module set derived by internal resolver"
+// derived by the internal resolver because the caller named no directory for the
+// toolchain to resolve in — not because the toolchain was asked and failed.
+const buildListApproxReason = "build_list_approximate: no resolution directory, module set derived by internal resolver"
 
 // resolveProjectFallback resolves a project walk via the internal MVS resolver.
-// When the fallback was reached because the toolchain was unavailable (the only
-// caller that hits it with a BuildListResolver wired), the graph is marked
-// Partial with buildListApproxReason so the approximate set is never presented as
-// authoritative. When no BuildListResolver is configured at all, this is simply
-// the legacy resolution path and no caveat is added.
-func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target coordinate.ModuleCoordinate, goModBytes []byte, depth domain3.StageDepth) (domain3.Graph, error) {
+//
+// buildListUnavailable is the toolchain's own reason when the build list was
+// asked for and failed, and empty when it was never asked for. Both mark the
+// graph Partial, but only the first is a degradation of an answer the operator
+// expected, so only it is recorded for the walk's readers to state. With no
+// BuildListResolver wired this is the legacy path and no caveat is added.
+func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target coordinate.ModuleCoordinate, goModBytes []byte, depth domain3.StageDepth, buildListUnavailable string) (domain3.Graph, error) {
 	parsed, err := r.parser.Parse("go.mod", goModBytes)
 	if err != nil {
 		return domain3.Graph{}, fmt.Errorf("parsing project go.mod for %s: %w", target, err)
@@ -410,11 +424,16 @@ func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target coord
 	}
 
 	if r.buildList != nil {
+		reason := buildListApproxReason
+		if buildListUnavailable != "" {
+			reason = domain3.BuildListUnavailableReason
+			g.BuildListUnavailable = buildListUnavailable
+		}
 		g.Partial = true
 		if g.PartialReason == "" {
-			g.PartialReason = buildListApproxReason
+			g.PartialReason = reason
 		} else {
-			g.PartialReason = buildListApproxReason + "; " + g.PartialReason
+			g.PartialReason = reason + "; " + g.PartialReason
 		}
 	}
 	return g, nil
@@ -517,7 +536,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 				slog.String("error.type", "fetch_failed"),
 				slog.String("error", err.Error()),
 			)
-			st.markPartial("fetch_failed")
+			st.markPartial(domain3.FetchFailedReason)
 			node.ResolutionSource = domain3.ResolutionFetchFailed
 			node.ErrorDetail = err.Error()
 		} else {
@@ -840,7 +859,7 @@ func (r *GraphResolver) resolveFromParsed(
 	workers := r.workers()
 	for len(depthQueue) > 0 {
 		if err := ctx.Err(); err != nil {
-			st.markPartial("cancelled")
+			st.markPartial(domain3.CancelledReason)
 			r.logger.InfoContext(ctx, "walk.resolve.cancelled",
 				slog.Int("nodes_resolved", len(st.nodes)),
 			)
@@ -1028,7 +1047,7 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target coordinate.Mo
 		PipelineVersion: r.pipelineVersion,
 		ResolvedAt:      r.clock.Now().UTC(),
 		Partial:         true,
-		PartialReason:   "shallow",
+		PartialReason:   domain3.ShallowReason,
 		HasLocalReplace: st.hasLocalReplace,
 	}
 	g.Nodes = st.drainNodes()
@@ -1249,7 +1268,7 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 			slog.String("error.type", "fetch_failed"),
 			slog.String("error", out.fetchErr.Error()),
 		)
-		st.markPartial("fetch_failed")
+		st.markPartial(domain3.FetchFailedReason)
 		existing := st.nodes[nodeKey]
 		st.nodes[nodeKey] = domain3.GraphNode{
 			Coordinate:         coord,
@@ -1279,7 +1298,7 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 			slog.String("module.version", coord.Version()),
 			slog.String("error", out.extractErr.Error()),
 		)
-		st.markPartial("parse_failed")
+		st.markPartial(domain3.ParseFailedReason)
 		prev := st.nodes[nodeKey]
 		st.nodes[nodeKey] = domain3.GraphNode{
 			Coordinate:         coord,
@@ -1312,7 +1331,7 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 			slog.String("module.version", coord.Version()),
 			slog.String("error", out.parseErr.Error()),
 		)
-		st.markPartial("parse_failed")
+		st.markPartial(domain3.ParseFailedReason)
 		prev := st.nodes[nodeKey]
 		st.nodes[nodeKey] = domain3.GraphNode{
 			Coordinate:         coord,
@@ -1520,13 +1539,20 @@ func enqueueTransitive(
 		// requirement: a real requirement the bound stops us from following. Record
 		// the boundary node but flag the closure as truncated so the graph is marked
 		// Partial and never consumed as a complete audit.
+		//
+		// The node's source is the bound itself, not how its version was picked.
+		// Nothing is fetched for it and nothing should be, and a node carrying mvs
+		// or replace here is indistinguishable from one the resolver was meant to
+		// fetch and did not — which is how the walker came to record a policy
+		// decision as a failed fetch. OriginalCoordinate still carries the require
+		// a replace acted on, so a replaced boundary node is not silently flattened.
 		st.depthTruncated = true
 		if st.selected[key] == "" {
 			st.selected[key] = req.Coordinate.Version()
 			st.nodes[key] = domain3.GraphNode{
 				Coordinate:         effective,
 				DirectDependency:   false,
-				ResolutionSource:   source,
+				ResolutionSource:   domain3.ResolutionDepthBounded,
 				OriginalCoordinate: original,
 			}
 		}

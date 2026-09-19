@@ -39,6 +39,14 @@ type auditRunJSON struct {
 	// publishes, carrying the sentence the reader is shown verbatim.
 	Toolchain vulnScanToolchainJSON `json:"toolchain"`
 	Staleness auditStalenessJSON    `json:"staleness"`
+	// Native is what this build compiles into or links into the binary from
+	// native source, in the shape vuln-scan-show publishes under the same key.
+	//
+	// It is a run fact and not a column: the audit's verdict columns cover Go
+	// code, and this says which part of the build that verdict does not reach. A
+	// build that links libxml2 and ships eight megabytes of SQLite reads
+	// identically to one that ships no C at all without it.
+	Native *nativeWalkRollup `json:"native_coverage"`
 }
 
 // auditWalkJSON names the walk that fixed the dependency set and says whether
@@ -126,13 +134,16 @@ const stalenessRefreshCommand = "latest --fresh"
 // It is built from the SAME auditDerivation the stderr statements are written
 // from, and the staleness date from the same helper the table's footer uses, so
 // the document and the screen cannot state different things about one run.
-func newAuditRunJSON(d auditDerivation, results []auditModuleResult, ttl time.Duration, now time.Time) auditRunJSON {
+func newAuditRunJSON(d auditDerivation, results []auditModuleResult, ttl time.Duration, now time.Time,
+	native *nativeWalkRollup,
+) auditRunJSON {
 	return auditRunJSON{
 		Walk:         auditWalkOf(d),
 		Scan:         auditScanOf(d),
 		Reachability: auditReachabilityOf(d),
 		Toolchain:    toolchainSectionOf(d.toolchain),
 		Staleness:    auditStalenessOf(results, ttl, now),
+		Native:       native,
 	}
 }
 

@@ -1,0 +1,106 @@
+# THE ZERO: a walk that brought nothing in. The document still names its subject and says so in one component rather than answering with an empty list or nothing at all.
+$ kanonarion sbom 01ARZ3NDEKTSV4RRFFQ69G5FB3
+exit 0
+--- stdout ---
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:golang/example.com/product@v1.4.0",
+      "copyright": "Copyright (c) 2026 Example Product Authors",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "fc7a432cbe4564c3fa8e6c5aac5cb84a9cd13519db6f55d89d7b756b84619dac"
+        },
+        {
+          "alg": "SHA-384",
+          "content": "e4f65b616a8565d3ba0038d057ad4cdc54bd734cceb3488dcd60e1fbd286f9a1910927e4cff101a751e1b1ff341532af"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "85f769787a06b879a482e19fcc988273d0e180a5c90961b25b0ab4248235b2780c447d1b128c76a2b10e6ce1a7a2a8eaf86dac2e58908b4ddab7c1f47fa0cb5d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "example.com/product",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.10.0"
+        }
+      ],
+      "purl": "pkg:golang/example.com/product@v1.4.0",
+      "type": "library",
+      "version": "v1.4.0"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:golang/example.com/product@v1.4.0"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "pkg:golang/example.com/product@v1.4.0",
+      "copyright": "Copyright (c) 2026 Example Product Authors",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "example.com/product",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.10.0"
+        }
+      ],
+      "purl": "pkg:golang/example.com/product@v1.4.0",
+      "type": "library",
+      "version": "v1.4.0"
+    },
+    "properties": [
+      {
+        "name": "kanonarion:document:timestamp_basis",
+        "value": "derived: newest licence extraction time among this document's inputs; no creation time was supplied, and this generator reads no clock"
+      },
+      {
+        "name": "kanonarion:licence:newest_extraction",
+        "value": "2026-02-03T11:30:00Z"
+      }
+    ],
+    "timestamp": "2026-02-03T11:30:00Z",
+    "tools": {
+      "components": [
+        {
+          "name": "kanonarion",
+          "type": "application",
+          "version": "0.10.0"
+        }
+      ]
+    }
+  },
+  "serialNumber": "urn:uuid:a00941e7-7729-c734-fa57-e121cc7ae537",
+  "specVersion": "1.6",
+  "version": 1
+}
+--- stderr ---
+(empty)

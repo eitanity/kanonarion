@@ -8,6 +8,7 @@
 package gotoolchain
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -33,6 +34,26 @@ func (v Version) String() string {
 		return "not recorded"
 	}
 	return string(v)
+}
+
+// versionForm is the shape of a released toolchain's version: "go" and then the
+// number, which is what `go env GOVERSION` reports and what a toolchain module's
+// own version states.
+var versionForm = regexp.MustCompile(`^go[0-9][0-9a-z.]*$`)
+
+// ParseVersion reads a toolchain version a person wrote, refusing anything no
+// record could hold.
+//
+// A stated version is only ever compared against what records say, so a value
+// outside this form matches nothing and would sit in a config file resolving
+// nothing. A bare "1.26.6" and a GOROOT path are both things people type, and
+// refusing them while the operator is typing is the whole point.
+func ParseVersion(s string) (Version, error) {
+	if !versionForm.MatchString(s) {
+		return Unrecorded, fmt.Errorf(
+			"%q is not a Go toolchain version in `go env GOVERSION` form (e.g. go1.26.6)", s)
+	}
+	return Version(s), nil
 }
 
 // toolchainModuleRoot matches the GOROOT of a toolchain downloaded as a module,

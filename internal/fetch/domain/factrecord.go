@@ -92,6 +92,16 @@ type FactRecord struct {
 	// as a property of the module. See ValidationLeg.
 	VCSCheck       string `json:"vcs_check,omitempty"`
 	VCSCheckSource string `json:"vcs_check_source,omitempty"`
+
+	// VCSURLBinding says which binding produced the clone URL that this
+	// measurement's VCS cross-verification leg reproduced the zip from: one the
+	// coordinate itself derives, or one the untrusted proxy named. Both routes
+	// reach the same Verified status, and without this field a reader cannot
+	// tell a repository the module path determined from a repository a proxy
+	// chose. Empty where no VCS leg was established, and empty on records
+	// written before the field existed — neither of which is a negative
+	// finding. See VCSURLBinding.
+	VCSURLBinding string `json:"vcs_url_binding,omitempty"`
 }
 
 // NewFactRecord constructs a FactRecord from a FetchedModule. ContentHash is
@@ -124,6 +134,7 @@ func NewFactRecord(m FetchedModule) FactRecord {
 		SumDBCheckSource:   m.SumDBCheckSource,
 		VCSCheck:           string(m.VCSCheck),
 		VCSCheckSource:     m.VCSCheckSource,
+		VCSURLBinding:      string(m.VCSURLBinding),
 	}
 }
 

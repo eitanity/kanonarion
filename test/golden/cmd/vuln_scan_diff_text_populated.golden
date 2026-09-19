@@ -5,8 +5,10 @@ exit 0
 Diff: 01JSCANRUN0GOLDEN00000001 → 01JSCANRUN0GOLDEN00000002
 Walk: 01ARZ3NDEKTSV4RRFFQ69G5FAV
 
-NEW findings (1):
+NEW findings (3):
   + GO-2026-0002  example.com/mod@v1.2.0  withdrawn advisory for example.com/mod
+  + GO-2026-0003  example.com/mod@v1.2.0  unreached advisory for example.com/mod
+  + GO-2026-0004  example.com/mod@v1.2.0  advisory naming a symbol this build does not hold
 
 --- stderr ---
 (empty)

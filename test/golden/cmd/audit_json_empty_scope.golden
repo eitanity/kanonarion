@@ -48,6 +48,7 @@ exit 0
     "ttl": "",
     "refresh_with": ""
   },
+  "native_coverage": null,
   "modules": []
 }
 --- stderr ---
