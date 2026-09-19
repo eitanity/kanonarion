@@ -72,8 +72,20 @@ license_policy:
 `,
 	"license_overrides": `
 license_overrides:
-  # Correct scanner gaps: map module path (optionally @version) to an SPDX ID.
+  # Your licence determination for a module: map module path (optionally
+  # @version) to an SPDX ID. It corrects a scanner gap, elects one arm of a dual
+  # licence, and settles a module 'notice' would otherwise hold back.
   # golang.org/x/mod: MIT
+  #
+  # Where the module ships no licence text, there is nothing for a reviewer to
+  # check the identifier against, so record who determined it, when, and what
+  # they read. The attribution document reproduces all three and says the
+  # identity is yours rather than the detector's.
+  # example.com/mod:
+  #   spdx: "Apache-2.0"
+  #   declared_by: "you@example.com"
+  #   declared_on: "2026-01-31"
+  #   basis: "README.md at example.com/mod v1.2.3, read 2026-01-31"
 `,
 	"copyright_declarations": `
 copyright_declarations:

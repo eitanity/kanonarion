@@ -3,7 +3,8 @@
 //
 // The config file is parsed once by the config bounded context; to
 // avoid a second parse of the same file this adapter is constructed from the
-// already-decoded "path[@version] → SPDX" map rather than re-reading disk.
+// already-decoded "path[@version] → determination" map rather than re-reading
+// disk.
 // Alternate backends (e.g. a database-backed store) can implement the same
 // port instead of this one.
 package yaml
@@ -21,8 +22,10 @@ type Store struct {
 }
 
 // New builds a Store from the decoded license_overrides map. A nil or empty
-// map yields a store that never overrides.
-func New(entries map[string]string) *Store {
+// map yields a store that never overrides. The values are already in the
+// licence domain's own type: the config context's are mapped by the caller, at
+// the one place both are in scope.
+func New(entries map[string]domain.LicenseOverride) *Store {
 	return &Store{set: domain.NewLicenseOverrideSet(entries)}
 }
 

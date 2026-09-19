@@ -12,10 +12,10 @@ func coord(path, version string) coordinate.ModuleCoordinate {
 }
 
 func TestLicenseOverrideSet_Resolve(t *testing.T) {
-	set := NewLicenseOverrideSet(map[string]string{
-		"golang.org/x/mod":                   "MIT",
-		"github.com/some/old-package@v1.2.3": "BSD-2-Clause",
-		"github.com/blank/entry":             "",
+	set := NewLicenseOverrideSet(map[string]LicenseOverride{
+		"golang.org/x/mod":                   {SPDX: "MIT"},
+		"github.com/some/old-package@v1.2.3": {SPDX: "BSD-2-Clause"},
+		"github.com/blank/entry":             {},
 	})
 
 	t.Run("module-level applies to all versions", func(t *testing.T) {
@@ -52,9 +52,9 @@ func TestLicenseOverrideSet_Resolve(t *testing.T) {
 }
 
 func TestLicenseOverrideSet_PinnedBeatsModuleLevel(t *testing.T) {
-	set := NewLicenseOverrideSet(map[string]string{
-		"example.com/m":        "Apache-2.0",
-		"example.com/m@v1.0.0": "MIT",
+	set := NewLicenseOverrideSet(map[string]LicenseOverride{
+		"example.com/m":        {SPDX: "Apache-2.0"},
+		"example.com/m@v1.0.0": {SPDX: "MIT"},
 	})
 	ov, ok := set.Resolve(coord("example.com/m", "v1.0.0"))
 	if !ok || ov.SPDX != "MIT" || !ov.VersionPinned {
@@ -71,11 +71,37 @@ func TestNewLicenseOverrideSet_EmptyAndCopy(t *testing.T) {
 	if _, ok := NewLicenseOverrideSet(nil).Resolve(coord("x", "v1")); ok {
 		t.Fatal("nil set must never match")
 	}
-	src := map[string]string{"x": "MIT"}
+	src := map[string]LicenseOverride{"x": {SPDX: "MIT"}}
 	set := NewLicenseOverrideSet(src)
-	src["x"] = "GPL-3.0-only" // mutate caller's map after construction
+	src["x"] = LicenseOverride{SPDX: "GPL-3.0-only"} // mutate caller's map after construction
 	ov, _ := set.Resolve(coord("x", "v1"))
 	if ov.SPDX != "MIT" {
 		t.Fatalf("set must copy input; got %q after caller mutation", ov.SPDX)
+	}
+}
+
+// Attributed distinguishes a determination that names its author, date and
+// basis from a bare identifier. A document renders the two differently, so a
+// partial value must not read as attributed: naming a declarer with no basis
+// is the shape a reader cannot check.
+func TestLicenseOverride_Attributed(t *testing.T) {
+	full := LicenseOverride{
+		SPDX:       "MIT",
+		DeclaredBy: "test-operator@example.invalid",
+		DeclaredOn: "2026-09-19",
+		Basis:      "synthetic fixture; no upstream source was read",
+	}
+	if !full.Attributed() {
+		t.Error("a complete determination reports as unattributed")
+	}
+	for name, o := range map[string]LicenseOverride{
+		"bare":        {SPDX: "MIT"},
+		"no basis":    {SPDX: "MIT", DeclaredBy: full.DeclaredBy, DeclaredOn: full.DeclaredOn},
+		"no date":     {SPDX: "MIT", DeclaredBy: full.DeclaredBy, Basis: full.Basis},
+		"no declarer": {SPDX: "MIT", DeclaredOn: full.DeclaredOn, Basis: full.Basis},
+	} {
+		if o.Attributed() {
+			t.Errorf("%s: reports as attributed", name)
+		}
 	}
 }

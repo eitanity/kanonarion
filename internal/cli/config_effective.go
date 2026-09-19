@@ -128,7 +128,12 @@ func effectiveSettings(cfg domain.Config, raw rawConfigDoc) []effectiveSetting {
 	}
 
 	for _, mod := range sortedKeys(cfg.LicenseOverrides) {
-		add("license_overrides."+mod, cfg.LicenseOverrides[mod], true)
+		o := cfg.LicenseOverrides[mod]
+		value := o.SPDX
+		if o.Attributed() {
+			value = o.SPDX + " (determined by " + o.DeclaredBy + " on " + o.DeclaredOn + "; basis: " + o.Basis + ")"
+		}
+		add("license_overrides."+mod, value, true)
 	}
 
 	for _, mod := range sortedKeys(cfg.CopyrightDeclarations) {

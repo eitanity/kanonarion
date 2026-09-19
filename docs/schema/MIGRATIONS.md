@@ -50,6 +50,59 @@ the same additive rule (consumers ignore unknown fields). No store table and no
 store migration: a human-supplied copyright is an operator assertion, not a
 measurement, so it lives in configuration rather than in the measurement ledger.
 
+### Additive within v2 - attributed `license_overrides`
+
+**Additive in the config file, breaking in one JSON view, no version bump.** An
+entry under `license_overrides` may now be written either as the bare SPDX
+identifier it has always been
+
+```yaml
+license_overrides:
+  golang.org/x/mod: MIT
+```
+
+or as a mapping that records who determined the licence, when, and what they
+read:
+
+```yaml
+license_overrides:
+  github.com/example/mod:
+    spdx: "Apache-2.0"
+    declared_by: "you@example.com"
+    declared_on: "2026-01-31"
+    basis: "README.md at v1.2.3, read 2026-01-31"
+```
+
+The attributed form exists because `notice` now honours these entries. An
+identifier a reviewer can check against the licence text the module ships needs
+no provenance; where the module ships no text — the case the operator is
+settling — the three fields are the only thing that makes the determination
+auditable, and the attribution document reproduces them.
+
+Provenance is all-or-nothing: an entry giving some of `declared_by`,
+`declared_on` and `basis` but not all is refused at config load, naming the
+coordinate and the field. `declared_on` is an ISO 8601 date. A mapping form
+without `spdx` is refused for the same reason. A key written with no value at
+all is still a no-op, as it has always been.
+
+Migration for existing configs: **none required.** Every existing file keeps
+loading and resolving identically, and `config get license_overrides.<module>`
+still answers with the bare identifier for an entry recorded as one. `config
+set license_overrides.<module>` writes the bare form and now refuses, rather
+than silently deleting the provenance, when the entry it would replace carries
+any.
+
+**Breaking:** `store config show --json` reports each `license_overrides` entry
+as an object (`spdx`, plus `declared_by` / `declared_on` / `basis` where
+recorded) rather than as a string. A consumer reading that value as a string
+reads `.spdx` instead. The text view is unchanged in shape: the value is the
+identifier, with the provenance appended in parentheses where it exists.
+
+No store table and no store migration: an operator's determination is an
+assertion, not a measurement, so it lives in configuration rather than in the
+measurement ledger, and the extraction record it supersedes is left exactly as
+the detector wrote it.
+
 ## JSON output sections
 
 The following top-level `--json` sections are introduced **additively** by the

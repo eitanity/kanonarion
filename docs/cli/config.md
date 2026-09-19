@@ -284,7 +284,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `license_policy.categories.<name>` | sequence | `[MIT, Apache-2.0]` |
 | `license_policy.rules` | sequence (read-only) | - |
 | `license_policy.rules[].unknown_license` | string (read-only, edit the file) | `allow` / `notify` / `warn` / `block` - see below |
-| `license_overrides.<module>` | string | `MIT` |
+| `license_overrides.<module>` | string, or a mapping (see below) | `MIT` |
 | `copyright_declarations.<module>` | mapping (read-only, edit the file) | see below |
 | `callgraph.exclude` | sequence | `[github.com/foo/bar]` |
 | `callgraph.toolchain` | string | `go1.26.6` - the toolchain a read prefers when one coordinate holds graphs built by two of them. It only breaks that tie: a coordinate naming one toolchain, or none, is served exactly as it is with this unset. An explicit `--toolchain` wins over it. See [`callgraph`](callgraph.md#naming-a-toolchain-on-a-query) |
@@ -298,6 +298,58 @@ The unified governance blocks (`directive_policy`, `godebug_policy`,
 ([`directives`](directives.md), [`godebug`](godebug.md),
 [`vendor`](vendor.md), [`fips`](fips.md)). All of them appear in the effective
 configuration block of `config show`.
+
+### `license_overrides` - the licence you determined
+
+`license_overrides` records your licence determination for a module: a
+correction where the detector read the files and got it wrong, an election
+where a module offers a choice of arms, and an identity where the detector
+found none at all. Every surface that reports a licence honours it -
+`license-compat`, `audit`, `license-list` and `notice`.
+
+An entry is written either as the bare SPDX identifier
+
+```yaml
+license_overrides:
+  golang.org/x/mod: MIT
+```
+
+or with the provenance of the determination:
+
+```yaml
+license_overrides:
+  github.com/example/mod:
+    spdx: "Apache-2.0"
+    declared_by: "you@example.com"
+    declared_on: "2026-01-31"
+    basis: "README.md at github.com/example/mod v1.2.3, read 2026-01-31"
+```
+
+The key is a module path, optionally pinned to a version
+(`github.com/example/mod@v1.2.3`); a pinned entry wins over a module-level one.
+
+**Which form to use.** An SPDX identifier is self-evidencing where the module
+ships the licence text: a reviewer checks the two against each other. Where it
+ships none - the case `notice` refuses on - there is nothing to check it
+against, and who determined it, when, and what they read is the only thing that
+makes the entry auditable. `notice` publishes all three beside the module and
+marks the identity as yours rather than as a detection; recorded as a bare
+identifier, it still settles the module, and the document says the
+determination names nobody.
+
+**Provenance is all-or-nothing.** An entry giving some of `declared_by`,
+`declared_on` and `basis` but not all is refused when the config file loads,
+naming the coordinate and the field. `declared_on` must be an ISO 8601 date
+(`YYYY-MM-DD`).
+
+**The detector's own answer is untouched.** An override is not an edit of the
+extraction record: `kanonarion license <module>@<version>` keeps reporting what
+the detector read, and `license-list` reports the override with its source
+column reading `override`.
+
+`config set license_overrides.<module> <SPDX>` writes the bare form. On a module
+whose entry carries provenance it refuses rather than deleting it - edit that
+entry in the file.
 
 ### `copyright_declarations` - copyright a human read upstream
 

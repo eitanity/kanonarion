@@ -229,7 +229,7 @@ func TestConfigGetValue(t *testing.T) {
 func TestConfigGetValue_ExistingEntries(t *testing.T) {
 	cfg := configdomain.DefaultConfig()
 	// Ensure at least one override and one category exist.
-	cfg.LicenseOverrides = map[string]string{"golang.org/x/mod": "MIT"}
+	cfg.LicenseOverrides = map[string]configdomain.LicenseOverride{"golang.org/x/mod": {SPDX: "MIT"}}
 	cfg.LicensePolicy.Categories = map[string][]string{"permissive": {"MIT", "Apache-2.0"}}
 
 	val, err := configGetValue(cfg, "license_overrides.golang.org/x/mod")

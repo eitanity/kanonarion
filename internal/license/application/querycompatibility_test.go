@@ -639,8 +639,8 @@ func TestCheckCompatibilityForWalk_OverrideRecordsTheElection(t *testing.T) {
 			},
 		},
 	}
-	overrides := domain.NewLicenseOverrideSet(map[string]string{
-		"example.com/dual": "Apache-2.0",
+	overrides := domain.NewLicenseOverrideSet(map[string]domain.LicenseOverride{
+		"example.com/dual": {SPDX: "Apache-2.0"},
 	})
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)

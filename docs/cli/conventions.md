@@ -54,6 +54,11 @@ license_policy:
       unknown_license: warn
 license_overrides:
   # golang.org/x/mod: MIT
+  # example.com/mod:
+  #   spdx: "Apache-2.0"
+  #   declared_by: "you@example.com"
+  #   declared_on: "2026-01-31"
+  #   basis: "README.md at example.com/mod v1.2.3, read 2026-01-31"
 copyright_declarations:
   # example.com/mod:
   #   copyright: "Copyright 2019 Example Authors"

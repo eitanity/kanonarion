@@ -36,7 +36,7 @@ func TestRunStoreConfigShow_JSON(t *testing.T) {
 				},
 			},
 		},
-		LicenseOverrides: map[string]string{},
+		LicenseOverrides: map[string]domain.LicenseOverride{},
 		Callgraph:        domain.CallgraphConfig{Exclude: []string{}},
 	}
 

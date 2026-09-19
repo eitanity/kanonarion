@@ -300,7 +300,14 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 		if !ok {
 			return "", &exitError{code: ExitConfig, msg: fmt.Sprintf("no license override for %q", module)}
 		}
-		return val, nil
+		// An entry recorded as a bare identifier reads back as one, so every
+		// config that predates the attributed form answers exactly as before.
+		// An attributed one reads back as the mapping it was written as: the
+		// identifier alone would drop the provenance that makes it auditable.
+		if !val.Attributed() {
+			return val.SPDX, nil
+		}
+		return marshalConfigYAML(val)
 	case key == "copyright_declarations":
 		return marshalConfigYAML(cfg.CopyrightDeclarations)
 	case strings.HasPrefix(key, "copyright_declarations."):
@@ -459,6 +466,10 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	// configuration was rejected.
 	prevValue, prevSource := previousConfigValue(&doc, yamlPath, key)
 
+	if err := refuseProvenanceLoss(&doc, yamlPath, key); err != nil {
+		return err
+	}
+
 	if err := setYAMLNode(&doc, yamlPath, valueNode); err != nil {
 		return err
 	}
@@ -494,6 +505,28 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	return nil
+}
+
+// refuseProvenanceLoss stops `config set` from replacing an attributed licence
+// determination with a bare identifier.
+//
+// `config set` writes scalars, and the write is a whole-node replacement, so
+// setting a module that carries declared_by/declared_on/basis would delete the
+// provenance an attribution document reproduces — silently, and reported as a
+// successful set. The entry is edited in the file instead, which is how the
+// attributed form is written in the first place.
+func refuseProvenanceLoss(doc *yaml.Node, yamlPath []string, key string) error {
+	if !strings.HasPrefix(key, "license_overrides.") {
+		return nil
+	}
+	node, ok := lookupYAMLNode(doc, yamlPath)
+	if !ok || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+		"%s records who determined the licence, when, and on what basis; "+
+			"setting it here would write a bare identifier and drop that provenance. "+
+			"Edit the entry in config.yaml instead", key)}
 }
 
 // previousConfigValue reports the value the write is about to displace and

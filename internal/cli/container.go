@@ -77,6 +77,7 @@ import (
 	licoverrides "github.com/eitanity/kanonarion/internal/license/adapters/overrides/yaml"
 	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
+	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
 
 	sbomcdx "github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
@@ -784,7 +785,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		DiffLicense:        diffLicenseUC,
 		GenerateNotice:     generateNoticeUC,
 		CheckCompatibility: checkCompatUC,
-		LicenseOverrides:   licoverrides.New(cfg.LicenseOverrides),
+		LicenseOverrides:   licoverrides.New(licenseOverrideEntries(cfg)),
 
 		ExtractInterface: ifaceExtractUC,
 		QueryInterface:   queryIfaceUC,
@@ -870,4 +871,25 @@ func callerWorktree(logger *slog.Logger) cgports.WorktreePreference {
 		}
 		dir = parent
 	}
+}
+
+// licenseOverrideEntries maps the operator's recorded licence determinations
+// from the config context's types to the licence domain's. The config context
+// keeps its own value types, so the translation happens here, at the one place
+// both are in scope — the same seam noticeDeclarations uses for the operator's
+// recorded copyrights.
+func licenseOverrideEntries(cfg domain.Config) map[string]licdomain.LicenseOverride {
+	if len(cfg.LicenseOverrides) == 0 {
+		return nil
+	}
+	entries := make(map[string]licdomain.LicenseOverride, len(cfg.LicenseOverrides))
+	for key, o := range cfg.LicenseOverrides {
+		entries[key] = licdomain.LicenseOverride{
+			SPDX:       o.SPDX,
+			DeclaredBy: o.DeclaredBy,
+			DeclaredOn: o.DeclaredOn,
+			Basis:      o.Basis,
+		}
+	}
+	return entries
 }
