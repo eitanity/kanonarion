@@ -268,14 +268,14 @@ golang.org/x/sync@v0.23.0                                            Verified   
 golang.org/x/sys@v0.48.0                                             Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 golang.org/x/tools@v0.50.0                                           Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 gopkg.in/yaml.v3@v3.0.1                                              Verified               MIT [Multiple]           current                        Clean  allow [permissive]
-modernc.org/libc@v1.75.7                                             Verified               BSD-3-Clause             latest: v1.77.0 (1 days ago)   Clean  allow [permissive]
+modernc.org/libc@v1.75.7                                             Verified               BSD-3-Clause             latest: v1.77.0 (2 days ago)   Clean  allow [permissive]
                                                                                                                      newer major: modernc.org/libc/v2@v2.1.30
 modernc.org/mathutil@v1.7.1                                          Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 modernc.org/memory@v1.12.1                                           Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-modernc.org/sqlite@v1.59.0                                           Verified               BSD-3-Clause [Multiple]  current                        Clean  allow [permissive] [electable: BSD-3-Clause or MIT]
+modernc.org/sqlite@v1.59.0                                           Verified               BSD-3-Clause [Multiple]  current                        Clean  allow [permissive]
 stdlib@v1.26.6                                                       VerifiedGoDevChecksum  BSD-3-Clause             unmeasured (toolchain-pinned)  Clean  allow [permissive]
 
-latest as of 2026-09-20 11:31 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
+latest as of 2026-09-20 19:35 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
 ```
 
 The default scope is `code`. Pass `--tool` for the tooling supply chain, or

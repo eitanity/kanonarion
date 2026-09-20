@@ -162,8 +162,9 @@ maximal upper bound and not the set you owe. Both are absent when the arms came
 from one file, where `obligations` is the owed set.
 
 A module is reported as dual-licensed only when its licence file says so — an
-`SPDX-License-Identifier` line naming a choice, or wording such as "under the
-terms of either licence". Where one file carries several licence texts, the
+`SPDX-License-Identifier` line naming a choice, wording such as "under the
+terms of either licence", or one file per licence whose **name** is that
+licence's name. Where one file carries several licence texts, the
 output states what the file was read to say and, where a grant covers
 third-party code the module carries rather than the module's own code, names
 that grant separately. It is deliberately absent from the expression: it is
@@ -179,6 +180,31 @@ go.opentelemetry.io/otel@v1.44.0: Multiple — Apache-2.0
 Where the file carries several grants and says nothing about how they relate,
 every grant is reported as applying (`A AND B`) and the `basis` line reads
 `conservative:`. The same is true when the licence text could not be read.
+
+**The file-name election.** A module that offers a choice gives each arm its own
+root file and names it after that licence — `LICENSE-MIT` beside
+`LICENSE-APACHE`, `APLv2` beside `GPLv3`, `APACHE-LICENSE-2.0` beside a plain
+`LICENSE`. The basis reads `election: one file per licence (…)` and lists the
+files.
+
+The name is checked against the identifier detected **in that file**, allowing
+the short forms (`APACHE`, `APACHE-2`, `APLv2` for `Apache-2.0`; `BSD`, `BSD3`
+for `BSD-3-Clause`; `GPLv3` for `GPL-3.0`; `GO` for `BSD-3-Clause`; `SIL`, `OFL`
+for `OFL-1.1`). A name carrying a licence-file stem that names something else
+names the component the file covers, not a licence anyone may elect — `LICENSE-SQLITE_VEC`,
+`LICENSE-THIRD-PARTY` — and one such file is enough for the whole module to take
+the separate-grants reading instead:
+
+```
+modernc.org/sqlite@v1.59.0: Multiple — BSD-3-Clause AND MIT
+  basis: split: one file per licence, none naming a choice
+  LICENSE: BSD-3-Clause (100%) — covers this module's code
+  LICENSE-SQLITE_VEC: MIT (99%) — covers this module's code
+```
+
+A plain `LICENSE`, `COPYING`, `COPYRIGHT` or `UNLICENSE` beside a named file
+decides nothing either way, and a dotted suffix (`LICENSE.libyaml`) never names
+a licence.
 
 `--json` carries the same two facts as `expression_basis` and `bundled_spdxs`.
 
@@ -328,7 +354,7 @@ say; a re-extraction that comes back identical appends nothing and says so on
 stderr. `--force` records the measurement either way.
 
 The database schema is versioned via the shared `schema_migrations` table
-(numbered per module). The current pipeline version is `1.3.0`.
+(numbered per module). The current pipeline version is `1.4.0`.
 
 ## Assurance log
 
