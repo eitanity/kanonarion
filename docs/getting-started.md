@@ -252,30 +252,30 @@ kanonarion verified it, its SPDX licence, how far behind the latest version it
 is, its vulnerability status, and the policy outcome.
 
 ```
-github.com/CycloneDX/cyclonedx-go@v0.11.0                            Verified               Apache-2.0               latest: v0.12.0 (4 days ago)   Clean  allow [permissive]
-github.com/dustin/go-humanize@v1.0.1                                 Verified               MIT                      current                        Clean  allow [permissive]
+github.com/CycloneDX/cyclonedx-go@v0.12.0                            Verified               Apache-2.0               current                        Clean  allow [permissive]
+github.com/dustin/go-humanize@v1.0.1                                 Verified               MIT                      latest: v1.1.0 (2 days ago)    Clean  allow [permissive]
 github.com/google/licensecheck@v0.3.1                                Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 github.com/google/uuid@v1.6.0                                        Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-github.com/klauspost/compress@v1.19.0                                Verified               BSD-3-Clause [Multiple]  latest: v1.19.2 (21 days ago)  Clean  allow [permissive]
-github.com/oklog/ulid/v2@v2.1.1                                      Verified               Apache-2.0               latest: v2.1.2 (34 days ago)   Clean  allow [permissive]
+github.com/klauspost/compress@v1.20.0                                Verified               BSD-3-Clause [Multiple]  current                        Clean  allow [permissive]
+github.com/oklog/ulid/v2@v2.1.2                                      Verified               Apache-2.0               current                        Clean  allow [permissive]
 github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec  Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-github.com/rogpeppe/go-internal@v1.15.0                              Verified               BSD-3-Clause             latest: v1.16.0 (56 days ago)  Clean  allow [permissive]
+github.com/rogpeppe/go-internal@v1.16.0                              Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 github.com/spf13/cobra@v1.10.2                                       Verified               Apache-2.0               current                        Clean  allow [permissive]
 github.com/spf13/pflag@v1.0.10                                       Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 go.uber.org/goleak@v1.3.0                                            Verified               MIT                      current                        Clean  allow [permissive]
-golang.org/x/mod@v0.40.0                                             Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-golang.org/x/sync@v0.22.0                                            Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-golang.org/x/sys@v0.47.0                                             Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-golang.org/x/tools@v0.49.0                                           Verified               BSD-3-Clause             current                        Clean  allow [permissive]
+golang.org/x/mod@v0.41.0                                             Verified               BSD-3-Clause             current                        Clean  allow [permissive]
+golang.org/x/sync@v0.23.0                                            Verified               BSD-3-Clause             current                        Clean  allow [permissive]
+golang.org/x/sys@v0.48.0                                             Verified               BSD-3-Clause             current                        Clean  allow [permissive]
+golang.org/x/tools@v0.50.0                                           Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 gopkg.in/yaml.v3@v3.0.1                                              Verified               MIT [Multiple]           current                        Clean  allow [permissive]
-modernc.org/libc@v1.73.5                                             Verified               BSD-3-Clause             latest: v1.75.6 (today)        Clean  allow [permissive]
+modernc.org/libc@v1.75.7                                             Verified               BSD-3-Clause             latest: v1.77.0 (1 days ago)   Clean  allow [permissive]
                                                                                                                      newer major: modernc.org/libc/v2@v2.1.30
 modernc.org/mathutil@v1.7.1                                          Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-modernc.org/memory@v1.11.0                                           Verified               BSD-3-Clause             latest: v1.12.1 (7 days ago)   Clean  allow [permissive]
-modernc.org/sqlite@v1.53.0                                           Verified               BSD-3-Clause             latest: v1.57.0 (7 days ago)   Clean  allow [permissive]
+modernc.org/memory@v1.12.1                                           Verified               BSD-3-Clause             current                        Clean  allow [permissive]
+modernc.org/sqlite@v1.59.0                                           Verified               BSD-3-Clause [Multiple]  current                        Clean  allow [permissive] [electable: BSD-3-Clause or MIT]
 stdlib@v1.26.6                                                       VerifiedGoDevChecksum  BSD-3-Clause             unmeasured (toolchain-pinned)  Clean  allow [permissive]
 
-latest as of 2026-08-27 01:12 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
+latest as of 2026-09-20 11:31 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
 ```
 
 The default scope is `code`. Pass `--tool` for the tooling supply chain, or
