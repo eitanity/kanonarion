@@ -15,8 +15,9 @@ that models the module's licence as a proper SPDX expression (`OR`, `AND`, `WITH
 that a flat SPDX identifier cannot represent:
 
 - **Dual-licensed, consumer chooses** - e.g. `MIT OR Apache-2.0` (the consumer
-  picks the licence they distribute under). This is the common pattern for
-  `gopkg.in/yaml.v3`, `github.com/klauspost/compress`, and the `gioui.org` family.
+  picks the licence they distribute under). This is the pattern for the
+  `gioui.org` family and for a module giving each arm its own named root file,
+  such as `github.com/gorhill/cronexpr`.
 - **Genuinely mixed** - different root-level files carry different licences that
   all apply simultaneously, e.g. `CC-BY-4.0 AND CC-BY-SA-3.0`.
 
@@ -25,17 +26,19 @@ that a flat SPDX identifier cannot represent:
 | Situation | Expression |
 |-----------|------------|
 | Single root file, single SPDX id, no close alternatives | bare identifier (e.g. `MIT`) |
-| Single root file, multiple full texts at ≤ 0.5% confidence gap ("compound file") | `OR` of all identified ids, sorted |
+| Single root file, multiple full texts at ≤ 0.5% confidence gap ("compound file") | whatever the file's own prose says: an election reads `OR`, a split or a bundled third-party grant reads `AND` over the module's own grants, and an unstated relationship reads `AND` and says the reading was conservative |
 | Multiple root files, all with the same SPDX id | bare identifier |
-| Multiple root files, distinct ids, any file has a dual-licence name — stem-prefixed (`LICENSE-MIT`, `COPYING-BSD`), reversed (`MIT-LICENSE`, `MIT-LICENSE.txt`, `GO-LICENSE`), or a bare licence-name shorthand (`GPLv2`, `GPLv3`, `APLv2`, `APACHE-LICENSE-2.0`) | `OR` of distinct ids, sorted |
-| Multiple root files, distinct ids, no dual-licence naming | `AND` of distinct ids, sorted |
+| Multiple root files, distinct ids, at least one file named after the licence detected in it, and no stem-carrying file named after anything else — stem-prefixed (`LICENSE-MIT`, `COPYING-BSD`), reversed (`MIT-LICENSE`, `MIT-LICENSE.txt`, `GO-LICENSE`), or a bare licence-name shorthand (`GPLv2`, `GPLv3`, `APLv2`, `APACHE-LICENSE-2.0`) | `OR` of distinct ids, sorted |
+| Multiple root files, distinct ids, no such naming | `AND` of distinct ids, sorted |
 
 The bare-name and reversed forms are accepted by licence-file **detection**
 itself, so a lone `MIT-LICENSE.txt` or an `APLv2` beside a `GPLv3` is
-extracted (`gorhill/cronexpr` reads `Apache-2.0 OR GPL-3.0`). For a
-disjunction, `licence` prints one obligation set **per arm**; to settle which
-arm applies, record the elected arm as a `license_overrides` entry — the tool
-does not choose one.
+extracted (`gorhill/cronexpr` reads `Apache-2.0 OR GPL-3.0`). A name that
+carries a licence-file stem and names something else — `LICENSE-THIRD-PARTY`,
+`LICENSE-SQLITE_VEC` — names the component the file covers, and the module
+takes the `AND` reading instead. For a disjunction, `licence` prints one
+obligation set **per arm**; to settle which arm applies, record the elected arm
+as a `license_overrides` entry — the tool does not choose one.
 
 **JSON output includes both fields:**
 
@@ -57,9 +60,10 @@ prefer `expression` when present.
 
 | Module | Expression | Pattern |
 |--------|------------|---------|
-| `gopkg.in/yaml.v3@v3.0.1` | `Apache-2.0 OR MIT` | Compound LICENSE file |
-| `github.com/klauspost/compress@v1.18.2` | `Apache-2.0 OR BSD-3-Clause OR MIT` | Compound LICENSE file |
-| `gioui.org@v0.2.0` | `MIT OR Unlicense` | Compound LICENSE file |
+| `gopkg.in/yaml.v3@v3.0.1` | `Apache-2.0 AND MIT` | Compound LICENSE file, read as a split |
+| `github.com/klauspost/compress@v1.20.0` | `BSD-3-Clause`, bundled `[Apache-2.0, MIT]` | Compound LICENSE file, read as a bundled grant |
+| `modernc.org/sqlite@v1.59.0` | `BSD-3-Clause AND MIT` | Two root files, one naming a component |
+| `gioui.org@v0.2.0` | `MIT OR Unlicense` | Compound LICENSE file, read as an election |
 | `github.com/ajstarks/deck/generate@...` | `CC-BY-4.0 AND CC-BY-SA-3.0` | Two separate root files, mixed |
 | `github.com/spf13/cobra@v1.8.1` | `Apache-2.0` | Single licence, no change |
 

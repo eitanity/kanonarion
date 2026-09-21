@@ -383,7 +383,8 @@ func (f *FakeQueryLicense) LicenseHistory(_ context.Context, coord coordinate.Mo
 }
 
 // ListLicenseRecords applies the filter the SQLite adapter applies: exact
-// equality on the primary SPDX identifier, then the offset, then the limit.
+// equality on the primary SPDX identifier, the pipeline version and the
+// copyright status, then the offset, then the limit.
 func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, filter licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error) {
 	if f.Err != nil {
 		return nil, f.Err
@@ -391,10 +392,22 @@ func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, filter licensep
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ListCalls++
+	wantStatus := map[licensedomain.CopyrightStatus]bool{}
+	for _, cs := range filter.CopyrightStatus {
+		wantStatus[cs] = true
+	}
 	// nil, not an empty slice, when nothing matches, as the adapter does.
 	var out []licenseports.LicenseSummary
 	for _, s := range f.list {
 		if filter.SPDX != "" && s.PrimarySPDX != filter.SPDX {
+			continue
+		}
+		if filter.PipelineVersion != "" && s.PipelineVersion != filter.PipelineVersion {
+			continue
+		}
+		// A disputed coordinate is kept whatever was asked for, as the adapter
+		// keeps it: there is no served record to test.
+		if len(wantStatus) > 0 && s.Conflict == nil && !wantStatus[s.CopyrightStatus] {
 			continue
 		}
 		out = append(out, s)

@@ -36,6 +36,7 @@ depth policy, store layout, and exit codes - see
 ### Licence & attribution
 
 - [`licence`](license.md) - extract and persist licence information for a Go module
+- [`licence-list`](license.md#kanonarion-licence-list) - list licence records, filterable by SPDX identifier, copyright status and the modules one build compiles
 - [`license-compat`](license-compat.md) - report licence conflicts in a closure against a target SPDX expression
 - [`license-diff`](license-diff.md) - report licence changes between two versions of a module
 - [`notice`](notice.md) - generate a deterministic THIRD-PARTY-LICENSES attribution document

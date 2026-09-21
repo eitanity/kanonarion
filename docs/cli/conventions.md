@@ -362,6 +362,25 @@ stderr; a caller that piped the command into a parser then read a partial list
 that looked whole. A bare array has nowhere to put a fact about the request,
 which is why the array became a field.
 
+Two further objects appear beside `records` on the listings that make those
+statements, and are absent on the listings that do not:
+
+- `scope`, on a listing narrowed to the modules one build compiles: how the
+  build was named, how many modules it compiles, and which of them hold no
+  record. Each of those carries why its record is absent and the invocation
+  that produces one — the four absences a build holds are filled by different
+  commands and two of them by none, so one remedy beside the list could only
+  ever be true of a subset. See [Scoping to a
+  build](license.md#scoping-to-a-build).
+- `generation`, on a listing that restricts its rows to one record generation:
+  the generation served, whether the restriction was lifted, and the flag that
+  lifts it. It is stated on every such listing, restricted or not, because a
+  consumer reading stdout must be told what the text path's trailing line tells
+  a person. See [The generation this build
+  serves](license.md#the-generation-this-build-serves).
+
+`licence-list` is the listing that carries both.
+
 **Nothing is written to stderr by a listing under `--json`.** The one exception
 is not a listing: a selector that names one record and misses exits `4`, and its
 statement travels on the error (see below).
@@ -416,6 +435,10 @@ document](#listing-documents), beside the empty `records` array:
 A listing that returned rows carries no `zero_result` and prints no such
 statement on the text path, and performs no extra store read to decide that: the
 survey that sizes the corpus is reached only once the page has come back empty.
+A listing narrowed to one build's modules counts that build's records rather
+than the store's — see [`licence-list`](license.md#scoping-to-a-build), whose
+`--package` / `--gomod` / `--walk-id` scope also puts a `scope` object beside
+`records` in the listing document.
 
 The same statement answers a **single-record selector** that matched nothing —
 a command given one name that is not in the store. Those exit `4` and carry the

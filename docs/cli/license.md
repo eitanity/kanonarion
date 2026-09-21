@@ -162,8 +162,9 @@ maximal upper bound and not the set you owe. Both are absent when the arms came
 from one file, where `obligations` is the owed set.
 
 A module is reported as dual-licensed only when its licence file says so — an
-`SPDX-License-Identifier` line naming a choice, or wording such as "under the
-terms of either licence". Where one file carries several licence texts, the
+`SPDX-License-Identifier` line naming a choice, wording such as "under the
+terms of either licence", or one file per licence whose **name** is that
+licence's name. Where one file carries several licence texts, the
 output states what the file was read to say and, where a grant covers
 third-party code the module carries rather than the module's own code, names
 that grant separately. It is deliberately absent from the expression: it is
@@ -179,6 +180,31 @@ go.opentelemetry.io/otel@v1.44.0: Multiple — Apache-2.0
 Where the file carries several grants and says nothing about how they relate,
 every grant is reported as applying (`A AND B`) and the `basis` line reads
 `conservative:`. The same is true when the licence text could not be read.
+
+**The file-name election.** A module that offers a choice gives each arm its own
+root file and names it after that licence — `LICENSE-MIT` beside
+`LICENSE-APACHE`, `APLv2` beside `GPLv3`, `APACHE-LICENSE-2.0` beside a plain
+`LICENSE`. The basis reads `election: one file per licence (…)` and lists the
+files.
+
+The name is checked against the identifier detected **in that file**, allowing
+the short forms (`APACHE`, `APACHE-2`, `APLv2` for `Apache-2.0`; `BSD`, `BSD3`
+for `BSD-3-Clause`; `GPLv3` for `GPL-3.0`; `GO` for `BSD-3-Clause`; `SIL`, `OFL`
+for `OFL-1.1`). A name carrying a licence-file stem that names something else
+names the component the file covers, not a licence anyone may elect — `LICENSE-SQLITE_VEC`,
+`LICENSE-THIRD-PARTY` — and one such file is enough for the whole module to take
+the separate-grants reading instead:
+
+```
+modernc.org/sqlite@v1.59.0: Multiple — BSD-3-Clause AND MIT
+  basis: split: one file per licence, none naming a choice
+  LICENSE: BSD-3-Clause (100%) — covers this module's code
+  LICENSE-SQLITE_VEC: MIT (99%) — covers this module's code
+```
+
+A plain `LICENSE`, `COPYING`, `COPYRIGHT` or `UNLICENSE` beside a named file
+decides nothing either way, and a dotted suffix (`LICENSE.libyaml`) never names
+a licence.
 
 `--json` carries the same two facts as `expression_basis` and `bundled_spdxs`.
 
@@ -281,7 +307,9 @@ any other.
 Because no record exists, `licence-list` never lists the standard library,
 `licence-diff` refuses it by name (pointing at `--history` instead), and
 `notice` carries it as a review item — its licence identity is known but no
-stage extracts the toolchain's licence text for verbatim attribution.
+stage extracts the toolchain's licence text for verbatim attribution. Scoped to
+a walk, `licence-list --walk-id` names `stdlib` under `without_record`: the walk
+carries it as a node, and it holds no record to list.
 
 ### `kanonarion licence-list`
 
@@ -290,8 +318,28 @@ List extracted licence records.
 ```
 kanonarion licence-list
 kanonarion licence-list --spdx MIT
+kanonarion licence-list --copyright-status none_found
+kanonarion licence-list --package ./cmd/kanonarion --copyright-status none_found --limit 0
+kanonarion licence-list --all-generations --limit 0
 kanonarion licence-list --limit 100
 ```
+
+**Columns.** Each row carries, in both renderings:
+
+| Column | Meaning |
+|--------|---------|
+| module coordinate | `path@version` |
+| status | the record's overall licence status (`Detected`, `Multiple`, `None`, …) |
+| licence | the SPDX expression where the record has one, the primary identifier otherwise; the operator's `license_overrides` determination where one applies |
+| copyright status | `found`, `none_found`, `extraction_failed` or `not_analysed` |
+| source | `scanner` for a detection, `override` for a recorded determination |
+
+Under `--json` the row adds `expression`, `pipeline_version` and `superseded`.
+`copyright_status`, `pipeline_version` and `superseded` are on **every** row,
+`not_analysed` and `false` included — those are answers, not absences, per
+[Measured zeros in JSON](conventions.md#measured-zeros-in-json). A row for a
+coordinate whose records disagree carries `conflict` instead of a licence, is
+printed as `CONFLICT`, and the command exits `10`.
 
 **Flags:**
 
@@ -300,8 +348,155 @@ kanonarion licence-list --limit 100
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--spdx` | | Filter by SPDX identifier (e.g. `MIT`, `Apache-2.0`), matched for exact equality |
 | `--copyright` | | Filter by copyright holder, as a case-insensitive substring of the licence files (loads full records) |
+| `--copyright-status` | | List only records holding one of these copyright statuses: `found`, `none_found`, `extraction_failed`, `not_analysed`. Comma-separated or repeated; a record matching **any** of them is listed. A value outside the four exits `20` naming all four |
+| `--all-generations` | false | Also list records extracted at a superseded pipeline version, marking each one |
+| `--package` | | Go package pattern (e.g. `./cmd/kanonarion`); scopes the listing to the modules linked into that binary |
+| `--gomod` | | Path to `go.mod`; scopes the listing to the project's code dependencies |
+| `--walk-id` | | Walk id; scopes the listing to that walk's modules |
 | `--limit` | 50 | Maximum records to show (0 = unlimited) |
-| `--offset` | 0 | Skip this many records before listing. With `--copyright` the offset applies to the records that matched the holder, not to the records read from the store |
+| `--offset` | 0 | Skip this many records before listing. With `--copyright` or a scope flag the offset applies to the records that survived the filter, not to the records read from the store |
+
+`--copyright` and `--copyright-status` compose: `--copyright-status found
+--copyright "Acme Corp"` lists the records that found a copyright AND name that
+holder.
+
+#### The generation this build serves
+
+By default the listing shows only records extracted at the pipeline version this
+build serves (currently `1.4.0`), **one row per coordinate**, and says so on the
+last line of the text output. A record extracted by a superseded pipeline
+version answers no query, so listing it beside the others would show a
+re-extracted module once per generation and pad the count of what is known.
+
+`--all-generations` includes them. Each earlier row is marked
+`[superseded generation <version>]` on the text path and carries
+`"superseded": true` under `--json`, and a trailing line counts how many were
+marked and names the invocation that re-extracts one.
+
+Under `--json` the same fact is a `generation` object beside `records`, stated
+on **every** invocation of this listing — restricted or not, with rows or
+without:
+
+```json
+{
+  "generation": {
+    "served": "1.4.0",
+    "all_generations": false,
+    "remedy": "--all-generations"
+  }
+}
+```
+
+`served` is the pipeline version this build answers from, so a consumer can
+compare it against each row's `pipeline_version`. `all_generations` says whether
+the restriction was lifted. `remedy` is the flag that lifts it, and it is absent
+under `--all-generations` — there is nothing left to lift, and `all_generations`
+beside it names the state (see [Measured zeros in
+JSON](conventions.md#measured-zeros-in-json), which keeps `omitempty` for
+exactly this reading of a string).
+
+The conflict check runs over the rows being **listed**, so a disagreement inside
+a generation this build does not serve is reported — as exit `10` — only under
+`--all-generations`.
+
+#### Scoping to a build
+
+`--package`, `--gomod` and `--walk-id` scope the listing to the modules a build
+compiles. They are mutually exclusive; two of them exits `20`. The modules are
+resolved exactly as [`notice`](notice.md#scoping-strategies) resolves them, so
+the two commands cannot disagree about which modules a build compiles — a
+replaced module is listed under its replacement, and `--gomod` includes
+test-only dependencies while `--package` does not.
+
+The scope is stated before the rows:
+
+```
+scope: package ./cmd/corteza (119 module(s))
+```
+
+A module **in scope that holds no licence record** is named rather than dropped
+— it is the one that still has to be attributed. Each is given the reason its
+record is absent and the invocation that produces one, because a build holds
+four kinds of absence and only one of them is filled by extracting the build:
+
+| kind | why no record | what produces one |
+|---|---|---|
+| `not_extracted` | a published module nothing has extracted yet | the walk's extraction under a `--walk-id` scope, `kanonarion license <coordinate>` otherwise |
+| `local_replace` | the build resolves it from a directory, so a fetch by coordinate never reaches its source | `walk --analyse-local` then `extract`, where this run could read the `go.mod` declaring the replace |
+| `local_root` | the build's own main module, which is not published | `walk --gomod ./go.mod --analyse-root` then `extract` |
+| `stdlib` | it ships with the toolchain and holds no licence record by design | **nothing** — its identity is read with `kanonarion license stdlib@<version>` |
+
+The text path groups the modules by the statement that applies to them, so the
+bulk extraction is offered once with the count it actually fills:
+
+```
+scope: walk 01M0YV8A16NMFS4DSPMRVW905A (396 module(s))
+3 module(s) in scope hold no licence record among the generations listed:
+  github.com/grafana/loki/pkg/push@v0.0.0-20250630054201-94c0ba7b0952
+    replaced by the local path ./pkg/push: what builds is that directory, not this coordinate, so extracting the coordinate never produces its record
+    to produce it: run 'kanonarion walk --gomod /path/to/go.mod --analyse-local' then 'kanonarion extract <walk-id>' to analyse github.com/grafana/loki/pkg/push from the local path this build replaces it with
+  github.com/grafana/loki/v3@local
+    the build's own main module, which is not a published module, so extraction by coordinate never reaches it
+    to produce it: run 'kanonarion walk --gomod ./go.mod --analyse-root' then 'kanonarion extract <walk-id>' to analyse the project's own licence
+  stdlib@v1.26.6
+    the standard library holds no licence record — it ships with the toolchain, and its licence identity comes from the recorded chain of custody (kanonarion license stdlib@v1.26.6); its attribution text is not extracted
+    no invocation produces this record
+```
+
+The statements are `notice`'s own: the same classification decides that command's
+review items, so the two never disagree about whether an extraction could fill a
+module.
+
+Under `--json` all of it is a `scope` object beside `records`, present only when
+a scope flag was given:
+
+```json
+{
+  "records": [ ... ],
+  "truncated": false, "limit": 0, "subject": "license records",
+  "remedy": "--limit 0", "offset": 0, "next_offset": 0,
+  "scope": {
+    "kind": "walk",
+    "value": "01M0YV8A16NMFS4DSPMRVW905A",
+    "module_count": 396,
+    "without_record": [
+      {
+        "module": "stdlib",
+        "version": "v1.26.6",
+        "reason": "the standard library holds no licence record — it ships with the toolchain, and its licence identity comes from the recorded chain of custody (kanonarion license stdlib@v1.26.6); its attribution text is not extracted",
+        "kind": "stdlib"
+      }
+    ]
+  }
+}
+```
+
+`module_count` is the build's module count, which is not the row count.
+`without_record` is an array at every count; empty is the measured answer that
+every module in scope has been extracted. Each entry carries `module`,
+`version`, `reason` and `kind`; `remedy` is an invocation that **produces** the
+record and is absent where none does — the standard library, and a local-path
+replace whose `go.mod` this run could not read.
+
+#### What will block a NOTICE
+
+[`notice`](notice.md) refuses to publish until every module in scope has a
+copyright that can be published. That set is one invocation:
+
+```
+kanonarion licence-list --package ./cmd/x --copyright-status none_found
+```
+
+The rows are the modules whose recorded copyright status is `none_found` — the
+same coordinates `notice --package ./cmd/x` reports for review.
+
+A module given a `copyright_declarations` entry is still listed with its
+recorded `none_found`: the entry is the operator's attribution and the
+extraction record is unchanged, so the listing reports the measurement and
+`notice` applies the declaration. The listing is the discovery surface, never
+the gate.
+
+#### Conventions
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
@@ -311,8 +506,8 @@ paging state, not a bare array, and writes nothing to stderr — see [Listing
 documents](conventions.md#listing-documents).
 
 The command takes no positional argument; one is refused rather than ignored. A
-zero result names the filter it applied and what it was compared against, per
-[Zero-result listings](conventions.md#zero-result-listings).
+zero result names every filter it applied and what each was compared against,
+per [Zero-result listings](conventions.md#zero-result-listings).
 
 ## Caching
 
@@ -328,7 +523,7 @@ say; a re-extraction that comes back identical appends nothing and says so on
 stderr. `--force` records the measurement either way.
 
 The database schema is versioned via the shared `schema_migrations` table
-(numbered per module). The current pipeline version is `1.3.0`.
+(numbered per module). The current pipeline version is `1.4.0`.
 
 ## Assurance log
 

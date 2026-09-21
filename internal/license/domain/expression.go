@@ -47,8 +47,9 @@ func DeriveExpression(entries []LicenseFileEntry, texts map[string]string) strin
 // - Compound file (one file carrying several full licence texts at near-equal
 // coverage) → whatever the file's own prose says the relationship is; see
 // ReadCompoundFile. The count of texts decides nothing.
-// - Multiple root files with dual-license naming (LICENSE-MIT + LICENSE-APACHE)
-// → OR expression (consumer picks one)
+// - Multiple root files each naming the licence it grants (LICENSE-MIT +
+// LICENSE-APACHE) → OR expression (consumer picks one); see
+// fileNamesElectLicence
 // - Multiple root files with genuinely distinct licenses → AND expression
 // (all apply)
 // - No identified license → empty string
@@ -98,9 +99,9 @@ func DeriveExpressionResult(entries []LicenseFileEntry, texts map[string]string)
 	}
 
 	sort.Strings(distinct)
-	// Dual-license naming (e.g. LICENSE-MIT + LICENSE-APACHE) signals the
-	// consumer may choose one. Otherwise, all licenses genuinely apply.
-	if hasDualLicenseNaming(roots) {
+	// One file per licence, each file naming its own licence, is how a module
+	// offers a choice. Otherwise, all licences genuinely apply.
+	if fileNamesElectLicence(roots) {
 		return ExpressionResult{
 			Expression: strings.Join(distinct, " OR "),
 			Basis:      "election: one file per licence (" + strings.Join(rootPaths(roots), ", ") + ")",
@@ -322,44 +323,130 @@ func SoleIdentifier(expr string) string {
 	return expr
 }
 
-// hasDualLicenseNaming reports whether any root entry uses a license file name
-// that indicates the module is dual-licensed. Modules with such names intend
-// the consumer to select one license. Three naming conventions signal this:
-// a stem-prefixed name (LICENSE-MIT, COPYING-BSD), the reversed form
-// (MIT-LICENSE, MIT-LICENSE.txt, GO-LICENSE), and a bare licence-name
-// shorthand (GPLv2, GPLv3, APLv2, APACHE-LICENSE-2.0) — each names the
-// specific licence the file grants, which is the per-licence naming a
-// dual-licensed module uses (gorhill/cronexpr ships APLv2 beside GPLv3;
-// sergi/go-diff ships APACHE-LICENSE-2.0 beside a plain MIT LICENSE).
-func hasDualLicenseNaming(entries []LicenseFileEntry) bool {
+// fileNamesElectLicence reports whether the root files' names offer the
+// consumer a choice: at least one file names the licence it grants, and no
+// file carrying a licence-file stem names something else. A stem-prefixed or
+// stem-suffixed name that is not a licence name — LICENSE-SQLITE_VEC,
+// LICENSE-THIRD-PARTY — names the component the file covers, which is the
+// opposite claim to an election, so one such file withdraws it for the module.
+func fileNamesElectLicence(entries []LicenseFileEntry) bool {
+	elects := false
 	for _, e := range entries {
-		base := e.Path
-		if idx := strings.LastIndex(e.Path, "/"); idx >= 0 {
-			base = e.Path[idx+1:]
+		if fileNameNamesItsLicence(e) {
+			elects = true
+			continue
 		}
-		upper := strings.ToUpper(base)
-		switch upper {
-		case "GPLV2", "GPLV3", "APLV2", "APACHE-LICENSE-2.0":
-			return true
-		}
-		for _, prefix := range []string{"LICENSE-", "LICENCE-", "COPYING-"} {
-			if strings.HasPrefix(upper, prefix) {
-				return true
-			}
-		}
-		// Reversed form: <NAME>-LICENSE[.ext] names the licence in NAME.
-		for _, stem := range []string{"LICENSE", "LICENCE"} {
-			idx := strings.Index(upper, "-"+stem)
-			if idx <= 0 {
-				continue
-			}
-			rest := upper[idx+1+len(stem):]
-			if rest == "" || strings.HasPrefix(rest, ".") {
-				return true
-			}
+		if _, hasStem := licenceNameToken(e.Path); hasStem {
+			return false
 		}
 	}
-	return false
+	return elects
+}
+
+// fileNameNamesItsLicence reports whether a root licence file's name names the
+// licence the detector matched in that file. Only a name that resolves to that
+// file's own identifier is evidence of per-licence naming; a name that resolves
+// to anything else is naming something other than a licence.
+func fileNameNamesItsLicence(e LicenseFileEntry) bool {
+	token, _ := licenceNameToken(e.Path)
+	if token == "" || e.SPDX == "" {
+		return false
+	}
+	return resolveLicenceNameToken(token) == normaliseLicenceToken(e.SPDX)
+}
+
+// licenceNameToken returns the part of a root licence file's base name that
+// would name a licence, and whether the name carries a licence-file stem.
+// Three naming conventions put a licence name in a file name: a stem-prefixed
+// name (LICENSE-MIT, COPYING-BSD), the reversed form (MIT-LICENSE.txt,
+// APACHE-LICENSE-2.0), and a bare licence-name shorthand (GPLv3, APLv2). A
+// generic name names no licence and is returned as no token at all.
+//
+// name is a root-level path, which is a base name: every caller reads it off a
+// list exprIsRootLevel has already filtered.
+func licenceNameToken(name string) (token string, hasStem bool) {
+	upper := strings.ToUpper(name)
+	for _, ext := range licenceFileTextExtensions {
+		if strings.HasSuffix(upper, ext) {
+			upper = upper[:len(upper)-len(ext)]
+			break
+		}
+	}
+	if licenceFileGenericNames[upper] {
+		return "", false
+	}
+	for _, stem := range []string{"LICENSE-", "LICENCE-", "COPYING-"} {
+		if strings.HasPrefix(upper, stem) {
+			return upper[len(stem):], true
+		}
+	}
+	for _, stem := range []string{"-LICENSE", "-LICENCE"} {
+		if idx := strings.Index(upper, stem); idx > 0 {
+			return upper[:idx] + upper[idx+len(stem):], true
+		}
+	}
+	return upper, false
+}
+
+// licenceFileGenericNames are the names a module gives its licence file when it
+// is not naming one licence among several. Beside a file that names one they
+// decide nothing, in either direction.
+var licenceFileGenericNames = map[string]bool{
+	"LICENSE":   true,
+	"LICENCE":   true,
+	"COPYING":   true,
+	"COPYRIGHT": true,
+	"UNLICENSE": true,
+}
+
+// licenceFileTextExtensions are the extensions a licence file carries that are
+// not part of its name. An unrecognised dotted suffix is left in place: it is
+// as likely to be what the file covers (LICENSE.libyaml) as an extension.
+var licenceFileTextExtensions = []string{".TXT", ".MD", ".MARKDOWN", ".RST", ".TEXT", ".HTML"}
+
+// licenceNameAliases maps a normalised file-name token to the normalised SPDX
+// identifier it names, for the short forms a file name uses in place of the
+// identifier. A token absent here stands for itself.
+var licenceNameAliases = map[string]string{
+	"APACHE":     "APACHE20",
+	"APACHE2":    "APACHE20",
+	"APACHE20":   "APACHE20",
+	"APLV2":      "APACHE20",
+	"BSD":        "BSD3CLAUSE",
+	"BSD3":       "BSD3CLAUSE",
+	"BSD3CLAUSE": "BSD3CLAUSE",
+	"BSD2":       "BSD2CLAUSE",
+	"BSD2CLAUSE": "BSD2CLAUSE",
+	"GPLV2":      "GPL20",
+	"GPLV3":      "GPL30",
+	"GO":         "BSD3CLAUSE",
+	"SIL":        "OFL11",
+	"OFL":        "OFL11",
+}
+
+// resolveLicenceNameToken returns the normalised SPDX identifier a file-name
+// token names.
+func resolveLicenceNameToken(token string) string {
+	n := normaliseLicenceToken(token)
+	if id, ok := licenceNameAliases[n]; ok {
+		return id
+	}
+	return n
+}
+
+// normaliseLicenceToken upper-cases a token and drops the separators a file
+// name and an SPDX identifier spell differently.
+func normaliseLicenceToken(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToUpper(s) {
+		switch r {
+		case '-', '_', '.', ' ':
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // licenseCheckPseudoIDs is the set of identifiers emitted by

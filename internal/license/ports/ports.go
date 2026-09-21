@@ -161,7 +161,24 @@ type LicenseOverrideStore interface {
 type LicenseFilter struct {
 	SPDX   string                // non-empty: filter by primary_spdx
 	Status *domain.LicenseStatus // nil: any status
-	Limit  int                   // 0: no limit
+
+	// CopyrightStatus restricts the listing to records holding one of these
+	// copyright statuses; empty is unrestricted. It is a set because the
+	// question it exists to answer — which modules will block an attribution
+	// document — is more than one of the four values, and asking it must be one
+	// command.
+	//
+	// It is compared against the stored copyright_status COLUMN, which is the
+	// enum's ordinal, so the filter costs no record load.
+	CopyrightStatus []domain.CopyrightStatus
+
+	// PipelineVersion restricts the listing to records extracted by that
+	// version of the licence pipeline; empty lists every generation the ledger
+	// holds. The version is a parameter here rather than a flag, because every
+	// other read of this store already takes the served version as one.
+	PipelineVersion string
+
+	Limit  int // 0: no limit
 	Offset int
 }
 
@@ -173,6 +190,10 @@ type LicenseSummary struct {
 	PrimarySPDX     string
 	Expression      string
 	OverallStatus   domain.LicenseStatus
+	// CopyrightStatus is what copyright extraction concluded for the served
+	// record. NotAnalysed — the zero value — is one of the four answers and not
+	// an absence, so a row always states it.
+	CopyrightStatus domain.CopyrightStatus
 	ExtractedAt     time.Time
 	ContentHash     string
 

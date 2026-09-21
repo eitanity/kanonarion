@@ -984,31 +984,72 @@ func printProvenanceSection(r domain.LicenseRecord, stdout io.Writer) error {
 	return nil
 }
 
-// licenceFromSummary is the licence a list row states: the expression where the
-// record has one, the primary otherwise.
-//
-// It is one function because the text listing, the JSON listing and the
-// cross-surface control all have to ask it the same way. A test that
-// re-implements this rule agrees with the renderer only by coincidence, and the
-// coincidence ended the day the licence surfaces started reading a record
-// through what its licences cover: the mirrored rule kept passing while the
-// listing served a Go library's embedded font licence.
-//
-// The identity itself is composed further upstream, where the record is read —
-// see the licence store's summary projection.
-func licenceFromSummary(s ports.LicenseSummary) string {
-	if s.Expression != "" {
-		return s.Expression
-	}
-	return s.PrimarySPDX
-}
-
 // -- license-list command --
 
+// licenseListFlags is one invocation's request.
+type licenseListFlags struct {
+	spdx      string
+	copyright string
+	// copyrightStatus restricts the listing to records holding one of these
+	// statuses. It is the flag that turns the listing into the answer to "which
+	// modules will block the attribution document".
+	copyrightStatus []domain.CopyrightStatus
+	// allGenerations lifts the pipeline-version restriction the default applies.
+	allGenerations bool
+	limit, offset  int
+}
+
+// generation is the pipeline version the listing restricts to, empty under
+// --all-generations.
+func (f licenseListFlags) generation() string {
+	if f.allGenerations {
+		return ""
+	}
+	return licapp.PipelineVersion
+}
+
+// licenseListGenerationJSON is the listing document's statement of which record
+// generation answered.
+//
+// The text path prints the same fact as a line under the rows. It is a field of
+// its own rather than words folded into `subject`, because the truncation line
+// renders the subject mid-sentence — "showing license records 3-4" — and a
+// subject carrying a version reads as a page range applied to a version.
+type licenseListGenerationJSON struct {
+	// Served is the pipeline version this build answers from, stated whether or
+	// not the listing was restricted to it: a consumer comparing a row's
+	// pipeline_version against it needs the value in both modes.
+	Served string `json:"served"`
+	// AllGenerations says the restriction was lifted. It is the field that names
+	// the state, and it is present at both values.
+	AllGenerations bool `json:"all_generations"`
+	// Remedy is the flag that lifts the restriction, and it is empty under
+	// --all-generations because there is nothing left to lift — conventions.md
+	// keeps omitempty for strings on exactly that reading, with the field beside
+	// it naming the state the document is in.
+	Remedy string `json:"remedy,omitempty"`
+}
+
+// generationStatement renders the generation half of the document.
+func (f licenseListFlags) generationStatement() licenseListGenerationJSON {
+	out := licenseListGenerationJSON{Served: licapp.PipelineVersion, AllGenerations: f.allGenerations}
+	if !f.allGenerations {
+		out.Remedy = "--all-generations"
+	}
+	return out
+}
+
+// postFiltered reports whether this request's page is assembled in the CLI
+// rather than by the port: --copyright decides on full records, and a scope
+// narrows to a module set the filter cannot express.
+func (f licenseListFlags) postFiltered(scope *licenceListScope) bool {
+	return f.copyright != "" || scope != nil
+}
+
 func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var spdx string
-	var copyright string
-	var limit, offset int
+	var f licenseListFlags
+	var copyrightStatus []string
+	var sf licenceScopeFlags
 
 	cmd := &cobra.Command{
 		Use: "license-list",
@@ -1018,11 +1059,54 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 		},
 		Aliases: []string{"licence-list"},
 		Short:   "List extracted license records",
+		Long: `license-list reads back the records 'kanonarion license' writes, so a question
+about a whole build can be asked once instead of once per module.
+
+Every row carries the licence identity, the recorded copyright status, the
+pipeline version the record was extracted at, and whether this build serves it.
+
+--copyright-status takes one or more of the four statuses a record can hold,
+comma-separated or repeated, and a record matching any of them is listed:
+
+  found                copyright extraction ran and identified at least one notice
+  none_found           extraction ran and identified none
+  extraction_failed    extraction could not complete
+  not_analysed         extraction has not run for this record
+
+A value outside the four is refused rather than matched, because in a list it
+would otherwise narrow the answer in silence.
+
+--package, --gomod and --walk-id scope the listing to the modules a build
+compiles, resolved exactly as 'kanonarion notice' resolves them. The modules in
+scope holding no licence record are named rather than dropped. So the set that
+will block an attribution document is one invocation:
+
+  kanonarion license-list --package ./cmd/x --copyright-status none_found
+
+By default only records at the pipeline version this build serves are listed,
+one row per coordinate. A record from an earlier pipeline version answers no
+query — it was measured by logic this build has replaced — so listing it beside
+the others would pad the count of what is known. --all-generations includes them
+and marks each one.`,
+		Example: `  kanonarion license-list
+  kanonarion license-list --spdx MIT
+  kanonarion license-list --copyright-status none_found
+  kanonarion license-list --package ./cmd/kanonarion --copyright-status none_found --limit 0
+  kanonarion license-list --gomod ./go.mod --json
+  kanonarion license-list --all-generations --limit 0`,
 		// The command filters by flag only. Without this a stray positional was
 		// accepted and silently ignored, so `license-list <module>` printed the
 		// whole store and read as "this module holds every one of these".
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			values, verr := copyrightStatusFilter(copyrightStatus)
+			if verr != nil {
+				return verr
+			}
+			f.copyrightStatus = values
+			if serr := sf.validate(); serr != nil {
+				return serr
+			}
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
@@ -1033,42 +1117,169 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading license overrides: %w", err)
 			}
-			return runLicenseList(cmd.Context(), spdx, copyright, limit, offset, ctr.QueryLicense, ovSet, stdout, stderr)
+			scope, serr := resolveLicenceListScope(cmd.Context(), sf, ctr)
+			if serr != nil {
+				return serr
+			}
+			return runLicenseList(cmd.Context(), f, scope, ctr.QueryLicense, ovSet, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().StringVar(&spdx, "spdx", "", "filter by SPDX identifier (e.g. MIT)")
-	cmd.Flags().StringVar(&copyright, "copyright", "", "filter by copyright holder substring (case-insensitive; loads full records)")
-	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to return (0 = unlimited)")
-	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
+	cmd.Flags().StringVar(&f.spdx, "spdx", "", "filter by SPDX identifier (e.g. MIT)")
+	cmd.Flags().StringVar(&f.copyright, "copyright", "", "filter by copyright holder substring (case-insensitive; loads full records)")
+	cmd.Flags().StringSliceVar(&copyrightStatus, "copyright-status", nil,
+		"list only records with one of these copyright statuses (comma-separated): found, none_found, extraction_failed, not_analysed")
+	cmd.Flags().BoolVar(&f.allGenerations, "all-generations", false,
+		"also list records extracted at a superseded pipeline version, which this build does not serve")
+	cmd.Flags().StringVar(&sf.packagePattern, "package", "",
+		"Go package pattern (e.g. ./cmd/kanonarion); scopes the listing to the modules linked into that binary")
+	cmd.Flags().StringVar(&sf.gomodPath, "gomod", "", "path to go.mod; scopes the listing to the project's code dependencies")
+	cmd.Flags().StringVar(&sf.walkID, "walk-id", "", "walk id; scopes the listing to that walk's modules")
+	cmd.Flags().IntVar(&f.limit, "limit", 50, "maximum number of records to return (0 = unlimited)")
+	cmd.Flags().IntVar(&f.offset, "offset", 0, "skip this many records")
 
 	return cmd
 }
 
-func runLicenseList(ctx context.Context, spdx, copyright string, limit, offset int, uc QueryLicenseUseCase, overrides domain.LicenseOverrideSet, stdout, stderr io.Writer) error {
-	// When copyright filtering is active, fetch without a limit so we can
-	// post-filter by full record; re-apply the caller's limit afterwards.
+// copyrightStatuses is the vocabulary --copyright-status accepts, in the order
+// docs/cli/license.md and the command's own help list the four.
+var copyrightStatuses = []domain.CopyrightStatus{
+	domain.CopyrightStatusFound,
+	domain.CopyrightStatusNoneFound,
+	domain.CopyrightStatusExtractionFailed,
+	domain.CopyrightStatusNotAnalysed,
+}
+
+// copyrightStatusFilter validates the values a caller gave --copyright-status.
+//
+// An unrecognised value is refused rather than passed through to match nothing.
+// On a single-value filter a zero result would at least be visible; in a list it
+// would not — two good values and one typo returns rows, and the rows the typo
+// should have added are missing with nothing in the output to say so.
+func copyrightStatusFilter(values []string) ([]domain.CopyrightStatus, error) {
+	known := map[string]domain.CopyrightStatus{}
+	names := make([]string, 0, len(copyrightStatuses))
+	for _, s := range copyrightStatuses {
+		known[s.String()] = s
+		names = append(names, s.String())
+	}
+	out := make([]domain.CopyrightStatus, 0, len(values))
+	seen := map[domain.CopyrightStatus]bool{}
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		status, ok := known[v]
+		if !ok {
+			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--copyright-status %q is not a status a licence record can hold; it accepts one or more of: %s",
+				v, strings.Join(names, ", "))}
+		}
+		if seen[status] {
+			continue
+		}
+		seen[status] = true
+		out = append(out, status)
+	}
+	return out, nil
+}
+
+// licenseListEntry is one row of the listing, in both output modes.
+type licenseListEntry struct {
+	Module     string `json:"module"`
+	Version    string `json:"version"`
+	Status     string `json:"status"`
+	License    string `json:"license"`
+	Expression string `json:"expression,omitempty"`
+	// CopyrightStatus is what copyright extraction concluded. It decides whether
+	// `notice` can publish the module, and it is emitted on every row including
+	// `not_analysed` — that is one of the four answers, not an absence.
+	CopyrightStatus string `json:"copyright_status"`
+	// PipelineVersion is the extraction logic that produced the record, and
+	// Superseded says this build does not serve it. Both halves are on every
+	// row: a consumer reading only the true ones could not tell a servable
+	// record from one the pair was never computed for.
+	PipelineVersion string `json:"pipeline_version"`
+	Superseded      bool   `json:"superseded"`
+	Source          string `json:"source"`
+	// Conflict carries the disagreement composition refused to resolve. A
+	// consumer parsing this must not read an absent license as "no licence".
+	Conflict string `json:"conflict,omitempty"`
+}
+
+// toLicenseListEntry projects one summary onto the row, applying the operator's
+// recorded determination where there is one.
+func toLicenseListEntry(s ports.LicenseSummary, coord coordinate.ModuleCoordinate, overrides domain.LicenseOverrideSet) licenseListEntry {
+	entry := licenseListEntry{
+		Module:          s.ModulePath,
+		Version:         s.ModuleVersion,
+		CopyrightStatus: s.CopyrightStatus.String(),
+		PipelineVersion: s.PipelineVersion,
+		Superseded:      s.PipelineVersion != licapp.PipelineVersion,
+		Source:          "scanner",
+	}
+	if s.Conflict != nil {
+		entry.Status = "Conflict"
+		entry.Conflict = s.Conflict.Error()
+		return entry
+	}
+	entry.Status = s.OverallStatus.String()
+	entry.License = s.PrimarySPDX
+	entry.Expression = s.Expression
+	if ov, ok := overrides.Resolve(coord); ok {
+		entry.License = ov.SPDX
+		entry.Expression = ""
+		entry.Source = "override"
+	}
+	return entry
+}
+
+func runLicenseList(
+	ctx context.Context,
+	f licenseListFlags,
+	scope *licenceListScope,
+	uc QueryLicenseUseCase,
+	overrides domain.LicenseOverrideSet,
+	stdout, stderr io.Writer,
+) error {
 	// One row more than will be printed, so the extra row's presence answers
 	// whether the limit bit. No count is taken: how many were withheld would
 	// cost a second read this listing does not otherwise pay.
 	// Paging goes to the port, which applies it to the same ordering the unpaged
-	// listing produces — except under --copyright, where the population being
-	// paged is the post-filtered set and a port offset would skip records the
-	// filter had not yet seen. There the skip is applied to the filtered rows
-	// below, on the only set that is the caller's page.
-	fetchLimit := truncationFetchLimit(limit)
-	fetchOffset := offset
-	if copyright != "" {
-		fetchLimit = 0
-		fetchOffset = 0
+	// listing produces — except where the population being paged is assembled
+	// here, and a port offset would skip records the CLI's filter had not yet
+	// seen. There the skip is applied below, on the only set that is the
+	// caller's page.
+	fetchLimit, fetchOffset := truncationFetchLimit(f.limit), f.offset
+	if f.postFiltered(scope) {
+		fetchLimit, fetchOffset = 0, 0
 	}
-	filter := ports.LicenseFilter{SPDX: spdx, Limit: fetchLimit, Offset: fetchOffset}
-	sums, err := uc.ListLicenseRecords(ctx, filter)
+	sums, err := uc.ListLicenseRecords(ctx, ports.LicenseFilter{
+		SPDX:            f.spdx,
+		CopyrightStatus: f.copyrightStatus,
+		PipelineVersion: f.generation(),
+		Limit:           fetchLimit,
+		Offset:          fetchOffset,
+	})
 	if err != nil {
 		return fmt.Errorf("listing license records: %w", err)
 	}
 
-	if copyright != "" {
+	// The scope census is a second read, and it is a different question from the
+	// page: a module whose record the status filter excluded still HOLDS a
+	// record, so naming the modules that hold none cannot be derived from the
+	// rows. It is paid only when a scope was asked for.
+	var census []ports.LicenseSummary
+	if scope != nil {
+		census, err = uc.ListLicenseRecords(ctx, ports.LicenseFilter{PipelineVersion: f.generation()})
+		if err != nil {
+			return fmt.Errorf("listing the licence records in scope: %w", err)
+		}
+		sums = scope.keep(sums)
+	}
+
+	if f.copyright != "" {
 		var matched []ports.LicenseSummary
 		for _, s := range sums {
 			coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
@@ -1079,163 +1290,252 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit, offset i
 			if rerr != nil || !found {
 				continue
 			}
-			if domain.MatchesCopyrightHolder(rec.LicenseFiles, copyright) {
+			if domain.MatchesCopyrightHolder(rec.LicenseFiles, f.copyright) {
 				matched = append(matched, s)
 			}
 		}
 		sums = matched
-		sums = skipList(sums, offset)
 	}
-	sums, truncated := truncateList(sums, limit)
-	trunc := listTruncation{limit: limit, subject: "license records", truncated: truncated, offset: offset}
-	if jsonOut {
-		type entry struct {
-			Module     string `json:"module"`
-			Version    string `json:"version"`
-			Status     string `json:"status"`
-			License    string `json:"license"`
-			Expression string `json:"expression,omitempty"`
-			Source     string `json:"source"`
-			// Conflict carries the disagreement composition refused to resolve. A
-			// consumer parsing this must not read an absent license as "no licence".
-			Conflict string `json:"conflict,omitempty"`
-		}
-		out := make([]entry, 0, len(sums))
-		var jsonConflicts []error
-		for _, s := range sums {
-			coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
-			if cErr != nil {
-				return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
-			}
-			if s.Conflict != nil {
-				jsonConflicts = append(jsonConflicts, s.Conflict)
-				out = append(out, entry{
-					Module: s.ModulePath, Version: s.ModuleVersion,
-					Status: "Conflict", Source: "scanner", Conflict: s.Conflict.Error(),
-				})
-				continue
-			}
-			license := s.PrimarySPDX
-			expr := s.Expression
-			source := "scanner"
-			if ov, ok := overrides.Resolve(coord); ok {
-				license = ov.SPDX
-				expr = ""
-				source = "override"
-			}
-			out = append(out, entry{s.ModulePath, s.ModuleVersion, s.OverallStatus.String(), license, expr, source, ""})
-		}
-		var zero *listZeroScope
-		if len(out) == 0 {
-			scope, serr := licenseListZeroScope(ctx, spdx, copyright, offset, uc)
-			if serr != nil {
-				return serr
-			}
-			zero = &scope
-		}
-		if derr := writeListDocument(stdout, out, trunc, zero); derr != nil {
-			return derr
-		}
-		if len(jsonConflicts) > 0 {
-			return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(jsonConflicts), errors.Join(jsonConflicts...))
-		}
-		return nil
+	if f.postFiltered(scope) {
+		sums = skipList(sums, f.offset)
 	}
-	if len(sums) == 0 {
-		scope, serr := licenseListZeroScope(ctx, spdx, copyright, offset, uc)
-		if serr != nil {
-			return serr
-		}
-		return writeListZeroNotice(stdout, scope)
-	}
+
+	sums, truncated := truncateList(sums, f.limit)
+	// The subject stays the bare plural rather than naming the generation in it,
+	// as native-list's does: the ranged form of the truncation line reads
+	// "showing <subject> 3-4", and a subject carrying a version renders that as
+	// "showing license records at pipeline 1.4.0 3-4". The generation is stated
+	// on its own line below instead, on every listing.
+	trunc := listTruncation{limit: f.limit, subject: "license records", truncated: truncated, offset: f.offset}
+
+	entries := make([]licenseListEntry, 0, len(sums))
 	var conflicts []error
 	for _, s := range sums {
 		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
 		if cErr != nil {
 			return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
+		entries = append(entries, toLicenseListEntry(s, coord, overrides))
 		if s.Conflict != nil {
 			conflicts = append(conflicts, s.Conflict)
-			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %-20s %s\n",
-				s.ModulePath+"@"+s.ModuleVersion, "CONFLICT", "unresolved",
-				"run 'kanonarion license "+s.ModulePath+"@"+s.ModuleVersion+" --history'"); err != nil {
+		}
+	}
+
+	var zero *listZeroScope
+	if len(entries) == 0 {
+		z, serr := licenseListZeroScope(ctx, f, scope, census, uc)
+		if serr != nil {
+			return serr
+		}
+		zero = &z
+	}
+
+	if jsonOut {
+		if derr := writeListDocumentWith(stdout, entries, trunc, zero, listDocumentFacts{
+			scope:      scope.statement(census),
+			generation: f.generationStatement(),
+		}); derr != nil {
+			return derr
+		}
+		return licenseListConflictErr(conflicts)
+	}
+	if perr := printLicenseListText(stdout, entries, f, scope, census, zero, trunc); perr != nil {
+		return perr
+	}
+	// Every module is listed first, then the command fails. A licence in dispute
+	// must not be reported as a clean run.
+	return licenseListConflictErr(conflicts)
+}
+
+// printLicenseListText renders the page in the reader's terms: the scope it was
+// taken over, the rows, the modules in scope that hold no record, which
+// generation answered, and what the limit withheld.
+func printLicenseListText(
+	stdout io.Writer,
+	entries []licenseListEntry,
+	f licenseListFlags,
+	scope *licenceListScope,
+	census []ports.LicenseSummary,
+	zero *listZeroScope,
+	trunc listTruncation,
+) error {
+	if serr := scope.writeTextStatement(stdout, census); serr != nil {
+		return serr
+	}
+	if zero != nil {
+		return writeListZeroNotice(stdout, *zero)
+	}
+	for _, e := range entries {
+		mark := ""
+		if e.Superseded {
+			mark = "  [superseded generation " + e.PipelineVersion + "]"
+		}
+		if e.Conflict != "" {
+			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %-20s %-18s %s\n",
+				e.Module+"@"+e.Version, "CONFLICT", "unresolved", "-",
+				"run 'kanonarion license "+e.Module+"@"+e.Version+" --history'"); err != nil {
 				return fmt.Errorf("writing output: %w", err)
 			}
 			continue
 		}
-		license := licenceFromSummary(s)
-		source := "scanner"
-		if ov, ok := overrides.Resolve(coord); ok {
-			license = ov.SPDX
-			source = "override"
-		}
-		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %-20s %s\n",
-			s.ModulePath+"@"+s.ModuleVersion,
-			s.OverallStatus.String(),
-			license,
-			source,
+		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %-20s %-18s %s%s\n",
+			e.Module+"@"+e.Version,
+			e.Status,
+			licenceFromEntry(e),
+			e.CopyrightStatus,
+			e.Source,
+			mark,
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}
-	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
-		return terr
+	if gerr := writeLicenseListGenerationNotice(stdout, f, entries); gerr != nil {
+		return gerr
 	}
-	// Every module is listed first, then the command fails. A licence in dispute
-	// must not be reported as a clean run.
-	if len(conflicts) > 0 {
-		return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(conflicts), errors.Join(conflicts...))
+	return writeListTruncationNotice(stdout, trunc)
+}
+
+// licenceFromEntry is the licence a text row states: the expression where the
+// record has one, the primary otherwise.
+//
+// It is one function because the text listing, the JSON listing and the
+// cross-surface control all have to ask it the same way, off the same projected
+// row. A test that re-implements this rule agrees with the renderer only by
+// coincidence, and the coincidence ended the day the licence surfaces started
+// reading a record through what its licences cover: the mirrored rule kept
+// passing while the listing served a Go library's embedded font licence.
+//
+// The identity itself is composed further upstream, where the record is read —
+// see the licence store's summary projection.
+func licenceFromEntry(e licenseListEntry) string {
+	if e.Expression != "" {
+		return e.Expression
+	}
+	return e.License
+}
+
+// writeLicenseListGenerationNotice states which generation the rows were drawn
+// from.
+//
+// It prints on every listing, not only when something was excluded: a reader who
+// is not told the rows were restricted to one generation has no way to tell a
+// restricted count from a whole one.
+func writeLicenseListGenerationNotice(stdout io.Writer, f licenseListFlags, entries []licenseListEntry) error {
+	if !f.allGenerations {
+		_, err := fmt.Fprintf(stdout,
+			"listing license records at pipeline %s, the version this build serves; "+
+				"records from a superseded pipeline version are not shown (--all-generations)\n",
+			licapp.PipelineVersion)
+		if err != nil {
+			return fmt.Errorf("writing generation notice: %w", err)
+		}
+		return nil
+	}
+	superseded := 0
+	for _, e := range entries {
+		if e.Superseded {
+			superseded++
+		}
+	}
+	if superseded == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(stdout,
+		"%d of %d listed record(s) were extracted at a superseded pipeline version; this build serves %s "+
+			"and answers no query from them. Re-extract one:\n  kanonarion license <module>@<version>\n",
+		superseded, len(entries), licapp.PipelineVersion)
+	if err != nil {
+		return fmt.Errorf("writing superseded notice: %w", err)
 	}
 	return nil
 }
 
-// licenseListZeroScope lifts both filters and re-asks the store, so a zero
-// distinguishes an identifier or holder that matched nothing from a store with
-// no licence records in it. Reached only when the listing came back empty.
-//
-// The two filters are named together when both are set: dropping one from the
-// statement would send the reader to check a spelling that was not the one that
-// excluded their module.
-func licenseListZeroScope(ctx context.Context, spdx, copyright string, offset int, uc QueryLicenseUseCase) (listZeroScope, error) {
-	all, err := uc.ListLicenseRecords(ctx, ports.LicenseFilter{})
-	if err != nil {
-		return listZeroScope{}, fmt.Errorf("counting license records for the zero-result notice: %w", err)
+// licenseListConflictErr fails the run when the page held a disputed
+// coordinate. The check is over the rows that were LISTED, so a disagreement
+// inside a generation this build does not serve is reported only where those
+// rows are — under --all-generations.
+func licenseListConflictErr(conflicts []error) error {
+	if len(conflicts) == 0 {
+		return nil
 	}
-	scope := listZeroScope{
+	return fmt.Errorf("%d module(s) hold conflicting license records: %w",
+		len(conflicts), errors.Join(conflicts...))
+}
+
+// licenseListZeroScope lifts the filters and re-asks the store, so a zero
+// distinguishes a value that matched nothing from a store with no licence
+// records in it. Reached only when the listing came back empty.
+//
+// Every active filter is named: dropping one from the statement would send the
+// reader to check a spelling that was not the one that excluded their module.
+func licenseListZeroScope(
+	ctx context.Context,
+	f licenseListFlags,
+	scope *licenceListScope,
+	census []ports.LicenseSummary,
+	uc QueryLicenseUseCase,
+) (listZeroScope, error) {
+	all := census
+	if scope == nil {
+		var err error
+		all, err = uc.ListLicenseRecords(ctx, ports.LicenseFilter{PipelineVersion: f.generation()})
+		if err != nil {
+			return listZeroScope{}, fmt.Errorf("counting license records for the zero-result notice: %w", err)
+		}
+	} else {
+		all = scope.keep(all)
+	}
+	z := listZeroScope{
 		subject:    "license record",
 		considered: len(all),
 		produce:    "kanonarion license <module>@<version>",
 		listAll:    "kanonarion license-list",
 	}
-	if len(all) > 0 {
-		scope.example = all[0].PrimarySPDX
+	// The illustration has to be in the shape the filter compares against, and an
+	// SPDX identifier is only that when --spdx is one of the filters that ran.
+	if len(all) > 0 && f.spdx != "" {
+		z.example = all[0].PrimarySPDX
 	}
-	switch {
-	case spdx != "" && copyright != "":
-		scope.filterName = "SPDX identifier and copyright holder"
-		scope.filterValue = spdx + " / " + copyright
-		scope.field = "primary SPDX identifier, then the copyright holder in the licence files"
-		scope.matchKind = matchExact + " then " + matchSubstring
-	case spdx != "":
-		scope.filterName = "SPDX identifier"
-		scope.filterValue = spdx
-		scope.field = "primary SPDX identifier"
-		scope.matchKind = matchExact
-	case copyright != "":
-		scope.filterName = "copyright holder"
-		scope.filterValue = copyright
-		scope.field = "copyright holder recorded in the licence files"
-		scope.matchKind = matchSubstring
-		// The illustration has to be in the shape the filter compares against,
-		// and an SPDX identifier is not one.
-		scope.example = ""
+	var names, values, fields, matches []string
+	if f.spdx != "" {
+		names = append(names, "SPDX identifier")
+		values = append(values, f.spdx)
+		fields = append(fields, "primary SPDX identifier")
+		matches = append(matches, matchExact)
 	}
-	// An offset past the end empties the page without the filter having anything
-	// to do with it, and the two look identical from the rows alone.
+	if f.copyright != "" {
+		names = append(names, "copyright holder")
+		values = append(values, f.copyright)
+		fields = append(fields, "the copyright holder in the licence files")
+		matches = append(matches, matchSubstring)
+	}
+	if len(f.copyrightStatus) > 0 {
+		names = append(names, "copyright status")
+		values = append(values, copyrightStatusNames(f.copyrightStatus))
+		fields = append(fields, "recorded copyright status")
+		matches = append(matches, matchExact)
+	}
+	if len(names) > 0 {
+		z.filterName = strings.Join(names, " and ")
+		z.filterValue = strings.Join(values, " / ")
+		z.field = strings.Join(fields, ", then ")
+		z.matchKind = strings.Join(matches, " then ")
+	}
+	// An offset past the end empties the page without a filter having anything to
+	// do with it, and the two look identical from the rows alone.
 	// An empty corpus is not something a page can start past, so a zero over it
 	// keeps the store-empty statement and its produce-a-record remedy.
-	if scope.filterValue == "" && len(all) > 0 && offset > 0 && offset >= len(all) {
-		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	if z.filterValue == "" && len(all) > 0 && f.offset > 0 && f.offset >= len(all) {
+		z.pagedPast = fmt.Sprintf("--offset %d starts past the last one", f.offset)
 	}
-	return scope, nil
+	return z, nil
+}
+
+// copyrightStatusNames renders a status filter as the caller spelled it.
+func copyrightStatusNames(statuses []domain.CopyrightStatus) string {
+	names := make([]string, 0, len(statuses))
+	for _, s := range statuses {
+		names = append(names, s.String())
+	}
+	return strings.Join(names, ",")
 }

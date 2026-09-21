@@ -243,6 +243,175 @@ func TestDeriveExpression_ReversedNameBesidePlainLicence_OR(t *testing.T) {
 	}
 }
 
+// TestDeriveExpression_FileNameElection_NamingForms walks the naming forms a
+// module uses to give each arm its own file. Every one of them names, in the
+// file's name, the licence the detector matched in that file.
+func TestDeriveExpression_FileNameElection_NamingForms(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []domain.LicenseFileEntry
+		want    string
+	}{
+		{
+			name: "stem-prefixed LICENSE-",
+			entries: []domain.LicenseFileEntry{
+				{Path: "LICENSE-MIT", SPDX: "MIT", Confidence: 0.99},
+				{Path: "LICENSE-APACHE", SPDX: "Apache-2.0", Confidence: 0.99},
+			},
+			want: "Apache-2.0 OR MIT",
+		},
+		{
+			name: "stem-prefixed LICENCE-",
+			entries: []domain.LicenseFileEntry{
+				{Path: "LICENCE-MIT", SPDX: "MIT", Confidence: 0.99},
+				{Path: "LICENCE-BSD", SPDX: "BSD-3-Clause", Confidence: 0.98},
+			},
+			want: "BSD-3-Clause OR MIT",
+		},
+		{
+			name: "stem-prefixed COPYING-",
+			entries: []domain.LicenseFileEntry{
+				{Path: "COPYING-BSD", SPDX: "BSD-3-Clause", Confidence: 0.99},
+				{Path: "COPYING-GPLv2", SPDX: "GPL-2.0", Confidence: 0.97},
+			},
+			want: "BSD-3-Clause OR GPL-2.0",
+		},
+		{
+			name: "reversed MIT-LICENSE",
+			entries: []domain.LicenseFileEntry{
+				{Path: "MIT-LICENSE", SPDX: "MIT", Confidence: 0.99},
+				{Path: "GO-LICENSE", SPDX: "BSD-3-Clause", Confidence: 0.99},
+			},
+			want: "BSD-3-Clause OR MIT",
+		},
+		{
+			name: "reversed with a text extension",
+			entries: []domain.LicenseFileEntry{
+				{Path: "MIT-LICENSE.txt", SPDX: "MIT", Confidence: 0.99},
+				{Path: "LICENSE-APACHE.txt", SPDX: "Apache-2.0", Confidence: 0.99},
+			},
+			want: "Apache-2.0 OR MIT",
+		},
+		{
+			name: "bare shorthands APLv2 and GPLv3",
+			entries: []domain.LicenseFileEntry{
+				{Path: "APLv2", SPDX: "Apache-2.0", Confidence: 0.99},
+				{Path: "GPLv3", SPDX: "GPL-3.0", Confidence: 0.95},
+			},
+			want: "Apache-2.0 OR GPL-3.0",
+		},
+		{
+			name: "bare APACHE-LICENSE-2.0 beside a plain LICENSE",
+			entries: []domain.LicenseFileEntry{
+				{Path: "LICENSE", SPDX: "MIT", Confidence: 0.99},
+				{Path: "APACHE-LICENSE-2.0", SPDX: "Apache-2.0", Confidence: 0.99},
+			},
+			want: "Apache-2.0 OR MIT",
+		},
+		{
+			name: "UNLICENSE beside LICENSE-MIT",
+			entries: []domain.LicenseFileEntry{
+				{Path: "LICENSE-MIT", SPDX: "MIT", Confidence: 0.99},
+				{Path: "UNLICENSE", SPDX: "Unlicense", Confidence: 0.99},
+			},
+			want: "MIT OR Unlicense",
+		},
+		{
+			name: "a licence named after its author",
+			entries: []domain.LicenseFileEntry{
+				{Path: "LICENSE", SPDX: "BSD-3-Clause", Confidence: 0.99},
+				{Path: "LICENSE-SIL", SPDX: "OFL-1.1", Confidence: 0.99},
+			},
+			want: "BSD-3-Clause OR OFL-1.1",
+		},
+		{
+			name: "COPYRIGHT beside two named files",
+			entries: []domain.LicenseFileEntry{
+				{Path: "COPYRIGHT", SPDX: "Apache-2.0", Confidence: 0.80},
+				{Path: "LICENSE-APACHE", SPDX: "Apache-2.0", Confidence: 0.99},
+				{Path: "LICENSE-MIT", SPDX: "MIT", Confidence: 0.99},
+			},
+			want: "Apache-2.0 OR MIT",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := domain.DeriveExpressionResult(tc.entries, nil)
+			if res.Expression != tc.want {
+				t.Errorf("expression = %q, want %q", res.Expression, tc.want)
+			}
+			if !strings.HasPrefix(res.Basis, "election: one file per licence (") {
+				t.Errorf("basis = %q, want the file-name election basis", res.Basis)
+			}
+		})
+	}
+}
+
+// TestDeriveExpression_SuffixNamesAComponent_AND is the defect the per-file
+// test closes: a stem-suffixed name that names what the file covers rather than
+// a licence offers no choice, so the grants stand separately.
+func TestDeriveExpression_SuffixNamesAComponent_AND(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []domain.LicenseFileEntry
+		want    string
+	}{
+		{
+			name: "component suffix",
+			entries: []domain.LicenseFileEntry{
+				{Path: "LICENSE", SPDX: "BSD-3-Clause", Confidence: 0.99},
+				{Path: "LICENSE-SQLITE_VEC", SPDX: "MIT", Confidence: 0.99},
+			},
+			want: "BSD-3-Clause AND MIT",
+		},
+		{
+			name: "third-party grant list",
+			entries: []domain.LicenseFileEntry{
+				{Path: "LICENSE", SPDX: "MIT", Confidence: 0.99},
+				{Path: "LICENSE-THIRD-PARTY", SPDX: "BSD-3-Clause", Confidence: 0.99},
+			},
+			want: "BSD-3-Clause AND MIT",
+		},
+		{
+			name: "one file names its licence, another names a component",
+			entries: []domain.LicenseFileEntry{
+				{Path: "LICENSE-MIT", SPDX: "MIT", Confidence: 0.99},
+				{Path: "LICENSE-APACHE", SPDX: "Apache-2.0", Confidence: 0.99},
+				{Path: "LICENSE-VENDORED_FONT", SPDX: "OFL-1.1", Confidence: 0.99},
+			},
+			want: "Apache-2.0 AND MIT AND OFL-1.1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := domain.DeriveExpressionResult(tc.entries, nil)
+			if res.Expression != tc.want {
+				t.Errorf("expression = %q, want %q", res.Expression, tc.want)
+			}
+			if res.Basis != domain.BasisSeparateGrants {
+				t.Errorf("basis = %q, want %q", res.Basis, domain.BasisSeparateGrants)
+			}
+		})
+	}
+}
+
+// TestDeriveExpression_DottedSuffixNeverElects keeps the per-file split where it
+// was: LICENSE.libyaml names what its grant covers, and no name here names a
+// licence, so nothing elects.
+func TestDeriveExpression_DottedSuffixNeverElects(t *testing.T) {
+	entries := []domain.LicenseFileEntry{
+		{Path: "LICENSE", SPDX: "Apache-2.0", Confidence: 0.99},
+		{Path: "LICENSE.libyaml", SPDX: "MIT", Confidence: 0.99},
+	}
+	res := domain.DeriveExpressionResult(entries, nil)
+	if res.Expression != "Apache-2.0 AND MIT" {
+		t.Errorf("expression = %q, want Apache-2.0 AND MIT", res.Expression)
+	}
+	if res.Basis != domain.BasisSeparateGrants {
+		t.Errorf("basis = %q, want %q", res.Basis, domain.BasisSeparateGrants)
+	}
+}
+
 func TestDisjunctionArms(t *testing.T) {
 	cases := []struct {
 		name string

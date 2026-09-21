@@ -173,7 +173,7 @@ func licenceFromRenderedLicenseList(t *testing.T, rec licdomain.LicenseRecord, a
 	jsonOut = asJSON
 	defer func() { jsonOut = prev }()
 	var stdout, stderr bytes.Buffer
-	if err := runLicenseList(context.Background(), "", "", 0, 0, fake,
+	if err := runLicenseList(context.Background(), licenseListFlags{}, nil, fake,
 		licdomain.NewLicenseOverrideSet(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("license-list: %v", err)
 	}
@@ -192,12 +192,18 @@ func licenceFromRenderedLicenseList(t *testing.T, rec licdomain.LicenseRecord, a
 		}
 		return doc.Records[0].License
 	}
-	// "<module>@<version>  <status>  <licence>  <source>"
-	fields := strings.Fields(out)
-	if len(fields) < 4 {
-		t.Fatalf("license-list row has no licence column: %q", out)
+	// "<module>@<version>  <status>  <licence>  <copyright status>  <source>",
+	// read off the ROW: the generation notice follows the rows on stdout, and
+	// tokenising the whole output would fold its prose into the licence.
+	row, _, found := strings.Cut(out, "\n")
+	if !found {
+		t.Fatalf("license-list printed no row: %q", out)
 	}
-	return strings.Join(fields[2:len(fields)-1], " ")
+	fields := strings.Fields(row)
+	if len(fields) < 5 {
+		t.Fatalf("license-list row has no licence column: %q", row)
+	}
+	return strings.Join(fields[2:len(fields)-2], " ")
 }
 
 // licenceFromRenderedLicenseDiff reads the licence out of the CONCLUSION the

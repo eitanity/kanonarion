@@ -25,6 +25,12 @@ import (
 // Bump this constant whenever extraction logic changes to ensure old records
 // are not confused with new ones.
 //
+// 1.4.0 emits the file-name election only where each named file names the
+// licence the detector matched in it, where 1.3.0 took any stem-prefixed name
+// as naming one. A suffix naming the component a file covers — LICENSE-THIRD-
+// PARTY, LICENSE-SQLITE_VEC — offered an election nobody granted, so the bump
+// is owed: Expression is sealed inside canonicalLicenseRecord.
+//
 // 1.3.0 reads the licence file's prose to decide how several grants in one file
 // relate, where 1.2.0 inferred it from the confidence delta between two text
 // matches. The bump is owed because it changes what a re-derived record
@@ -39,7 +45,7 @@ import (
 // no stored record can be re-read into the new answer. Records are keyed
 // (module, version, pipeline_version), so the 1.2.0 rows stay readable as what
 // the earlier generation concluded rather than being replaced.
-const PipelineVersion = "1.3.0"
+const PipelineVersion = "1.4.0"
 
 // ExtractLicenseUseCase extracts and persists license information for a
 // single Go module at a pinned version.

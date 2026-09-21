@@ -555,7 +555,7 @@ func emptyListingSurfaces(t *testing.T) []listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runLicenseList(context.Background(), "", "", limit, offset,
+			if err := runLicenseList(context.Background(), licenseListFlags{limit: limit, offset: offset}, nil,
 				testfakes.NewFakeQueryLicense(), licdomain.LicenseOverrideSet{}, &stdout, &stderr); err != nil {
 				t.Fatalf("runLicenseList: %v", err)
 			}

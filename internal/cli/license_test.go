@@ -280,10 +280,11 @@ func TestLicenseList_EmptyStore(t *testing.T) {
 func TestRunLicenseList_WithRecords(t *testing.T) {
 	uc := testfakes.NewFakeQueryLicense()
 	uc.SetList([]licenseports.LicenseSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT", OverallStatus: domain.LicenseStatusDetected},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: licapp.PipelineVersion,
+			PrimarySPDX: "MIT", OverallStatus: domain.LicenseStatusDetected, CopyrightStatus: domain.CopyrightStatusFound},
 	})
 	var buf bytes.Buffer
-	err := runLicenseList(context.Background(), "", "", 50, 0, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
+	err := runLicenseList(context.Background(), licenseListFlags{limit: 50}, nil, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -305,11 +306,12 @@ func TestRunLicenseList_WithRecords(t *testing.T) {
 func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 	uc := testfakes.NewFakeQueryLicense()
 	uc.SetList([]licenseports.LicenseSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "Unknown", OverallStatus: domain.LicenseStatusNone},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: licapp.PipelineVersion,
+			PrimarySPDX: "Unknown", OverallStatus: domain.LicenseStatusNone},
 	})
 	ovSet := domain.NewLicenseOverrideSet(map[string]domain.LicenseOverride{"example.com/app": {SPDX: "MIT"}})
 	var buf bytes.Buffer
-	if err := runLicenseList(context.Background(), "", "", 50, 0, uc, ovSet, &buf, io.Discard); err != nil {
+	if err := runLicenseList(context.Background(), licenseListFlags{limit: 50}, nil, uc, ovSet, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -324,7 +326,7 @@ func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 func TestRunLicenseList_SPDXFilter_NoMatch(t *testing.T) {
 	uc := testfakes.NewFakeQueryLicense()
 	var buf bytes.Buffer
-	err := runLicenseList(context.Background(), "Apache-2.0", "", 50, 0, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
+	err := runLicenseList(context.Background(), licenseListFlags{spdx: "Apache-2.0", limit: 50}, nil, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

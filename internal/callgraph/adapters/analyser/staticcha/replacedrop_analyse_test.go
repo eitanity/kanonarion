@@ -3,6 +3,7 @@ package staticcha_test
 import (
 	"context"
 	"log/slog"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -27,10 +28,11 @@ import (
 // is what lets the assertion be "the module loads completely" rather than "it
 // fails differently".
 func TestAnalyse_MonorepoReplaceIsDroppedAndTheModuleLoads(t *testing.T) {
+	xmod := builtXModVersion(t)
 	coord := mustTestCoord(t, "example.com/premod", "v1.0.0")
 	files := map[string]string{
 		"go.mod": "module example.com/premod\n\ngo 1.17\n\n" +
-			"require golang.org/x/mod v0.40.0\n\n" +
+			"require golang.org/x/mod " + xmod + "\n\n" +
 			"replace golang.org/x/mod => ../mod/\n",
 		"premod.go": "package premod\n\nimport \"golang.org/x/mod/semver\"\n\n" +
 			"// Canonical is the module's exported entry point.\nfunc Canonical(v string) string { return semver.Canonical(v) }\n",
@@ -79,11 +81,15 @@ func TestAnalyse_MonorepoReplaceIsDroppedAndTheModuleLoads(t *testing.T) {
 // so the extraction does not break it and removing it would change what the
 // module's own build selects.
 func TestAnalyse_VersionToVersionReplaceIsLeftAlone(t *testing.T) {
+	xmod := builtXModVersion(t)
+	if xmod == "v0.39.0" {
+		t.Fatal("this build links golang.org/x/mod v0.39.0, the version the fixture replaces away: pick another")
+	}
 	coord := mustTestCoord(t, "example.com/premod", "v1.0.0")
 	files := map[string]string{
 		"go.mod": "module example.com/premod\n\ngo 1.17\n\n" +
 			"require golang.org/x/mod v0.39.0\n\n" +
-			"replace golang.org/x/mod v0.39.0 => golang.org/x/mod v0.40.0\n",
+			"replace golang.org/x/mod v0.39.0 => golang.org/x/mod " + xmod + "\n",
 		"premod.go": "package premod\n\nimport \"golang.org/x/mod/semver\"\n\n" +
 			"// Canonical is the module's exported entry point.\nfunc Canonical(v string) string { return semver.Canonical(v) }\n",
 	}
@@ -197,4 +203,22 @@ func TestAnalyse_ModuleWithNoReplaceIsUntouched(t *testing.T) {
 	if rec.FailureCause != domain.FailureCauseUnrecorded {
 		t.Errorf("FailureCause = %q on a complete extraction", rec.FailureCause)
 	}
+}
+
+// builtXModVersion is the golang.org/x/mod version this repository's own build
+// selects. The loader runs offline, so a fixture can only require a version the
+// host's module cache is certain to hold, and the only such version is the one
+// this build resolved. A literal is stranded by the next dependency bump on any
+// host whose cache does not still hold the old one.
+func builtXModVersion(t *testing.T) string {
+	t.Helper()
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-m", "-f", "{{.Version}}", "golang.org/x/mod").Output()
+	if err != nil {
+		t.Fatalf("reading the golang.org/x/mod version this build selects: %v", err)
+	}
+	version := strings.TrimSpace(string(out))
+	if version == "" {
+		t.Fatal("go list named no version for golang.org/x/mod")
+	}
+	return version
 }

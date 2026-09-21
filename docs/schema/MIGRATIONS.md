@@ -137,6 +137,40 @@ consumer nowhere.
 
 The rows themselves are unchanged.
 
+## Licence record: pipeline `1.3.0` → `1.4.0`
+
+**No shape change; not hash-transparent.** Where a module carries several root
+licence files, the choice between an election (`A OR B`) and separate grants
+(`A AND B`) was read off the file names, and any name carrying a licence-file
+stem counted: `LICENSE-`, `LICENCE-`, `COPYING-`, the reversed `<NAME>-LICENSE`,
+or a bare shorthand such as `APLv2`.
+
+A suffix does not have to name a licence. `LICENSE-SQLITE_VEC` and
+`LICENSE-THIRD-PARTY` name the component the file covers, and the record then
+offered an election neither module grants.
+
+The name is now tested against the identifier the detector matched **in that
+file**, through an alias table (`APACHE`, `APACHE-2`, `APLv2` → `Apache-2.0`;
+`BSD`, `BSD3` → `BSD-3-Clause`; `GPLv3` → `GPL-3.0`; `GO` → `BSD-3-Clause`;
+otherwise the identifier itself). The election is emitted only when at least one
+root file names its own licence and no stem-carrying file names something else.
+A plain `LICENSE`, `COPYING`, `COPYRIGHT` or `UNLICENSE` beside a named file
+stays neutral. Everything else takes the separate-grants reading: `A AND B`,
+per-arm `arm_grants`, and merged obligations labelled an upper bound.
+
+**Reads that change.** For a module whose name-based election is withdrawn,
+`expression` moves from `A OR B` to `A AND B`, `expression_basis` from
+`election: one file per licence (…)` to `split: one file per licence, none
+naming a choice`, `arm_grants` and `obligations_reading` appear, and
+`elective_obligations` and `license_electable_arms` disappear. `license`,
+`license-list`, `license-diff`, `audit`, `context`, `sbom`, `notice` and
+`license-compat` all follow the record.
+
+Migration: **none.** Reads key on the pipeline version. Records are keyed
+(module, version, pipeline_version), so the 1.3.0 rows stay readable as what the
+earlier generation concluded; re-derivation is a re-extraction, because the file
+names live only in the module zip.
+
 ## Fetch store: module `fetch`, migration 10 - which repository the VCS check cloned
 
 `FactRecord` gains `vcs_url_binding`, and the `fetch_records` table gains a
