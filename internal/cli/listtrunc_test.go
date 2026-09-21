@@ -16,6 +16,7 @@ import (
 	exports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
+	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
 	nativedomain "github.com/eitanity/kanonarion/internal/native/domain"
@@ -123,7 +124,8 @@ func licenseSurface() listingSurface {
 	for i := range truncPopulation {
 		sums = append(sums, licports.LicenseSummary{
 			ModulePath: fmt.Sprintf("example.com/mod%d", i), ModuleVersion: "v1.0.0",
-			PipelineVersion: "lic-1", PrimarySPDX: "MIT", OverallStatus: licdomain.LicenseStatusDetected,
+			PipelineVersion: licapp.PipelineVersion, PrimarySPDX: "MIT",
+			OverallStatus: licdomain.LicenseStatusDetected, CopyrightStatus: licdomain.CopyrightStatusFound,
 		})
 	}
 	uc.SetList(sums)
@@ -134,7 +136,7 @@ func licenseSurface() listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runLicenseList(context.Background(), "", "", limit, offset, uc,
+			if err := runLicenseList(context.Background(), licenseListFlags{limit: limit, offset: offset}, nil, uc,
 				licdomain.LicenseOverrideSet{}, &stdout, &stderr); err != nil {
 				t.Fatalf("runLicenseList: %v", err)
 			}
@@ -581,13 +583,19 @@ func TestListTruncationWriters_ReportWriteFailure(t *testing.T) {
 // array in a document and not one field of them moved, was added or was renamed.
 func TestListings_TextIsUnchangedAndRecordsKeepTheirShape(t *testing.T) {
 	want := map[string]struct{ text, firstRecord string }{
+		// The licence row gained a copyright-status column and the listing gained
+		// the line naming the generation its rows were drawn from — the two facts
+		// the listing could not previously state. Nothing else about the row
+		// moved: the columns before it are in the same places and the truncation
+		// line is byte-identical.
 		"license-list": {
-			text: `example.com/mod0@v1.0.0                            Detected     MIT                  scanner
-example.com/mod1@v1.0.0                            Detected     MIT                  scanner
-example.com/mod2@v1.0.0                            Detected     MIT                  scanner
+			text: `example.com/mod0@v1.0.0                            Detected     MIT                  found              scanner
+example.com/mod1@v1.0.0                            Detected     MIT                  found              scanner
+example.com/mod2@v1.0.0                            Detected     MIT                  found              scanner
+listing license records at pipeline 1.4.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 showing first 3 license records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
-			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Detected","license":"MIT","source":"scanner"}`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Detected","license":"MIT","copyright_status":"found","pipeline_version":"1.4.0","superseded":false,"source":"scanner"}`,
 		},
 		"interface-list": {
 			text: `example.com/mod0@v1.0.0                            Unknown      2 package(s)  [superseded pipeline ]

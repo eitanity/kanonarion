@@ -88,6 +88,21 @@ func (uc *GenerateNoticeUseCase) Generate(ctx context.Context, req NoticeRequest
 	return result, nil
 }
 
+// StdlibMissingRecordReason states why the standard library holds no licence
+// record, and where its identity is read instead.
+//
+// It is one function because more than one surface meets the same absence —
+// notice's review list, and the scoped listing that names the modules in a
+// build holding no record — and a second wording would let them come to
+// disagree about whether an extraction could ever fill it. It names no remedy
+// for the absence itself: nothing fetches or extracts the toolchain, so there
+// is no invocation that would produce the record.
+func StdlibMissingRecordReason(coord coordinate.ModuleCoordinate) string {
+	return "the standard library holds no licence record — it ships with the toolchain, " +
+		"and its licence identity comes from the recorded chain of custody " +
+		"(kanonarion license " + coord.String() + "); its attribution text is not extracted"
+}
+
 func (uc *GenerateNoticeUseCase) processModule(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
@@ -108,9 +123,7 @@ func (uc *GenerateNoticeUseCase) processModule(
 		if coord.Path() == walkdomain.StdlibModulePath {
 			return nil, &licensedomain.ReviewItem{
 				Coordinate: coord,
-				Reason: "the standard library holds no licence record — it ships with the toolchain, " +
-					"and its licence identity comes from the recorded chain of custody " +
-					"(kanonarion license " + coord.String() + "); its attribution text is not extracted",
+				Reason:     StdlibMissingRecordReason(coord),
 			}, nil
 		}
 		return nil, &licensedomain.ReviewItem{

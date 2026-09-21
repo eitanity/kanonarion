@@ -382,6 +382,17 @@ notice: 2 module(s) require human review before publishing:
   example.com/bar@v2.0.0: copyright not found (status: none_found)
 ```
 
+The same set can be listed before the document is attempted, over the same
+scope, without being refused first:
+
+```
+kanonarion licence-list --package ./cmd/corteza --copyright-status none_found --limit 0
+```
+
+See [`licence-list`](license.md#what-will-block-a-notice). A
+`copyright_declarations` entry does not change what that listing prints — the
+extraction record is unchanged — so `notice` remains the gate.
+
 Resolve by checking the module manually and either:
 - Recording your own licence determination as a `license_overrides` entry (for
   an ambiguous identification, or for a module carrying no licence the detector

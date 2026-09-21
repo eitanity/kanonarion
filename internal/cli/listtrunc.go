@@ -167,6 +167,27 @@ type listDocumentJSON struct {
 	// which of the three zeroes this is — empty store, filter miss, or a page
 	// past the end — and what invocation changes the answer.
 	ZeroResult *listZeroJSON `json:"zero_result,omitempty"`
+	// Scope is present only on a listing narrowed to one build's modules, where
+	// it names how the build was named and what the narrowing left out. The row
+	// count is not the scope's module count, and nothing else in the document
+	// could say so.
+	Scope any `json:"scope,omitempty"`
+	// Generation is present on every listing that restricts its rows to one
+	// record generation, and says which generation answered and how to lift the
+	// restriction. Without it a consumer reading stdout cannot tell that
+	// superseded records were excluded — the text path says so on its own line,
+	// and a machine reader that is told less than a person is a defect.
+	Generation any `json:"generation,omitempty"`
+}
+
+// listDocumentFacts are the statements a listing may add beside its records,
+// each nil on the listings that do not make it. They travel as one value so a
+// new statement does not add a positional argument to every call site.
+type listDocumentFacts struct {
+	// scope is the build a listing was narrowed to; see licenceListScopeJSON.
+	scope any
+	// generation is the record generation a listing drew its rows from.
+	generation any
 }
 
 // writeListDocument emits a listing's whole answer on stdout.
@@ -175,10 +196,22 @@ type listDocumentJSON struct {
 // array first: the type of the field must not depend on how many rows came back,
 // or every consumer has to branch on it.
 func writeListDocument[T any](stdout io.Writer, records []T, t listTruncation, zero *listZeroScope) error {
+	return writeListDocumentWith(stdout, records, t, zero, listDocumentFacts{})
+}
+
+// writeListDocumentWith is the same document carrying the statements a listing
+// makes about its own request. Empty facts emit exactly what writeListDocument
+// does, so a listing that makes none of them is unchanged.
+func writeListDocumentWith[T any](stdout io.Writer, records []T, t listTruncation, zero *listZeroScope, facts listDocumentFacts) error {
 	if records == nil {
 		records = []T{}
 	}
-	doc := listDocumentJSON{Records: records, listTruncationJSON: t.statement()}
+	doc := listDocumentJSON{
+		Records:            records,
+		listTruncationJSON: t.statement(),
+		Scope:              facts.scope,
+		Generation:         facts.generation,
+	}
 	if zero != nil {
 		statement := listZeroStatementJSON(*zero)
 		doc.ZeroResult = &statement

@@ -9,6 +9,7 @@ import (
 
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
 )
@@ -222,7 +223,7 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "license-list",
 			run: func(stdout, stderr io.Writer) error {
-				return runLicenseList(context.Background(), "NOSUCHLICENSE", "", 50, 0,
+				return runLicenseList(context.Background(), licenseListFlags{spdx: "NOSUCHLICENSE", limit: 50}, nil,
 					testfakes.NewFakeQueryLicense(), licdomain.NewLicenseOverrideSet(nil), stdout, stderr)
 			},
 			want: []string{"the store holds no license record at all", `SPDX identifier "NOSUCHLICENSE"`,
@@ -293,10 +294,10 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 func TestRunLicenseList_BothFiltersAreNamed(t *testing.T) {
 	uc := testfakes.NewFakeQueryLicense()
 	uc.SetList([]licports.LicenseSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: licapp.PipelineVersion, PrimarySPDX: "MIT"},
 	})
 	var stdout, stderr bytes.Buffer
-	if err := runLicenseList(context.Background(), "Apache-2.0", "Acme Corp", 50, 0,
+	if err := runLicenseList(context.Background(), licenseListFlags{spdx: "Apache-2.0", copyright: "Acme Corp", limit: 50}, nil,
 		uc, licdomain.NewLicenseOverrideSet(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -314,10 +315,10 @@ func TestRunLicenseList_BothFiltersAreNamed(t *testing.T) {
 func TestRunLicenseList_CopyrightFilterOffersNoSPDXExample(t *testing.T) {
 	uc := testfakes.NewFakeQueryLicense()
 	uc.SetList([]licports.LicenseSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: licapp.PipelineVersion, PrimarySPDX: "MIT"},
 	})
 	var stdout, stderr bytes.Buffer
-	if err := runLicenseList(context.Background(), "", "zzz-no-such-holder", 50, 0,
+	if err := runLicenseList(context.Background(), licenseListFlags{copyright: "zzz-no-such-holder", limit: 50}, nil,
 		uc, licdomain.NewLicenseOverrideSet(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

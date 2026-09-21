@@ -459,11 +459,12 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 	for rows.Next() {
 		var sum ports.LicenseSummary
 		var extractedAt string
-		var status int
+		var status, copyrightStatus int
 		var blob []byte
 		if serr := rows.Scan(
 			&sum.ModulePath, &sum.ModuleVersion, &sum.PipelineVersion,
-			&sum.PrimarySPDX, &sum.Expression, &status, &extractedAt, &sum.ContentHash,
+			&sum.PrimarySPDX, &sum.Expression, &status, &copyrightStatus,
+			&extractedAt, &sum.ContentHash,
 			&blob,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning license summary: %w", serr)
@@ -474,6 +475,7 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		}
 		sum.ExtractedAt = t.UTC()
 		sum.OverallStatus = domain2.LicenseStatus(status)
+		sum.CopyrightStatus = domain2.CopyrightStatus(copyrightStatus)
 
 		k := generationKey{sum.ModulePath, sum.ModuleVersion, sum.PipelineVersion}
 		if counts[k] == 0 {
@@ -496,9 +498,15 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		return nil, fmt.Errorf("iterating license summaries: %w", err)
 	}
 
+	// A filter that selects on a per-RECORD column leaves a count over the rows
+	// it matched, not over the ledger's, so the single-row shortcut below would
+	// describe a key by whichever of its generations happened to match rather
+	// than by the one composition serves.
+	rowFiltered := filter.SPDX != "" || filter.Status != nil || len(filter.CopyrightStatus) > 0
+
 	out := make([]ports.LicenseSummary, 0, len(order))
 	for _, k := range order {
-		if counts[k] == 1 {
+		if counts[k] == 1 && !rowFiltered {
 			// The overwhelming majority: one generation, so the columns already
 			// describe the served record and no blob is decoded to learn it.
 			out = append(out, first[k])
@@ -534,12 +542,41 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 			ModuleVersion:   k.version,
 			PipelineVersion: k.pipeline,
 			OverallStatus:   served.OverallStatus,
+			CopyrightStatus: served.CopyrightStatus,
 			ExtractedAt:     served.ExtractedAt.UTC(),
 			ContentHash:     served.ContentHash,
 		}, served))
 	}
 
-	return page(out, filter.Limit, filter.Offset), nil
+	return page(keepCopyrightStatus(out, filter.CopyrightStatus), filter.Limit, filter.Offset), nil
+}
+
+// keepCopyrightStatus drops a collapsed row whose SERVED record does not hold
+// one of the requested statuses.
+//
+// The SQL clause is a prefilter over rows, and a coordinate holding several
+// generations is collapsed to the one composition serves: a row that matched
+// the column can therefore collapse onto a record that does not, and listing it
+// would answer "none_found" with a module whose served record found one.
+//
+// A disputed coordinate is kept whatever was asked for. There is no served
+// record to test, and hiding a disagreement because it could not be shown to
+// match is the one outcome a filter must not produce.
+func keepCopyrightStatus(sums []ports.LicenseSummary, want []domain2.CopyrightStatus) []ports.LicenseSummary {
+	if len(want) == 0 {
+		return sums
+	}
+	keep := make(map[domain2.CopyrightStatus]bool, len(want))
+	for _, cs := range want {
+		keep[cs] = true
+	}
+	out := make([]ports.LicenseSummary, 0, len(sums))
+	for _, s := range sums {
+		if s.Conflict != nil || keep[s.CopyrightStatus] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // page applies the caller's limit and offset to the collapsed list.
@@ -558,7 +595,8 @@ func page(sums []ports.LicenseSummary, limit, offset int) []ports.LicenseSummary
 
 func buildListQuery(f ports.LicenseFilter) (string, []any) {
 	q := `SELECT module_path, module_version, pipeline_version,
-	             primary_spdx, spdx_expression, overall_status, extracted_at, content_hash,
+	             primary_spdx, spdx_expression, overall_status, copyright_status,
+	             extracted_at, content_hash,
 	             serialised
 	      FROM licence_records`
 	var conds []string
@@ -571,6 +609,20 @@ func buildListQuery(f ports.LicenseFilter) (string, []any) {
 	if f.Status != nil {
 		conds = append(conds, "overall_status = ?")
 		args = append(args, int(*f.Status))
+	}
+	if f.PipelineVersion != "" {
+		conds = append(conds, "pipeline_version = ?")
+		args = append(args, f.PipelineVersion)
+	}
+	// The column holds the enum's ordinal, so the values are bound as integers.
+	// Binding the names would compare a string to an INTEGER column and match
+	// nothing, which in a listing is a silently narrowed answer.
+	if len(f.CopyrightStatus) > 0 {
+		conds = append(conds, "copyright_status IN ("+
+			strings.TrimSuffix(strings.Repeat("?,", len(f.CopyrightStatus)), ",")+")")
+		for _, cs := range f.CopyrightStatus {
+			args = append(args, int(cs))
+		}
 	}
 
 	if len(conds) > 0 {

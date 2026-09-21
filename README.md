@@ -41,7 +41,7 @@ walk  →  extract  →  query commands
 2. **`extract [walk-id]`** - runs the licence, interface and examples stages for every module in the walk. The call graph is opt-in (`--stages callgraph`) because it can exhaust RAM on a large walk; `inspect` runs it. Vulnerabilities are `vuln-scan`'s.
 3. **Query commands** - fast, offline reads from the local store. No network required.
 
-The store lives at `~/.kanonarion` by default. All metadata is in a single SQLite database; module ZIPs are content-addressed blobs. Every fetch is verified against the Go checksum database.
+The store lives at `~/.kanonarion` by default. All metadata is in a single SQLite database; module ZIPs are content-addressed blobs. Every network fetch is verified against the Go checksum database and, where git is available, cross-checked against the upstream repository. A fetch from a carried-in module cache (`--from-modcache`, for an air-gapped host) is anchored on your `go.sum` instead, and the record says so.
 
 ---
 
@@ -49,7 +49,11 @@ The store lives at `~/.kanonarion` by default. All metadata is in a single SQLit
 
 Kanonarion never silently renders uncertainty as certainty.
 
-Vulnerabilities are **reachable**, **not reachable**, or **unknown** - the last for advisories where symbol-level reachability data isn't available. Licences are **Detected**, **Unclassified**, or **None** - a resolved SPDX identity, licence text that could not be classified, or no licence evidence found - never silently rendered as "allowed". If kanonarion can't determine something, it says so. Policy can be configured to treat unknowns as hard failures so a CI gate fails loudly rather than passing on a blind spot.
+A vulnerability finding carries one of five reachability states: **reachable**, **not reachable**, **package level only** (the advisory names no symbol, so symbol-level reachability was never determinable), **not affected**, or **withdrawn**. Beside the state it carries a **soundness** value that says how thorough the search behind a negative was - a "not reachable" that rests on the scanner's silence is labelled as that, not as a clean result. A module nobody could scan reads `Unscannable`, never `Clean`.
+
+A licence record is **Detected**, **Multiple**, **Ambiguous**, **Unclassified**, **None**, **PerFile** or **ExtractionFailed**. Licence text that could not be classified is never reported as no licence, and neither is ever rendered as "allowed": an unknown licence blocks by default in the production scope. Where several licences apply, the record says whether they are a choice (`A OR B`) or separate grants (`A AND B`), and what that reading was based on.
+
+If kanonarion can't determine something, it says so, and a command that refuses names the command that would produce the missing answer.
 
 ---
 
@@ -118,7 +122,8 @@ kanonarion walk github.com/spf13/cobra@v1.8.1
 # Resolve the latest successful walk id (needs jq)
 WALK_ID=$(kanonarion walk-list --latest-success --json | jq -r '.id')
 
-# Extract all facts for that walk (interfaces, licences, call graphs, examples)
+# Extract the facts for that walk (licences, interfaces, examples).
+# Call graphs are opt-in: add --stages callgraph, or let `inspect` run them.
 kanonarion extract "$WALK_ID"
 
 # Scan that walk for vulnerabilities (add --reachability to triage by reachability)
@@ -141,17 +146,26 @@ Kanonarion is designed to be called directly from agent tool-use. The recommende
 | Everything about a symbol (signature, docs, examples) | `symbol-context <Name> --json` |
 | "How do I use X?"                          | `examples-find <symbol>` then `examples-show` |
 | "Which library should I use for X?"        | `symbol-find <Name>` |
-| "Is this library safe?"                    | `vuln-scan --module <module@version> --reachability` |
+| "Should we adopt this library?"            | `inspect <module@version>`, then read `fetch` (authenticity), `provenance`, `license`, `latest`, `vuln-show` and `capability` for it |
+| "Is this advisory reachable from my code?" | `reachability <module@version> --vuln <id> --gomod ./go.mod` |
 | "What can this dependency actually do?"    | `capability <module@version>` |
 | "Can I use this commercially?"             | `license <module@version>` |
-| "Is my dependency closure licence-compatible?" | `license-compat <module@version>` |
+| "Is my dependency closure licence-compatible?" | `license-compat <root-module@version> --target <SPDX>` (the coordinate a stored walk is rooted at; `@local` for your own project) |
 | Generate a third-party attribution / NOTICE file | `notice --package ./cmd/<binary>` |
 | "What does function F call?"               | `callees '<fully.qualified.Symbol>'` |
 | "What calls function F?" / impact analysis | `callers '<fully.qualified.Symbol>'` |
 | "Which types implement this interface?" / port-change scoping | `implementers '<pkg/path.Interface>'` |
 | Scope an answer to production code only    | add `--exclude-tests` to any of the three, to `context <dir>`, or to a go.mod read (`context --gomod`, `latest --gomod`) - every go.mod answer states its test scope either way |
 | Make those queries resolve my own project's symbols | `local <dir>` |
-| Dependency upgraded - what changed?        | `walk-diff <old-id> <new-id>` |
+| Dependency upgraded - what changed in the graph? | `walk-diff <old-id> <new-id>` |
+| "What changed in the API between two versions, and do we call any of it?" | `interface-diff <module@a> <module@b> --used-by ./go.mod` |
+| "How does my own code use this dependency?" | `usage <module@version>` |
+| "Did the licence change between two versions?" | `license-diff <module@a> <module@b>` |
+| "Who in my build depends on X?"            | `dependents <module>` |
+| "Does this dependency compile a C library into my binary?" | `native <module@version>`, `native-list` |
+| "When did we first know about this advisory?" | `store ledger`, `vuln-scan-history <walk-id>`, `vuln-scan-diff <run-a> <run-b>` |
+| "Was every module actually cross-verified?" | `verification-coverage <walk-id>` |
+| Produce an SBOM for a build                | `sbom <walk-id>` |
 | "Is there a newer version of X?"           | `latest <module>` |
 | Audit this project's supply-chain hygiene  | `directives` / `godebug` / `vendor` / `fips` |
 
@@ -161,15 +175,20 @@ All query commands support `--json` for machine-readable output, making them eas
 
 ## Key features
 
-- **Offline-first.** After the initial walk and extract, all queries are local SQLite reads. No network calls, no rate limits, no flaky CI.
+- **Offline-first.** After the initial walk and extract, all queries are local SQLite reads. No network calls, no rate limits.
 - **Deterministic.** Pinned versions, checksum-verified ZIPs, sorted JSON output. The same query returns the same result today and a year from now.
 - **No SaaS, no phone home.** A single binary that runs where you run it. No account, no telemetry, no vendor in the loop.
 - **Reachability-aware vulnerability scanning.** Integrates govulncheck with optional `--reachability` filtering. Every finding states whether a path from your entry points to the vulnerable symbol was found, was not found, or was never determinable because the advisory names no symbol for that module path - and says which, so the triage is yours to make on evidence rather than on a severity number.
-- **Licence compliance with provenance.** Per-module SPDX licence detection with a full transitive summary, classified as Detected, Unclassified, or None.
+- **Licence compliance with provenance.** Per-module SPDX licence detection with a full transitive summary. Each record states its status, what each licence file covers (the module's code, documentation, a bundled component), and whether several licences are a choice or separate grants. A licence or copyright a person determined by reading upstream is recorded in the config with who decided, when and on what basis, and the attribution document prints it as a human determination, not a detection.
 - **Interface extraction.** Full public API surface - types, functions, methods, constants - in structured JSON the agent can consume directly, measured in one named build frame (`goos/goarch` plus cgo) rather than every platform at once.
-- **Call graph with a three-valued answer.** Intra-module call graph for impact analysis and reachability queries. Every answer says whether an empty result is a *measurement* (`RESOLVED-ABSENT`) or an *undecided* one (`UNRESOLVED`, naming what blocked it) - so "nothing calls this" is never a guess dressed as a fact. `_test.go` declarations are in the graph and tagged, because test fakes are most of the edit surface of an interface change; `--exclude-tests` narrows any query to production code and says so on the answer, empty or not.
+- **Call graph with a three-valued answer.** A call graph across your project and its dependencies, for impact analysis and reachability queries. Every answer says whether an empty result is a *measurement* (`RESOLVED-ABSENT`) or an *undecided* one (`UNRESOLVED`, naming what blocked it) - so "nothing calls this" is never a guess dressed as a fact. `_test.go` declarations are in the graph and tagged, because test fakes are most of the edit surface of an interface change; `--exclude-tests` narrows any query to production code and says so on the answer, empty or not.
 - **Interface implementers.** `implementers` lists the concrete types satisfying an interface, including ones that satisfy it only by embedding - the question a port-signature change actually raises, and one a grep for the method name answers wrongly.
-- **Usage examples.** Verified code snippets extracted from module test files, so the agent codes against patterns that actually work.
+- **Usage examples.** `Example*` functions harvested from each module's own test files, so the agent codes against patterns the module's authors wrote and test.
+- **Upgrade evidence.** `interface-diff --used-by` compares two versions' public API and joins the result against your own call graph, so a bump is judged on the symbols you call rather than on the whole changelog. `usage` lists what your code uses from one dependency, with call-site counts. An empty signature diff is reported as exactly that - the behaviour may still have moved - and the output says what would answer it.
+- **Native code in a Go binary.** A cgo module can compile a whole C library into your binary that no Go advisory database indexes. `native` records what a module ships or links and names the component where it can; `native-list` asks the whole store. A module with no native record was not examined, and the output says that rather than implying it is clean.
+- **Append-only evidence.** Records are sealed with a content hash and never rewritten. A re-scan adds a generation; the earlier one stays readable as what was concluded then. Every record names the pipeline version that produced it; call-graph, interface and vulnerability records also name the Go toolchain, and a call-graph record names the analyser library. `store ledger`, `vuln-scan-history` and `vuln-scan-diff` answer "what did we know, and when".
+- **The standard library and the toolchain are in scope.** The standard library is a node in the graph with its own chain of custody, and `audit` checks the Go toolchain itself against its advisories.
+- **Air-gapped and vendored builds.** `walk --from-modcache` acquires from a carried-in module cache; `vendor` reconciles a `vendor/` tree against what the manifest resolves, because a vendored tree is the build.
 - **Policy gates.** Walk-traversal rules in YAML - max depth, whether replace directives and indirect requirements are followed, and which VCS forges may be cross-verified against - validated with `policy validate`.
 - **SBOM generation.** CycloneDX 1.6 software bill of materials from any walk, with a full dependency graph and per-component `SHA-256/384/512` artefact hashes computed at download. The Go standard library is a first-class component, verified against Go's published source-tarball checksum; `--stdlib-from-gomod` pins its version to the `go.mod` directive for reproducible release artifacts.
 - **Auditable evidence chain.** Every fetch, verification and policy decision is recorded in an append-only `audit.jsonl`: reproducible, time-stamped evidence of what kanonarion did and when.
@@ -182,7 +201,9 @@ All query commands support `--json` for machine-readable output, making them eas
 ~/.kanonarion/
   mirror.db          # SQLite - all metadata (walks, interfaces, vulns, licences, …)
   blobs/             # Content-addressed module ZIPs
-  audit.jsonl        # Append-only fetch audit log
+  sumdb/             # Checksum database client state
+  audit.jsonl        # Append-only event log: walks, extractions, scans, SBOMs, custody
+  config.yaml        # Optional - preferences, licence policy, recorded determinations
 ```
 
 ---
@@ -203,6 +224,24 @@ Example policies are in [`docs/examples/policies/`](docs/examples/policies/).
 
 ---
 
+## Exit codes
+
+Every command uses the same codes, so a caller can tell "no record yet" from "the evidence is in doubt":
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Partial - an answer, with a statement of what it missed |
+| 2 | The work could not complete |
+| 4 | No record - the message names the command that produces it |
+| 5 | A policy or publication gate fired on real findings |
+| 10 | Recorded evidence is in doubt: a failed hash, or two records that disagree |
+| 20 | Never reached an answer: bad argument, missing toolchain, no store |
+
+The full contract, including output channels and listing shape, is in [`docs/cli/conventions.md`](docs/cli/conventions.md).
+
+---
+
 ### Observability
 
 Logging defaults to `--log-level warn`. Long runs narrate on stderr with a throttled progress heartbeat, silenced by `--no-progress`. `--log-level info` adds per-module detail; `debug` adds memory telemetry for troubleshooting large closures.
@@ -213,6 +252,7 @@ Logging defaults to `--log-level warn`. Long runs narrate on stderr with a throt
 
 - [`docs/getting-started.md`](docs/getting-started.md) - from fresh checkout to per-module dependency answers, zero prior knowledge (includes a copy-pasteable agent prompt)
 - [`docs/cli/reference.md`](docs/cli/reference.md) - full CLI reference
+- [`docs/cli/conventions.md`](docs/cli/conventions.md) - exit codes, output channels, listing and paging rules
 - [`docs/cli/vuln.md`](docs/cli/vuln.md) - vulnerability commands
 - [`docs/cli/extract.md`](docs/cli/extract.md) - extraction pipeline
 
@@ -225,7 +265,7 @@ tools. Have these on `PATH`:
 
 | Tool | When it's needed | Install |
 |---|---|---|
-| **Go 1.26+** | Install *and* runtime - kanonarion drives the `go` toolchain (`go list`, `go mod download`, `go test -c`, `go tool nm`) to resolve build lists and analyse binaries. | [go.dev/dl](https://go.dev/dl/) |
+| **Go 1.26.6+** (an older Go with the default `GOTOOLCHAIN=auto` downloads it) | Install *and* runtime - kanonarion drives the `go` toolchain (`go list`, `go mod download`, `go test -c`, `go tool nm`) to resolve build lists and analyse binaries. | [go.dev/dl](https://go.dev/dl/) |
 | **git** | Runtime - VCS cross-verification (the `fetch` stage compares the proxy zip against the upstream source repository). Optional: without git, fetches still verify against the Go checksum database but record an unverified VCS status; pass `--skip-vcs-verify` to skip explicitly. | system package manager |
 | **govulncheck** | Runtime - required by `vuln-scan` / `inspect`. The scan fails fast with an actionable error if it's missing. It type-checks source in-process, so the Go release it was **built with** must be at least the one your project's `go` directive names; a scan that meets that gap names the tool and the command that rebuilds it. | `go install golang.org/x/vuln/cmd/govulncheck@latest` |
 | **jq** | Optional - only the shell snippets in this README use it to pull a walk id out of `--json` output. | system package manager |
@@ -250,7 +290,8 @@ Contributors build from a checkout instead of `go install`:
 make build     # compile binary to ./kanonarion
 make test      # run all tests with race detector
 make coverage  # generate coverage report
-make lint      # run golangci-lint
+make lint      # go vet, staticcheck, govulncheck, gosec
+go tool golangci-lint run ./...   # golangci-lint is separate from make lint
 ```
 
 ## Status

@@ -5,14 +5,14 @@ project - and your trust in its output - seriously.
 
 ## Supported Versions
 
-Kanonarion is pre-`v1.0`. Only the current release line, **`v0.8`**, receives
+Kanonarion is pre-`v1.0`. Only the current release line, **`v0.12`**, receives
 security fixes; every earlier or pre-release version is unsupported. Pin a
-`v0.8.x` tag and upgrade promptly.
+`v0.12.x` tag and upgrade promptly.
 
 | Version | Supported |
 |-----------------------|-----------|
-| `v0.8.x` | ✅ |
-| anything older than `v0.1` | ❌ |
+| `v0.12.x` | ✅ |
+| anything older than `v0.12` | ❌ |
 
 ## Reporting a Vulnerability
 
