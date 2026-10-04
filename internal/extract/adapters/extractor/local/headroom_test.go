@@ -168,13 +168,42 @@ func TestCallgraphHeadroom_SaysWhyItIsWaiting(t *testing.T) {
 	mem := &varyingHostMemory{}
 	mem.available.Store(CallgraphBudgetBytes - 1)
 
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	if err != nil {
+		t.Fatalf("building the coordinate: %v", err)
+	}
+
 	var logged lockedBuffer
 	adapter := newCallgraphAdapter(exec, extractedOutcome()).
 		WithCallgraphConcurrency(4).
 		WithHostMemory(mem).
 		WithLogger(slog.New(slog.NewTextHandler(&logged, nil)))
+	adapter.cgPoll = time.Millisecond
 
-	if peak := peakConcurrency(t, adapter, exec, 8, 1); peak != 1 {
+	// The line is written only when a worker finds another analysis running, so
+	// one is held open in the executor until the line appears; otherwise every
+	// worker can take the idle fast path and nothing waits.
+	var wg sync.WaitGroup
+	extract := func() {
+		if _, eerr := adapter.Extract(t.Context(), coord, "callgraph", false, ""); eerr != nil {
+			t.Errorf("Extract returned error: %v", eerr)
+		}
+	}
+	wg.Go(extract)
+	for exec.inFlight.Load() < 1 {
+		runtime.Gosched()
+	}
+	for range 7 {
+		wg.Go(extract)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(logged.String(), "callgraph_analysis_waiting_for_memory") && time.Now().Before(deadline) {
+		runtime.Gosched()
+	}
+	close(exec.release)
+	wg.Wait()
+
+	if peak := exec.peak.Load(); peak != 1 {
 		t.Fatalf("%d analyses ran at once, want 1", peak)
 	}
 	for _, want := range []string{"callgraph_analysis_waiting_for_memory", "available_bytes", "per_subprocess_budget_bytes"} {
