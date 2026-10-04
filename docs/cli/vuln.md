@@ -817,7 +817,18 @@ Reachability of 61 finding(s):
   undecided        33 — a recorded negative no search stands behind; none of these is a clean negative
     inferred       31 — no search ran; the negative reads a source-fidelity analysis's silence
     unsearchable    2 — the advisory names no symbol for this module path, so no search was ever possible
+...
+
+Affected modules (2):
+  golang.org/x/crypto@v0.31.0
+    GO-2025-3487 [not reachable in call graph — inferred]
+    GO-2025-0001 [reachable]
+  ...
 ```
+
+Each finding is listed on its own line under its module, with the same
+reachability label `vuln-scan` prints for it. A withdrawn advisory carries its
+retraction date instead of a label.
 
 #### The build the run's answers are about
 

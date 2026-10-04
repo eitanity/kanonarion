@@ -655,7 +655,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain,
+	if perr := printFreshScanResult(ctx, ctr.NegativeSearch, run, rollups, reach, toolchain,
 		nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID)), jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
@@ -748,6 +748,29 @@ func (r *vulnScanRollups) add(coord coordinate.ModuleCoordinate, record vuldomai
 		r.unscannable.add(record.UnscanReason, coord.Path()+"@"+coord.Version(), record.UnscannableReason)
 	case vuldomain.CoverageAnalysed:
 		// Analysed: the findings bucket above is the whole answer.
+	}
+}
+
+// printFreshScanResult prints a scan this process just ran. Its records come
+// from the scan, not from the store, so they have not been through the read-time
+// call-graph search every stored read passes through; they are searched here so
+// the scan states the rung a later read of the same records states. The search
+// sets only an unserialised field, so nothing stored changes.
+func printFreshScanResult(ctx context.Context, searcher negativeSearcher, run vuldomain.WalkScanRun, rollups *vulnScanRollups, reach vulnScanReachability, toolchain vulnScanToolchainJSON, native *nativeWalkRollup, jsonOut bool, stdout io.Writer) error {
+	rollups.searchNegatives(ctx, searcher)
+	return printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, native, jsonOut, stdout)
+}
+
+// searchNegatives puts the affected and withdrawn records through searcher,
+// leaving them as they are when there is no searcher to apply.
+func (r *vulnScanRollups) searchNegatives(ctx context.Context, searcher negativeSearcher) {
+	if searcher == nil {
+		return
+	}
+	for _, bucket := range [][]vulnScanAffected{r.affected, r.withdrawn} {
+		for i := range bucket {
+			searcher.Search(ctx, &bucket[i].record)
+		}
 	}
 }
 

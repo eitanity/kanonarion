@@ -187,7 +187,8 @@ type Container struct {
 	VulnPipelineVersion string
 	// NegativeSearch is the read-time call-graph search over stored negatives.
 	// QueryVuln already applies it; this is for the read paths that go to the
-	// vuln store directly rather than through the query use case.
+	// vuln store directly rather than through the query use case, and for the
+	// records a fresh scan prints without reading them back.
 	NegativeSearch *reachability.NegativeSearcher
 
 	// sbom

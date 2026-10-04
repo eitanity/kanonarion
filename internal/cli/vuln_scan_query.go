@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -257,10 +256,9 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 type scanAffectedModule struct {
 	Coordinate string `json:"coordinate"`
 	Status     string `json:"status"`
-	// Findings carry the rung behind each reachability answer. This command's
-	// text surface prints finding IDs only, so --json is the sole place a
-	// consumer reads a verdict from a scan run, and a negative published without
-	// the rung is a negative published without what was searched to reach it.
+	// Findings carry the rung behind each reachability answer: a negative
+	// published without the rung is a negative published without what was
+	// searched to reach it.
 	Findings []vulnFindingJSON `json:"findings,omitempty"`
 }
 
@@ -512,24 +510,23 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 }
 
 // writeScanModuleFindings prints one findings section: a heading with the module
-// count, then one line per module naming its finding IDs. A withdrawn advisory
-// carries its retraction date, which is the whole reason it is listed apart from
-// the affected set.
+// count, then each module with one line per finding carrying the reachability
+// label `vuln-scan` prints for it. A withdrawn advisory carries its retraction
+// date instead, which is the whole reason it is listed apart from the affected set.
 func writeScanModuleFindings(stdout io.Writer, heading string, modules []scanAffectedModule) {
 	if len(modules) == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(stdout, "\n%s (%d):\n", heading, len(modules))
 	for _, m := range modules {
-		findingIDs := make([]string, 0, len(m.Findings))
+		_, _ = fmt.Fprintf(stdout, "  %s\n", m.Coordinate)
 		for _, f := range m.Findings {
-			id := f.ID
+			line := f.ID + reachabilityLabel(f.VulnerabilityFinding, " [not reachable in call graph]")
 			if f.IsWithdrawn() {
-				id += " (withdrawn " + f.WithdrawnAt.UTC().Format(time.RFC3339) + ")"
+				line += " (withdrawn " + f.WithdrawnAt.UTC().Format(time.RFC3339) + ")"
 			}
-			findingIDs = append(findingIDs, id)
+			_, _ = fmt.Fprintf(stdout, "    %s\n", line)
 		}
-		_, _ = fmt.Fprintf(stdout, "  %s  %s\n", m.Coordinate, strings.Join(findingIDs, "  "))
 	}
 }
 

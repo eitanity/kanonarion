@@ -158,9 +158,10 @@ Two consequences worth knowing before you read a negative:
   Source mode is that silence at its strongest and reports `inferred`; binary
   mode inspected a symbol table with no call graph behind it and reports
   `unconfirmed`. Where the store holds a call graph for the coordinate, that
-  silence is put through kanonarion's own search when you read the finding, which
-  is what can raise it to `confirmed` or `disputed` with no re-scan. A search over
-  a dependency's own graph can confirm a negative in any frame, but contradicts
+  silence is put through kanonarion's own search when you read the finding, and
+  when `vuln-scan` prints it, which is what can raise it to `confirmed` or
+  `disputed` with no re-scan. A search over a dependency's own graph can
+  confirm a negative in any frame, but contradicts
   one only in the frame it was measured in; a path found in another frame is
   reported in the reason and does not change the rung. Which roots that search
   starts from is what decides whether it can confirm at all — see below.
