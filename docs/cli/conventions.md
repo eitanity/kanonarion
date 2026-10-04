@@ -376,10 +376,54 @@ statements, and are absent on the listings that do not:
   the generation served, whether the restriction was lifted, and the flag that
   lifts it. It is stated on every such listing, restricted or not, because a
   consumer reading stdout must be told what the text path's trailing line tells
-  a person. See [The generation this build
-  serves](license.md#the-generation-this-build-serves).
+  a person. See [The generation a listing serves](#the-generation-a-listing-serves).
 
 `licence-list` is the listing that carries both.
+
+### The generation a listing serves
+
+`licence-list`, `native-list`, `interface-list`, `examples-list` and
+`callgraph-list` list per-coordinate records, and each record was produced by
+one pipeline version (for `native-list`, one detection generation). A record from
+a version this build does not serve answers no query: every read of it exits `4`
+and names the re-derivation. These five listings therefore share one contract:
+
+- **By default only records at the version this build serves are listed, one row
+  per coordinate.** The text output says so on its last line before any
+  truncation line:
+
+  ```
+  listing interface records at pipeline 0.6.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+  ```
+
+- **`--all-generations` includes the earlier records.** Each is marked
+  `[superseded generation <version>]` on the text path, and a trailing line
+  counts how many were marked and names the command that re-derives one.
+- **Every row carries its version and `superseded`**, `false` included:
+  `pipeline_version` on four of the listings, `generation` on `native-list`.
+- **The conflict check runs over the rows being listed.** A disagreement inside
+  a version this build does not serve exits `10` only under `--all-generations`.
+- **Under `--json` the document carries a `generation` object** on every
+  invocation, with rows or without:
+
+  ```json
+  {
+    "generation": {
+      "served": "0.6.0",
+      "all_generations": false,
+      "remedy": "--all-generations"
+    }
+  }
+  ```
+
+  `served` is the version this build answers from, to compare against each
+  row's version. `all_generations` says whether the restriction was lifted.
+  `remedy` is the flag that lifts it, and is absent under `--all-generations`,
+  where there is nothing left to lift (see [Measured zeros in
+  JSON](#measured-zeros-in-json)).
+
+`subject` names the rows only (`"interface records"`); the version is never part
+of it, so the ranged truncation line reads `showing interface records 3-4`.
 
 **Nothing is written to stderr by a listing under `--json`.** The one exception
 is not a listing: a selector that names one record and misses exits `4`, and its

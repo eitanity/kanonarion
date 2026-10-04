@@ -486,6 +486,7 @@ type packageSummary struct {
 
 func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
+	var allGenerations bool
 
 	cmd := &cobra.Command{
 		Use: "interface-list [<module>@<version>]",
@@ -494,7 +495,16 @@ func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "List interface records, or packages within a specific module",
+		Long: `interface-list reads back the records 'kanonarion interface' writes, one row
+per module coordinate. Given a module coordinate it lists that module's
+packages instead.
+
+By default only records at the pipeline version this build serves are listed,
+one row per coordinate. A record from an earlier pipeline version answers no
+query, so listing it beside the others would pad the count of what is known.
+--all-generations includes them and marks each one.`,
 		Example: `  kanonarion interface-list
+  kanonarion interface-list --all-generations --limit 0
   kanonarion interface-list github.com/spf13/cobra@v1.8.1
   kanonarion interface-list github.com/spf13/cobra@v1.8.1 --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -504,12 +514,14 @@ func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				return runInterfaceListForModule(cmd.Context(), args[0], jsonOut, stdout, stderr)
 			}
-			return runInterfaceList(cmd.Context(), limit, offset, stdout, stderr)
+			return runInterfaceList(cmd.Context(), limit, offset, allGenerations, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to return without a module arg (0 = unlimited)")
 	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
+	cmd.Flags().BoolVar(&allGenerations, "all-generations", false,
+		"also list records extracted at a superseded pipeline version, which this build does not serve")
 
 	return cmd
 }
@@ -565,7 +577,7 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 	return nil
 }
 
-func runInterfaceList(ctx context.Context, limit, offset int, stdout, stderr io.Writer) error {
+func runInterfaceList(ctx context.Context, limit, offset int, allGenerations bool, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
@@ -573,15 +585,26 @@ func runInterfaceList(ctx context.Context, limit, offset int, stdout, stderr io.
 	}
 	defer func() { _ = cleanup() }()
 
-	return interfaceListWith(ctx, limit, offset, ctr.QueryInterface, stdout, stderr)
+	return interfaceListWith(ctx, limit, offset, allGenerations, ctr.QueryInterface, stdout, stderr)
+}
+
+// interfaceListGeneration is interface-list's generation contract.
+func interfaceListGeneration(allGenerations bool) listGeneration {
+	return pipelineGeneration("interface records", ifaceapp.PipelineVersion, allGenerations,
+		"kanonarion interface <module>@<version>")
 }
 
 // interfaceListWith holds the collapsed listing over an injected use case, so
 // the row cap it applies is exercisable without a live store.
-func interfaceListWith(ctx context.Context, limit, offset int, uc QueryInterfaceUseCase, stdout, stderr io.Writer) error {
+func interfaceListWith(ctx context.Context, limit, offset int, allGenerations bool, uc QueryInterfaceUseCase, stdout, stderr io.Writer) error {
+	gen := interfaceListGeneration(allGenerations)
 	// One row more than will be printed: the extra row answers whether the limit
 	// bit, and costs one row rather than a second read.
-	sums, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{Limit: truncationFetchLimit(limit), Offset: offset})
+	sums, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{
+		PipelineVersion: gen.filterVersion(),
+		Limit:           truncationFetchLimit(limit),
+		Offset:          offset,
+	})
 	if err != nil {
 		return fmt.Errorf("listing interface records: %w", err)
 	}
@@ -589,12 +612,12 @@ func interfaceListWith(ctx context.Context, limit, offset int, uc QueryInterface
 	// the notice is built from, and a listing that returned rows never pays it.
 	var zero listZeroScope
 	if len(sums) == 0 {
-		zero, err = interfaceListZeroScope(ctx, offset, uc)
+		zero, err = interfaceListZeroScope(ctx, offset, gen, uc)
 		if err != nil {
 			return err
 		}
 	}
-	return printInterfaceList(sums, jsonOut, limit, offset, zero, stdout, stderr)
+	return printInterfaceList(sums, jsonOut, limit, offset, gen, zero, stdout, stderr)
 }
 
 // interfaceListZeroScope lifts the paging and re-asks the store, so a zero says
@@ -602,8 +625,8 @@ func interfaceListWith(ctx context.Context, limit, offset int, uc QueryInterface
 // past the last one. This listing takes no filter — a module argument routes to
 // interface-list's single-module rendering, which fails with ExitNotFound — so
 // the filter cause cannot arise and the notice never claims it did.
-func interfaceListZeroScope(ctx context.Context, offset int, uc QueryInterfaceUseCase) (listZeroScope, error) {
-	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
+func interfaceListZeroScope(ctx context.Context, offset int, gen listGeneration, uc QueryInterfaceUseCase) (listZeroScope, error) {
+	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{PipelineVersion: gen.filterVersion()})
 	if err != nil {
 		return listZeroScope{}, fmt.Errorf("counting interface records for the zero-result notice: %w", err)
 	}
@@ -670,21 +693,18 @@ func interfaceRecordMiss(ctx context.Context, uc QueryInterfaceUseCase, coord co
 // own row and the command fails afterwards: every module is listed first, so one
 // module in dispute does not delete the answers for all the others, and the run
 // still does not read as clean.
-func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offset int, zero listZeroScope, stdout, stderr io.Writer) error {
+func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offset int, gen listGeneration, zero listZeroScope, stdout, stderr io.Writer) error {
 	sums, truncated := truncateList(sums, limit)
-	trunc := listTruncation{limit: limit, subject: "interface records", truncated: truncated, offset: offset}
+	trunc := listTruncation{limit: limit, subject: gen.subject, truncated: truncated, offset: offset}
 	if jsonOut {
 		type interfaceListEntry struct {
 			Module  string `json:"module"`
 			Version string `json:"version"`
 			Status  string `json:"status"`
 			// PipelineVersion is the extraction logic that produced the record,
-			// and Superseded says this build does not serve it. Without the
-			// pair a consumer reads a listed record as an available one and
-			// finds every query about it empty. Both halves are emitted on
-			// every row: the half that says "this one IS servable" is false,
-			// and omitting it left the servable rows looking like rows the
-			// pair was never computed for.
+			// and Superseded says this build does not serve it. Both halves are
+			// emitted on every row: omitting the false half would leave the
+			// servable rows looking like rows the pair was never computed for.
 			PipelineVersion string `json:"pipeline_version"`
 			Superseded      bool   `json:"superseded"`
 			PackageCount    int    `json:"package_count"`
@@ -699,7 +719,7 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 					Module: s.ModulePath, Version: s.ModuleVersion,
 					Status: "Conflict", Conflict: s.Conflict.Error(),
 					PipelineVersion: s.PipelineVersion,
-					Superseded:      s.PipelineVersion != ifaceapp.PipelineVersion,
+					Superseded:      gen.superseded(s.PipelineVersion),
 				})
 				continue
 			}
@@ -708,7 +728,7 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 				Version:         s.ModuleVersion,
 				Status:          s.OverallStatus.String(),
 				PipelineVersion: s.PipelineVersion,
-				Superseded:      s.PipelineVersion != ifaceapp.PipelineVersion,
+				Superseded:      gen.superseded(s.PipelineVersion),
 				PackageCount:    s.PackageCount,
 			})
 		}
@@ -716,64 +736,59 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 		if len(entries) == 0 {
 			empty = &zero
 		}
-		if derr := writeListDocument(stdout, entries, trunc, empty); derr != nil {
+		if derr := writeListDocumentWith(stdout, entries, trunc, empty, listDocumentFacts{
+			generation: gen.statement(),
+		}); derr != nil {
 			return derr
 		}
-		if len(jsonConflicts) > 0 {
-			return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
-				len(jsonConflicts), errors.Join(jsonConflicts...))
-		}
-		return nil
+		return interfaceListConflictErr(jsonConflicts)
 	}
 	if len(sums) == 0 {
 		return writeListZeroNotice(stdout, zero)
 	}
 	var conflicts []error
-	supersededRows := 0
+	superseded := 0
 	for _, s := range sums {
+		mark := gen.mark(s.PipelineVersion)
+		if mark != "" {
+			superseded++
+		}
 		if s.Conflict != nil {
 			conflicts = append(conflicts, s.Conflict)
-			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %s\n",
+			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %s%s\n",
 				s.ModulePath+"@"+s.ModuleVersion, "CONFLICT",
-				"run: kanonarion interface "+s.ModulePath+"@"+s.ModuleVersion+" --history"); err != nil {
+				"run: kanonarion interface "+s.ModulePath+"@"+s.ModuleVersion+" --history", mark); err != nil {
 				return fmt.Errorf("writing output: %w", err)
 			}
 			continue
-		}
-		superseded := ""
-		if s.PipelineVersion != ifaceapp.PipelineVersion {
-			superseded = "  [superseded pipeline " + s.PipelineVersion + "]"
-			supersededRows++
 		}
 		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d package(s)%s\n",
 			s.ModulePath+"@"+s.ModuleVersion,
 			s.OverallStatus.String(),
 			s.PackageCount,
-			superseded,
+			mark,
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}
-	// A listed record this build will not serve is still a listed record; the
-	// row says so, and the footer says how many and what to do, so an operator
-	// does not read the listing as an inventory of answerable modules.
-	if supersededRows > 0 {
-		if _, err := fmt.Fprintf(stdout,
-			"%d of %d listed record(s) were produced by superseded extraction logic; this build "+
-				"serves pipeline %s and answers no query from them. Re-extract one:\n"+
-				"  kanonarion interface <module>@<version>\n",
-			supersededRows, len(sums), ifaceapp.PipelineVersion); err != nil {
-			return fmt.Errorf("writing superseded notice: %w", err)
-		}
+	if gerr := gen.writeNotice(stdout, superseded, len(sums)); gerr != nil {
+		return gerr
 	}
 	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
 		return terr
 	}
 	// Every module is listed first, then the command fails. A module whose
 	// records disagree must not be reported as a clean run.
-	if len(conflicts) > 0 {
-		return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
-			len(conflicts), errors.Join(conflicts...))
+	return interfaceListConflictErr(conflicts)
+}
+
+// interfaceListConflictErr fails the run when the listed rows held a disputed
+// coordinate. It sees only the rows being listed, so a disagreement inside a
+// generation this build does not serve is reported only under --all-generations.
+func interfaceListConflictErr(conflicts []error) error {
+	if len(conflicts) == 0 {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
+		len(conflicts), errors.Join(conflicts...))
 }

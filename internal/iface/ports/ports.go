@@ -173,6 +173,11 @@ type InterfaceFilter struct {
 	// away. Restriction happens before that composition.
 	Coordinate *coordinate.ModuleCoordinate
 
+	// PipelineVersion restricts the listing to one generation; empty is every
+	// generation. It applies before the collapse and the paging, so a page
+	// counts only the generation asked for.
+	PipelineVersion string
+
 	Limit  int // 0: no limit
 	Offset int
 }

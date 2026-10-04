@@ -94,6 +94,7 @@ target](walk.md#declaring-the-build-target---target).
 ```
 kanonarion examples-list
 kanonarion examples-list --limit 100
+kanonarion examples-list --all-generations --limit 0
 ```
 
 **Flags:**
@@ -101,8 +102,16 @@ kanonarion examples-list --limit 100
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory |
+| `--all-generations` | `false` | Also list records extracted at a superseded pipeline version, marking each one |
 | `--limit` | `50` | Maximum records to show (0 = unlimited) |
 | `--offset` | `0` | Skip this many records before listing |
+
+By default the listing shows only records at the pipeline version this build
+serves, one row per coordinate, and says so on its last line.
+`--all-generations` includes records from earlier pipeline versions and marks
+each one. Every JSON row carries `pipeline_version` and `superseded`, and the
+document carries a `generation` object. See [The generation a listing
+serves](conventions.md#the-generation-a-listing-serves).
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).

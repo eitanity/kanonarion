@@ -156,14 +156,16 @@ func TestPrintInterfaceList_MarksRecordsThisBuildWillNotServe(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := printInterfaceList(sums, false, 0, 0, listZeroScope{}, &stdout, &stderr); err != nil {
+	// The rows only reach the page together under --all-generations; the
+	// default asks the store for the served generation alone.
+	if err := printInterfaceList(sums, false, 0, 0, interfaceListGeneration(true), listZeroScope{}, &stdout, &stderr); err != nil {
 		t.Fatalf("printInterfaceList: %v", err)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "[superseded pipeline "+supersededPipeline+"]") {
+	if !strings.Contains(out, "[superseded generation "+supersededPipeline+"]") {
 		t.Errorf("a listed record this build will not serve is not marked:\n%s", out)
 	}
-	if !strings.Contains(out, "1 of 2 listed record(s) were produced by superseded extraction logic") {
+	if !strings.Contains(out, "1 of 2 listed record(s) were extracted at a superseded pipeline version") {
 		t.Errorf("the listing does not count what it will not answer from:\n%s", out)
 	}
 	fresh := ""

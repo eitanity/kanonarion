@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -624,9 +625,17 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 	             overall_status, package_count, extracted_at, content_hash
 	      FROM interface_records`
 	var args []any
+	var where []string
 	if filter.Coordinate != nil {
-		q += ` WHERE module_path = ? AND module_version = ?`
+		where = append(where, "module_path = ? AND module_version = ?")
 		args = append(args, filter.Coordinate.Path(), filter.Coordinate.Version())
+	}
+	if filter.PipelineVersion != "" {
+		where = append(where, "pipeline_version = ?")
+		args = append(args, filter.PipelineVersion)
+	}
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, " AND ")
 	}
 	q += ` ORDER BY extracted_at DESC, rowid DESC`
 

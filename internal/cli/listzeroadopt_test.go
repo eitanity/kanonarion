@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	exapp "github.com/eitanity/kanonarion/internal/example/application"
+	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	"strings"
 	"testing"
 	"time"
@@ -45,8 +47,8 @@ func decodeZeroNotice(t *testing.T, stderr string) listZeroJSON {
 func populatedInterfaceList() *testfakes.FakeQueryInterface {
 	uc := testfakes.NewFakeQueryInterface()
 	uc.SetList([]ifaceports.InterfaceSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PackageCount: 2},
-		{ModulePath: "example.com/dep", ModuleVersion: "v2.0.0", PackageCount: 1},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: ifaceapp.PipelineVersion, PackageCount: 2},
+		{ModulePath: "example.com/dep", ModuleVersion: "v2.0.0", PipelineVersion: ifaceapp.PipelineVersion, PackageCount: 1},
 	})
 	return uc
 }
@@ -54,8 +56,8 @@ func populatedInterfaceList() *testfakes.FakeQueryInterface {
 func populatedExamplesList() *testfakes.FakeQueryExamples {
 	uc := testfakes.NewFakeQueryExamples()
 	uc.SetList([]exports.ExampleSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", ExampleCount: 3},
-		{ModulePath: "example.com/dep", ModuleVersion: "v2.0.0", ExampleCount: 1},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: exapp.PipelineVersion, ExampleCount: 3},
+		{ModulePath: "example.com/dep", ModuleVersion: "v2.0.0", PipelineVersion: exapp.PipelineVersion, ExampleCount: 1},
 	})
 	return uc
 }
@@ -195,7 +197,7 @@ func TestRunInterfaceList_ZeroNamesItsScope(t *testing.T) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := interfaceListWith(context.Background(), 20, offset, uc, &stdout, &stderr); err != nil {
+			if err := interfaceListWith(context.Background(), 20, offset, false, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("interfaceListWith: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -235,7 +237,7 @@ func TestRunExamplesList_ZeroNamesItsScope(t *testing.T) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runExamplesList(context.Background(), 20, offset, uc, &stdout, &stderr); err != nil {
+			if err := runExamplesList(context.Background(), 20, offset, false, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runExamplesList: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -565,7 +567,7 @@ func emptyListingSurfaces(t *testing.T) []listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := interfaceListWith(context.Background(), limit, offset,
+			if err := interfaceListWith(context.Background(), limit, offset, false,
 				testfakes.NewFakeQueryInterface(), &stdout, &stderr); err != nil {
 				t.Fatalf("interfaceListWith: %v", err)
 			}
@@ -575,7 +577,7 @@ func emptyListingSurfaces(t *testing.T) []listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runExamplesList(context.Background(), limit, offset,
+			if err := runExamplesList(context.Background(), limit, offset, false,
 				testfakes.NewFakeQueryExamples(), &stdout, &stderr); err != nil {
 				t.Fatalf("runExamplesList: %v", err)
 			}
@@ -585,7 +587,7 @@ func emptyListingSurfaces(t *testing.T) []listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runCallGraphList(context.Background(), "", limit, offset,
+			if err := runCallGraphList(context.Background(), "", limit, offset, false,
 				testfakes.NewFakeQueryCallGraph(), &stdout, &stderr); err != nil {
 				t.Fatalf("runCallGraphList: %v", err)
 			}

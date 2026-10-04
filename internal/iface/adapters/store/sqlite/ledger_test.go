@@ -1118,3 +1118,65 @@ func TestLedger_IdenticalGenerationSeesThroughARefetchOfTheSameTree(t *testing.T
 		t.Fatalf("content hash = %q, want the generation already held (%q)", got.ContentHash, held.ContentHash)
 	}
 }
+
+// TestLedger_ListRestrictedToOneGeneration pins that the generation filter
+// selects rows before the collapse and the paging: a page counts only the
+// generation asked for, and the unfiltered listing is the control that the
+// other generation is held.
+func TestLedger_ListRestrictedToOneGeneration(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	artefact := fetchtest.ZipArtefact("same-bytes=").String()
+	const earlier = "0.0.1"
+
+	a := mustCoord(t, "example.com/a", "v1.0.0")
+	b := mustCoord(t, "example.com/b", "v1.0.0")
+	old := ledgerRecord(t, a, domain2.InterfaceStatusPartial, []string{"New"},
+		time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), artefact)
+	old.PipelineVersion = earlier
+	var h domain2.InterfaceRecordHasher
+	old, err := h.SetContentHash(old)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	for _, r := range []domain2.InterfaceRecord{
+		ledgerRecord(t, a, domain2.InterfaceStatusExtracted, []string{"New", "Close"},
+			time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), artefact),
+		old,
+		ledgerRecord(t, b, domain2.InterfaceStatusExtracted, []string{"Open"},
+			time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC), artefact),
+	} {
+		if err := s.PutInterfaceRecord(ctx, r); err != nil {
+			t.Fatalf("PutInterfaceRecord: %v", err)
+		}
+	}
+
+	every, err := s.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
+	if err != nil {
+		t.Fatalf("ListInterfaceRecords: %v", err)
+	}
+	if len(every) != 3 {
+		t.Fatalf("the unfiltered listing returned %d rows, want 3 (a at two pipelines, b)", len(every))
+	}
+	served, err := s.ListInterfaceRecords(ctx, ports.InterfaceFilter{PipelineVersion: ledgerPipeline})
+	if err != nil {
+		t.Fatalf("ListInterfaceRecords at one pipeline: %v", err)
+	}
+	if len(served) != 2 {
+		t.Fatalf("a generation-scoped listing returned %d rows, want 2: %+v", len(served), served)
+	}
+	for _, sum := range served {
+		if sum.PipelineVersion != ledgerPipeline {
+			t.Errorf("listed %s at pipeline %s, want only %s", sum.ModulePath, sum.PipelineVersion, ledgerPipeline)
+		}
+	}
+	// The newest row is the earlier generation's: a filter applied after the
+	// paging would hand back that row as the first page and leave it empty.
+	page, err := s.ListInterfaceRecords(ctx, ports.InterfaceFilter{PipelineVersion: ledgerPipeline, Limit: 1})
+	if err != nil {
+		t.Fatalf("ListInterfaceRecords at one pipeline with a limit: %v", err)
+	}
+	if len(page) != 1 || page[0].PipelineVersion != ledgerPipeline {
+		t.Errorf("limit 1 at one pipeline returned %+v, want one row at %s", page, ledgerPipeline)
+	}
+}

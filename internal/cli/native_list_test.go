@@ -88,7 +88,7 @@ func nativeSurface(t *testing.T) listingSurface {
 	return listingSurface{
 		name:       "native-list",
 		population: truncPopulation,
-		subject:    "native records at generation " + nativedomain.PipelineFingerprint(),
+		subject:    "native records",
 		listCalls:  func() int { return uc.listCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
@@ -191,7 +191,8 @@ func TestNativeList_JSONIsOneDocumentHoldingOneArray(t *testing.T) {
 
 // The envelope is the one this store's listings already have. A third shape is
 // a decision nobody needs to make twice, so it is compared key for key against
-// two siblings rather than described in a comment.
+// the per-coordinate listings that state a generation, and against a listing
+// that states none, which must differ by exactly the generation object.
 func TestNativeList_EnvelopeMatchesItsSiblingsKeyForKey(t *testing.T) {
 	native, _, err := runNativeListFor(t,
 		[]nativeports.NativeSummary{nativeSummaryFixture(t, "example.com/a", nativedomain.PresenceAbsent)},
@@ -200,7 +201,7 @@ func TestNativeList_EnvelopeMatchesItsSiblingsKeyForKey(t *testing.T) {
 		t.Fatalf("nativeListWith: %v", err)
 	}
 
-	for _, sibling := range []listingSurface{interfaceSurface(), vulnScanSurface()} {
+	for _, sibling := range []listingSurface{interfaceSurface(), licenseSurface(), callGraphSurface(), examplesSurface()} {
 		t.Run(sibling.name, func(t *testing.T) {
 			other, _ := sibling.run(t, 3, 0, true)
 			if got, want := jsonKeySet(t, native), jsonKeySet(t, other); got != want {
@@ -208,6 +209,13 @@ func TestNativeList_EnvelopeMatchesItsSiblingsKeyForKey(t *testing.T) {
 			}
 		})
 	}
+	t.Run("vuln-scan-list", func(t *testing.T) {
+		other, _ := vulnScanSurface().run(t, 3, 0, true)
+		want := "generation," + jsonKeySet(t, other)
+		if got := jsonKeySet(t, native); got != want {
+			t.Errorf("native-list envelope keys = %s, want vuln-scan-list's plus generation: %s", got, want)
+		}
+	})
 }
 
 // jsonKeySet renders a JSON object's top-level keys, sorted, as one comparable

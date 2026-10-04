@@ -554,12 +554,17 @@ LIMIT 2`
 func (s *Store) ListExampleRecords(ctx context.Context, filter ports.ExampleFilter) ([]ports.ExampleSummary, error) {
 	// No LIMIT or OFFSET here: paging happens after the collapse, on modules
 	// rather than rows.
-	const q = `SELECT module_path, module_version, pipeline_version,
+	q := `SELECT module_path, module_version, pipeline_version,
 	             overall_status, example_count, extracted_at, content_hash
-	      FROM example_records
-	      ORDER BY extracted_at DESC, rowid DESC`
+	      FROM example_records`
+	var args []any
+	if filter.PipelineVersion != "" {
+		q += ` WHERE pipeline_version = ?`
+		args = append(args, filter.PipelineVersion)
+	}
+	q += ` ORDER BY extracted_at DESC, rowid DESC`
 
-	rows, err := s.db.DB().QueryContext(ctx, q)
+	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing example records: %w", err)
 	}

@@ -622,9 +622,9 @@ func TestRunLicenseList_TextAndDocumentAgreeOnTheGeneration(t *testing.T) {
 	}
 }
 
-// Every other listing leaves the statement nil, so its document keeps exactly
-// the key set it had. The generation field is license-list's, not a new key on
-// every listing in the tree.
+// A listing that makes no generation statement leaves it nil, so its document
+// keeps exactly the key set it had. The generation field belongs to the
+// per-coordinate listings, not to every listing in the tree.
 func TestListDocument_CarriesNoGenerationUnlessTheListingMakesOne(t *testing.T) {
 	withJSON(t, true)
 	var stdout bytes.Buffer

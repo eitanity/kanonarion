@@ -209,6 +209,7 @@ kanonarion interface-list [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
+| `--all-generations` | `false` | Also list records extracted at a superseded pipeline version, marking each one |
 | `--limit` | `50` | Maximum records to show (`0` = unlimited) |
 | `--offset` | `0` | Skip this many records before listing |
 
@@ -219,21 +220,27 @@ Under `--json` the command answers with one object carrying `records` and the
 paging state, not a bare array, and writes nothing to stderr — see [Listing
 documents](conventions.md#listing-documents).
 
+By default the listing shows only records at the pipeline version this build
+serves, one row per coordinate, and says so on its last line.
+`--all-generations` includes records from earlier pipeline versions and marks
+each one. Every JSON row carries `pipeline_version` and `superseded`, and the
+document carries a `generation` object. A conflict inside a superseded pipeline
+version exits `10` only under `--all-generations`. See [The generation a
+listing serves](conventions.md#the-generation-a-listing-serves).
+
 **Example:**
 
 ```
 $ kanonarion interface-list
 github.com/spf13/cobra@v1.8.1               Extracted    1 package(s)
-github.com/spf13/pflag@v1.0.5               Extracted    1 package(s)  [superseded pipeline 0.3.0]
-1 of 2 listed record(s) were produced by superseded extraction logic; this build serves
-pipeline 0.6.0 and answers no query from them. Re-extract one:
+listing interface records at pipeline 0.6.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+
+$ kanonarion interface-list --all-generations
+github.com/spf13/cobra@v1.8.1               Extracted    1 package(s)
+github.com/spf13/pflag@v1.0.5               Extracted    1 package(s)  [superseded generation 0.3.0]
+1 of 2 listed record(s) were extracted at a superseded pipeline version; this build serves 0.6.0 and answers no query from them. Re-extract one:
   kanonarion interface <module>@<version>
 ```
-
-The listing shows every stored record whatever produced it: a marked row says
-the record is there and that no query will be answered from it. `--json` carries
-the same as `pipeline_version` and `superseded` on every row — `superseded:
-false` is what says a record IS servable.
 
 ### `symbol-find`
 

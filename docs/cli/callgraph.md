@@ -1079,6 +1079,13 @@ List modules with extracted call graph records, newest first. The optional
 `<module>` argument filters to one module path, matched for **exact equality** —
 `github.com/spf13/cobra` matches, `github.com/spf13` does not.
 
+By default only records at the pipeline version this build serves are listed,
+and the last line says so; every coordinate the default listing prints is one
+`callgraph-show` answers. `--all-generations` includes records from earlier
+pipeline versions, one row per coordinate and version, and marks each earlier
+row `[superseded generation <version>]`. See [The generation a listing
+serves](conventions.md#the-generation-a-listing-serves).
+
 **One line per coordinate**, not per stored record: a module re-analysed
 sixty-five times occupies one row. The listing reports what the ledger holds and
 does not compose it, so where a coordinate holds more than one generation the
@@ -1087,9 +1094,10 @@ recently extracted one:
 
 ```
 $ kanonarion callgraph-list
-golang.org/x/text@v0.17.0        0.5.0  Extracted  5916 nodes 48874 edges
-golang.org/x/net@v0.33.0         0.5.0  Extracted  4820 nodes 40116 edges  [2 generations; counts from 2026-08-23T23:56:37Z]
-golang.org/x/tools@v0.49.0       0.5.0  2 generations state different counts, status or completeness; run: kanonarion callgraph-show golang.org/x/tools@v0.49.0 --history
+golang.org/x/text@v0.42.0              0.7.0  Extracted  5931 nodes 48484 edges
+github.com/spf13/cobra@v1.10.2         0.7.0  Extracted  1404 nodes  6583 edges  [2 generations; counts from 2026-09-20T11:30:56.168419348Z]
+github.com/eitanity/kanonarion@local   0.7.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show github.com/eitanity/kanonarion@local --history
+listing call graph records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 ```
 
 Those counts belong to the generation the row names, which is **not**
@@ -1112,7 +1120,7 @@ compose to a served answer, and generations stating identical counts can still
 conflict on their contents. `callgraph-show` is what settles that.
 
 In JSON, a coordinate with one generation carries `module`, `version`,
-`pipeline_version`, `status`, `node_count`, `edge_count` and
+`pipeline_version`, `superseded`, `status`, `node_count`, `edge_count` and
 `generations_differ`. One with several carries those plus `counts_from` — the
 timestamp of the generation the top-level counts came from — and a `generations`
 array of `extracted_at`, `status`, `node_count`, `edge_count` and
@@ -1127,15 +1135,16 @@ terminal is the only thing it costs here.
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--all-generations` | `false` | Also list records extracted at a superseded pipeline version, marking each one |
 | `--limit` | `20` | Maximum records to show (`0` = unlimited) |
+| `--offset` | `0` | Skip this many records before listing |
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
-Under `--json` the command answers with one object carrying `records` and the
-paging state, not a bare array, and writes nothing to stderr — see [Listing
-documents](conventions.md#listing-documents).
-| `--offset` | `0` | Skip this many records before listing |
+Under `--json` the command answers with one object carrying `records`, the
+paging state and the `generation` object, not a bare array, and writes nothing
+to stderr — see [Listing documents](conventions.md#listing-documents).
 
 A zero result names its own scope — whether the store is empty, the filter
 matched nothing, or `--offset` skipped past the end — per

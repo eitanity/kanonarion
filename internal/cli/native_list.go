@@ -165,18 +165,16 @@ func (f nativeListFlags) filter() nativeports.NativeFilter {
 	}
 }
 
-// subject names the listing's rows in the reader's terms, and states which
-// generation they were drawn from.
-//
-// The generation is in the subject rather than in a field of its own so the
-// listing document keeps exactly the key set every other listing on this store
-// emits, and a reader of the truncation line is told the scope of the rows it
-// is describing in the same sentence.
-func (f nativeListFlags) subject() string {
-	if f.allGenerations {
-		return "native records at every generation"
+// nativeListGeneration is native-list's generation contract, in the detection
+// ledger's words: a native record is keyed on a detection generation, not a
+// pipeline version alone.
+func nativeListGeneration(allGenerations bool) listGeneration {
+	return listGeneration{
+		served: nativedomain.PipelineFingerprint(), all: allGenerations, subject: "native records",
+		at: "generation", servedNoun: "generation", supersededNoun: "generation",
+		producedAt: "taken at a superseded detection generation",
+		redo:       "Re-measure one", produce: "kanonarion native <module>@<version>",
 	}
-	return "native records at generation " + nativedomain.PipelineFingerprint()
 }
 
 func runNativeList(ctx context.Context, f nativeListFlags, stdout, stderr io.Writer) error {
@@ -343,13 +341,13 @@ func nativePresencesHeld(sums []nativeports.NativeSummary) []string {
 }
 
 // toNativeListEntry projects one summary into the row both output modes carry.
-func toNativeListEntry(s nativeports.NativeSummary) nativeListEntry {
+func toNativeListEntry(s nativeports.NativeSummary, gen listGeneration) nativeListEntry {
 	entry := nativeListEntry{
 		Module:           s.Coordinate.Path(),
 		Version:          s.Coordinate.Version(),
 		Presence:         string(s.Presence),
 		Generation:       s.Generation,
-		Superseded:       s.Generation != nativedomain.PipelineFingerprint(),
+		Superseded:       gen.superseded(s.Generation),
 		ArtefactIdentity: s.ArtefactIdentity,
 		Components:       []nativeListComponent{},
 		LinkedLibraries:  []string{},
@@ -399,12 +397,13 @@ func nativeListDetail(e nativeListEntry) string {
 // clean.
 func printNativeList(sums []nativeports.NativeSummary, f nativeListFlags, zero listZeroScope, stdout, stderr io.Writer) error {
 	sums, truncated := truncateList(sums, f.limit)
-	trunc := listTruncation{limit: f.limit, subject: f.subject(), truncated: truncated, offset: f.offset}
+	gen := nativeListGeneration(f.allGenerations)
+	trunc := listTruncation{limit: f.limit, subject: gen.subject, truncated: truncated, offset: f.offset}
 
 	entries := make([]nativeListEntry, 0, len(sums))
 	var conflicts []error
 	for _, s := range sums {
-		entries = append(entries, toNativeListEntry(s))
+		entries = append(entries, toNativeListEntry(s, gen))
 		if s.Conflict != nil {
 			conflicts = append(conflicts, s.Conflict)
 		}
@@ -415,7 +414,9 @@ func printNativeList(sums []nativeports.NativeSummary, f nativeListFlags, zero l
 		if len(entries) == 0 {
 			empty = &zero
 		}
-		if derr := writeListDocument(stdout, entries, trunc, empty); derr != nil {
+		if derr := writeListDocumentWith(stdout, entries, trunc, empty, listDocumentFacts{
+			generation: gen.statement(),
+		}); derr != nil {
 			return derr
 		}
 		return nativeListConflictErr(conflicts)
@@ -424,10 +425,11 @@ func printNativeList(sums []nativeports.NativeSummary, f nativeListFlags, zero l
 	if len(entries) == 0 {
 		return writeListZeroNotice(stdout, zero)
 	}
-	if perr := printNativeListRows(stdout, entries); perr != nil {
+	superseded, perr := printNativeListRows(stdout, gen, entries)
+	if perr != nil {
 		return perr
 	}
-	if gerr := writeNativeListGenerationNotice(stdout, f, entries); gerr != nil {
+	if gerr := gen.writeNotice(stdout, superseded, len(entries)); gerr != nil {
 		return gerr
 	}
 	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
@@ -436,59 +438,24 @@ func printNativeList(sums []nativeports.NativeSummary, f nativeListFlags, zero l
 	return nativeListConflictErr(conflicts)
 }
 
-// printNativeListRows writes the rows themselves.
-func printNativeListRows(stdout io.Writer, entries []nativeListEntry) error {
-	for _, e := range entries {
-		mark := ""
-		if e.Superseded {
-			mark = "  [superseded generation " + e.Generation + "]"
-		}
-		if e.Conflict != "" {
-			mark = "  [CONFLICT: " + e.Conflict + "]"
-		}
-		if _, err := fmt.Fprintf(stdout, "%-55s %-22s %s%s\n",
-			e.Module+"@"+e.Version, e.Presence, nativeListDetail(e), mark); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-	}
-	return nil
-}
-
-// writeNativeListGenerationNotice states which generation the rows were drawn
-// from.
-//
-// It prints on every listing, not only when something was excluded. A count of
-// native records is read as a count of what is known about a build, and a
-// reader who is not told the rows were restricted to one generation has no way
-// to tell a restricted count from a whole one.
-func writeNativeListGenerationNotice(stdout io.Writer, f nativeListFlags, entries []nativeListEntry) error {
-	if !f.allGenerations {
-		_, err := fmt.Fprintf(stdout,
-			"listing native records at generation %s, the generation this build serves; "+
-				"records from a superseded generation are not shown (--all-generations)\n",
-			nativedomain.PipelineFingerprint())
-		if err != nil {
-			return fmt.Errorf("writing generation notice: %w", err)
-		}
-		return nil
-	}
+// printNativeListRows writes the rows themselves and returns how many it
+// marked superseded.
+func printNativeListRows(stdout io.Writer, gen listGeneration, entries []nativeListEntry) (int, error) {
 	superseded := 0
 	for _, e := range entries {
+		mark := gen.mark(e.Generation)
 		if e.Superseded {
 			superseded++
 		}
+		if e.Conflict != "" {
+			mark += "  [CONFLICT: " + e.Conflict + "]"
+		}
+		if _, err := fmt.Fprintf(stdout, "%-55s %-22s %s%s\n",
+			e.Module+"@"+e.Version, e.Presence, nativeListDetail(e), mark); err != nil {
+			return 0, fmt.Errorf("writing output: %w", err)
+		}
 	}
-	if superseded == 0 {
-		return nil
-	}
-	_, err := fmt.Fprintf(stdout,
-		"%d of %d listed record(s) were taken at a superseded detection generation; this build serves %s "+
-			"and answers no query from them. Re-measure one:\n  kanonarion native <module>@<version>\n",
-		superseded, len(entries), nativedomain.PipelineFingerprint())
-	if err != nil {
-		return fmt.Errorf("writing superseded notice: %w", err)
-	}
-	return nil
+	return superseded, nil
 }
 
 // nativeListConflictErr fails the run when the page held a disputed coordinate.

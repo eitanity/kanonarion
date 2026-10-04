@@ -999,44 +999,10 @@ type licenseListFlags struct {
 	limit, offset  int
 }
 
-// generation is the pipeline version the listing restricts to, empty under
-// --all-generations.
-func (f licenseListFlags) generation() string {
-	if f.allGenerations {
-		return ""
-	}
-	return licapp.PipelineVersion
-}
-
-// licenseListGenerationJSON is the listing document's statement of which record
-// generation answered.
-//
-// The text path prints the same fact as a line under the rows. It is a field of
-// its own rather than words folded into `subject`, because the truncation line
-// renders the subject mid-sentence — "showing license records 3-4" — and a
-// subject carrying a version reads as a page range applied to a version.
-type licenseListGenerationJSON struct {
-	// Served is the pipeline version this build answers from, stated whether or
-	// not the listing was restricted to it: a consumer comparing a row's
-	// pipeline_version against it needs the value in both modes.
-	Served string `json:"served"`
-	// AllGenerations says the restriction was lifted. It is the field that names
-	// the state, and it is present at both values.
-	AllGenerations bool `json:"all_generations"`
-	// Remedy is the flag that lifts the restriction, and it is empty under
-	// --all-generations because there is nothing left to lift — conventions.md
-	// keeps omitempty for strings on exactly that reading, with the field beside
-	// it naming the state the document is in.
-	Remedy string `json:"remedy,omitempty"`
-}
-
-// generationStatement renders the generation half of the document.
-func (f licenseListFlags) generationStatement() licenseListGenerationJSON {
-	out := licenseListGenerationJSON{Served: licapp.PipelineVersion, AllGenerations: f.allGenerations}
-	if !f.allGenerations {
-		out.Remedy = "--all-generations"
-	}
-	return out
+// licenseListGeneration is license-list's generation contract.
+func licenseListGeneration(allGenerations bool) listGeneration {
+	return pipelineGeneration("license records", licapp.PipelineVersion, allGenerations,
+		"kanonarion license <module>@<version>")
 }
 
 // postFiltered reports whether this request's page is assembled in the CLI
@@ -1210,13 +1176,13 @@ type licenseListEntry struct {
 
 // toLicenseListEntry projects one summary onto the row, applying the operator's
 // recorded determination where there is one.
-func toLicenseListEntry(s ports.LicenseSummary, coord coordinate.ModuleCoordinate, overrides domain.LicenseOverrideSet) licenseListEntry {
+func toLicenseListEntry(s ports.LicenseSummary, coord coordinate.ModuleCoordinate, overrides domain.LicenseOverrideSet, gen listGeneration) licenseListEntry {
 	entry := licenseListEntry{
 		Module:          s.ModulePath,
 		Version:         s.ModuleVersion,
 		CopyrightStatus: s.CopyrightStatus.String(),
 		PipelineVersion: s.PipelineVersion,
-		Superseded:      s.PipelineVersion != licapp.PipelineVersion,
+		Superseded:      gen.superseded(s.PipelineVersion),
 		Source:          "scanner",
 	}
 	if s.Conflict != nil {
@@ -1251,6 +1217,7 @@ func runLicenseList(
 	// here, and a port offset would skip records the CLI's filter had not yet
 	// seen. There the skip is applied below, on the only set that is the
 	// caller's page.
+	gen := licenseListGeneration(f.allGenerations)
 	fetchLimit, fetchOffset := truncationFetchLimit(f.limit), f.offset
 	if f.postFiltered(scope) {
 		fetchLimit, fetchOffset = 0, 0
@@ -1258,7 +1225,7 @@ func runLicenseList(
 	sums, err := uc.ListLicenseRecords(ctx, ports.LicenseFilter{
 		SPDX:            f.spdx,
 		CopyrightStatus: f.copyrightStatus,
-		PipelineVersion: f.generation(),
+		PipelineVersion: gen.filterVersion(),
 		Limit:           fetchLimit,
 		Offset:          fetchOffset,
 	})
@@ -1272,7 +1239,7 @@ func runLicenseList(
 	// rows. It is paid only when a scope was asked for.
 	var census []ports.LicenseSummary
 	if scope != nil {
-		census, err = uc.ListLicenseRecords(ctx, ports.LicenseFilter{PipelineVersion: f.generation()})
+		census, err = uc.ListLicenseRecords(ctx, ports.LicenseFilter{PipelineVersion: gen.filterVersion()})
 		if err != nil {
 			return fmt.Errorf("listing the licence records in scope: %w", err)
 		}
@@ -1301,12 +1268,7 @@ func runLicenseList(
 	}
 
 	sums, truncated := truncateList(sums, f.limit)
-	// The subject stays the bare plural rather than naming the generation in it,
-	// as native-list's does: the ranged form of the truncation line reads
-	// "showing <subject> 3-4", and a subject carrying a version renders that as
-	// "showing license records at pipeline 1.4.0 3-4". The generation is stated
-	// on its own line below instead, on every listing.
-	trunc := listTruncation{limit: f.limit, subject: "license records", truncated: truncated, offset: f.offset}
+	trunc := listTruncation{limit: f.limit, subject: gen.subject, truncated: truncated, offset: f.offset}
 
 	entries := make([]licenseListEntry, 0, len(sums))
 	var conflicts []error
@@ -1315,7 +1277,7 @@ func runLicenseList(
 		if cErr != nil {
 			return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
-		entries = append(entries, toLicenseListEntry(s, coord, overrides))
+		entries = append(entries, toLicenseListEntry(s, coord, overrides, gen))
 		if s.Conflict != nil {
 			conflicts = append(conflicts, s.Conflict)
 		}
@@ -1333,13 +1295,13 @@ func runLicenseList(
 	if jsonOut {
 		if derr := writeListDocumentWith(stdout, entries, trunc, zero, listDocumentFacts{
 			scope:      scope.statement(census),
-			generation: f.generationStatement(),
+			generation: gen.statement(),
 		}); derr != nil {
 			return derr
 		}
 		return licenseListConflictErr(conflicts)
 	}
-	if perr := printLicenseListText(stdout, entries, f, scope, census, zero, trunc); perr != nil {
+	if perr := printLicenseListText(stdout, entries, gen, scope, census, zero, trunc); perr != nil {
 		return perr
 	}
 	// Every module is listed first, then the command fails. A licence in dispute
@@ -1353,7 +1315,7 @@ func runLicenseList(
 func printLicenseListText(
 	stdout io.Writer,
 	entries []licenseListEntry,
-	f licenseListFlags,
+	gen listGeneration,
 	scope *licenceListScope,
 	census []ports.LicenseSummary,
 	zero *listZeroScope,
@@ -1365,15 +1327,16 @@ func printLicenseListText(
 	if zero != nil {
 		return writeListZeroNotice(stdout, *zero)
 	}
+	superseded := 0
 	for _, e := range entries {
-		mark := ""
+		mark := gen.mark(e.PipelineVersion)
 		if e.Superseded {
-			mark = "  [superseded generation " + e.PipelineVersion + "]"
+			superseded++
 		}
 		if e.Conflict != "" {
-			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %-20s %-18s %s\n",
+			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %-20s %-18s %s%s\n",
 				e.Module+"@"+e.Version, "CONFLICT", "unresolved", "-",
-				"run 'kanonarion license "+e.Module+"@"+e.Version+" --history'"); err != nil {
+				"run 'kanonarion license "+e.Module+"@"+e.Version+" --history'", mark); err != nil {
 				return fmt.Errorf("writing output: %w", err)
 			}
 			continue
@@ -1389,7 +1352,7 @@ func printLicenseListText(
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}
-	if gerr := writeLicenseListGenerationNotice(stdout, f, entries); gerr != nil {
+	if gerr := gen.writeNotice(stdout, superseded, len(entries)); gerr != nil {
 		return gerr
 	}
 	return writeListTruncationNotice(stdout, trunc)
@@ -1412,42 +1375,6 @@ func licenceFromEntry(e licenseListEntry) string {
 		return e.Expression
 	}
 	return e.License
-}
-
-// writeLicenseListGenerationNotice states which generation the rows were drawn
-// from.
-//
-// It prints on every listing, not only when something was excluded: a reader who
-// is not told the rows were restricted to one generation has no way to tell a
-// restricted count from a whole one.
-func writeLicenseListGenerationNotice(stdout io.Writer, f licenseListFlags, entries []licenseListEntry) error {
-	if !f.allGenerations {
-		_, err := fmt.Fprintf(stdout,
-			"listing license records at pipeline %s, the version this build serves; "+
-				"records from a superseded pipeline version are not shown (--all-generations)\n",
-			licapp.PipelineVersion)
-		if err != nil {
-			return fmt.Errorf("writing generation notice: %w", err)
-		}
-		return nil
-	}
-	superseded := 0
-	for _, e := range entries {
-		if e.Superseded {
-			superseded++
-		}
-	}
-	if superseded == 0 {
-		return nil
-	}
-	_, err := fmt.Fprintf(stdout,
-		"%d of %d listed record(s) were extracted at a superseded pipeline version; this build serves %s "+
-			"and answers no query from them. Re-extract one:\n  kanonarion license <module>@<version>\n",
-		superseded, len(entries), licapp.PipelineVersion)
-	if err != nil {
-		return fmt.Errorf("writing superseded notice: %w", err)
-	}
-	return nil
 }
 
 // licenseListConflictErr fails the run when the page held a disputed
@@ -1478,7 +1405,9 @@ func licenseListZeroScope(
 	all := census
 	if scope == nil {
 		var err error
-		all, err = uc.ListLicenseRecords(ctx, ports.LicenseFilter{PipelineVersion: f.generation()})
+		all, err = uc.ListLicenseRecords(ctx, ports.LicenseFilter{
+			PipelineVersion: licenseListGeneration(f.allGenerations).filterVersion(),
+		})
 		if err != nil {
 			return listZeroScope{}, fmt.Errorf("counting license records for the zero-result notice: %w", err)
 		}

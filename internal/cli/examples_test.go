@@ -66,10 +66,11 @@ func makeExampleRecord(t *testing.T) exdomain.ExampleRecord {
 func TestRunExamplesList_WithRecords(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	uc.SetList([]exports.ExampleSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", ExampleCount: 1, OverallStatus: exdomain.ExampleStatusFound},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: exapp.PipelineVersion,
+			ExampleCount: 1, OverallStatus: exdomain.ExampleStatusFound},
 	})
 	var buf bytes.Buffer
-	err := runExamplesList(context.Background(), 50, 0, uc, &buf, io.Discard)
+	err := runExamplesList(context.Background(), 50, 0, false, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestRunExamplesList_WithRecords(t *testing.T) {
 func TestRunExamplesList_Empty(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	var buf bytes.Buffer
-	if err := runExamplesList(context.Background(), 50, 0, uc, &buf, io.Discard); err != nil {
+	if err := runExamplesList(context.Background(), 50, 0, false, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "the store holds no example record at all") {
