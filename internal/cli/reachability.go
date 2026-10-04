@@ -638,8 +638,13 @@ type negativeSearchOutput struct {
 	// InRecordedFrame says whether the graph searched is a graph of the build the
 	// record was measured in. It decides what a found path may mean and is
 	// emitted always, never inferred from the fields above.
-	InRecordedFrame bool                      `json:"in_recorded_frame"`
-	Routes          []reachabilityRouteOutput `json:"routes,omitempty"`
+	InRecordedFrame bool `json:"in_recorded_frame"`
+	// GraphsSearched names the stored call graphs the traversal ran over, so the
+	// rung beside it can be checked against the records that produced it. A
+	// standard-library answer names two: the consuming build's graph and the
+	// standard library's own, joined at the first's external leaves.
+	GraphsSearched []string                  `json:"graphs_searched,omitempty"`
+	Routes         []reachabilityRouteOutput `json:"routes,omitempty"`
 	// ReflectiveDispatch is what the search could NOT follow. Where a search ran,
 	// its zero counts are evidence — the graph was looked at and holds no such
 	// site — which an absent key cannot say, so it is emitted rather than omitted.
@@ -698,6 +703,7 @@ func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc)
 		EntryPointPathFound: s.PathFound,
 		WholeGraphPathFound: s.ShippedCodePathFound,
 		InRecordedFrame:     s.InRecordedFrame,
+		GraphsSearched:      s.GraphsSearched,
 		ReflectiveDispatch:  reflectiveDispatchToOutput(s),
 	}
 	// Every route the search found, from either rooting. A route this tool

@@ -277,9 +277,13 @@ func hasSyntheticSymbolMarker(symbol string) bool {
 	return strings.Contains(symbol, "$")
 }
 
+// A leading "internal/" is the standard library's own form of the rule: a
+// module path always carries a dot in its first element, so only std packages
+// reach it.
 func isInternalPkg(path string) bool {
 	return strings.Contains(path, "/internal/") ||
-		strings.HasSuffix(path, "/internal")
+		strings.HasSuffix(path, "/internal") ||
+		strings.HasPrefix(path, "internal/")
 }
 
 // isMainPkg reports whether a function belongs to a command — a package nothing

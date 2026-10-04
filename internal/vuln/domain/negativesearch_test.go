@@ -254,3 +254,68 @@ func TestReachableReflectiveDispatch_CountsOnlyWhatAnEntryPointReaches(t *testin
 		t.Errorf("a nil search reports %d reachable sites", got)
 	}
 }
+
+// TestNegativeSoundness_NamesTheGraphsTheSearchRanOver: a rung is a claim about
+// a measurement, and the records it was made over are part of the claim. One
+// graph is named plainly; two are named as the join they are; none adds
+// nothing, which is what every record written before the field carries.
+func TestNegativeSoundness_NamesTheGraphsTheSearchRanOver(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		graphs []string
+		want   []string
+		absent []string
+	}{
+		{
+			name:   "none named",
+			absent: []string{"The search ran over"},
+		},
+		{
+			name:   "one graph",
+			graphs: []string{"example.com/mod@v1.0.0 (BUILT_WITH_BODIES, 5 nodes, 1 edges)"},
+			want:   []string{"The search ran over the stored call graph of example.com/mod@v1.0.0"},
+			absent: []string{"joined"},
+		},
+		{
+			name:   "two graphs joined",
+			graphs: []string{"example.com/app@local (x)", "stdlib@v1.26.5 (y)"},
+			want: []string{
+				"The search ran over the stored call graph of example.com/app@local (x)",
+				"joined at the call sites where it leaves its own module to that of stdlib@v1.26.5 (y)",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := domain.VulnerabilityFinding{
+				AffectedSymbols: []string{"vulnerable"},
+				Reachable: &domain.ReachabilityResult{
+					IsReachable: false,
+					DerivedBy: domain.ReachabilityDerivation{
+						Analyser: domain.AnalyserGovulncheck, Fidelity: string(domain.ScanModeSource),
+					},
+				},
+				NegativeSearch: &domain.NegativeSearch{
+					Fidelity: "BUILT_WITH_BODIES", EntryPointRoots: 2, ArtifactKind: "Application",
+					GraphsSearched: tc.graphs,
+				},
+			}
+			rung, reason := domain.NegativeSoundness(f)
+			if rung != domain.SoundnessConfirmed {
+				t.Fatalf("soundness = %s (%s)", rung, reason)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(reason, want) {
+					t.Errorf("the reason does not contain %q:\n%s", want, reason)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(reason, absent) {
+					t.Errorf("the reason contains %q, which it should not:\n%s", absent, reason)
+				}
+			}
+		})
+	}
+}

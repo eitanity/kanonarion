@@ -901,6 +901,10 @@ func enrichFinding(f *domain.VulnerabilityFinding, coord coordinate.ModuleCoordi
 			f.FixedIn = fixed
 		}
 		f.AffectedSymbols = collectSymbols(a.EcosystemSpecific.Imports)
+		// The packages those symbols are in, kept beside the flattened list. A
+		// symbol name alone does not say which package it is in, and one coordinate
+		// can hold many — the standard library holds 362.
+		f.AffectedPackages = collectImportPaths(a.EcosystemSpecific.Imports)
 		// An entry that names this module path but no symbol within it is recorded
 		// as such, so a reader can see that symbol-level reachability was never
 		// available for this coordinate rather than inferring it from an empty
@@ -990,6 +994,26 @@ func collectSymbols(imports []osvImport) []string {
 	}
 	sort.Strings(syms)
 	return syms
+}
+
+// collectImportPaths returns the sorted, deduplicated package paths an
+// advisory names symbols in. An import entry naming no package is skipped: a
+// path that is not stated cannot scope anything.
+func collectImportPaths(imports []osvImport) []string {
+	seen := make(map[string]struct{})
+	var paths []string
+	for _, imp := range imports {
+		if imp.Path == "" || len(imp.Symbols) == 0 {
+			continue
+		}
+		if _, ok := seen[imp.Path]; ok {
+			continue
+		}
+		seen[imp.Path] = struct{}{}
+		paths = append(paths, imp.Path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // normaliseFixed v-prefixes a non-empty index fixed version; empty stays empty

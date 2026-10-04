@@ -167,9 +167,10 @@ type Container struct {
 	DiffInterface    DiffInterfaceUseCase
 
 	// callgraph
-	ExtractCallGraph      ExtractCallGraphUseCase
-	ExtractLocalCallGraph ExtractLocalCallGraphUseCase
-	QueryCallGraph        QueryCallGraphUseCase
+	ExtractCallGraph       ExtractCallGraphUseCase
+	ExtractLocalCallGraph  ExtractLocalCallGraphUseCase
+	ExtractStdlibCallGraph ExtractStdlibCallGraphUseCase
+	QueryCallGraph         QueryCallGraphUseCase
 
 	// examples
 	ExtractExample ExtractExampleUseCase
@@ -530,6 +531,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
+	// The recorded chain of custody, read by the stdlib call-graph stage to anchor
+	// its record and by every command asked about the stdlib coordinate.
+	stdlibCustody := stdlibsqlite.New(dbHandle)
+	cgStdlibExtractUC := cgapp.NewExtractStdlibCallGraphUseCase(cgapp.StdlibConfig{
+		Store: cgStore, Analyser: cgAnalyser,
+		Toolchains: newToolchainLocator(goBinary),
+		Custody:    stdlibCustodyProjection{reader: stdlibCustody},
+		Clock:      clk, Stopwatch: stopwatch, Logger: logger,
+	}).WithAudit(factStore)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
@@ -585,7 +595,6 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	queryExtractUC := extractapp.NewQueryExtractionUseCase(extStore)
 
 	// ---- license query / notice / compatibility / diff use cases ----
-	stdlibCustody := stdlibsqlite.New(dbHandle)
 	queryLicenseUC := licapp.NewQueryLicenseUseCaseWithWalks(licStore, walkStore)
 	diffLicenseUC := licapp.NewDiffLicenseUseCase(licStore)
 	checkCompatUC := licapp.NewCheckCompatibilityUseCase(licStore, walkStore)
@@ -666,7 +675,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// reaches a surface, so a negative another analyser only stayed silent about
 	// is answered by a search wherever a graph exists for the coordinate. It
 	// writes nothing: see searchedVulnQuery.
-	negSearcher := reachability.NewNegativeSearcher(cgLoader)
+	negSearcher := reachability.NewNegativeSearcher(cgLoader).
+		WithProjectDirs(walkProjectDirs{walks: queryWalksUC})
 	queryVulnUC := newSearchedVulnQuery(vulnapp.NewQueryVulnUseCase(vulnStore), negSearcher)
 	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, walkStore)
 	diffScanRunsUC := newSearchedDiffScanRuns(vulnapp.NewDiffScanRunsUseCase(vulnStore), negSearcher)
@@ -791,9 +801,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		QueryInterface:   queryIfaceUC,
 		DiffInterface:    diffIfaceUC,
 
-		ExtractCallGraph:      cgExtractUC,
-		ExtractLocalCallGraph: cgLocalExtractUC,
-		QueryCallGraph:        queryCGUC,
+		ExtractCallGraph:       cgExtractUC,
+		ExtractLocalCallGraph:  cgLocalExtractUC,
+		ExtractStdlibCallGraph: cgStdlibExtractUC,
+		QueryCallGraph:         queryCGUC,
 
 		ExtractExample: exExtractUC,
 		QueryExamples:  queryExamplesUC,

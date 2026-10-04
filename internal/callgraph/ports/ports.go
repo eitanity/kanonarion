@@ -168,6 +168,82 @@ type CallGraphAnalyser interface {
 	AnalyserMetadata() AnalyserMetadata
 }
 
+// ToolchainSource is an installed Go toolchain, named by what the analysis
+// needs from it: where its standard-library source is, which command drives it,
+// and which version it says it is.
+//
+// Version is the toolchain's own `go env GOVERSION` ("go1.26.5"), read from the
+// toolchain rather than from the directory holding it — a GOROOT is upgraded in
+// place, so a path says where a toolchain came from and only the toolchain says
+// which one it is.
+type ToolchainSource struct {
+	GoRoot   string
+	GoBinary string
+	Version  string
+}
+
+// ErrToolchainSourceUnavailable means no toolchain on this host supplies the
+// standard library at the version asked for, so there is no source to analyse.
+// It is the standard library's counterpart of ErrModuleNotFetched: nothing was
+// measured, and a record claiming otherwise would be fabricated.
+var ErrToolchainSourceUnavailable = errors.New("no installed toolchain supplies this standard library")
+
+// ToolchainSourceLocator finds the installed toolchain whose standard library
+// is the one a coordinate names.
+//
+// It is a port because locating a toolchain means asking one to name itself,
+// which is a subprocess; the extraction package may not spawn one.
+type ToolchainSourceLocator interface {
+	// LocateToolchain returns the toolchain whose `go env GOVERSION` is
+	// goVersion ("go1.26.5"). It returns ErrToolchainSourceUnavailable when this
+	// host holds none.
+	LocateToolchain(ctx context.Context, goVersion string) (ToolchainSource, error)
+}
+
+// StdlibCustody is the chain-of-custody evidence a standard-library graph
+// record anchors itself to: the artefact identity of the published source
+// tarball for that toolchain version, and the seal over the measurement that
+// established it.
+//
+// It is a projection, not the stdlib domain's own type. The call-graph context
+// needs two strings to stamp on a record and must not take a dependency on
+// another bounded context's record shape to get them.
+type StdlibCustody struct {
+	// ArtefactIdentity names the published source tarball's bytes.
+	ArtefactIdentity string
+	// MeasurementHash is the custody measurement's own content hash, which is
+	// what makes the anchor checkable.
+	MeasurementHash string
+	// Verification is the recorded verification status
+	// ("VerifiedGoDevChecksum", …), carried so a reader can weigh the anchor.
+	Verification string
+}
+
+// StdlibCustodyReader reads the recorded standard-library chain of custody for
+// one toolchain version. Extraction reads it and never writes it, so the port
+// is declared narrowly rather than taken as the whole stdlib store.
+type StdlibCustodyReader interface {
+	// StdlibCustody returns the custody anchor for goVersion ("go1.26.5"). The
+	// bool is false when the ledger holds none.
+	StdlibCustody(ctx context.Context, goVersion string) (StdlibCustody, bool, error)
+}
+
+// StdlibCallGraphAnalyser extracts the standard library's call graph from an
+// installed toolchain's own source tree.
+//
+// It is its own port rather than a third method on CallGraphAnalyser because
+// the input is a toolchain rather than an artefact: there is no zip, no
+// coordinate to fetch, and no build list to pin.
+type StdlibCallGraphAnalyser interface {
+	// AnalyseStdlib analyses the standard library src supplies, recording it at
+	// coord. Failures that are a property of the source are reported in the
+	// record's OverallStatus; only infrastructure errors return a non-nil error.
+	AnalyseStdlib(ctx context.Context, src ToolchainSource, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error)
+
+	// AnalyserMetadata returns the algorithm and version of this implementation.
+	AnalyserMetadata() AnalyserMetadata
+}
+
 // LocalCallGraphAnalyser performs static call graph analysis on a Go module
 // working tree on disk (no zip), used for local-analysis ingestion so
 // kanonarion can resolve callers/callees of its own internal packages

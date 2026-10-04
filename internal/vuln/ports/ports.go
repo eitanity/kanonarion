@@ -833,6 +833,23 @@ type CallGraphLoader interface {
 	Load(ctx context.Context, coord coordinate.ModuleCoordinate) (CallGraphProjection, error)
 }
 
+// WalkProjectDirReader answers where the working tree a walk was rooted at is,
+// for a refusal that has to name the command that analyses it.
+//
+// It exists because the directory is recorded and was being ignored. A
+// project-rooted walk stores the tree it ran in, so a refusal that said "no
+// stored record names the working tree" about such a frame was stating
+// something the store contradicts — and printing a sentence where a command
+// belongs. It is a read of ONE column and is declared narrowly rather than
+// taken as the walk store, because nothing here may walk, scan or write.
+//
+// The bool is false when the walk names no directory, which a coordinate walk
+// legitimately does not. An error is a store fault and leaves the caller with
+// no directory, never with a wrong one.
+type WalkProjectDirReader interface {
+	WalkProjectDir(ctx context.Context, walkID string) (string, bool, error)
+}
+
 // CallGraphProjection is the minimal view of a call graph the reachability
 // analyser consumes: the nodes and the directed call edges between them, plus
 // the fidelity signature that backed them.
@@ -873,6 +890,22 @@ type CallGraphProjection struct {
 	// because this port must stay free of that domain — the rule lives beside
 	// composition and the reachability adapter applies it.
 	ServableAsCacheHit bool
+	// StdlibPackages is the standard-library closure of the build this graph was
+	// taken of: every standard-library import path the go command resolved for
+	// it. It says what the binary CONTAINS, which the graph itself cannot — a
+	// package the build links and never calls holds no node either.
+	//
+	// It is what lets a read continue a traversal into the standard library's own
+	// graph without following edges into packages the binary does not link. Empty
+	// means the record predates the field and the closure is unknown, never that
+	// the build links no standard library: a reader must refuse to act on it
+	// rather than read it as an empty set.
+	StdlibPackages []string
+	// AnalysisRoot is the working tree this graph was taken of, empty for a graph
+	// built from anything else. It is carried so a refusal about this graph can
+	// name the directory a re-analysis must run in, rather than telling the
+	// reader a tree is unnamed when the record names it.
+	AnalysisRoot string
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.

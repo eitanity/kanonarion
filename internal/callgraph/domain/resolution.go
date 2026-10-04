@@ -1,6 +1,28 @@
 package domain
 
-import "strings"
+import (
+	"strings"
+)
+
+// IsStdlibPackage reports whether an import path names a standard-library
+// package, by the go command's own rule: a module path's first element carries
+// a dot and a standard-library path's does not.
+//
+// It is the same test `fetch` applies when it refuses "stdlib" with "missing
+// dot in first path element", and it correctly admits the vendored trees the
+// toolchain links into the same binaries, whose paths begin "vendor/".
+//
+// It takes a PACKAGE path and not a symbol id, deliberately. A node id appends
+// the symbol to the package — "fmt.Println" — and the first element of that is
+// "fmt.Println", which carries a dot and would read as a module. A caller
+// deciding what a node belongs to has the package on the node and must use it.
+func IsStdlibPackage(pkgPath string) bool {
+	if pkgPath == "" {
+		return false
+	}
+	first, _, _ := strings.Cut(pkgPath, "/")
+	return !strings.Contains(first, ".")
+}
 
 // ResolveSymbolModule reports whether symbolID falls under one of the analysed
 // module paths. It returns the longest matching module path and true, or ""

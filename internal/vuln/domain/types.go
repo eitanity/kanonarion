@@ -602,15 +602,31 @@ type ReachabilityResult struct {
 
 // VulnerabilityFinding represents a single vulnerability affecting a module.
 type VulnerabilityFinding struct {
-	ID              string              `json:"id"`
-	Aliases         []string            `json:"aliases,omitzero"`
-	Summary         string              `json:"summary"`
-	Details         string              `json:"details,omitzero"`
-	AffectedRange   string              `json:"affected_range"`
-	FixedIn         string              `json:"fixed_in,omitzero"`
-	Severity        *Severity           `json:"severity,omitzero"`
-	AffectedSymbols []string            `json:"affected_symbols,omitzero"`
-	Reachable       *ReachabilityResult `json:"reachable,omitzero"`
+	ID              string    `json:"id"`
+	Aliases         []string  `json:"aliases,omitzero"`
+	Summary         string    `json:"summary"`
+	Details         string    `json:"details,omitzero"`
+	AffectedRange   string    `json:"affected_range"`
+	FixedIn         string    `json:"fixed_in,omitzero"`
+	Severity        *Severity `json:"severity,omitzero"`
+	AffectedSymbols []string  `json:"affected_symbols,omitzero"`
+	// AffectedPackages are the import paths the advisory names its symbols in,
+	// sorted. An advisory lists its symbols per package; the symbol list above
+	// flattens them, and the package is what says WHICH "Decoder.Decode" is
+	// meant.
+	//
+	// It matters most where one coordinate spans many packages. The standard
+	// library is one module with 362 of them, so an unqualified "Decoder.Decode"
+	// matches encoding/json, encoding/xml, encoding/gob and encoding/asn1 at
+	// once — and a search told to look for all four reports a route to a package
+	// the advisory is not about. Measured: an encoding/xml advisory contradicted
+	// by a path into encoding/json.
+	//
+	// Empty means the record predates the field, never that the advisory named
+	// no package. A reader must widen to every package rather than narrow to
+	// none.
+	AffectedPackages []string            `json:"affected_packages,omitzero"`
+	Reachable        *ReachabilityResult `json:"reachable,omitzero"`
 	// NegativeSearch is what kanonarion's own call-graph search says about this
 	// finding's negative, attached at read time and never stored — see
 	// NegativeSearch. It carries no JSON tag content on purpose: the record's

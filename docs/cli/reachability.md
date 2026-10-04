@@ -286,6 +286,7 @@ the coordinate, or the graph names none of the advisory's symbols — which is n
 | `whole_graph_path_found` | Whether a path was found with the module's whole graph rooted. A different claim; it never decides the rung and is never dropped. |
 | `in_recorded_frame` | Whether the graph searched is a graph of the build this record was measured in. A clean search confirms in any frame; a found path contradicts only in this one. |
 | `routes` | Every route the search found, from either rooting, each naming its own root. |
+| `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two for a standard-library answer, which is a join — see below. |
 | `reflective_dispatch` | What the search could not follow: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
 
 The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
@@ -304,6 +305,44 @@ searched or nothing had looked:
 ```
 GO-2025-3487 (CVE-2025-22869) [not reachable — inferred]: Potential denial of service in golang.org/x/crypto
 ```
+
+### A standard-library negative is searched by joining two graphs
+
+`stdlib@<version>` is one coordinate holding 362 packages, and no build enters
+it the way a consumer enters a module: the question is never "does the standard
+library reach this symbol" — it reaches everything it ships — but "does MY
+build". So the search for a standard-library negative joins two stored graphs:
+
+- the call graph of the build the record was measured in, which the record's
+  frame names, and
+- the call graph of the standard library at that toolchain version, extracted by
+  `kanonarion callgraph stdlib@<version>`.
+
+They join at the external leaves where the first stops. A call-graph node is
+identified by its package path and symbol — `crypto/tls.(*Conn).Handshake` — so
+the leaf a build records where it calls into the standard library is spelled
+exactly as the standard library's own graph spells that function. The traversal
+is rooted at the BUILD's entry points, never the standard library's.
+
+Three things scope it, and an answer that loses any of them is wrong rather than
+imprecise:
+
+- **Only the standard-library packages the build links are traversed.** A build's
+  own call graph records which they are. A class-hierarchy graph resolves one
+  indirect call on a `func()` variable to every `func()` in the program, so
+  without this a build that imports none of `net/http` reaches `net/url` through
+  `flag`'s default usage function. The count is stated in `graphs_searched`.
+- **A graph that does not record its standard-library closure is not joined.**
+  Re-analyse it — `kanonarion local <dir> --force` for a project — and the
+  refusal says so. Guessing the closure would confirm negatives out of code
+  nothing measured.
+- **The advisory's own packages scope its symbols.** An advisory lists its
+  symbols per package, and `Decoder.Decode` means `encoding/xml`'s when the
+  advisory is about `encoding/xml`. Records scanned before this was stored carry
+  no packages and are searched unscoped, as before; re-scan to narrow them.
+
+A path found in a joined graph IS in the frame the record was measured in, so it
+can contradict the recorded negative and the rung reads `disputed`.
 
 ### Every surface that publishes an answer carries the rung
 
@@ -441,9 +480,10 @@ Four rules keep this honest:
 Two things decide how much of a route can be annotated, and both are about which
 call graphs the store holds:
 
-- The **standard library** has no call graph: the call-graph stage analyses a
-  module zip and the standard library arrives by a different route. Hops whose
-  call site is in `stdlib` are always `not-annotated`.
+- The **standard library** has a call graph only once one has been extracted:
+  `kanonarion callgraph stdlib@v1.26.5` reads the matching installed toolchain's
+  own `$GOROOT/src`. Until then, hops whose call site is in `stdlib` are
+  `not-annotated`.
 - A **project's own root module** is analysed only when its working tree has been
   ingested — `kanonarion local /path/to/tree`. Until then, every hop out of the
   project's own code is `not-annotated`, and that is usually the largest single

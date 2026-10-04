@@ -26,6 +26,44 @@ To analyse a published module, fetch it first (`kanonarion fetch`). To analyse a
 working tree — including this repository — use [`kanonarion local`](local.md),
 which indexes the directory in place.
 
+### The standard library
+
+```
+kanonarion callgraph stdlib@v1.26.5
+```
+
+`stdlib` is the coordinate a walk records the Go standard library under, and it
+is the one coordinate `kanonarion fetch` cannot take: the standard library
+arrives with the toolchain, never through the module proxy. `callgraph` reads it
+from an **installed toolchain's own `$GOROOT/src`** — the one whose
+`go env GOVERSION` matches the version in the coordinate — searching the `go`
+command this run uses, then `~/sdk`, then the module cache. Where the host holds
+no such toolchain the command refuses and names the download that would supply
+it; nothing is recorded, because a graph built by a different Go is a graph of a
+different standard library.
+
+The record is an ordinary `CallGraphRecord` and every query that reads a module
+graph reads it. What it carries that others do not:
+
+- `source: toolchain-source`, with `read from:` naming the `$GOROOT/src` it was
+  taken of and a digest of the files the loader read there.
+- `custody artefact:` — the SHA-256 of the published `go<VERSION>.src.tar.gz`
+  the standard library's chain of custody holds for that toolchain version (see
+  [`audit`](audit.md)). It names the published bytes, which is a different claim
+  from the digest above: nothing here asserts that the installed tree and the
+  published tarball are the same bytes.
+- `toolchain:` — the toolchain that built the graph, which for this coordinate
+  is also the toolchain the graph is OF.
+- `test scope: EXCLUDED`. A consumer's build compiles none of the standard
+  library's own test files, so no route through one is a route in any build this
+  graph describes.
+
+`--from-walk` is accepted and used for nothing: the standard library vendors
+every dependency it has, so there is no build list to pin it against.
+
+Measured on a 32-core, 61 GiB host: go1.26.5, 362 packages, 23,404 nodes and
+436,572 edges, 10.3 s wall and 1.38 GB peak RSS.
+
 ### What the answers claim
 
 Every query in this family reports a **three-valued answer**, printed on a
@@ -461,7 +499,7 @@ kanonarion callgraph-show <module>@<version> [flags]
 | `--diff` | `false` | Report what the distinct stored measurements for the module differ about, instead of the composed answer |
 | `--diff-from` | _(the older of the two most recent measurements)_ | With `--diff`: the generation on the left of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
 | `--diff-to` | _(the most recent measurement)_ | With `--diff`: the generation on the right of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
-| `--source` | _(default)_ | Restrict to graphs built from one source: `zip` or `worktree` |
+| `--source` | _(default)_ | Restrict to graphs built from one source: `zip`, `worktree` or `toolchain-source` |
 | `--toolchain` | _(default)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. `go1.26.6`). A coordinate holding none of them reports no record |
 
 ```

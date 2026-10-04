@@ -152,3 +152,29 @@ func TestModuleCoordinate_UnmarshalJSON_InvalidJSON(t *testing.T) {
 		t.Fatal("expected error for invalid JSON object")
 	}
 }
+
+// TestIsStdlib separates the synthetic standard-library node from every
+// fetchable path. The proxy cannot take it — "stdlib" has no dot in its first
+// path element — so every stage that fetches has to route it elsewhere rather
+// than refuse it.
+func TestIsStdlib(t *testing.T) {
+	t.Parallel()
+
+	stdlib, err := coordinate.NewStdlibCoordinateAt("v1.26.5")
+	if err != nil {
+		t.Fatalf("stdlib coordinate: %v", err)
+	}
+	if !stdlib.IsStdlib() {
+		t.Error("the standard-library coordinate does not report itself as one")
+	}
+	if !coordinate.NewStdlibCoordinate().IsStdlib() {
+		t.Error("the version-less standard-library sentinel does not report itself as one")
+	}
+	published, err := coordinate.NewModuleCoordinate("example.com/stdlib", "v1.0.0")
+	if err != nil {
+		t.Fatalf("coordinate: %v", err)
+	}
+	if published.IsStdlib() {
+		t.Error("a published module whose path ends in stdlib is reported as the standard library")
+	}
+}

@@ -98,10 +98,12 @@ func parseAnalysisSource(v string) (domain.AnalysisSource, error) {
 		return domain.AnalysisSourceModuleZip, nil
 	case string(domain.AnalysisSourceWorktree):
 		return domain.AnalysisSourceWorktree, nil
+	case string(domain.AnalysisSourceToolchainSource):
+		return domain.AnalysisSourceToolchainSource, nil
 	default:
 		return domain.AnalysisSourceUnrecorded, fmt.Errorf(
-			"unknown analysis source %q: use %q (a fetched module zip) or %q (a directory on disk)",
-			v, domain.AnalysisSourceModuleZip, domain.AnalysisSourceWorktree)
+			"unknown analysis source %q: use %q (a fetched module zip), %q (a directory on disk) or %q (an installed toolchain's standard library)",
+			v, domain.AnalysisSourceModuleZip, domain.AnalysisSourceWorktree, domain.AnalysisSourceToolchainSource)
 	}
 }
 
@@ -407,6 +409,16 @@ func historyFailure(r domain.CallGraphRecord) string {
 // not missing — and printing "(none)" there would read as a defect rather than
 // as the truth about a directory on disk.
 func historyOrigin(r domain.CallGraphRecord) string {
+	if r.AnalysisSource == domain.AnalysisSourceToolchainSource {
+		origin := "custody " + r.ArtefactIdentity
+		if r.ArtefactIdentity == "" {
+			origin = "(no custody artefact recorded)"
+		}
+		if r.WorktreeDigest != "" {
+			origin += ", source tree " + r.WorktreeDigest
+		}
+		return origin
+	}
 	if r.AnalysisSource == domain.AnalysisSourceWorktree {
 		if r.WorktreeDigest == "" {
 			return "(worktree, no digest recorded)"
@@ -908,6 +920,20 @@ func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
 		domain.RecordToolchain(r).String())
 	if r.AnalysisSource == domain.AnalysisSourceWorktree && r.WorktreeDigest != "" {
 		line += "  (tree " + r.WorktreeDigest + ")"
+	}
+	// A toolchain-source record makes two separate claims and both belong here.
+	// The root is the tree that was read, which a reader holding the same
+	// toolchain can open; the artefact identity is the published source tarball
+	// the custody chain anchors that toolchain version to, which is a different
+	// measurement and must not read as a digest of what was analysed.
+	if r.AnalysisSource == domain.AnalysisSourceToolchainSource {
+		line += "\n  read from: " + r.AnalysisRoot
+		if r.WorktreeDigest != "" {
+			line += " (" + r.WorktreeDigest + ")"
+		}
+		if r.ArtefactIdentity != "" {
+			line += "\n  custody artefact: " + r.ArtefactIdentity
+		}
 	}
 	// A synthesised go.mod means the analysed tree is the published bytes plus a
 	// file kanonarion invented. Printing the source without it would let the

@@ -47,6 +47,22 @@ var postures = map[string]Posture{
 		},
 		Forbid: []string{"GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
+	// An installed toolchain's own standard-library source, read in place.
+	//
+	// -mod=readonly for the reason the worktree postures give, one step
+	// stronger: $GOROOT/src is not even the developer's tree, and under -mod=mod
+	// the go command would write go.sum entries into the toolchain itself. The
+	// standard library vendors every dependency it has, so nothing needs
+	// resolving and GOPROXY=off states that rather than relying on it.
+	// GOTOOLCHAIN is pinned because the source being read belongs to one
+	// toolchain and must be read by that one.
+	"toolchain-stdlib": {
+		Require: map[string]string{
+			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
+			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
+		},
+		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
+	},
 	// -mod=readonly on both worktree postures. The tree belongs to the developer,
 	// and -mod=mod lets the go command close a missing go.sum entry from the
 	// module cache rather than report it.
@@ -177,8 +193,11 @@ var EnvBuilders = map[string]string{
 		"environment reaches it unchanged but for its own memory ceiling, which no posture governs " +
 		"because it decides nothing about how a build resolves",
 	"internal/callgraph/adapters/analyser/staticcha isolatedModuleEnv": "extracted-module",
-	"internal/adapters/proxy/modcache download":                        "not an analysis child: populates a module cache",
-	"internal/staleness/adapters/golist childEnv":                      "not an analysis child: an update probe that must reach a proxy",
+	"internal/callgraph/adapters/analyser/staticcha stdlibAnalysisEnv": "toolchain-stdlib",
+	"internal/cli toolchainAt": "not an analysis child: a probe asking one named go command which GOROOT and " +
+		"version it is, pinned to GOTOOLCHAIN=local so it answers about itself rather than switching",
+	"internal/adapters/proxy/modcache download":   "not an analysis child: populates a module cache",
+	"internal/staleness/adapters/golist childEnv": "not an analysis child: an update probe that must reach a proxy",
 }
 
 // For returns the named posture. Absent means the caller named one that does not

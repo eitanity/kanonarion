@@ -137,6 +137,41 @@ consumer nowhere.
 
 The rows themselves are unchanged.
 
+## The standard library gets a call graph: no migration and no bump
+
+**No store migration, no schema-version bump, no pipeline bump.** The call-graph
+ledger gains a third `analysis_source` value and both the call-graph record and
+the vulnerability finding gain one `omitempty` field each, absent from every
+record already written — so every stored record re-marshals to the bytes it was
+sealed over and keeps its content hash verifiable. The three canonical-shape
+goldens are untouched, which is the evidence.
+
+**What is new.**
+
+- `callgraph_records.analysis_source` may read `toolchain-source`: a graph built
+  from an installed toolchain's own `$GOROOT/src`, which is neither a published
+  zip nor a mutable checkout. The record's `artefact_identity` names the
+  published `go<VERSION>.src.tar.gz` the standard library's chain of custody
+  holds; `worktree_digest` names the source tree the analysis actually read, and
+  is what tells two such records apart.
+- `callgraph_records` gains `stdlib_packages`: the standard-library closure of
+  the build the graph was taken of, as the go command resolved it. It is what a
+  read needs to know which standard-library code a binary CONTAINS, which a call
+  graph alone cannot say.
+- A vulnerability finding gains `affected_packages`: the import paths the
+  advisory names its symbols in. An advisory lists symbols per package and the
+  flat symbol list lost which; one coordinate can hold many packages, and
+  `stdlib` holds 362.
+
+**What an old record reads as.** An absent `stdlib_packages` is "the closure was
+not recorded", never "this build links no standard library". A read that joins a
+build's graph to the standard library's refuses rather than guessing, and names
+the re-analysis. An absent `affected_packages` leaves a search unscoped, exactly
+as it was.
+
+**No re-scan is owed to keep answering.** Re-extraction is what adds the two
+fields, and the surfaces that use them say so where they are missing.
+
 ## Licence record: pipeline `1.3.0` → `1.4.0`
 
 **No shape change; not hash-transparent.** Where a module carries several root

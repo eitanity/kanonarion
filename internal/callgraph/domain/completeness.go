@@ -90,6 +90,36 @@ func (l CompletenessLevel) IsBuiltWithBodies() bool {
 	return l == CompletenessBuiltWithBodies
 }
 
+// WeakerCompleteness returns whichever of two fidelities a conclusion that
+// crossed both may claim: the lower rung of the ladder CompletenessLevels
+// defines.
+//
+// It exists for the search that joins two stored graphs into one traversal. A
+// negative certified across such a graph rests on BOTH halves having been built
+// with bodies, and reporting the better of the two would let a type-only half
+// confirm an absence whose call edges were never built.
+//
+// A level this build does not define ranks at the floor: a fidelity it cannot
+// place is not one it may vouch for.
+func WeakerCompleteness(a, b CompletenessLevel) CompletenessLevel {
+	if completenessRank(b) < completenessRank(a) {
+		return b
+	}
+	return a
+}
+
+// completenessRank orders a level, highest first in CompletenessLevels. An
+// unrecognised level, and the zero value, rank at the floor.
+func completenessRank(l CompletenessLevel) int {
+	levels := CompletenessLevels()
+	for i, candidate := range levels {
+		if candidate == l {
+			return len(levels) - i
+		}
+	}
+	return 0
+}
+
 // CompletenessDescriptor is the per-side fidelity signature a diff compares for
 // parity. The completeness level names how much of the module was built, and the
 // algorithm captures the algorithm/devirt tier that produced the graph, so

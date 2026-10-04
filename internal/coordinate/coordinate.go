@@ -158,6 +158,14 @@ func (c ModuleCoordinate) IsLocal() bool {
 	return c.version == LocalVersion
 }
 
+// IsStdlib reports whether the coordinate names the synthetic standard-library
+// module rather than a fetchable path. The standard library arrives with the
+// toolchain, never through the module proxy, so a stage that fetches must route
+// it elsewhere rather than refuse it.
+func (c ModuleCoordinate) IsStdlib() bool {
+	return c.path == StdlibPath
+}
+
 // IsPseudoVersion reports whether the version is a Go pseudo-version
 // (e.g. v0.0.0-20210101000000-abcdefabcdef).
 func (c ModuleCoordinate) IsPseudoVersion() bool {

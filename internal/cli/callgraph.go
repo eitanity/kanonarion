@@ -121,16 +121,28 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	}
 	defer func() { _ = cleanup() }()
 
-	inputs, err := analysisInputsForWalk(ctx, ctr.QueryWalks, f.fromWalk)
-	if err != nil {
-		return err
-	}
 	var run callGraphRunJSON
-	if f.fromWalk == "" {
-		inputs, run.BuildListRefusal = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
+	var inputs cgdomain.AnalysisInputs
+	// The standard library resolves no build list and has none to be pinned
+	// against: it vendors every dependency it has, and the toolchain the
+	// coordinate names decides the rest. A --from-walk naming the frame that
+	// recorded the coordinate is therefore accepted and used for nothing, which
+	// is the honest outcome rather than a refusal of a flag that costs nothing.
+	if !coord.IsStdlib() {
+		inputs, err = analysisInputsForWalk(ctx, ctr.QueryWalks, f.fromWalk)
+		if err != nil {
+			return err
+		}
+		if f.fromWalk == "" {
+			inputs, run.BuildListRefusal = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
+		}
 	}
 
-	result, err := ctr.ExtractCallGraph.Execute(ctx, cgapp.ExtractRequest{
+	extract := ctr.ExtractCallGraph.Execute
+	if coord.IsStdlib() {
+		extract = ctr.ExtractStdlibCallGraph.Execute
+	}
+	result, err := extract(ctx, cgapp.ExtractRequest{
 		Coordinate: coord,
 		Force:      f.force,
 		Inputs:     inputs,

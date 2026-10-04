@@ -42,7 +42,7 @@ import (
 // touch, and omitting them made "no callers" a confident false negative for
 // every test-only consumer. The outcome of that decision is recorded on the
 // result so a query can state it rather than imply coverage it does not have.
-func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord coordinate.ModuleCoordinate, targetPkgPaths []string, env []string) (ssaBuildResult, error) {
+func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord coordinate.ModuleCoordinate, targetPkgPaths []string, env []string, mode analysisMode) (ssaBuildResult, error) {
 	res := ssaBuildResult{
 		Prog:      ssa.NewProgram(fset, ssa.BuilderMode(0)),
 		TestPkgs:  map[*ssa.Package]bool{},
@@ -92,8 +92,20 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	}
 
 	a.step(coord, "loading package syntax")
-	loaded, lErr := load(true)
-	if lErr != nil {
+	// A consumer's build compiles none of the standard library's own test files,
+	// so they are outside what a stdlib graph is for, and loading them would add
+	// several thousand packages to an already large program. The axis is stated
+	// rather than left to read as a clean absence.
+	withTests := mode != modeStdlib
+	if !withTests {
+		res.TestScope = domain.TestScopeExcluded
+		res.TestScopeDetail = stdlibTestScopeDetail
+	}
+	loaded, lErr := load(withTests)
+	switch {
+	case lErr != nil && !withTests:
+		return res, lErr
+	case lErr != nil:
 		// Loading with tests is not viable for this module. Retry without them
 		// rather than lose the graph entirely — but record the exclusion, so the
 		// query layer names the axis it could not measure instead of reporting a
@@ -117,6 +129,9 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// p.TypesInfo are dropped further down, and the module a package belongs to is
 	// not recoverable from the ssa.Program afterwards.
 	res.Membership = newModuleMembership(coord, loaded)
+	if mode == modeStdlib {
+		res.Membership = newStdlibMembership(coord, loaded)
+	}
 
 	// Pass 1: register every target package from syntax. This must complete
 	// before any Build, and before the type-only dependency sweep below: a

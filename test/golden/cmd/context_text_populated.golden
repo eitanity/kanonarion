@@ -16,6 +16,6 @@ example.com/mod@v1.2.0
   Native code:     not_examined
                    this module's artefact was not examined for native code compiled into the binary, so nothing is known either way — run: kanonarion native example.com/mod@v1.2.0
 
-Context size: ~1497 tokens (5990 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
+Context size: ~1524 tokens (6097 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 --- stderr ---
 (empty)

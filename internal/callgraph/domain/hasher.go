@@ -72,6 +72,8 @@ func canonicalOrder(r CallGraphRecord) CallGraphRecord {
 	sort.Strings(r.FailedPackages)
 	r.PrefixAttributedPackages = append([]string(nil), r.PrefixAttributedPackages...)
 	sort.Strings(r.PrefixAttributedPackages)
+	r.StdlibPackages = append([]string(nil), r.StdlibPackages...)
+	sort.Strings(r.StdlibPackages)
 	r.ForeignModulesBuilt = append([]ForeignModule(nil), r.ForeignModulesBuilt...)
 	sort.Slice(r.ForeignModulesBuilt, func(i, j int) bool {
 		return ForeignModuleLess(r.ForeignModulesBuilt[i], r.ForeignModulesBuilt[j])
@@ -199,6 +201,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		FailureDetail:            c.FailureDetail,
 		FailedPackages:           c.FailedPackages,
 		PrefixAttributedPackages: c.PrefixAttributedPackages,
+		StdlibPackages:           c.StdlibPackages,
 		ForeignModulesBuilt:      domainForeignModules(c.ForeignModulesBuilt),
 		ExclusionReason:          c.ExclusionReason,
 		ExclusionList:            c.ExclusionList,
@@ -468,11 +471,21 @@ type canonicalRecord struct {
 	// than checking the stored bytes, so a new key present on every record moves
 	// every record's digest.
 	ForeignModulesBuilt []canonicalForeignModule `json:"foreign_modules_built,omitzero"`
-	Nodes               []canonicalNode          `json:"nodes"`
-	OverallStatus       int                      `json:"overall_status"`
-	PipelineVersion     string                   `json:"pipeline_version"`
-	SchemaVersion       string                   `json:"schema_version"`
-	SourceContentHash   string                   `json:"source_content_hash,omitempty"`
+	// StdlibPackages is omitted when empty, on the terms every additive field on
+	// this shape has used: every record sealed before it marshals to exactly the
+	// bytes it always did and keeps its stored content hash verifiable, so the
+	// axis lands with no PipelineVersion bump and no migration.
+	//
+	// It is INSIDE the seal because a read acts on it: a traversal that continues
+	// into the standard library's graph drops every edge touching a package this
+	// list does not name, so a value edited after the fact would change what a
+	// stored answer says without breaking the record's own integrity check.
+	StdlibPackages    []string        `json:"stdlib_packages,omitzero"`
+	Nodes             []canonicalNode `json:"nodes"`
+	OverallStatus     int             `json:"overall_status"`
+	PipelineVersion   string          `json:"pipeline_version"`
+	SchemaVersion     string          `json:"schema_version"`
+	SourceContentHash string          `json:"source_content_hash,omitempty"`
 	// SynthesisedGoMod is omitted when zero so every record sealed before the
 	// field existed marshals to exactly the bytes it always did and keeps its
 	// stored content hash verifiable — the terms every additive field on this
@@ -670,6 +683,13 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 		sort.Strings(prefixAttributed)
 	}
 
+	var stdlibPkgs []string
+	if len(r.StdlibPackages) > 0 {
+		stdlibPkgs = make([]string, len(r.StdlibPackages))
+		copy(stdlibPkgs, r.StdlibPackages)
+		sort.Strings(stdlibPkgs)
+	}
+
 	c := canonicalRecord{
 		Algorithm:        string(r.Algorithm),
 		AnalysisSource:   string(r.AnalysisSource),
@@ -695,6 +715,7 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 		NodeCount:                r.NodeCount,
 		Nodes:                    cNodes,
 		PrefixAttributedPackages: prefixAttributed,
+		StdlibPackages:           stdlibPkgs,
 		ForeignModulesBuilt:      canonicalForeignModules(r.ForeignModulesBuilt),
 		OverallStatus:            int(r.OverallStatus),
 		PipelineVersion:          r.PipelineVersion,
