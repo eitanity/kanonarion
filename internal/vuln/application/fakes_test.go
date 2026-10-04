@@ -436,6 +436,10 @@ func (f *fakeVulnStore) PutWalkScanRun(_ context.Context, run domain.WalkScanRun
 	if f.errOnPutRun != nil {
 		return f.errOnPutRun
 	}
+	// As the real store: a held id is refused, so no test passes on an overwrite.
+	if _, held := f.runs[run.ID]; held {
+		return fmt.Errorf("%w: %s", ports.ErrWalkScanRunExists, run.ID)
+	}
 	f.runs[run.ID] = run
 	return nil
 }
@@ -883,6 +887,25 @@ func (f *fakeDatabase) LookupFindings(_ context.Context, coord coordinate.Module
 type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
+
+// steppedClock holds still until the test advances it, for a test that needs a
+// second scan to start at a later instant than the first.
+type steppedClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *steppedClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *steppedClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
 
 // callCountingScanner wraps a VulnerabilityScanner and records whether Scan was called.
 type callCountingScanner struct {

@@ -352,7 +352,7 @@ When a scan run of the same walk against the same advisory snapshot already
 exists, its result is served and `govulncheck` does not run:
 
 ```
-vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability answers came from the source that run read, which this run did not re-read (--force to re-measure)
+vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889502117346 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability answers came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 The line names the run whose answers you are reading and when it was made. The
@@ -609,8 +609,11 @@ Scanning walk 01KQDBVW092ER1HNXZ60X27CMD...
   [2/3] github.com/spf13/cobra@v1.8.1 - Clean
   [3/3] golang.org/x/net@v0.0.0-20210405180319-a5a99cb37ef4 - Affected
       GO-2022-0969 (CVE-2022-27664): HTTP/2 server DoS
-Scan completed: Complete, Affected (2)  Run ID: 01KQDBVW092ER1HNXZ60X27CME
+Scan completed: Complete, Affected (2)  Run ID: vscan-01KQDBVW092ER1HNXZ60X27CMD-1786116020645803117
 ```
+
+The run id is `vscan-<walk id>-<start time in Unix nanoseconds>`. Runs recorded
+by earlier releases end in whole seconds instead and keep that id.
 
 The completion line reports two independent axes, because a run answers two
 different questions: **coverage** — was every module in the build list analysed?
@@ -760,7 +763,7 @@ than printed as though it resolves:
 
 ```
 $ kanonarion vuln-scan-list --limit 0
-vscan-01KYBTWG8TW0KY1ME26KXZTH6X-1784956207  walk=01KYBTWG8TW0KY1ME26KXZTH6X  status=Affected      2026-07-25T05:12:12Z  inputs unresolvable: walk absent from this store
+vscan-01KYBTWG8TW0KY1ME26KXZTH6X-1784956207339475210  walk=01KYBTWG8TW0KY1ME26KXZTH6X  status=Affected      2026-07-25T05:12:12Z  inputs unresolvable: walk absent from this store
 ```
 
 The findings stand; what cannot be recovered is *what was scanned* - which
@@ -957,7 +960,7 @@ the walk you were looking at is not what excluded it.
 
 ```
 no scan run matched run id "vscan-NOPE" — the value is compared for exact equality against the run id of
-all 15 scan run(s) in the store (e.g. vscan-01KQDBVW092ER1HNXZ60X27CMD-1786116020); to list every scan
+all 15 scan run(s) in the store (e.g. vscan-01KQDBVW092ER1HNXZ60X27CMD-1786116020645803117); to list every scan
 run: kanonarion vuln-scan-list --limit 0
 ```
 

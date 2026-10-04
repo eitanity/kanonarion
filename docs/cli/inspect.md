@@ -121,7 +121,7 @@ also a section of the document, `run`, beside the per-module content:
   "run": {
     "walk_id": "01KQDBVW092ER1HNXZ60X27CMD",
     "walk": "reused",
-    "scan_run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1788082354",
+    "scan_run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1788082354871260419",
     "scan": "reused",
     "snapshot": { "source": "vuln.go.dev", "version": "2026-08-28T14:47:45Z" },
     "toolchain": { "judged": false, "status": "unjudged", "reason": "the walk recorded no build toolchain version", "…": "…" }
@@ -236,7 +236,7 @@ not counted as findings)` with its retraction date. See
   "run": {
     "walk_id": "01KQDBVW092ER1HNXZ60X27CMD",
     "walk": "measured by this run",
-    "scan_run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1788082354",
+    "scan_run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1788082354871260419",
     "scan": "measured by this run",
     "snapshot": { "source": "vuln.go.dev", "version": "2026-05-07T19:21:40Z" },
     "toolchain": { "judged": true, "status": "clear", "version": "go1.26.5", "…": "…" }

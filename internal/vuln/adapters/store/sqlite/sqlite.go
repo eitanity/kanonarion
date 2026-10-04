@@ -1354,25 +1354,9 @@ INSERT INTO walk_scan_runs (
     unscannable_modules, failed_modules,
     operator, content_hash, serialised
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (id) DO UPDATE SET
-    walk_id             = excluded.walk_id,
-    snapshot_source     = excluded.snapshot_source,
-    snapshot_version    = excluded.snapshot_version,
-    started_at          = excluded.started_at,
-    completed_at        = excluded.completed_at,
-    overall_status      = excluded.overall_status,
-    coverage_status     = excluded.coverage_status,
-    findings_status     = excluded.findings_status,
-    total_modules       = excluded.total_modules,
-    analysed_modules    = excluded.analysed_modules,
-    affected_modules    = excluded.affected_modules,
-    unscannable_modules = excluded.unscannable_modules,
-    failed_modules      = excluded.failed_modules,
-    operator            = excluded.operator,
-    content_hash        = excluded.content_hash,
-    serialised          = excluded.serialised`
+ON CONFLICT (id) DO NOTHING`
 
-		if _, err = tx.ExecContext(ctx, q,
+		res, err := tx.ExecContext(ctx, q,
 			run.ID, run.WalkID, run.Snapshot.Source(), run.Snapshot.Version(),
 			recordstamp.Format(run.StartedAt),
 			recordstamp.Format(run.CompletedAt),
@@ -1381,8 +1365,19 @@ ON CONFLICT (id) DO UPDATE SET
 			run.Counts.Total, run.Counts.Analysed, run.Counts.Affected,
 			run.Counts.Unscannable, run.Counts.Failed,
 			run.Operator, run.ContentHash, serialised,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("inserting walk scan run: %w", err)
+		}
+		// A stored id is refused, never merged: updating the header while the
+		// membership rows below kept the first scan's hashes is how one run came
+		// to name two scans. Returning rolls the transaction back untouched.
+		inserted, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("counting inserted walk scan run: %w", err)
+		}
+		if inserted == 0 {
+			return fmt.Errorf("%w: %s", ports.ErrWalkScanRunExists, run.ID)
 		}
 
 		// record_content_hash names the exact generation this run scanned. Since the

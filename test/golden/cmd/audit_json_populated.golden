@@ -16,7 +16,7 @@ exit 0
   },
   "scan": {
     "answered": true,
-    "run_id": "vscan-$ULID-1772323200",
+    "run_id": "vscan-$ULID-1772323200000000000",
     "reused": false,
     "snapshot": {
       "source": "vuln.go.dev",

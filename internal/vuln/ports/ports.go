@@ -51,6 +51,11 @@ var ErrCallGraphNotFound = errors.New("call graph record not found")
 // failure without importing the store.
 var ErrVulnIntegrity = errors.New("vulnerability record integrity check failed")
 
+// ErrWalkScanRunExists is returned by PutWalkScanRun when the store already holds
+// a run under the id being written. A run is written once: merging a second scan
+// into it would leave one id naming two scans' records.
+var ErrWalkScanRunExists = errors.New("walk scan run already recorded")
+
 // ErrSnapshotIntegrity is returned by the vulnerability store when the advisory
 // database snapshot itself fails its integrity check: on write when the
 // caller-declared hash contradicts the bytes handed over, and on read when the
@@ -397,7 +402,9 @@ type VulnerabilityStore interface {
 		walkID string,
 	) ([]domain.VulnerabilityRecord, error)
 
-	// PutWalkScanRun persists the aggregate result of a walk scan.
+	// PutWalkScanRun persists the aggregate result of a walk scan. An id the
+	// store already holds is refused with ErrWalkScanRunExists and the stored run
+	// is left as it was.
 	PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) error
 
 	// GetWalkScanRun retrieves a walk scan run by its ID.

@@ -279,10 +279,13 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// there was nothing to compare — see projectBuildDivergence, which says which.
 	projectDivergence := uc.projectBuildDivergence(walk, params.ProjectDir)
 
+	// Nanoseconds, fixed width at 19 digits: two scans of one walk inside one
+	// second are two runs, and the store refuses an id it already holds.
+	startedAt := uc.clock.Now()
 	run := domain.WalkScanRun{
-		ID:               fmt.Sprintf("vscan-%s-%d", params.WalkID, uc.clock.Now().Unix()),
+		ID:               fmt.Sprintf("vscan-%s-%d", params.WalkID, startedAt.UnixNano()),
 		WalkID:           params.WalkID,
-		StartedAt:        uc.clock.Now(),
+		StartedAt:        startedAt,
 		PerModuleResults: make(map[coordinate.ModuleCoordinate]string),
 		PipelineVersion:  uc.pipelineVersion,
 		Operator:         params.Operator,

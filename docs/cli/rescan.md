@@ -84,7 +84,7 @@ Re-scanning walk 01KQDBVW092ER1HNXZ60X27CMD...          # stderr
   [2/3] github.com/spf13/cobra@v1.8.1 — Clean           # stderr
   [3/3] golang.org/x/net@v0.0.0-20210405180319 — Clean  # stderr
 Re-scan completed: Complete, Affected (2)               # stdout
-Run ID: vscan-01KQDBVW092ER1HNXZ60X27CMD-1711929600     # stdout
+Run ID: vscan-01KQDBVW092ER1HNXZ60X27CMD-1711929600000000000     # stdout
 Snapshot: osv.dev/go@v2024-04-01T00-00-00               # stdout
 ```
 
@@ -101,7 +101,7 @@ parsed out of the sentence.
 
 ```json
 {
-  "run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1711929600",
+  "run_id": "vscan-01KQDBVW092ER1HNXZ60X27CMD-1711929600000000000",
   "walk_id": "01KQDBVW092ER1HNXZ60X27CMD",
   "completion": "Complete, Affected (2)",
   "coverage_status": "Complete",
