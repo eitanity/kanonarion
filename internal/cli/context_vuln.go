@@ -39,6 +39,9 @@ type vulnBatchCtx struct {
 	graphCache map[string]*walkdomain.Graph
 	// affectedCache memoises the affected-module set per walkID.
 	affectedCache map[string]map[coordinate.ModuleCoordinate]struct{}
+	// affectedAside memoises, per walkID, the generations set aside while the
+	// affected set was read.
+	affectedAside map[string]setAsideRows
 	// anchor is the build this batch reports on, when the caller named one — a
 	// walk, or the project a go.mod declares. Set means every per-module verdict
 	// is selected in that build's frame and read from that walk's runs alone.
@@ -131,6 +134,7 @@ func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC Q
 		walkUC:        walkUC,
 		graphCache:    make(map[string]*walkdomain.Graph),
 		affectedCache: make(map[string]map[coordinate.ModuleCoordinate]struct{}),
+		affectedAside: make(map[string]setAsideRows),
 		frameCache:    make(map[string]vulnFrameAnchor),
 	}, nil
 }
@@ -166,15 +170,16 @@ func (b *vulnBatchCtx) graphFor(ctx context.Context, walkID string) (*walkdomain
 // Affected, so it is skipped rather than fabricated. Only a real StatusAffected
 // record adds a coordinate. A failed read is not cached, so a later read may
 // still succeed.
-func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC QueryVulnUseCase) (map[coordinate.ModuleCoordinate]struct{}, error) {
+func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC QueryVulnUseCase) (map[coordinate.ModuleCoordinate]struct{}, setAsideRows, error) {
 	if b.affectedCache == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if s, ok := b.affectedCache[walkID]; ok {
-		return s, nil
+		return s, b.affectedAside[walkID], nil
 	}
 	runs := b.runs[walkID]
 	affected := make(map[coordinate.ModuleCoordinate]struct{})
+	var aside setAsideRows
 	if len(runs) > 0 {
 		run := runs[0] // most recent (DESC by started_at)
 		// Each peer's verdict is read in the walk's own frame. Read frame-blind,
@@ -183,10 +188,11 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 		// looked at this build.
 		anchor := b.frameFor(ctx, run.WalkID)
 		for coord := range run.PerModuleResults {
-			rec, found, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
+			rec, found, recAside, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
 			if err != nil {
-				return nil, fmt.Errorf("reading walk-peer status for %s in walk %s: %w", coord, run.WalkID, err)
+				return nil, nil, fmt.Errorf("reading walk-peer status for %s in walk %s: %w", coord, run.WalkID, err)
 			}
+			aside = aside.merge(recAside)
 			if !found {
 				continue
 			}
@@ -202,7 +208,10 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 		}
 	}
 	b.affectedCache[walkID] = affected
-	return affected, nil
+	if b.affectedAside != nil {
+		b.affectedAside[walkID] = aside
+	}
+	return affected, aside, nil
 }
 
 // filterWalkAnnotation names the affected peers that lie in coord's own
@@ -229,7 +238,8 @@ func (b *vulnBatchCtx) filterWalkAnnotation(ctx context.Context, result *context
 	}
 
 	reachable := graph.ReachableFrom(coord)
-	affected, err := b.affectedFor(ctx, run.WalkID, vulnUC)
+	affected, aside, err := b.affectedFor(ctx, run.WalkID, vulnUC)
+	result.aside = result.aside.merge(aside)
 	if err != nil {
 		// A peer's verdict could not be read. Do not fabricate an affected peer
 		// from a store fault, and do not misattribute the fault to this module's
@@ -269,14 +279,26 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 	// A store read failure must surface as read_error like every other section —
 	// analysed-but-unreadable presented as not_run is the absence-as-answer
 	// defect class.
+	var aside setAsideRows
 	recs, err := vulnUC.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
-	if err != nil {
+	if err := aside.take(err); err != nil {
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 	}
+	var section contextVulnerabilities
 	if batch.anchored {
-		return supersededOr(ctx, coord, vulnUC, batch.walkUC, batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC))
+		section = batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC)
+	} else {
+		section = batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC)
 	}
-	return supersededOr(ctx, coord, vulnUC, batch.walkUC, batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC))
+	// Nothing this build reads was servable and something was set aside: that is
+	// the section's answer, not "nobody looked".
+	if section.Status == sectionStatusNotRun && len(aside) > 0 {
+		section = contextVulnerabilities{Status: sectionStatusSetAside, Error: aside.statement()}
+	}
+	section = supersededOr(ctx, coord, vulnUC, batch.walkUC, section)
+	section.aside = aside.merge(section.aside)
+	section.SetAside = section.aside.json()
+	return section
 }
 
 // supersededOr replaces a not_run section with the superseded one when that is

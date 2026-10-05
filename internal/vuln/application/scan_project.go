@@ -546,7 +546,7 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		return rec, fmt.Errorf("hashing target-rooted vulnerability record for %s: %w", coord, herr)
 	}
 	rec = sealed
-	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
+	if perr := putRecord(ctx, uc.vulnStore, rec, uc.setAsideReporter(), uc.logger); perr != nil {
 		return rec, fmt.Errorf("persisting target-rooted vulnerability record for %s: %w", coord, perr)
 	}
 	return rec, nil

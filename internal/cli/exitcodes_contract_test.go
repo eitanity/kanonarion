@@ -109,15 +109,15 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		}},
 		{"vuln-show --walk-id (walk never scanned)", ExitNotFound, func(t *testing.T) error {
 			return runVulnShow(context.Background(), coord.String(), missingWalk, "", buildTargetFlags{}, false, false, false,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{})
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"vuln-show (no record at all)", ExitNotFound, func(t *testing.T) error {
 			return runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{})
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"vuln-show --history", ExitNotFound, func(t *testing.T) error {
 			return runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, true,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{})
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"scan-show", ExitNotFound, func(t *testing.T) error {
 			return runScanShow(context.Background(), "vscan-missing", false,
@@ -345,17 +345,17 @@ func TestExitCodeContract_AmbiguousFrameIsConfig(t *testing.T) {
 		{"vuln-show, two consumer frames, no anchor", ExitConfig, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
 			return runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{})
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"reachability, two consumer frames, no anchor", ExitConfig, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
 			return runVulnReachability(context.Background(), coord.String(), twoProjectVulnID, "", "", false, false,
-				uc, walks, nil, &bytes.Buffer{})
+				uc, walks, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"vuln-show, --walk-id and --gomod together", ExitConfig, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
 			return runVulnShow(context.Background(), coord.String(), walkA, "./go.mod", buildTargetFlags{}, true, false, false,
-				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{})
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{}, io.Discard)
 		}},
 	})
 }
@@ -371,12 +371,12 @@ func TestExitCodeContract_PinnedFrameWithNoRecordIsNotFound(t *testing.T) {
 		{"vuln-show --walk-id (walk holds no record in its own frame)", ExitNotFound, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
 			return runVulnShow(context.Background(), coord.String(), walkC, "", buildTargetFlags{}, false, false, false,
-				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{})
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"reachability --walk-id (walk holds no record in its own frame)", ExitNotFound, func(t *testing.T) error {
 			uc, walks := twoProjectFakes(t)
 			return runVulnReachability(context.Background(), coord.String(), twoProjectVulnID, walkC, "", false, false,
-				uc, walks, nil, &bytes.Buffer{})
+				uc, walks, nil, &bytes.Buffer{}, io.Discard)
 		}},
 	})
 }

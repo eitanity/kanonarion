@@ -1772,7 +1772,10 @@ type unreadableRowEntry struct {
 	PipelineVersion string
 	SnapshotSource  string
 	SnapshotVersion string
-	Reason          string
+	// ContentHash is the seal a record row's bytes carry, empty for a run or
+	// where the head did not yield one.
+	ContentHash string
+	Reason      string
 }
 
 // label renders one row for a text listing, where prose is the right form: the
@@ -1793,6 +1796,9 @@ func (e unreadableRowEntry) label() string {
 	}).String(); gen != "" {
 		id += " " + gen
 	}
+	if e.ContentHash != "" {
+		id += " content_hash " + e.ContentHash
+	}
 	return id
 }
 
@@ -1809,19 +1815,30 @@ func (e unreadableRowEntry) label() string {
 // Runs and records come through it alike. The fact is the same fact and the
 // commands that render it are the same commands, so a second reporter for
 // records would be a second place for this rule to be got wrong.
+//
+// A record listing whose only unreadable rows are set-aside generations reports
+// them the same way: a survey lists every row it holds, readable or not.
 func unreadableRowReport(err error) ([]unreadableRowEntry, bool) {
+	var rows []vulnports.UnreadableRow
 	var unreadable *vulnports.UnreadableRows
-	if !errors.As(err, &unreadable) {
+	var aside *vulnports.SetAsideGenerations
+	switch {
+	case errors.As(err, &unreadable):
+		rows = unreadable.Rows
+	case errors.As(err, &aside):
+		rows = aside.Rows
+	default:
 		return nil, false
 	}
-	entries := make([]unreadableRowEntry, 0, len(unreadable.Rows))
-	for _, r := range unreadable.Rows {
+	entries := make([]unreadableRowEntry, 0, len(rows))
+	for _, r := range rows {
 		entries = append(entries, unreadableRowEntry{
 			ID:              r.ID,
 			Kind:            r.Kind,
 			PipelineVersion: r.Generation.PipelineVersion,
 			SnapshotSource:  r.Generation.SnapshotSource,
 			SnapshotVersion: r.Generation.SnapshotVersion,
+			ContentHash:     r.ContentHash,
 			Reason:          unreadableRowReason(r),
 		})
 	}
@@ -1883,13 +1900,13 @@ func writeUnreadableRows(stdout io.Writer, entries []unreadableRowEntry, idWidth
 //
 // The two cases are not interchangeable and must not be reported alike. A
 // record whose stored bytes still hash to the seal they carry has not been
-// altered; this build simply cannot reproduce it, because it was sealed by an
-// earlier canonical shape — the remedy is a re-scan. Where that cannot be
-// established the wording stays neutral: an unverified record is reported as
-// unverified, and nothing is insinuated about how it got that way.
+// altered; this build simply cannot reproduce it, because an earlier or a later
+// build wrote it in another canonical shape. Where that cannot be established
+// the wording stays neutral: an unverified record is reported as unverified, and
+// nothing is insinuated about how it got that way.
 func unreadableRowReason(r vulnports.UnreadableRow) string {
 	if errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
-		return "sealed by an earlier record generation; re-scan to reseal"
+		return vulnports.SetAsideRemedy
 	}
 	return "could not be verified: " + r.Reason.Error()
 }

@@ -177,8 +177,11 @@ type Container struct {
 	QueryExamples  QueryExamplesUseCase
 
 	// vuln
-	ScanModule          ScanModuleUseCase
-	ScanWalk            ScanWalkUseCase
+	ScanModule ScanModuleUseCase
+	ScanWalk   ScanWalkUseCase
+	// SetAside is where the scans state the stored generations their writes and
+	// reuse reads set aside; a scanning command points it at its stderr.
+	SetAside            *setAsideRelay
 	RescanWalk          RescanWalkUseCase
 	QueryVuln           QueryVulnUseCase
 	QueryScanRuns       QueryScanRunsUseCase
@@ -630,11 +633,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// heaviest module able to take the host by the other route.
 	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary, callgraphCeiling, callgraphNarration).
 		WithMemoryCeiling(callgraphBound.CeilingBytes)
+	setAside := newSetAsideRelay(logger)
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,
 		scanner, database, reach,
 		clk, vulnapp.PipelineVersion, logger,
-	).WithCallGraphLoader(cgLoader).
+	).WithSetAsideReporter(setAside.report).
+		WithCallGraphLoader(cgLoader).
 		WithCallGraphSpawner(cgSpawner).
 		WithRouteAnnotator(routeAnnotator).
 		// A module scan resolves its own snapshot when no walk scan handed it one,
@@ -812,6 +817,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		ScanModule:          moduleScannerUC,
 		ScanWalk:            walkScannerUC,
+		SetAside:            setAside,
 		RescanWalk:          rescanWalkUC,
 		QueryVuln:           queryVulnUC,
 		QueryScanRuns:       queryScanRunsUC,

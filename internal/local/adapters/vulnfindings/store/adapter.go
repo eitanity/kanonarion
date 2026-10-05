@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -69,11 +70,23 @@ func (a *VulnStoreAdapter) LoadFindings(
 		Scanned:        make(map[coordinate.ModuleCoordinate]struct{}),
 		OtherFrameOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		SupersededOnly: make(map[coordinate.ModuleCoordinate]struct{}),
+		SetAsideOnly:   make(map[coordinate.ModuleCoordinate]struct{}),
 		Restriction:    seedRestriction(consumerModulePath),
 	}
 	for _, coord := range coords {
 		candidates, err := a.store.ListVulnerabilityRecordsForModule(ctx, coord, a.pipelineVersion)
-		if err != nil {
+		// Generations this build cannot reproduce are left out of the seed and
+		// named beside it; an altered row still fails the load.
+		var aside *vulnports.SetAsideGenerations
+		if errors.As(err, &aside) {
+			for _, r := range aside.Rows {
+				result.SetAside = append(result.SetAside, r.SetAsideLabel()+": "+vulnports.SetAsideRemedy)
+			}
+			if len(candidates) == 0 {
+				result.SetAsideOnly[coord] = struct{}{}
+				continue
+			}
+		} else if err != nil {
 			return ports.FindingSet{}, fmt.Errorf("loading vuln records for %s: %w", coord, err)
 		}
 		if len(candidates) == 0 {

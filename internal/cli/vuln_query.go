@@ -78,7 +78,7 @@ marks them superseded.`,
 			}
 			defer func() { _ = cleanup() }()
 			return runVulnShow(cmd.Context(), args[0], walkID, gomod, target, cmd.Flags().Changed("gomod"), jsonOut, history,
-				ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout)
+				ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout, stderr)
 		},
 	}
 
@@ -101,8 +101,8 @@ func runVulnShow(
 	walks QueryWalksUseCase,
 	graphs QueryCallGraphUseCase,
 	natives nativeRecordReader,
-	stdout io.Writer,
-) error {
+	stdout, stderr io.Writer,
+) (retErr error) {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
@@ -127,6 +127,11 @@ func runVulnShow(
 	var rec vuldomain.VulnerabilityRecord
 	var isolated vuldomain.VulnerabilityRecord
 	var hasIsolated bool
+	// Generations this build cannot reproduce are left out of the selection and
+	// stated beside the answer, or inside any refusal; an altered row still
+	// refuses.
+	var aside setAsideRows
+	defer func() { retErr = aside.annotate(retErr) }()
 	if !anchored {
 		// Every generation is read rather than the store's composed "latest",
 		// because "show me this module's record" is a question a consumer asks
@@ -139,7 +144,7 @@ func runVulnShow(
 		// reachability, over the same store, served the consumer's route to the
 		// vulnerable symbol. Same read as reachability uses, so the two agree.
 		recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
-		if err != nil {
+		if err := aside.take(err); err != nil {
 			return vulnShowReadRefusal(coord, err)
 		}
 		// More than one consumer frame and no flag naming one: the question has
@@ -147,7 +152,10 @@ func runVulnShow(
 		if frames := consumerFrames(recs, coord); len(frames) > 1 {
 			return ambiguousFrameRefusal("kanonarion vuln-show "+coord.String(), coord, frames)
 		}
-		r, aside, has, ok := selectConsumerRecord(recs, coord)
+		r, isoAside, has, ok := selectConsumerRecord(recs, coord)
+		if !ok && len(aside) > 0 {
+			return aside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan <walk-id>")
+		}
 		if !ok {
 			// The read above keys on the pipeline version, so an empty result may
 			// be a coordinate this build has superseded rather than one nobody has
@@ -166,7 +174,7 @@ func runVulnShow(
 			}
 			return &exitError{code: ExitNotFound, msg: msg}
 		}
-		rec, isolated, hasIsolated = r, aside, has
+		rec, isolated, hasIsolated = r, isoAside, has
 	} else {
 		// The candidates leave the store unranked and the frame decides here. The
 		// walk's membership index keys on (coordinate, pipeline, snapshot) and
@@ -175,20 +183,23 @@ func runVulnShow(
 		// the same generation — which is how a walk-pinned read used to answer
 		// from a different walk without saying so.
 		candidates, err := uc.ListRecordsForModuleInWalk(ctx, coord, vulnPipelineVersion, anchor.walkID)
-		if err != nil {
+		if err := aside.take(err); err != nil {
 			return vulnShowReadRefusal(coord, err)
+		}
+		r, isoAside, has, ok, serr := selectAnchoredRecord(candidates, coord, anchor, "kanonarion vuln-show "+coord.String())
+		if serr != nil {
+			return serr
+		}
+		if !ok && len(aside) > 0 {
+			return aside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan "+anchor.walkID)
 		}
 		if len(candidates) == 0 {
 			return explainWalkRecordAbsence(ctx, runs, walks, coord, anchor.walkID)
 		}
-		r, aside, has, ok, serr := selectAnchoredRecord(candidates, coord, anchor, "kanonarion vuln-show "+coord.String())
-		if serr != nil {
-			return serr
-		}
 		if !ok {
 			return frameRecordAbsence(coord, anchor, candidates)
 		}
-		rec, isolated, hasIsolated = r, aside, has
+		rec, isolated, hasIsolated = r, isoAside, has
 	}
 
 	// The native statement is derived from the module's own stored measurement,
@@ -212,12 +223,13 @@ func runVulnShow(
 		// and no statement of what was searched to reach it.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordNativeJSON(rec, newRecordRootFunc(ctx, graphs), cov)); err != nil {
+		if err := enc.Encode(toVulnRecordShowJSON(rec, newRecordRootFunc(ctx, graphs), cov, aside)); err != nil {
 			return fmt.Errorf("encoding vulnerability record: %w", err)
 		}
 		return nil
 	}
 
+	aside.write(stderr)
 	writeFrameAnchorNotice(stdout, anchor, anchored)
 	if anchored {
 		// The record's own Walk line is provenance for the scan that wrote it, and
@@ -235,11 +247,13 @@ func runVulnShow(
 
 // vulnShowReadRefusal is how this command reports a failed record read.
 //
-// It keeps failing closed on a row the store could not verify, unlike the
-// listings: vuln-show serves ONE verdict selected from the coordinate's records,
-// and a verdict chosen out of a set that is missing a row can be a Clean
-// standing where a finding was. What it adds is the survey that does list the
-// row, so the refusal ends at a command rather than at a wall.
+// It keeps failing closed on a row whose bytes do not hash to their own seal,
+// unlike the listings: vuln-show serves ONE verdict selected from the
+// coordinate's records, and a verdict chosen out of a set missing an altered row
+// can be a Clean standing where a finding was. A generation this build merely
+// cannot reproduce is set aside and stated instead, and never reaches here. What
+// this adds is the survey that does list the row, so the refusal ends at a
+// command rather than at a wall.
 func vulnShowReadRefusal(coord coordinate.ModuleCoordinate, err error) error {
 	if _, unreadable := unreadableRowReport(err); !unreadable {
 		return fmt.Errorf("getting vulnerability record: %w", err)

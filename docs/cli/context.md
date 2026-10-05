@@ -653,8 +653,10 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
+| `status` | string | `not_run` / `superseded` / `set_aside` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
 | | | `superseded`: the store holds records for this module only at pipeline versions this build no longer serves. `error` carries the statement, the generations held, and the re-scan to run. It is not `not_run`: the scan ran. |
+| | | `set_aside`: every record this build reads for this module was written in a canonical shape it cannot reproduce. `error` names each by `content_hash`. See [vuln](vuln.md#a-stored-record-this-build-cannot-verify). |
+| `set_aside` | array | Stored generations the section's reads left out because this build cannot reproduce them: `coordinate`, `pipeline_version`, `database_snapshot`, `content_hash`, `reason`. Absent when none |
 | `findings` | array | CVE findings |
 | `findings[].id` | string | Primary CVE / GHSA identifier |
 | `findings[].aliases` | array | Alternative identifiers |
@@ -685,7 +687,7 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `snapshot_retrieved_at` | string | When that snapshot was fetched. Absent when the record's snapshot carries no retrieval time |
 | `snapshot_age_days` | int\|null | How old the snapshot was when the answer was validated. Always present; `0` is the freshest answer the field has — validated against a snapshot pulled the same day — and `null` means the snapshot carries no retrieval time to measure from |
 | `extracted_at` | string | RFC3339 scan timestamp |
-| `error` | string | Set when `status` is `read_error` |
+| `error` | string | Set when `status` is `read_error`, `superseded` or `set_aside` |
 
 The walk-level annotation carries two independent axes and prints each when it
 says something this module's own line does not, together when both do:

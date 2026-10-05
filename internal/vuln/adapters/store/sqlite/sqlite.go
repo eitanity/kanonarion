@@ -778,7 +778,9 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 	// for a connection the transaction is holding, and deadlock.
 	// Retried when another writer holds the single-writer lock: the condition is
 	// transient and what this carries is expensive to redo. See RetryOnBusy.
+	var aside []ports.UnreadableRow
 	if err := sqlitestore.RetryOnBusy(ctx, "vulnerability record for "+record.Coordinate.String(), func(ctx context.Context) error {
+		aside = nil
 		tx, err := s.db.DB().BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("beginning transaction: %w", err)
@@ -826,7 +828,7 @@ DO NOTHING`
 			return fmt.Errorf("inserting vulnerability record: %w", err)
 		}
 
-		if err = s.reconcileFindingsIndex(ctx, tx, record, rooting); err != nil {
+		if aside, err = s.reconcileFindingsIndex(ctx, tx, record, rooting); err != nil {
 			return err
 		}
 
@@ -837,7 +839,9 @@ DO NOTHING`
 	}); err != nil {
 		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
-	return nil
+	// Committed: the set-aside generations travel beside the completed write so
+	// the caller can state them, rather than being dropped here unseen.
+	return setAsideErr(aside)
 }
 
 // reconcileFindingsIndex rewrites the findings index for one coordinate,
@@ -854,27 +858,31 @@ DO NOTHING`
 // Everything runs on the caller's transaction. The pool holds one connection, so
 // a read issued against the store's own handle would wait on the transaction
 // that has already written the row it needs to see.
+//
+// The index is composed over the generations this build can reproduce. The ones
+// it cannot are returned as set aside, for the caller to state; a generation
+// whose bytes do not hash to their own seal aborts the write.
 func (s *Store) reconcileFindingsIndex(
 	ctx context.Context,
 	tx execQuerier,
 	record domain.VulnerabilityRecord,
 	rooting domain.Rooting,
-) error {
-	generations, err := s.listGenerations(ctx, tx,
+) ([]ports.UnreadableRow, error) {
+	generations, aside, err := s.listGenerations(ctx, tx,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	served, ok, cerr := domain.ComposeAt(generations, rooting)
 	if cerr != nil {
-		return fmt.Errorf("composing %s to reconcile its finding index: %w", record.Coordinate, cerr)
+		return nil, fmt.Errorf("composing %s to reconcile its finding index: %w", record.Coordinate, cerr)
 	}
 	if !ok {
 		// Unreachable in practice — the row just inserted is in this frame — but a
 		// silent skip here would leave the index describing a superseded record,
 		// so the impossible case is reported rather than assumed away.
-		return fmt.Errorf("reconciling finding index for %s: no record in frame %q after appending one", record.Coordinate, rooting)
+		return nil, fmt.Errorf("reconciling finding index for %s: no record in frame %q after appending one", record.Coordinate, rooting)
 	}
 
 	// The delete is what makes the index describe the served record rather than
@@ -890,7 +898,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(), string(rooting),
 	); err != nil {
-		return fmt.Errorf("clearing finding index entries for %s: %w", record.Coordinate, err)
+		return nil, fmt.Errorf("clearing finding index entries for %s: %w", record.Coordinate, err)
 	}
 
 	// Populate the findings index for cross-store queries.
@@ -916,15 +924,17 @@ ON CONFLICT DO NOTHING`
 				record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
 				string(rooting),
 			); err != nil {
-				return fmt.Errorf("inserting finding index entry %s: %w", id, err)
+				return nil, fmt.Errorf("inserting finding index entry %s: %w", id, err)
 			}
 		}
 	}
-	return nil
+	return aside, nil
 }
 
 // listGenerations returns every verified record the ledger holds for one
-// coordinate, pipeline version and snapshot, oldest append first.
+// coordinate, pipeline version and snapshot, oldest append first, and the
+// generations it set aside as drift. A generation whose bytes do not hash to
+// their own seal is an integrity error and ends the read.
 //
 // It takes the querier so it can run either standalone or inside a transaction;
 // see reconcileFindingsIndex for why that is mandatory rather than stylistic.
@@ -932,7 +942,7 @@ func (s *Store) listGenerations(
 	ctx context.Context,
 	q querier,
 	path, version, pipelineVersion, snapshotSource, snapshotVersion string,
-) ([]domain.VulnerabilityRecord, error) {
+) ([]domain.VulnerabilityRecord, []ports.UnreadableRow, error) {
 	// rowid, not content_hash, is the secondary sort: two scans can share a
 	// timestamp, at whole seconds on every row written before the column was
 	// widened and at any precision when two land inside one tick. The ledger is
@@ -947,28 +957,35 @@ ORDER BY julianday(scanned_at) ASC, rowid ASC`
 
 	rows, err := q.QueryContext(ctx, stmt, path, version, pipelineVersion, snapshotSource, snapshotVersion)
 	if err != nil {
-		return nil, fmt.Errorf("querying vulnerability record generations: %w", err)
+		return nil, nil, fmt.Errorf("querying vulnerability record generations: %w", err)
 	}
 	defer func() {
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
 	}()
 
-	var out []domain.VulnerabilityRecord
+	var (
+		out   []domain.VulnerabilityRecord
+		aside []ports.UnreadableRow
+	)
 	for rows.Next() {
 		var serialised []byte
 		if serr := rows.Scan(&serialised); serr != nil {
-			return nil, fmt.Errorf("scanning vulnerability record: %w", serr)
+			return nil, nil, fmt.Errorf("scanning vulnerability record: %w", serr)
 		}
-		rec, derr := decodeRecord(serialised)
+		rec, drifted, derr := splitRecordRow(serialised)
 		if derr != nil {
-			return nil, derr
+			return nil, nil, derr
+		}
+		if drifted != nil {
+			aside = append(aside, *drifted)
+			continue
 		}
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating vulnerability record generations: %w", err)
+		return nil, nil, fmt.Errorf("iterating vulnerability record generations: %w", err)
 	}
-	return out, nil
+	return out, aside, nil
 }
 
 // firstScannedAt returns the immutable first-seen timestamp the ledger already
@@ -1055,19 +1072,21 @@ func (s *Store) GetVulnerabilityRecord(
 	if snapshot.IsZero() {
 		return domain.VulnerabilityRecord{}, false, domain.ErrZeroSnapshot
 	}
-	records, err := s.listGenerations(ctx, s.db.DB(),
+	records, aside, err := s.listGenerations(ctx, s.db.DB(),
 		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source(), snapshot.Version())
 	if err != nil {
 		return domain.VulnerabilityRecord{}, false, err
 	}
+	// Nothing reproducible but something set aside is "no record this build can
+	// serve", and the set-aside error is what says so.
 	if len(records) == 0 {
-		return domain.VulnerabilityRecord{}, false, nil
+		return domain.VulnerabilityRecord{}, false, setAsideErr(aside)
 	}
 	composed, cerr := domain.Compose(records)
 	if cerr != nil {
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
 	}
-	return composed, true, nil
+	return composed, true, setAsideErr(aside)
 }
 
 // GetVulnerabilityRecordAt returns the composed record for a coordinate,
@@ -1103,19 +1122,19 @@ func (s *Store) GetVulnerabilityRecordAt(
 	if snapshot.IsZero() {
 		return domain.VulnerabilityRecord{}, false, domain.ErrZeroSnapshot
 	}
-	records, err := s.listGenerations(ctx, s.db.DB(),
+	records, aside, err := s.listGenerations(ctx, s.db.DB(),
 		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source(), snapshot.Version())
 	if err != nil {
 		return domain.VulnerabilityRecord{}, false, err
 	}
 	if len(records) == 0 {
-		return domain.VulnerabilityRecord{}, false, nil
+		return domain.VulnerabilityRecord{}, false, setAsideErr(aside)
 	}
 	composed, ok, cerr := domain.ComposeAt(records, rooting)
 	if cerr != nil {
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
 	}
-	return composed, ok, nil
+	return composed, ok, setAsideErr(aside)
 }
 
 // HasVulnerabilityRecord reports whether the ledger holds the exact generation
@@ -1191,17 +1210,20 @@ ORDER BY julianday(scanned_at) ASC, rowid ASC`
 
 	records, err := s.queryRecords(ctx, "latest vulnerability record", q,
 		coord.Path(), coord.Version(), pipelineVersion)
-	if err != nil {
+	// Drift alone is composed around and returned beside the answer; any other
+	// failure, an altered row among them, still refuses.
+	var aside *ports.SetAsideGenerations
+	if err != nil && !errors.As(err, &aside) {
 		return domain.VulnerabilityRecord{}, false, err
 	}
 	if len(records) == 0 {
-		return domain.VulnerabilityRecord{}, false, nil
+		return domain.VulnerabilityRecord{}, false, err
 	}
 	composed, cerr := domain.Compose(records)
 	if cerr != nil {
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
 	}
-	return composed, true, nil
+	return composed, true, err
 }
 
 // ListVulnerabilityRecordsForModuleInWalk returns every generation of a
@@ -1286,7 +1308,7 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records for walk: %w", err)
 	}
-	return records, unreadableRowsErr(unreadable)
+	return records, recordListingErr(unreadable)
 }
 
 // queryRecords runs a query selecting only the serialised column and decodes
@@ -1320,7 +1342,7 @@ func (s *Store) queryRecords(ctx context.Context, what, query string, args ...an
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating %s: %w", what, err)
 	}
-	return out, unreadableRowsErr(unreadable)
+	return out, recordListingErr(unreadable)
 }
 
 // PutWalkScanRun persists a walk scan run and its per-module membership index.
@@ -1522,6 +1544,29 @@ func unreadableRowsErr(unreadable []ports.UnreadableRow) error {
 		return nil
 	}
 	return &ports.UnreadableRows{Rows: unreadable}
+}
+
+// recordListingErr is unreadableRowsErr for record listings, which excuse drift:
+// when every unreadable row is a generation this build cannot reproduce, the
+// rows come back as set aside rather than as an integrity failure. One altered
+// row makes the whole report an integrity failure, drifted rows included, so a
+// survey still lists them all.
+func recordListingErr(unreadable []ports.UnreadableRow) error {
+	for _, r := range unreadable {
+		if !errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
+			return unreadableRowsErr(unreadable)
+		}
+	}
+	return setAsideErr(unreadable)
+}
+
+// setAsideErr wraps the generations a read or write set aside, or returns nil
+// when there were none.
+func setAsideErr(aside []ports.UnreadableRow) error {
+	if len(aside) == 0 {
+		return nil
+	}
+	return &ports.SetAsideGenerations{Rows: aside}
 }
 
 // runIDFrom recovers a run's identifier from stored bytes the seal check
@@ -1898,7 +1943,7 @@ ORDER BY julianday(scanned_at) DESC`
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
 	}
-	return records, unreadableRowsErr(unreadable)
+	return records, recordListingErr(unreadable)
 }
 
 // walkHasScanRun reports whether any vulnerability scan run was recorded for
@@ -1952,8 +1997,15 @@ ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.row
 
 	type moduleKey struct{ path, version string }
 	var order []moduleKey
+	// Set-aside generations are kept per module and reported only where they
+	// bore on the answer: a module served its pinned record did not need them.
+	aside := map[moduleKey][]ports.UnreadableRow{}
 	pinned := map[moduleKey]domain.VulnerabilityRecord{}
 	candidates := map[moduleKey][]domain.VulnerabilityRecord{}
+	// A module whose pinned generation was set aside has no record from this
+	// run that this build can serve; composing its other generations would
+	// report a record the run never produced.
+	pinnedAside := map[moduleKey]bool{}
 
 	for rows.Next() {
 		var path, version, wantHash, gotHash string
@@ -1961,13 +2013,21 @@ ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.row
 		if err := rows.Scan(&path, &version, &wantHash, &gotHash, &serialised); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		rec, derr := decodeRecord(serialised)
-		if derr != nil {
-			return nil, derr
-		}
 		k := moduleKey{path, version}
 		if _, seen := candidates[k]; !seen {
 			order = append(order, k)
+			candidates[k] = nil
+		}
+		rec, drifted, derr := splitRecordRow(serialised)
+		if derr != nil {
+			return nil, derr
+		}
+		if drifted != nil {
+			aside[k] = append(aside[k], *drifted)
+			if wantHash != "" && wantHash == gotHash {
+				pinnedAside[k] = true
+			}
+			continue
 		}
 		candidates[k] = append(candidates[k], rec)
 		if wantHash != "" && wantHash == gotHash {
@@ -1981,9 +2041,14 @@ ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.row
 	}
 
 	records := make([]domain.VulnerabilityRecord, 0, len(order))
+	var setAside []ports.UnreadableRow
 	for _, k := range order {
 		if rec, ok := pinned[k]; ok {
 			records = append(records, rec)
+			continue
+		}
+		setAside = append(setAside, aside[k]...)
+		if pinnedAside[k] || len(candidates[k]) == 0 {
 			continue
 		}
 		composed, cerr := domain.Compose(candidates[k])
@@ -1992,7 +2057,7 @@ ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.row
 		}
 		records = append(records, composed)
 	}
-	return records, nil
+	return records, setAsideErr(setAside)
 }
 
 // ListVulnerabilityRecordsForModule returns every generation the ledger holds
@@ -2152,23 +2217,6 @@ ORDER BY ` + latest + ` DESC, walk_id`
 	return out, nil
 }
 
-// decodeRecord parses a stored record and checks the seal it carries. Every
-// read path goes through it, not only the snapshot-keyed one: a guarantee that
-// holds on one query and not the next has a hole the size of the rest of the
-// query surface, and a caller reaching a record by any route is entitled to the
-// same answer about whether it still describes what was scanned.
-//
-// An integrity failure is reported as ErrVulnIntegrity, never as absence. A
-// detected tamper reported as "nothing here" becomes a silent re-scan that
-// overwrites the evidence of the tamper.
-func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
-	rec, cerr := classifyRecord(serialised)
-	if cerr != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w", ports.ErrVulnIntegrity, rec.Coordinate, cerr)
-	}
-	return rec, nil
-}
-
 // classifyRecord parses a stored record and says why it cannot be trusted,
 // without naming it: the coordinate comes back on the record, so a caller that
 // already names the row — an unreadable-row report does — does not have to
@@ -2204,20 +2252,45 @@ func classifyRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 // It is the seam every record LISTING goes through, so the rule for an
 // unreadable row cannot be applied to one listing and missed by another: the
 // record reads fan out over four store methods and reach vuln-by-id, vuln-show
-// and its history alike. The single-record reads deliberately do not come
-// through here — see listGenerations.
+// and its history alike. The reads that compose one group go through
+// splitRecordRow instead, which ends the read on an altered row.
 func recordRow(serialised []byte) (domain.VulnerabilityRecord, *ports.UnreadableRow) {
 	rec, derr := classifyRecord(serialised)
 	if derr != nil {
-		id, generation := recordIdentityFrom(serialised)
-		return domain.VulnerabilityRecord{}, &ports.UnreadableRow{
-			Kind:       ports.RowKindRecord,
-			ID:         id,
-			Generation: generation,
-			Reason:     derr,
-		}
+		row := unreadableRecordRow(serialised, derr)
+		return domain.VulnerabilityRecord{}, &row
 	}
 	return rec, nil
+}
+
+// splitRecordRow decodes one stored generation for a read that composes. A
+// generation this build cannot reproduce but whose bytes hash to their own seal
+// comes back as a set-aside row. Every other failure is ErrVulnIntegrity and ends
+// the read, never absence: a detected tamper reported as "nothing here" becomes a
+// silent re-scan that overwrites the evidence of the tamper.
+func splitRecordRow(serialised []byte) (domain.VulnerabilityRecord, *ports.UnreadableRow, error) {
+	rec, cerr := classifyRecord(serialised)
+	if cerr == nil {
+		return rec, nil, nil
+	}
+	if errors.Is(cerr, recordseal.ErrGenerationDrift) {
+		row := unreadableRecordRow(serialised, cerr)
+		return domain.VulnerabilityRecord{}, &row, nil
+	}
+	return domain.VulnerabilityRecord{}, nil, fmt.Errorf("%w: %s: %w", ports.ErrVulnIntegrity, rec.Coordinate, cerr)
+}
+
+// unreadableRecordRow names a stored record the seal check rejected, from the
+// head of its bytes.
+func unreadableRecordRow(serialised []byte, reason error) ports.UnreadableRow {
+	id, generation, hash := recordIdentityFrom(serialised)
+	return ports.UnreadableRow{
+		Kind:        ports.RowKindRecord,
+		ID:          id,
+		Generation:  generation,
+		ContentHash: hash,
+		Reason:      reason,
+	}
 }
 
 // recordIdentityFrom recovers a record's identity from stored bytes the seal
@@ -2232,17 +2305,18 @@ func recordRow(serialised []byte) (domain.VulnerabilityRecord, *ports.Unreadable
 // under suspicion, which is precisely why they must not be interpreted as a
 // record. Anything that cannot be read comes back empty and the row is reported
 // without it.
-func recordIdentityFrom(serialised []byte) (string, ports.RowGeneration) {
+func recordIdentityFrom(serialised []byte) (string, ports.RowGeneration, string) {
 	var head struct {
 		Coordinate       json.RawMessage `json:"coordinate"`
 		PipelineVersion  string          `json:"pipeline_version"`
+		ContentHash      string          `json:"content_hash"`
 		DatabaseSnapshot struct {
 			Source  string `json:"source"`
 			Version string `json:"version"`
 		} `json:"database_snapshot"`
 	}
 	if err := json.Unmarshal(serialised, &head); err != nil {
-		return "", ports.RowGeneration{}
+		return "", ports.RowGeneration{}, ""
 	}
 	generation := ports.RowGeneration{
 		PipelineVersion: head.PipelineVersion,
@@ -2251,19 +2325,19 @@ func recordIdentityFrom(serialised []byte) (string, ports.RowGeneration) {
 	}
 	var coord coordinate.ModuleCoordinate
 	if err := json.Unmarshal(head.Coordinate, &coord); err != nil {
-		return "", generation
+		return "", generation, head.ContentHash
 	}
 	// The zero coordinate renders as "@", which names nothing and reads as an
 	// identity. A row that will not say which module it is is reported without
 	// one.
 	if coord.IsZero() {
-		return "", generation
+		return "", generation, head.ContentHash
 	}
-	return coord.String(), generation
+	return coord.String(), generation, head.ContentHash
 }
 
 // decodeRun parses a stored walk scan run and checks its seal, on the same
-// terms as decodeRecord.
+// terms as splitRecordRow, without excusing drift.
 func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
 	var h domain.WalkScanRunHasher
 	run, err := h.Unmarshal(serialised)

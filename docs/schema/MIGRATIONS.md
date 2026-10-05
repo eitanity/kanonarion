@@ -244,9 +244,8 @@ leg that never ran.
 **Cost of the additive field, stated rather than discovered.** An OLDER
 kanonarion build cannot verify a record written by this one: it drops the unknown
 field when it re-marshals, so the recomputed hash differs. The store reports that
-correctly as a record written by a different canonical shape that should be
-re-extracted - never as a tamper. This is the ordinary consequence of an additive
-field, not a defect.
+correctly as a record written by a different canonical shape - never as a tamper.
+This is the ordinary consequence of an additive field, not a defect.
 
 **`verification-coverage` splits `cross_verified` three ways** to match:
 `cross_verified_module_path_url`, `cross_verified_proxy_named_url` and
@@ -288,8 +287,8 @@ rather than rendering as a direct call.
 **An OLDER build cannot verify a record written by this one.** That is the
 ordinary consequence of an additive field under a canonical-shape seal, in the
 direction the hash-transparency rule does not cover, and the store already names
-it: such a record is reported as "written by a different canonical shape … should
-be re-extracted rather than investigated", never as a tamper.
+it: such a record is reported as "written by a different canonical shape", never
+as a tamper.
 
 ## Coverage gaps say what they are a statement about: no migration and no bump
 

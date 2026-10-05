@@ -1546,7 +1546,7 @@ func (uc *ScanWalkUseCase) persistSealed(
 	if herr != nil {
 		return rec, fmt.Errorf("hashing %s vulnerability record for %s: %w", kind, rec.Coordinate, herr)
 	}
-	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, sealed); perr != nil {
+	if perr := putRecord(ctx, uc.vulnStore, sealed, uc.setAsideReporter(), uc.logger); perr != nil {
 		return sealed, fmt.Errorf("persisting %s vulnerability record for %s: %w", kind, sealed.Coordinate, perr)
 	}
 	return sealed, nil

@@ -763,9 +763,11 @@ func auditScope(
 		// for itself pays nothing for it. A read that fails is reported rather than
 		// silently collapsing the count to nought, because nought is also the
 		// answer that removes the statement.
-		if recs, lerr := ctr.QueryVuln.ListRecordsForRun(ctx, prior.ID); lerr != nil {
+		var aside setAsideRows
+		if recs, lerr := ctr.QueryVuln.ListRecordsForRun(ctx, prior.ID); aside.take(lerr) != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: reading the reused run's records: %v\n", lerr)
 		} else {
+			aside.write(stderr)
 			derivation.scanReachabilityVerdicts = reachabilityVerdicts(recs)
 		}
 	}
@@ -910,11 +912,28 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 	// frame-blind read this replaces ranked every frame the coordinate was
 	// measured in against each other, so a store holding a second project's scans
 	// could put that project's verdict in this project's audit row.
-	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
+	vrec, found, vaside, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
 		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
+	res.VulnStatus, res.VulnReason = auditSetAside(res.VulnStatus, res.VulnReason, found, verr, vaside)
 
 	return res, nil
+}
+
+// auditSetAside states, in the row, the generations the walk-frame read set
+// aside. A row with nothing this build can serve says so in its status; a row
+// that was served carries the statement beside its own reason.
+func auditSetAside(status, reason string, found bool, verr error, aside setAsideRows) (string, string) {
+	if len(aside) == 0 || verr != nil {
+		return status, reason
+	}
+	if !found {
+		return "(set aside)", aside.statement()
+	}
+	if reason == "" {
+		return status, aside.statement()
+	}
+	return status, reason + "; " + aside.statement()
 }
 
 // auditSupersededReason is the row's explanation when the walk-frame read found
@@ -1298,9 +1317,10 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, policyScope)
 	applyPolicyEvaluation(&res, eval, "")
 
-	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
+	vrec, found, vaside, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
 		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
+	res.VulnStatus, res.VulnReason = auditSetAside(res.VulnStatus, res.VulnReason, found, verr, vaside)
 	return res
 }
 

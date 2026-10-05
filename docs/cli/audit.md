@@ -74,7 +74,10 @@ For each module in the scope, `audit` emits a single line containing:
   `ScanFailed`, `(not scanned)` when no record exists at any pipeline version, or
   `(superseded)` when the store holds records for the module only at pipeline
   versions this build no longer reads — the module has been scanned, and the row's
-  reason names the generations held and says to re-scan. A module whose every
+  reason names the generations held and says to re-scan. `(set aside)` when every
+  record this build reads for the module was written in a canonical shape it
+  cannot reproduce; the reason names each by `content_hash` (see [A stored record
+  this build cannot verify](vuln.md#a-stored-record-this-build-cannot-verify)). A module whose every
   matched advisory was retracted upstream reads `Withdrawn`, and its count is
   reported as *retracted* rather than as findings: only one of the two is
   something to act on. A module carrying both reads
@@ -355,8 +358,8 @@ included. `vuln_withdrawn` is the retracted subset and live advisories are the
 difference between the two. Both are emitted on every row, `0` included: `0`
 means no advisory covering this module was retracted, and it is a measurement,
 not a gap. A row with no scan at all reports `0` for both and says which absence
-it is in `vuln_status` (`(not scanned)`, `(superseded)`, `(scan record
-unreadable)`) and `vuln_reason`.
+it is in `vuln_status` (`(not scanned)`, `(superseded)`, `(set aside)`, `(scan
+record unreadable)`) and `vuln_reason`.
 
 `latest_release_age_days` is **how long ago the latest release shipped**, not how
 far behind the pin is. There is no `days_behind` field. See

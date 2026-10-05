@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -59,20 +60,22 @@ func (q *searchedVulnQuery) GetRecord(
 	ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, snapshot vulndomain.DatabaseSnapshot,
 ) (vulndomain.VulnerabilityRecord, bool, error) {
 	rec, found, err := q.inner.GetRecord(ctx, coord, pipelineVersion, snapshot)
-	if err != nil || !found {
+	// A composed record served beside set-aside generations is still an answer,
+	// so it is searched like any other.
+	if !found {
 		return rec, found, err //nolint:wrapcheck // the inner use case's error is the answer; wrapping it here would double-name the read
 	}
-	return q.search(ctx, rec), true, nil
+	return q.search(ctx, rec), true, err //nolint:wrapcheck // as above
 }
 
 func (q *searchedVulnQuery) GetLatestRecord(
 	ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string,
 ) (vulndomain.VulnerabilityRecord, bool, error) {
 	rec, found, err := q.inner.GetLatestRecord(ctx, coord, pipelineVersion)
-	if err != nil || !found {
+	if !found {
 		return rec, found, err //nolint:wrapcheck // as above
 	}
-	return q.search(ctx, rec), true, nil
+	return q.search(ctx, rec), true, err //nolint:wrapcheck // as above
 }
 
 func (q *searchedVulnQuery) ListRecordsForModuleInWalk(
@@ -130,10 +133,13 @@ func (q *searchedVulnQuery) ListRecordsForRun(
 	ctx context.Context, runID string,
 ) ([]vulndomain.VulnerabilityRecord, error) {
 	recs, err := q.inner.ListRecordsForRun(ctx, runID)
+	// Partial results survive, as above: a run's records come back beside the
+	// generations the store set aside.
+	recs = q.searchAll(ctx, recs)
 	if err != nil {
-		return nil, fmt.Errorf("listing records for run: %w", err)
+		return recs, fmt.Errorf("listing records for run: %w", err)
 	}
-	return q.searchAll(ctx, recs), nil
+	return recs, nil
 }
 
 // ListRecordGenerationsForModule is a census of pipeline versions, not of
@@ -170,7 +176,10 @@ func newSearchedDiffScanRuns(uc DiffScanRunsUseCase, searcher negativeSearcher) 
 
 func (d *searchedDiffScanRuns) Diff(ctx context.Context, runIDA, runIDB string) (vulndomain.ScanRunDiff, error) {
 	diff, err := d.inner.Diff(ctx, runIDA, runIDB)
-	if err != nil {
+	// A diff computed beside set-aside generations is still a diff, so it is
+	// searched and returned with the report; any other error ends it here.
+	var aside *vulnports.SetAsideGenerations
+	if err != nil && !errors.As(err, &aside) {
 		return diff, fmt.Errorf("diffing scan runs: %w", err)
 	}
 	for _, deltas := range [][]vulndomain.FindingDelta{
@@ -185,6 +194,9 @@ func (d *searchedDiffScanRuns) Diff(ctx context.Context, runIDA, runIDB string) 
 	}
 	for i := range diff.UnresolvedFindings {
 		d.searchFinding(ctx, diff.UnresolvedFindings[i].Coordinate, &diff.UnresolvedFindings[i].Finding)
+	}
+	if err != nil {
+		return diff, fmt.Errorf("diffing scan runs: %w", err)
 	}
 	return diff, nil
 }

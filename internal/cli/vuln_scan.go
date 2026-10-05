@@ -563,6 +563,9 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 			logger.Warn("vuln-scan: store cleanup failed", "error", cerr)
 		}
 	}()
+	// Generations the scan's writes set aside are statements, so they go to
+	// stderr beside the progress, under --json as well.
+	ctr.SetAside.to(stderr)
 
 	// Progress preamble goes to stderr so stdout is a clean data channel —
 	// under --json, callers pipe stdout straight into jq and a preamble line
@@ -795,10 +798,14 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		return vulnScanRunFacts{}, fmt.Errorf("witnessing the served scan run: %w", err)
 	}
 
+	// Generations this build cannot reproduce are left out of the report and
+	// stated on stderr beside it; an altered row still refuses.
+	var aside setAsideRows
 	recs, err := ctr.QueryVuln.ListRecordsForRun(ctx, run.ID)
-	if err != nil {
+	if err := aside.take(err); err != nil {
 		return vulnScanRunFacts{}, fmt.Errorf("reading the reused scan run's records: %w", err)
 	}
+	aside.write(stderr)
 
 	rollups := newVulnScanRollups()
 	for _, rec := range recs {
@@ -1347,6 +1354,7 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 		req.Snapshot = &snap
 	}
 
+	ctr.SetAside.to(stderr)
 	return rescanWith(ctx, ctr.RescanWalk, req, f.policyPath, f.noProgress, stdout, stderr)
 }
 

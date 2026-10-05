@@ -229,13 +229,18 @@ func (uc *RescanWalkUseCase) priorRunWasProjectRooted(ctx context.Context, walkI
 	// Ordered newest first by the store, so runs[0] is the generation a re-scan
 	// is asked to reproduce.
 	recs, err := uc.vulnStore.ListVulnerabilityRecords(ctx, runs[0].ID)
-	if err != nil {
+	if err != nil && !isSetAside(err) {
 		return false, fmt.Errorf("reading the records of scan run %q to settle its analysis frame: %w", runs[0].ID, err)
 	}
 	for _, rec := range recs {
 		if domain.RecordRooting(rec).IsTargetRooted() {
 			return true, nil
 		}
+	}
+	// No readable record says target-rooted, but a set-aside one might: answering
+	// "isolated" without it would be the silent frame change this read prevents.
+	if err != nil {
+		return false, fmt.Errorf("settling the analysis frame of scan run %q without the generations this build cannot reproduce: %w", runs[0].ID, err)
 	}
 	return false, nil
 }

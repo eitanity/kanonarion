@@ -166,6 +166,9 @@ type vulnRecordJSON struct {
 	// stamp and is absent whenever the stamp is, so a consumer that never reads
 	// the stamp sees no change. See firstScannedAtAnchorNote.
 	FirstScannedAtAnchor string `json:"first_scanned_at_anchor,omitempty"`
+	// SetAside names the stored generations of this coordinate the read left out
+	// because this build cannot reproduce them. Absent when nothing was set aside.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // toVulnRecordJSON projects one record, classifying its routes against the
@@ -216,7 +219,14 @@ type vulnRecordNativeJSON struct {
 // not derive it, rather than present and empty, which would assert an absence
 // nothing measured.
 func toVulnRecordNativeJSON(rec vuldomain.VulnerabilityRecord, bind recordRootFunc, cov *nativeCoverage) any {
+	return toVulnRecordShowJSON(rec, bind, cov, nil)
+}
+
+// toVulnRecordShowJSON is toVulnRecordNativeJSON carrying the generations the
+// read set aside.
+func toVulnRecordShowJSON(rec vuldomain.VulnerabilityRecord, bind recordRootFunc, cov *nativeCoverage, aside setAsideRows) any {
 	base := toVulnRecordJSON(rec, bind)
+	base.SetAside = aside.json()
 	if cov == nil {
 		return base
 	}
@@ -259,6 +269,7 @@ type unreadableRecordJSON struct {
 	Coordinate       string                  `json:"coordinate,omitempty"`
 	PipelineVersion  string                  `json:"pipeline_version,omitempty"`
 	DatabaseSnapshot *unreadableSnapshotJSON `json:"database_snapshot,omitempty"`
+	ContentHash      string                  `json:"content_hash,omitempty"`
 	OverallStatus    string                  `json:"overall_status"`
 	Reason           string                  `json:"reason"`
 }
@@ -277,6 +288,7 @@ func toUnreadableRecordJSON(e unreadableRowEntry) unreadableRecordJSON {
 	out := unreadableRecordJSON{
 		Coordinate:      e.ID,
 		PipelineVersion: e.PipelineVersion,
+		ContentHash:     e.ContentHash,
 		OverallStatus:   statusUnreadable,
 		Reason:          e.Reason,
 	}

@@ -106,6 +106,8 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			reason = domain.UncoveredOtherFrameOnly
 		case setContains(set.SupersededOnly, coord):
 			reason = domain.UncoveredSupersededPipeline
+		case setContains(set.SetAsideOnly, coord):
+			reason = domain.UncoveredSetAside
 		}
 		uncovered = append(uncovered, domain.UncoveredModule{
 			Path: coord.Path(), Version: coord.Version(), Reason: reason,
@@ -132,6 +134,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			Modules:         nil,
 			Coverage:        coverage,
 			SeedRestriction: set.Restriction,
+			SeedSetAside:    set.SetAside,
 			Notice: fmt.Sprintf("no stored vulnerability findings for the %d module(s) of this build the store holds a record for",
 				len(set.Scanned)),
 		}, nil
@@ -195,6 +198,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		Modules:         modResults,
 		Coverage:        coverage,
 		SeedRestriction: set.Restriction,
+		SeedSetAside:    set.SetAside,
 		Notice:          notice,
 	}, nil
 }

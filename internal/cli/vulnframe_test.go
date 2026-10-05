@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -158,7 +159,7 @@ func TestVulnShow_WalkIDIsHonouredAndNotSubstituted(t *testing.T) {
 
 	var buf bytes.Buffer
 	if err := runVulnShow(context.Background(), coord.String(), walkA, "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf); err != nil {
+		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -179,7 +180,7 @@ func TestVulnShow_PinnedWalkWithNoRecordInItsFrameRefusesRatherThanSubstituting(
 
 	var buf bytes.Buffer
 	err := runVulnShow(context.Background(), coord.String(), walkC, "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf)
+		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf, io.Discard)
 	if err == nil {
 		t.Fatalf("want a refusal for a walk holding no record in its own frame, got output:\n%s", buf.String())
 	}
@@ -201,7 +202,7 @@ func TestVulnShow_UnanchoredRefusesNamingEveryConsumerFrame(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf)
+		uc, testfakes.NewFakeQueryScanRuns(), walks, nil, nil, &buf, io.Discard)
 	if err == nil {
 		t.Fatalf("want a refusal on a two-consumer store, got output:\n%s", buf.String())
 	}
@@ -234,7 +235,7 @@ func TestVulnShow_SingleConsumerFrameIsUnchanged(t *testing.T) {
 
 	var got bytes.Buffer
 	if err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, &got); err != nil {
+		uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, nil, &got, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -253,7 +254,7 @@ func TestReachability_WalkIDAnswersInThatWalksFrame(t *testing.T) {
 
 	var buf bytes.Buffer
 	if err := runVulnReachability(context.Background(), coord.String(), twoProjectVulnID, walkA, "", false, false,
-		uc, walks, nil, &buf); err != nil {
+		uc, walks, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -276,7 +277,7 @@ func TestReachability_WalkIDOfTheOtherProjectReturnsItsOwnVerdict(t *testing.T) 
 
 	var buf bytes.Buffer
 	if err := runVulnReachability(context.Background(), coord.String(), twoProjectVulnID, walkB, "", false, false,
-		uc, walks, nil, &buf); err != nil {
+		uc, walks, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out := buf.String(); !strings.Contains(out, "NOT reachable") ||
@@ -291,7 +292,7 @@ func TestReachability_UnanchoredRefusesNamingEveryConsumerFrame(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runVulnReachability(context.Background(), coord.String(), twoProjectVulnID, "", "", false, false,
-		uc, walks, nil, &buf)
+		uc, walks, nil, &buf, io.Discard)
 	if err == nil {
 		t.Fatalf("want a refusal on a two-consumer store, got output:\n%s", buf.String())
 	}
@@ -323,7 +324,7 @@ func TestReachability_SingleConsumerFrameIsUnchanged(t *testing.T) {
 
 	var buf bytes.Buffer
 	if err := runVulnReachability(context.Background(), coord.String(), twoProjectVulnID, "", "", false, false,
-		uc, testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
+		uc, testfakes.NewFakeQueryWalks(), nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -454,7 +455,7 @@ func TestAffectedSetForRun_AnswersInTheRunsOwnFrame(t *testing.T) {
 		PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""},
 	}
 
-	got, err := affectedSetForRun(context.Background(), uc, run,
+	got, _, err := affectedSetForRun(context.Background(), uc, run,
 		walkFrameAnchor(walkA, projectRoot(t, "example.com/project-a")))
 	if err != nil {
 		t.Fatalf("affectedSetForRun: %v", err)
@@ -463,7 +464,7 @@ func TestAffectedSetForRun_AnswersInTheRunsOwnFrame(t *testing.T) {
 		t.Errorf("the run's own scan reports the module Affected; the walk's affected set dropped it: %v", got)
 	}
 
-	clean, err := affectedSetForRun(context.Background(), uc, run,
+	clean, _, err := affectedSetForRun(context.Background(), uc, run,
 		walkFrameAnchor(walkB, projectRoot(t, "example.com/project-b")))
 	if err != nil {
 		t.Fatalf("affectedSetForRun: %v", err)

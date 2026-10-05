@@ -71,10 +71,13 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 	compact := f.compact && !f.full
 
 	// Build the filtered node list for --direct-only / --affected-only / --modules.
-	nodes, err := filterContextWalkNodes(ctx, rec.Graph.Nodes, rec.Target, f, ctr.QueryVuln, ctr.QueryScanRuns, vulnBatch)
+	nodes, filterAside, err := filterContextWalkNodes(ctx, rec.Graph.Nodes, rec.Target, f, ctr.QueryVuln, ctr.QueryScanRuns, vulnBatch)
 	if err != nil {
 		return err
 	}
+	// The selection was decided without these generations, so the report says so
+	// beside the document rather than inside one module's section.
+	filterAside.write(stderr)
 
 	// --size-only with --walk-id: accumulate per-module JSON sizes.
 	if f.sizeOnly {
@@ -180,13 +183,13 @@ func filterContextWalkNodes(
 	vulnUC QueryVulnUseCase,
 	runsUC QueryScanRunsUseCase,
 	vulnBatch *vulnBatchCtx,
-) ([]walkdomain.GraphNode, error) {
+) ([]walkdomain.GraphNode, setAsideRows, error) {
 	// Build coordinate allow-set from --modules file.
 	var allowSet map[string]struct{}
 	if f.modulesFile != "" {
 		data, err := os.ReadFile(filepath.Clean(f.modulesFile))
 		if err != nil {
-			return nil, fmt.Errorf("reading --modules file %q: %w", f.modulesFile, err)
+			return nil, nil, fmt.Errorf("reading --modules file %q: %w", f.modulesFile, err)
 		}
 		allowSet = make(map[string]struct{})
 		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
@@ -201,12 +204,15 @@ func filterContextWalkNodes(
 	// walk. Resolving from PerModuleResults (always populated after a scan) avoids
 	// silently dropping modules that are Affected in the scan but lack an extracted
 	// VulnerabilityRecord in the store.
-	var affectedSet map[coordinate.ModuleCoordinate]struct{}
+	var (
+		affectedSet map[coordinate.ModuleCoordinate]struct{}
+		aside       setAsideRows
+	)
 	if f.affectedOnly && f.walkID != "" {
 		var err error
-		affectedSet, err = buildAffectedSetForWalk(ctx, runsUC, vulnUC, f.walkID, vulnBatch)
+		affectedSet, aside, err = buildAffectedSetForWalk(ctx, runsUC, vulnUC, f.walkID, vulnBatch)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -235,14 +241,14 @@ func filterContextWalkNodes(
 		}
 		out = append(out, node)
 	}
-	return out, nil
+	return out, aside, nil
 }
 
 // buildAffectedSetForWalk returns the set of module coordinates that are
 // Affected in the most recent scan run for the given walk. It resolves module
 // status from the scan run's PerModuleResults so that modules affected at the
 // scan level are included even when no VulnerabilityRecord was extracted.
-func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, vulnUC QueryVulnUseCase, walkID string, batch *vulnBatchCtx) (map[coordinate.ModuleCoordinate]struct{}, error) {
+func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, vulnUC QueryVulnUseCase, walkID string, batch *vulnBatchCtx) (map[coordinate.ModuleCoordinate]struct{}, setAsideRows, error) {
 
 	// Prefer the in-memory batch to avoid an extra DB round-trip.
 	runs := batch.runs[walkID]
@@ -250,11 +256,11 @@ func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, v
 		var err error
 		runs, err = runsUC.ListRunsForWalk(ctx, walkID)
 		if err != nil {
-			return nil, fmt.Errorf("listing scan runs for walk %s: %w", walkID, err)
+			return nil, nil, fmt.Errorf("listing scan runs for walk %s: %w", walkID, err)
 		}
 	}
 	if len(runs) == 0 {
-		return map[coordinate.ModuleCoordinate]struct{}{}, nil
+		return map[coordinate.ModuleCoordinate]struct{}{}, nil, nil
 	}
 
 	// runs[0] is the most recent (ListWalkScanRuns returns DESC by started_at).
@@ -269,17 +275,20 @@ func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, v
 // fabricated into an Affected entry. A not-found record is a coverage gap (the
 // run lists the coordinate but nothing backs a verdict): it is no evidence of
 // Affected, so it is skipped. Only a real StatusAffected record adds a
-// coordinate.
-func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldomain.WalkScanRun, anchor vulnFrameAnchor) (map[coordinate.ModuleCoordinate]struct{}, error) {
+// coordinate. The generations set aside on the way are returned for the caller
+// to state.
+func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldomain.WalkScanRun, anchor vulnFrameAnchor) (map[coordinate.ModuleCoordinate]struct{}, setAsideRows, error) {
 	affected := make(map[coordinate.ModuleCoordinate]struct{}, len(run.PerModuleResults))
+	var aside setAsideRows
 	for coord := range run.PerModuleResults {
 		// Walk-scoped (snapshot-agnostic) so a snapshot mismatch does not hide a
 		// record, and selected in the walk's own frame so another project's scan
 		// of a shared dependency cannot decide whether this walk is affected.
-		rec, found, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
+		rec, found, recAside, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
 		if err != nil {
-			return nil, fmt.Errorf("reading status for %s in walk %s: %w", coord, run.WalkID, err)
+			return nil, nil, fmt.Errorf("reading status for %s in walk %s: %w", coord, run.WalkID, err)
 		}
+		aside = aside.merge(recAside)
 		if !found {
 			continue
 		}
@@ -290,7 +299,7 @@ func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldoma
 			affected[coord] = struct{}{}
 		}
 	}
-	return affected, nil
+	return affected, aside, nil
 }
 
 // runContextWalkSizeOnly accumulates JSON sizes for each filtered node and

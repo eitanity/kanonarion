@@ -195,25 +195,28 @@ func isolatedOnly(recs []vuldomain.VulnerabilityRecord) []vuldomain.Vulnerabilit
 // report with an error about a question nobody asked. A walk whose record the
 // store no longer holds has no frame to select on, so those fall back to
 // consumer-frame selection — still never a frame-blind pick.
+//
+// aside names the generations this build cannot reproduce, left out of the
+// selection for the caller to state; an altered row is still an error.
 func recordInWalkFrame(
 	ctx context.Context,
 	uc QueryVulnUseCase,
 	coord coordinate.ModuleCoordinate,
 	anchor vulnFrameAnchor,
-) (vuldomain.VulnerabilityRecord, bool, error) {
+) (rec vuldomain.VulnerabilityRecord, found bool, aside setAsideRows, err error) {
 	candidates, err := uc.ListRecordsForModuleInWalk(ctx, coord, vulnPipelineVersion, anchor.walkID)
-	if err != nil {
-		return vuldomain.VulnerabilityRecord{}, false, fmt.Errorf("reading vulnerability records for %s in walk %s: %w", coord, anchor.walkID, err)
+	if err := aside.take(err); err != nil {
+		return vuldomain.VulnerabilityRecord{}, false, nil, fmt.Errorf("reading vulnerability records for %s in walk %s: %w", coord, anchor.walkID, err)
 	}
 	if len(candidates) == 0 {
-		return vuldomain.VulnerabilityRecord{}, false, nil
+		return vuldomain.VulnerabilityRecord{}, false, aside, nil
 	}
 	if anchor.rooting.IsRecorded() {
-		rec, _, _, ok := selectRecordInFrame(candidates, anchor.rooting)
-		return rec, ok, nil
+		rec, _, _, found = selectRecordInFrame(candidates, anchor.rooting)
+		return rec, found, aside, nil
 	}
-	rec, _, _, ok := selectConsumerRecord(candidates, coord)
-	return rec, ok, nil
+	rec, _, _, found = selectConsumerRecord(candidates, coord)
+	return rec, found, aside, nil
 }
 
 // walkFrameAnchor is the frame of one walk, for a caller that already holds the

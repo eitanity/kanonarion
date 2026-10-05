@@ -157,10 +157,13 @@ type reachabilityOutput struct {
 	// It is on the JSON surface as well as the text one because the probe's
 	// consumers are scripts as often as people, and the restriction is part of
 	// what the answer means.
-	SeedRestriction string               `json:"seed_restriction,omitempty"`
-	Notice          string               `json:"notice,omitempty"`
-	Coverage        reachabilityCoverage `json:"coverage"`
-	Modules         []reachabilityModule `json:"modules"`
+	SeedRestriction string `json:"seed_restriction,omitempty"`
+	// SeedSetAside names the stored generations the seed was drawn without,
+	// because this build cannot reproduce them. Absent when none.
+	SeedSetAside []string             `json:"seed_set_aside,omitempty"`
+	Notice       string               `json:"notice,omitempty"`
+	Coverage     reachabilityCoverage `json:"coverage"`
+	Modules      []reachabilityModule `json:"modules"`
 }
 
 // reachabilityFlags holds every flag the reachability command registers. They
@@ -283,7 +286,7 @@ func runReachabilityStoredQuery(ctx context.Context, coordArg string, f reachabi
 	}
 	defer func() { _ = cleanup() }()
 	return runVulnReachability(ctx, coordArg, f.vulnID, f.walkID, f.gomod, gomodSet,
-		jsonOut, ctr.QueryVuln, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
+		jsonOut, ctr.QueryVuln, ctr.QueryWalks, ctr.QueryCallGraph, stdout, stderr)
 }
 
 // runReachabilityLocalProbe is the command's local dispatch path: a live
@@ -324,9 +327,9 @@ func runVulnReachability(
 	uc QueryVulnUseCase,
 	walks QueryWalksUseCase,
 	graphs QueryCallGraphUseCase,
-	stdout io.Writer,
+	stdout, stderr io.Writer,
 ) error {
-	err := runVulnReachabilityQuery(ctx, arg, vulnID, walkID, gomod, gomodSet, jsonOut, uc, walks, graphs, stdout)
+	err := runVulnReachabilityQuery(ctx, arg, vulnID, walkID, gomod, gomodSet, jsonOut, uc, walks, graphs, stdout, stderr)
 	if err == nil || !jsonOut {
 		return err
 	}
@@ -384,8 +387,8 @@ func runVulnReachabilityQuery(
 	uc QueryVulnUseCase,
 	walks QueryWalksUseCase,
 	graphs QueryCallGraphUseCase,
-	stdout io.Writer,
-) error {
+	stdout, stderr io.Writer,
+) (retErr error) {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
@@ -406,13 +409,18 @@ func runVulnReachabilityQuery(
 		aside    vuldomain.VulnerabilityRecord
 		hasAside bool
 		found    bool
+		// Generations this build cannot reproduce: left out of the selection and
+		// stated beside the answer, or inside any refusal. An altered row still
+		// refuses.
+		setAside setAsideRows
 	)
+	defer func() { retErr = setAside.annotate(retErr) }()
 	if anchored {
 		// Anchored: the walk's candidates, ranked within the walk's own frame.
 		// The candidate set spans every frame of that generation, so ranking it
 		// blind is what answered a corteza question from a langchaingo scan.
 		candidates, cerr := uc.ListRecordsForModuleInWalk(ctx, coord, localVulnPipelineVersion, anchor.walkID)
-		if cerr != nil {
+		if cerr := setAside.take(cerr); cerr != nil {
 			return fmt.Errorf("getting vulnerability record: %w", cerr)
 		}
 		var serr error
@@ -420,6 +428,9 @@ func runVulnReachabilityQuery(
 			fmt.Sprintf("kanonarion reachability %s --vuln %s", coord, vulnID))
 		if serr != nil {
 			return serr
+		}
+		if !found && len(setAside) > 0 {
+			return setAside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan "+anchor.walkID)
 		}
 		if !found {
 			// Refused rather than answered from a neighbouring frame, and refused
@@ -430,7 +441,7 @@ func runVulnReachabilityQuery(
 		}
 	} else {
 		recs, lerr := uc.ListRecordsForModule(ctx, coord, localVulnPipelineVersion)
-		if lerr != nil {
+		if lerr := setAside.take(lerr); lerr != nil {
 			return fmt.Errorf("getting vulnerability record: %w", lerr)
 		}
 		// Two consumers' builds, one coordinate, no flag naming which: the store
@@ -440,6 +451,9 @@ func runVulnReachabilityQuery(
 				fmt.Sprintf("kanonarion reachability %s --vuln %s", coord, vulnID), coord, frames)
 		}
 		rec, aside, hasAside, found = selectConsumerRecord(recs, coord)
+		if !found && len(setAside) > 0 {
+			return setAside.noServable(coord, remedyScanModule(coord).String())
+		}
 		if !found {
 			// "The module has not been vuln-scanned" is the strongest of this
 			// command's absences, and the read above cannot see past its own
@@ -456,6 +470,7 @@ func runVulnReachabilityQuery(
 	if verr != nil {
 		return verr
 	}
+	res.SetAside = setAside.json()
 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
@@ -466,6 +481,7 @@ func runVulnReachabilityQuery(
 		return nil
 	}
 
+	setAside.write(stderr)
 	writeFrameAnchorNotice(stdout, anchor, anchored)
 	printVulnReachability(stdout, res)
 	return nil
@@ -604,6 +620,9 @@ type vulnReachabilityQuery struct {
 	// the two frames both hold a verdict. Absent otherwise: an aside beside an
 	// answer drawn from the isolated frame itself would be the same record twice.
 	IsolatedAside *isolatedAside `json:"isolated_aside,omitempty"`
+	// SetAside names the stored generations of this coordinate the read left out
+	// because this build cannot reproduce them. Absent when nothing was set aside.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 	// WithdrawnAt is set only on the withdrawn verdict, and carries the retraction
 	// timestamp so the answer states its reason rather than asserting a bare
 	// negative the reader has to take on trust.
@@ -1401,6 +1420,9 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 	if r.SeedRestriction != "" {
 		w.printf("  seed:      %s\n", r.SeedRestriction)
 	}
+	for _, a := range r.SeedSetAside {
+		w.printf("  set aside: %s\n", a)
+	}
 	if r.Notice != "" {
 		w.printf("  notice:    %s\n", r.Notice)
 	}
@@ -1531,6 +1553,7 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 		VersionID:       r.VersionID,
 		ProbeKind:       r.ProbeKind,
 		SeedRestriction: r.SeedRestriction,
+		SeedSetAside:    r.SeedSetAside,
 		Notice:          r.Notice,
 		Coverage:        coverageToOutput(r.Coverage),
 		Modules:         mods,

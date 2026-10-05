@@ -133,6 +133,10 @@ const (
 	// it. Distinct from not_run, which claims nothing looked; here a build was
 	// measured and the module was not in it.
 	sectionStatusNotInWalk = "not_in_basis_walk"
+	// sectionStatusSetAside: every stored generation this build reads for the
+	// coordinate was written in a canonical shape this build cannot reproduce, so
+	// it serves none of them. The error field names them.
+	sectionStatusSetAside = "set_aside"
 )
 
 // Fork-heuristic status strings, mirrored from the domain status names so the
@@ -434,6 +438,12 @@ type contextVulnerabilities struct {
 	SnapshotRetrievedAt string `json:"snapshot_retrieved_at,omitempty"`
 	SnapshotAgeDays     *int   `json:"snapshot_age_days"`
 	Error               string `json:"error,omitempty"`
+	// SetAside names the stored generations the section's reads left out because
+	// this build cannot reproduce them. Absent when nothing was set aside.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
+	// aside collects those generations while the section is built; SetAside is
+	// its projection.
+	aside setAsideRows
 }
 
 // errContextOutputWrite marks a failure to WRITE the answer, as distinct from a

@@ -321,6 +321,8 @@ func printVulnerabilitiesSummary(w *errWriter, out contextOutput) {
 		}
 	case sectionStatusReadError:
 		w.printf("  Vulnerabilities: (failed: %s)\n", out.Vulnerabilities.Error)
+	case sectionStatusSetAside:
+		w.printf("  Vulnerabilities: (no record this build can serve — %s)\n", out.Vulnerabilities.Error)
 	default:
 		line := out.Vulnerabilities.Status + contextFindingCount(out.Vulnerabilities.Findings)
 		if ann := walkAnnotation(out.Vulnerabilities); ann != "" {
@@ -330,6 +332,9 @@ func printVulnerabilitiesSummary(w *errWriter, out contextOutput) {
 		printWalkBasis(w, "  Walk basis:      %s\n", out.Vulnerabilities)
 		printRunContextNote(w, "  Run context:     %s\n", out.Vulnerabilities)
 		printScanProvenance(w, out.Vulnerabilities)
+		for _, a := range out.Vulnerabilities.SetAside {
+			w.printf("  Set aside:       %s content_hash %s — %s\n", a.Coordinate, a.ContentHash, a.Reason)
+		}
 	}
 }
 

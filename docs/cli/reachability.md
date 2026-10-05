@@ -50,6 +50,11 @@ it is reachable in a module already scanned with `vuln-scan --reachability`. It
 is **read-only**: it reports the persisted finding's answer and confidence, and
 never fetches or scans.
 
+A stored generation this build cannot reproduce is left out of the answer and
+named: on stderr on the text path, in `set_aside` under `--json`. When it was
+the only generation, the query exits `4`. See [A stored record this build cannot
+verify](vuln.md#a-stored-record-this-build-cannot-verify).
+
 ### Which build the answer is about
 
 A stored answer is evidence about one build. Name the build:
@@ -747,6 +752,12 @@ table says so in `reason`, naming the frame the stored scan was rooted at:
 carried from the stored scan (by govulncheck, fidelity source, rooted at
 target-rooted:github.com/example/app@local)
 ```
+
+A stored record written in a canonical shape this build cannot reproduce does
+not seed the probe. Each one is named in `seed_set_aside` (`set aside:` on the
+text path), and a dependency whose every record is one of them appears in
+`coverage.uncovered_modules` with that reason. See [A stored record this build
+cannot verify](vuln.md#a-stored-record-this-build-cannot-verify).
 
 ### Which binaries the probe read
 

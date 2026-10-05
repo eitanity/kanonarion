@@ -669,9 +669,20 @@ func scanRunPinnedRecord(
 		return vuldomain.VulnerabilityRecord{}, false, nil
 	}
 	recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
-	if err != nil {
+	// Other generations of the coordinate being set aside does not touch this
+	// answer, which is one record named by hash. The pinned one being set aside
+	// does: the run's record is then one this build cannot serve, and that is
+	// reported as the read failure it is rather than as absence.
+	var aside setAsideRows
+	if err := aside.take(err); err != nil {
 		return vuldomain.VulnerabilityRecord{}, false, fmt.Errorf(
 			"reading the record %s pinned for %s: %w", contentHash, coord, err)
+	}
+	for _, r := range aside {
+		if r.ContentHash == contentHash {
+			return vuldomain.VulnerabilityRecord{}, false, fmt.Errorf(
+				"reading the record %s pinned for %s: %s", contentHash, coord, setAsideRows{r}.statement())
+		}
 	}
 	for _, rec := range recs {
 		if rec.ContentHash == contentHash {
@@ -873,7 +884,7 @@ func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanDiff(cmd.Context(), args[0], args[1], jsonOut, ctr.DiffScanRuns, ctr.QueryScanRuns, stdout)
+			return runScanDiff(cmd.Context(), args[0], args[1], jsonOut, ctr.DiffScanRuns, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
 
@@ -882,10 +893,13 @@ func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 
 func runScanDiff(
 	ctx context.Context, runIDA, runIDB string, jsonOut bool,
-	ucDiff DiffScanRunsUseCase, ucRuns QueryScanRunsUseCase, stdout io.Writer,
+	ucDiff DiffScanRunsUseCase, ucRuns QueryScanRunsUseCase, stdout, stderr io.Writer,
 ) error {
+	// The diff is computed without the generations this build cannot reproduce,
+	// and says so: in the document under --json, on stderr otherwise.
+	var aside setAsideRows
 	diff, err := ucDiff.Diff(ctx, runIDA, runIDB)
-	if err != nil {
+	if err := aside.take(err); err != nil {
 		return fmt.Errorf("computing scan diff: %w", err)
 	}
 	// A diff is a claim about two runs of one walk, so the walk it names carries
@@ -898,12 +912,15 @@ func runScanDiff(
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(newScanRunDiffDocument(diff)); err != nil {
+		doc := newScanRunDiffDocument(diff)
+		doc.SetAside = aside.json()
+		if err := enc.Encode(doc); err != nil {
 			return fmt.Errorf("encoding scan diff: %w", err)
 		}
 		return nil
 	}
 
+	aside.write(stderr)
 	_, _ = fmt.Fprintf(stdout, "Diff: %s → %s\n", runIDA, runIDB)
 	if walkPresent {
 		_, _ = fmt.Fprintf(stdout, "Walk: %s\n\n", diff.RunA.WalkID)

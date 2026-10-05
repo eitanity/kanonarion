@@ -1548,10 +1548,60 @@ index answer rather than being dropped.
 
 ### A stored record this build cannot verify
 
-A record is sealed by the build that wrote it. A later build with a different
-canonical shape cannot always reproduce that seal — the bytes are intact and hash
-to the seal they carry, but this binary cannot rebuild them — and the row is then
-**unreadable** rather than wrong.
+A record is sealed by the build that wrote it. A build with a different
+canonical shape — an earlier one or a later one — cannot always reproduce that
+seal. The bytes are intact and hash to the seal they carry, but this binary
+cannot rebuild them. Such a generation is **set aside**: it is left out of the
+answer and named by its `content_hash`. Nothing about it is wrong; read it with
+the build that wrote it, or upgrade.
+
+A record whose bytes do **not** hash to their own seal has been altered. Every
+command that meets one refuses at exit `10`, as before.
+
+#### Commands that answer for one coordinate
+
+`vuln-show`, `reachability --vuln` and `context` answer from the generations this
+build can reproduce, and state the ones set aside:
+
+```
+$ kanonarion vuln-show example.com/bravo@v2.0.0
+set aside example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01) content_hash sha256:a2546bf0…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+...the record...
+```
+
+The statement goes to stderr on the text path. Under `--json` it is in the
+document instead, as `set_aside`; the key is absent when nothing was set aside:
+
+```json
+"set_aside": [
+  {
+    "coordinate": "example.com/bravo@v2.0.0",
+    "pipeline_version": "v25",
+    "database_snapshot": { "source": "govulndb", "version": "v2026-01-01" },
+    "content_hash": "sha256:a2546bf0…",
+    "reason": "written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade"
+  }
+]
+```
+
+When **every** generation this build reads for the coordinate was set aside,
+there is no record this build can serve. The command exits `4`, names the
+generations, and names the re-scan that writes one this build can read.
+
+`context` reports that case as `status: set_aside`, with the statement in `error`.
+`audit` reports it as `(set aside)` in the vuln column. A record served beside a
+set-aside generation carries the statement in `set_aside` (`context`) or in
+`vuln_reason` (`audit`).
+
+#### Scans
+
+`vuln-scan`, `vuln-scan-rescan` and the scan inside `audit` write their records as usual
+when a group holds a set-aside generation, and state it on stderr, once per
+generation. A served stored run states the generations its report was built
+without the same way. A module whose own pinned record was set aside is left out
+of that report.
+
+#### Surveys
 
 The surveys list every record they can verify and **name the ones they cannot, in
 place**, exiting `0`:
@@ -1560,7 +1610,7 @@ place**, exiting `0`:
 $ kanonarion vuln-by-id GO-2026-9001
 example.com/charlie@v3.0.0            Affected  vuln-db=v2026-01-01  scanned=2026-02-01T02:00:00Z  pipeline=v25
 example.com/alpha@v1.0.0              Affected  vuln-db=v2026-01-01  scanned=2026-02-01T00:00:00Z  pipeline=v25
-example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01)  status=unreadable  sealed by an earlier record generation; re-scan to reseal
+example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01) content_hash sha256:a2546bf0…  status=unreadable  written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
 ```
 
 An omitted row and a row reported as unreadable say different things about the
@@ -1577,8 +1627,9 @@ consumer filtering on status sees it and cannot mistake it for one:
   "coordinate": "example.com/bravo@v2.0.0",
   "pipeline_version": "v25",
   "database_snapshot": { "source": "govulndb", "version": "v2026-01-01" },
+  "content_hash": "sha256:a2546bf0…",
   "overall_status": "unreadable",
-  "reason": "sealed by an earlier record generation; re-scan to reseal"
+  "reason": "written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade"
 }
 ```
 
@@ -1592,13 +1643,6 @@ prose is the right form there.
 
 `vuln-scan-list` and `vuln-scan-show` report unreadable **scan runs** the same
 way.
-
-The reads that answer for **one** coordinate do not relax: plain `vuln-show`,
-`reachability` and the report a stored run is rebuilt into keep failing closed at
-exit `10`, because an answer composed from a candidate set with a row missing can
-report `Clean` where the store holds a finding. `vuln-show`'s refusal names the history
-as the survey that does list the row. The remedy for a drifted row is a re-scan,
-never an investigation: nothing has been altered.
 
 ---
 

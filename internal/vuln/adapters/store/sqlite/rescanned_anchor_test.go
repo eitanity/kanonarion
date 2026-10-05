@@ -69,7 +69,7 @@ func TestReadPath_RescannedRecordRoundTrips(t *testing.T) {
 // The row below is an intact record of an earlier generation: its blob carries a
 // field today's struct does not know, so re-marshalling cannot reproduce it,
 // while the bytes still hash to the seal they carry. The answer must be
-// generation drift — re-extract it — and never alteration.
+// generation drift, set aside and named, and never alteration.
 func TestReadPath_DriftedRescannedRecordIsReportedAsDrift(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
@@ -89,9 +89,13 @@ func TestReadPath_DriftedRescannedRecordIsReportedAsDrift(t *testing.T) {
 		t.Fatalf("seeding the earlier generation's row: %v", err)
 	}
 
-	_, _, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot)
-	if !errors.Is(err, ports.ErrVulnIntegrity) {
-		t.Fatalf("GetVulnerabilityRecord error = %v, want it wrapped in ErrVulnIntegrity", err)
+	_, found, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot)
+	var aside *ports.SetAsideGenerations
+	if found || !errors.As(err, &aside) {
+		t.Fatalf("GetVulnerabilityRecord = (found %v, %v), want no servable record and the generation set aside", found, err)
+	}
+	if errors.Is(err, ports.ErrVulnIntegrity) {
+		t.Errorf("a drifted generation was reported as an integrity failure: %v", err)
 	}
 	if !errors.Is(err, recordseal.ErrGenerationDrift) {
 		t.Errorf("an intact record carrying a first-seen anchor is reported as altered rather than as "+
