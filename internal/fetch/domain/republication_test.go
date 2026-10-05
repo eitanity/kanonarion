@@ -169,8 +169,11 @@ func TestInferRepublication_HoldersWithoutVerbatim(t *testing.T) {
 
 // A candidate path with no owner element (a bare host) names no owner.
 func TestInferRepublication_HostOnlyCandidateNamesNoOwner(t *testing.T) {
-	if got := pathOwnerElements("example.com"); got != nil {
-		t.Errorf("pathOwnerElements(host only) = %v, want nil", got)
+	if owner := pathOwner("example.com"); owner != "" {
+		t.Errorf("pathOwner(host only) = %q, want \"\"", owner)
+	}
+	if holderNamesOwner("Example Corporation", "") {
+		t.Error("an empty owner must name nobody")
 	}
 }
 
@@ -282,5 +285,139 @@ func TestInferRepublication_HolderWithBracketedURLIsStillAHolder(t *testing.T) {
 	}, nil)
 	if len(got) != 1 || got[0].Signal != RepublicationMultipleHolders {
 		t.Fatalf("indicators = %+v, want the multiple-holders signal", got)
+	}
+}
+
+// A holder that owns both the module and a ledger neighbour with an overlapping
+// name is one owner, not a copy. The same pair joined by a replace directive
+// still reports: the directive is the evidence, whoever owns the two sides.
+func TestInferRepublication_SameOwnerLedgerNeighbourIsSkipped(t *testing.T) {
+	attributions := []CopyrightAttribution{
+		{Holder: "Eitanity Systems VCC", Verbatim: "Copyright (c) 2026 Eitanity Systems VCC"},
+	}
+	if got := InferRepublication("github.com/eitanity/softmagic", attributions,
+		LedgerModules([]string{"github.com/eitanity/softmagic-cli"})); len(got) != 0 {
+		t.Fatalf("ledger indicators = %+v, want none: both paths share one owner", got)
+	}
+	got := InferRepublication("github.com/eitanity/softmagic", attributions,
+		ReplacedModules([]string{"github.com/eitanity/softmagic-cli"}))
+	if len(got) != 1 || got[0].Canonical != "github.com/eitanity/softmagic-cli" {
+		t.Fatalf("replace indicators = %+v, want one for the replaced module", got)
+	}
+}
+
+// A holder that names the module's own owner is the module's own copyright,
+// whatever else it also names: one author's project on two hosts, or one
+// vendor's word inside another path. A replace counterpart still reports.
+func TestInferRepublication_HolderNamingOwnOwnerIsSkipped(t *testing.T) {
+	for name, tc := range map[string]struct {
+		module, holder, candidate string
+	}{
+		"same owner on another host": {
+			module:    "gopkg.in/alecthomas/kingpin.v2",
+			holder:    "Alec Thomas",
+			candidate: "github.com/alecthomas/kingpin/v2",
+		},
+		"own owner word in another path": {
+			module:    "github.com/go-sql-driver/mysql",
+			holder:    "The Go-MySQL-Driver Authors. All rights reserved",
+			candidate: "gorm.io/driver/mysql",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			attributions := []CopyrightAttribution{{Holder: tc.holder, Verbatim: "Copyright " + tc.holder}}
+			if got := InferRepublication(tc.module, attributions, LedgerModules([]string{tc.candidate})); len(got) != 0 {
+				t.Fatalf("ledger indicators = %+v, want none: %q names %s's own owner", got, tc.holder, tc.module)
+			}
+			got := InferRepublication(tc.module, attributions, ReplacedModules([]string{tc.candidate}))
+			if len(got) != 1 || got[0].Canonical != tc.candidate {
+				t.Fatalf("replace indicators = %+v, want one for %s", got, tc.candidate)
+			}
+		})
+	}
+}
+
+// Copyright boilerplate names no one: "contributors" must not match an owner
+// such as "contrib".
+func TestInferRepublication_BoilerplateHolderWordsDoNotMatch(t *testing.T) {
+	got := InferRepublication("github.com/prometheus/prometheus", []CopyrightAttribution{
+		{Holder: "JS Foundation and other contributors", Verbatim: "Copyright JS Foundation and other contributors"},
+	}, LedgerModules([]string{"go.opentelemetry.io/contrib/bridges/prometheus"}))
+	if len(got) != 0 {
+		t.Fatalf("indicators = %+v, want none: the holder has no distinctive word", got)
+	}
+}
+
+// Paths differing only by major version are one module and yield one indicator,
+// naming the smallest path. A replace relation still outranks a ledger one, and
+// its own path is the one named.
+func TestInferRepublication_MajorVersionSiblingsYieldOneIndicator(t *testing.T) {
+	attributions := []CopyrightAttribution{{Holder: "Masterminds", Verbatim: "Copyright (C) 2013-2020 Masterminds"}}
+	got := InferRepublication("github.com/go-task/slim-sprig/v3", attributions,
+		LedgerModules([]string{"github.com/Masterminds/sprig/v3", "github.com/Masterminds/sprig"}))
+	if len(got) != 1 || got[0].Canonical != "github.com/Masterminds/sprig" {
+		t.Fatalf("ledger indicators = %+v, want one naming github.com/Masterminds/sprig", got)
+	}
+	got = InferRepublication("github.com/go-task/slim-sprig/v3", attributions, append(
+		LedgerModules([]string{"github.com/Masterminds/sprig"}),
+		ReplacedModules([]string{"github.com/Masterminds/sprig/v3"})...))
+	if len(got) != 1 || got[0].Canonical != "github.com/Masterminds/sprig/v3" || !strings.Contains(got[0].Statement, "replace directive") {
+		t.Fatalf("indicators = %+v, want one replace indicator naming github.com/Masterminds/sprig/v3", got)
+	}
+}
+
+// Only the first element after the host is the owner. A repository or package
+// name deeper in the path names no owner, however much a holder's name contains
+// it.
+func TestInferRepublication_OwnerIsFirstElementOnly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		module, holder, candidate string
+	}{
+		"repository name": {
+			module:    "example.com/fork/websocket",
+			holder:    "The Gorilla WebSocket Authors",
+			candidate: "github.com/mdlayher/socket",
+		},
+		"deeper element": {
+			module:    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/opentelemetry",
+			holder:    "The OpenTelemetry Authors",
+			candidate: "github.com/googlecloudplatform/opentelemetry-operations-go/exporter/opentelemetry",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := InferRepublication(tc.module, []CopyrightAttribution{
+				{Holder: tc.holder, Verbatim: "Copyright " + tc.holder},
+			}, LedgerModules([]string{tc.candidate}))
+			if len(got) != 0 {
+				t.Fatalf("indicators = %+v, want none: %q is not the owner of %s", got, tc.holder, tc.candidate)
+			}
+		})
+	}
+}
+
+// A short owner would sit inside any long holder token: "linux" contains "x".
+// The owner is held to the token's length floor so the substring test compares
+// two distinctive names.
+func TestInferRepublication_ShortOwnerDoesNotMatchInsideHolderToken(t *testing.T) {
+	got := InferRepublication("github.com/opencontainers/image-spec", []CopyrightAttribution{
+		{Holder: "The Linux Foundation", Verbatim: "Copyright 2016 The Linux Foundation."},
+	}, LedgerModules([]string{"golang.org/x/image"}))
+	if len(got) != 0 {
+		t.Fatalf("indicators = %+v, want none: owner %q is too short to be named", got, "x")
+	}
+}
+
+// The ledger statement says what was compared: path owners differ and the
+// names overlap. Neither proves different ownership or an identical name.
+func TestInferRepublication_LedgerStatementWording(t *testing.T) {
+	got := InferRepublication("github.com/golang-jwt/jwt/v4", []CopyrightAttribution{
+		{Holder: "Dave Grijalva", Verbatim: "Copyright (c) 2012 Dave Grijalva"},
+	}, LedgerModules([]string{"github.com/dgrijalva/jwt-go"}))
+	if len(got) != 1 {
+		t.Fatalf("indicators = %+v, want one", got)
+	}
+	want := `copyright holder "Dave Grijalva" names the owner of github.com/dgrijalva/jwt-go, a module under a different path owner with an overlapping name held in this store — path suggests a republication of it; verify via VCS origin or content comparison`
+	if got[0].Statement != want {
+		t.Errorf("statement = %q\nwant        %q", got[0].Statement, want)
 	}
 }

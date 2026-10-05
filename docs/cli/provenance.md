@@ -65,12 +65,23 @@ inference when either rule fires:
   module) attributes copyright to more than one distinct holder. A project that
   has always lived at one path normally carries one.
 - **`holder_matches_other_module_path`** - a copyright holder's name names the
-  owner of a *different* module path this store knows of. The other path comes
-  from one of two places, and the rule reads them differently:
+  owner of a *different* module path this store knows of. A path's owner is its
+  first element after the host (`dgrijalva` in `github.com/dgrijalva/jwt-go`);
+  deeper elements are not compared, and an owner shorter than 5 characters
+  never matches. A holder names the owner when a word of 5 or more characters in
+  the holder's name contains the owner or is contained in it. Copyright
+  boilerplate words (`authors`, `contributors`, `foundation`, `rights`,
+  `reserved`, `other`, `others`, `project`, `developers`, `team`, `limited`,
+  `corporation`, `company`, `incorporated`, `software`, `copyright`, `present`,
+  `holders`) never match. Paths that differ only by major version count as one
+  module and yield one indicator. The other path comes from one of two places,
+  and the rule reads them differently:
   - **the licence ledger** - any module the store holds a licence record for.
     Here the two module names must also overlap: the owner match alone fires on
     every module a large copyright holder appears in, and the name overlap alone
-    fires on any unrelated project sharing a word.
+    fires on any unrelated project sharing a word. A holder that also names the
+    subject's own owner is not compared, so a module under the same owner never
+    fires.
   - **a `go.mod` replace directive** recorded in a walk - the module the
     subject replaces. No name comparison is applied: the directive already says
     the two modules stand in for each other, and a fork is free to rename
@@ -172,7 +183,7 @@ example.com/republished/lib@v4.5.1
     licence text attributes copyright to 2 distinct holders (Original Author; New Maintainers) - a project republished under a new path carries the original author's line beside the new maintainers'; verify via VCS origin or content comparison
       evidence: Copyright (c) 2012 Original Author
       evidence: Copyright (c) 2021 New Maintainers
-    copyright holder "Original Author" names the owner of example.com/originalauthor/lib-go, a differently-owned module of the same name held in this store - path suggests a republication of it; verify via VCS origin or content comparison
+    copyright holder "Original Author" names the owner of example.com/originalauthor/lib-go, a module under a different path owner with an overlapping name held in this store - path suggests a republication of it; verify via VCS origin or content comparison
       evidence: Copyright (c) 2012 Original Author
 ```
 
