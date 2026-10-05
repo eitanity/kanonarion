@@ -246,7 +246,9 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	root := newRootCmd(stdout, stderr)
 	installDefaultSubcommands(root)
 	root.SetArgs(args)
-	if err := root.ExecuteContext(ctx); err != nil {
+	err := root.ExecuteContext(ctx)
+	storeSetAside.flush(stderr, err)
+	if err != nil {
 		return fmt.Errorf("execute root command: %w", err)
 	}
 	return nil

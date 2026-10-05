@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
@@ -18,7 +19,16 @@ import (
 // Store is the SQLite-backed standard-library fact store.
 type Store struct {
 	db sqlitestore.DB
+	// setAside receives the measurements a read left out because this build
+	// cannot reproduce them; see ReportSetAside.
+	setAside recordseal.Reporter
 }
+
+// RecordKind is how a set-aside measurement names its kind.
+const RecordKind = "stdlib custody measurement"
+
+// ReportSetAside states where the store names a measurement it set aside.
+func (s *Store) ReportSetAside(r func([]recordseal.SetAsideRow)) { s.setAside = r }
 
 // Migrations returns the schema migrations for the stdlib module. Versioning is
 // per-module (the schema_migrations key is (module, version)), so this is
@@ -210,6 +220,11 @@ func (s *Store) composeFor(ctx context.Context, goVersion string, req domain.Com
 // second precision, which is the precision the seal covers, so two acquisitions
 // within one second carry the same timestamp and only insertion order separates
 // them.
+//
+// A row whose stored values hash to its seal but which this build cannot
+// reproduce is left out and named through ReportSetAside; when every row is,
+// the answer is *recordseal.NothingServable. Any other seal mismatch is
+// ErrFactsIntegrity and ends the read.
 func (s *Store) ListFactsFor(ctx context.Context, goVersion string) ([]domain.Facts, error) {
 	if goVersion == "" {
 		return nil, domain.ErrNoGoVersion
@@ -230,6 +245,7 @@ ORDER BY acquired_at ASC, rowid ASC`
 	}()
 
 	var out []domain.Facts
+	var asides []recordseal.SetAsideRow
 	var h domain.FactsHasher
 	for rows.Next() {
 		var (
@@ -255,12 +271,22 @@ ORDER BY acquired_at ASC, rowid ASC`
 		// one that carries a seal must match it, or the row was altered after it was
 		// written and must not be served as evidence.
 		if verr := h.VerifyContentHash(f); verr != nil {
-			return nil, fmt.Errorf("%w: %s: %w", ports.ErrFactsIntegrity, f.GoVersion, verr)
+			if !h.StoredValuesHashToSeal(f, acquiredAt) {
+				return nil, fmt.Errorf("%w: %s: %w", ports.ErrFactsIntegrity, f.GoVersion, verr)
+			}
+			asides = append(asides, recordseal.SetAsideRow{
+				Kind: RecordKind, ID: f.GoVersion, ContentHash: f.ContentHash, Reason: recordseal.Drift(verr),
+			})
+			continue
 		}
 		out = append(out, f)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating stdlib facts: %w", err)
+	}
+	s.setAside.Report(asides)
+	if len(out) == 0 && len(asides) > 0 {
+		return nil, &recordseal.NothingServable{Kind: RecordKind, ID: goVersion, Aside: &recordseal.SetAside{Rows: asides}}
 	}
 	return out, nil
 }

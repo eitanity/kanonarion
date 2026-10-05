@@ -79,6 +79,11 @@ func (s listZeroScope) plural() string {
 // fills `considered` is paid exactly when the alternative is a line the reader
 // cannot act on, and never on a listing that returned rows.
 func writeListZeroNotice(stdout io.Writer, s listZeroScope) error {
+	// Rows the listing's reads set aside are held, so the listing is not a zero;
+	// Run names them on stderr.
+	if storeSetAside.pending() {
+		return nil
+	}
 	line, remedyLabel, remedy := listZeroStatement(s)
 	if _, err := fmt.Fprintf(stdout, "%s\n  %s: %s\n", line, remedyLabel, remedy); err != nil {
 		return fmt.Errorf("writing zero-result notice: %w", err)

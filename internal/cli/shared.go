@@ -16,6 +16,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	"github.com/spf13/cobra"
@@ -848,6 +849,7 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 // cliClock is deliberately absent: it is the test seam SetClockForTest pins
 // BEFORE the invocation runs, and resetting it here would unpin every golden.
 func resetInvocationState() {
+	storeSetAside.reset()
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""
 	// The built-in defaults, which is what a store with no config file loads —
@@ -1694,6 +1696,7 @@ var evidenceInDoubt = []error{
 	extractports.ErrExtractionRunIntegrity,
 	vulnports.ErrVulnIntegrity, vulnports.ErrSnapshotIntegrity,
 	stdlibports.ErrFactsIntegrity, stdlibports.ErrFactsConflict,
+	fetchports.ErrFetchRecordIntegrity,
 	nativeports.ErrNativeConflict,
 }
 
@@ -1722,6 +1725,13 @@ func ExitCodeForError(err error) int {
 		if errors.Is(err, sentinel) {
 			return ExitIntegrity
 		}
+	}
+	// Every stored generation was set aside, or a refusal was decided without
+	// one: nothing this build can serve to answer, which is an absence. A
+	// set-aside reaches here only as a failure, since reads return it beside an
+	// answer; checked after the sentinels so an altered row still wins.
+	if _, ok := errors.AsType[*recordseal.SetAside](err); ok {
+		return ExitNotFound
 	}
 	// A divergence — two records for one coordinate disagreeing on a hash they
 	// both carry — is an integrity failure, not a configuration error. A
@@ -1819,30 +1829,47 @@ func (e unreadableRowEntry) label() string {
 // A record listing whose only unreadable rows are set-aside generations reports
 // them the same way: a survey lists every row it holds, readable or not.
 func unreadableRowReport(err error) ([]unreadableRowEntry, bool) {
-	var rows []vulnports.UnreadableRow
 	var unreadable *vulnports.UnreadableRows
-	var aside *vulnports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	switch {
+	case errors.As(err, new(*recordseal.NothingServable)):
+		// No row to list beside: the read has no answer for this build.
+		return nil, false
 	case errors.As(err, &unreadable):
-		rows = unreadable.Rows
+		entries := make([]unreadableRowEntry, 0, len(unreadable.Rows))
+		for _, r := range unreadable.Rows {
+			entries = append(entries, unreadableRowEntry{
+				ID:              r.ID,
+				Kind:            r.Kind,
+				PipelineVersion: r.Generation.PipelineVersion,
+				SnapshotSource:  r.Generation.SnapshotSource,
+				SnapshotVersion: r.Generation.SnapshotVersion,
+				ContentHash:     r.ContentHash,
+				Reason:          unreadableRowReason(r.Reason),
+			})
+		}
+		return entries, true
 	case errors.As(err, &aside):
-		rows = aside.Rows
+		entries := make([]unreadableRowEntry, 0, len(aside.Rows))
+		for _, r := range aside.Rows {
+			kind := vulnports.RowKindRecord
+			if r.Kind == vulnports.SetAsideKindRun {
+				kind = vulnports.RowKindRun
+			}
+			entries = append(entries, unreadableRowEntry{
+				ID:              r.ID,
+				Kind:            kind,
+				PipelineVersion: r.Generation.PipelineVersion,
+				SnapshotSource:  r.Generation.Snapshot.Source,
+				SnapshotVersion: r.Generation.Snapshot.Version,
+				ContentHash:     r.ContentHash,
+				Reason:          unreadableRowReason(r.Reason),
+			})
+		}
+		return entries, true
 	default:
 		return nil, false
 	}
-	entries := make([]unreadableRowEntry, 0, len(rows))
-	for _, r := range rows {
-		entries = append(entries, unreadableRowEntry{
-			ID:              r.ID,
-			Kind:            r.Kind,
-			PipelineVersion: r.Generation.PipelineVersion,
-			SnapshotSource:  r.Generation.SnapshotSource,
-			SnapshotVersion: r.Generation.SnapshotVersion,
-			ContentHash:     r.ContentHash,
-			Reason:          unreadableRowReason(r),
-		})
-	}
-	return entries, true
 }
 
 // statusUnreadable is the status a survey reports for a row it listed but could
@@ -1904,9 +1931,9 @@ func writeUnreadableRows(stdout io.Writer, entries []unreadableRowEntry, idWidth
 // build wrote it in another canonical shape. Where that cannot be established
 // the wording stays neutral: an unverified record is reported as unverified, and
 // nothing is insinuated about how it got that way.
-func unreadableRowReason(r vulnports.UnreadableRow) string {
-	if errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
-		return vulnports.SetAsideRemedy
+func unreadableRowReason(reason error) string {
+	if errors.Is(reason, recordseal.ErrGenerationDrift) {
+		return recordseal.SetAsideRemedy
 	}
-	return "could not be verified: " + r.Reason.Error()
+	return "could not be verified: " + reason.Error()
 }

@@ -26,12 +26,21 @@ import (
 // Store is the SQLite-backed license store.
 type Store struct {
 	db sqlitestore.DB
+	// setAside receives the stored generations a read or a write left out
+	// because this build cannot reproduce them; see ReportSetAside.
+	setAside recordseal.Reporter
 }
+
+// RecordKind is how a set-aside licence generation names its kind.
+const RecordKind = "licence record"
 
 // New returns a new Store using the provided database handle.
 func New(db sqlitestore.DB) *Store {
 	return &Store{db: db}
 }
+
+// ReportSetAside states where the store names a generation it set aside.
+func (s *Store) ReportSetAside(r func([]recordseal.SetAsideRow)) { s.setAside = r }
 
 // Migrations returns the schema migrations for the license module.
 func Migrations() []sqlitestore.Migration {
@@ -267,10 +276,12 @@ DO NOTHING`
 // domain.Compose for the ladder and for the disagreements it refuses to resolve
 // by picking.
 //
-// A stored record that fails its integrity check is still ErrLicenceIntegrity,
+// A stored record whose bytes do not hash to their seal is ErrLicenceIntegrity,
 // and it stops the read rather than being skipped: dropping it would serve a
 // composition computed over fewer records than the ledger holds and report it as
-// the whole answer.
+// the whole answer. A record whose bytes hash to their seal but which this build
+// cannot reproduce is set aside, named through ReportSetAside, and composed
+// around; see ListLicenseRecordsFor.
 func (s *Store) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.LicenseRecord, bool, error) {
 	records, err := s.ListLicenseRecordsFor(ctx, coord, pipelineVersion)
 	if err != nil {
@@ -298,6 +309,10 @@ func (s *Store) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoo
 // the seal were widened together and at any precision when two land inside one
 // tick. The ledger is append-only, so insertion order is the sequence it actually
 // has, and composition relies on it for local coordinates.
+//
+// A generation this build cannot reproduce is left out and named through
+// ReportSetAside. When every generation is, the answer is
+// *recordseal.NothingServable: records are held, none this build can serve.
 func (s *Store) ListLicenseRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.LicenseRecord, error) {
 	// The zero coordinate names no module, so this is a question about nothing.
 	// Answering it with absence would report "no record here" for a module that
@@ -305,7 +320,7 @@ func (s *Store) ListLicenseRecordsFor(ctx context.Context, coord coordinate.Modu
 	if coord.IsZero() {
 		return nil, coordinate.ErrZeroCoordinate
 	}
-	const q = `SELECT serialised FROM licence_records
+	const q = `SELECT serialised, content_hash FROM licence_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 ORDER BY julianday(extracted_at) ASC, rowid ASC`
 
@@ -318,42 +333,68 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 	}()
 
 	var out []domain2.LicenseRecord
+	var asides []recordseal.SetAsideRow
 	for rows.Next() {
 		var blob []byte
-		if serr := rows.Scan(&blob); serr != nil {
+		var stored string
+		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return nil, fmt.Errorf("scanning license record: %w", serr)
 		}
-		rec, rerr := decodeRecord(blob)
+		rec, aside, rerr := decodeRecord(blob, stored)
 		if rerr != nil {
 			return nil, rerr
+		}
+		if aside != nil {
+			asides = append(asides, *aside)
+			continue
 		}
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating license records: %w", err)
 	}
+	s.setAside.Report(asides)
+	if len(out) == 0 && len(asides) > 0 {
+		return nil, &recordseal.NothingServable{Kind: RecordKind, ID: coord.String(), Aside: &recordseal.SetAside{Rows: asides}}
+	}
 	return out, nil
 }
 
 // decodeRecord turns one stored blob into a verified record. A row that cannot
-// be decoded, parsed or verified is an error rather than an absence.
-func decodeRecord(blob []byte) (domain2.LicenseRecord, error) {
+// be decoded, parsed or verified is an error rather than an absence, except one
+// whose bytes hash to the seal it is filed under (storedHash) in a shape this
+// build cannot reproduce: that comes back as a set-aside row instead.
+func decodeRecord(blob []byte, storedHash string) (domain2.LicenseRecord, *recordseal.SetAsideRow, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
-		return domain2.LicenseRecord{}, fmt.Errorf("decompressing license record: %w", decErr)
+		return domain2.LicenseRecord{}, nil, fmt.Errorf("decompressing license record: %w", decErr)
 	}
 	var h domain2.LicenseRecordHasher
 	rec, err := h.Unmarshal(raw)
 	if err != nil {
-		return domain2.LicenseRecord{}, fmt.Errorf("unmarshalling license record: %w", err)
+		return domain2.LicenseRecord{}, nil, fmt.Errorf("unmarshalling license record: %w", err)
 	}
 	if verr := h.VerifyContentHash(rec); verr != nil {
 		// A record this build cannot reproduce is not necessarily a record that
 		// has been altered. recordseal decides which, on the stored bytes alone.
-		return domain2.LicenseRecord{}, fmt.Errorf("%w: %w",
-			ports.ErrLicenceIntegrity, recordseal.Classify(raw, rec.ContentHash, verr))
+		cerr := recordseal.Classify(raw, rec.ContentHash, verr)
+		if !errors.Is(cerr, recordseal.ErrGenerationDrift) {
+			return domain2.LicenseRecord{}, nil, fmt.Errorf("%w: %w", ports.ErrLicenceIntegrity, cerr)
+		}
+		// Intact bytes filed under another seal are still an altered row.
+		if rec.ContentHash != storedHash {
+			return domain2.LicenseRecord{}, nil, fmt.Errorf("%w: blob has %q, stored %q: %w",
+				ports.ErrLicenceIntegrity, rec.ContentHash, storedHash, verr)
+		}
+		return domain2.LicenseRecord{}, &recordseal.SetAsideRow{
+			Kind:        RecordKind,
+			ID:          rec.Coordinate.String(),
+			Generation:  recordseal.Generation{PipelineVersion: rec.PipelineVersion},
+			ContentHash: storedHash,
+			Reason:      cerr,
+		}, nil
 	}
-	return rec, nil
+	return rec, nil, nil
 }
 
 // IdenticalGeneration returns the generation the ledger already holds that
@@ -374,10 +415,12 @@ func decodeRecord(blob []byte) (domain2.LicenseRecord, error) {
 // breaks a tie so two rows sharing a second cannot order differently between
 // runs.
 //
-// A row this build cannot verify stops the read rather than being skipped, on the
-// same terms as every other read leg of this store. The caller treats a failure
-// as "nothing held" and appends, so an unverifiable row costs a redundant
-// generation, never a suppressed measurement.
+// A row whose bytes do not hash to their seal stops the read rather than being
+// skipped, on the same terms as every other read leg of this store. The caller
+// treats a failure as "nothing held" and appends, so an unverifiable row costs a
+// redundant generation, never a suppressed measurement. A row this build cannot
+// reproduce cannot be shown to state this measurement, so it is skipped and
+// named through ReportSetAside.
 func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.LicenseRecord) (domain2.LicenseRecord, bool, error) {
 	if rec.Coordinate.IsZero() {
 		return domain2.LicenseRecord{}, false, coordinate.ErrZeroCoordinate
@@ -388,7 +431,7 @@ func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.LicenseReco
 		return domain2.LicenseRecord{}, false, nil
 	}
 
-	const q = `SELECT serialised FROM licence_records
+	const q = `SELECT serialised, content_hash FROM licence_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND primary_spdx = ? AND spdx_expression = ? AND overall_status = ?
   AND copyright_status = ? AND provenance_confidence = ?
@@ -405,14 +448,21 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
 	}()
 
+	var asides []recordseal.SetAsideRow
+	defer func() { s.setAside.Report(asides) }()
 	for rows.Next() {
 		var blob []byte
-		if serr := rows.Scan(&blob); serr != nil {
+		var stored string
+		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return domain2.LicenseRecord{}, false, fmt.Errorf("scanning licence generation of %s: %w", rec.Coordinate, serr)
 		}
-		held, derr := decodeRecord(blob)
+		held, aside, derr := decodeRecord(blob, stored)
 		if derr != nil {
 			return domain2.LicenseRecord{}, false, derr
+		}
+		if aside != nil {
+			asides = append(asides, *aside)
+			continue
 		}
 		same, serr := domain2.SameMeasurement(rec, held)
 		if serr != nil {
@@ -455,6 +505,9 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 	var order []generationKey
 	counts := map[generationKey]int{}
 	first := map[generationKey]ports.LicenseSummary{}
+	// asideFirst marks a key whose newest row this build cannot reproduce; the
+	// composed read below re-reads it, names it and serves the rest.
+	asideFirst := map[generationKey]bool{}
 
 	for rows.Next() {
 		var sum ports.LicenseSummary
@@ -486,11 +539,15 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 			// licence files. Measured on the maintainer's store,
 			// `license-list --limit 0 --json` over 1,828 records goes from 0.03s
 			// to 0.08s; --copyright already paid more (0.13s) for the same reason.
-			rec, derr := decodeRecord(blob)
+			rec, aside, derr := decodeRecord(blob, sum.ContentHash)
 			if derr != nil {
 				return nil, derr
 			}
-			first[k] = ports.WithLicenceIdentity(sum, rec)
+			if aside != nil {
+				asideFirst[k] = true
+			} else {
+				first[k] = ports.WithLicenceIdentity(sum, rec)
+			}
 		}
 		counts[k]++
 	}
@@ -506,7 +563,7 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 
 	out := make([]ports.LicenseSummary, 0, len(order))
 	for _, k := range order {
-		if counts[k] == 1 && !rowFiltered {
+		if counts[k] == 1 && !rowFiltered && !asideFirst[k] {
 			// The overwhelming majority: one generation, so the columns already
 			// describe the served record and no blob is decoded to learn it.
 			out = append(out, first[k])
@@ -520,6 +577,11 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 		// every record describing the artefact — composing the filtered subset
 		// would serve a record chosen from a ladder missing its own top.
 		served, found, gerr := s.GetLicenseRecord(ctx, coord, k.pipeline)
+		if errors.As(gerr, new(*recordseal.NothingServable)) {
+			// Every generation was set aside and named by the read; the listing
+			// keeps its other rows.
+			continue
+		}
 		if errors.Is(gerr, ports.ErrLicenceConflict) {
 			// Reported on the row, not raised as the list's error: see the comment
 			// on LicenseSummary.Conflict.

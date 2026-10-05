@@ -81,7 +81,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 	// does not satisfy the full path; re-fetch over it so PutFetchRecord upgrades
 	// it in place.
 	if !req.Force {
-		existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
+		existing, ok, err := ports.AbsentIfNothingServable(uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion))
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
@@ -214,7 +214,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 
 	// Step 1: cache check. Any existing record already carries a verified go.mod.
 	if !req.Force {
-		existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
+		existing, ok, err := ports.AbsentIfNothingServable(uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion))
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}

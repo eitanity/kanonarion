@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -350,5 +351,36 @@ func TestRescan_ReadFaultSettlingTheFrameIsRaisedNotReadAsNoFrame(t *testing.T) 
 				t.Errorf("error missing %q:\n%v", tc.want, err)
 			}
 		})
+	}
+}
+
+// A prior run this build cannot reproduce may be the newest, so with no
+// readable run saying target-rooted the frame is not settled without it: the
+// re-scan refuses and names it rather than degrading to isolated.
+func TestRescan_RefusesWhenAPriorRunWasSetAside(t *testing.T) {
+	root := coordinatetest.MustNew("example.com/app", coordinate.LocalVersion)
+	walk := walkdomain.WalkRecord{
+		ID:     "walk-frame-aside",
+		Target: root,
+		Graph:  walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: root}}},
+	}
+	ws := newFakeWalkStore()
+	if err := ws.PutWalk(t.Context(), walk); err != nil {
+		t.Fatalf("PutWalk: %v", err)
+	}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v2")}
+	uc, store := frameRescannerWithStore(t, ws, db)
+	store.runsAside = []recordseal.SetAsideRow{{Kind: ports.SetAsideKindRun, ID: "run-drifted",
+		ContentHash: "sha256:d81f", Reason: recordseal.Drift(errors.New("mismatch"))}}
+
+	for _, isolatedPrior := range []bool{false, true} {
+		if isolatedPrior {
+			seedRunWithRooting(t, store, walk.ID, domain.RootingIsolated)
+		}
+		_, err := uc.Rescan(t.Context(), application.RescanRequest{WalkID: walk.ID})
+		if err == nil || !strings.Contains(err.Error(), "sha256:d81f") ||
+			!strings.Contains(err.Error(), "without the scan runs this build cannot reproduce") {
+			t.Errorf("isolated prior %v: Rescan = %v, want a refusal naming the set-aside run", isolatedPrior, err)
+		}
 	}
 }

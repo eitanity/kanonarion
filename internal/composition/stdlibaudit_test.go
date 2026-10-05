@@ -80,7 +80,7 @@ func TestOfflineStdlibAcquirer_WiresTheAssuranceLog(t *testing.T) {
 
 	acquirer := composition.NewOfflineStdlibAcquirer(
 		handle, "", clock.System{}, factStore,
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
 	ctx := context.Background()
 	// Forced, so the measurement is written rather than served: the event says a

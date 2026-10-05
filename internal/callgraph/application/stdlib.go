@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -113,7 +114,8 @@ func (uc *ExtractStdlibCallGraphUseCase) Execute(ctx context.Context, req Extrac
 		var cerr error
 		existing, found, cerr = uc.store.GetCallGraphRecord(ctx, req.Coordinate, uc.pipelineVersion)
 		switch {
-		case errors.Is(cerr, ports.ErrCallGraphConflict), errors.Is(cerr, ports.ErrCallGraphIntegrity):
+		case errors.Is(cerr, ports.ErrCallGraphConflict), errors.Is(cerr, ports.ErrCallGraphIntegrity),
+			errors.As(cerr, new(*recordseal.NothingServable)):
 			// No single stored generation answers the coordinate. Refusing to SERVE
 			// that is right; refusing to MEASURE a new answer is not, so it is a
 			// cache miss here and the ladder decides afterwards.

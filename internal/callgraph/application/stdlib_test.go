@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -334,6 +335,9 @@ func TestExtractStdlib_ReMeasuresWhatItCannotRead(t *testing.T) {
 	for name, getErr := range map[string]error{
 		"composition conflict": ports.ErrCallGraphConflict,
 		"integrity failure":    ports.ErrCallGraphIntegrity,
+		"every generation set aside": &recordseal.NothingServable{
+			Kind: "call graph record", ID: "stdlib@v1.26.5", Aside: &recordseal.SetAside{},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &fakeCallGraphStore{}

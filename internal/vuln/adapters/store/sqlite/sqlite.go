@@ -1212,7 +1212,7 @@ ORDER BY julianday(scanned_at) ASC, rowid ASC`
 		coord.Path(), coord.Version(), pipelineVersion)
 	// Drift alone is composed around and returned beside the answer; any other
 	// failure, an altered row among them, still refuses.
-	var aside *ports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if err != nil && !errors.As(err, &aside) {
 		return domain.VulnerabilityRecord{}, false, err
 	}
@@ -1308,7 +1308,7 @@ ORDER BY julianday(vr.scanned_at) ASC, vr.rowid ASC`
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records for walk: %w", err)
 	}
-	return records, recordListingErr(unreadable)
+	return records, listingErr(unreadable)
 }
 
 // queryRecords runs a query selecting only the serialised column and decodes
@@ -1342,7 +1342,7 @@ func (s *Store) queryRecords(ctx context.Context, what, query string, args ...an
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating %s: %w", what, err)
 	}
-	return out, recordListingErr(unreadable)
+	return out, listingErr(unreadable)
 }
 
 // PutWalkScanRun persists a walk scan run and its per-module membership index.
@@ -1452,15 +1452,20 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 	}
 
 	run, derr := decodeRun(serialised)
+	if errors.Is(derr, recordseal.ErrGenerationDrift) {
+		// One run has no other generation to serve instead: an absence for this
+		// build, never an integrity failure.
+		row := unreadableRunRow(serialised, derr).SetAside()
+		return domain.WalkScanRun{}, false, &recordseal.NothingServable{Kind: row.Kind, ID: id,
+			Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{row}}}
+	}
 	if derr != nil {
 		// Reported as the same unreadable-row failure the listings raise, for one
 		// row. The listing is how an operator finds a bad run, and looking at it
 		// is the next thing they do, so the two must speak the same language:
 		// an inspection command can name the row and carry on, and a consuming
 		// caller still matches the integrity sentinel and still fails closed.
-		return domain.WalkScanRun{}, false, unreadableRowsErr([]ports.UnreadableRow{
-			{Kind: ports.RowKindRun, ID: runIDFrom(serialised), Reason: derr},
-		})
+		return domain.WalkScanRun{}, false, unreadableRowsErr([]ports.UnreadableRow{unreadableRunRow(serialised, derr)})
 	}
 	return run, true, nil
 }
@@ -1479,7 +1484,7 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 	if err != nil {
 		return nil, err
 	}
-	return runs, unreadableRowsErr(unreadable)
+	return runs, listingErr(unreadable)
 }
 
 // ListAllWalkScanRuns lists all scan runs across all walks, most recent first.
@@ -1500,7 +1505,7 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 	if err != nil {
 		return nil, err
 	}
-	return runs, unreadableRowsErr(unreadable)
+	return runs, listingErr(unreadable)
 }
 
 // collectRuns reads every scan run in rows, keeping the ones that verify and
@@ -1524,7 +1529,7 @@ func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRow, e
 		}
 		run, derr := decodeRun(serialised)
 		if derr != nil {
-			unreadable = append(unreadable, ports.UnreadableRow{Kind: ports.RowKindRun, ID: runIDFrom(serialised), Reason: derr})
+			unreadable = append(unreadable, unreadableRunRow(serialised, derr))
 			continue
 		}
 		runs = append(runs, run)
@@ -1546,12 +1551,12 @@ func unreadableRowsErr(unreadable []ports.UnreadableRow) error {
 	return &ports.UnreadableRows{Rows: unreadable}
 }
 
-// recordListingErr is unreadableRowsErr for record listings, which excuse drift:
-// when every unreadable row is a generation this build cannot reproduce, the
-// rows come back as set aside rather than as an integrity failure. One altered
-// row makes the whole report an integrity failure, drifted rows included, so a
-// survey still lists them all.
-func recordListingErr(unreadable []ports.UnreadableRow) error {
+// listingErr is unreadableRowsErr for listings, which excuse drift: when every
+// unreadable row is a generation this build cannot reproduce, the rows come back
+// as set aside rather than as an integrity failure. One altered row makes the
+// whole report an integrity failure, drifted rows included, so a survey still
+// lists them all.
+func listingErr(unreadable []ports.UnreadableRow) error {
 	for _, r := range unreadable {
 		if !errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
 			return unreadableRowsErr(unreadable)
@@ -1566,24 +1571,34 @@ func setAsideErr(aside []ports.UnreadableRow) error {
 	if len(aside) == 0 {
 		return nil
 	}
-	return &ports.SetAsideGenerations{Rows: aside}
+	rows := make([]recordseal.SetAsideRow, 0, len(aside))
+	for _, r := range aside {
+		rows = append(rows, r.SetAside())
+	}
+	return &recordseal.SetAside{Rows: rows}
 }
 
-// runIDFrom recovers a run's identifier from stored bytes the seal check
-// rejected, so the row can be named in a report.
+// unreadableRunRow names a stored run the seal check rejected, from the head of
+// its bytes.
 //
-// It reads only the id field and asserts nothing else about the bytes: they are
-// under suspicion, which is precisely why they must not be interpreted as a
-// record. An id that cannot be read comes back empty and the row is reported
-// without one.
-func runIDFrom(serialised []byte) string {
+// It reads only the id, pipeline and seal and asserts nothing else about the
+// bytes: they are under suspicion, which is precisely why they must not be
+// interpreted as a record. A field that cannot be read comes back empty and the
+// row is reported without it.
+func unreadableRunRow(serialised []byte, reason error) ports.UnreadableRow {
 	var head struct {
-		ID string `json:"id"`
+		ID              string `json:"id"`
+		PipelineVersion string `json:"pipeline_version"`
+		ContentHash     string `json:"content_hash"`
 	}
 	if err := json.Unmarshal(serialised, &head); err != nil {
-		return ""
+		return ports.UnreadableRow{Kind: ports.RowKindRun, Reason: reason}
 	}
-	return head.ID
+	return ports.UnreadableRow{
+		Kind: ports.RowKindRun, ID: head.ID,
+		Generation:  ports.RowGeneration{PipelineVersion: head.PipelineVersion},
+		ContentHash: head.ContentHash, Reason: reason,
+	}
 }
 
 // PutDatabaseSnapshot persists a snapshot blob.
@@ -1943,7 +1958,7 @@ ORDER BY julianday(scanned_at) DESC`
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
 	}
-	return records, recordListingErr(unreadable)
+	return records, listingErr(unreadable)
 }
 
 // walkHasScanRun reports whether any vulnerability scan run was recorded for
@@ -2337,7 +2352,9 @@ func recordIdentityFrom(serialised []byte) (string, ports.RowGeneration, string)
 }
 
 // decodeRun parses a stored walk scan run and checks its seal, on the same
-// terms as splitRecordRow, without excusing drift.
+// terms as splitRecordRow: a run this build cannot reproduce but whose bytes
+// hash to their own seal comes back as ErrGenerationDrift without
+// ErrVulnIntegrity.
 func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
 	var h domain.WalkScanRunHasher
 	run, err := h.Unmarshal(serialised)
@@ -2345,9 +2362,11 @@ func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
 		return domain.WalkScanRun{}, fmt.Errorf("unmarshalling walk scan run: %w", err)
 	}
 	if verr := h.VerifyContentHash(run); verr != nil {
-		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w",
-			ports.ErrVulnIntegrity, run.ID,
-			recordseal.Excluding(h.SealExcludes()...).Classify(serialised, run.ContentHash, verr))
+		cerr := recordseal.Excluding(h.SealExcludes()...).Classify(serialised, run.ContentHash, verr)
+		if errors.Is(cerr, recordseal.ErrGenerationDrift) {
+			return domain.WalkScanRun{}, fmt.Errorf("run %s: %w", run.ID, cerr)
+		}
+		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w", ports.ErrVulnIntegrity, run.ID, cerr)
 	}
 	return run, nil
 }

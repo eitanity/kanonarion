@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -265,11 +266,9 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		// is right; refusing to MEASURE a new answer is not, so it is a cache miss
 		// here. Extraction appends, and the ladder decides which generation answers
 		// afterwards.
-		switch {
-		case errors.Is(cerr, ports.ErrCallGraphConflict):
-			log.InfoContext(ctx, "callgraph_cache_conflict_remeasuring",
-				slog.String("conflict", cerr.Error()),
-			)
+		switch event, key := cacheMissEvent(cerr); {
+		case event != "":
+			log.InfoContext(ctx, event, slog.String(key, cerr.Error()))
 		case cerr != nil && !errors.Is(cerr, ports.ErrCallGraphIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking callgraph store: %w", cerr)
 		}
@@ -539,6 +538,20 @@ func (uc *ExtractCallGraphUseCase) resolvedForThisToolchain(
 		slog.String("content_hash", rec.ContentHash),
 	)
 	return rec, found, nil
+}
+
+// cacheMissEvent names the log event and key for a cache lookup error that is a
+// miss rather than a failure, and returns an empty event for any other error.
+func cacheMissEvent(cerr error) (event, key string) {
+	switch {
+	case errors.Is(cerr, ports.ErrCallGraphConflict):
+		return "callgraph_cache_conflict_remeasuring", "conflict"
+	case errors.As(cerr, new(*recordseal.NothingServable)):
+		// Every held generation was set aside, and the store named each; this
+		// build measures one it can serve.
+		return "callgraph_cache_set_aside_remeasuring", "reason"
+	}
+	return "", ""
 }
 
 // runToolchain names the Go this run analyses under, asking at most once.

@@ -530,7 +530,9 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(newLicenseDocument(r)); err != nil {
+		doc := newLicenseDocument(r)
+		doc.SetAside = storeSetAside.take().json()
+		if err := enc.Encode(doc); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		return nil

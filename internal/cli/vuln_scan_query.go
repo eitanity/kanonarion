@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/failurecause"
 
@@ -81,6 +83,8 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 	}
 	// This command surveys the store, so a row it cannot verify is part of the
 	// answer rather than a reason to withhold it. Any other error still aborts.
+	// A run this build cannot reproduce is set aside and named beside the list.
+	err = storeSetAside.collect(err)
 	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
@@ -162,6 +166,10 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 // Reached only when the listing came back empty.
 func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryScanRunsUseCase) (listZeroScope, error) {
 	all, err := uc.ListAllRuns(ctx)
+	// A set-aside run is still one the store holds, so it is counted.
+	var aside setAsideRows
+	err = aside.take(err)
+	storeSetAside.report(aside)
 	// A store that cannot be surveyed still answers the question the listing was
 	// asked; what it cannot do is size the corpus, and a count of zero would
 	// assert exactly the thing it failed to measure.
@@ -174,7 +182,7 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 		filterValue: walkID,
 		field:       "walk id each run was recorded against",
 		matchKind:   matchExact,
-		considered:  len(all),
+		considered:  len(all) + len(aside),
 		produce:     "kanonarion vuln-scan <walk-id>",
 		listAll:     "kanonarion vuln-scan-list",
 	}
@@ -201,6 +209,9 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 // survey read is on the miss branch, where a found run never goes.
 func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jsonOut bool, stderr io.Writer) error {
 	all, err := uc.ListAllRuns(ctx)
+	var aside setAsideRows
+	err = aside.take(err)
+	storeSetAside.report(aside)
 	// A store with unreadable rows can still be counted; one that cannot be read
 	// at all has nothing honest to say, and a zero substituted for a failed count
 	// would assert exactly the thing it failed to measure.
@@ -213,7 +224,7 @@ func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jso
 		filterValue: runID,
 		field:       "run id",
 		matchKind:   matchExact,
-		considered:  len(all),
+		considered:  len(all) + len(aside),
 		produce:     "kanonarion vuln-scan <walk-id>",
 		listAll:     "kanonarion vuln-scan-list --limit 0",
 	}
@@ -354,6 +365,11 @@ type scanShowSummary struct {
 
 func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, graphs QueryCallGraphUseCase, walks QueryWalksUseCase, natives nativeRecordReader, stdout, stderr io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
+	// A run this build cannot reproduce has nothing to show in its place: the
+	// refusal names it and both remedies, at exit 4.
+	if errors.As(err, new(*recordseal.NothingServable)) {
+		return fmt.Errorf("getting scan run: %w", err)
+	}
 	// vuln-scan-list names the rows it could not verify, and this is the command
 	// an operator runs next against one of those names. Refusing here would send
 	// them from a listing that reports the fault to the one tool that will not
@@ -792,6 +808,8 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	// A history of a walk is a survey of the same rows vuln-scan-list surveys,
 	// and reaches them through the same store seam, so it answers the same way:
 	// every run it can read, plus the ones it cannot, named.
+	var aside setAsideRows
+	err = aside.take(err)
 	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
@@ -819,12 +837,13 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		// none, so an existing consumer sees no change. The unresolvable-inputs
 		// statement joins on the same terms and for the same reason: it is a fact
 		// about the walk, not a field of any run.
-		if len(unreadable) > 0 || !walkPresent {
+		if len(unreadable) > 0 || len(aside) > 0 || !walkPresent {
 			payload := struct {
 				Runs               []vuldomain.WalkScanRun `json:"runs"`
 				Unreadable         []unreadableRowEntry    `json:"unreadable,omitempty"`
+				SetAside           []setAsideJSON          `json:"set_aside,omitempty"`
 				InputsUnresolvable string                  `json:"inputs_unresolvable,omitempty"`
-			}{Runs: runs, Unreadable: unreadable}
+			}{Runs: runs, Unreadable: unreadable, SetAside: aside.json()}
 			if !walkPresent {
 				payload.InputsUnresolvable = unresolvableInputsNote(walkID)
 			}
@@ -839,10 +858,12 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		return nil
 	}
 
+	// Stated on stderr when the command ends, as every text read states one.
+	storeSetAside.report(aside)
 	if !walkPresent {
 		_, _ = fmt.Fprintf(stdout, "%s\n", unresolvableInputsNote(walkID))
 	}
-	if len(runs) == 0 && len(unreadable) == 0 {
+	if len(runs) == 0 && len(unreadable) == 0 && len(aside) == 0 {
 		_, _ = fmt.Fprintf(stdout, "no scan runs found for walk %s\n", walkID)
 		return nil
 	}

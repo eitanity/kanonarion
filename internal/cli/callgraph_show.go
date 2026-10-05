@@ -204,6 +204,7 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		if disagrees {
 			j.AnalyserDisagreement = toAnalyserDisagreementJSON(disagreement)
 		}
+		j.SetAside = storeSetAside.take().json()
 		if err := enc.Encode(j); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
@@ -672,6 +673,9 @@ type callGraphRecordJSON struct {
 	// coordinate were not all parsed by the same analyser. Absent means they
 	// agreed, or that only one of them said.
 	AnalyserDisagreement *analyserDisagreementJSON `json:"analyser_disagreement,omitempty"`
+	// SetAside names the stored call graph generations the reads behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // analyserJSON is one record's analyser identity, fielded rather than rendered,

@@ -42,6 +42,13 @@ For each module in the scope, `audit` emits a single line containing:
 - **Verification** - outcome of sumdb/VCS cross-verification (`Verified`,
   `VerifiedBySumDBOnly`, `VerifiedByGoSum`, `UnverifiedNoSumDB`, etc.). See
   [Local `go.sum` verification](#local-gosum-verification) for `VerifiedByGoSum`.
+  `(set aside)` when every fetch record of the module was written in a shape
+  this build cannot reproduce; the run names each one on stderr.
+  `(integrity check failed)` when a stored fetch record was altered after it was
+  written; the table is still printed, then `audit` exits `10` naming the
+  record. `(divergent fetch records)` when two of the module's fetch records
+  disagree on a hash they both carry; the exit is unaffected.
+  `(fetch record unreadable)` for any other read failure.
 - **License** - primary SPDX identifier; annotated with status when ambiguous
   (e.g. `Apache-2.0 [Multiple]`)
 - **Staleness** - `current` when the pinned version is the latest published,

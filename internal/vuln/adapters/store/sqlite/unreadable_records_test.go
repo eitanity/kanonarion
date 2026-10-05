@@ -165,9 +165,9 @@ func TestRecordListings_ReportUnreadableRowsAndKeepTheRest(t *testing.T) {
 				}
 			}
 
-			var aside *ports.SetAsideGenerations
+			var aside *recordseal.SetAside
 			if !errors.As(err, &aside) {
-				t.Fatalf("error = %v, want *ports.SetAsideGenerations", err)
+				t.Fatalf("error = %v, want *recordseal.SetAside", err)
 			}
 			if len(aside.Rows) != 1 {
 				t.Fatalf("set aside = %v, want exactly the one drifted row", aside.Rows)
@@ -181,19 +181,19 @@ func TestRecordListings_ReportUnreadableRowsAndKeepTheRest(t *testing.T) {
 			if row.ID != bad.Coordinate.String() {
 				t.Errorf("unreadable row ID = %q, want the bare coordinate %s", row.ID, bad.Coordinate)
 			}
-			if row.Kind != ports.RowKindRecord {
-				t.Errorf("row kind = %q, want %q", row.Kind, ports.RowKindRecord)
+			if row.Kind != "vulnerability record" {
+				t.Errorf("row kind = %q, want %q", row.Kind, "vulnerability record")
 			}
 			// The generation travels beside the identity, because a coordinate
 			// alone does not pick one row out of a history.
 			if row.Generation.PipelineVersion != bad.PipelineVersion {
 				t.Errorf("pipeline version = %q, want %q", row.Generation.PipelineVersion, bad.PipelineVersion)
 			}
-			if row.Generation.SnapshotVersion != bad.DatabaseSnapshot.Version() {
-				t.Errorf("snapshot version = %q, want %q", row.Generation.SnapshotVersion, bad.DatabaseSnapshot.Version())
+			if row.Generation.Snapshot.Version != bad.DatabaseSnapshot.Version() {
+				t.Errorf("snapshot version = %q, want %q", row.Generation.Snapshot.Version, bad.DatabaseSnapshot.Version())
 			}
-			if row.Generation.SnapshotSource != bad.DatabaseSnapshot.Source() {
-				t.Errorf("snapshot source = %q, want %q", row.Generation.SnapshotSource, bad.DatabaseSnapshot.Source())
+			if row.Generation.Snapshot.Source != bad.DatabaseSnapshot.Source() {
+				t.Errorf("snapshot source = %q, want %q", row.Generation.Snapshot.Source, bad.DatabaseSnapshot.Source())
 			}
 			// A generation this build no longer seals must not be reported in the
 			// words reserved for altered bytes.
@@ -274,7 +274,7 @@ func TestComposingReads_AllDriftedIsNoServableRecord(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got := read()
 			found, err := got.found, got.err
-			var aside *ports.SetAsideGenerations
+			var aside *recordseal.SetAside
 			if found || !errors.As(err, &aside) {
 				t.Fatalf("read = (found %v, %v), want no servable record with the generation set aside", found, err)
 			}

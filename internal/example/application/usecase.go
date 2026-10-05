@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
@@ -148,6 +149,12 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 		case errors.Is(cerr, ports.ErrExampleConflict):
 			log.InfoContext(ctx, "example_cache_conflict_remeasuring",
 				slog.String("conflict", cerr.Error()),
+			)
+		case errors.As(cerr, new(*recordseal.NothingServable)):
+			// Every held generation was set aside, and the store named each; this
+			// build measures one it can serve.
+			log.InfoContext(ctx, "example_cache_set_aside_remeasuring",
+				slog.String("reason", cerr.Error()),
 			)
 		case cerr != nil && !errors.Is(cerr, ports.ErrExampleIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking example store: %w", cerr)

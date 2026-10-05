@@ -65,6 +65,12 @@ const (
 	// separating the two is this class's whole purpose. It is not a finding: no
 	// proxy is accused of anything by a module landing here.
 	BucketCrossVerifiedProxyNamedURL
+
+	// BucketDivergent is a module whose fetch records disagree on a hash they
+	// both carry. Records exist, so it is not unrecorded; none can speak for the
+	// module, so it carries no assurance and is outside the cross-verifiable
+	// denominator.
+	BucketDivergent
 )
 
 // String names the bucket for display. The names are the reader-facing
@@ -90,6 +96,8 @@ func (b VerificationBucket) String() string {
 		return "local source (nothing to verify)"
 	case BucketUnrecorded:
 		return "no fetch record"
+	case BucketDivergent:
+		return "divergent fetch records"
 	case BucketUnrecognised:
 		return "unrecognised status"
 	default:
@@ -274,6 +282,7 @@ type VerificationCoverage struct {
 	LocalSource    int
 	Unrecorded     int
 	Unrecognised   int
+	Divergent      int
 
 	VCSRechecked   int
 	VCSInherited   int
@@ -320,12 +329,15 @@ func VerificationCoverageOf(obs []CoverageObservation) VerificationCoverage {
 			c.Unrecorded++
 		case BucketUnrecognised:
 			c.Unrecognised++
+		case BucketDivergent:
+			c.Divergent++
 		}
 
 		// Local source has no remote artefact to cross-verify, so it is not a
 		// gap in the ledger's evidence either. Counting it as "not measured"
 		// would invite exactly the misreading these classes exist to prevent.
-		if o.Bucket == BucketLocalSource {
+		// Divergent records have no one record whose legs could answer.
+		if o.Bucket == BucketLocalSource || o.Bucket == BucketDivergent {
 			continue
 		}
 		switch VCSEvidenceOf(o.Legs, o.UnderLedger) {
@@ -354,12 +366,13 @@ func (c VerificationCoverage) Recorded() int {
 }
 
 // CrossVerifiable is the number of modules for which cross-verification is a
-// meaningful question: the recorded ones that are not local source. It is the
+// meaningful question: the recorded ones that are neither local source nor
+// divergent. It is the
 // honest denominator for "what fraction of this graph has a VCS anchor" —
 // against Total, a project walk would report a shortfall for its own main
 // module, which has no remote artefact to anchor.
 func (c VerificationCoverage) CrossVerifiable() int {
-	return c.Recorded() - c.LocalSource
+	return c.Recorded() - c.LocalSource - c.Divergent
 }
 
 // IsCollapsed reports whether cross-verification covered none of a graph that

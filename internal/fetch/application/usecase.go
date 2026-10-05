@@ -236,7 +236,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	// git for (domain.RecordIsCacheable). Re-verify that one instead of serving
 	// back a downgrade that describes a moment or a machine, not the module.
 	if !req.Force {
-		existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
+		existing, ok, err := ports.AbsentIfNothingServable(uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion))
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
@@ -422,7 +422,7 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	// Step 1: cache check. Any existing record — full or go.mod-only — already
 	// carries a verified go.mod, which is all this path needs.
 	if !req.Force {
-		existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
+		existing, ok, err := ports.AbsentIfNothingServable(uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion))
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}

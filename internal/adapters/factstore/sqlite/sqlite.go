@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -43,7 +44,16 @@ const fetchedAtFormat = recordstamp.Layout
 // Store is the SQLite-backed fact store.
 type Store struct {
 	db sqlitestore.DB
+	// setAside receives the measurements a read left out because this build
+	// cannot reproduce them; see ReportSetAside.
+	setAside recordseal.Reporter
 }
+
+// RecordKind is how a set-aside measurement names its kind.
+const RecordKind = "fetch record"
+
+// ReportSetAside states where the store names a measurement it set aside.
+func (s *Store) ReportSetAside(r func([]recordseal.SetAsideRow)) { s.setAside = r }
 
 // Migrations returns the schema migrations for the fetch module.
 func Migrations() []sqlitestore.Migration {
@@ -406,6 +416,10 @@ func (s *Store) ListFetchRecords(ctx context.Context, coord coordinate.ModuleCoo
 
 // listFetchRecords is the one query and one rehydration loop both listings share.
 // pipelineVersion is read only when scope is onePipelineVersion.
+//
+// A row whose stored values hash to its seal but which this build cannot
+// reproduce is left out and named through ReportSetAside; when every row is,
+// the answer is *recordseal.NothingServable. Any other failure ends the read.
 func (s *Store) listFetchRecords(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
@@ -436,8 +450,9 @@ ORDER BY julianday(fetched_at) ASC, rowid ASC`
 	defer func() { _ = rows.Close() }()
 
 	var out []domain2.FactRecord
+	var asides []recordseal.SetAsideRow
 	for rows.Next() {
-		r, serr := scanRecord(rows)
+		r, fetchedAt, serr := scanRecord(rows)
 		if serr != nil {
 			return nil, serr
 		}
@@ -446,14 +461,36 @@ ORDER BY julianday(fetched_at) ASC, rowid ASC`
 		// silently dropping it would report a tampered store as a smaller one.
 		sealed, rerr := domain2.Rehydrate(r)
 		if rerr != nil {
-			return nil, fmt.Errorf("rehydrating stored fetch record for %s: %w", coord, rerr)
+			if !storedValuesHashToSeal(r, fetchedAt) {
+				return nil, fmt.Errorf("%w: rehydrating stored fetch record for %s: %w", ports.ErrFetchRecordIntegrity, coord, rerr)
+			}
+			asides = append(asides, recordseal.SetAsideRow{
+				Kind: RecordKind, ID: coord.String(), ContentHash: r.ContentHash,
+				Generation: recordseal.Generation{PipelineVersion: r.PipelineVersion},
+				Reason:     recordseal.Drift(rerr),
+			})
+			continue
 		}
 		out = append(out, sealed.Record())
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating fetch records: %w", err)
 	}
+	s.setAside.Report(asides)
+	if len(out) == 0 && len(asides) > 0 {
+		return nil, &recordseal.NothingServable{Kind: RecordKind, ID: coord.String(), Aside: &recordseal.SetAside{Rows: asides}}
+	}
 	return out, nil
+}
+
+// storedValuesHashToSeal reports whether a row that failed to rehydrate is one
+// this build cannot reproduce rather than an altered one: it passes every other
+// invariant, and its values as stored hash to its own seal.
+func storedValuesHashToSeal(r domain2.FactRecord, fetchedAt string) bool {
+	if r.Ecosystem != domain2.EcosystemGo || r.SchemaVersion == "" {
+		return false
+	}
+	return domain2.CanonicalHasher{}.StoredValuesHashToSeal(r, fetchedAt)
 }
 
 // rowScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -461,8 +498,9 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-// scanRecord reads one row into a FactRecord, without verifying it.
-func scanRecord(sc rowScanner) (domain2.FactRecord, error) {
+// scanRecord reads one row into a FactRecord, without verifying it, with
+// fetched_at as the row spells it.
+func scanRecord(sc rowScanner) (domain2.FactRecord, string, error) {
 	var r domain2.FactRecord
 	var fetchedAt string
 	err := sc.Scan(
@@ -476,16 +514,16 @@ func scanRecord(sc rowScanner) (domain2.FactRecord, error) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain2.FactRecord{}, fmt.Errorf("scanning fetch record: %w", err)
+			return domain2.FactRecord{}, "", fmt.Errorf("scanning fetch record: %w", err)
 		}
-		return domain2.FactRecord{}, fmt.Errorf("scanning fetch record: %w", err)
+		return domain2.FactRecord{}, "", fmt.Errorf("scanning fetch record: %w", err)
 	}
 	t, err := time.Parse(time.RFC3339, fetchedAt)
 	if err != nil {
-		return domain2.FactRecord{}, fmt.Errorf("parsing fetched_at %q: %w", fetchedAt, err)
+		return domain2.FactRecord{}, "", fmt.Errorf("parsing fetched_at %q: %w", fetchedAt, err)
 	}
 	r.FetchedAt = t.UTC()
-	return r, nil
+	return r, fetchedAt, nil
 }
 
 // PutAttestation inserts or replaces a provenance attestation. Idempotent on

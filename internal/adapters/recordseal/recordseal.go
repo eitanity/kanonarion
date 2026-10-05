@@ -228,12 +228,7 @@ func (x Exclusions) Classify(raw []byte, storedHash string, verifyErr error) err
 	if err != nil || !consistent {
 		return verifyErr
 	}
-	// No direction is claimed: the store does not record which build wrote a row,
-	// and a record a later build wrote fails here exactly as an earlier one does.
-	return fmt.Errorf("%w: the stored bytes hash to their own seal, so nothing has been altered — "+
-		"this build cannot reproduce them because an earlier or a later build wrote them in a different "+
-		"canonical shape; read the record with the build that wrote it, or re-derive it, rather than "+
-		"investigate it: %w", ErrGenerationDrift, verifyErr)
+	return Drift(verifyErr)
 }
 
 // ReplaceTopLevelContentHash returns raw with the value of its top-level

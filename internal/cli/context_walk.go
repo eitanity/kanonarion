@@ -255,7 +255,9 @@ func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, v
 	if len(runs) == 0 {
 		var err error
 		runs, err = runsUC.ListRunsForWalk(ctx, walkID)
-		if err != nil {
+		// A run this build cannot reproduce is named and the newest it can read
+		// answers.
+		if err = storeSetAside.collect(err); err != nil {
 			return nil, nil, fmt.Errorf("listing scan runs for walk %s: %w", walkID, err)
 		}
 	}

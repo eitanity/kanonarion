@@ -276,3 +276,27 @@ func TestPrefetchMissing_AllPresentSkipsFetch(t *testing.T) {
 		t.Errorf("expected 0 FetchModule calls, got %d", fetcher.fetchCount())
 	}
 }
+
+// A module whose every fetch record was set aside is pre-fetched, as an absent
+// one is, so the scan measures it with a record this build can serve.
+func TestPrefetchMissing_EverythingSetAsideIsFetched(t *testing.T) {
+	ctx := t.Context()
+	walkID := "w-aside"
+	aside := coordinatetest.MustNew("github.com/aside/mod", "v1.0.0")
+
+	walkStore := newFakeWalkStore()
+	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+		ID:    walkID,
+		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: aside}}},
+	})
+	facts := newFakeFacts()
+	facts.setAside = true
+	fetcher := &fakeFetcher{}
+
+	uc := makePrefetchScanWalkUC(t, walkStore, newFakeVulnStore(), facts, newFakeBlob(), fetcher)
+	_, _ = uc.Scan(ctx, application.ScanWalkParams{WalkID: walkID})
+
+	if !fetcher.wasFetched(aside) {
+		t.Errorf("FetchModule was not called for %s, whose every record was set aside", aside)
+	}
+}

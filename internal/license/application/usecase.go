@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -203,6 +204,12 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 		case errors.Is(cerr, ports.ErrLicenceConflict):
 			log.InfoContext(ctx, "licence_cache_conflict_remeasuring",
 				slog.String("conflict", cerr.Error()),
+			)
+		case errors.As(cerr, new(*recordseal.NothingServable)):
+			// Every held generation was set aside, and the store named each; this
+			// build measures one it can serve.
+			log.InfoContext(ctx, "licence_cache_set_aside_remeasuring",
+				slog.String("reason", cerr.Error()),
 			)
 		case cerr != nil && !errors.Is(cerr, ports.ErrLicenceIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking license store: %w", cerr)

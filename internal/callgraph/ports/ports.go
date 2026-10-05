@@ -299,9 +299,11 @@ type CallGraphStore interface {
 	// analysis source composition defaults to. Returns (zero, false, nil) if the
 	// ledger holds none.
 	//
-	// Returns ErrCallGraphIntegrity if a stored hash does not verify, and
+	// Returns ErrCallGraphIntegrity if stored bytes do not hash to their seal, and
 	// ErrCallGraphConflict for a disagreement composition must not resolve by
-	// picking.
+	// picking. A generation this build cannot reproduce but whose bytes hash to
+	// their seal is set aside and composed around; when every generation is set
+	// aside it returns *recordseal.NothingServable.
 	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.CallGraphRecord, bool, error)
 
 	// ListCallGraphRecords returns summaries matching the filter, ordered by

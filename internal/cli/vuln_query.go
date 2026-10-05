@@ -353,7 +353,7 @@ func explainWalkRecordAbsence(
 	walkID string,
 ) error {
 	scanRuns, err := runs.ListRunsForWalk(ctx, walkID)
-	if err != nil {
+	if err = storeSetAside.collect(err); err != nil {
 		return fmt.Errorf("no vulnerability record for %s in walk %s, and its scan runs could not be read: %w", coord, walkID, err)
 	}
 	if len(scanRuns) == 0 {

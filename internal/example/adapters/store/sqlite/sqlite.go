@@ -26,12 +26,21 @@ import (
 // Store is the SQLite-backed example store.
 type Store struct {
 	db sqlitestore.DB
+	// setAside receives the stored generations a read or a write left out
+	// because this build cannot reproduce them; see ReportSetAside.
+	setAside recordseal.Reporter
 }
+
+// RecordKind is how a set-aside example generation names its kind.
+const RecordKind = "example record"
 
 // New returns a new Store using the provided database handle.
 func New(db sqlitestore.DB) *Store {
 	return &Store{db: db}
 }
+
+// ReportSetAside states where the store names a generation it set aside.
+func (s *Store) ReportSetAside(r func([]recordseal.SetAsideRow)) { s.setAside = r }
 
 // Migrations returns the schema migrations for the example module.
 func Migrations() []sqlitestore.Migration {
@@ -330,10 +339,12 @@ DO NOTHING`
 // merely by running later. See domain.Compose for the ladder and for the
 // disagreement it refuses to resolve by picking.
 //
-// A stored record that fails its integrity check is still ErrExampleIntegrity,
+// A stored record whose bytes do not hash to their seal is ErrExampleIntegrity,
 // and it stops the read rather than being skipped: dropping it would serve a
 // composition computed over fewer records than the ledger holds and report it as
-// the whole answer.
+// the whole answer. A record whose bytes hash to their seal but which this build
+// cannot reproduce is set aside, named through ReportSetAside, and composed
+// around; see ListExampleRecordsFor.
 func (s *Store) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.ExampleRecord, bool, error) {
 	records, err := s.ListExampleRecordsFor(ctx, coord, pipelineVersion)
 	if err != nil {
@@ -362,6 +373,10 @@ func (s *Store) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoo
 // step — and two extractions within one second carry the same timestamp. The
 // ledger is append-only, so insertion order is the sequence it actually has, and
 // composition relies on it for local coordinates.
+//
+// A generation this build cannot reproduce is left out and named through
+// ReportSetAside. When every generation is, the answer is
+// *recordseal.NothingServable: records are held, none this build can serve.
 func (s *Store) ListExampleRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.ExampleRecord, error) {
 	// The zero coordinate names no module, so this is a question about nothing.
 	// Answering it with absence would report "no record here" for a module that
@@ -369,7 +384,7 @@ func (s *Store) ListExampleRecordsFor(ctx context.Context, coord coordinate.Modu
 	if coord.IsZero() {
 		return nil, coordinate.ErrZeroCoordinate
 	}
-	const q = `SELECT serialised FROM example_records
+	const q = `SELECT serialised, content_hash FROM example_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 ORDER BY extracted_at ASC, rowid ASC`
 
@@ -382,42 +397,68 @@ ORDER BY extracted_at ASC, rowid ASC`
 	}()
 
 	var out []domain2.ExampleRecord
+	var asides []recordseal.SetAsideRow
 	for rows.Next() {
 		var blob []byte
-		if serr := rows.Scan(&blob); serr != nil {
+		var stored string
+		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return nil, fmt.Errorf("scanning example record: %w", serr)
 		}
-		rec, rerr := decodeRecord(blob)
+		rec, aside, rerr := decodeRecord(blob, stored)
 		if rerr != nil {
 			return nil, rerr
+		}
+		if aside != nil {
+			asides = append(asides, *aside)
+			continue
 		}
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating example records: %w", err)
 	}
+	s.setAside.Report(asides)
+	if len(out) == 0 && len(asides) > 0 {
+		return nil, &recordseal.NothingServable{Kind: RecordKind, ID: coord.String(), Aside: &recordseal.SetAside{Rows: asides}}
+	}
 	return out, nil
 }
 
 // decodeRecord turns one stored blob into a verified record. A row that cannot
-// be decoded, parsed or verified is an error rather than an absence.
-func decodeRecord(blob []byte) (domain2.ExampleRecord, error) {
+// be decoded, parsed or verified is an error rather than an absence, except one
+// whose bytes hash to the seal it is filed under (storedHash) in a shape this
+// build cannot reproduce: that comes back as a set-aside row instead.
+func decodeRecord(blob []byte, storedHash string) (domain2.ExampleRecord, *recordseal.SetAsideRow, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
-		return domain2.ExampleRecord{}, fmt.Errorf("decompressing example record: %w", decErr)
+		return domain2.ExampleRecord{}, nil, fmt.Errorf("decompressing example record: %w", decErr)
 	}
 	var h domain2.ExampleRecordHasher
 	rec, err := h.Unmarshal(raw)
 	if err != nil {
-		return domain2.ExampleRecord{}, fmt.Errorf("unmarshalling example record: %w", err)
+		return domain2.ExampleRecord{}, nil, fmt.Errorf("unmarshalling example record: %w", err)
 	}
 	if verr := h.VerifyContentHash(rec); verr != nil {
 		// A record this build cannot reproduce is not necessarily one that has
 		// been altered. recordseal decides which, on the stored bytes alone.
-		return domain2.ExampleRecord{}, fmt.Errorf("%w: %w",
-			ports.ErrExampleIntegrity, recordseal.Classify(raw, rec.ContentHash, verr))
+		cerr := recordseal.Classify(raw, rec.ContentHash, verr)
+		if !errors.Is(cerr, recordseal.ErrGenerationDrift) {
+			return domain2.ExampleRecord{}, nil, fmt.Errorf("%w: %w", ports.ErrExampleIntegrity, cerr)
+		}
+		// Intact bytes filed under another seal are still an altered row.
+		if rec.ContentHash != storedHash {
+			return domain2.ExampleRecord{}, nil, fmt.Errorf("%w: blob has %q, stored %q: %w",
+				ports.ErrExampleIntegrity, rec.ContentHash, storedHash, verr)
+		}
+		return domain2.ExampleRecord{}, &recordseal.SetAsideRow{
+			Kind:        RecordKind,
+			ID:          rec.Coordinate.String(),
+			Generation:  recordseal.Generation{PipelineVersion: rec.PipelineVersion},
+			ContentHash: storedHash,
+			Reason:      cerr,
+		}, nil
 	}
-	return rec, nil
+	return rec, nil, nil
 }
 
 // IdenticalGeneration returns the generation the ledger already holds that
@@ -435,10 +476,12 @@ func decodeRecord(blob []byte) (domain2.ExampleRecord, error) {
 // breaks a tie so two rows sharing a second cannot order differently between
 // runs.
 //
-// A row this build cannot verify stops the read rather than being skipped, on the
-// same terms as every other read leg of this store. The caller treats a failure
-// as "nothing held" and appends, so an unverifiable row costs a redundant
-// generation, never a suppressed measurement.
+// A row whose bytes do not hash to their seal stops the read rather than being
+// skipped, on the same terms as every other read leg of this store. The caller
+// treats a failure as "nothing held" and appends, so an unverifiable row costs a
+// redundant generation, never a suppressed measurement. A row this build cannot
+// reproduce cannot be shown to state this measurement, so it is skipped and
+// named through ReportSetAside.
 func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.ExampleRecord) (domain2.ExampleRecord, bool, error) {
 	if rec.Coordinate.IsZero() {
 		return domain2.ExampleRecord{}, false, coordinate.ErrZeroCoordinate
@@ -449,7 +492,7 @@ func (s *Store) IdenticalGeneration(ctx context.Context, rec domain2.ExampleReco
 		return domain2.ExampleRecord{}, false, nil
 	}
 
-	const q = `SELECT serialised FROM example_records
+	const q = `SELECT serialised, content_hash FROM example_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND overall_status = ? AND example_count = ?
 ORDER BY extracted_at DESC, content_hash DESC`
@@ -464,14 +507,21 @@ ORDER BY extracted_at DESC, content_hash DESC`
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
 	}()
 
+	var asides []recordseal.SetAsideRow
+	defer func() { s.setAside.Report(asides) }()
 	for rows.Next() {
 		var blob []byte
-		if serr := rows.Scan(&blob); serr != nil {
+		var stored string
+		if serr := rows.Scan(&blob, &stored); serr != nil {
 			return domain2.ExampleRecord{}, false, fmt.Errorf("scanning example generation of %s: %w", rec.Coordinate, serr)
 		}
-		held, derr := decodeRecord(blob)
+		held, aside, derr := decodeRecord(blob, stored)
 		if derr != nil {
 			return domain2.ExampleRecord{}, false, derr
+		}
+		if aside != nil {
+			asides = append(asides, *aside)
+			continue
 		}
 		same, serr := domain2.SameMeasurement(rec, held)
 		if serr != nil {
@@ -618,6 +668,11 @@ func (s *Store) ListExampleRecords(ctx context.Context, filter ports.ExampleFilt
 			return nil, fmt.Errorf("example record %s@%s names no module: %w", k.path, k.version, cerr)
 		}
 		served, found, gerr := s.GetExampleRecord(ctx, coord, k.pipeline)
+		if errors.As(gerr, new(*recordseal.NothingServable)) {
+			// Every generation was set aside and named by the read; the listing
+			// keeps its other rows.
+			continue
+		}
 		if errors.Is(gerr, ports.ErrExampleConflict) {
 			// Reported on the row, not raised as the list's error: see the comment
 			// on ExampleSummary.Conflict.
@@ -760,6 +815,9 @@ func (s *Store) servedRefs(ctx context.Context, candidates []candidateRef, pipel
 			switch {
 			case errors.Is(herr, ports.ErrExampleConflict):
 				conflicts = append(conflicts, herr)
+				h = ""
+			case errors.As(herr, new(*recordseal.NothingServable)):
+				// Omitted as a disputed module is; the read named what it set aside.
 				h = ""
 			case herr != nil:
 				return nil, herr

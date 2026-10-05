@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/local/ports"
@@ -77,10 +78,10 @@ func (a *VulnStoreAdapter) LoadFindings(
 		candidates, err := a.store.ListVulnerabilityRecordsForModule(ctx, coord, a.pipelineVersion)
 		// Generations this build cannot reproduce are left out of the seed and
 		// named beside it; an altered row still fails the load.
-		var aside *vulnports.SetAsideGenerations
+		var aside *recordseal.SetAside
 		if errors.As(err, &aside) {
 			for _, r := range aside.Rows {
-				result.SetAside = append(result.SetAside, r.SetAsideLabel()+": "+vulnports.SetAsideRemedy)
+				result.SetAside = append(result.SetAside, r.Label()+": "+recordseal.SetAsideRemedy)
 			}
 			if len(candidates) == 0 {
 				result.SetAsideOnly[coord] = struct{}{}

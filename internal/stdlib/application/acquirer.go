@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
@@ -103,6 +104,12 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 
 	if !opts.Force {
 		facts, ok, err := a.store.Get(ctx, version)
+		if errors.As(err, new(*recordseal.NothingServable)) {
+			// Every held measurement was set aside and the store named each; this
+			// build measures one it can serve.
+			a.logger.InfoContext(ctx, "stdlib.acquire.cache_set_aside", slog.String("go_version", version))
+			ok, err = false, nil
+		}
 		if err != nil {
 			return domain.Facts{}, fmt.Errorf("reading stdlib fact cache for %s: %w", version, err)
 		}

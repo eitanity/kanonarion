@@ -220,6 +220,7 @@ func printCallGraphSummary(
 		// --json'. Every scalar stays at the key it had. Nil and not empty, so
 		// this is never read as a graph that measured nothing.
 		doc.Nodes, doc.Edges = nil, nil
+		doc.SetAside = storeSetAside.take().json()
 		if err := enc.Encode(doc); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}

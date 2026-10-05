@@ -63,6 +63,7 @@ The classes partition the graph - every module lands in exactly one.
 | `unverified` | No anchor was established, for any reason. The reasons differ in what to do about them, not in how much assurance they carry. |
 | `local_source` | Built from a local source tree (the main module, a local-path replace). There is no remote artefact to cross-verify, so this is neither assurance nor a gap. |
 | `unrecorded` | In the graph, with no fetch record found. Absence of a measurement, not a failed one. |
+| `divergent` | Fetch records exist and disagree on a hash they both carry (text class `divergent fetch records`). The row's reason names the hash and the records' content hashes. Recorded, but carrying no assurance, so it is outside `cross_verifiable`. The report still exits `0`. |
 | `unrecognised` | A verification status this mapping has never heard of. It lands here rather than being folded into a class it may not belong to. |
 
 ### Which repository the VCS check cloned
@@ -113,8 +114,8 @@ trailing `.git`, say - is reported as `proxy-named`, because the only safe
 direction to err in is understating assurance. Records are never re-classified
 on read: the answer a record gives is the one its measurement reached.
 
-`cross_verifiable` is the honest denominator: the recorded modules that are not
-local source. Measured against `total`, a project walk would report a shortfall
+`cross_verifiable` is the honest denominator: the recorded modules that are
+neither local source nor divergent. Measured against `total`, a project walk would report a shortfall
 for its own main module, which has no remote artefact to anchor.
 
 `collapsed` is `true` when a graph had something to cross-verify and none of it
@@ -143,6 +144,11 @@ readers to `python3` over another command's output. Each row carries
 `coordinate`, `path`, `version`, `class`, the recorded `status`, `reason`
 where the record recorded one, and `vcs_url_binding` where the record recorded
 a binding.
+
+A fetch record this build cannot reproduce is left out and named in the
+document's `set_aside` (on stderr without `--json`). A module whose every record
+was set aside is counted `unrecorded`, and its reason says so. See
+[fetch](fetch.md#a-stored-record-this-build-cannot-reproduce).
 
 Most records record a status and no prose: the detail is written when there is
 something worth saying, so its absence is not a gap. A row with neither says so
@@ -224,6 +230,7 @@ kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD --json
   "local_source": 1,
   "unrecorded": 0,
   "unrecognised": 0,
+  "divergent": 0,
   "collapsed": true,
   "shares": {
     "cross_verified": 0,
@@ -233,6 +240,7 @@ kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD --json
     "local_source": 0.2,
     "unrecorded": 0,
     "unrecognised": 0,
+    "divergent": 0,
     "cross_verified_of_applicable": 0
   },
   "vcs": {
@@ -287,7 +295,7 @@ Only global flags apply.
 |------|---------|
 | `0` | Success - including a collapsed graph. Coverage is reported, not enforced; the gate is the caller's to write. |
 | `4` | No walk record with that id |
-| `10` | The walk record failed its integrity check |
+| `10` | The walk record, or a module's fetch record, failed its integrity check. No figures are printed: a module whose record was altered is not counted as `unrecorded` |
 | `20` | The store could not be opened |
 
 ## Examples

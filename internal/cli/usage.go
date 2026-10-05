@@ -203,7 +203,9 @@ func usageWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoord
 	}
 
 	if jsonOut {
-		if encErr := encodeJSON(stdout, toUsageJSON(report)); encErr != nil {
+		doc := toUsageJSON(report)
+		doc.SetAside = storeSetAside.take().json()
+		if encErr := encodeJSON(stdout, doc); encErr != nil {
 			return encErr
 		}
 		return usageVerdictExit(report)
@@ -1291,6 +1293,9 @@ type usageJSON struct {
 	Confidence string `json:"confidence_note"`
 	Answer     string `json:"answer"`
 	AnswerWhy  string `json:"answer_reason,omitempty"`
+	// SetAside names the stored call graph generations the reads behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 func toUsageJSON(r *usageReport) usageJSON {

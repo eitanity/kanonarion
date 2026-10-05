@@ -42,6 +42,9 @@ func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout, s
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", id)}
 		}
+		if none := walkNotServable(err); none != nil {
+			return none
+		}
 		return fmt.Errorf("getting walk: %w", err)
 	}
 

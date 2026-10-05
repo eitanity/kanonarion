@@ -122,6 +122,9 @@ type implementersResult struct {
 	// the searched module's own declaration — see domain.ForeignModule for why
 	// the distinction is not cosmetic.
 	AnswerForeignModules []foreignModuleJSON `json:"answer_foreign_modules,omitempty"`
+	// SetAside names the stored call graph generations the reads behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // runImplementers answers an implementers query and renders it with the same
@@ -427,6 +430,7 @@ func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMeth
 	if perMethod {
 		res.Method = method
 	}
+	res.SetAside = storeSetAside.take().json()
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(res); err != nil {

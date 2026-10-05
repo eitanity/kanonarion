@@ -139,7 +139,9 @@ func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, gener
 		return fmt.Errorf("analysing capabilities: %w", err)
 	}
 	if jsonOut {
-		return encodeJSON(stdout, capabilityReportToJSON(coord, report, scope))
+		doc := capabilityReportToJSON(coord, report, scope)
+		doc.SetAside = storeSetAside.take().json()
+		return encodeJSON(stdout, doc)
 	}
 	return printCapabilityReport(stdout, coord, report, scope)
 }
@@ -161,7 +163,9 @@ func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capability
 		return fmt.Errorf("diffing capabilities: %w", err)
 	}
 	if jsonOut {
-		return encodeJSON(stdout, capabilityDiffToJSON(from, to, fromReport, toReport, diff, scope))
+		doc := capabilityDiffToJSON(from, to, fromReport, toReport, diff, scope)
+		doc.SetAside = storeSetAside.take().json()
+		return encodeJSON(stdout, doc)
 	}
 	return printCapabilityDiff(stdout, from, to, diff, scope)
 }
@@ -228,6 +232,9 @@ type capabilityReportJSON struct {
 	// something weaker than a capability of this module. Always present (empty
 	// array when there are none) so its absence cannot be read as "none found".
 	Observations []capabilityFindingJSON `json:"observations"`
+	// SetAside names the stored call graph generations the reads behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 type capabilityDiffJSON struct {
@@ -238,6 +245,9 @@ type capabilityDiffJSON struct {
 	Added    []string             `json:"added"`
 	Removed  []string             `json:"removed"`
 	Common   []string             `json:"common"`
+	// SetAside names the stored call graph generations the reads behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport, scope cgdomain.RootScope) capabilityReportJSON {

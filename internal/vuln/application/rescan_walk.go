@@ -220,10 +220,16 @@ func (uc *RescanWalkUseCase) projectFrameDir(ctx context.Context, walk walkdomai
 // silent frame change it exists to prevent.
 func (uc *RescanWalkUseCase) priorRunWasProjectRooted(ctx context.Context, walkID string) (bool, error) {
 	runs, err := uc.vulnStore.ListWalkScanRuns(ctx, walkID)
-	if err != nil {
+	if err != nil && !isSetAside(err) {
 		return false, fmt.Errorf("reading the scan runs of walk %q to settle its analysis frame: %w", walkID, err)
 	}
+	// A run this build cannot reproduce may be the newest, so only a readable run
+	// saying target-rooted settles the frame without it.
+	runsAside := err
 	if len(runs) == 0 {
+		if runsAside != nil {
+			return false, fmt.Errorf("settling the analysis frame of walk %q without the scan runs this build cannot reproduce: %w", walkID, runsAside)
+		}
 		return false, nil
 	}
 	// Ordered newest first by the store, so runs[0] is the generation a re-scan
@@ -241,6 +247,9 @@ func (uc *RescanWalkUseCase) priorRunWasProjectRooted(ctx context.Context, walkI
 	// "isolated" without it would be the silent frame change this read prevents.
 	if err != nil {
 		return false, fmt.Errorf("settling the analysis frame of scan run %q without the generations this build cannot reproduce: %w", runs[0].ID, err)
+	}
+	if runsAside != nil {
+		return false, fmt.Errorf("settling the analysis frame of walk %q without the scan runs this build cannot reproduce: %w", walkID, runsAside)
 	}
 	return false, nil
 }

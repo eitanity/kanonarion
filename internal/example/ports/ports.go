@@ -72,9 +72,11 @@ type ExampleStore interface {
 
 	// GetExampleRecord retrieves the composed record for the given coordinate
 	// and pipeline version. Returns (zero, false, nil) if not found.
-	// Returns ErrExampleIntegrity if a stored hash does not verify, and
+	// Returns ErrExampleIntegrity if stored bytes do not hash to their seal, and
 	// ErrExampleConflict when composition must not pick between the records
-	// held.
+	// held. A generation this build cannot reproduce but whose bytes hash to
+	// their seal is set aside and composed around; when every generation is set
+	// aside it returns *recordseal.NothingServable.
 	GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.ExampleRecord, bool, error)
 
 	// ListExampleRecords returns summaries matching the filter, ordered by

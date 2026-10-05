@@ -808,6 +808,30 @@ func hashCanonical(r CallGraphRecord) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// storedEdgesSpan is what a stored blob carries in place of the edge array: the
+// store writes the record with no edges, which marshalCanonical renders empty.
+const storedEdgesSpan = `"edges":[]`
+
+// StoredDigest recomputes the seal over the bytes a store kept — the blob as the
+// writing build emitted it, content_hash blanked, edges omitted — with the edges
+// kept beside it spliced back in. Nothing outside the edge array goes through
+// today's struct, so a blob written in another canonical shape still hashes to
+// its own seal when nothing was altered.
+func (CallGraphRecordHasher) StoredDigest(blanked []byte, edges []CallEdge) (string, error) {
+	at := bytes.Index(blanked, []byte(storedEdgesSpan))
+	if at < 0 || bytes.Contains(blanked[at+len(storedEdgesSpan):], []byte(storedEdgesSpan)) {
+		return "", fmt.Errorf("locating the edge array in the stored callgraph record: want exactly one %s", storedEdgesSpan)
+	}
+	h := sha256.New()
+	hashWrite(h, blanked[:at])
+	hashWrite(h, []byte(`"edges":`))
+	if err := writeCanonicalEdges(h, canonicalEdgeOrder(edges)); err != nil {
+		return "", err
+	}
+	hashWrite(h, blanked[at+len(storedEdgesSpan):])
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // writeCanonicalEdges writes the canonical JSON array of edges into h without
 // holding it. Two digests are taken over a record's edges — the seal and the
 // one conflict detection compares generations by — and both stream through

@@ -167,7 +167,13 @@ func printExampleRecord(r domain.ExampleRecord, fromCache bool, jsonOut bool, st
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(r); err != nil {
+		// The record's own keys, unchanged, plus the generations the read set
+		// aside; absent when there are none.
+		doc := struct {
+			domain.ExampleRecord
+			SetAside []setAsideJSON `json:"set_aside,omitempty"`
+		}{r, storeSetAside.take().json()}
+		if err := enc.Encode(doc); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		return nil

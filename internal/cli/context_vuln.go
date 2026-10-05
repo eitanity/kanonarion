@@ -119,7 +119,7 @@ func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC Q
 	window := make([]string, 0, len(walks))
 	for _, w := range walks {
 		runs, err := runsUC.ListRunsForWalk(ctx, w.ID)
-		if err != nil {
+		if err = storeSetAside.collect(err); err != nil {
 			continue
 		}
 		runsMap[w.ID] = runs

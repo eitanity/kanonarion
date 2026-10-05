@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -12,7 +14,7 @@ import (
 // SetAsideReporter states the stored generations a scan's writes and reuse
 // reads set aside because this build cannot reproduce them. Module scans run
 // concurrently, so it must be safe to call from several goroutines.
-type SetAsideReporter func(rows []ports.UnreadableRow)
+type SetAsideReporter func(rows []recordseal.SetAsideRow)
 
 // WithSetAsideReporter sets where the scan states set-aside generations. Without
 // one they are logged at warn level, so they are never dropped unseen; returns
@@ -24,7 +26,7 @@ func (uc *ScanModuleUseCase) WithSetAsideReporter(r SetAsideReporter) *ScanModul
 
 // reportSetAside states rows through the reporter, or the logger when none is
 // set.
-func reportSetAside(r SetAsideReporter, logger *slog.Logger, rows []ports.UnreadableRow) {
+func reportSetAside(r SetAsideReporter, logger *slog.Logger, rows []recordseal.SetAsideRow) {
 	if len(rows) == 0 {
 		return
 	}
@@ -33,8 +35,8 @@ func reportSetAside(r SetAsideReporter, logger *slog.Logger, rows []ports.Unread
 		return
 	}
 	for _, row := range rows {
-		logger.Warn("set aside a stored vulnerability record generation",
-			"generation", row.SetAsideLabel(), "meaning", ports.SetAsideRemedy)
+		logger.Warn("set aside a stored "+row.Kind+" generation",
+			"generation", row.Label(), "meaning", recordseal.SetAsideRemedy)
 	}
 }
 
@@ -43,7 +45,7 @@ func reportSetAside(r SetAsideReporter, logger *slog.Logger, rows []ports.Unread
 // a failure; every other error is.
 func putRecord(ctx context.Context, store ports.VulnerabilityStore, record domain.VulnerabilityRecord, r SetAsideReporter, logger *slog.Logger) error {
 	err := store.PutVulnerabilityRecord(ctx, record)
-	var aside *ports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if errors.As(err, &aside) {
 		reportSetAside(r, logger, aside.Rows)
 		return nil

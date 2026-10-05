@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/license/application"
@@ -572,5 +573,26 @@ func TestGenerateNotice_UnclassifiedRootFileIsRecordedNotReproduced(t *testing.T
 	}
 	if notice.SPDX != "" {
 		t.Errorf("NOTICE SPDX = %q, want empty — a notice declares no licence", notice.SPDX)
+	}
+}
+
+// TestGenerateNotice_NothingServableIsAReviewItem: a module whose every licence
+// generation was set aside reads as one with no record, so the notice is
+// generated and the module is listed for review, not refused.
+func TestGenerateNotice_NothingServableIsAReviewItem(t *testing.T) {
+	coord := mustCoord(t, "example.com/drifted", "v1.0.0")
+	uc := buildNoticeUseCase(t, nil, nil, &fakeLicenseStore{getErr: &recordseal.NothingServable{
+		Kind: "licence record", ID: coord.String(),
+		Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{{ContentHash: "sha256:aa", Reason: recordseal.ErrGenerationDrift}}},
+	}})
+
+	result, err := uc.Generate(context.Background(), application.NoticeRequest{
+		Coordinates: []coordinate.ModuleCoordinate{coord},
+	})
+	if err != nil {
+		t.Fatalf("Generate = %v, want a notice with the module for review", err)
+	}
+	if len(result.ReviewItems) != 1 || result.ReviewItems[0].Coordinate != coord {
+		t.Fatalf("review items = %+v, want one for %s", result.ReviewItems, coord)
 	}
 }

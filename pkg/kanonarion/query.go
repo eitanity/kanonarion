@@ -139,8 +139,8 @@ type Queries = composition.Queries
 // Stability: public composition entrypoint; unstable pre-v1. It may gain
 // optional configuration via a variadic option within a major version
 // (§4).
-func Open(storeRoot string) (*Queries, func() error, error) {
-	queries, cleanup, err := composition.NewQueries(storeRoot)
+func Open(storeRoot string, opts ...Option) (*Queries, func() error, error) {
+	queries, cleanup, err := composition.NewQueries(storeRoot, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening kanonarion store: %w", err)
 	}

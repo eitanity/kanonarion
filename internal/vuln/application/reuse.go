@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -108,6 +109,12 @@ func (uc *ScanWalkUseCase) ReusableRun(ctx context.Context, walkID, projectDir s
 	}
 
 	runs, err := uc.vulnStore.ListWalkScanRuns(ctx, walkID)
+	if rows, ok := recordseal.MergeSetAside(nil, err); ok {
+		// A run this build cannot reproduce cannot be shown to qualify, so it is
+		// not reused; it is named rather than skipped unseen.
+		reportSetAside(uc.setAsideReporter(), uc.logger, rows)
+		err = nil
+	}
 	if err != nil {
 		return domain.WalkScanRun{}, false, fmt.Errorf("listing scan runs for walk %q: %w", walkID, err)
 	}

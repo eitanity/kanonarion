@@ -137,8 +137,8 @@ type Driver = composition.Driver
 // Stability: public driver composition entrypoint; unstable pre-v1. It may gain
 // optional configuration via a variadic option within a major version
 // (§4).
-func OpenDriver(storeRoot string) (*Driver, func() error, error) {
-	driver, cleanup, err := composition.NewDriver(storeRoot)
+func OpenDriver(storeRoot string, opts ...Option) (*Driver, func() error, error) {
+	driver, cleanup, err := composition.NewDriver(storeRoot, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening kanonarion driver: %w", err)
 	}

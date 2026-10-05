@@ -917,6 +917,7 @@ func readInspectScanRun(ctx context.Context, ctr *Container, walkID string, stde
 		return 0, "", ""
 	}
 	runs, rerr := ctr.QueryScanRuns.ListRunsForWalk(ctx, walkID)
+	rerr = storeSetAside.collect(rerr)
 	switch {
 	case rerr != nil:
 		_, _ = fmt.Fprintf(stderr, "==> inspect: reading scan run for walk %s: %v\n", walkID, rerr)

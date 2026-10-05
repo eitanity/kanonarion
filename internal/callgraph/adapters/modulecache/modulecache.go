@@ -251,7 +251,7 @@ func (c *Cache) prefetchSource(ctx context.Context, coords []coordinate.ModuleCo
 		if ctx.Err() != nil {
 			return
 		}
-		record, ok, err := fetchports.ComposedFetchRecord(ctx, c.facts, coord)
+		record, ok, err := fetchports.AbsentIfNothingServable(fetchports.ComposedFetchRecord(ctx, c.facts, coord))
 		if err != nil {
 			c.logger.WarnContext(ctx, "callgraph_modcache_prefetch_check_failed",
 				slog.String("module", coord.String()), slog.String("error", err.Error()))
@@ -280,7 +280,7 @@ func (c *Cache) prefetchGoMod(ctx context.Context, coords []coordinate.ModuleCoo
 		if ctx.Err() != nil {
 			return
 		}
-		_, ok, err := fetchports.ComposedFetchRecord(ctx, c.facts, coord)
+		_, ok, err := fetchports.AbsentIfNothingServable(fetchports.ComposedFetchRecord(ctx, c.facts, coord))
 		if err != nil {
 			c.logger.WarnContext(ctx, "callgraph_modcache_prefetch_check_failed",
 				slog.String("module", coord.String()), slog.String("error", err.Error()))

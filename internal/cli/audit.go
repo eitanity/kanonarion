@@ -19,8 +19,10 @@ import (
 	"github.com/spf13/cobra"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -94,7 +96,7 @@ Exit codes:
      blocked by policy (unknown_license=block), or the licence gate could not
      be evaluated because the policy scope in force matches no license_policy
      rule — the table is still printed either way
-  10 a walk node failed its integrity check
+  10 a walk node or a module's fetch record failed its integrity check
   20 bad invocation, unresolvable go.mod, or a policy file that could not be read`,
 		Example: `  kanonarion audit
   kanonarion audit --gomod ./go.mod
@@ -357,6 +359,9 @@ type auditModuleResult struct {
 	// field here would change the documented `audit --json` array element for
 	// every consumer to carry a per-row copy of a whole-graph figure.
 	coverage fetchdomain.CoverageObservation
+	// integrity is the failure of a stored record behind this row that was
+	// altered after it was written; the run exits on it once the table is out.
+	integrity error
 }
 
 func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error {
@@ -522,13 +527,30 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		if err := enc.Encode(newAuditOutput(envelope, run, results)); err != nil {
 			return fmt.Errorf("encoding results: %w", err)
 		}
-		return auditBlockingErr(results)
+		return auditOutcomeErr(results)
 	}
 
 	if err := printAuditTable(stdout, results); err != nil {
 		return err
 	}
-	return auditBlockingErr(results)
+	return auditOutcomeErr(results)
+}
+
+// auditOutcomeErr is the run's exit once the table is out: a stored record that
+// failed its integrity check outranks the licence gate, as it does on every
+// command that reads one.
+func auditOutcomeErr(results []auditModuleResult) error {
+	var failed []string
+	for _, r := range results {
+		if r.integrity != nil {
+			failed = append(failed, r.integrity.Error())
+		}
+	}
+	if len(failed) == 0 {
+		return auditBlockingErr(results)
+	}
+	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("%d dependency(ies) with a stored record that failed its integrity check:\n  %s",
+		len(failed), strings.Join(failed, "\n  "))}
 }
 
 // auditDerivation records where an audit's two expensive answers came from: the
@@ -866,7 +888,9 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 		return res, nil
 	}
 
-	if frec, found, ferr := ctr.QueryFetch.ComposeFetchRecord(ctx, coord); ferr == nil && found {
+	frec, found, ferr := ctr.QueryFetch.ComposeFetchRecord(ctx, coord)
+	switch {
+	case ferr == nil && found:
 		res.Verification = frec.VerificationStatus
 		res.coverage = fetchdomain.CoverageObservation{
 			Bucket: fetchdomain.BucketForFetchRecord(
@@ -877,7 +901,19 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 			UnderLedger: frec.MeasurementKind != "",
 			Recorded:    true,
 		}
-	} else if !found {
+	case errors.As(ferr, new(*recordseal.NothingServable)):
+		// Records are held, none this build can serve; the run names each one.
+		res.Verification = "(set aside)"
+	case errors.As(ferr, new(*fetchdomain.Divergence)):
+		// Records exist and disagree; the coverage aggregate counts them apart.
+		res.Verification = "(divergent fetch records)"
+		res.coverage = fetchdomain.CoverageObservation{Bucket: fetchdomain.BucketDivergent, Recorded: true}
+	case errors.Is(ferr, fetchports.ErrFetchRecordIntegrity):
+		res.Verification = "(integrity check failed)"
+		res.integrity = ferr
+	case ferr != nil:
+		res.Verification = "(fetch record unreadable)"
+	default:
 		res.Verification = "(not fetched)"
 	}
 
@@ -1193,6 +1229,10 @@ func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error
 	case lerr == nil:
 		display = "(not run)"
 		status = "(not run)"
+	case errors.As(lerr, new(*recordseal.NothingServable)):
+		// Records are held, none this build can serve; the run names each one.
+		display = "(set aside)"
+		status = "(set aside)"
 	}
 	return display, status, resolvedSPDX, uncertaintyReason, arms
 }

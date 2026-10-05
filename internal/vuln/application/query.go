@@ -23,8 +23,8 @@ func NewQueryVulnUseCase(store ports.VulnerabilityStore) *QueryVulnUseCase {
 
 // GetRecord retrieves a vulnerability record by coordinate, pipeline version, and snapshot.
 //
-// The composed record comes back beside a *ports.SetAsideGenerations naming the
-// generations it was composed without; see ports.SetAsideGenerations.
+// The composed record comes back beside a *recordseal.SetAside naming the
+// generations it was composed without; see recordseal.SetAside.
 func (uc *QueryVulnUseCase) GetRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
@@ -136,7 +136,7 @@ func (uc *QueryVulnUseCase) ListRecordGenerationsForModule(
 // report assembled from "latest per module" could mix generations and present a
 // summary no single run ever produced.
 //
-// The records come back beside a *ports.SetAsideGenerations when the store set
+// The records come back beside a *recordseal.SetAside when the store set
 // generations aside, so the report can be served and the generations stated.
 func (uc *QueryVulnUseCase) ListRecordsForRun(ctx context.Context, runID string) ([]domain.VulnerabilityRecord, error) {
 	recs, err := uc.store.ListVulnerabilityRecords(ctx, runID)

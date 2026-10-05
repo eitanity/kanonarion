@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -178,7 +179,7 @@ func (d *searchedDiffScanRuns) Diff(ctx context.Context, runIDA, runIDB string) 
 	diff, err := d.inner.Diff(ctx, runIDA, runIDB)
 	// A diff computed beside set-aside generations is still a diff, so it is
 	// searched and returned with the report; any other error ends it here.
-	var aside *vulnports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if err != nil && !errors.As(err, &aside) {
 		return diff, fmt.Errorf("diffing scan runs: %w", err)
 	}

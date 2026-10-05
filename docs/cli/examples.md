@@ -150,6 +150,32 @@ reason as `failure_detail`. A cache hit re-serves the stored record without
 re-extracting, so it appends nothing; `--force` re-extracts and appends. A re-extraction that appends no generation appends no event either: the log
 records generations, not runs.
 
+## A stored record this build cannot verify
+
+A record written by a build with a different canonical shape may not be
+reproducible by this binary, though its bytes still hash to the seal it carries.
+Such a generation is **set aside**: left out of the answer and named by its
+`content_hash`. Read it with the build that wrote it, or upgrade. The statement
+goes to stderr:
+
+```
+set aside example record example.com/mod@v1.0.0 (pipeline 0.3.0) content_hash sha256:6863…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+```
+
+Under `--json`, `examples` and `examples-list` carry it in the document as
+`set_aside` (`kind: "example record"`), and `context` in its `examples` section. `examples-show`,
+`examples-find` and `examples-list <module>` print a bare object or array, so
+they state it on stderr. For a module holding one generation, `examples-list`
+and `examples-find` answer from the stored columns and index rows without
+reading the record.
+
+When **every** generation of a module was set aside, `examples-show` and
+`examples-list <module>` exit `4` and name the generations; `examples` extracts
+it again; `examples-list` and `examples-find` leave the module out and name it.
+
+A record whose stored bytes do **not** hash to its seal has been altered, and
+every command that meets one refuses at exit `10`, as before.
+
 ## Limitations
 
 - No fetched code is executed. Extraction is purely lexical/syntactic.

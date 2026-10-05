@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -886,7 +887,7 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 	rec, ok, err := uc.vulnStore.GetVulnerabilityRecordAt(ctx, params.Coordinate, uc.pipelineVersion, snapshot, domain.RootingIsolated)
 	// A miss states nothing here: the fresh scan's write states any set-aside
 	// generation, and stating it twice would read as two.
-	var aside *ports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if err != nil && !errors.As(err, &aside) || !ok {
 		return domain.VulnerabilityRecord{}, false, nil //nolint:nilerr // a lookup failure is treated as a cache miss; the scan proceeds fresh
 	}

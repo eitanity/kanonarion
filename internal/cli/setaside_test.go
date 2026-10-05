@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
 // These run vuln-show over a real store holding a generation this build cannot
@@ -108,7 +108,7 @@ func TestVulnShow_ServesAroundADriftedGenerationAndNamesIt(t *testing.T) {
 	if !strings.Contains(stdout, "GO-2025-0001") || strings.Contains(stdout, "GO-2025-0002") {
 		t.Errorf("stdout does not serve the readable generations alone:\n%s", stdout)
 	}
-	if !strings.Contains(stderr, seal) || !strings.Contains(stderr, vulnports.SetAsideRemedy) {
+	if !strings.Contains(stderr, seal) || !strings.Contains(stderr, recordseal.SetAsideRemedy) {
 		t.Errorf("stderr does not name the set-aside generation %s with what it means:\n%s", seal, stderr)
 	}
 
@@ -125,7 +125,7 @@ func TestVulnShow_ServesAroundADriftedGenerationAndNamesIt(t *testing.T) {
 	if jerr := json.Unmarshal([]byte(stdout), &doc); jerr != nil {
 		t.Fatalf("decoding %q: %v", stdout, jerr)
 	}
-	if len(doc.SetAside) != 1 || doc.SetAside[0].ContentHash != seal || doc.SetAside[0].Reason != vulnports.SetAsideRemedy {
+	if len(doc.SetAside) != 1 || doc.SetAside[0].ContentHash != seal || doc.SetAside[0].Reason != recordseal.SetAsideRemedy {
 		t.Errorf("set_aside = %+v, want the one drifted generation %s inside the document", doc.SetAside, seal)
 	}
 	if stderr != "" {
@@ -143,7 +143,7 @@ func TestVulnShow_AllDriftedIsNoServableRecord(t *testing.T) {
 	if code := ExitCodeForError(err); code != ExitNotFound {
 		t.Errorf("exit code = %d, want %d", code, ExitNotFound)
 	}
-	for _, want := range []string{"that this build can serve", seal, vulnports.SetAsideRemedy} {
+	for _, want := range []string{"that this build can serve", seal, recordseal.SetAsideRemedy} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal does not say %q:\n%v", want, err)
 		}
@@ -170,7 +170,7 @@ func TestVulnShow_AlteredGenerationStillExitsIntegrity(t *testing.T) {
 	if code := ExitCodeForError(err); code != ExitIntegrity {
 		t.Errorf("exit code = %d, want %d", code, ExitIntegrity)
 	}
-	if !strings.Contains(err.Error(), "integrity check failed") || strings.Contains(err.Error(), vulnports.SetAsideRemedy) {
+	if !strings.Contains(err.Error(), "integrity check failed") || strings.Contains(err.Error(), recordseal.SetAsideRemedy) {
 		t.Errorf("refusal is not the tamper wording:\n%v", err)
 	}
 	if stderr != "" {
@@ -194,13 +194,13 @@ func TestSetAsideRelay_StatesEachGenerationOnce(t *testing.T) {
 	relay := newSetAsideRelay(nil)
 	var errOut bytes.Buffer
 	relay.to(&errOut)
-	row := vulnports.UnreadableRow{Kind: vulnports.RowKindRecord, ID: "example.com/group@v1.0.0", ContentHash: "sha256:aa"}
-	relay.report([]vulnports.UnreadableRow{row})
-	relay.report([]vulnports.UnreadableRow{row})
+	row := recordseal.SetAsideRow{Kind: "vulnerability record", ID: "example.com/group@v1.0.0", ContentHash: "sha256:aa"}
+	relay.report([]recordseal.SetAsideRow{row})
+	relay.report([]recordseal.SetAsideRow{row})
 	if got := strings.Count(errOut.String(), "sha256:aa"); got != 1 {
 		t.Errorf("the generation was stated %d times, want once:\n%s", got, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), vulnports.SetAsideRemedy) {
+	if !strings.Contains(errOut.String(), recordseal.SetAsideRemedy) {
 		t.Errorf("the statement does not say what it means:\n%s", errOut.String())
 	}
 }

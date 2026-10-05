@@ -15,6 +15,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -37,7 +38,13 @@ type Store struct {
 	// every caller of a port method would put a process detail in a dozen
 	// signatures to be forgotten in one of them.
 	worktree ports.WorktreePreference
+	// setAside receives the stored generations a read or a write left out
+	// because this build cannot reproduce them; see ReportSetAside.
+	setAside recordseal.Reporter
 }
+
+// recordKind is how a set-aside call graph generation names its kind.
+const recordKind = "call graph record"
 
 // New returns a new Store using the provided database handle.
 func New(db sqlitestore.DB) *Store {
@@ -55,6 +62,12 @@ func New(db sqlitestore.DB) *Store {
 // edge one, because the caller's tree only matches a stored generation while it
 // is unedited.
 func (s *Store) PreferWorktree(p ports.WorktreePreference) { s.worktree = p }
+
+// ReportSetAside states where the store names a generation it set aside. It is
+// configuration rather than a return value for the reason PreferWorktree gives:
+// the composing read sits under every record and edge read, and the answer each
+// returns stays the answer. Without a reporter they are logged at warn level.
+func (s *Store) ReportSetAside(r func([]recordseal.SetAsideRow)) { s.setAside = r }
 
 // preferredRoot returns the root a read of coord should prefer, and whether
 // there is one. The preference applies only to the local coordinate of the
@@ -1037,10 +1050,13 @@ INSERT OR IGNORE INTO callgraph_edges (
 // domain.Compose for the dimension rule and for the disagreements composition
 // refuses to resolve by picking.
 //
-// A stored record that fails its integrity check is still ErrCallGraphIntegrity,
+// A stored record whose bytes do not hash to their seal is ErrCallGraphIntegrity,
 // and it stops the read rather than being skipped: dropping it would serve a
 // composition computed over fewer records than the ledger holds and report it as
-// the whole answer.
+// the whole answer. A record whose bytes hash to their seal but which this build
+// cannot reproduce is set aside, named through ReportSetAside, and composed
+// around; when every generation is set aside the answer is
+// *recordseal.NothingServable.
 func (s *Store) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.CallGraphRecord, bool, error) {
 	return s.composeFor(ctx, coord, pipelineVersion, domain2.ComposeRequest{})
 }
@@ -1201,13 +1217,14 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	if qerr != nil {
 		return domain2.CallGraphRecord{}, false, qerr
 	}
-	rec, ok, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser, newIdentifierPool())
+	rec, ok, _, derr := s.decodeRecord(ctx, row.blob, row.hash, row.analyser, newIdentifierPool())
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
 	if !ok {
-		// The newest generation was written at an older canonical shape. Fall back
-		// to the full read, which skips it and may find an older readable one.
+		// The newest generation was written at an older schema, or in a shape this
+		// build cannot reproduce. Fall back to the full read, which skips or sets
+		// it aside, names it, and may find an older readable one.
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	return rec, true, nil
@@ -1479,14 +1496,17 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	if !found {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	rec, ok, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser, newIdentifierPool())
+	rec, ok, aside, derr := s.decodeRecord(ctx, best.blob, best.hash, best.analyser, newIdentifierPool())
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
 	if !ok {
-		// Written at an older canonical shape, so it cannot be verified and is not
-		// served. Re-deriving is the right outcome: the run that asked holds the
-		// tree and can measure it again.
+		// Written at an older schema or in a shape this build cannot reproduce, so
+		// it is not served. Re-deriving is the right outcome: the run that asked
+		// holds the tree and can measure it again.
+		if aside != nil {
+			s.setAside.Report([]recordseal.SetAsideRow{*aside})
+		}
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	return rec, true, nil
@@ -1562,14 +1582,19 @@ ORDER BY julianday(extracted_at) DESC, content_hash DESC`
 	}
 
 	pool := newIdentifierPool()
+	var asides []recordseal.SetAsideRow
+	defer func() { s.setAside.Report(asides) }()
 	for _, c := range candidates {
-		held, ok, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser, pool)
+		held, ok, aside, derr := s.decodeRecord(ctx, c.blob, c.hash, c.analyser, pool)
 		if derr != nil {
 			return domain2.CallGraphRecord{}, false, derr
 		}
 		if !ok {
-			// Written at an older canonical shape, so it cannot be verified and
-			// cannot be shown to restate this analysis.
+			// Written at an older schema or in a shape this build cannot reproduce,
+			// so it cannot be shown to restate this analysis.
+			if aside != nil {
+				asides = append(asides, *aside)
+			}
 			continue
 		}
 		same, rerr := sealed.RestatedBy(held)
@@ -1648,6 +1673,10 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ? AND analys
 	}
 
 	rec, found, err := s.composeFor(ctx, coord, pipelineVersion, domain2.ComposeRequest{})
+	if errors.As(err, new(*recordseal.NothingServable)) {
+		// Every generation was set aside and named; there is no routing to show.
+		return ports.WorktreeRouting{}, false, nil
+	}
 	if err != nil || !found {
 		return ports.WorktreeRouting{}, false, err
 	}
@@ -1723,17 +1752,28 @@ ORDER BY julianday(extracted_at) ASC, rowid ASC`
 	// coordinate are repeated analyses of the same code, so each one's
 	// identifiers are very nearly the previous one's.
 	pool := newIdentifierPool()
+	var asides []recordseal.SetAsideRow
 	for _, st := range raw {
-		rec, ok, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser, pool)
+		rec, ok, aside, derr := s.decodeRecord(ctx, st.blob, st.hash, st.analyser, pool)
 		if derr != nil {
 			return nil, derr
 		}
+		if aside != nil {
+			asides = append(asides, *aside)
+			continue
+		}
 		if !ok {
-			// Written at an older canonical shape. Skipped for composition rather
+			// Written at an older record schema. Skipped for composition rather
 			// than reported: see decodeRecord.
 			continue
 		}
 		out = append(out, rec)
+	}
+	s.setAside.Report(asides)
+	// Generations held but every reproducible one set aside: the answer is that
+	// nothing here can be served by this build, not that nothing is held.
+	if len(out) == 0 && len(asides) > 0 {
+		return nil, &recordseal.NothingServable{Kind: recordKind, ID: coord.String(), Aside: &recordseal.SetAside{Rows: asides}}
 	}
 	return out, nil
 }
@@ -1800,7 +1840,8 @@ func (s *Store) LatestCallGraphOutcome(ctx context.Context, coord coordinate.Mod
 
 // decodeRecord turns one stored row into a verified record, reconstructing its
 // edges from the satellite. The bool is false when the row was written at an
-// older canonical shape.
+// older record schema, or when it comes back as a set-aside row: bytes that hash
+// to their own seal in a canonical shape this build cannot reproduce.
 //
 // The schema version is part of a record's identity, not just a hint about how
 // to verify it. A record written at an older schema decodes with every later
@@ -1813,34 +1854,45 @@ func (s *Store) LatestCallGraphOutcome(ctx context.Context, coord coordinate.Mod
 // This gate is also why the ledger does not need a purge on every analyser shape
 // change: the stale generation stays in the table, readable as history, and
 // answers nothing.
-func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string, pool *identifierPool) (domain2.CallGraphRecord, bool, error) {
+func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analyser string, pool *identifierPool) (domain2.CallGraphRecord, bool, *recordseal.SetAsideRow, error) {
 	raw, decErr := blobcodec.Decode(blob)
 	if decErr != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("decompressing callgraph record: %w", decErr)
+		return domain2.CallGraphRecord{}, false, nil, fmt.Errorf("decompressing callgraph record: %w", decErr)
 	}
 
 	var h domain2.CallGraphRecordHasher
 	rec, err := h.Unmarshal(raw)
 	if err != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("unmarshalling callgraph record: %w", err)
+		return domain2.CallGraphRecord{}, false, nil, fmt.Errorf("unmarshalling callgraph record: %w", err)
 	}
 	if rec.SchemaVersion != domain2.CallGraphSchemaVersion {
-		return domain2.CallGraphRecord{}, false, nil
+		return domain2.CallGraphRecord{}, false, nil, nil
 	}
 
 	// Current-schema blobs omit edges; reconstruct them from callgraph_edges and
 	// verify the hash over the full reconstructed record.
 	if rec.ContentHash != storedHash {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: embedded hash %q does not match stored %q",
+		return domain2.CallGraphRecord{}, false, nil, fmt.Errorf("%w: embedded hash %q does not match stored %q",
 			ports.ErrCallGraphIntegrity, rec.ContentHash, storedHash)
 	}
 	edges, fetchErr := s.fetchEdges(ctx, storedHash, rec.EdgeCount, pool)
 	if fetchErr != nil {
-		return domain2.CallGraphRecord{}, false, fetchErr
+		return domain2.CallGraphRecord{}, false, nil, fetchErr
 	}
 	rec.Edges = edges
 	if verr := h.VerifyContentHash(rec); verr != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: %w", ports.ErrCallGraphIntegrity, verr)
+		// The edges are fetched even for a row that is then set aside: the seal
+		// covers them, so only with them can intact bytes be told from altered ones.
+		if !storedBytesHashToSeal(raw, edges, storedHash) {
+			return domain2.CallGraphRecord{}, false, nil, fmt.Errorf("%w: %w", ports.ErrCallGraphIntegrity, verr)
+		}
+		return domain2.CallGraphRecord{}, false, &recordseal.SetAsideRow{
+			Kind:        recordKind,
+			ID:          rec.Coordinate.String(),
+			Generation:  recordseal.Generation{PipelineVersion: rec.PipelineVersion},
+			ContentHash: storedHash,
+			Reason:      recordseal.Drift(verr),
+		}, nil
 	}
 	// Projected AFTER verification, and it changes nothing about it: the analyser
 	// is outside the seal, so the hash is computed over bytes that never carried
@@ -1854,10 +1906,23 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash, analy
 	// a claim the store is carrying.
 	id, aerr := domain2.ParseAnalyserColumn(analyser)
 	if aerr != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("reading the analyser of record %s: %w", storedHash, aerr)
+		return domain2.CallGraphRecord{}, false, nil, fmt.Errorf("reading the analyser of record %s: %w", storedHash, aerr)
 	}
 	rec.Analyser = id
-	return rec, true, nil
+	return rec, true, nil, nil
+}
+
+// storedBytesHashToSeal reports whether the stored blob, with the edges kept
+// beside it, hashes to the seal it carries: recordseal's self-consistency check
+// for a record whose blob is not the whole sealed record. The analyser is not in
+// the blob, so nothing else is left out of the seal.
+func storedBytesHashToSeal(raw []byte, edges []domain2.CallEdge, storedHash string) bool {
+	blanked, _, err := recordseal.ReplaceTopLevelContentHash(raw, "")
+	if err != nil {
+		return false
+	}
+	digest, err := domain2.CallGraphRecordHasher{}.StoredDigest(blanked, edges)
+	return err == nil && digest == storedHash
 }
 
 // fetchEdges queries callgraph_edges for the edges belonging to ONE record,
@@ -2069,6 +2134,11 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 			return nil, fmt.Errorf("callgraph record %s@%s names no module: %w", k.path, k.version, cerr)
 		}
 		served, found, gerr := s.GetCallGraphRecord(ctx, coord, k.pipeline)
+		if errors.As(gerr, new(*recordseal.NothingServable)) {
+			// Every generation was set aside and named by the read; the listing
+			// keeps its other rows.
+			continue
+		}
 		if errors.Is(gerr, ports.ErrCallGraphConflict) {
 			// Reported on the row, not raised as the list's error: see the comment
 			// on CallGraphSummary.Conflict.
@@ -2382,6 +2452,11 @@ LIMIT 2`
 	// it is reached only by a coordinate whose generations were built over
 	// genuinely different foreign modules.
 	hash, found, err := s.servedContentHash(ctx, coord, pipelineVersion, toolchain)
+	if errors.As(err, new(*recordseal.NothingServable)) {
+		// No generation this build can serve, so none qualifies the answer; the
+		// read named what it set aside.
+		return nil, false, nil
+	}
 	if err != nil || !found {
 		return nil, false, err
 	}
@@ -2608,6 +2683,9 @@ func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pip
 			switch {
 			case errors.Is(herr, ports.ErrCallGraphConflict):
 				conflicts = append(conflicts, herr)
+				h = ""
+			case errors.As(herr, new(*recordseal.NothingServable)):
+				// Omitted as a disputed module is; the read named what it set aside.
 				h = ""
 			case herr != nil:
 				return nil, herr

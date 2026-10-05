@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
@@ -16,7 +17,17 @@ import (
 type Store struct {
 	db     sqlitestore.DB
 	hasher domain.ExtractionRunHasher
+	// setAside receives a run this build cannot reproduce; see ReportSetAside.
+	setAside recordseal.Reporter
 }
+
+// RecordKind is how a set-aside extraction run names its kind.
+const RecordKind = "extraction run"
+
+// ReportSetAside states where the store names a run it could not serve because
+// this build cannot reproduce it. The read also refuses with it, so a caller
+// that swallows the refusal still leaves it stated.
+func (s *Store) ReportSetAside(r func([]recordseal.SetAsideRow)) { s.setAside = r }
 
 // New returns a new Store using the provided database handle.
 func New(db sqlitestore.DB) *Store {
@@ -107,6 +118,9 @@ func (s *Store) PutExtractionRun(ctx context.Context, run domain.ExtractionRun) 
 	return nil
 }
 
+// GetExtractionRun reads one run by id. A run whose bytes do not hash to their
+// seal is ErrExtractionRunIntegrity; one whose bytes do but which this build
+// cannot reproduce is *recordseal.NothingServable.
 func (s *Store) GetExtractionRun(ctx context.Context, id string) (domain.ExtractionRun, error) {
 	var data []byte
 	err := s.db.DB().QueryRowContext(ctx,
@@ -126,7 +140,16 @@ func (s *Store) GetExtractionRun(ctx context.Context, id string) (domain.Extract
 	}
 
 	if err := s.hasher.VerifyContentHash(run); err != nil {
-		return domain.ExtractionRun{}, fmt.Errorf("%w: %w", ports.ErrExtractionRunIntegrity, err)
+		// The bytes alone decide: the content_hash column keeps the first
+		// checkpoint's seal while raw_record is rewritten by each later one.
+		cerr := recordseal.Classify(data, run.ContentHash, err)
+		if !errors.Is(cerr, recordseal.ErrGenerationDrift) {
+			return domain.ExtractionRun{}, fmt.Errorf("%w: %w", ports.ErrExtractionRunIntegrity, cerr)
+		}
+		row := recordseal.SetAsideRow{Kind: RecordKind, ID: id, ContentHash: run.ContentHash, Reason: cerr}
+		s.setAside.Report([]recordseal.SetAsideRow{row})
+		return domain.ExtractionRun{}, &recordseal.NothingServable{Kind: RecordKind, ID: id,
+			Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{row}}}
 	}
 
 	return run, nil

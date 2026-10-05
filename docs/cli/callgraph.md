@@ -1524,6 +1524,38 @@ That read gate is also why the ledger does not purge: it achieves what a
 wholesale delete was for — a stale-shape record answers nothing — without
 deleting the evidence, so the row survives for a history read.
 
+### A stored record this build cannot verify
+
+A record written by a build with a different canonical shape — an earlier one or
+a later one, at the same schema version — may not be reproducible by this
+binary. Its bytes and its edge rows still hash to the seal it carries, so
+nothing was altered. Such a generation is **set aside**: it is left out of the
+answer and named by its `content_hash`. Read it with the build that wrote it, or
+upgrade.
+
+`callgraph-show` (and `--history`, `--diff`), `implementers`, `usage`,
+`capability` and `reachability` answer from the generations this build can
+reproduce. So do `callers` and `callees` for a module holding more than one
+generation; for a module holding one, they answer from its edge rows without
+reading the record. The statement goes to stderr on the text path:
+
+```
+set aside call graph record example.com/mod@v1.2.3 (pipeline 0.7.0) content_hash sha256:2284…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+```
+
+Under `--json` it is in the document as `set_aside`, with `kind: "call graph
+record"` (`call_graph_set_aside` in
+`reachability`, whose `set_aside` names vulnerability records). The key is
+absent when nothing was set aside. `callers` and `callees` without
+`--transitive` print a JSON array, so they state it on stderr.
+
+When **every** generation of the coordinate was set aside, there is no record
+this build can serve: the command exits `4` and names the generations. `callgraph`
+and `local` treat that coordinate as not yet analysed and measure it again.
+
+A record whose stored bytes or edge rows do **not** hash to its seal has been
+altered, and every command that meets one refuses at exit `10`, as before.
+
 ## Which working tree answered
 
 A local coordinate is shared by every checkout of the module path, so a project

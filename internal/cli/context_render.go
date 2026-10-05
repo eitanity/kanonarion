@@ -164,6 +164,11 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		w.printf("  Verification:    (not fetched)\n")
 	case sectionStatusReadError:
 		w.printf("  Verification:    (failed: %s)\n", out.Verification.Error)
+	case sectionStatusSetAside:
+		w.printf("  Verification:    (no record this build can serve — %s)\n", out.Verification.Error)
+	case sectionStatusDivergent:
+		// The statement opens with "divergent fetch records for …".
+		w.printf("  Verification:    (%s)\n", out.Verification.Error)
 	default:
 		v := out.Verification
 		line := v.Status
@@ -174,6 +179,7 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			line += " [RETRACTED]"
 		}
 		w.printf("  Verification:    %s\n", line)
+		printSetAsideLines(w, "  Set aside:       ", v.SetAside)
 	}
 
 	switch out.Provenance.ForkHeuristic.Status {
@@ -212,28 +218,7 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		printPreModulesCaveat(w, out.Dependencies.PreModulesCaveat)
 	}
 
-	switch out.License.Status {
-	case sectionStatusNotRun:
-		if out.Commands.License != "" {
-			w.printf("  License:         (not run — run: %s)\n", out.Commands.License)
-		} else {
-			w.printf("  License:         (not run)\n")
-		}
-	case sectionStatusReadError:
-		w.printf("  License:         (failed: %s)\n", out.License.Error)
-	default:
-		line := licenseSummaryLine(out.License)
-		if out.License.Error != "" {
-			// The licence summary line carries no status word of its own when a
-			// SPDX identifier was matched, so the recorded reason is appended as
-			// its own clause rather than folded into one that may not be printed.
-			line += " (" + statusWithReason(out.License.Status, out.License.Error) + ")"
-		}
-		w.printf("  License:         %s\n", line)
-		if c := out.License.Custody; c != nil {
-			w.printf("    basis:         %s\n", c.Statement)
-		}
-	}
+	printLicenseSummary(w, out)
 
 	switch out.Interface.Status {
 	case sectionStatusNotRun:
@@ -271,19 +256,7 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			statusWithReason(out.CallGraph.Status, out.CallGraph.Error))
 	}
 
-	switch out.Examples.Status {
-	case sectionStatusNotRun:
-		if out.Commands.Examples != "" {
-			w.printf("  Examples:        (not run — run: %s)\n", out.Commands.Examples)
-		} else {
-			w.printf("  Examples:        (not run)\n")
-		}
-	case sectionStatusReadError:
-		w.printf("  Examples:        (failed: %s)\n", out.Examples.Error)
-	default:
-		w.printf("  Examples:        %d (%s)\n", out.Examples.Count,
-			statusWithReason(out.Examples.Status, out.Examples.Error))
-	}
+	printExamplesSummary(w, out)
 
 	printVulnerabilitiesSummary(w, out)
 	printNativeSummary(w, out)
@@ -304,6 +277,57 @@ func printNativeSummary(w *errWriter, out contextOutput) {
 		return
 	}
 	printNativeCoverage(w.w, out.Native)
+}
+
+// printLicenseSummary is the licence line of the summary, split out for the
+// complexity ceiling printVulnerabilitiesSummary names.
+func printLicenseSummary(w *errWriter, out contextOutput) {
+	switch out.License.Status {
+	case sectionStatusNotRun:
+		if out.Commands.License != "" {
+			w.printf("  License:         (not run — run: %s)\n", out.Commands.License)
+		} else {
+			w.printf("  License:         (not run)\n")
+		}
+	case sectionStatusReadError:
+		w.printf("  License:         (failed: %s)\n", out.License.Error)
+	case sectionStatusSetAside:
+		w.printf("  License:         (no record this build can serve — %s)\n", out.License.Error)
+	default:
+		line := licenseSummaryLine(out.License)
+		if out.License.Error != "" {
+			// The licence summary line carries no status word of its own when a
+			// SPDX identifier was matched, so the recorded reason is appended as
+			// its own clause rather than folded into one that may not be printed.
+			line += " (" + statusWithReason(out.License.Status, out.License.Error) + ")"
+		}
+		w.printf("  License:         %s\n", line)
+		if c := out.License.Custody; c != nil {
+			w.printf("    basis:         %s\n", c.Statement)
+		}
+		printSetAsideLines(w, "  Set aside:       ", out.License.SetAside)
+	}
+}
+
+// printExamplesSummary is the examples line of the summary, split out on the
+// same terms.
+func printExamplesSummary(w *errWriter, out contextOutput) {
+	switch out.Examples.Status {
+	case sectionStatusNotRun:
+		if out.Commands.Examples != "" {
+			w.printf("  Examples:        (not run — run: %s)\n", out.Commands.Examples)
+		} else {
+			w.printf("  Examples:        (not run)\n")
+		}
+	case sectionStatusReadError:
+		w.printf("  Examples:        (failed: %s)\n", out.Examples.Error)
+	case sectionStatusSetAside:
+		w.printf("  Examples:        (no record this build can serve — %s)\n", out.Examples.Error)
+	default:
+		w.printf("  Examples:        %d (%s)\n", out.Examples.Count,
+			statusWithReason(out.Examples.Status, out.Examples.Error))
+		printSetAsideLines(w, "  Set aside:       ", out.Examples.SetAside)
+	}
 }
 
 // printVulnerabilitiesSummary is the vulnerabilities line of the summary, split
@@ -332,9 +356,15 @@ func printVulnerabilitiesSummary(w *errWriter, out contextOutput) {
 		printWalkBasis(w, "  Walk basis:      %s\n", out.Vulnerabilities)
 		printRunContextNote(w, "  Run context:     %s\n", out.Vulnerabilities)
 		printScanProvenance(w, out.Vulnerabilities)
-		for _, a := range out.Vulnerabilities.SetAside {
-			w.printf("  Set aside:       %s content_hash %s — %s\n", a.Coordinate, a.ContentHash, a.Reason)
-		}
+		printSetAsideLines(w, "  Set aside:       ", out.Vulnerabilities.SetAside)
+	}
+}
+
+// printSetAsideLines states, one line each under label, the generations a
+// section's read set aside.
+func printSetAsideLines(w *errWriter, label string, aside []setAsideJSON) {
+	for _, a := range aside {
+		w.printf("%s%s content_hash %s — %s\n", label, a.Coordinate, a.ContentHash, a.Reason)
 	}
 }
 

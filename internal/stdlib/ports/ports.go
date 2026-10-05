@@ -26,7 +26,8 @@ type AuditSink interface {
 var ErrFactsConflict = errors.New("conflicting stdlib facts")
 
 // ErrFactsIntegrity is returned when a stored measurement carries a seal its own
-// canonical form does not reproduce — the row was altered after it was written.
+// canonical form does not reproduce and whose stored values do not hash to that
+// seal either — the row was altered after it was written.
 //
 // A measurement carrying NO seal is not an integrity failure: rows written before
 // the seal existed legitimately have none, and refusing them would make an
@@ -91,7 +92,8 @@ type LicenseIdentifier interface {
 // version across projects, until --force re-acquires it.
 type Store interface {
 	// Get returns the cached facts for goVersion. The bool is false on a cache
-	// miss.
+	// miss. A measurement this build cannot reproduce is composed around; when
+	// every one is, Get returns *recordseal.NothingServable.
 	Get(ctx context.Context, goVersion string) (domain.Facts, bool, error)
 	// Put APPENDS a measurement. It never updates: the ledger key carries the
 	// acquisition route, the artefact digest, the time of measurement and the

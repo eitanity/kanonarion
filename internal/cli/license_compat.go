@@ -285,6 +285,10 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID stri
 		// It narrows what the verdict covers, so a consumer needs it more than
 		// a reader does; absent means no module in the closure is one.
 		PreModulesCaveat *preModulesCaveatJSON `json:"pre_modules_caveat,omitempty"`
+		// SetAside names the stored licence generations the report's reads left
+		// out because this build cannot reproduce them; a module with none left
+		// is an unmeasured input.
+		SetAside []setAsideJSON `json:"set_aside,omitempty"`
 	}
 
 	out := reportJSON{
@@ -299,6 +303,7 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID stri
 		Conflicts:        make([]conflictJSON, 0, len(report.Conflicts)),
 		CoverageHoles:    make([]coverageHoleJSON, 0, len(report.CoverageHoles)),
 		PreModulesCaveat: caveat,
+		SetAside:         storeSetAside.take().json(),
 	}
 	for _, c := range report.Conflicts {
 		out.Conflicts = append(out.Conflicts, conflictJSON{

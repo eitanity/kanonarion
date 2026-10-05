@@ -392,6 +392,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 	// ---- factstore (auditing) ----
 	rawStore := fetchsqlite.New(dbHandle)
+	rawStore.ReportSetAside(storeSetAside.report)
 	factStore, err := fetchsqlite.NewAuditingStore(rawStore, filepath.Join(storeRoot, "audit.jsonl"))
 	if err != nil {
 		_ = dbHandle.Close()
@@ -416,7 +417,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// from whichever tree was analysed last — and from outside any module, or in a
 	// module the ledger has never been run in, the read is exactly what it was.
 	cgStore.PreferWorktree(callerWorktree(logger))
+	// A generation this build cannot reproduce is composed around and named; see
+	// storeSetAside for where.
+	cgStore.ReportSetAside(storeSetAside.report)
+	licStore.ReportSetAside(storeSetAside.report)
+	walkStore.ReportSetAside(storeSetAside.report)
+	extStore.ReportSetAside(storeSetAside.report)
 	exStore := exsqlite.New(dbHandle)
+	exStore.ReportSetAside(storeSetAside.report)
 	vulnStore := vulnsqlite.New(dbHandle)
 	sbomStore := sbomstore.New(dbHandle)
 
@@ -478,10 +486,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// environment may leave the building — and only the second one governs here.
 	if offlineStdlibAnchor(modcacheMode) {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, factStore, logger), skipVCSVerify)
+			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, factStore, logger, storeSetAside.report), skipVCSVerify)
 	} else {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewStdlibAcquirer(dbHandle, blobs, clk, factStore, logger), skipVCSVerify)
+			composition.NewStdlibAcquirer(dbHandle, blobs, clk, factStore, logger, storeSetAside.report), skipVCSVerify)
 	}
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 
@@ -538,6 +546,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// The recorded chain of custody, read by the stdlib call-graph stage to anchor
 	// its record and by every command asked about the stdlib coordinate.
 	stdlibCustody := stdlibsqlite.New(dbHandle)
+	stdlibCustody.ReportSetAside(storeSetAside.report)
 	cgStdlibExtractUC := cgapp.NewExtractStdlibCallGraphUseCase(cgapp.StdlibConfig{
 		Store: cgStore, Analyser: cgAnalyser,
 		Toolchains: newToolchainLocator(goBinary),

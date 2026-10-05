@@ -1,6 +1,7 @@
 package application_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
@@ -240,5 +242,37 @@ func TestReusableRun_RefusesAnotherWalksRun(t *testing.T) {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("one walk's scan run was offered as another walk's")
+	}
+}
+
+// A prior run this build cannot reproduce cannot be shown to qualify, so it is
+// never reused, and it is named rather than skipped unseen; a readable run
+// beside it is still reused.
+func TestReusableRun_SetAsideRunIsNotReusedAndIsNamed(t *testing.T) {
+	var logged bytes.Buffer
+	vulnStore := newFakeVulnStore()
+	walkStore := newFakeWalkStore()
+	if err := walkStore.PutWalk(context.Background(), walkdomain.WalkRecord{ID: reuseWalkID}); err != nil {
+		t.Fatalf("seeding walk: %v", err)
+	}
+	uc := application.NewScanWalkUseCase(walkStore, vulnStore, nil, nil, nil, "v1",
+		slog.New(slog.NewTextHandler(&logged, nil)))
+	snap := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
+	seedSnapshot(t, vulnStore, snap)
+	vulnStore.runsAside = []recordseal.SetAsideRow{{
+		Kind: "walk scan run", ID: "vscan-drifted", ContentHash: "sha256:d81f",
+		Reason: recordseal.Drift(errors.New("content hash mismatch")),
+	}}
+
+	if run, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, ""); err != nil || ok {
+		t.Fatalf("ReusableRun = (%q, %v, %v), want no reuse and no error", run.ID, ok, err)
+	}
+	if !strings.Contains(logged.String(), "sha256:d81f") {
+		t.Errorf("the set-aside run was not named:\n%s", logged.String())
+	}
+
+	seedRun(t, vulnStore, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
+	if run, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, ""); err != nil || !ok || run.ID != "vscan-1" {
+		t.Errorf("ReusableRun = (%q, %v, %v), want the readable run reused", run.ID, ok, err)
 	}
 }

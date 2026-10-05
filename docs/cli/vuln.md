@@ -1565,7 +1565,7 @@ build can reproduce, and state the ones set aside:
 
 ```
 $ kanonarion vuln-show example.com/bravo@v2.0.0
-set aside example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01) content_hash sha256:a2546bf0…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+set aside vulnerability record example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01) content_hash sha256:a2546bf0…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
 ...the record...
 ```
 
@@ -1575,6 +1575,7 @@ document instead, as `set_aside`; the key is absent when nothing was set aside:
 ```json
 "set_aside": [
   {
+    "kind": "vulnerability record",
     "coordinate": "example.com/bravo@v2.0.0",
     "pipeline_version": "v25",
     "database_snapshot": { "source": "govulndb", "version": "v2026-01-01" },
@@ -1583,6 +1584,12 @@ document instead, as `set_aside`; the key is absent when nothing was set aside:
   }
 ]
 ```
+
+Every `set_aside` entry, in every command's document, states `kind`, so a
+document that reads several stores tells its entries apart: `vulnerability
+record`, `call graph record`, `licence record`, `example record`, `walk record`,
+`extraction run`, `walk scan run` or `stdlib custody measurement`. A record
+filed under a module states `coordinate`; the last four state `id` instead.
 
 When **every** generation this build reads for the coordinate was set aside,
 there is no record this build can serve. The command exits `4`, names the
@@ -1643,6 +1650,28 @@ prose is the right form there.
 
 `vuln-scan-list` and `vuln-scan-show` report unreadable **scan runs** the same
 way.
+
+#### A scan run this build cannot verify
+
+A **scan run** written in a canonical shape this build cannot reproduce is set
+aside the same way. A run has no other generation to serve in its place, so:
+
+- `vuln-scan-show` and `vuln-scan-diff` naming it exit `4` with the statement.
+- `vuln-scan-list` and `vuln-scan-history` list the other runs and name it: on
+  stderr on the text path, in the document's `set_aside` under `--json`, with
+  `kind: "walk scan run"` and the run under `id`:
+
+```
+set aside walk scan run 01JS0NGARD0000000000000RN1 (pipeline v25) content_hash sha256:9c1e…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+```
+
+- `vuln-scan` does not reuse it, and names it.
+- `vuln-scan-rescan` of a local project whose walk records no directory refuses
+  at exit `4`, naming it, when no readable run settles the analysis frame
+  without it.
+
+A run whose bytes do **not** hash to their own seal is still reported as
+`unreadable`, and a command that consumes it refuses at exit `10`.
 
 ---
 

@@ -90,7 +90,7 @@ func TestReadPath_DriftedRescannedRecordIsReportedAsDrift(t *testing.T) {
 	}
 
 	_, found, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot)
-	var aside *ports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if found || !errors.As(err, &aside) {
 		t.Fatalf("GetVulnerabilityRecord = (found %v, %v), want no servable record and the generation set aside", found, err)
 	}

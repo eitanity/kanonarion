@@ -124,6 +124,9 @@ func getDependentsWalk(ctx context.Context, walks QueryWalksUseCase, walkID stri
 		return walkdomain.WalkRecord{}, &exitError{code: ExitIntegrity,
 			msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}
 	}
+	if none := walkNotServable(err); none != nil {
+		return walkdomain.WalkRecord{}, none
+	}
 	return walkdomain.WalkRecord{}, fmt.Errorf("getting walk: %w", err)
 }
 

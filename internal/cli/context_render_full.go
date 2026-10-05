@@ -42,6 +42,10 @@ func printFullVerification(w *errWriter, v contextVerification) {
 		w.printf("(not fetched)\n")
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", v.Error)
+	case sectionStatusSetAside:
+		w.printf("(no record this build can serve — %s)\n", v.Error)
+	case sectionStatusDivergent:
+		w.printf("(%s)\n", v.Error)
 	default:
 		w.printf("Status:     %s\n", v.Status)
 		if v.ExtractedAt != "" {
@@ -53,6 +57,7 @@ func printFullVerification(w *errWriter, v contextVerification) {
 		if v.Retracted {
 			w.printf("RETRACTED\n")
 		}
+		printSetAsideLines(w, "Set Aside:  ", v.SetAside)
 	}
 }
 
@@ -110,6 +115,8 @@ func printFullLicense(w *errWriter, l contextLicense, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", l.Error)
+	case sectionStatusSetAside:
+		w.printf("(no record this build can serve — %s)\n", l.Error)
 	default:
 		if l.SPDX != "" {
 			w.printf("SPDX:         %s\n", l.SPDX)
@@ -125,6 +132,7 @@ func printFullLicense(w *errWriter, l contextLicense, cmd string) {
 		if l.Error != "" {
 			w.printf("Detail:       %s\n", l.Error)
 		}
+		printSetAsideLines(w, "Set Aside:    ", l.SetAside)
 		switch l.CopyrightStatus {
 		case "not_analysed", "":
 			w.printf("Copyright:    (not analysed)\n")
@@ -233,6 +241,8 @@ func printFullExamples(w *errWriter, ex contextExamples, cmd string) {
 		}
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", ex.Error)
+	case sectionStatusSetAside:
+		w.printf("(no record this build can serve — %s)\n", ex.Error)
 	default:
 		w.printf("Status:       %s\n", ex.Status)
 		if ex.ExtractedAt != "" {
@@ -241,6 +251,7 @@ func printFullExamples(w *errWriter, ex contextExamples, cmd string) {
 		if ex.Error != "" {
 			w.printf("Detail:       %s\n", ex.Error)
 		}
+		printSetAsideLines(w, "Set Aside:    ", ex.SetAside)
 		for _, e := range ex.Examples {
 			printFullExample(w, e)
 		}

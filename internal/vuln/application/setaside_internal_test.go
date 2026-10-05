@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -45,18 +46,18 @@ func (s *setAsideStub) ListVulnerabilityRecords(_ context.Context, id string) ([
 	return s.recs[id], s.listErr[id]
 }
 
-var driftRow = ports.UnreadableRow{
-	Kind:        ports.RowKindRecord,
+var driftRow = recordseal.SetAsideRow{
+	Kind:        "vulnerability record",
 	ID:          "example.com/group@v1.0.0",
 	ContentHash: "sha256:a2546bf0",
 	Reason:      errors.New("record written by a different canonical shape"),
 }
 
 func TestPutRecord_SetAsideIsStatedAndTheWriteSucceeds(t *testing.T) {
-	var got []ports.UnreadableRow
-	store := &setAsideStub{putErr: &ports.SetAsideGenerations{Rows: []ports.UnreadableRow{driftRow}}}
+	var got []recordseal.SetAsideRow
+	store := &setAsideStub{putErr: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{driftRow}}}
 
-	err := putRecord(t.Context(), store, domain.VulnerabilityRecord{}, func(rows []ports.UnreadableRow) { got = rows }, slog.Default())
+	err := putRecord(t.Context(), store, domain.VulnerabilityRecord{}, func(rows []recordseal.SetAsideRow) { got = rows }, slog.Default())
 	if err != nil {
 		t.Fatalf("putRecord = %v, want nil: the write committed", err)
 	}
@@ -69,7 +70,7 @@ func TestPutRecord_IntegrityFailureIsNotExcused(t *testing.T) {
 	called := false
 	store := &setAsideStub{putErr: fmt.Errorf("%w: example.com/group@v1.0.0: content hash mismatch", ports.ErrVulnIntegrity)}
 
-	err := putRecord(t.Context(), store, domain.VulnerabilityRecord{}, func([]ports.UnreadableRow) { called = true }, slog.Default())
+	err := putRecord(t.Context(), store, domain.VulnerabilityRecord{}, func([]recordseal.SetAsideRow) { called = true }, slog.Default())
 	if !errors.Is(err, ports.ErrVulnIntegrity) {
 		t.Fatalf("putRecord = %v, want the integrity failure", err)
 	}
@@ -82,7 +83,7 @@ func TestPutRecord_IntegrityFailureIsNotExcused(t *testing.T) {
 func TestPutRecord_NoReporterStillStatesTheGeneration(t *testing.T) {
 	var logged bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	store := &setAsideStub{putErr: &ports.SetAsideGenerations{Rows: []ports.UnreadableRow{driftRow}}}
+	store := &setAsideStub{putErr: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{driftRow}}}
 
 	if err := putRecord(t.Context(), store, domain.VulnerabilityRecord{}, nil, logger); err != nil {
 		t.Fatalf("putRecord = %v", err)
@@ -100,11 +101,11 @@ func TestTryReuseCachedRecord_ServesAroundASetAsideGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored := domain.VulnerabilityRecord{Coordinate: c, OverallStatus: domain.StatusClean, ScannedAt: time.Unix(0, 0)}
-	var got []ports.UnreadableRow
+	var got []recordseal.SetAsideRow
 	uc := &ScanModuleUseCase{
-		vulnStore: &setAsideStub{getRec: stored, getOK: true, getErr: &ports.SetAsideGenerations{Rows: []ports.UnreadableRow{driftRow}}},
+		vulnStore: &setAsideStub{getRec: stored, getOK: true, getErr: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{driftRow}}},
 		logger:    slog.Default(),
-		setAside:  func(rows []ports.UnreadableRow) { got = rows },
+		setAside:  func(rows []recordseal.SetAsideRow) { got = rows },
 	}
 	rec, handled, rerr := uc.tryReuseCachedRecord(t.Context(), ScanModuleParams{Coordinate: c}, domain.DatabaseSnapshot{})
 	if rerr != nil || !handled || !rec.Reused {
@@ -121,11 +122,11 @@ func TestDiffScanRuns_ReturnsTheDiffAndNamesTheSetAside(t *testing.T) {
 	store := &setAsideStub{
 		runs: map[string]domain.WalkScanRun{"a": {ID: "a", WalkID: "w"}, "b": {ID: "b", WalkID: "w"}},
 		listErr: map[string]error{
-			"b": &ports.SetAsideGenerations{Rows: []ports.UnreadableRow{driftRow}},
+			"b": &recordseal.SetAside{Rows: []recordseal.SetAsideRow{driftRow}},
 		},
 	}
 	diff, err := NewDiffScanRunsUseCase(store).Diff(t.Context(), "a", "b")
-	var aside *ports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if !errors.As(err, &aside) || len(aside.Rows) != 1 {
 		t.Fatalf("Diff error = %v, want the set-aside generation named", err)
 	}

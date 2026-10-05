@@ -473,6 +473,7 @@ func runVulnReachabilityQuery(
 	res.SetAside = setAside.json()
 
 	if jsonOut {
+		res.CallGraphSetAside = storeSetAside.take().json()
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(res); err != nil {
@@ -623,6 +624,9 @@ type vulnReachabilityQuery struct {
 	// SetAside names the stored generations of this coordinate the read left out
 	// because this build cannot reproduce them. Absent when nothing was set aside.
 	SetAside []setAsideJSON `json:"set_aside,omitempty"`
+	// CallGraphSetAside names the stored call graph generations the graph reads
+	// behind this answer left out because this build cannot reproduce them.
+	CallGraphSetAside []setAsideJSON `json:"call_graph_set_aside,omitempty"`
 	// WithdrawnAt is set only on the withdrawn verdict, and carries the retraction
 	// timestamp so the answer states its reason rather than asserting a bare
 	// negative the reader has to take on trust.

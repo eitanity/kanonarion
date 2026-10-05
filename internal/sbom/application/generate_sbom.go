@@ -2,11 +2,13 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
@@ -243,6 +245,11 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 	licenses := make(map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, len(walk.Graph.Nodes))
 	for _, node := range walk.Graph.Nodes {
 		rec, ok, lerr := uc.licenseStore.GetLicenseRecord(ctx, node.Coordinate, uc.licensePipelineVersion)
+		if errors.As(lerr, new(*recordseal.NothingServable)) {
+			// No generation this build can serve, so the licence is missing as an
+			// unextracted one is; the store named each generation it set aside.
+			continue
+		}
 		if lerr != nil {
 			return domain.SBOMRecord{}, fmt.Errorf("loading license for %s: %w", node.Coordinate, lerr)
 		}

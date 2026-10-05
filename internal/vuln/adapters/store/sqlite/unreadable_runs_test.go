@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -78,11 +79,28 @@ func driftBlob(t *testing.T, run domain.WalkScanRun) []byte {
 	return out
 }
 
-// TestListWalkScanRuns_ReportsUnreadableRowsAndKeepsTheRest is the regression:
-// the good rows survive a bad one, the bad one is named rather than dropped,
-// and the failure still answers to the integrity sentinel so a consuming
-// command's fail-closed branch is unchanged.
-func TestListWalkScanRuns_ReportsUnreadableRowsAndKeepsTheRest(t *testing.T) {
+// tamperBlob is run's stored bytes with one byte of its walk id flipped and the
+// seal left alone: the bytes no longer hash to the seal they carry.
+func tamperBlob(t *testing.T, run domain.WalkScanRun) []byte {
+	t.Helper()
+	blob, err := domain.WalkScanRunHasher{}.Marshal(run)
+	if err != nil {
+		t.Fatalf("marshalling run: %v", err)
+	}
+	from := []byte(`"walk_id":"` + run.WalkID + `"`)
+	if bytes.Count(blob, from) != 1 {
+		t.Fatalf("fixture has %d walk ids, want exactly 1", bytes.Count(blob, from))
+	}
+	to := append([]byte(nil), from...)
+	to[len(to)-2] ^= 0x01
+	return bytes.Replace(blob, from, to, 1)
+}
+
+// TestListWalkScanRuns_SetsDriftedRunAsideAndKeepsTheRest is the regression: a
+// run this build cannot reproduce is set aside and named by its seal, the good
+// rows survive it, and nothing reports it as tampering — a consuming command no
+// longer fails closed on it.
+func TestListWalkScanRuns_SetsDriftedRunAsideAndKeepsTheRest(t *testing.T) {
 	ctx := t.Context()
 	db, err := sqlitestore.Open(":memory:", sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
@@ -93,11 +111,16 @@ func TestListWalkScanRuns_ReportsUnreadableRowsAndKeepsTheRest(t *testing.T) {
 
 	good := storeRun(t, store, "vscan-walk-1-good", "walk-1")
 	bad := storeRun(t, store, "vscan-walk-1-bad", "walk-1")
-
+	drifted := driftBlob(t, bad)
 	if _, err := db.DB().ExecContext(ctx,
-		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`,
-		driftBlob(t, bad), bad.ID); err != nil {
+		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, drifted, bad.ID); err != nil {
 		t.Fatalf("installing drifted row: %v", err)
+	}
+	var head struct {
+		ContentHash string `json:"content_hash"`
+	}
+	if err := json.Unmarshal(drifted, &head); err != nil {
+		t.Fatal(err)
 	}
 
 	for _, tc := range []struct {
@@ -113,29 +136,34 @@ func TestListWalkScanRuns_ReportsUnreadableRowsAndKeepsTheRest(t *testing.T) {
 			if len(runs) != 1 || runs[0].ID != good.ID {
 				t.Fatalf("runs = %v, want only the verifiable run %s", ids(runs), good.ID)
 			}
-
-			var unreadable *ports.UnreadableRows
-			if !errors.As(err, &unreadable) {
-				t.Fatalf("error = %v, want *ports.UnreadableRows", err)
+			var aside *recordseal.SetAside
+			if !errors.As(err, &aside) || len(aside.Rows) != 1 {
+				t.Fatalf("error = %v, want one *recordseal.SetAside row", err)
 			}
-			if len(unreadable.Rows) != 1 {
-				t.Fatalf("unreadable = %v, want exactly the one bad row", unreadable.Rows)
+			row := aside.Rows[0]
+			if row.ID != bad.ID || row.Kind != ports.SetAsideKindRun || row.ContentHash != head.ContentHash {
+				t.Errorf("set aside = %+v, want run %s named by %s", row, bad.ID, head.ContentHash)
 			}
-			// Naming the row is the point: a caller told only that something is
-			// wrong cannot go and look at it.
-			if unreadable.Rows[0].ID != bad.ID {
-				t.Errorf("unreadable run ID = %q, want %q", unreadable.Rows[0].ID, bad.ID)
-			}
-			// A generation this build no longer seals must not be reported in the
-			// words reserved for altered bytes.
-			if !errors.Is(unreadable.Rows[0].Reason, recordseal.ErrGenerationDrift) {
-				t.Errorf("reason = %v, want it to classify as generation drift", unreadable.Rows[0].Reason)
-			}
-			// Consuming commands match this sentinel and must keep failing closed.
-			if !errors.Is(err, ports.ErrVulnIntegrity) {
-				t.Errorf("errors.Is(err, ErrVulnIntegrity) = false; consuming callers would stop failing closed")
+			if errors.Is(err, ports.ErrVulnIntegrity) {
+				t.Error("a drifted run was reported as an integrity failure")
 			}
 		})
+	}
+
+	// Tamper control: one altered run makes the listing an integrity failure,
+	// the drifted run included so a survey still lists them all.
+	altered := storeRun(t, store, "vscan-walk-1-altered", "walk-1")
+	if _, err := db.DB().ExecContext(ctx,
+		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, tamperBlob(t, altered), altered.ID); err != nil {
+		t.Fatalf("installing altered row: %v", err)
+	}
+	runs, err := store.ListWalkScanRuns(ctx, "walk-1")
+	var unreadable *ports.UnreadableRows
+	if !errors.As(err, &unreadable) || !errors.Is(err, ports.ErrVulnIntegrity) || len(unreadable.Rows) != 2 {
+		t.Fatalf("error = %v, want *ports.UnreadableRows naming both rows and ErrVulnIntegrity", err)
+	}
+	if len(runs) != 1 || runs[0].ID != good.ID {
+		t.Errorf("runs = %v, want only %s", ids(runs), good.ID)
 	}
 }
 
@@ -206,11 +234,11 @@ func TestListWalkScanRuns_UnparseableRowIsStillReported(t *testing.T) {
 	}
 }
 
-// TestGetWalkScanRun_ReportsUnreadableRowAsSuchPins the single-row read on the
-// same terms as the listings: an inspection command must be able to tell an
-// unreadable row from a missing one, and a consuming caller must still classify
-// it exactly as it did before.
-func TestGetWalkScanRun_ReportsUnreadableRowAsSuch(t *testing.T) {
+// TestGetWalkScanRun_DriftIsNothingServableAndTamperIsIntegrity pins the
+// single-row read: a run this build cannot reproduce has no other generation to
+// serve, so the answer is NothingServable naming its seal, never the integrity
+// sentinel; an altered run is still an unreadable row that fails closed.
+func TestGetWalkScanRun_DriftIsNothingServableAndTamperIsIntegrity(t *testing.T) {
 	ctx := t.Context()
 	db, err := sqlitestore.Open(":memory:", sqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
@@ -230,20 +258,23 @@ func TestGetWalkScanRun_ReportsUnreadableRowAsSuch(t *testing.T) {
 	if found {
 		t.Error("an unverifiable run was handed to the caller")
 	}
+	var none *recordseal.NothingServable
+	if !errors.As(err, &none) || len(none.Aside.Rows) != 1 || none.Aside.Rows[0].ID != bad.ID {
+		t.Fatalf("error = %v, want *recordseal.NothingServable naming %s", err, bad.ID)
+	}
+	if !errors.Is(err, recordseal.ErrGenerationDrift) || errors.Is(err, ports.ErrVulnIntegrity) {
+		t.Errorf("error = %v, want drift and not the integrity sentinel", err)
+	}
+
+	altered := storeRun(t, store, "vscan-walk-1-altered", "walk-1")
+	if _, err := db.DB().ExecContext(ctx,
+		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, tamperBlob(t, altered), altered.ID); err != nil {
+		t.Fatalf("installing altered row: %v", err)
+	}
+	_, _, err = store.GetWalkScanRun(ctx, altered.ID)
 	var unreadable *ports.UnreadableRows
-	if !errors.As(err, &unreadable) {
-		t.Fatalf("error = %v, want *ports.UnreadableRows", err)
-	}
-	if len(unreadable.Rows) != 1 || unreadable.Rows[0].ID != bad.ID {
-		t.Errorf("unreadable = %v, want the one row named", unreadable.Rows)
-	}
-	if !errors.Is(unreadable.Rows[0].Reason, recordseal.ErrGenerationDrift) {
-		t.Errorf("reason = %v, want generation drift", unreadable.Rows[0].Reason)
-	}
-	// Consuming readers of this method — the SBOM generator and vuln-scan-diff —
-	// match the sentinel and must keep failing closed.
-	if !errors.Is(err, ports.ErrVulnIntegrity) {
-		t.Error("errors.Is(err, ErrVulnIntegrity) = false; consumers would stop failing closed")
+	if !errors.As(err, &unreadable) || !errors.Is(err, ports.ErrVulnIntegrity) {
+		t.Errorf("altered run: error = %v, want *ports.UnreadableRows and ErrVulnIntegrity", err)
 	}
 
 	// Absence is still absence, not an unreadable row.

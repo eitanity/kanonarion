@@ -113,7 +113,7 @@ func TestDriftedGeneration_SetAsideOnWriteAndRead(t *testing.T) {
 
 	second := groupRecord(t, time.Date(2024, 2, 1, 2, 0, 0, 0, time.UTC), "GO-2024-0003")
 	err := store.PutVulnerabilityRecord(ctx, second)
-	var aside *ports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if !errors.As(err, &aside) {
 		t.Fatalf("PutVulnerabilityRecord = %v, want the write to commit and name the drifted generation", err)
 	}
@@ -140,7 +140,7 @@ func TestDriftedGeneration_SetAsideOnWriteAndRead(t *testing.T) {
 	if !found {
 		t.Fatalf("GetVulnerabilityRecordAt found nothing (%v), want the composed record", rerr)
 	}
-	var readAside *ports.SetAsideGenerations
+	var readAside *recordseal.SetAside
 	if !errors.As(rerr, &readAside) || len(readAside.Rows) != 1 || readAside.Rows[0].ContentHash != driftSeal {
 		t.Fatalf("GetVulnerabilityRecordAt error = %v, want the drifted generation %s named", rerr, driftSeal)
 	}
@@ -177,7 +177,7 @@ func TestAlteredGeneration_StillAbortsWriteAndRead(t *testing.T) {
 	if !errors.Is(err, ports.ErrVulnIntegrity) {
 		t.Fatalf("PutVulnerabilityRecord = %v, want the integrity refusal", err)
 	}
-	var aside *ports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if errors.As(err, &aside) || errors.Is(err, recordseal.ErrGenerationDrift) {
 		t.Errorf("an altered generation was excused as drift: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestRunRecords_SetAsideOnlyWhereItBoreOnTheAnswer(t *testing.T) {
 	}
 
 	recs, err = store.ListVulnerabilityRecords(ctx, "vscan-drifted")
-	var aside *ports.SetAsideGenerations
+	var aside *recordseal.SetAside
 	if !errors.As(err, &aside) || len(aside.Rows) != 1 || aside.Rows[0].ContentHash != driftSeal {
 		t.Fatalf("ListVulnerabilityRecords(pinned drifted) error = %v, want the drifted generation %s named", err, driftSeal)
 	}

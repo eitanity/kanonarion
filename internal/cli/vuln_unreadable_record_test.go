@@ -30,13 +30,12 @@ import (
 // not an integrity failure. The identity is bare and the generation rides beside
 // it, which is the shape the store hands over.
 func driftedRecords(coord string) error {
-	return &vulnports.SetAsideGenerations{Rows: []vulnports.UnreadableRow{{
-		Kind: vulnports.RowKindRecord,
+	return &recordseal.SetAside{Rows: []recordseal.SetAsideRow{{
+		Kind: "vulnerability record",
 		ID:   coord,
-		Generation: vulnports.RowGeneration{
+		Generation: recordseal.Generation{
 			PipelineVersion: "v25",
-			SnapshotSource:  "govulndb",
-			SnapshotVersion: "v2026-01-01",
+			Snapshot:        recordseal.Snapshot{Name: "vuln-db", Source: "govulndb", Version: "v2026-01-01"},
 		},
 		ContentHash: "sha256:00c9783d",
 		Reason: fmt.Errorf("%w: content hash mismatch: stored %q, computed %q",
@@ -100,7 +99,7 @@ func TestRunVulnByID_ServesReadableRecordsAndNamesTheUnreadable(t *testing.T) {
 		t.Errorf("output does not mark the row unreadable:\n%s", got)
 	}
 	// Drift is not tampering, and the wording must not let a reader conclude it was.
-	if !strings.Contains(got, vulnports.SetAsideRemedy) {
+	if !strings.Contains(got, recordseal.SetAsideRemedy) {
 		t.Errorf("output does not report the row as generation drift:\n%s", got)
 	}
 }

@@ -155,7 +155,9 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	defer func() { _ = dbHandle.Close() }()
 
 	walkStore := walksqlite.New(dbHandle)
+	walkStore.ReportSetAside(storeSetAside.report)
 	factStore := factstoresqlite.New(dbHandle)
+	factStore.ReportSetAside(storeSetAside.report)
 	blobStore := localfs.New(storeRoot)
 
 	// 1. Find the walk whose version set is copied.

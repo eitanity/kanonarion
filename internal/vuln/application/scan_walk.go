@@ -1037,7 +1037,7 @@ func (uc *ScanWalkUseCase) prefetchMissing(ctx context.Context, coords []coordin
 		if ctx.Err() != nil {
 			return
 		}
-		fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
+		fact, ok, err := fetchports.AbsentIfNothingServable(uc.moduleScanner.getFetchRecord(ctx, coord))
 		if err != nil {
 			uc.logger.Warn("pre-fetch: error checking fact store", "module", coord, "error", err)
 			continue
@@ -1071,7 +1071,7 @@ func (uc *ScanWalkUseCase) prefetchGoModOnly(ctx context.Context, coords []coord
 		if ctx.Err() != nil {
 			return
 		}
-		_, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
+		_, ok, err := fetchports.AbsentIfNothingServable(uc.moduleScanner.getFetchRecord(ctx, coord))
 		if err != nil {
 			uc.logger.Warn("pre-fetch(go.mod-only): error checking fact store", "module", coord, "error", err)
 			continue

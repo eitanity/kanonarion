@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/audit"
@@ -307,90 +308,37 @@ func (e *UnreadableRows) Error() string {
 // now.
 func (e *UnreadableRows) Unwrap() error { return ErrVulnIntegrity }
 
-// SetAsideRemedy says what a set-aside generation is and what reads it. It names
-// no direction: the store does not record which build wrote a row, so the row
-// may come from an earlier build or a later one.
-const SetAsideRemedy = "written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, " +
-	"so nothing was altered — read it with the build that wrote it, or upgrade"
+// SetAsideKindRun and SetAsideKindRecord are how a set-aside run and record
+// name their kind.
+const (
+	SetAsideKindRun    = "walk scan run"
+	SetAsideKindRecord = "vulnerability record"
+)
 
-// SetAsideGenerations reports that a read or a write answered over the stored
-// generations this build can reproduce and left out the ones named in Rows. It
-// is returned WITH the answer, never instead of it: the records, the composed
-// record or the committed write beside it are the operation's result.
-//
-// Every row in it failed reproduction as generation drift. It deliberately does
-// not unwrap to ErrVulnIntegrity: drift is excused and alteration is not, so a
-// row whose bytes do not hash to their own seal still fails the operation as an
-// integrity error. When every generation of a group is drifted the answer is
-// "no record this build can serve", and this error is what says why.
-type SetAsideGenerations struct {
-	Rows []UnreadableRow
-}
-
-// Error names every set-aside generation by coordinate, generation and content
-// hash, then what that means.
-func (e *SetAsideGenerations) Error() string {
-	parts := make([]string, 0, len(e.Rows))
-	for _, r := range e.Rows {
-		parts = append(parts, r.SetAsideLabel())
-	}
-	noun := "generation"
-	if len(e.Rows) != 1 {
-		noun = "generations"
-	}
-	return fmt.Sprintf("set aside %d stored vulnerability record %s: %s — %s",
-		len(e.Rows), noun, strings.Join(parts, "; "), SetAsideRemedy)
-}
-
-// Unwrap exposes each row's own failure, so errors.Is still finds the drift
-// classification the store reported, and never ErrVulnIntegrity.
-func (e *SetAsideGenerations) Unwrap() []error {
-	out := make([]error, 0, len(e.Rows))
-	for _, r := range e.Rows {
-		if r.Reason != nil {
-			out = append(out, r.Reason)
+// SetAside converts a row this listing excused as drift into the shared
+// set-aside row, under the kind and generation its readers state it in.
+func (r UnreadableRow) SetAside() recordseal.SetAsideRow {
+	if r.Kind == RowKindRun {
+		return recordseal.SetAsideRow{
+			Kind: SetAsideKindRun, ID: r.ID,
+			Generation:  recordseal.Generation{PipelineVersion: r.Generation.PipelineVersion},
+			ContentHash: r.ContentHash, Reason: r.Reason,
 		}
 	}
-	return out
-}
-
-// SetAsideLabel renders a set-aside row as coordinate, generation and content
-// hash, each where the head yielded it.
-func (r UnreadableRow) SetAsideLabel() string {
-	label := r.ID
-	if label == "" {
-		label = "unidentified " + string(RowKindRecord)
+	return recordseal.SetAsideRow{
+		Kind: SetAsideKindRecord,
+		ID:   r.ID,
+		Generation: recordseal.Generation{
+			PipelineVersion: r.Generation.PipelineVersion,
+			Snapshot: recordseal.Snapshot{
+				Name:    "vuln-db",
+				Source:  r.Generation.SnapshotSource,
+				Version: r.Generation.SnapshotVersion,
+			},
+		},
+		ContentHash: r.ContentHash,
+		Reason:      r.Reason,
 	}
-	if gen := r.Generation.String(); gen != "" {
-		label += " " + gen
-	}
-	if r.ContentHash != "" {
-		label += " content_hash " + r.ContentHash
-	}
-	return label
-}
-
-// MergeSetAside folds the set-aside rows err carries into into, keeping one row
-// per content hash, and reports whether err was a set-aside at all. A caller
-// reading several groups states each generation once.
-func MergeSetAside(into []UnreadableRow, err error) ([]UnreadableRow, bool) {
-	var aside *SetAsideGenerations
-	if !errors.As(err, &aside) {
-		return into, false
-	}
-	for _, r := range aside.Rows {
-		dup := false
-		for _, have := range into {
-			if have.ContentHash == r.ContentHash && have.ID == r.ID && have.Generation == r.Generation {
-				dup = true
-				break
-			}
-		}
-		if !dup {
-			into = append(into, r)
-		}
-	}
-	return into, true
 }
 
 // VulnerabilityStore defines the port for persisting vulnerability records.
@@ -422,7 +370,7 @@ type VulnerabilityStore interface {
 	//
 	// The findings index is reconciled over the generations of the record's group
 	// this build can reproduce. When it set any aside, the write has committed
-	// and a *SetAsideGenerations naming them is returned; a generation whose bytes
+	// and a *recordseal.SetAside naming them is returned; a generation whose bytes
 	// do not hash to their own seal aborts the write.
 	PutVulnerabilityRecord(ctx context.Context, record domain.VulnerabilityRecord) error
 
@@ -432,7 +380,7 @@ type VulnerabilityStore interface {
 	// domain.Compose for the ladder it serves on.
 	//
 	// It composes over the generations this build can reproduce and returns a
-	// *SetAsideGenerations beside the answer naming the rest. A group whose every
+	// *recordseal.SetAside beside the answer naming the rest. A group whose every
 	// generation was set aside answers found=false with that error: no record
 	// this build can serve.
 	GetVulnerabilityRecord(
@@ -510,14 +458,16 @@ type VulnerabilityStore interface {
 	// is left as it was.
 	PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) error
 
-	// GetWalkScanRun retrieves a walk scan run by its ID.
+	// GetWalkScanRun retrieves a walk scan run by its ID. A run whose bytes do
+	// not hash to their seal is *UnreadableRows; one whose bytes do but which
+	// this build cannot reproduce is *recordseal.NothingServable.
 	GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanRun, bool, error)
 
 	// ListWalkScanRuns lists all scan runs for a specific walk.
 	//
 	// A row that fails its seal does not end the listing — see the partial-result
 	// rule on ListVulnerabilityRecordsByFindingID, which every listing on this
-	// port follows.
+	// port follows, drifted runs coming back as *recordseal.SetAside.
 	ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error)
 
 	// ListAllWalkScanRuns lists all scan runs across all walks, most recent first,
@@ -559,7 +509,7 @@ type VulnerabilityStore interface {
 	//
 	// When every row it could not verify is a generation this build cannot
 	// reproduce — its bytes hash to their own seal — the error is a
-	// *SetAsideGenerations instead, which does not unwrap to ErrVulnIntegrity: a
+	// *recordseal.SetAside instead, which does not unwrap to ErrVulnIntegrity: a
 	// consumer serves the rows it has and states the ones set aside. One altered
 	// row makes it *UnreadableRows again, every unreadable row included.
 	//
@@ -574,7 +524,7 @@ type VulnerabilityStore interface {
 	//
 	// It composes one verdict per module out of the generations the run reached,
 	// so it fails closed on an altered row. A generation this build cannot
-	// reproduce is set aside and named in a *SetAsideGenerations returned beside
+	// reproduce is set aside and named in a *recordseal.SetAside returned beside
 	// the records; a module whose pinned generation was set aside is left out,
 	// because composing its other generations would report a record the run
 	// never produced.
