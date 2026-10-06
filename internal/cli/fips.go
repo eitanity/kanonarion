@@ -134,6 +134,7 @@ dependency exits non-zero so CI can gate.
 
 Exit codes:
   0  no finding resolves to a blocking policy outcome
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   5  the governance gate fired: one or more findings violate fips policy
   20 bad invocation, or a policy file that could not be read`,
 		Example: `  kanonarion fips

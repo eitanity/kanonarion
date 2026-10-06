@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
@@ -193,8 +194,10 @@ func (a *LocalAcquirer) identifyLicense(ctx context.Context, version, goRoot str
 	}
 	spdx, err := a.licenses.Identify(ctx, text)
 	if err != nil {
-		a.logger.WarnContext(ctx, "stdlib.license.identify_failed",
-			slog.String("go_version", version), slog.String("error", err.Error()))
+		if !interrupt.Cancelled(ctx, err) {
+			a.logger.WarnContext(ctx, "stdlib.license.identify_failed",
+				slog.String("go_version", version), slog.String("error", err.Error()))
+		}
 		return "", licenseClassifierFailed
 	}
 	if spdx == "" {

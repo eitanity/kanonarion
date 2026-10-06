@@ -95,6 +95,7 @@ command exits non-zero when a directive's policy outcome is "warn".
 
 Exit codes:
   0  no directive resolves to a blocking policy outcome
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   5  the governance gate fired: one or more directives violate policy — the
      scan succeeded and the finding is real, so route this to a human
   20 bad invocation, or a policy file that could not be read`,

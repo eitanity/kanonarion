@@ -37,6 +37,11 @@ Remove orphaned temporary files left behind by interrupted operations (e.g. a
 fetch or extraction killed mid-write). Persisted records and blobs are not
 touched.
 
+A run stopped by Ctrl-C, `SIGTERM` or `SIGHUP` removes its own temporary
+directories, including those of the call-graph subprocesses it started. Only a
+process killed outright - `kill -9`, the OOM killer - leaves them behind, and
+this command recovers them.
+
 ```
 kanonarion store clean [--store-root <dir>] [--json]
 ```

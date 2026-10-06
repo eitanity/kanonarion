@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -725,6 +726,8 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", perr)
 			}
 			return sealed, nil
+		case interrupt.Cancelled(ctx, err):
+			return domain.VulnerabilityRecord{}, fmt.Errorf("metadata check: %w", err)
 		case err != nil:
 			uc.logger.Warn("metadata check failed, proceeding with full scan", "error", err)
 		case isVulnerable:
@@ -753,6 +756,10 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		// project selected rather than whatever a network tidy would pick.
 		BuildList: params.SelectedVersions,
 	})
+	if interrupt.Cancelled(ctx, err) {
+		// Stopped by the run's cancellation: no failed-scan record is made of it.
+		return domain.VulnerabilityRecord{}, fmt.Errorf("scanning %s: %w", params.Coordinate, err)
+	}
 	if err != nil {
 		uc.logger.Error("vulnerability scan failed", "coordinate", params.Coordinate, "error", err)
 		record = domain.VulnerabilityRecord{
@@ -1395,7 +1402,9 @@ func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanM
 			// what tells "requested and failed" apart from "never requested", which
 			// are otherwise the same absence.
 			findings[i].ReachabilityNote = buildReachabilityFailureNote(rerr)
-			uc.logger.Warn("reachability analysis failed", "coordinate", params.Coordinate, "finding", finding.ID, "error", rerr)
+			if !interrupt.Cancelled(ctx, rerr) {
+				uc.logger.Warn("reachability analysis failed", "coordinate", params.Coordinate, "finding", finding.ID, "error", rerr)
+			}
 			continue
 		}
 		findings[i].Reachable = &result
@@ -1445,7 +1454,9 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 			// Not found — fall through to spawn.
 		default:
 			// Integrity or other store error — don't spawn over a broken record.
-			uc.logger.Warn("callgraph store check failed before spawn", "coordinate", params.Coordinate, "error", loadErr)
+			if !interrupt.Cancelled(ctx, loadErr) {
+				uc.logger.Warn("callgraph store check failed before spawn", "coordinate", params.Coordinate, "error", loadErr)
+			}
 			return fmt.Sprintf("callgraph store check failed: %v", loadErr)
 		}
 	}
@@ -1464,6 +1475,10 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 	stderr, spawnErr := uc.callGraphSpawner.Spawn(ctx, params.Coordinate, params.Force, params.WalkID)
 	if spawnErr != nil {
 		note := buildCallGraphSpawnNote(spawnErr, stderr)
+		if interrupt.Cancelled(ctx, spawnErr) {
+			interrupt.Note(interrupt.CallGraph)
+			return note
+		}
 		uc.logger.Warn("callgraph subprocess failed", "coordinate", params.Coordinate, "note", note)
 		return note
 	}

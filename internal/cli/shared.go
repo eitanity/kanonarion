@@ -569,7 +569,11 @@ func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
 	// so `go list -deps` over one tree answers differently for each. The pair is
 	// written here rather than left to whatever the parent process exported, so
 	// the set this resolves is the one the invocation declared.
-	cmd.Env = declaredTarget.Apply(os.Environ())
+	// A list the cancellation kills cannot remove its work directory (-test
+	// writes one), so it gets a temp root removed once it has exited.
+	scratch, removeScratch := childproc.Scratch()
+	defer removeScratch()
+	cmd.Env = append(declaredTarget.Apply(os.Environ()), scratch...)
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -1671,6 +1675,9 @@ func proxyAdapterError(err error) error {
 // Used by main to translate categorised errors (e.g. ExitNotFound) into
 // distinct process exit codes rather than the catch-all ExitConfig.
 func ExitCodeFromError(err error) (int, bool) {
+	if _, ok := errors.AsType[*interruptedError](err); ok {
+		return ExitCancelled, true
+	}
 	if ee, ok := errors.AsType[*exitError](err); ok {
 		return ee.code, true
 	}

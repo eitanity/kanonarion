@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
@@ -56,6 +57,10 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		DBDir:      vulnDBDir,
 		Vendored:   closure.Vendored,
 	})
+	if interrupt.Cancelled(ctx, err) {
+		interrupt.Note(interrupt.ModuleScan)
+		return fmt.Errorf("project-rooted scan of %s: %w", root, err)
+	}
 	if err != nil {
 		uc.logger.Error("project-rooted scan failed", "root", root, "error", err)
 		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, closure, requested, gotoolchain.Unrecorded, out, domain.StatusScanFailed, "", "", err.Error(), failurecause.Unrecorded)
@@ -114,6 +119,9 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		// answer. The project's own main module is versioned "(devel)" and never
 		// coordinate-matches an advisory, so it does not reach the false case.
 		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, true, *snapshot)
+		if interrupt.Cancelled(ctx, err) {
+			return fmt.Errorf("matching advisories for %s: %w", coord, err)
+		}
 		if err != nil {
 			// A coordinate whose advisory set could not be read has not been
 			// checked. Reporting it Clean would be the exact false negative this
@@ -442,6 +450,9 @@ func (uc *ScanWalkUseCase) resolveVendoredClosure(ctx context.Context, params Sc
 		return ports.VendoredClosure{}
 	}
 	closure, err := uc.vendoredClosure.VendoredClosure(ctx, filepath.Join(params.ProjectDir, "go.mod"))
+	if interrupt.Cancelled(ctx, err) {
+		return ports.VendoredClosure{}
+	}
 	if err != nil {
 		uc.logger.Warn("vuln-scan: could not read the project's vendored closure, analysing the fetched artefacts instead",
 			"project_dir", params.ProjectDir, "error", err)

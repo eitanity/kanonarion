@@ -120,7 +120,7 @@ func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.W
 		Progress: newExtractProgressReporter(stderr, f.noProgress, activeConfig, logLevel),
 	})
 	if err != nil {
-		return domain.ExtractionRun{}, fmt.Errorf("extraction execution failed: %w", err)
+		return domain.ExtractionRun{}, stepError(ctx, "extraction execution", err)
 	}
 	return run, nil
 }

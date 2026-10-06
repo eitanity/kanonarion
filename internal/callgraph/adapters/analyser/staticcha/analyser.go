@@ -12,7 +12,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -464,6 +466,9 @@ func (a *Analyser) analyseDir(
 	if err != nil {
 		return rec, err
 	}
+	if stoppedLoad(ctx, &rec) {
+		return rec, nil
+	}
 	retry, refusal := toolchains.Escalate(rec.FailureDetail)
 	if refusal != "" {
 		rec.FailureDetail = refusal
@@ -477,7 +482,25 @@ func (a *Analyser) analyseDir(
 		slog.String("version", coord.Version()),
 		slog.String("toolchain", toolchains.Selected()),
 	)
-	return a.analyseDirOnce(ctx, tempDir, coord, synth, read, mode, goModCache, toolchains)
+	rec, err = a.analyseDirOnce(ctx, tempDir, coord, synth, read, mode, goModCache, toolchains)
+	if err == nil {
+		stoppedLoad(ctx, &rec)
+	}
+	return rec, err
+}
+
+// stoppedLoad restates a load failure the run's cancellation caused as the
+// Cancelled record it is, and reports whether it did. A go command the
+// cancellation killed says nothing about whether the module loads.
+func stoppedLoad(ctx context.Context, rec *domain.CallGraphRecord) bool {
+	if rec.OverallStatus != domain.CallGraphStatusLoadFailed || !interrupt.Stopped(ctx) {
+		return false
+	}
+	rec.OverallStatus = domain.CallGraphStatusCancelled
+	rec.Completeness = domain.CompletenessUnknown
+	rec.FailureCause = domain.FailureCauseEnvironment
+	rec.FailureDetail = "cancelled during load: " + rec.FailureDetail
+	return true
 }
 
 // analyseDirOnce holds the shared post-extraction analysis pipeline: load
@@ -564,6 +587,11 @@ func (a *Analyser) analyseDirOnce(
 	// disabled, a working tree's is the build and is honoured — and building both
 	// leaves a reader unable to tell which one the child was handed.
 	env = toolchains.Apply(childEnv(mode, tempDir, goModCache))
+	// A go command the cancellation kills cannot remove its own work directory,
+	// so every child of this analysis gets a temp root removed when it returns.
+	scratch, removeScratch := childproc.Scratch()
+	defer removeScratch()
+	env = append(env, scratch...)
 
 	// Which toolchain ran is stamped on EVERY record this function returns,
 	// successes and failures alike, because a graph carries the toolchain's own

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/eitanity/kanonarion/internal/adapters/modcache"
 )
 
 // Errors a bounded child ends with. They are sentinels because the two are
@@ -77,12 +79,21 @@ func RunBounded(ctx context.Context, b Bounds, name string, args ...string) ([]b
 	cmd := CommandContext(childCtx, name, args...)
 	cmd.WaitDelay = WaitDelay
 	cmd.Stderr = watch
+	// Appended to this process's own environment rather than replacing it: the
+	// child needs every other variable it would have inherited, and os/exec
+	// keeps the last value for a duplicated key, so a value handed to this
+	// process does not outrank the one it hands on.
+	var extra []string
 	if b.MemoryCeiling > 0 {
-		// Appended to this process's own environment rather than replacing it: the
-		// child needs every other variable it would have inherited, and os/exec
-		// keeps the last value for a duplicated key, so a ceiling handed to this
-		// process does not outrank the one it hands on.
-		cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%d", MemoryCeilingEnv, b.MemoryCeiling))
+		extra = append(extra, fmt.Sprintf("%s=%d", MemoryCeilingEnv, b.MemoryCeiling))
+	}
+	scratch, removeScratch := childScratch()
+	defer removeScratch()
+	if scratch != "" {
+		extra = append(extra, scratchEnv(scratch)...)
+	}
+	if len(extra) > 0 {
+		cmd.Env = append(os.Environ(), extra...)
 	}
 
 	done := make(chan struct{})
@@ -104,6 +115,10 @@ func RunBounded(ctx context.Context, b Bounds, name string, args ...string) ([]b
 		return watch.Bytes(), fmt.Errorf("%w for %s: %w", ErrStalled, b.Stall, err)
 	case b.Ceiling > 0 && errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil:
 		return watch.Bytes(), fmt.Errorf("%w of %s: %w", ErrCeiling, b.Ceiling, err)
+	case errors.Is(ctx.Err(), context.Canceled):
+		// The caller's cancellation killed the child. Without it on the error a
+		// caller reads the SIGKILL as the operating system ending the analysis.
+		return watch.Bytes(), cancelledChild{err: err, stop: ctx.Err()}
 	}
 	return watch.Bytes(), err //nolint:wrapcheck // the caller classifies the raw exec error (exit status, cancellation); wrapping it here would rewrite the text those classifiers read
 }
@@ -209,3 +224,49 @@ func (w *progressWatch) stopWhenSilent(done <-chan struct{}, kill context.Cancel
 		}
 	}
 }
+
+// ScratchPrefix names the directory a parent makes for each child's temporary
+// files. `store clean` sweeps it: a parent killed outright leaves it behind.
+const ScratchPrefix = "kanonarion-child-"
+
+// childScratch makes the directory a child uses as its temp root, and returns
+// it with the function that removes it.
+//
+// The parent owns it because the child cannot be relied on to clean up: a
+// cancelled child is killed with SIGKILL, so its own deferred removals never
+// run. Removing the root after Wait reclaims whatever it wrote, read-only
+// module-cache trees included. A root that cannot be made leaves the child on
+// the inherited temp dir, as before.
+func childScratch() (string, func()) {
+	dir, err := os.MkdirTemp("", ScratchPrefix+"*")
+	if err != nil {
+		return "", func() {}
+	}
+	return dir, func() { _ = modcache.Remove(dir) }
+}
+
+// scratchEnv points every temp-dir variable a child may consult at dir: TMPDIR
+// for Go and the tools it runs on Unix, TMP and TEMP on Windows.
+func scratchEnv(dir string) []string {
+	return []string{"TMPDIR=" + dir, "TMP=" + dir, "TEMP=" + dir}
+}
+
+// Scratch is the temp root RunBounded gives its child, for a caller that builds
+// its own command: env points the child's temp-dir variables at it, and remove,
+// called after the child has exited, reclaims what a killed child left there.
+// With no root to make, env is empty and the child keeps the inherited temp dir.
+func Scratch() (env []string, remove func()) {
+	dir, removeDir := childScratch()
+	if dir == "" {
+		return nil, removeDir
+	}
+	return scratchEnv(dir), removeDir
+}
+
+// cancelledChild is a child's exit error together with the cancellation that
+// caused it. It reads as the exit error, whose text callers classify, and it is
+// also the cancellation.
+type cancelledChild struct{ err, stop error }
+
+func (e cancelledChild) Error() string   { return e.err.Error() }
+func (e cancelledChild) Unwrap() []error { return []error{e.err, e.stop} }

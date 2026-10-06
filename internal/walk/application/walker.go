@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -234,7 +235,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		targetResult := w.fetchOne(ctx, recorder, req.Target, req.Force, log)
 		outcome.PerNodeResults[req.Target] = targetResult
 		if targetResult.Status != domain2.NodeSucceeded {
-			outcome.OverallStatus = domain2.WalkFailed
+			outcome.OverallStatus = targetFailureStatus(ctx)
 		} else {
 			graph, err := resolver.ResolveShallow(ctx, req.Target)
 			if err != nil {
@@ -263,8 +264,8 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		g, perr := resolver.ResolveProject(ctx, req.Target, req.MainModuleGoMod, req.ResolutionDir, policy.FetchStage(), req.ScopeModules, req.StdlibFromGoMod, req.Force)
 		if perr != nil {
 			// The local go.mod could not be parsed — terminal, like a target
-			// fetch failure.
-			outcome.OverallStatus = domain2.WalkFailed
+			// fetch failure — unless the run was stopped while resolving.
+			outcome.OverallStatus = targetFailureStatus(ctx)
 			outcome.CompletedAt = w.clock.Now()
 			log.InfoContext(ctx, "walker.end",
 				slog.String("status", outcome.OverallStatus.String()),
@@ -286,7 +287,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		targetResult := w.fetchOne(ctx, recorder, req.Target, req.Force, log)
 		outcome.PerNodeResults[req.Target] = targetResult
 		if targetResult.Status != domain2.NodeSucceeded {
-			outcome.OverallStatus = domain2.WalkFailed
+			outcome.OverallStatus = targetFailureStatus(ctx)
 			outcome.CompletedAt = w.clock.Now()
 			log.InfoContext(ctx, "walker.end",
 				slog.String("status", outcome.OverallStatus.String()),
@@ -431,11 +432,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		absPath := filepath.Join(req.LocalReplaceBase, node.LocalPath)
 		fr, ferr := w.localFetcher.EnsureFetchedFromPath(ctx, node.Coordinate, absPath)
 		if ferr != nil {
-			log.WarnContext(ctx, "walker.local_fetch.failed",
-				slog.String("module.path", node.Coordinate.Path()),
-				slog.String("local_path", absPath),
-				slog.String("error", ferr.Error()),
-			)
+			logLocalFetchFailure(ctx, log, node.Coordinate, absPath, ferr)
 			outcome.PerNodeResults[node.Coordinate] = domain2.NodeResult{
 				Coordinate: node.Coordinate,
 				Status:     domain2.NodeLocalReplace,
@@ -592,6 +589,12 @@ func (w *Walker) ingestProjectRoot(
 	}
 
 	fr, err := w.localFetcher.EnsureFetchedFromPath(ctx, req.Target, req.ProjectDir)
+	if interrupt.Cancelled(ctx, err) {
+		interrupt.Note(interrupt.ModuleFetch)
+		log.DebugContext(ctx, "walker.local_root_ingest.cancelled",
+			slog.String("module.path", req.Target.Path()))
+		return false
+	}
 	if err != nil {
 		fail(err.Error())
 		return false
@@ -712,6 +715,30 @@ func degradeForIncompleteGraph(status domain2.WalkStatus, graph domain2.Graph) d
 		}
 	}
 	return status
+}
+
+// logLocalFetchFailure logs a local-replace ingest that did not succeed; one the
+// run's cancellation stopped is logged at debug under its own name.
+func logLocalFetchFailure(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate, absPath string, err error) {
+	if interrupt.Cancelled(ctx, err) {
+		interrupt.Note(interrupt.ModuleFetch)
+		log.DebugContext(ctx, "walker.local_fetch.cancelled", slog.String("module.path", coord.Path()))
+		return
+	}
+	log.WarnContext(ctx, "walker.local_fetch.failed",
+		slog.String("module.path", coord.Path()),
+		slog.String("local_path", absPath),
+		slog.String("error", err.Error()),
+	)
+}
+
+// targetFailureStatus is the status of a walk whose target did not fetch: a
+// failure, unless the run's cancellation is what stopped the fetch.
+func targetFailureStatus(ctx context.Context) domain2.WalkStatus {
+	if interrupt.Stopped(ctx) {
+		return domain2.WalkCancelled
+	}
+	return domain2.WalkFailed
 }
 
 func aggregateStatus(

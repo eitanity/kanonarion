@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -487,6 +488,11 @@ func (uc *ExtractCallGraphUseCase) identicalGeneration(
 		return domain2.CallGraphRecord{}, false
 	}
 	held, found, err := reader.IdenticalGeneration(ctx, record)
+	if interrupt.Cancelled(ctx, err) {
+		// The run was stopped; the write that follows fails on the same
+		// cancellation and says so.
+		return domain2.CallGraphRecord{}, false
+	}
 	if err != nil {
 		log.WarnContext(ctx, "callgraph_held_generation_unreadable_appending",
 			slog.String("reason", err.Error()),

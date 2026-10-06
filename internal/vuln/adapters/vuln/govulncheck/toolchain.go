@@ -38,8 +38,12 @@ func runGoChild(ctx context.Context, tc *goenv.Toolchains, base []string, dir st
 	for {
 		cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are literals and paths this package derived
 		cmd.Dir = dir
-		cmd.Env = tc.Apply(base)
+		// A build the cancellation kills cannot remove its work directory, so it
+		// gets a temp root removed once it has exited.
+		scratch, removeScratch := childproc.Scratch()
+		cmd.Env = append(tc.Apply(base), scratch...)
 		out, err := cmd.CombinedOutput()
+		removeScratch()
 		if err == nil {
 			return out, nil
 		}

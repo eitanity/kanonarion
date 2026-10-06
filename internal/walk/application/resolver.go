@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -258,6 +259,9 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 	var g domain3.Graph
 	if r.buildList != nil && projectDir != "" {
 		bl, blErr := r.buildList.Resolve(ctx, projectDir)
+		if interrupt.Cancelled(ctx, blErr) {
+			return domain3.Graph{}, fmt.Errorf("resolving the build list: %w", blErr)
+		}
 		if blErr != nil {
 			r.logger.WarnContext(ctx, "walk.build_list.unavailable",
 				slog.String("project_dir", projectDir),
@@ -359,6 +363,12 @@ func (r *GraphResolver) acquireStdlibCustody(ctx context.Context, node *domain3.
 		return
 	}
 	facts, digests, err := r.stdlib.AcquireStdlib(ctx, version, force, r.skipVCSVerify)
+	if interrupt.Cancelled(ctx, err) {
+		interrupt.Note(interrupt.StdlibCustody)
+		r.logger.DebugContext(ctx, "walk.stdlib.custody_cancelled",
+			slog.String("stdlib.version", node.Coordinate.Version()))
+		return
+	}
 	if err != nil {
 		r.logger.WarnContext(ctx, "walk.stdlib.custody_unavailable",
 			slog.String("stdlib.version", node.Coordinate.Version()),
@@ -530,12 +540,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 	for i, t := range fetchTasks {
 		node := st.nodes[t.path]
 		if err := results[i].err; err != nil {
-			r.logger.WarnContext(ctx, "walk.fetch.failed",
-				slog.String("module.path", t.coord.Path()),
-				slog.String("module.version", t.coord.Version()),
-				slog.String("error.type", "fetch_failed"),
-				slog.String("error", err.Error()),
-			)
+			r.logFetchFailure(ctx, t.coord, err)
 			st.markPartial(domain3.FetchFailedReason)
 			node.ResolutionSource = domain3.ResolutionFetchFailed
 			node.ErrorDetail = err.Error()
@@ -1249,6 +1254,26 @@ func (r *GraphResolver) fetchAndParseModule(ctx context.Context, coord, original
 	return out
 }
 
+// logFetchFailure logs a fetch that did not succeed. One stopped by the run's
+// cancellation failed nothing on its own terms, so it is logged at debug under
+// its own name and counted for the run's single interruption statement.
+func (r *GraphResolver) logFetchFailure(ctx context.Context, coord coordinate.ModuleCoordinate, err error) {
+	if interrupt.Cancelled(ctx, err) {
+		interrupt.Note(interrupt.ModuleFetch)
+		r.logger.DebugContext(ctx, "walk.fetch.cancelled",
+			slog.String("module.path", coord.Path()),
+			slog.String("module.version", coord.Version()),
+		)
+		return
+	}
+	r.logger.WarnContext(ctx, "walk.fetch.failed",
+		slog.String("module.path", coord.Path()),
+		slog.String("module.version", coord.Version()),
+		slog.String("error.type", "fetch_failed"),
+		slog.String("error", err.Error()),
+	)
+}
+
 // applyFetchParse folds a concurrent fetchParseOutcome back into the resolve
 // state: it updates the node (retraction, resolution source, error detail), and
 // on success caches the module's depth-filtered requirements and declared go
@@ -1262,12 +1287,7 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 	nodeKey := out.nodeKey
 
 	if out.fetchErr != nil {
-		r.logger.WarnContext(ctx, "walk.fetch.failed",
-			slog.String("module.path", coord.Path()),
-			slog.String("module.version", coord.Version()),
-			slog.String("error.type", "fetch_failed"),
-			slog.String("error", out.fetchErr.Error()),
-		)
+		r.logFetchFailure(ctx, coord, out.fetchErr)
 		st.markPartial(domain3.FetchFailedReason)
 		existing := st.nodes[nodeKey]
 		st.nodes[nodeKey] = domain3.GraphNode{
@@ -1293,11 +1313,19 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 	st.recordDigests(coord, domain2.RecordDigests(out.record.FactRecord))
 
 	if out.extractErr != nil {
-		r.logger.WarnContext(ctx, "walk.gomod.extract.failed",
-			slog.String("module.path", coord.Path()),
-			slog.String("module.version", coord.Version()),
-			slog.String("error", out.extractErr.Error()),
-		)
+		if interrupt.Cancelled(ctx, out.extractErr) {
+			interrupt.Note(interrupt.ModuleFetch)
+			r.logger.DebugContext(ctx, "walk.gomod.extract.cancelled",
+				slog.String("module.path", coord.Path()),
+				slog.String("module.version", coord.Version()),
+			)
+		} else {
+			r.logger.WarnContext(ctx, "walk.gomod.extract.failed",
+				slog.String("module.path", coord.Path()),
+				slog.String("module.version", coord.Version()),
+				slog.String("error", out.extractErr.Error()),
+			)
+		}
 		st.markPartial(domain3.ParseFailedReason)
 		prev := st.nodes[nodeKey]
 		st.nodes[nodeKey] = domain3.GraphNode{

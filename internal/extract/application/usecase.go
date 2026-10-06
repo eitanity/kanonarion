@@ -12,6 +12,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
@@ -374,7 +375,7 @@ func (uc *ExtractUseCase) checkpointRun(ctx context.Context, run domain.Extracti
 			// nothing new — it never said it.
 			lastWritten = len(results)
 		}
-		if err != nil {
+		if err != nil && !interrupt.Cancelled(ctx, err) {
 			uc.log().WarnContext(ctx, "extraction_run_checkpoint_failed",
 				slog.String("extraction.run.id", run.ID),
 				slog.String("extraction.walk.id", run.WalkID),

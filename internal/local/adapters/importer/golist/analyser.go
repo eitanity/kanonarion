@@ -58,8 +58,12 @@ func (a *Analyser) list(ctx context.Context, root string, args ...string) ([]byt
 	for {
 		cmd := childproc.CommandContext(ctx, a.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 		cmd.Dir = root
-		cmd.Env = toolchains.Apply(listEnv(root))
+		// A list the cancellation kills cannot remove its work directory (-test
+		// writes one), so it gets a temp root removed once it has exited.
+		scratch, removeScratch := childproc.Scratch()
+		cmd.Env = append(toolchains.Apply(listEnv(root)), scratch...)
 		out, err := cmd.Output()
+		removeScratch()
 		if err == nil {
 			return out, nil
 		}

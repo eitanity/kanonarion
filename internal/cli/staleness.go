@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	stalegolist "github.com/eitanity/kanonarion/internal/staleness/adapters/golist"
 	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
@@ -249,7 +250,7 @@ func (r *reportOnceLookup) Resolve(ctx context.Context, path, pinnedVersion stri
 	switch {
 	case err == nil:
 		return ans, nil
-	case !errors.Is(err, staleapp.ErrBatchUnavailable):
+	case interrupt.Cancelled(ctx, err), !errors.Is(err, staleapp.ErrBatchUnavailable):
 		return ans, fmt.Errorf("resolving staleness for %s: %w", path, err)
 	}
 	if !r.reported {

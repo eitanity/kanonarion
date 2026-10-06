@@ -41,6 +41,7 @@ Exit codes:
   2  unknown pairs or pending elections — dep licenses not in the modelled
      dataset, or dual-licensed deps whose compatible arm has not been elected
      (requires human review; these are never silently "compatible")
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   4  no walk record, or no licence record for the root — the diagnostic names
      the command that produces the missing record
   20 bad invocation (unparseable coordinate, wrong argument count, or a

@@ -257,7 +257,7 @@ func (f *Fetcher) EnsureFetchedReplacing(ctx context.Context, coord, original co
 				slog.Int("attempt", attempt),
 				slog.String("reason", serr.Error()),
 			)
-			return res, err //nolint:wrapcheck // deliberate pass-through of the wrapped fetcher's error
+			return res, stoppedRetry{err: err, stop: serr}
 		}
 		totalBackoff += delay
 	}
@@ -324,3 +324,11 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
+
+// stoppedRetry is the error that prompted a retry the context cut short. It
+// reads as that error, which is what the caller asked about, and it is also the
+// cancellation, so a caller can tell a stopped run from a failed lookup.
+type stoppedRetry struct{ err, stop error }
+
+func (e stoppedRetry) Error() string   { return e.err.Error() }
+func (e stoppedRetry) Unwrap() []error { return []error{e.err, e.stop} }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
@@ -92,6 +93,7 @@ project's own build dependencies (the code your packages import, incl. tests);
 
 Exit codes:
   0  every dependency resolved and no licence-policy block
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   5  the governance gate fired: dependencies with an undetermined licence are
      blocked by policy (unknown_license=block), or the licence gate could not
      be evaluated because the policy scope in force matches no license_policy
@@ -749,7 +751,11 @@ func auditScope(
 	ef := extractFlags{stages: []string{"license"}, force: f.force, noProgress: f.noProgress}
 	// extractWalk, not runExtract: audit reports per-module licence rows and must
 	// not take the extraction's own exit code, which now reads partiality.
-	if _, eerr := extractWalk(ctx, walkID, ef, stderr); eerr != nil {
+	_, eerr := extractWalk(ctx, walkID, ef, stderr)
+	if ierr := stopIfInterrupted(ctx, "extracting licences for walk "+walkID, eerr); ierr != nil {
+		return nil, derivation, ierr
+	}
+	if eerr != nil {
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
 
@@ -764,6 +770,9 @@ func auditScope(
 		_, _ = fmt.Fprintf(progressOut, "==> audit: refreshing the advisory database\n")
 		derivation.refreshed = true
 		refresh, frerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
+		if ierr := stopIfInterrupted(ctx, "refreshing the advisory database", frerr); ierr != nil {
+			return nil, derivation, ierr
+		}
 		if frerr != nil {
 			derivation.refreshErr = frerr
 		} else {
@@ -775,7 +784,11 @@ func auditScope(
 	// run that answered, and answered with the same lookup the scan itself makes:
 	// audit narrates the whole derivation in one place, so runVulnScan is told not
 	// to announce the reuse a second time.
-	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, filepath.Dir(f.gomodPath)); rerr != nil {
+	prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, filepath.Dir(f.gomodPath))
+	if ierr := stopIfInterrupted(ctx, "finding a reusable scan of walk "+walkID, rerr); ierr != nil {
+		return nil, derivation, ierr
+	}
+	if rerr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
 	} else if ok && !f.force {
 		derivation.scanReused = true
@@ -804,6 +817,9 @@ func auditScope(
 	// could answer with a different run.
 	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
 	scanFacts, verr := runVulnScanReporting(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceAudit, false, f.noProgress, false, true, io.Discard, stderr)
+	if ierr := stopIfInterrupted(ctx, "scanning vulnerabilities for walk "+walkID, verr); ierr != nil {
+		return nil, derivation, ierr
+	}
 	if verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
@@ -830,6 +846,9 @@ func auditScope(
 	// rule domain that governs it rather than under a scope no rule matches.
 	policyScope := policyScopeForWalkScope(walkScope)
 	for _, node := range depNodes {
+		if ierr := stopIfInterrupted(ctx, "auditing "+node.Coordinate.String(), nil); ierr != nil {
+			return nil, derivation, ierr
+		}
 		res, rerr := buildAuditResult(ctx, node, walkFrameAnchor(walkID, rec.Target), policyScope, overrides, staleness, ctr, stderr)
 		if rerr != nil {
 			return nil, derivation, rerr
@@ -838,6 +857,19 @@ func auditScope(
 		results = append(results, res)
 	}
 	return results, derivation, nil
+}
+
+// stopIfInterrupted ends an audit the operator interrupted. The phases tolerate
+// one another's failures, but none carries on past a cancelled run: what it
+// went on to print would read as columns that had been measured.
+func stopIfInterrupted(ctx context.Context, step string, err error) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	return fmt.Errorf("%s: %w", step, err)
 }
 
 // auditDependencyNodes returns the dependency nodes of a project walk: every
@@ -1073,6 +1105,10 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 		// the mode working as designed and is already stated in the column, the
 		// coverage line and the JSON.
 		if lerr != nil && !errors.Is(lerr, errStalenessOffline) {
+			if interrupt.Cancelled(ctx, lerr) {
+				res.markStalenessUnmeasured(stalenessLookupFailed)
+				return
+			}
 			// errStalenessBatchReported is the exception: the batched resolution
 			// failed for the WHOLE set and has already said so once. Every row is
 			// still marked unmeasured; only the repeated sentence is dropped.

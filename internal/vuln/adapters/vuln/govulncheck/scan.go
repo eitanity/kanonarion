@@ -15,6 +15,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/vulndbdir"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/failurecause"
@@ -114,6 +115,9 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		// answer needs it. A module that will not build without cgo takes the
 		// buildErr branch below to source mode, which still answers.
 		out, buildErr := runGoChild(ctx, toolchains, withCgoDisabled(env), scanDir, "test", "-c", "-o", tmpBin, pkg)
+		if serr := stoppedScan(ctx, buildErr); serr != nil {
+			return domain.VulnerabilityRecord{}, serr
+		}
 		_, statErr := os.Stat(tmpBin)
 		switch {
 		case buildErr != nil:
@@ -138,7 +142,11 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	if scanMode != domain.ScanModeBinary {
 		// Source mode: download deps then run govulncheck source analysis.
 		s.logger.Info("vuln-scan: downloading dependencies", "dir", scanDir)
-		if out, dlErr := runGoChild(ctx, toolchains, env, scanDir, "mod", "download"); dlErr != nil {
+		out, dlErr := runGoChild(ctx, toolchains, env, scanDir, "mod", "download")
+		if serr := stoppedScan(ctx, dlErr); serr != nil {
+			return domain.VulnerabilityRecord{}, serr
+		}
+		if dlErr != nil {
 			// Source mode continues regardless: a download failure often just means
 			// the module's isolated build needs a version outside the project's
 			// pinned cache — an expected out-of-toolchain outcome the application
@@ -184,6 +192,9 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		// application layer that owns severity. Logging it at warn here would dump
 		// govulncheck's stderr for every expected out-of-toolchain module,
 		// contradicting that classification. The stderr stays available at debug.
+		if serr := stoppedScan(ctx, waitErr); serr != nil {
+			return domain.VulnerabilityRecord{}, serr
+		}
 		s.logger.Debug("vuln-scan: govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
 		f := classifyScanFailure(waitErr, stderrStr, tool)
 		return domain.VulnerabilityRecord{
@@ -613,6 +624,16 @@ func withCgoDisabled(env []string) []string {
 	out := make([]string, len(env), len(env)+1)
 	copy(out, env)
 	return append(out, "CGO_ENABLED=0")
+}
+
+// stoppedScan returns the error for a govulncheck run that ended because ctx was
+// cancelled, or nil. Classified, the kill reads as an out-of-memory Unscannable,
+// and a stopped scan measured nothing.
+func stoppedScan(ctx context.Context, waitErr error) error {
+	if waitErr == nil || !interrupt.Stopped(ctx) {
+		return nil
+	}
+	return fmt.Errorf("govulncheck stopped: %w", ctx.Err())
 }
 
 // scanFailure is one govulncheck non-zero exit, classified: the status it

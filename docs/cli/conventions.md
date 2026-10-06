@@ -733,7 +733,7 @@ and repeated in that command's `--help`.
 | 0 | OK | Success |
 | 1 | Partial | The work completed but is known-incomplete: walk partial, an extraction run some of whose stages failed, a call graph that measured some packages and not others, or an SBOM generated with one or more components carrying no licence identity |
 | 2 | Failed | The work could not complete: walk failed, a call-graph extraction produced no graph at all, or `license-compat` found unmodelled licence pairs needing review |
-| 3 | Cancelled | The context was cancelled before the work completed |
+| 3 | Cancelled | The context was cancelled before the work completed, including a run interrupted by `SIGINT` (Ctrl-C), `SIGTERM` or `SIGHUP` |
 | 4 | NotFound | A record requested by ID or coordinate does not exist. The message names the command that produces it |
 | 5 | Policy | A governance or publication gate fired on real findings. The scan succeeded and the finding is genuine |
 | 10 | Integrity | Recorded evidence is in doubt: a record failed its content-hash check, or two records for one coordinate diverge. Every domain that stores records raises it — walk, fetch, extraction run, call graph, interface, licence, example, vulnerability, advisory snapshot, stdlib facts — and the code does not depend on which one did |
@@ -768,6 +768,7 @@ code says the invocation is what has to change.
 |---|---|
 | 1 | `walk`, `inspect` (partial closure); `extract` (the run is recorded partial — the stages that ran ARE stored, and the failed-stage breakdown names the rest); `callgraph`, `local` (a `Partial` graph — it IS still an answer, and the failed packages line scopes what it does not cover); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs); `use` (some modules with a stored artefact did not reach the module cache); `vuln-scan` (some modules in the walk were not analysed) |
 | 2 | `walk`, `inspect` (target unfetchable); `callgraph`, `local` (no graph at all: `LoadFailed`, or a `Partial` that measured no function); `extract` (the run itself failed and produced no usable stage); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity); `use` (no module reached the module cache); `vuln-scan` (no module in the walk was analysed) |
+| 3 | every command, when interrupted by `SIGINT`, `SIGTERM` or `SIGHUP` - whatever the interrupted step would otherwise have exited with (see [Interrupting a run](#interrupting-a-run)) |
 | 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `capability` (no call graph is stored for the coordinate, at this build's pipeline version, and the message names the invocation that produces it with the coordinate filled in); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree) |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review); `interface-diff --used-by` (the consumer's own code calls a declaration the bump removes or changes) |
 | 10 | any command consuming a record whose content hash does not verify, or that meets two records for one coordinate which disagree — a walk node, a fetched artefact, an extraction run, a call graph, an interface, a licence, an example, a vulnerability record, an advisory snapshot or the stdlib facts. A store-inspection command reports the same condition and exits 0 (see [Store layout](#store-layout)); a consuming command fails closed |
@@ -775,6 +776,23 @@ code says the invocation is what has to change.
 
 A policy gate is only a 5 when it *fired on findings*. A policy **file** that
 cannot be found or parsed is a 20 — that is a broken invocation, not a verdict.
+
+### Interrupting a run
+
+A run stopped by `SIGINT` (Ctrl-C), `SIGTERM` or `SIGHUP` says so once on
+stderr, names what was in flight as counts, and exits `3`:
+
+```
+interrupted (interrupt signal received); stopped with 420 module fetches, 1 stdlib custody check in flight
+error: execute root command: project walk produced no record for example.com/mod@local
+```
+
+The `error:` line says what the run did not finish or write. An operation the
+interrupt stopped is not a failure: it is not logged as `walk.fetch.failed` or
+any other failure event, and no failed-status record is made of it. Each one is
+logged at `--log-level debug` under its own `*.cancelled` event. A command with
+several phases, such as `audit` or `inspect`, stops at the phase it was in and
+prints no table or summary for the phases it did not reach.
 
 ### Store schema newer than the binary
 

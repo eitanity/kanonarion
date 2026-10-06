@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -273,6 +274,10 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 	if err != nil {
 		return domain.SBOMRecord{}, err
 	}
+	vendorScope, err := uc.vendorScope(ctx, walk)
+	if err != nil {
+		return domain.SBOMRecord{}, err
+	}
 
 	// 3. Generate. The document is an inventory of components and their identity,
 	// hashes and licences; it carries no vulnerability list, so no scan run is
@@ -284,7 +289,7 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		Operator:             req.Operator,
 		MainComponentVersion: req.MainComponentVersion,
 		MainComponentLicense: req.MainComponentLicense,
-		VendorScope:          uc.vendorScope(ctx, walk),
+		VendorScope:          vendorScope,
 		ModuleOrigins:        origins,
 		NativeRecords:        natives,
 		// A package-scoped run has already filtered walk.Graph above, so the
@@ -393,18 +398,23 @@ func (uc *GenerateSBOMUseCase) nativeRecords(
 // with no recorded project root, or a project with no vendored tree. A read
 // failure is logged and yields nil rather than failing generation — the
 // document is still true, it just cannot state this scope.
-func (uc *GenerateSBOMUseCase) vendorScope(ctx context.Context, walk walkdomain.WalkRecord) *vendordomain.VendorScope {
+func (uc *GenerateSBOMUseCase) vendorScope(ctx context.Context, walk walkdomain.WalkRecord) (*vendordomain.VendorScope, error) {
 	if uc.vendorTree == nil || walk.ProjectDir == "" {
-		return nil
+		return nil, nil
 	}
 	mods, err := uc.vendorTree.VendorTree(ctx, filepath.Join(walk.ProjectDir, "go.mod"))
+	if interrupt.Cancelled(ctx, err) {
+		// A read the cancellation stopped is not an unreadable tree: the
+		// document would omit a scope nothing failed to state.
+		return nil, fmt.Errorf("reading the vendored tree: %w", err)
+	}
 	if err != nil {
 		uc.logger.WarnContext(ctx, "sbom.vendor_scope.unavailable",
 			"walk_id", walk.ID, "project_dir", walk.ProjectDir, "error", err)
-		return nil
+		return nil, nil
 	}
 	if len(mods) == 0 {
-		return nil
+		return nil, nil
 	}
 	described := make(map[string]bool, len(walk.Graph.Nodes)*2)
 	for _, n := range walk.Graph.Nodes {
@@ -416,5 +426,5 @@ func (uc *GenerateSBOMUseCase) vendorScope(ctx context.Context, walk walkdomain.
 	scope := vendordomain.ScopeOverTree(mods, func(m vendordomain.VendoredModule) bool {
 		return described[m.Path]
 	})
-	return &scope
+	return &scope, nil
 }

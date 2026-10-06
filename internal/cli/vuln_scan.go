@@ -647,7 +647,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		},
 	})
 	if err != nil {
-		return vulnScanRunFacts{}, fmt.Errorf("vuln scan failed: %w", err)
+		return vulnScanRunFacts{}, stepError(ctx, "vuln scan", err)
 	}
 
 	// The toolchain axis goes to stderr, beside the result. It is also the
@@ -1411,7 +1411,7 @@ func rescanWith(
 			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
 				"vuln-scan-rescan refused: %v. %s", err, remedyRescanProject(frame.ProjectDir))}
 		}
-		return fmt.Errorf("vuln-scan-rescan failed: %w", err)
+		return stepError(ctx, "vuln-scan-rescan", err)
 	}
 
 	if jsonOut {

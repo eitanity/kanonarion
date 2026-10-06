@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/vulndbdir"
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
@@ -691,6 +692,12 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 	for _, coord := range allCoords {
 		r := finalResults[coord]
 		*progressCount++
+		if interrupt.Cancelled(ctx, r.err) {
+			// A scan the run's cancellation stopped measured nothing and failed
+			// nothing; it is not recorded as a failed scan.
+			interrupt.Note(interrupt.ModuleScan)
+			return counts, fmt.Errorf("scanning %s: %w", r.coord, r.err)
+		}
 		if r.err != nil {
 			uc.logger.Error("failed to scan module in walk", "walk_id", params.WalkID, "module", r.coord, "error", r.err)
 			counts.failed++
@@ -1038,6 +1045,9 @@ func (uc *ScanWalkUseCase) prefetchMissing(ctx context.Context, coords []coordin
 			return
 		}
 		fact, ok, err := fetchports.AbsentIfNothingServable(uc.moduleScanner.getFetchRecord(ctx, coord))
+		if interrupt.Cancelled(ctx, err) {
+			return
+		}
 		if err != nil {
 			uc.logger.Warn("pre-fetch: error checking fact store", "module", coord, "error", err)
 			continue
@@ -1049,7 +1059,10 @@ func (uc *ScanWalkUseCase) prefetchMissing(ctx context.Context, coords []coordin
 			continue
 		}
 		uc.logger.Info("pre-fetch: fetching missing module", "module", coord)
-		if ferr := uc.fetcher.FetchModule(ctx, coord); ferr != nil {
+		if ferr := uc.fetcher.FetchModule(ctx, coord); interrupt.Cancelled(ctx, ferr) {
+			interrupt.Note(interrupt.ModuleFetch)
+			return
+		} else if ferr != nil {
 			uc.logger.Warn("pre-fetch: failed to fetch module", "module", coord, "error", ferr)
 		}
 	}
@@ -1072,6 +1085,9 @@ func (uc *ScanWalkUseCase) prefetchGoModOnly(ctx context.Context, coords []coord
 			return
 		}
 		_, ok, err := fetchports.AbsentIfNothingServable(uc.moduleScanner.getFetchRecord(ctx, coord))
+		if interrupt.Cancelled(ctx, err) {
+			return
+		}
 		if err != nil {
 			uc.logger.Warn("pre-fetch(go.mod-only): error checking fact store", "module", coord, "error", err)
 			continue
@@ -1080,7 +1096,10 @@ func (uc *ScanWalkUseCase) prefetchGoModOnly(ctx context.Context, coords []coord
 			continue
 		}
 		uc.logger.Info("pre-fetch(go.mod-only): fetching missing module go.mod", "module", coord)
-		if ferr := uc.fetcher.FetchModuleGoMod(ctx, coord); ferr != nil {
+		if ferr := uc.fetcher.FetchModuleGoMod(ctx, coord); interrupt.Cancelled(ctx, ferr) {
+			interrupt.Note(interrupt.ModuleFetch)
+			return
+		} else if ferr != nil {
 			uc.logger.Warn("pre-fetch(go.mod-only): failed to fetch module go.mod", "module", coord, "error", ferr)
 		}
 	}
@@ -1134,7 +1153,7 @@ func (uc *ScanWalkUseCase) populatePrePruningGoMods(ctx context.Context, graph w
 	)
 	uc.logger.Info("populated pre-pruning module-graph go.mod files for offline resolution",
 		"written", report.Written, "reached", report.Requested, "roots", len(roots))
-	if !report.Complete() {
+	if !report.Complete() && !interrupt.Stopped(ctx) {
 		// Under GOPROXY=off there is no network fallback, so a hole here is the
 		// difference between a module that resolves and one that is recorded as
 		// a coverage gap. Name it rather than leaving the gap to be rediscovered
@@ -1228,7 +1247,7 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 		report := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, src)
 		uc.logger.Info("populated nested-ancestor module sources for offline resolution",
 			"written", report.Written, "requested", report.Requested)
-		if !report.Complete() {
+		if !report.Complete() && !interrupt.Stopped(ctx) {
 			uc.logger.Warn("some nested-ancestor sources could not be populated; imports under those paths may fail to resolve offline",
 				"written", report.Written, "requested", report.Requested,
 				"failures", report.FailureSummary(populateFailureLogLimit))
@@ -1240,7 +1259,7 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 		report := modcache.PopulateGoMod(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, mods)
 		uc.logger.Info("populated scanned-node build-list go.mod files for offline resolution",
 			"written", report.Written, "requested", report.Requested)
-		if !report.Complete() {
+		if !report.Complete() && !interrupt.Stopped(ctx) {
 			uc.logger.Warn("some build-list go.mod files could not be populated; modules requiring these versions may fail to resolve offline",
 				"written", report.Written, "requested", report.Requested,
 				"failures", report.FailureSummary(populateFailureLogLimit))
@@ -1456,7 +1475,9 @@ func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domai
 		if errors.Is(err, ports.ErrSnapshotIntegrity) {
 			return "", noop, fmt.Errorf("pre-extracting the advisory database: %w", ports.SnapshotIntegrityAbort(*snapshot, err))
 		}
-		uc.logger.Warn("failed to retrieve snapshot for pre-extraction, each module scan will extract independently", "error", err)
+		if !interrupt.Cancelled(ctx, err) {
+			uc.logger.Warn("failed to retrieve snapshot for pre-extraction, each module scan will extract independently", "error", err)
+		}
 		return "", noop, nil
 	}
 	defer func() { _ = content.Close() }()
@@ -1608,14 +1629,17 @@ func (uc *ScanWalkUseCase) prepareModCache(ctx context.Context, walk walkdomain.
 		uc.prefetchMissing(ctx, coords)
 
 		report := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, coords)
-		if report.Written == 0 && report.Requested > 0 {
+		switch {
+		case report.Written == 0 && report.Requested > 0 && interrupt.Stopped(ctx):
+			uc.logger.Debug("pre-populating GOMODCACHE cancelled", "requested", report.Requested)
+		case report.Written == 0 && report.Requested > 0:
 			uc.logger.Warn("failed to pre-populate GOMODCACHE, govulncheck will download dependencies",
 				"requested", report.Requested, "failures", report.FailureSummary(populateFailureLogLimit))
-		} else {
+		default:
 			goModCache = cacheDir
 			uc.logger.Info("pre-populated GOMODCACHE from blob store",
 				"modules", report.Written, "requested", report.Requested, "dir", cacheDir)
-			if !report.Complete() {
+			if !report.Complete() && !interrupt.Stopped(ctx) {
 				uc.logger.Warn("some modules could not be populated into the scan cache; their scans may fail to resolve offline",
 					"written", report.Written, "requested", report.Requested,
 					"failures", report.FailureSummary(populateFailureLogLimit))

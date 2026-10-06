@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -103,7 +104,8 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	}
 	loaded, lErr := load(withTests)
 	switch {
-	case lErr != nil && !withTests:
+	case lErr != nil && (!withTests || interrupt.Stopped(ctx)):
+		// A load the run's cancellation stopped says nothing about test scope.
 		return res, lErr
 	case lErr != nil:
 		// Loading with tests is not viable for this module. Retry without them

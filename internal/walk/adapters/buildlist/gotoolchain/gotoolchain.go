@@ -21,6 +21,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -90,6 +91,11 @@ func (r *Resolver) Resolve(ctx context.Context, projectDir string) (walkports.Bu
 	// failure degrades to empty values (no stdlib node, no platform) rather than
 	// failing the walk — the module set is still authoritative without it.
 	goVersion, goos, goarch := r.buildEnv(ctx, projectDir)
+	if interrupt.Stopped(ctx) {
+		// A probe the cancellation cut short measured nothing; a build list
+		// without its environment would read as one that has none.
+		return walkports.BuildList{}, fmt.Errorf("probing the build environment: %w", ctx.Err())
+	}
 
 	return walkports.BuildList{
 		Modules:   modules,
@@ -125,6 +131,9 @@ func (r *Resolver) BuildEnvironment(ctx context.Context, projectDir string) (goV
 // than treating it as fatal.
 func (r *Resolver) buildEnv(ctx context.Context, projectDir string) (goVersion, goos, goarch string) {
 	out, err := r.run(ctx, projectDir, "env", "GOVERSION", "GOOS", "GOARCH")
+	if interrupt.Cancelled(ctx, err) {
+		return "", "", ""
+	}
 	if err != nil {
 		r.logger.WarnContext(ctx, "walk.build_list.env_probe_failed",
 			slog.String("project_dir", projectDir),

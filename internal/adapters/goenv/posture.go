@@ -190,8 +190,8 @@ var postures = map[string]Posture{
 // defects had.
 var EnvBuilders = map[string]string{
 	"internal/adapters/childproc RunBounded": "not a go-command child: the child is this same binary, and the " +
-		"environment reaches it unchanged but for its own memory ceiling, which no posture governs " +
-		"because it decides nothing about how a build resolves",
+		"environment reaches it unchanged but for its own memory ceiling and a temp root the parent " +
+		"removes after it exits, neither of which decides anything about how a build resolves",
 	"internal/callgraph/adapters/analyser/staticcha isolatedModuleEnv": "extracted-module",
 	"internal/callgraph/adapters/analyser/staticcha stdlibAnalysisEnv": "toolchain-stdlib",
 	"internal/cli toolchainAt": "not an analysis child: a probe asking one named go command which GOROOT and " +

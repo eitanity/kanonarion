@@ -115,6 +115,7 @@ begun. What is offered here is the truthful statement kanonarion can make today.
 | 0 | `Complete` | every module was analysed, findings or not |
 | 1 | partial | some modules were not analysed |
 | 2 | none | nothing was analysed; the run established nothing |
+| 3 | - | the run was interrupted (see [Interrupting a run](conventions.md#interrupting-a-run)) |
 
 Findings do not change the exit code. Whether a finding should fail a build is a
 policy question, and `audit` answers it.

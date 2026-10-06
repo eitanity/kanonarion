@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
@@ -191,6 +192,10 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 	log.InfoContext(ctx, "blob_read", slog.Int("zip_bytes", len(zipData)))
 
 	record, extractErr := uc.extractFromZip(ctx, log, req.Coordinate, zipData)
+	if interrupt.Cancelled(ctx, extractErr) {
+		// Stopped by the run's cancellation: no failed-extraction record is made of it.
+		return ExtractResult{}, fmt.Errorf("extracting the examples of %s: %w", req.Coordinate, extractErr)
+	}
 	if extractErr != nil {
 		record = domain2.ExampleRecord{
 			SchemaVersion:   domain2.ExampleSchemaVersion,
@@ -272,6 +277,11 @@ func (uc *ExtractExampleUseCase) identicalGeneration(
 		return domain2.ExampleRecord{}, false
 	}
 	held, found, err := reader.IdenticalGeneration(ctx, record)
+	if interrupt.Cancelled(ctx, err) {
+		// The run was stopped; the write that follows fails on the same
+		// cancellation and says so.
+		return domain2.ExampleRecord{}, false
+	}
 	if err != nil {
 		log.WarnContext(ctx, "example_held_generation_unreadable_appending",
 			slog.String("reason", err.Error()),

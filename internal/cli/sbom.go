@@ -68,6 +68,7 @@ Exit codes:
      licence. The document IS written, names them, and names the command
      that supplies each missing record; a licence-less SBOM must never pass
      as complete
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   20 the command never got as far as a document: a walk id or --package
      scope that names nothing, a missing walk id and no --package, an
      unparseable coordinate, an unparseable --generated-at. A walk id is
