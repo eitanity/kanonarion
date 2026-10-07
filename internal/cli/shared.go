@@ -796,7 +796,9 @@ func mergeWorkspaceRequires(goworkPath string, reqVersions map[string]string) er
 	workDir := filepath.Dir(goworkPath)
 	for _, use := range wf.Use {
 		modPath := filepath.Join(workDir, use.Path, "go.mod")
-		mdata, merr := os.ReadFile(filepath.Clean(modPath))
+		// Use paths come from the operator's own go.work and may point outside
+		// the workspace (use ../other); the go command reads these same files.
+		mdata, merr := os.ReadFile(filepath.Clean(modPath)) // #nosec G703 -- operator's go.work use path; confining it breaks valid workspaces
 		if merr != nil {
 			continue // best-effort: skip unreadable modules
 		}
