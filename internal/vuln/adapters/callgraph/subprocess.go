@@ -81,7 +81,7 @@ func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleC
 	sqlitestore.AddRetries(sqlitestore.ContentionNoticeIn(string(stderr)))
 	// A child that exited Partial stored a graph naming its own gaps. Calling that
 	// a spawn failure hides a usable graph behind a note saying there is none.
-	if childproc.ExitedPartial(err) {
+	if childproc.ExitedPartial(err) || childproc.ExitedAnalyserLimit(err, stderr) {
 		return stderr, nil
 	}
 	// The analysis ran and only its write lost. Said here, where the marker is in

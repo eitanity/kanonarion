@@ -154,7 +154,7 @@ func TestRunCalleesTransitive_ResolvedAbsent(t *testing.T) {
 // store yields a RESOLVED-ABSENT default (the caller has already errored on it).
 func TestNegativeCallAnswer_ModuleNotResolved(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph() // no summaries
-	v, err := negativeCallAnswer(context.Background(), "example.com/x.Fn", true, uc, buildScope{}, cgports.EdgeQueryOptions{}, "")
+	v, err := negativeCallAnswer(context.Background(), "example.com/x.Fn", true, uc, buildScope{}, cgports.EdgeQueryOptions{}, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestNegativeCallAnswer_ModuleNotResolved(t *testing.T) {
 func TestNegativeCallAnswer_NodeAbsentBelowFull(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Completeness: cgdomain.CompletenessMetadataOnly}
 	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
-	v, err := negativeCallAnswer(context.Background(), "example.com/m.Ghost", false, uc, buildScope{}, cgports.EdgeQueryOptions{}, "")
+	v, err := negativeCallAnswer(context.Background(), "example.com/m.Ghost", false, uc, buildScope{}, cgports.EdgeQueryOptions{}, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestNegativeCallAnswer_NodeAbsentBelowFull(t *testing.T) {
 func TestNegativeCallAnswer_ListError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.Err = errors.New("boom")
-	if _, err := negativeCallAnswer(context.Background(), "example.com/m.Fn", true, uc, buildScope{}, cgports.EdgeQueryOptions{}, ""); err == nil {
+	if _, err := negativeCallAnswer(context.Background(), "example.com/m.Fn", true, uc, buildScope{}, cgports.EdgeQueryOptions{}, "", ""); err == nil {
 		t.Fatal("expected error from list failure")
 	}
 }

@@ -933,6 +933,31 @@ func TestAdapterExtractor_CallGraph_PartialChildExit(t *testing.T) {
 		}
 	})
 
+	// A child too old to read the source refuses with 20 after storing its
+	// record; the stage reads that record rather than a spawn failure.
+	t.Run("analyser-limit exit is classified from the stored record", func(t *testing.T) {
+		exec := &fakeSubprocessExecutor{
+			stderr: []byte("error: github.com/foo/bar@v1.0.0: Partial — this kanonarion cannot read this code: " +
+				"it was built with go1.26 and the code requires go1.27. It type-checks source with the Go compiled into the binary"),
+			err: fakeExitStatus{code: 20},
+		}
+		reader := &fakeCallGraphReader{
+			found: true,
+			out: cgports.CallGraphOutcome{
+				ContentHash:   "hash-cg-limit",
+				OverallStatus: cgdomain.CallGraphStatusPartial,
+				FailureCause:  cgdomain.FailureCauseEnvironment,
+			},
+		}
+		res, err := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false, "")
+		if err != nil {
+			t.Fatalf("Extract failed: %v", err)
+		}
+		if res.RecordID != "hash-cg-limit" || res.Cause != cgdomain.FailureCauseEnvironment {
+			t.Errorf("stage = %+v, want the stored record and its environment cause", res)
+		}
+	})
+
 	// A child that exited saying it produced no graph is still a failed stage.
 	t.Run("no-graph exit still marks StageFailed", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{

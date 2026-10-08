@@ -1,6 +1,6 @@
 module github.com/eitanity/kanonarion
 
-go 1.26.6
+go 1.27.2
 
 require (
 	github.com/CycloneDX/cyclonedx-go v0.12.0

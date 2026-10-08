@@ -11,6 +11,7 @@ import (
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/spf13/cobra"
 )
 
@@ -177,6 +178,11 @@ func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
 	if r.FailureDetail != "" {
 		msg += " — " + r.FailureDetail
 	}
+	// 20, not 1 or 2: the remedy is another build of this binary, which no
+	// invocation of this one can run, so the invocation is what has to change.
+	if l, ok := cgdomain.AnalyserLimitOf(r.FailureDetail); ok && r.OverallStatus != cgdomain.CallGraphStatusCancelled {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %s — %s", r.Coordinate, r.OverallStatus, l.Statement())}
+	}
 	switch r.OverallStatus {
 	// ExcludedByConfig shares Extracted's 0 by decision, not by omission: the
 	// operator listed this module in callgraph.exclude, so the absent graph is
@@ -264,7 +270,10 @@ func printCallGraphSummary(
 // their module cache. The record has already classified it, so the remedy is
 // printed from the classification rather than re-derived by the reader.
 func writeIncompletenessRemedy(stdout io.Writer, r cgdomain.CallGraphRecord, dir string) error {
-	if !cgdomain.RecordIsIncomplete(r) {
+	// A failure the analyser limit caused is owed its remedy too: no graph is
+	// still not a fault in the source.
+	_, limited := gotoolchain.ReadAnalyserLimit(r.FailureDetail)
+	if !cgdomain.RecordIsIncomplete(r) && (!limited || !cgdomain.RecordIsFailure(r)) {
 		return nil
 	}
 	if _, err := fmt.Fprintln(stdout, cgdomain.IncompleteGraphRemedy(r.Coordinate, r.FailureCause, r.FailureDetail, dir)); err != nil {

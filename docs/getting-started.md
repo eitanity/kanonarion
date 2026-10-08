@@ -52,7 +52,7 @@ kanonarion uses these four words everywhere.
 
 ### 0. Before you start
 
-- **Go 1.26 or newer.** kanonarion never downloads a Go toolchain. It analyses
+- **Go 1.27.2 or newer.** kanonarion never downloads a Go toolchain. It analyses
   with the one you already have. If a project needs a newer Go than that, it
   uses a newer Go that is already unpacked on this machine — in `~/sdk`, or one
   the go command downloaded earlier into the module cache. If there is none, it
@@ -253,10 +253,10 @@ is, its vulnerability status, and the policy outcome.
 
 ```
 github.com/CycloneDX/cyclonedx-go@v0.12.0                            Verified               Apache-2.0               current                        Clean  allow [permissive]
-github.com/dustin/go-humanize@v1.0.1                                 Verified               MIT                      latest: v1.1.0 (2 days ago)    Clean  allow [permissive]
+github.com/dustin/go-humanize@v1.0.1                                 Verified               MIT                      latest: v1.1.0 (20 days ago)   Clean  allow [permissive]
 github.com/google/licensecheck@v0.3.1                                Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 github.com/google/uuid@v1.6.0                                        Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-github.com/klauspost/compress@v1.20.0                                Verified               BSD-3-Clause [Multiple]  current                        Clean  allow [permissive]
+github.com/klauspost/compress@v1.20.0                                Verified               BSD-3-Clause [Multiple]  latest: v1.20.1 (13 days ago)  Clean  allow [permissive]
 github.com/oklog/ulid/v2@v2.1.2                                      Verified               Apache-2.0               current                        Clean  allow [permissive]
 github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec  Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 github.com/rogpeppe/go-internal@v1.16.0                              Verified               BSD-3-Clause             current                        Clean  allow [permissive]
@@ -266,16 +266,16 @@ go.uber.org/goleak@v1.3.0                                            Verified   
 golang.org/x/mod@v0.41.0                                             Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 golang.org/x/sync@v0.23.0                                            Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 golang.org/x/sys@v0.48.0                                             Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-golang.org/x/tools@v0.50.0                                           Verified               BSD-3-Clause             current                        Clean  allow [permissive]
+golang.org/x/tools@v0.50.0                                           Verified               BSD-3-Clause             latest: v0.51.0 (6 days ago)   Clean  allow [permissive]
 gopkg.in/yaml.v3@v3.0.1                                              Verified               MIT [Multiple]           current                        Clean  allow [permissive]
-modernc.org/libc@v1.75.7                                             Verified               BSD-3-Clause             latest: v1.77.0 (2 days ago)   Clean  allow [permissive]
+modernc.org/libc@v1.75.7                                             Verified               BSD-3-Clause             latest: v1.77.1 (16 days ago)  Clean  allow [permissive]
                                                                                                                      newer major: modernc.org/libc/v2@v2.1.30
 modernc.org/mathutil@v1.7.1                                          Verified               BSD-3-Clause             current                        Clean  allow [permissive]
 modernc.org/memory@v1.12.1                                           Verified               BSD-3-Clause             current                        Clean  allow [permissive]
-modernc.org/sqlite@v1.59.0                                           Verified               BSD-3-Clause [Multiple]  current                        Clean  allow [permissive]
-stdlib@v1.26.6                                                       VerifiedGoDevChecksum  BSD-3-Clause             unmeasured (toolchain-pinned)  Clean  allow [permissive]
+modernc.org/sqlite@v1.59.0                                           Verified               BSD-3-Clause [Multiple]  latest: v1.60.1 (9 days ago)   Clean  allow [permissive]
+stdlib@v1.27.2                                                       VerifiedGoDevChecksum  BSD-3-Clause             unmeasured (toolchain-pinned)  Clean  allow [permissive]
 
-latest as of 2026-09-20 19:35 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
+latest as of 2026-10-08 20:48 UTC (staleness.ttl 1h0m0s; `latest --fresh` to re-query)
 ```
 
 The default scope is `code`. Pass `--tool` for the tooling supply chain, or
@@ -378,8 +378,8 @@ kanonarion dependents github.com/spf13/pflag@v1.0.10
 ```
 
 ```
-notice: ./go.mod names the build, so the answer below is walk 01M0RGVEZH7BN09G63JX3B1X88 (code scope, frame linux/amd64) rooted at github.com/eitanity/kanonarion@local; the require directives in ./go.mod agree with that walk, though the manifest was not re-resolved through the toolchain for this read; the store holds 2 walks of this target in the code scope on linux/amd64 under go1.26.6 and none was named, so this one was chosen — name one with --walk-id to choose it yourself
-1 module(s) in walk 01M0RGVEZH7BN09G63JX3B1X88 (frame linux/amd64) depend on github.com/spf13/pflag@v1.0.10 (the walk root does; it is excluded by default — pass --include-root):
+notice: ./go.mod names the build, so the answer below is walk 01M4DN1KPYJM458G55MJEGK9NV (code scope, frame linux/amd64) rooted at github.com/eitanity/kanonarion@local; ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod records the current resolution
+1 module(s) in walk 01M4DN1KPYJM458G55MJEGK9NV (frame linux/amd64) depend on github.com/spf13/pflag@v1.0.10 (the walk root does; it is excluded by default — pass --include-root):
   github.com/spf13/cobra@v1.10.2  [direct]
 ```
 

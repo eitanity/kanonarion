@@ -46,6 +46,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // WaitDelay bounds how long Wait blocks on the child's I/O pipes after the
@@ -125,4 +127,20 @@ type exitCoder interface{ ExitCode() int }
 func ExitedPartial(err error) bool {
 	var ec exitCoder
 	return errors.As(err, &ec) && ec.ExitCode() == PartialExitCode
+}
+
+// ConfigExitCode is the exit code a kanonarion child uses when the invocation,
+// rather than the work, has to change.
+const ConfigExitCode = 20
+
+// ExitedAnalyserLimit reports whether a child exited ConfigExitCode because it
+// was built with a Go too old to read the source. It still wrote its record,
+// which says so, so a parent reads the record as it would after a Partial exit.
+func ExitedAnalyserLimit(err error, stderr []byte) bool {
+	var ec exitCoder
+	if !errors.As(err, &ec) || ec.ExitCode() != ConfigExitCode {
+		return false
+	}
+	_, ok := gotoolchain.ReadAnalyserLimit(string(stderr))
+	return ok
 }

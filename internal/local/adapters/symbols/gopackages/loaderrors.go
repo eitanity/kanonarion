@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // reportLoadErrors writes one line per distinct problem the load reported and
@@ -247,4 +249,16 @@ func flattenMessage(msg string) string {
 // "# example.com/pb" line it prints above a package's build errors.
 func isPackageBanner(msg string) bool {
 	return strings.HasPrefix(msg, "# ") && !strings.Contains(msg, "\n")
+}
+
+// analyserLimit reads the highest analyser toolchain limit any loaded package
+// reports.
+func analyserLimit(pkgs []*packages.Package) (gotoolchain.AnalyserLimit, bool) {
+	var msgs []string
+	packages.Visit(pkgs, nil, func(p *packages.Package) {
+		for _, e := range p.Errors {
+			msgs = append(msgs, e.Msg)
+		}
+	})
+	return gotoolchain.ReadAnalyserLimit(strings.Join(msgs, "\n"))
 }

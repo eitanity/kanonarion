@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"slices"
 	"sort"
+	"strings"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 )
@@ -152,6 +153,13 @@ func Analyse(rec cgdomain.CallGraphRecord, roots []string) CapabilityReport {
 	default:
 		report.Caveat = "call graph carries a status this build does not recognise (" +
 			rec.OverallStatus.String() + "); capability set is a lower bound and may be incomplete"
+	}
+
+	// A graph the analysing binary could not read is not a lower bound found in
+	// the source, and the reader is owed the reason and what lifts it.
+	if clause, remedy, ok := cgdomain.AnalyserLimitCaveat(rec.FailureDetail); ok && report.Partial {
+		report.Caveat = strings.TrimSpace("call graph did not fully resolve (status " + rec.OverallStatus.String() +
+			"): " + clause + "; capability set is a lower bound and may be incomplete. " + remedy)
 	}
 
 	nodeByID := make(map[string]cgdomain.CallNode, len(rec.Nodes))

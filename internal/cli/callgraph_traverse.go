@@ -155,7 +155,7 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 				return err
 			}
 		case pr.isPartial:
-			if err := writePartialNotice(stdout, "callers", symbolID, pr.failedPkgs); err != nil {
+			if err := writePartialNotice(stdout, "callers", symbolID, pr); err != nil {
 				return err
 			}
 		}
@@ -179,7 +179,7 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callers", symbolID, refs, true)
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg, pr.detail)
 		if verr != nil {
 			return verr
 		}
@@ -283,7 +283,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 				return err
 			}
 		case pr.isPartial:
-			if err := writePartialNotice(stdout, "callees", symbolID, pr.failedPkgs); err != nil {
+			if err := writePartialNotice(stdout, "callees", symbolID, pr); err != nil {
 				return err
 			}
 		}
@@ -307,7 +307,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callees", symbolID, refs, false)
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg, pr.detail)
 		if verr != nil {
 			return verr
 		}
@@ -488,7 +488,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 				return err
 			}
 		case pr.isPartial:
-			if err := writePartialNotice(stdout, "transitive callers", symbolID, pr.failedPkgs); err != nil {
+			if err := writePartialNotice(stdout, "transitive callers", symbolID, pr); err != nil {
 				return err
 			}
 		}
@@ -511,7 +511,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callers", symbolID, edges, nodes, true)
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg, pr.detail)
 		if verr != nil {
 			return verr
 		}
@@ -567,7 +567,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 				return err
 			}
 		case pr.isPartial:
-			if err := writePartialNotice(stdout, "transitive callees", symbolID, pr.failedPkgs); err != nil {
+			if err := writePartialNotice(stdout, "transitive callees", symbolID, pr); err != nil {
 				return err
 			}
 		}
@@ -590,7 +590,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callees", symbolID, edges, nodes, false)
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg, pr.detail)
 		if verr != nil {
 			return verr
 		}

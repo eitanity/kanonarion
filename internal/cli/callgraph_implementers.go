@@ -208,6 +208,7 @@ type implementerLookup struct {
 	testScope        domain.TestScope
 	testScopeDetail  string
 	partialPkg       string
+	partialDetail    string
 }
 
 func (l implementerLookup) hasMethod(method string) bool {
@@ -231,7 +232,7 @@ func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) do
 		sinks = append(sinks, domain.SoundnessSink{
 			Kind:   domain.SinkDroppedPackageEdges,
 			Site:   l.iface.ID,
-			Detail: "package " + l.partialPkg + " did not typecheck, so its edges were dropped",
+			Detail: "package " + l.partialPkg + " " + domain.DroppedPackageReason(l.partialDetail) + ", so its edges were dropped",
 		})
 	}
 	if l.belowFull != domain.CompletenessUnknown && !l.belowFull.IsBuiltWithBodies() {
@@ -341,6 +342,7 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 		if rec.OverallStatus == domain.CallGraphStatusPartial && out.partialPkg == "" {
 			if fp, hit := symbolFailedPackage(interfaceID, rec.FailedPackages); hit {
 				out.partialPkg = fp
+				out.partialDetail = rec.FailureDetail
 			}
 		}
 		if out.belowFull == domain.CompletenessUnknown &&

@@ -208,6 +208,9 @@ type NegativeAnswerInputs struct {
 	// empty answer over it is unmeasured rather than absent. Empty when the
 	// symbol's own package typechecked.
 	DroppedEdgePackage string
+	// DroppedEdgeDetail is the failure detail of the record that dropped it,
+	// which says why.
+	DroppedEdgeDetail string
 	// TestsExcludedByRequest is set when the caller asked for the test surface
 	// to be dropped. It is not a soundness sink — the scope was chosen, not
 	// missed — but it still narrows what an empty answer means, so it is named
@@ -245,7 +248,7 @@ func ClassifyNegativeAnswer(in NegativeAnswerInputs) Answer {
 		sinks = append(sinks, SoundnessSink{
 			Kind:   SinkDroppedPackageEdges,
 			Site:   site,
-			Detail: "package " + in.DroppedEdgePackage + " did not typecheck, so its edges were dropped",
+			Detail: "package " + in.DroppedEdgePackage + " " + DroppedPackageReason(in.DroppedEdgeDetail) + ", so its edges were dropped",
 		})
 	}
 

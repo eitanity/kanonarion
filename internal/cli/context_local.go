@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	localimporter "github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
 	localsnapshot "github.com/eitanity/kanonarion/internal/local/adapters/snapshot/walkdir"
 	localsymbols "github.com/eitanity/kanonarion/internal/local/adapters/symbols/gopackages"
@@ -95,6 +97,11 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 		ExcludeTests:  f.excludeTests,
 	})
 	if err != nil {
+		// 20: the remedy is a newer build of this binary, not an invocation of it.
+		var lim *gotoolchain.AnalyserLimitError
+		if errors.As(err, &lim) {
+			return &exitError{code: ExitConfig, msg: "local workspace analysis: " + lim.Error()}
+		}
 		return fmt.Errorf("local workspace analysis: %w", err)
 	}
 

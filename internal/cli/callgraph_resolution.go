@@ -316,6 +316,9 @@ type partialRoot struct {
 	// failedPkgs is the union of the owning module's failed packages, for
 	// messaging.
 	failedPkgs []string
+	// limitDetail is the detail of a Partial record whose packages the analysing
+	// binary could not read, so the notice says why they are missing.
+	limitDetail string
 	// cause is what the record says limited it: the module's own sources, or the
 	// environment the analysis ran in. It decides which remedy is printed, and a
 	// remedy chosen without it sends the reader after the wrong fault.
@@ -373,6 +376,9 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		out.isPartial = true
 		for _, p := range rec.FailedPackages {
 			failedSet[p] = true
+		}
+		if _, lim := gotoolchain.ReadAnalyserLimit(rec.FailureDetail); lim && out.limitDetail == "" {
+			out.limitDetail = rec.FailureDetail
 		}
 		if fp, hit := symbolFailedPackage(symbolID, rec.FailedPackages); hit && out.failedPkg == "" {
 			out.failedPkg = fp
@@ -461,7 +467,7 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 // droppedPkg: a symbol whose own package failed to typecheck is not a node in any
 // graph, so classifyEmptyEdgeResult is deliberately skipped for it and the
 // dropped package carried here is what keeps the verdict off ABSENT.
-func negativeCallAnswer(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, sc buildScope, opts ports.EdgeQueryOptions, droppedPkg string) (domain.Answer, error) {
+func negativeCallAnswer(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, sc buildScope, opts ports.EdgeQueryOptions, droppedPkg, droppedDetail string) (domain.Answer, error) {
 	coords, err := listScopedCoordinates(ctx, uc, sc.modules)
 	if err != nil {
 		return domain.Answer{}, err
@@ -486,6 +492,7 @@ func negativeCallAnswer(ctx context.Context, symbolID string, scanDispatch bool,
 		NodesByID:              map[string]domain.CallNode{},
 		ScanDispatch:           scanDispatch,
 		DroppedEdgePackage:     droppedPkg,
+		DroppedEdgeDetail:      droppedDetail,
 		TestsExcludedByRequest: opts.ExcludeTests,
 		// Start from Analysed and weaken on the first record that says otherwise:
 		// a symbol answered from several analysed versions is only as measured as
@@ -608,12 +615,17 @@ func symbolFailedPackage(symbolID string, failedPkgs []string) (string, bool) {
 //
 // kind is "callers", "callees", or the transitive variants.
 func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
+	why := "did not typecheck when " + pr.coord.String() + " was analysed"
+	if l, ok := gotoolchain.ReadAnalyserLimit(pr.detail); ok {
+		why = "was not analysed: the kanonarion that analysed " + pr.coord.String() + " was built with " +
+			l.Built + " and the code requires " + l.Required
+	}
 	line := fmt.Sprintf(
-		"notice: unmeasured on one side — package %q did not typecheck when %s was analysed, so edges "+
+		"notice: unmeasured on one side — package %q %s, so edges "+
 			"with an end inside it were dropped; the %s of %s listed below are what the store does hold "+
 			"(chiefly edges recorded in other modules' graphs), and an edge inside %s that is not listed "+
 			"is unmeasured rather than known to be absent",
-		pr.failedPkg, pr.coord, kind, symbolID, pr.failedPkg)
+		pr.failedPkg, why, kind, symbolID, pr.failedPkg)
 	// Which remedy, and whether it needs --force, are decided by the record's own
 	// stated cause rather than here: a published dependency's build failure is not
 	// the reader's to fix, and a gap this host's cold module cache opened is not a
@@ -635,14 +647,14 @@ func writeDroppedEdgesNotice(stdout io.Writer, kind, symbolID string, pr partial
 // emitted for every callers/callees/reachability answer over a Partial graph
 // whose root package itself typechecked (the root-in-failed-package case is a
 // hard error, not a caveat). Never emitted for an Extracted graph.
-func writePartialNotice(stdout io.Writer, kind, symbolID string, failedPkgs []string) error {
+func writePartialNotice(stdout io.Writer, kind, symbolID string, pr partialRoot) error {
 	pkgs := "some packages"
-	if len(failedPkgs) > 0 {
-		pkgs = strings.Join(failedPkgs, ", ")
+	if len(pr.failedPkgs) > 0 {
+		pkgs = strings.Join(pr.failedPkgs, ", ")
 	}
 	if _, err := fmt.Fprintf(stdout,
-		"notice: call graph is Partial — %s did not typecheck; %s of %s may be incomplete (edges in the failed package(s) were dropped)\n",
-		pkgs, kind, symbolID); err != nil {
+		"notice: call graph is Partial — %s %s; %s of %s may be incomplete (edges in the failed package(s) were dropped)\n",
+		pkgs, domain.DroppedPackageReason(pr.limitDetail), kind, symbolID); err != nil {
 		return fmt.Errorf("writing partial notice: %w", err)
 	}
 	return nil

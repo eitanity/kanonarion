@@ -390,6 +390,10 @@ func TestExitCodeContract_PartialSurvivesTheProcessBoundary(t *testing.T) {
 		t.Errorf("childproc.PartialExitCode = %d, ExitPartial = %d; the parent reads the child's exit code and the two must be one number",
 			childproc.PartialExitCode, ExitPartial)
 	}
+	if childproc.ConfigExitCode != ExitConfig {
+		t.Errorf("childproc.ConfigExitCode = %d, ExitConfig = %d; the parent reads the child's exit code and the two must be one number",
+			childproc.ConfigExitCode, ExitConfig)
+	}
 }
 
 // The three classes must not collide. This is the whole contract in one

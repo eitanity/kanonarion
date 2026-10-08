@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"go/token"
+	"go/version"
 	"io"
 	"log/slog"
 	"os"
@@ -19,6 +20,7 @@ import (
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -566,6 +568,11 @@ func (a *Analyser) analyseDirOnce(
 		if goenv.IsToolchainTooOld(detail) {
 			return domain.FailureCauseEnvironment
 		}
+		// The source is newer than the Go this binary was built with: a newer
+		// kanonarion re-measures it, so it is never the module's finding.
+		if _, ok := gotoolchain.ReadAnalyserLimit(detail); ok {
+			return domain.FailureCauseEnvironment
+		}
 		return a.classifyLoadFailure(ctx, tempDir, env)
 	}
 
@@ -958,7 +965,32 @@ func classifyIncompleteGraph(
 		rec.FailureDetail = strings.TrimSuffix(unobtainable+"; "+rec.FailureDetail, "; ")
 		rec.FailureCause = domain.FailureCauseEnvironment
 	}
+	// Leads everything: a binary that cannot read the source makes every other
+	// error suspect. It is read from every error, not the three the detail keeps,
+	// and kept in the detail so the remedy can name it.
+	if line, ok := analyserLimitLine(metaErrs, allLoadErrs); ok {
+		if !strings.Contains(rec.FailureDetail, line) {
+			rec.FailureDetail = strings.TrimSuffix(line+"; "+rec.FailureDetail, "; ")
+		}
+		rec.FailureCause = domain.FailureCauseEnvironment
+	}
 	return rec
+}
+
+// analyserLimitLine returns the error stating the highest Go the source needs
+// beyond this binary's build, if any error states one.
+func analyserLimitLine(sets ...[]string) (string, bool) {
+	var best string
+	var top gotoolchain.AnalyserLimit
+	for _, set := range sets {
+		for _, d := range set {
+			l, ok := gotoolchain.ReadAnalyserLimit(d)
+			if ok && (best == "" || version.Compare(l.Required, top.Required) > 0) {
+				best, top = d, l
+			}
+		}
+	}
+	return best, best != ""
 }
 
 // buildCompleteness reads the module-level fidelity off the load result, at the

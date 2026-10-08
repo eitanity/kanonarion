@@ -806,7 +806,8 @@ func (r *usageReport) usageVerdict() cgdomain.Answer {
 	if len(r.DroppedPackages) > 0 {
 		sinks = append(sinks, cgdomain.SoundnessSink{
 			Kind: cgdomain.SinkDroppedPackageEdges, Site: site,
-			Detail: strings.Join(r.DroppedPackages, ", ") + " did not typecheck, so their edges were dropped",
+			Detail: strings.Join(r.DroppedPackages, ", ") + " " + cgdomain.DroppedPackageReason(r.DroppedDetail) +
+				", so their edges were dropped",
 		})
 	}
 	if len(r.Dispatch) > 0 {

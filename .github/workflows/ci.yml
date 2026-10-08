@@ -25,13 +25,15 @@ jobs:
       contents: read
     strategy:
       matrix:
-        # Pinned to the exact patch the go.mod 'go' directive requires
-        # (bumped to 1.26.6 for GO-2026-5026, GO-2026-5972, GO-2026-6090 and
-        # GO-2026-6218). A floating '1.26.x' can resolve setup-go to an older
-        # manifest patch, which then triggers an in-CI GOTOOLCHAIN download to
-        # satisfy the directive — needless and fragile under the hardened egress
-        # allowlist. Bump this in lockstep with go.mod.
-        go: ["1.26.6"]
+        # Pinned to the exact patch the go.mod 'go' directive requires. Release
+        # binaries are built with that Go, and the analysers type-check source
+        # with the go/types compiled into the binary, so it must be the newest Go
+        # users write: a binary built with an older Go refuses newer source. A
+        # floating '1.27.x' can resolve setup-go to an older manifest patch, which
+        # then triggers an in-CI GOTOOLCHAIN download to satisfy the directive —
+        # needless and fragile under the hardened egress allowlist. Bump this in
+        # lockstep with go.mod.
+        go: ["1.27.2"]
     steps:
       - name: Harden the runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2

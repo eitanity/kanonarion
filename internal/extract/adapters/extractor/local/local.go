@@ -378,7 +378,7 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	// A child that exited Partial wrote its graph; the record read below is what
 	// classifies it. Reading that exit as a fault made every incompletely
 	// analysable module a failed stage.
-	if execErr != nil && !childproc.ExitedPartial(execErr) {
+	if execErr != nil && !childproc.ExitedPartial(execErr) && !childproc.ExitedAnalyserLimit(execErr, stderr) {
 		detail, cause, cgStatus := buildSubprocessErrorDetail(execErr, stderr, walkID)
 		return ports.StageResult{
 			Status: domain.StageFailed,

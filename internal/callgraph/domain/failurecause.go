@@ -1,6 +1,9 @@
 package domain
 
-import "github.com/eitanity/kanonarion/internal/failurecause"
+import (
+	"github.com/eitanity/kanonarion/internal/failurecause"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
+)
 
 // FailureCause is the call-graph ledger's name for the shared axis: whether a
 // failed or incomplete extraction is a statement about the module or about the
@@ -72,6 +75,12 @@ const (
 // ImplementersOf: CallGraphRecord is a result type carrying facts, and cache
 // policy is behaviour over those facts rather than one of them.
 func RecordIsCacheable(r CallGraphRecord) bool {
+	// Read from the detail because earlier builds filed this class as the
+	// module's: a binary too old for the source measured nothing, and a newer one
+	// must get to re-measure rather than be served that record back.
+	if _, ok := gotoolchain.ReadAnalyserLimit(r.FailureDetail); ok {
+		return false
+	}
 	switch r.FailureCause {
 	case FailureCauseEnvironment:
 		return false

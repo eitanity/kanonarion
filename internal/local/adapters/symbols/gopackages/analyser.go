@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -53,6 +54,11 @@ func (a *Analyser) AnalyseSymbols(ctx context.Context, root string) ([]domain.Im
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
 		return nil, fmt.Errorf("loading packages: %w", err)
+	}
+	// Fatal only when this binary could not read the source: every reference
+	// it would report then rests on a type check that never happened.
+	if l, ok := analyserLimit(pkgs); ok {
+		return nil, &gotoolchain.AnalyserLimitError{Limit: l}
 	}
 	// Non-fatal: emit partial results on type-check errors. One line per
 	// distinct problem, rather than packages.PrintErrors' three lines for one
