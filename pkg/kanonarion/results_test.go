@@ -147,7 +147,11 @@ var allowedResultMethods = map[string][]string{
 	// behaviour one: it reads the version string the coordinate already holds
 	// and reports how the module system resolves it, exactly as
 	// IsPseudoVersion and IsLocal do. Nothing is measured, fetched or hashed.
-	"ModuleCoordinate": {"ExtractCommitPrefix", "GitTagVersion", "HasVersion", "IsLocal", "IsPreModulesIncompatible", "IsPseudoVersion", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
+	// IsStdlib joins them on the same terms: it reads the path the coordinate
+	// already holds and reports that it names the synthetic standard-library
+	// node rather than a fetchable module, exactly as IsLocal reports the
+	// synthetic local version. Nothing is measured, fetched or hashed.
+	"ModuleCoordinate": {"ExtractCommitPrefix", "GitTagVersion", "HasVersion", "IsLocal", "IsPreModulesIncompatible", "IsPseudoVersion", "IsStdlib", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
 	"FactRecord":       {"Coordinate", "IsGoModOnly"},
 	"WalkRecord":       {},
 	"LicenseRecord":    {"SortFiles"},

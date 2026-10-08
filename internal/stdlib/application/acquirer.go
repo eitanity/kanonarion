@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
@@ -103,6 +105,12 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 
 	if !opts.Force {
 		facts, ok, err := a.store.Get(ctx, version)
+		if errors.As(err, new(*recordseal.NothingServable)) {
+			// Every held measurement was set aside and the store named each; this
+			// build measures one it can serve.
+			a.logger.InfoContext(ctx, "stdlib.acquire.cache_set_aside", slog.String("go_version", version))
+			ok, err = false, nil
+		}
 		if err != nil {
 			return domain.Facts{}, fmt.Errorf("reading stdlib fact cache for %s: %w", version, err)
 		}
@@ -198,7 +206,7 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 // happened, and a log line cannot — nothing stores it and no report shows it.
 func (a *Acquirer) publishedChecksum(ctx context.Context, version string) (string, error) {
 	releases, err := a.manifest.FetchReleases(ctx)
-	if err != nil {
+	if err != nil && !interrupt.Cancelled(ctx, err) {
 		a.logger.WarnContext(ctx, "stdlib.manifest.unavailable",
 			slog.String("go_version", version), slog.String("error", err.Error()))
 		return "", fmt.Errorf("reading the go.dev/dl release manifest: %w", err)
@@ -267,8 +275,10 @@ func (a *Acquirer) identifyLicense(ctx context.Context, version string, tarball 
 	}
 	spdx, err := a.licenses.Identify(ctx, text)
 	if err != nil {
-		a.logger.WarnContext(ctx, "stdlib.license.identify_failed",
-			slog.String("go_version", version), slog.String("error", err.Error()))
+		if !interrupt.Cancelled(ctx, err) {
+			a.logger.WarnContext(ctx, "stdlib.license.identify_failed",
+				slog.String("go_version", version), slog.String("error", err.Error()))
+		}
 		return "", licenseClassifierFailed
 	}
 	if spdx == "" {
@@ -287,8 +297,10 @@ func (a *Acquirer) identifyLicense(ctx context.Context, version string, tarball 
 func (a *Acquirer) resolveCommit(ctx context.Context, version string) string {
 	commit, err := a.commits.ResolveCommit(ctx, domain.VCSRepoURL, version)
 	if err != nil {
-		a.logger.WarnContext(ctx, "stdlib.vcs.unresolved",
-			slog.String("go_version", version), slog.String("error", err.Error()))
+		if !interrupt.Cancelled(ctx, err) {
+			a.logger.WarnContext(ctx, "stdlib.vcs.unresolved",
+				slog.String("go_version", version), slog.String("error", err.Error()))
+		}
 		return ""
 	}
 	return commit
@@ -318,8 +330,10 @@ func (a *Acquirer) cacheTarball(ctx context.Context, version string, tarball []b
 		return ""
 	}
 	if err := a.blobs.Put(ctx, identity, bytes.NewReader(tarball)); err != nil {
-		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",
-			slog.String("go_version", version), slog.String("error", err.Error()))
+		if !interrupt.Cancelled(ctx, err) {
+			a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",
+				slog.String("go_version", version), slog.String("error", err.Error()))
+		}
 		return ""
 	}
 	return identity.String()

@@ -149,14 +149,21 @@ func TestScript(t *testing.T) {
 	})
 }
 
-func cmdSeedWalk(args []string) {
+// seedStoreRoot is the shared prologue of the seed commands: exactly one
+// argument, the store root, created 0o750; any failure exits 1.
+func seedStoreRoot(args []string) string {
 	if len(args) != 1 {
 		os.Exit(1)
 	}
 	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
+	if err := os.MkdirAll(storeRoot, 0o750); err != nil { // #nosec G703 -- the test's own scratch directory, passed on argv by the TestMain re-exec harness
 		os.Exit(1)
 	}
+	return storeRoot
+}
+
+func cmdSeedWalk(args []string) {
+	storeRoot := seedStoreRoot(args)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	migrations := append(fetchsqlite.Migrations(), sqlite.Migrations()...)
 	db, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
@@ -390,13 +397,7 @@ func buildFixtureWalkRecords() []domain.WalkRecord {
 }
 
 func cmdSeedCallGraph(args []string) {
-	if len(args) != 1 {
-		os.Exit(1)
-	}
-	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		os.Exit(1)
-	}
+	storeRoot := seedStoreRoot(args)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	migrations := append(fetchsqlite.Migrations(), cgsqlite.Migrations()...)
 	db, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
@@ -491,13 +492,7 @@ func cmdSeedCallGraph(args []string) {
 }
 
 func cmdSeedLicense(args []string) {
-	if len(args) != 1 {
-		os.Exit(1)
-	}
-	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		os.Exit(1)
-	}
+	storeRoot := seedStoreRoot(args)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	db, err := sqlitestore.Open(dbPath, licsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
@@ -532,13 +527,7 @@ func cmdSeedLicense(args []string) {
 }
 
 func cmdSeedIface(args []string) {
-	if len(args) != 1 {
-		os.Exit(1)
-	}
-	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		os.Exit(1)
-	}
+	storeRoot := seedStoreRoot(args)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	db, err := sqlitestore.Open(dbPath, ifsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
@@ -579,13 +568,7 @@ func cmdSeedIface(args []string) {
 }
 
 func cmdSeedExamples(args []string) {
-	if len(args) != 1 {
-		os.Exit(1)
-	}
-	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		os.Exit(1)
-	}
+	storeRoot := seedStoreRoot(args)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	migrations := append(fetchsqlite.Migrations(), exsqlite.Migrations()...)
 	db, err := sqlitestore.Open(dbPath, migrations, sqlitestore.IntentCreate)
@@ -642,13 +625,7 @@ func cmdSeedExamples(args []string) {
 const fixtureSnapshotBody = "{}"
 
 func cmdSeedVuln(args []string) {
-	if len(args) != 1 {
-		os.Exit(1)
-	}
-	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		os.Exit(1)
-	}
+	storeRoot := seedStoreRoot(args)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	db, err := sqlitestore.Open(dbPath, vulnsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
@@ -738,13 +715,7 @@ func cmdSeedVuln(args []string) {
 // record, one ScanFailed record (with ErrorDetail), and one Unscannable record
 // (with UnscannableReason). The overall walk status is Partial.
 func cmdSeedVulnPartial(args []string) {
-	if len(args) != 1 {
-		os.Exit(1)
-	}
-	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		os.Exit(1)
-	}
+	storeRoot := seedStoreRoot(args)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	db, err := sqlitestore.Open(dbPath, vulnsqlite.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
@@ -826,13 +797,7 @@ func cmdSeedVulnPartial(args []string) {
 // example.com/dep@v1.1.0 appears in PerModuleResults but has no record, so
 // that tests can verify the --affected-only flag includes both.
 func cmdSeedVulnForWalk(args []string) {
-	if len(args) != 1 {
-		os.Exit(1)
-	}
-	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		os.Exit(1)
-	}
+	storeRoot := seedStoreRoot(args)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	allMigs := append(append(fetchsqlite.Migrations(), sqlite.Migrations()...), vulnsqlite.Migrations()...)
 	db, err := sqlitestore.Open(dbPath, allMigs, sqlitestore.IntentCreate)
@@ -984,13 +949,7 @@ var nativeFixtureModules = map[string]map[string]string{
 // cmdSeedNative files a fetch record and stores the artefact for each of the
 // three native fixture modules.
 func cmdSeedNative(args []string) {
-	if len(args) != 1 {
-		os.Exit(1)
-	}
-	storeRoot := filepath.Clean(args[0])
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		os.Exit(1)
-	}
+	storeRoot := seedStoreRoot(args)
 	db, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), composition.Migrations(), sqlitestore.IntentCreate)
 	if err != nil {
 		os.Exit(1)

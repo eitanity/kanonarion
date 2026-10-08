@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -463,6 +464,11 @@ type FactRecordLister interface {
 	ListFetchRecords(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.FactRecord, error)
 }
 
+// ErrFetchRecordIntegrity is returned by a fact store read when a stored record
+// fails its integrity invariants and its stored values do not hash to its own
+// seal: the row was altered after it was written.
+var ErrFetchRecordIntegrity = errors.New("fetch record integrity check failed")
+
 // ErrComposedReadUnsupported is the refusal a coordinate-only fetch read owes a
 // FactStore that cannot answer it. It is an error rather than an absence,
 // because "this store cannot say what has been measured" and "nothing has been
@@ -521,6 +527,17 @@ func ComposedFetchRecord(ctx context.Context, facts FactStore, coord coordinate.
 		return domain2.CompositeRecord{}, false, fmt.Errorf("reading measurements of %s: %w", coord, err)
 	}
 	return record, found, nil
+}
+
+// AbsentIfNothingServable reads a coordinate whose every measurement was set
+// aside as absent, for a step whose answer to absence is to measure afresh: the
+// store has named each one, and this build appends a measurement it can serve.
+func AbsentIfNothingServable[R any](rec R, ok bool, err error) (R, bool, error) {
+	if errors.As(err, new(*recordseal.NothingServable)) {
+		var absent R
+		return absent, false, nil
+	}
+	return rec, ok, err
 }
 
 // AttestationStore persists provenance attestations additively, separate from

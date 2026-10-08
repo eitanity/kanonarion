@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -103,7 +104,7 @@ func TestReachabilityQuery_ConsumerRouteOutranksAnIsolatedStandDown(t *testing.T
 	)
 
 	var out bytes.Buffer
-	if err := runVulnReachability(t.Context(), coord.String(), frameVulnID, "", "", false, false, uc, testfakes.NewFakeQueryWalks(), nil, &out); err != nil {
+	if err := runVulnReachability(t.Context(), coord.String(), frameVulnID, "", "", false, false, uc, testfakes.NewFakeQueryWalks(), nil, &out, io.Discard); err != nil {
 		t.Fatalf("runVulnReachability: %v", err)
 	}
 	got := out.String()
@@ -137,7 +138,7 @@ func TestReachabilityQuery_NoConsumerVerdictRefusesRatherThanFallingBack(t *test
 	)
 
 	var out bytes.Buffer
-	err := runVulnReachability(t.Context(), coord.String(), frameVulnID, "", "", false, false, uc, testfakes.NewFakeQueryWalks(), nil, &out)
+	err := runVulnReachability(t.Context(), coord.String(), frameVulnID, "", "", false, false, uc, testfakes.NewFakeQueryWalks(), nil, &out, io.Discard)
 	if err == nil {
 		t.Fatalf("want a refusal, got an answer:\n%s", out.String())
 	}
@@ -167,7 +168,7 @@ func TestReachabilityQuery_IsolatedOnlyLedgerStillAnswers(t *testing.T) {
 	uc.AddRecords(coord, isolatedNotReachable(t, time.Date(2026, 7, 31, 17, 49, 28, 0, time.UTC)))
 
 	var out bytes.Buffer
-	if err := runVulnReachability(t.Context(), coord.String(), frameVulnID, "", "", false, false, uc, testfakes.NewFakeQueryWalks(), nil, &out); err != nil {
+	if err := runVulnReachability(t.Context(), coord.String(), frameVulnID, "", "", false, false, uc, testfakes.NewFakeQueryWalks(), nil, &out, io.Discard); err != nil {
 		t.Fatalf("runVulnReachability: %v", err)
 	}
 	got := out.String()

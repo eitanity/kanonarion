@@ -5,7 +5,7 @@ exit 0
 {
   "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
   "total": 4,
-  "recorded": 3,
+  "recorded": 4,
   "cross_verifiable": 3,
   "cross_verified": 2,
   "cross_verified_module_path_url": 0,
@@ -15,8 +15,9 @@ exit 0
   "go_sum_only": 0,
   "unverified": 0,
   "local_source": 0,
-  "unrecorded": 1,
+  "unrecorded": 0,
   "unrecognised": 0,
+  "divergent": 1,
   "collapsed": false,
   "shares": {
     "cross_verified": 50,
@@ -26,8 +27,9 @@ exit 0
     "go_sum_only": 0,
     "unverified": 0,
     "local_source": 0,
-    "unrecorded": 25,
+    "unrecorded": 0,
     "unrecognised": 0,
+    "divergent": 25,
     "cross_verified_of_applicable": 66.7
   },
   "vcs": {
@@ -63,8 +65,8 @@ exit 0
       "coordinate": "example.com/mod@v1.2.0",
       "path": "example.com/mod",
       "version": "v1.2.0",
-      "class": "no fetch record",
-      "reason": "the fetch record for this module could not be read, so nothing here describes how it was verified"
+      "class": "divergent fetch records",
+      "reason": "divergent fetch records for example.com/mod@v1.2.0 at pipeline 0.4.0: module_hash disagrees ([h1:3IvVk0RhFj+2ByrMSiZ8R9Zi8RQYOGgRkIQ2mO6rqo4= h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=]; records [sha256:7d32329c81baae26c4105ad8e69fd5cf7a7ee6ec8d3191c4608d507d489ca889 sha256:2664c06163e8d0f71d84b26c55403ff5e721d89aa20d54653a741dccf10c5631])"
     },
     {
       "coordinate": "example.com/shallow@v1.0.0",

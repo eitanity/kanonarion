@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/config/domain"
@@ -42,13 +44,21 @@ func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {
 // tempPrefixes lists all kanonarion-owned temp dir/file prefixes created in os.TempDir.
 var tempPrefixes = []string{
 	"kanonarion-vuln-scan-",
+	"kanonarion-vuln-target-",
 	"kanonarion-modcache-",
 	"kanonarion-vulndb-",
 	"kanonarion-vuln-scan-zip-",
+	"kanonarion-callgraph-",
+	"kanonarion-vendor-zip-",
+	"kanonarion-zip-",
 	"kanonarion-vulndb-zip-",
 	"kanonarion-verify-",
 	"kanonarion-cg-",
 	"kanonarion-bin-",
+	"kanonarion-githome-",
+	"kanonarion-toolchain-",
+	"kanonarion_probe_bin",
+	childproc.ScratchPrefix,
 }
 
 func newStoreCleanCmd(stdout io.Writer) *cobra.Command {
@@ -199,7 +209,10 @@ func runStoreClean(root, tmpDir string, asJSON bool, stdout io.Writer) error {
 			full := filepath.Join(tmpDir, name)
 			// Measured before the removal: afterwards there is nothing to size.
 			size := dirSize(full)
-			if rerr := os.RemoveAll(full); rerr != nil {
+			// modcache.Remove, not os.RemoveAll: a module cache a child left
+			// behind is written read-only, and RemoveAll stops at the first
+			// read-only directory.
+			if rerr := modcache.Remove(full); rerr != nil {
 				warn("removing %s: %v", full, rerr)
 			} else {
 				_, _ = fmt.Fprintf(text, "removed %s\n", full)

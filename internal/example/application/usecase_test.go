@@ -486,13 +486,14 @@ func TestExecute_ContextCancelled(t *testing.T) {
 	cancel() // pre-cancel so extractFromZip sees a cancelled context
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
-	result, err := uc.Execute(ctx, application.ExtractRequest{Coordinate: coord})
-	// Infrastructure errors are returned as Go errors; extraction failures are in the record.
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+	_, err := uc.Execute(ctx, application.ExtractRequest{Coordinate: coord})
+	// A cancelled extraction failed nothing: it returns the cancellation and
+	// records no failed extraction.
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Execute: err = %v, want the cancellation", err)
 	}
-	if result.Record.OverallStatus != domain2.ExampleStatusExtractionFailed {
-		t.Errorf("expected ExtractionFailed for cancelled context, got %v", result.Record.OverallStatus)
+	if len(exampleStore.puts) != 0 {
+		t.Errorf("a cancelled extraction wrote %d record(s): %+v", len(exampleStore.puts), exampleStore.puts)
 	}
 }
 

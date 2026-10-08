@@ -35,25 +35,51 @@ func ForcedReanalysisInstruction(coord coordinate.ModuleCoordinate, dir string) 
 	return reanalysis(coord, dir, " --force")
 }
 
-// reanalysis is the single construction both forms use. There is no path through
-// it that yields a placeholder: an unnamed working tree produces a sentence, so
-// no caller can emit one by passing the empty string.
-func reanalysis(coord coordinate.ModuleCoordinate, dir, flags string) string {
+// ReanalysisCommand is ReanalysisInstruction for a caller that is filling a
+// REMEDY SLOT rather than writing a sentence: it returns the invocation and
+// true, or "" and false where no command can be named.
+//
+// The two forms exist because the fallback is not an invocation. A local
+// coordinate whose working tree nothing names produces a SENTENCE, and splicing
+// a sentence into "extract it with: …" composes text that reads as a command
+// and is not one — measured on a live store, a refusal ended "extract it with:
+// no stored record names the working tree, so run kanonarion local from inside
+// it". A slot takes a command or takes nothing.
+//
+// force asks for the form that re-measures past a held record. It is owed
+// exactly where a stored record would otherwise answer the re-run, which is the
+// question RecordIsCacheable decides, so remedy and reuse gate cannot disagree.
+func ReanalysisCommand(coord coordinate.ModuleCoordinate, dir string, force bool) (string, bool) {
+	flags := ""
+	if force {
+		flags = " --force"
+	}
 	if !coord.IsLocal() {
-		return "kanonarion callgraph " + coord.String() + flags
+		return "kanonarion callgraph " + coord.String() + flags, true
 	}
 	if dir == "" {
-		return UnnamedWorkingTreeLead + ", so run kanonarion local" + flags + " from inside it"
+		return "", false
 	}
-	return "kanonarion local " + dir + flags
+	return "kanonarion local " + dir + flags, true
+}
+
+// reanalysis is the single construction both sentence forms use. There is no
+// path through it that yields a placeholder: an unnamed working tree produces a
+// sentence, so no caller can emit one by passing the empty string.
+func reanalysis(coord coordinate.ModuleCoordinate, dir, flags string) string {
+	if line, ok := ReanalysisCommand(coord, dir, flags == " --force"); ok {
+		return line
+	}
+	return UnnamedWorkingTreeLead + ", so run kanonarion local" + flags + " from inside it"
 }
 
 // IsReFetchable reports whether coord names bytes 'kanonarion fetch' can go and
 // get. A project coordinate names a working tree, never a published artefact,
-// so a remedy that tells its reader to fetch it names a command that cannot
-// succeed however often it is run.
+// and the standard library arrives with the toolchain, so a remedy that tells
+// its reader to fetch either names a command that cannot succeed however often
+// it is run — `fetch stdlib@…` does not even parse the path.
 func IsReFetchable(coord coordinate.ModuleCoordinate) bool {
-	return !coord.IsLocal() && !coord.IsZero()
+	return !coord.IsLocal() && !coord.IsStdlib() && !coord.IsZero()
 }
 
 // ColdModuleCacheRemedy makes every module a load needs available on this host,

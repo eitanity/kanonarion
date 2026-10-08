@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -87,7 +88,7 @@ func (a *Analyser) prepareModuleCache(
 		slog.Int("written", report.Written),
 		slog.Int("requested", report.Requested),
 	)
-	if !report.Complete() {
+	if !report.Complete() && !interrupt.Stopped(ctx) {
 		// Under GOPROXY=off there is no fallback, so a hole here is the difference
 		// between a module that resolves and one that records an environment
 		// failure. Naming it is what keeps that failure explicable.

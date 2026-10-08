@@ -3,12 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/failurecause"
 
@@ -82,6 +83,8 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 	}
 	// This command surveys the store, so a row it cannot verify is part of the
 	// answer rather than a reason to withhold it. Any other error still aborts.
+	// A run this build cannot reproduce is set aside and named beside the list.
+	err = storeSetAside.collect(err)
 	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
@@ -163,6 +166,10 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 // Reached only when the listing came back empty.
 func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryScanRunsUseCase) (listZeroScope, error) {
 	all, err := uc.ListAllRuns(ctx)
+	// A set-aside run is still one the store holds, so it is counted.
+	var aside setAsideRows
+	err = aside.take(err)
+	storeSetAside.report(aside)
 	// A store that cannot be surveyed still answers the question the listing was
 	// asked; what it cannot do is size the corpus, and a count of zero would
 	// assert exactly the thing it failed to measure.
@@ -175,7 +182,7 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 		filterValue: walkID,
 		field:       "walk id each run was recorded against",
 		matchKind:   matchExact,
-		considered:  len(all),
+		considered:  len(all) + len(aside),
 		produce:     "kanonarion vuln-scan <walk-id>",
 		listAll:     "kanonarion vuln-scan-list",
 	}
@@ -202,6 +209,9 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 // survey read is on the miss branch, where a found run never goes.
 func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jsonOut bool, stderr io.Writer) error {
 	all, err := uc.ListAllRuns(ctx)
+	var aside setAsideRows
+	err = aside.take(err)
+	storeSetAside.report(aside)
 	// A store with unreadable rows can still be counted; one that cannot be read
 	// at all has nothing honest to say, and a zero substituted for a failed count
 	// would assert exactly the thing it failed to measure.
@@ -214,7 +224,7 @@ func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jso
 		filterValue: runID,
 		field:       "run id",
 		matchKind:   matchExact,
-		considered:  len(all),
+		considered:  len(all) + len(aside),
 		produce:     "kanonarion vuln-scan <walk-id>",
 		listAll:     "kanonarion vuln-scan-list --limit 0",
 	}
@@ -257,10 +267,9 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 type scanAffectedModule struct {
 	Coordinate string `json:"coordinate"`
 	Status     string `json:"status"`
-	// Findings carry the rung behind each reachability answer. This command's
-	// text surface prints finding IDs only, so --json is the sole place a
-	// consumer reads a verdict from a scan run, and a negative published without
-	// the rung is a negative published without what was searched to reach it.
+	// Findings carry the rung behind each reachability answer: a negative
+	// published without the rung is a negative published without what was
+	// searched to reach it.
 	Findings []vulnFindingJSON `json:"findings,omitempty"`
 }
 
@@ -356,6 +365,11 @@ type scanShowSummary struct {
 
 func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, graphs QueryCallGraphUseCase, walks QueryWalksUseCase, natives nativeRecordReader, stdout, stderr io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
+	// A run this build cannot reproduce has nothing to show in its place: the
+	// refusal names it and both remedies, at exit 4.
+	if errors.As(err, new(*recordseal.NothingServable)) {
+		return fmt.Errorf("getting scan run: %w", err)
+	}
 	// vuln-scan-list names the rows it could not verify, and this is the command
 	// an operator runs next against one of those names. Refusing here would send
 	// them from a listing that reports the fault to the one tool that will not
@@ -512,24 +526,23 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 }
 
 // writeScanModuleFindings prints one findings section: a heading with the module
-// count, then one line per module naming its finding IDs. A withdrawn advisory
-// carries its retraction date, which is the whole reason it is listed apart from
-// the affected set.
+// count, then each module with one line per finding carrying the reachability
+// label `vuln-scan` prints for it. A withdrawn advisory carries its retraction
+// date instead, which is the whole reason it is listed apart from the affected set.
 func writeScanModuleFindings(stdout io.Writer, heading string, modules []scanAffectedModule) {
 	if len(modules) == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(stdout, "\n%s (%d):\n", heading, len(modules))
 	for _, m := range modules {
-		findingIDs := make([]string, 0, len(m.Findings))
+		_, _ = fmt.Fprintf(stdout, "  %s\n", m.Coordinate)
 		for _, f := range m.Findings {
-			id := f.ID
+			line := f.ID + reachabilityLabel(f.VulnerabilityFinding, " [not reachable in call graph]")
 			if f.IsWithdrawn() {
-				id += " (withdrawn " + f.WithdrawnAt.UTC().Format(time.RFC3339) + ")"
+				line += " (withdrawn " + f.WithdrawnAt.UTC().Format(time.RFC3339) + ")"
 			}
-			findingIDs = append(findingIDs, id)
+			_, _ = fmt.Fprintf(stdout, "    %s\n", line)
 		}
-		_, _ = fmt.Fprintf(stdout, "  %s  %s\n", m.Coordinate, strings.Join(findingIDs, "  "))
 	}
 }
 
@@ -672,9 +685,20 @@ func scanRunPinnedRecord(
 		return vuldomain.VulnerabilityRecord{}, false, nil
 	}
 	recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
-	if err != nil {
+	// Other generations of the coordinate being set aside does not touch this
+	// answer, which is one record named by hash. The pinned one being set aside
+	// does: the run's record is then one this build cannot serve, and that is
+	// reported as the read failure it is rather than as absence.
+	var aside setAsideRows
+	if err := aside.take(err); err != nil {
 		return vuldomain.VulnerabilityRecord{}, false, fmt.Errorf(
 			"reading the record %s pinned for %s: %w", contentHash, coord, err)
+	}
+	for _, r := range aside {
+		if r.ContentHash == contentHash {
+			return vuldomain.VulnerabilityRecord{}, false, fmt.Errorf(
+				"reading the record %s pinned for %s: %s", contentHash, coord, setAsideRows{r}.statement())
+		}
 	}
 	for _, rec := range recs {
 		if rec.ContentHash == contentHash {
@@ -784,6 +808,8 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	// A history of a walk is a survey of the same rows vuln-scan-list surveys,
 	// and reaches them through the same store seam, so it answers the same way:
 	// every run it can read, plus the ones it cannot, named.
+	var aside setAsideRows
+	err = aside.take(err)
 	unreadable, survivable := unreadableRowReport(err)
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
@@ -811,12 +837,13 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		// none, so an existing consumer sees no change. The unresolvable-inputs
 		// statement joins on the same terms and for the same reason: it is a fact
 		// about the walk, not a field of any run.
-		if len(unreadable) > 0 || !walkPresent {
+		if len(unreadable) > 0 || len(aside) > 0 || !walkPresent {
 			payload := struct {
 				Runs               []vuldomain.WalkScanRun `json:"runs"`
 				Unreadable         []unreadableRowEntry    `json:"unreadable,omitempty"`
+				SetAside           []setAsideJSON          `json:"set_aside,omitempty"`
 				InputsUnresolvable string                  `json:"inputs_unresolvable,omitempty"`
-			}{Runs: runs, Unreadable: unreadable}
+			}{Runs: runs, Unreadable: unreadable, SetAside: aside.json()}
 			if !walkPresent {
 				payload.InputsUnresolvable = unresolvableInputsNote(walkID)
 			}
@@ -831,10 +858,12 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		return nil
 	}
 
+	// Stated on stderr when the command ends, as every text read states one.
+	storeSetAside.report(aside)
 	if !walkPresent {
 		_, _ = fmt.Fprintf(stdout, "%s\n", unresolvableInputsNote(walkID))
 	}
-	if len(runs) == 0 && len(unreadable) == 0 {
+	if len(runs) == 0 && len(unreadable) == 0 && len(aside) == 0 {
 		_, _ = fmt.Fprintf(stdout, "no scan runs found for walk %s\n", walkID)
 		return nil
 	}
@@ -876,7 +905,7 @@ func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanDiff(cmd.Context(), args[0], args[1], jsonOut, ctr.DiffScanRuns, ctr.QueryScanRuns, stdout)
+			return runScanDiff(cmd.Context(), args[0], args[1], jsonOut, ctr.DiffScanRuns, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
 
@@ -885,10 +914,13 @@ func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 
 func runScanDiff(
 	ctx context.Context, runIDA, runIDB string, jsonOut bool,
-	ucDiff DiffScanRunsUseCase, ucRuns QueryScanRunsUseCase, stdout io.Writer,
+	ucDiff DiffScanRunsUseCase, ucRuns QueryScanRunsUseCase, stdout, stderr io.Writer,
 ) error {
+	// The diff is computed without the generations this build cannot reproduce,
+	// and says so: in the document under --json, on stderr otherwise.
+	var aside setAsideRows
 	diff, err := ucDiff.Diff(ctx, runIDA, runIDB)
-	if err != nil {
+	if err := aside.take(err); err != nil {
 		return fmt.Errorf("computing scan diff: %w", err)
 	}
 	// A diff is a claim about two runs of one walk, so the walk it names carries
@@ -901,12 +933,15 @@ func runScanDiff(
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(newScanRunDiffDocument(diff)); err != nil {
+		doc := newScanRunDiffDocument(diff)
+		doc.SetAside = aside.json()
+		if err := enc.Encode(doc); err != nil {
 			return fmt.Errorf("encoding scan diff: %w", err)
 		}
 		return nil
 	}
 
+	aside.write(stderr)
 	_, _ = fmt.Fprintf(stdout, "Diff: %s → %s\n", runIDA, runIDB)
 	if walkPresent {
 		_, _ = fmt.Fprintf(stdout, "Walk: %s\n\n", diff.RunA.WalkID)

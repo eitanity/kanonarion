@@ -54,6 +54,7 @@ func runCallGraphDiff(ctx context.Context, coord coordinate.ModuleCoordinate, f 
 				Generations:      len(recs),
 				DistinctMeasures: len(measurements),
 				DistinctGraphs:   graphs,
+				SetAside:         storeSetAside.take().json(),
 			})
 		}
 		_, werr := fmt.Fprintf(stdout,
@@ -72,7 +73,9 @@ func runCallGraphDiff(ctx context.Context, coord coordinate.ModuleCoordinate, f 
 	counts := diffCounts{generations: len(recs), measurements: len(measurements), graphs: graphs}
 
 	if jsonOut {
-		return encodeJSON(stdout, toCallGraphDiffJSON(coord, counts, pair, diff))
+		doc := toCallGraphDiffJSON(coord, counts, pair, diff)
+		doc.SetAside = storeSetAside.take().json()
+		return encodeJSON(stdout, doc)
 	}
 	return printGenerationDiff(stdout, coord, counts, pair, diff, f)
 }
@@ -399,6 +402,9 @@ type callGraphDiffJSON struct {
 	Fields           []diffFieldJSON      `json:"fields,omitempty"`
 	Collections      []diffCollectionJSON `json:"collections,omitempty"`
 	Summary          string               `json:"summary,omitempty"`
+	// SetAside names the stored call graph generations the reads behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // diffSideJSON is one side of the comparison. SelectedBy is why this record is

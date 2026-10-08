@@ -3,6 +3,7 @@ package retrying
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -169,8 +170,14 @@ func TestCancelledBackoffStopsRetrying(t *testing.T) {
 	r := New(inner, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	r.sleep = func(context.Context, time.Duration) error { return context.Canceled }
 
-	if _, err := r.LatestInfo(context.Background(), "example.com/mod/v2"); err == nil {
+	_, err := r.LatestInfo(context.Background(), "example.com/mod/v2")
+	if err == nil {
 		t.Fatal("want the lookup error, got nil")
+	}
+	// The stop is part of the answer, so the caller does not report a lookup the
+	// run's cancellation cut short as a failed one.
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("the cancellation is missing from the returned error: %v", err)
 	}
 	if inner.calls != 1 {
 		t.Errorf("attempts = %d, want 1", inner.calls)

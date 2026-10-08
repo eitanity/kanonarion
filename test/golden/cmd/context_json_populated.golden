@@ -22,7 +22,7 @@ exit 0
         "dependents": "kanonarion dependents example.com/mod@v1.2.0"
       },
       "verification": {
-        "status": "read_error",
+        "status": "divergent",
         "retracted": false,
         "error": "divergent fetch records for example.com/mod@v1.2.0 at pipeline 0.4.0: module_hash disagrees ([h1:3IvVk0RhFj+2ByrMSiZ8R9Zi8RQYOGgRkIQ2mO6rqo4= h1:e3OmvJfFGN8zHyBHMYyERM362zguHcEOgGGgZ+9xR6A=]; records [sha256:7d32329c81baae26c4105ad8e69fd5cf7a7ee6ec8d3191c4608d507d489ca889 sha256:2664c06163e8d0f71d84b26c55403ff5e721d89aa20d54653a741dccf10c5631]) — two measurements describe different artefacts; recover with --force, which appends an authoritative measurement and erases nothing"
       },
@@ -127,7 +127,7 @@ exit 0
             "reachability_state": "not_reachable",
             "reachable": false,
             "soundness": "confirmed",
-            "soundness_reason": "a call-graph search ran over a graph built with function bodies and found no path from an entry point to the vulnerable symbol, rooted at the 3 entry points the analysis can name — the public API, package init and the process entry point; the graph is Application. Separately, rooting the whole graph — every function the module ships, on the premise that an application is entered in ways no static analysis enumerates — DOES reach the vulnerable symbol. That is a different claim from this one, made from roots nothing established are entered, and it is stated so the reader can weigh it rather than discover it later"
+            "soundness_reason": "a call-graph search ran over a graph built with function bodies and found no path from an entry point to the vulnerable symbol, rooted at the 3 entry points the analysis can name — the public API, package init and the process entry point; the graph is Application. Separately, rooting the whole graph — every function the module ships, on the premise that an application is entered in ways no static analysis enumerates — DOES reach the vulnerable symbol. That is a different claim from this one, made from roots nothing established are entered, and it is stated so the reader can weigh it rather than discover it later. The search ran over the stored call graph of example.com/mod@v1.2.0 (BUILT_WITH_BODIES, 5 nodes, 1 edges)"
           },
           {
             "id": "GO-2026-0004",

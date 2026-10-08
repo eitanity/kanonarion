@@ -118,6 +118,19 @@ func (CanonicalHasher) VerifyContentHash(r FactRecord) error {
 	return nil
 }
 
+// StoredValuesHashToSeal reports whether r's values, with fetched_at spelled
+// exactly as the row stores it, hash to the seal r carries: the column store's
+// form of recordseal's self-consistency check. fetched_at is the one value a
+// re-marshal re-renders, so a seal taken over another spelling of it reproduces
+// only from the stored text.
+func (CanonicalHasher) StoredValuesHashToSeal(r FactRecord, fetchedAt string) bool {
+	saved := r.ContentHash
+	r.ContentHash = ""
+	data, err := marshalCanonicalAt(r, fetchedAt)
+	sum := sha256.Sum256(data)
+	return saved != "" && err == nil && saved == "sha256:"+hex.EncodeToString(sum[:])
+}
+
 // CanonicalTimeFormat is the fixed-width nanosecond encoding a measurement time
 // takes when it carries sub-second precision, re-exported from the package that
 // now owns it for every ledger and the assurance log.
@@ -134,12 +147,17 @@ func canonicalTime(t time.Time) string {
 // Times are formatted as RFC3339 UTC. Keys are sorted by the canonicalRecord
 // struct field order (which matches lexicographic key order).
 func marshalCanonical(r FactRecord) ([]byte, error) {
+	return marshalCanonicalAt(r, canonicalTime(r.FetchedAt))
+}
+
+// marshalCanonicalAt is marshalCanonical with fetched_at spelled as given.
+func marshalCanonicalAt(r FactRecord, fetchedAt string) ([]byte, error) {
 	c := canonicalRecord{
 		AcquisitionMode:    r.AcquisitionMode,
 		ContentHash:        r.ContentHash,
 		ContentLocation:    r.ContentLocation,
 		Ecosystem:          r.Ecosystem,
-		FetchedAt:          canonicalTime(r.FetchedAt),
+		FetchedAt:          fetchedAt,
 		GitCommitHash:      r.GitCommitHash,
 		GitRef:             r.GitRef,
 		GitURL:             r.GitURL,

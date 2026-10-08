@@ -298,6 +298,15 @@ kanonarion licence stdlib@v1.26.5 --history
     artefact: sha256:495be4bc…
 ```
 
+A custody measurement whose stored values hash to its seal but which this build
+cannot reproduce — a build that recorded the acquisition time at a different
+precision wrote it — is set aside: left out of the answer and named on stderr
+(`set aside stdlib custody measurement go1.26.5 content_hash …`). When every
+measurement of the version is set aside, `licence` and `--history` exit `4` and
+name them, and the next walk measures the toolchain again. A measurement whose
+values do **not** hash to its seal has been altered, and the read refuses at exit
+`10`, as before.
+
 `--force`, `--per-file` and `--recursive` do not apply to the standard library
 itself: there is nothing to re-extract, no source files to scan and no
 dependency closure below it. A **project's** `--recursive --all` listing does
@@ -524,6 +533,38 @@ stderr. `--force` records the measurement either way.
 
 The database schema is versioned via the shared `schema_migrations` table
 (numbered per module). The current pipeline version is `1.4.0`.
+
+## A stored record this build cannot verify
+
+A record written by a build with a different canonical shape — an earlier one or
+a later one, at the same pipeline version — may not be reproducible by this
+binary. Its bytes still hash to the seal it carries, so nothing was altered.
+Such a generation is **set aside**: it is left out of the answer and named by
+its `content_hash`. Read it with the build that wrote it, or upgrade.
+
+`licence` (and `--history`), `licence-list`, `licence-compat`, `notice`, `sbom`,
+`audit` and `context` answer from the generations this build can reproduce. On
+the text path the statement goes to stderr:
+
+```
+set aside licence record example.com/mod@v1.0.0 (pipeline 1.4.0) content_hash sha256:f0c5…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+```
+
+Under `--json`, `licence`, `licence-list` and `licence-compat` carry it in the
+document as `set_aside` (`kind: "licence record"`), and `context` in its
+`license` section. The key is
+absent when nothing was set aside. A set-aside generation is not a superseded
+one: `generation` in a listing still says which pipeline answered.
+
+When **every** generation of a coordinate was set aside, there is no record
+this build can serve. `licence --history` exits `4` and names the generations;
+`licence` treats the coordinate as not yet extracted and extracts it again. A
+listing leaves the coordinate out and names it; `notice` and `sbom` treat its
+licence as missing, and `licence-compat` as unmeasured (when it is the root
+whose licence would be the target, it exits `4`).
+
+A record whose stored bytes do **not** hash to its seal has been altered, and
+every command that meets one refuses at exit `10`, as before.
 
 ## Assurance log
 

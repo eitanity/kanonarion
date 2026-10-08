@@ -81,6 +81,7 @@ func SealedCollections() map[string]CollectionOrder {
 	return map[string]CollectionOrder{
 		"findings":                      OrderUnordered,
 		"findings[].affected_symbols":   OrderUnordered,
+		"findings[].affected_packages":  OrderUnordered,
 		"findings[].aliases":            OrderUnordered,
 		"findings[].references":         OrderUnordered,
 		"findings[].reachable.routes":   OrderUnordered,
@@ -116,6 +117,7 @@ func canonicalOrder(r VulnerabilityRecord) VulnerabilityRecord {
 // copies.
 func canonicalFinding(f VulnerabilityFinding) VulnerabilityFinding {
 	f.AffectedSymbols = sortedStrings(f.AffectedSymbols)
+	f.AffectedPackages = sortedStrings(f.AffectedPackages)
 	f.Aliases = sortedStrings(f.Aliases)
 	f.References = sortedReferences(f.References)
 	if f.Reachable != nil {

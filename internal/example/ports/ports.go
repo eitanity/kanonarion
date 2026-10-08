@@ -72,9 +72,11 @@ type ExampleStore interface {
 
 	// GetExampleRecord retrieves the composed record for the given coordinate
 	// and pipeline version. Returns (zero, false, nil) if not found.
-	// Returns ErrExampleIntegrity if a stored hash does not verify, and
+	// Returns ErrExampleIntegrity if stored bytes do not hash to their seal, and
 	// ErrExampleConflict when composition must not pick between the records
-	// held.
+	// held. A generation this build cannot reproduce but whose bytes hash to
+	// their seal is set aside and composed around; when every generation is set
+	// aside it returns *recordseal.NothingServable.
 	GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.ExampleRecord, bool, error)
 
 	// ListExampleRecords returns summaries matching the filter, ordered by
@@ -131,6 +133,11 @@ type IdenticalGenerationReader interface {
 
 // ExampleFilter constrains ListExampleRecords results.
 type ExampleFilter struct {
+	// PipelineVersion restricts the listing to one generation; empty is every
+	// generation. It applies before the collapse and the paging, so a page
+	// counts only the generation asked for.
+	PipelineVersion string
+
 	Limit  int // 0: no limit
 	Offset int
 }

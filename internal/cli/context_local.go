@@ -223,6 +223,9 @@ func printLocalReachabilityText(w *errWriter, r *reachabilityOutput) {
 	if r.SeedRestriction != "" {
 		w.printf("    notice: %s\n", r.SeedRestriction)
 	}
+	for _, a := range r.SeedSetAside {
+		w.printf("    set aside: %s\n", a)
+	}
 	if r.Notice != "" {
 		w.printf("    %s\n", r.Notice)
 		return

@@ -29,6 +29,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -73,8 +74,12 @@ func runChild(ctx context.Context, tc *goenv.Toolchains, root, goBin string, rea
 	for {
 		cmd := childproc.CommandContext(ctx, goBin, args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 		cmd.Dir = root
-		cmd.Env = tc.Apply(probeEnv(root))
+		// A build the cancellation kills cannot remove its own work directory, so
+		// it gets a temp root this process removes once it has exited.
+		scratch, removeScratch := childproc.Scratch()
+		cmd.Env = append(tc.Apply(probeEnv(root)), scratch...)
 		out, detail, err := read(cmd)
+		removeScratch()
 		if err == nil {
 			return out, "", nil
 		}
@@ -154,6 +159,11 @@ func (p *Prober) probeBinaries(ctx context.Context, tc *goenv.Toolchains, root, 
 		entry := ports.ProbedBinary{ImportPath: mainPkg}
 		outBin := filepath.Join(outDir, fmt.Sprintf("probe_%d", i))
 		symbols, err := p.buildAndRead(ctx, tc, root, mainPkg, outBin)
+		if interrupt.Cancelled(ctx, err) {
+			// A build the run's cancellation stopped is not a binary that failed to
+			// build, and the binaries after it were never tried.
+			return ports.SymbolProbeResult{}, fmt.Errorf("building the probe binary for %s: %w", mainPkg, ctx.Err())
+		}
 		if err != nil {
 			entry.BuildError = err.Error()
 			if firstErr == nil {

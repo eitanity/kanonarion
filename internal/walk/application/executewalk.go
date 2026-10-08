@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/audit"
@@ -290,6 +291,9 @@ func (uc *ExecuteWalkUseCase) reusableWalk(
 		return domain.WalkRecord{}, false
 	}
 	prior, err := uc.store.GetWalk(ctx, summaries[0].ID)
+	if interrupt.Cancelled(ctx, err) {
+		return domain.WalkRecord{}, false
+	}
 	if err != nil {
 		uc.logger.WarnContext(ctx, "walk_identity_match_unreadable",
 			slog.String("walk_id", summaries[0].ID),

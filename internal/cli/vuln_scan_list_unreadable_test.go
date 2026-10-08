@@ -70,7 +70,7 @@ func TestRunScanList_ListsReadableRunsAndNamesTheUnreadable(t *testing.T) {
 	}
 	// Drift is not tampering, and the wording must not let a reader conclude it
 	// was.
-	if !strings.Contains(got, "sealed by an earlier record generation; re-scan to reseal") {
+	if !strings.Contains(got, recordseal.SetAsideRemedy) {
 		t.Errorf("output does not report the row as generation drift:\n%s", got)
 	}
 }
@@ -124,7 +124,7 @@ func TestRunScanList_NeutralWordingWhenDriftCannotBeShown(t *testing.T) {
 	if !strings.Contains(got, "could not be verified") {
 		t.Errorf("output does not use the neutral wording:\n%s", got)
 	}
-	if strings.Contains(got, "sealed by an earlier record generation") {
+	if strings.Contains(got, recordseal.SetAsideRemedy) {
 		t.Errorf("output claims generation drift it cannot show:\n%s", got)
 	}
 }
@@ -199,7 +199,7 @@ func TestRunScanShow_ReportsTheUnreadableRunItWasAskedFor(t *testing.T) {
 	if !strings.Contains(got, statusUnreadable) {
 		t.Errorf("output does not mark the run unreadable:\n%s", got)
 	}
-	if !strings.Contains(got, "sealed by an earlier record generation; re-scan to reseal") {
+	if !strings.Contains(got, recordseal.SetAsideRemedy) {
 		t.Errorf("output does not give the reason:\n%s", got)
 	}
 }

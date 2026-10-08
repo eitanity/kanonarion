@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/example/application"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 )
@@ -55,5 +56,32 @@ func TestExecute_AStoreFailureIsStillAnExtractionFailure(t *testing.T) {
 	uc := buildUseCase(t, facts, blobs, &fakeExampleStore{getErr: unreadable})
 	if _, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord}); !errors.Is(err, unreadable) {
 		t.Fatalf("Execute returned %v, want the store failure", err)
+	}
+}
+
+// TestExecute_NothingServableIsACacheMiss: every held generation was set aside
+// as one this build cannot reproduce, so this build measures one it can serve.
+func TestExecute_NothingServableIsACacheMiss(t *testing.T) {
+	coord := mustCoord(t, "example.com/pkg", "v1.0.0")
+	facts := &fakeFactStore{}
+	blobs := &fakeBlobStore{}
+	putFactWithBlob(t, facts, blobs, coord, buildModuleZip(t, coord, map[string]string{
+		"example_test.go": "package pkg_test\n\nfunc ExampleNew() {}\n",
+	}))
+	examples := &fakeExampleStore{getErr: &recordseal.NothingServable{
+		Kind: "record", ID: coord.String(),
+		Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{{ContentHash: "sha256:aa", Reason: recordseal.ErrGenerationDrift}}},
+	}}
+
+	uc := buildUseCase(t, facts, blobs, examples)
+	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	if err != nil {
+		t.Fatalf("a coordinate with nothing servable was reported as an extraction failure: %v", err)
+	}
+	if result.FromCache {
+		t.Error("extraction served a cached answer for a coordinate with nothing servable")
+	}
+	if _, ok := examples.records[exampleKey{coord.Path(), coord.Version(), application.PipelineVersion}]; !ok {
+		t.Error("the measured generation was not appended")
 	}
 }

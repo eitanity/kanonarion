@@ -109,6 +109,9 @@ type licenseDocument struct {
 	// the ordinary case — `obligations` is the owed set and needs no
 	// qualification.
 	ObligationsReading string `json:"obligations_reading,omitempty"`
+	// SetAside names the stored licence generations the read behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // licenseFileJSON is one licence-named file found in the module.

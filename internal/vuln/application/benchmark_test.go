@@ -75,7 +75,6 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 	const scanDelay = 100 * time.Millisecond
 	ctx := context.Background()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	clock := fixedClock{t: now}
 	snap := vulntest.MustNew("bench", "v1")
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -106,6 +105,9 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 		db := &fakeDatabase{snapshot: snap, vulnerables: vulnerables}
 
 		b.Run(fmt.Sprintf("modules=%d/workers=1", n), func(b *testing.B) {
+			// Each iteration starts a later scan: the run ID carries the start
+			// instant, and the store refuses a second run under the same ID.
+			clock := &steppedClock{t: now}
 			vulnStore := newFakeVulnStore()
 			_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 			moduleUC := application.NewScanModuleUseCase(
@@ -126,10 +128,14 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 				if _, err := walkUC.Scan(ctx, params); err != nil {
 					b.Fatal(err)
 				}
+				clock.advance(time.Second)
 			}
 		})
 
 		b.Run(fmt.Sprintf("modules=%d/workers=parallel", n), func(b *testing.B) {
+			// Each iteration starts a later scan: the run ID carries the start
+			// instant, and the store refuses a second run under the same ID.
+			clock := &steppedClock{t: now}
 			vulnStore := newFakeVulnStore()
 			_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 			moduleUC := application.NewScanModuleUseCase(
@@ -150,6 +156,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 				if _, err := walkUC.Scan(ctx, params); err != nil {
 					b.Fatal(err)
 				}
+				clock.advance(time.Second)
 			}
 		})
 	}

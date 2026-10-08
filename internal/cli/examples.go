@@ -167,7 +167,13 @@ func printExampleRecord(r domain.ExampleRecord, fromCache bool, jsonOut bool, st
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(r); err != nil {
+		// The record's own keys, unchanged, plus the generations the read set
+		// aside; absent when there are none.
+		doc := struct {
+			domain.ExampleRecord
+			SetAside []setAsideJSON `json:"set_aside,omitempty"`
+		}{r, storeSetAside.take().json()}
+		if err := enc.Encode(doc); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		return nil
@@ -426,8 +432,8 @@ func exampleRecordMiss(ctx context.Context, uc QueryExamplesUseCase, coord coord
 // single-module rendering, which fails with ExitNotFound — so the filter cause
 // cannot arise and the notice never claims it did. Reached only when the
 // listing came back empty.
-func examplesListZeroScope(ctx context.Context, offset int, uc QueryExamplesUseCase) (listZeroScope, error) {
-	all, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{})
+func examplesListZeroScope(ctx context.Context, offset int, gen listGeneration, uc QueryExamplesUseCase) (listZeroScope, error) {
+	all, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{PipelineVersion: gen.filterVersion()})
 	if err != nil {
 		return listZeroScope{}, fmt.Errorf("counting example records for the zero-result notice: %w", err)
 	}
@@ -449,6 +455,7 @@ func examplesListZeroScope(ctx context.Context, offset int, uc QueryExamplesUseC
 
 func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit, offset int
+	var allGenerations bool
 
 	cmd := &cobra.Command{
 		Use: "examples-list [<module>@<version>]",
@@ -457,7 +464,16 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "List example records, or examples within a specific module",
+		Long: `examples-list reads back the records 'kanonarion examples' writes, one row per
+module coordinate. Given a module coordinate it lists that module's examples
+instead.
+
+By default only records at the pipeline version this build serves are listed,
+one row per coordinate. A record from an earlier pipeline version answers no
+query, so listing it beside the others would pad the count of what is known.
+--all-generations includes them and marks each one.`,
 		Example: `  kanonarion examples-list
+  kanonarion examples-list --all-generations --limit 0
   kanonarion examples-list github.com/charmbracelet/lipgloss@v1.1.0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
@@ -472,12 +488,14 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout, stderr)
 			}
-			return runExamplesList(cmd.Context(), limit, offset, ctr.QueryExamples, stdout, stderr)
+			return runExamplesList(cmd.Context(), limit, offset, allGenerations, ctr.QueryExamples, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to return without a module arg (0 = unlimited)")
 	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
+	cmd.Flags().BoolVar(&allGenerations, "all-generations", false,
+		"also list records extracted at a superseded pipeline version, which this build does not serve")
 
 	return cmd
 }
@@ -535,88 +553,127 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 	return nil
 }
 
-func runExamplesList(ctx context.Context, limit, offset int, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
+// examplesListGeneration is examples-list's generation contract.
+func examplesListGeneration(allGenerations bool) listGeneration {
+	return pipelineGeneration("example records", application.PipelineVersion, allGenerations,
+		"kanonarion examples <module>@<version>")
+}
+
+// examplesListEntry is one row of `examples-list --json`.
+type examplesListEntry struct {
+	Module  string `json:"module"`
+	Version string `json:"version"`
+	Status  string `json:"status"`
+	// PipelineVersion and Superseded are emitted on every row, false included:
+	// a consumer reading only the true ones could not tell a servable record
+	// from one the pair was never computed for.
+	PipelineVersion string `json:"pipeline_version"`
+	Superseded      bool   `json:"superseded"`
+	ExampleCount    int    `json:"example_count"`
+	Conflict        string `json:"conflict,omitempty"`
+}
+
+func runExamplesList(ctx context.Context, limit, offset int, allGenerations bool, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
+	gen := examplesListGeneration(allGenerations)
 	// One row more than will be printed, so the extra row answers whether the
 	// limit bit without a second read.
-	sums, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{Limit: truncationFetchLimit(limit), Offset: offset})
+	sums, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{
+		PipelineVersion: gen.filterVersion(),
+		Limit:           truncationFetchLimit(limit),
+		Offset:          offset,
+	})
 	if err != nil {
 		return fmt.Errorf("listing example records: %w", err)
 	}
 	sums, truncated := truncateList(sums, limit)
-	trunc := listTruncation{limit: limit, subject: "example records", truncated: truncated, offset: offset}
+	trunc := listTruncation{limit: limit, subject: gen.subject, truncated: truncated, offset: offset}
 	if jsonOut {
-		type entry struct {
-			Module       string `json:"module"`
-			Version      string `json:"version"`
-			Status       string `json:"status"`
-			ExampleCount int    `json:"example_count"`
-			Conflict     string `json:"conflict,omitempty"`
-		}
-		out := make([]entry, 0, len(sums))
+		out := make([]examplesListEntry, 0, len(sums))
 		var jsonConflicts []error
 		for _, s := range sums {
 			if s.Conflict != nil {
 				jsonConflicts = append(jsonConflicts, s.Conflict)
-				out = append(out, entry{
+				out = append(out, examplesListEntry{
 					Module: s.ModulePath, Version: s.ModuleVersion,
 					Status: "Conflict", Conflict: s.Conflict.Error(),
+					PipelineVersion: s.PipelineVersion, Superseded: gen.superseded(s.PipelineVersion),
 				})
 				continue
 			}
-			out = append(out, entry{Module: s.ModulePath, Version: s.ModuleVersion,
-				Status: s.OverallStatus.String(), ExampleCount: s.ExampleCount})
+			out = append(out, examplesListEntry{
+				Module:          s.ModulePath,
+				Version:         s.ModuleVersion,
+				Status:          s.OverallStatus.String(),
+				PipelineVersion: s.PipelineVersion,
+				Superseded:      gen.superseded(s.PipelineVersion),
+				ExampleCount:    s.ExampleCount,
+			})
 		}
 		var zero *listZeroScope
 		if len(out) == 0 {
-			scope, serr := examplesListZeroScope(ctx, offset, uc)
+			scope, serr := examplesListZeroScope(ctx, offset, gen, uc)
 			if serr != nil {
 				return serr
 			}
 			zero = &scope
 		}
-		if derr := writeListDocument(stdout, out, trunc, zero); derr != nil {
+		if derr := writeListDocumentWith(stdout, out, trunc, zero, listDocumentFacts{
+			generation: gen.statement(),
+		}); derr != nil {
 			return derr
 		}
-		if len(jsonConflicts) > 0 {
-			return fmt.Errorf("%d module(s) hold conflicting example records: %w",
-				len(jsonConflicts), errors.Join(jsonConflicts...))
-		}
-		return nil
+		return examplesListConflictErr(jsonConflicts)
 	}
 	if len(sums) == 0 {
-		scope, serr := examplesListZeroScope(ctx, offset, uc)
+		scope, serr := examplesListZeroScope(ctx, offset, gen, uc)
 		if serr != nil {
 			return serr
 		}
 		return writeListZeroNotice(stdout, scope)
 	}
 	var conflicts []error
+	superseded := 0
 	for _, s := range sums {
+		mark := gen.mark(s.PipelineVersion)
+		if mark != "" {
+			superseded++
+		}
 		if s.Conflict != nil {
 			conflicts = append(conflicts, s.Conflict)
-			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %s\n",
+			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %s%s\n",
 				s.ModulePath+"@"+s.ModuleVersion, "CONFLICT",
-				"run 'kanonarion examples "+s.ModulePath+"@"+s.ModuleVersion+" --history'"); err != nil {
+				"run 'kanonarion examples "+s.ModulePath+"@"+s.ModuleVersion+" --history'", mark); err != nil {
 				return fmt.Errorf("writing output: %w", err)
 			}
 			continue
 		}
-		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d example(s)\n",
+		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d example(s)%s\n",
 			s.ModulePath+"@"+s.ModuleVersion,
 			s.OverallStatus.String(),
 			s.ExampleCount,
+			mark,
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	if gerr := gen.writeNotice(stdout, superseded, len(sums)); gerr != nil {
+		return gerr
 	}
 	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
 		return terr
 	}
 	// Every module is listed first, then the command fails. A module in dispute
 	// must not be reported as a clean run.
-	if len(conflicts) > 0 {
-		return fmt.Errorf("%d module(s) hold conflicting example records: %w",
-			len(conflicts), errors.Join(conflicts...))
+	return examplesListConflictErr(conflicts)
+}
+
+// examplesListConflictErr fails the run when the listed rows held a disputed
+// coordinate. It sees only the rows being listed, so a disagreement inside a
+// generation this build does not serve is reported only under --all-generations.
+func examplesListConflictErr(conflicts []error) error {
+	if len(conflicts) == 0 {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("%d module(s) hold conflicting example records: %w",
+		len(conflicts), errors.Join(conflicts...))
 }

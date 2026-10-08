@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -90,6 +93,9 @@ type moduleVerification struct {
 	// and derived here, beside the row, so the per-module report and the totals
 	// are one measurement rather than two that may disagree.
 	observation fetchdomain.CoverageObservation
+	// integrity is the failure of a fetch record altered after it was written; a
+	// coverage report refuses on it.
+	integrity error
 }
 
 // graphVerificationRows classifies every node of a walk's graph and records why.
@@ -134,6 +140,18 @@ func graphVerificationRows(
 		default:
 			rec, found, err := records.ComposeFetchRecord(ctx, n.Coordinate)
 			switch {
+			case errors.As(err, new(*recordseal.NothingServable)):
+				row.Reason = "every fetch record held for this module was set aside, " + recordseal.SetAsideRemedy
+			case errors.As(err, new(*fetchdomain.Divergence)):
+				// Records exist and disagree: stated in the divergence's own terms,
+				// never as an absent record.
+				var div *fetchdomain.Divergence
+				_ = errors.As(err, &div)
+				row.observation = fetchdomain.CoverageObservation{Bucket: fetchdomain.BucketDivergent, Recorded: true}
+				row.Reason = div.Error()
+			case errors.Is(err, fetchports.ErrFetchRecordIntegrity):
+				row.Reason = "the fetch record for this module failed its integrity check: " + err.Error()
+				row.integrity = err
 			case err != nil:
 				row.Reason = "the fetch record for this module could not be read, so nothing here describes how it was verified"
 			case !found:
@@ -243,6 +261,7 @@ func writeVerificationCoverage(w io.Writer, c fetchdomain.VerificationCoverage) 
 		{fetchdomain.BucketUnverified, c.Unverified},
 		{fetchdomain.BucketLocalSource, c.LocalSource},
 		{fetchdomain.BucketUnrecorded, c.Unrecorded},
+		{fetchdomain.BucketDivergent, c.Divergent},
 		{fetchdomain.BucketUnrecognised, c.Unrecognised},
 	} {
 		// Zero rows are dropped so the line stays readable, EXCEPT

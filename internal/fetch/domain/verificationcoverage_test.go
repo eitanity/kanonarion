@@ -15,6 +15,7 @@ func TestVerificationCoverage_BucketsPartitionTheTotal(t *testing.T) {
 		{Bucket: BucketUnverified, Recorded: true},
 		{Bucket: BucketLocalSource, Recorded: true},
 		{Bucket: BucketUnrecognised, Recorded: true},
+		{Bucket: BucketDivergent, Recorded: true},
 		{}, // no measurement found
 	}
 	c := VerificationCoverageOf(obs)
@@ -23,11 +24,11 @@ func TestVerificationCoverage_BucketsPartitionTheTotal(t *testing.T) {
 		t.Fatalf("Total=%d, want %d", c.Total, len(obs))
 	}
 	sum := c.CrossVerified + c.ChecksumDBOnly + c.GoSumOnly + c.Unverified +
-		c.LocalSource + c.Unrecorded + c.Unrecognised
+		c.LocalSource + c.Unrecorded + c.Unrecognised + c.Divergent
 	if sum != c.Total {
 		t.Errorf("buckets sum to %d but Total is %d — a module fell out of every class: %+v", sum, c.Total, c)
 	}
-	if c.CrossVerified != 2 || c.Unrecorded != 1 || c.Unrecognised != 1 {
+	if c.CrossVerified != 2 || c.Unrecorded != 1 || c.Unrecognised != 1 || c.Divergent != 1 {
 		t.Errorf("unexpected counts: %+v", c)
 	}
 }
@@ -176,6 +177,7 @@ func TestVerificationBucket_String(t *testing.T) {
 		BucketLocalSource:    "local source (nothing to verify)",
 		BucketUnrecorded:     "no fetch record",
 		BucketUnrecognised:   "unrecognised status",
+		BucketDivergent:      "divergent fetch records",
 	} {
 		if got := bucket.String(); got != want {
 			t.Errorf("bucket %d = %q, want %q", int(bucket), got, want)
@@ -239,5 +241,22 @@ func TestVerificationCoverageOf_CountsVCSNever(t *testing.T) {
 	}
 	if c.VCSNotMeasured != 0 {
 		t.Errorf("VCSNotMeasured = %d, want 0: this record carries legs, so it can speak to the question", c.VCSNotMeasured)
+	}
+}
+
+// Divergent records exist, so the module is recorded; none can speak for it, so
+// it is neither assurance nor in the cross-verifiable denominator, and no VCS
+// evidence is read off records that disagree.
+func TestVerificationCoverage_DivergentIsRecordedButNotApplicable(t *testing.T) {
+	c := VerificationCoverageOf([]CoverageObservation{
+		{Bucket: BucketCrossVerified, Recorded: true, UnderLedger: true},
+		{Bucket: BucketDivergent, Recorded: true, UnderLedger: true},
+	})
+	if c.Divergent != 1 || c.Unrecorded != 0 || c.Recorded() != 2 || c.CrossVerifiable() != 1 {
+		t.Errorf("coverage = %+v (recorded %d, cross-verifiable %d); want the divergent module counted apart",
+			c, c.Recorded(), c.CrossVerifiable())
+	}
+	if vcs := c.VCSRechecked + c.VCSInherited + c.VCSNever + c.VCSNotMeasured + c.VCSUnavailable; vcs != c.CrossVerifiable() {
+		t.Errorf("VCS evidence counts %d modules, want the cross-verifiable %d", vcs, c.CrossVerifiable())
 	}
 }

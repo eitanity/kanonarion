@@ -102,6 +102,13 @@ are re-extracted, so a pipeline step reading only the exit code must be able to
 see it. `extract show` is a store-inspection command and exits `0` whatever
 status it reprints.
 
+A run written by a build with a different canonical shape may not be
+reproducible by this binary, though its bytes still hash to the seal it carries.
+`extract show` naming it exits `4` and says so — read it with the build that
+wrote it, or upgrade. `extract list` reads its columns, so it lists the run. A
+run whose bytes do **not** hash to their seal has been altered, and `extract
+show` refuses at exit `10`.
+
 ## Orchestration Logic
 
 1.  **Walk Loading**: The orchestrator loads the module graph from the specified `walk-id`.

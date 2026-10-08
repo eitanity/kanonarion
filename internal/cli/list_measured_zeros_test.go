@@ -21,7 +21,7 @@ import (
 func interfaceListRows(t *testing.T, sums []ifaceports.InterfaceSummary) []map[string]any {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	if err := printInterfaceList(sums, true, 0, 0, listZeroScope{}, &stdout, &stderr); err != nil {
+	if err := printInterfaceList(sums, true, 0, 0, interfaceListGeneration(false), listZeroScope{}, &stdout, &stderr); err != nil {
 		t.Fatalf("printing interface list: %v", err)
 	}
 	var rows []map[string]any

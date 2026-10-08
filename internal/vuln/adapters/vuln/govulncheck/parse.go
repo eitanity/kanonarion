@@ -70,6 +70,16 @@ type OSV struct {
 	// produced the finding and carried nothing when the analysis did — one
 	// advisory in two shapes, in a field that is sealed and content-hashed.
 	SymbolsByPath map[string][]string `json:"-"`
+	// ImportPathsByModule is, for each module path this advisory names, the
+	// package import paths its entry lists symbols in — deduplicated, sorted and
+	// interned.
+	//
+	// It is beside SymbolsByPath rather than inside it because the two scope a
+	// search on different axes and a finding carries both flat: the symbols say
+	// what is at risk, the packages say where. One module can hold many packages,
+	// and the standard library holds 362, so a symbol name alone scopes to
+	// nothing there.
+	ImportPathsByModule map[string][]string `json:"-"`
 }
 
 // Reference is one entry of an advisory's references array, kept whole: the
@@ -79,15 +89,16 @@ type Reference struct {
 	URL  string `json:"url"`
 }
 
-// Affected is one OSV affected-package block, reduced to the two things a
-// finding reads from it: which module path it is about, and whether it names
-// any symbol within that path.
+// Affected is one OSV affected-package block, reduced to the three things a
+// finding reads from it: which module path it is about, whether it names any
+// symbol within that path, and which packages those symbols are in.
 type Affected struct {
 	Package struct {
 		Name string `json:"name"`
 	} `json:"package"`
 	EcosystemSpecific struct {
 		Imports []struct {
+			Path    string   `json:"path"`
 			Symbols []string `json:"symbols"`
 		} `json:"imports"`
 	} `json:"ecosystem_specific"`
@@ -129,6 +140,42 @@ func symbolsByPath(affected []Affected, intern func(string) string) map[string][
 		}
 		slices.Sort(syms)
 		out[p] = syms
+	}
+	return out
+}
+
+// importPathsByModule returns, per module path the advisory names, the package
+// import paths it names symbols in.
+//
+// It is separate from symbolsByPath because it answers a separate question. The
+// symbol list says WHAT is at risk and the package list says WHERE it is, and
+// one module can hold many packages — the standard library holds 362, so a bare
+// symbol name scopes to nothing there.
+func importPathsByModule(affected []Affected, intern func(string) string) map[string][]string {
+	if len(affected) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(affected))
+	for _, a := range affected {
+		if a.Package.Name == "" {
+			continue
+		}
+		p := intern(a.Package.Name)
+		paths := out[p]
+		if paths == nil {
+			paths = []string{}
+		}
+		for _, imp := range a.EcosystemSpecific.Imports {
+			if imp.Path == "" || len(imp.Symbols) == 0 {
+				continue
+			}
+			ip := intern(imp.Path)
+			if !slices.Contains(paths, ip) {
+				paths = append(paths, ip)
+			}
+		}
+		slices.Sort(paths)
+		out[p] = paths
 	}
 	return out
 }
@@ -234,15 +281,16 @@ func (s *Scanner) processMessage(raw []byte, msg *Message, osvs map[string]*OSV,
 			// Ensure strings are copied and interned
 			id := intern(msg.OSV.ID)
 			osvs[id] = &OSV{
-				ID:            id,
-				Aliases:       internStrings(msg.OSV.Aliases, intern),
-				Summary:       intern(msg.OSV.Summary),
-				Details:       intern(msg.OSV.Details),
-				Published:     msg.OSV.Published,
-				Modified:      msg.OSV.Modified,
-				Withdrawn:     msg.OSV.Withdrawn,
-				References:    internReferences(msg.OSV.References, intern),
-				SymbolsByPath: symbolsByPath(msg.OSV.Affected, intern),
+				ID:                  id,
+				Aliases:             internStrings(msg.OSV.Aliases, intern),
+				Summary:             intern(msg.OSV.Summary),
+				Details:             intern(msg.OSV.Details),
+				Published:           msg.OSV.Published,
+				Modified:            msg.OSV.Modified,
+				Withdrawn:           msg.OSV.Withdrawn,
+				References:          internReferences(msg.OSV.References, intern),
+				SymbolsByPath:       symbolsByPath(msg.OSV.Affected, intern),
+				ImportPathsByModule: importPathsByModule(msg.OSV.Affected, intern),
 			}
 			msg.OSV = nil
 		}
@@ -816,6 +864,11 @@ func applyOSV(f *domain.VulnerabilityFinding, entry *OSV, modulePath string) {
 			// one and is drawn from this same named set.
 			f.AffectedSymbols = slices.Clone(syms)
 		}
+	}
+	// Where the symbols are, whichever list above is in force: both are drawn
+	// from the same named set, so the packages scope either one.
+	if paths, ok := entry.ImportPathsByModule[modulePath]; ok && !f.AdvisoryNamesNoSymbols {
+		f.AffectedPackages = slices.Clone(paths)
 	}
 	f.Aliases = entry.Aliases
 	f.References = advisoryReferences(entry.References)

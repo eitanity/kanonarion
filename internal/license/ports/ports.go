@@ -100,7 +100,10 @@ type LicenseStore interface {
 
 	// GetLicenceRecord retrieves the record for the given coordinate and
 	// pipeline version. Returns (zero, false, nil) if not found.
-	// Returns ErrLicenceIntegrity if the stored hash does not verify.
+	// Returns ErrLicenceIntegrity if stored bytes do not hash to their seal. A
+	// generation this build cannot reproduce but whose bytes hash to their seal
+	// is set aside and composed around; when every generation is set aside it
+	// returns *recordseal.NothingServable.
 	GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.LicenseRecord, bool, error)
 
 	// ListLicenceRecords returns summaries matching the filter, ordered by

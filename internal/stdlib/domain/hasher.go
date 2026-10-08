@@ -61,6 +61,19 @@ func (FactsHasher) VerifyContentHash(f Facts) error {
 // ContentHash. Call SetContentHash before this.
 func (FactsHasher) Marshal(f Facts) ([]byte, error) { return marshalCanonical(f) }
 
+// StoredValuesHashToSeal reports whether f's values, with acquired_at spelled
+// exactly as the row stores it, hash to the seal f carries: the column store's
+// form of recordseal's self-consistency check. acquired_at is the one value a
+// re-marshal re-renders, so a seal taken over another spelling of it reproduces
+// only from the stored text.
+func (FactsHasher) StoredValuesHashToSeal(f Facts, acquiredAt string) bool {
+	saved := f.ContentHash
+	f.ContentHash = ""
+	data, err := marshalCanonicalAt(f, acquiredAt)
+	sum := sha256.Sum256(data)
+	return saved != "" && err == nil && saved == "sha256:"+hex.EncodeToString(sum[:])
+}
+
 // IsSealed reports whether a measurement carries a content hash at all. It is
 // the distinction between "verified" and "nothing to verify", which a bare error
 // return cannot express.
@@ -92,8 +105,13 @@ type canonicalFacts struct {
 }
 
 func marshalCanonical(f Facts) ([]byte, error) {
+	return marshalCanonicalAt(f, f.AcquiredAt.UTC().Format(time.RFC3339))
+}
+
+// marshalCanonicalAt is marshalCanonical with acquired_at spelled as given.
+func marshalCanonicalAt(f Facts, acquiredAt string) ([]byte, error) {
 	c := canonicalFacts{
-		AcquiredAt:         f.AcquiredAt.UTC().Format(time.RFC3339),
+		AcquiredAt:         acquiredAt,
 		AcquisitionRoute:   string(f.AcquisitionRoute),
 		ContentHash:        f.ContentHash,
 		ContentLocation:    f.ContentLocation,

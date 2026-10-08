@@ -169,6 +169,7 @@ whether every selected node landed.
 | 0 | Every module with a stored artefact reached the cache (including when there was nothing to copy) |
 | 1 | Some, but not all, reached it - the cache is incomplete, and the message says how many of how many |
 | 2 | Nothing reached the cache, though at least one module had an artefact to copy |
+| 3 | The run was interrupted (see [Interrupting a run](conventions.md#interrupting-a-run)) |
 | 4 | The named walk id, or the target coordinate, is not in the store |
 | 20 | The walk id is rooted at a different target, or the invocation is malformed |
 

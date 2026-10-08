@@ -17,9 +17,9 @@ import (
 
 const listModule = "example.com/reanalysed"
 
-// listGeneration builds one generation of listModule with counts of its own, so
+// reanalysedGeneration builds one generation of listModule with counts of its own, so
 // a row that reported another generation's numbers is visible in the output.
-func listGeneration(at time.Time, status cgdomain.CallGraphStatus, nodes, edges int, hash string) cgdomain.CallGraphRecord {
+func reanalysedGeneration(at time.Time, status cgdomain.CallGraphStatus, nodes, edges int, hash string) cgdomain.CallGraphRecord {
 	return cgdomain.CallGraphRecord{
 		Coordinate:      coordinatetest.MustNew(listModule, "v1.0.0"),
 		Algorithm:       cgdomain.AlgorithmCHA,
@@ -34,6 +34,18 @@ func listGeneration(at time.Time, status cgdomain.CallGraphStatus, nodes, edges 
 	}
 }
 
+// rowsFor counts the text rows naming a module, leaving out the listing's own
+// trailing statements.
+func rowsFor(out, module string) int {
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, module+"@") {
+			n++
+		}
+	}
+	return n
+}
+
 // fakeWithGenerations stages one coordinate holding three generations that
 // disagree about their counts.
 func fakeWithGenerations() *testfakes.FakeQueryCallGraph {
@@ -44,9 +56,9 @@ func fakeWithGenerations() *testfakes.FakeQueryCallGraph {
 	}})
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	coord := coordinatetest.MustNew(listModule, "v1.0.0")
-	uc.AddGeneration(coord, cgapp.PipelineVersion, listGeneration(base, cgdomain.CallGraphStatusPartial, 10, 11, "sha256:oldest"))
-	uc.AddGeneration(coord, cgapp.PipelineVersion, listGeneration(base.Add(time.Hour), cgdomain.CallGraphStatusExtracted, 20, 22, "sha256:middle"))
-	uc.AddGeneration(coord, cgapp.PipelineVersion, listGeneration(base.Add(2*time.Hour), cgdomain.CallGraphStatusExtracted, 30, 33, "sha256:newest"))
+	uc.AddGeneration(coord, cgapp.PipelineVersion, reanalysedGeneration(base, cgdomain.CallGraphStatusPartial, 10, 11, "sha256:oldest"))
+	uc.AddGeneration(coord, cgapp.PipelineVersion, reanalysedGeneration(base.Add(time.Hour), cgdomain.CallGraphStatusExtracted, 20, 22, "sha256:middle"))
+	uc.AddGeneration(coord, cgapp.PipelineVersion, reanalysedGeneration(base.Add(2*time.Hour), cgdomain.CallGraphStatusExtracted, 30, 33, "sha256:newest"))
 	return uc
 }
 
@@ -62,7 +74,7 @@ func fakeWithAgreeingGenerations() *testfakes.FakeQueryCallGraph {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	coord := coordinatetest.MustNew(listModule, "v1.0.0")
 	for i, hash := range []string{"sha256:oldest", "sha256:middle", "sha256:newest"} {
-		uc.AddGeneration(coord, cgapp.PipelineVersion, listGeneration(
+		uc.AddGeneration(coord, cgapp.PipelineVersion, reanalysedGeneration(
 			base.Add(time.Duration(i)*time.Hour), cgdomain.CallGraphStatusExtracted, 30, 33, hash))
 	}
 	return uc
@@ -90,7 +102,7 @@ func TestCallGraphList_ListsCoordinatesNeverComposedSummaries(t *testing.T) {
 
 			uc := fakeWithGenerations()
 			var buf bytes.Buffer
-			if err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, &bytes.Buffer{}); err != nil {
+			if err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, &bytes.Buffer{}); err != nil {
 				t.Fatalf("runCallGraphList: %v", err)
 			}
 			if uc.ListCalls != 0 {
@@ -113,7 +125,7 @@ func TestCallGraphList_ListsCoordinatesNeverComposedSummaries(t *testing.T) {
 func TestCallGraphList_ZeroResultNoticeComposesNothing(t *testing.T) {
 	uc := fakeWithGenerations()
 	var buf bytes.Buffer
-	if err := runCallGraphList(context.Background(), "example.com/absent", 20, 0, uc, &buf, &bytes.Buffer{}); err != nil {
+	if err := runCallGraphList(context.Background(), "example.com/absent", 20, 0, false, uc, &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	if !strings.Contains(buf.String(), "example.com/absent") {
@@ -164,11 +176,11 @@ func TestCallGraphList_DifferingGenerationsStateThatInsteadOfACount(t *testing.T
 	}
 
 	var buf bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, &bytes.Buffer{}); err != nil {
+	if err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	out := buf.String()
-	if lines := strings.Count(out, "\n"); lines != 1 {
+	if lines := rowsFor(out, listModule); lines != 1 {
 		t.Errorf("the coordinate rendered as %d lines, want 1:\n%s", lines, out)
 	}
 	if !strings.Contains(out, "3 generations state different counts, status or completeness") {
@@ -208,11 +220,11 @@ func TestCallGraphList_AgreeingGenerationsKeepTheirCounts(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, &bytes.Buffer{}); err != nil {
+	if err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	out := buf.String()
-	if lines := strings.Count(out, "\n"); lines != 1 {
+	if lines := rowsFor(out, listModule); lines != 1 {
 		t.Errorf("the coordinate rendered as %d lines, want 1:\n%s", lines, out)
 	}
 	for _, want := range []string{
@@ -238,11 +250,13 @@ func TestCallGraphList_SingleGenerationRowIsUnchanged(t *testing.T) {
 		NodeCount:       5, EdgeCount: 8,
 	}})
 	var buf bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, &bytes.Buffer{}); err != nil {
+	if err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	const want = "example.com/once@v1.0.0                                      " +
-		cgapp.PipelineVersion + "        Extracted     5 nodes     8 edges\n"
+		cgapp.PipelineVersion + "        Extracted     5 nodes     8 edges\n" +
+		"listing call graph records at pipeline " + cgapp.PipelineVersion +
+		", the version this build serves; records from a superseded pipeline version are not shown (--all-generations)\n"
 	if buf.String() != want {
 		t.Errorf("row rendered as\n%q\nwant\n%q", buf.String(), want)
 	}
@@ -266,7 +280,7 @@ func TestCallGraphList_JSONSingleGenerationKeepsItsShape(t *testing.T) {
 		NodeCount:       5, EdgeCount: 8,
 	}})
 	var buf bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, &bytes.Buffer{}); err != nil {
+	if err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	var got []map[string]any
@@ -278,7 +292,7 @@ func TestCallGraphList_JSONSingleGenerationKeepsItsShape(t *testing.T) {
 		"module": "example.com/once", "version": "v1.0.0",
 		"pipeline_version": cgapp.PipelineVersion, "status": "Extracted",
 		"node_count": float64(5), "edge_count": float64(8),
-		"generations_differ": false,
+		"generations_differ": false, "superseded": false,
 	}
 	if len(got[0]) != len(want) {
 		t.Errorf("entry has fields %v, want exactly %v", got[0], want)
@@ -301,7 +315,7 @@ func TestCallGraphList_JSONDifferingGenerationsStateNoHeadlineCount(t *testing.T
 	t.Cleanup(func() { jsonOut = restore })
 
 	var buf bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0, fakeWithGenerations(), &buf, &bytes.Buffer{}); err != nil {
+	if err := runCallGraphList(context.Background(), "", 20, 0, false, fakeWithGenerations(), &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	var got []map[string]any
@@ -352,7 +366,7 @@ func TestCallGraphList_JSONAgreeingGenerationsCarryTheirCounts(t *testing.T) {
 	t.Cleanup(func() { jsonOut = restore })
 
 	var buf bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0, fakeWithAgreeingGenerations(), &buf, &bytes.Buffer{}); err != nil {
+	if err := runCallGraphList(context.Background(), "", 20, 0, false, fakeWithAgreeingGenerations(), &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	var got []map[string]any
@@ -404,7 +418,7 @@ func (n *noGenerationLister) ListCallGraphCoordinates(ctx context.Context, filte
 func TestCallGraphList_UnenumeratedGenerationsAreStatedNotZeroed(t *testing.T) {
 	uc := &noGenerationLister{FakeQueryCallGraph: fakeWithGenerations()}
 	var buf bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, &bytes.Buffer{}); err != nil {
+	if err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
 	out := buf.String()

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -593,5 +594,25 @@ func TestGenerateSBOM_OriginReadFailureFailsGeneration(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ledger disagrees with itself") {
 		t.Errorf("err = %v, want it to name the store failure", err)
+	}
+}
+
+// TestGenerateSBOM_NothingServableIsAMissingLicence: a module whose every
+// licence generation was set aside has no licence this build can serve, so the
+// document is generated with that licence missing rather than refused.
+func TestGenerateSBOM_NothingServableIsAMissingLicence(t *testing.T) {
+	ws := &fakeWalkStore{walk: makeWalk("walk-1")}
+	ls := &fakeLicenseStore{err: &recordseal.NothingServable{
+		Kind: "licence record", ID: "example.com/mod@v1.0.0",
+		Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{{ContentHash: "sha256:aa", Reason: recordseal.ErrGenerationDrift}}},
+	}}
+	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-1"}}
+
+	uc := makeUCWithLicenses(ws, ls, &fakeSBOMStore{}, gen)
+	if _, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"}); err != nil {
+		t.Fatalf("Generate = %v, want the document with the licence missing", err)
+	}
+	if len(gen.capturedLicenses) != 0 {
+		t.Errorf("generator received licences %v, want none", gen.capturedLicenses)
 	}
 }

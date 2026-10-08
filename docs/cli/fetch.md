@@ -285,6 +285,41 @@ records are stored in `<store-root>/mirror.db` (SQLite), keyed by
 `(module, version, pipeline_version)`. Every fetch is also appended to
 `<store-root>/audit.jsonl`.
 
+### A stored record this build cannot reproduce
+
+A fact record written by another build may spell a value differently from this
+build — the time of measurement at another precision, for example. Its stored
+values hash to its own seal, so nothing was altered, but this build cannot
+re-derive that seal. Such a record is **set aside**: left out of the answer and
+named on stderr, once:
+
+```
+set aside fetch record example.com/mod@v1.0.0 (pipeline 0.4.0) content_hash sha256:3f1c…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+```
+
+Every reader composes over the module's other records. `context` names it in
+its `verification` section (`set_aside` under `--json`), and
+`verification-coverage --json` in its document's `set_aside`. Each entry has
+`kind: "fetch record"`.
+
+When **every** record of a module was set aside:
+
+- `fetch`, a walk's local-replace ingest, and the pre-fetch `vuln-scan` and
+  `callgraph` make for missing modules treat the module as not yet held: they
+  measure it again and append a record this build can serve. The set-aside
+  records stay as written.
+- `callgraph`, `license`, `interface` and `examples` with a coordinate exit `4`
+  and name each record.
+- `context` reports `verification.status: set_aside`, `audit` reports
+  `(set aside)` in the verification column, and `verification-coverage` puts the
+  module in `unrecorded` with the statement as its reason.
+
+A record whose stored values do **not** hash to its seal was altered after it
+was written. That is an integrity failure (`fetch record integrity check
+failed`): the commands above exit `10`, `audit` shows `(integrity check failed)`
+and exits `10` after its table, `verification-coverage` refuses at exit `10`,
+and `context` reports `verification.status: read_error` with the failure.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -292,6 +327,7 @@ records are stored in `<store-root>/mirror.db` (SQLite), keyed by
 | `0` | Success |
 | `2` | Fetch or (with `--strict`) verification failed |
 | `3` | Cancelled |
+| `4` | A read needing a module's fetch record found only records this build cannot reproduce (see above) |
 | `10` | Integrity check failed |
 | `20` | Configuration or precondition error: an invalid flag combination, or an environment that forbids fetching (`GOPROXY=off`, `GOPROXY=direct`) |
 

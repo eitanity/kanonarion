@@ -60,6 +60,10 @@ const (
 	// remedy is a re-scan, not a first scan, and the module is not an
 	// unexamined dependency.
 	UncoveredSupersededPipeline = "the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again"
+	// UncoveredSetAside means every record the store holds for the coordinate at
+	// this build's pipeline version was written in a canonical shape this build
+	// cannot reproduce, so it serves none of them. SeedSetAside names them.
+	UncoveredSetAside = "every stored vulnerability record for this coordinate was written in a canonical shape this build cannot reproduce; read it with the build that wrote it, or upgrade"
 )
 
 // UncoveredModule is one module in the local build the probe holds no answer
@@ -327,6 +331,9 @@ type LocalReachabilityResult struct {
 	// project's answer for the same dependency; this line says that answer was
 	// not read.
 	SeedRestriction string
+	// SeedSetAside names, one line each, the stored generations the seed was
+	// drawn without because this build cannot reproduce them. Empty when none.
+	SeedSetAside []string
 	// Notice is a human-readable explanation when the result is empty or
 	// degraded (no stored findings for any dependency, or the probe was
 	// skipped). Empty when a full symbol table probe ran.

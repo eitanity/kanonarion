@@ -268,7 +268,7 @@ func TestRunCallGraphList_WithRecords(t *testing.T) {
 		},
 	})
 	var buf bytes.Buffer
-	err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, io.Discard)
+	err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestRunCallGraphList_WithRecords(t *testing.T) {
 func TestRunCallGraphList_NoMatchingPipelineVersion(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, io.Discard)
+	err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestRunCallGraphList_WithModuleFilter(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
 	var buf bytes.Buffer
-	err := runCallGraphList(context.Background(), "example.com/app", 20, 0, uc, &buf, io.Discard)
+	err := runCallGraphList(context.Background(), "example.com/app", 20, 0, false, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

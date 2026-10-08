@@ -26,6 +26,44 @@ To analyse a published module, fetch it first (`kanonarion fetch`). To analyse a
 working tree — including this repository — use [`kanonarion local`](local.md),
 which indexes the directory in place.
 
+### The standard library
+
+```
+kanonarion callgraph stdlib@v1.26.5
+```
+
+`stdlib` is the coordinate a walk records the Go standard library under, and it
+is the one coordinate `kanonarion fetch` cannot take: the standard library
+arrives with the toolchain, never through the module proxy. `callgraph` reads it
+from an **installed toolchain's own `$GOROOT/src`** — the one whose
+`go env GOVERSION` matches the version in the coordinate — searching the `go`
+command this run uses, then `~/sdk`, then the module cache. Where the host holds
+no such toolchain the command refuses and names the download that would supply
+it; nothing is recorded, because a graph built by a different Go is a graph of a
+different standard library.
+
+The record is an ordinary `CallGraphRecord` and every query that reads a module
+graph reads it. What it carries that others do not:
+
+- `source: toolchain-source`, with `read from:` naming the `$GOROOT/src` it was
+  taken of and a digest of the files the loader read there.
+- `custody artefact:` — the SHA-256 of the published `go<VERSION>.src.tar.gz`
+  the standard library's chain of custody holds for that toolchain version (see
+  [`audit`](audit.md)). It names the published bytes, which is a different claim
+  from the digest above: nothing here asserts that the installed tree and the
+  published tarball are the same bytes.
+- `toolchain:` — the toolchain that built the graph, which for this coordinate
+  is also the toolchain the graph is OF.
+- `test scope: EXCLUDED`. A consumer's build compiles none of the standard
+  library's own test files, so no route through one is a route in any build this
+  graph describes.
+
+`--from-walk` is accepted and used for nothing: the standard library vendors
+every dependency it has, so there is no build list to pin it against.
+
+Measured on a 32-core, 61 GiB host: go1.26.5, 362 packages, 23,404 nodes and
+436,572 edges, 10.3 s wall and 1.38 GB peak RSS.
+
 ### What the answers claim
 
 Every query in this family reports a **three-valued answer**, printed on a
@@ -461,7 +499,7 @@ kanonarion callgraph-show <module>@<version> [flags]
 | `--diff` | `false` | Report what the distinct stored measurements for the module differ about, instead of the composed answer |
 | `--diff-from` | _(the older of the two most recent measurements)_ | With `--diff`: the generation on the left of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
 | `--diff-to` | _(the most recent measurement)_ | With `--diff`: the generation on the right of the comparison. Takes a `record:` hash as `--history` prints it, or a unique prefix of one |
-| `--source` | _(default)_ | Restrict to graphs built from one source: `zip` or `worktree` |
+| `--source` | _(default)_ | Restrict to graphs built from one source: `zip`, `worktree` or `toolchain-source` |
 | `--toolchain` | _(default)_ | Restrict to graphs built by one Go toolchain, in `go env GOVERSION` form (e.g. `go1.26.6`). A coordinate holding none of them reports no record |
 
 ```
@@ -1041,6 +1079,13 @@ List modules with extracted call graph records, newest first. The optional
 `<module>` argument filters to one module path, matched for **exact equality** —
 `github.com/spf13/cobra` matches, `github.com/spf13` does not.
 
+By default only records at the pipeline version this build serves are listed,
+and the last line says so; every coordinate the default listing prints is one
+`callgraph-show` answers. `--all-generations` includes records from earlier
+pipeline versions, one row per coordinate and version, and marks each earlier
+row `[superseded generation <version>]`. See [The generation a listing
+serves](conventions.md#the-generation-a-listing-serves).
+
 **One line per coordinate**, not per stored record: a module re-analysed
 sixty-five times occupies one row. The listing reports what the ledger holds and
 does not compose it, so where a coordinate holds more than one generation the
@@ -1049,9 +1094,10 @@ recently extracted one:
 
 ```
 $ kanonarion callgraph-list
-golang.org/x/text@v0.17.0        0.5.0  Extracted  5916 nodes 48874 edges
-golang.org/x/net@v0.33.0         0.5.0  Extracted  4820 nodes 40116 edges  [2 generations; counts from 2026-08-23T23:56:37Z]
-golang.org/x/tools@v0.49.0       0.5.0  2 generations state different counts, status or completeness; run: kanonarion callgraph-show golang.org/x/tools@v0.49.0 --history
+golang.org/x/text@v0.42.0              0.7.0  Extracted  5931 nodes 48484 edges
+github.com/spf13/cobra@v1.10.2         0.7.0  Extracted  1404 nodes  6583 edges  [2 generations; counts from 2026-09-20T11:30:56.168419348Z]
+github.com/eitanity/kanonarion@local   0.7.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show github.com/eitanity/kanonarion@local --history
+listing call graph records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 ```
 
 Those counts belong to the generation the row names, which is **not**
@@ -1074,7 +1120,7 @@ compose to a served answer, and generations stating identical counts can still
 conflict on their contents. `callgraph-show` is what settles that.
 
 In JSON, a coordinate with one generation carries `module`, `version`,
-`pipeline_version`, `status`, `node_count`, `edge_count` and
+`pipeline_version`, `superseded`, `status`, `node_count`, `edge_count` and
 `generations_differ`. One with several carries those plus `counts_from` — the
 timestamp of the generation the top-level counts came from — and a `generations`
 array of `extracted_at`, `status`, `node_count`, `edge_count` and
@@ -1089,15 +1135,16 @@ terminal is the only thing it costs here.
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--all-generations` | `false` | Also list records extracted at a superseded pipeline version, marking each one |
 | `--limit` | `20` | Maximum records to show (`0` = unlimited) |
+| `--offset` | `0` | Skip this many records before listing |
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
-Under `--json` the command answers with one object carrying `records` and the
-paging state, not a bare array, and writes nothing to stderr — see [Listing
-documents](conventions.md#listing-documents).
-| `--offset` | `0` | Skip this many records before listing |
+Under `--json` the command answers with one object carrying `records`, the
+paging state and the `generation` object, not a bare array, and writes nothing
+to stderr — see [Listing documents](conventions.md#listing-documents).
 
 A zero result names its own scope — whether the store is empty, the filter
 matched nothing, or `--offset` skipped past the end — per
@@ -1476,6 +1523,38 @@ silently zeroed.
 That read gate is also why the ledger does not purge: it achieves what a
 wholesale delete was for — a stale-shape record answers nothing — without
 deleting the evidence, so the row survives for a history read.
+
+### A stored record this build cannot verify
+
+A record written by a build with a different canonical shape — an earlier one or
+a later one, at the same schema version — may not be reproducible by this
+binary. Its bytes and its edge rows still hash to the seal it carries, so
+nothing was altered. Such a generation is **set aside**: it is left out of the
+answer and named by its `content_hash`. Read it with the build that wrote it, or
+upgrade.
+
+`callgraph-show` (and `--history`, `--diff`), `implementers`, `usage`,
+`capability` and `reachability` answer from the generations this build can
+reproduce. So do `callers` and `callees` for a module holding more than one
+generation; for a module holding one, they answer from its edge rows without
+reading the record. The statement goes to stderr on the text path:
+
+```
+set aside call graph record example.com/mod@v1.2.3 (pipeline 0.7.0) content_hash sha256:2284…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+```
+
+Under `--json` it is in the document as `set_aside`, with `kind: "call graph
+record"` (`call_graph_set_aside` in
+`reachability`, whose `set_aside` names vulnerability records). The key is
+absent when nothing was set aside. `callers` and `callees` without
+`--transitive` print a JSON array, so they state it on stderr.
+
+When **every** generation of the coordinate was set aside, there is no record
+this build can serve: the command exits `4` and names the generations. `callgraph`
+and `local` treat that coordinate as not yet analysed and measure it again.
+
+A record whose stored bytes or edge rows do **not** hash to its seal has been
+altered, and every command that meets one refuses at exit `10`, as before.
 
 ## Which working tree answered
 

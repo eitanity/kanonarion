@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"io"
 	"strings"
 	"testing"
@@ -20,8 +21,8 @@ import (
 func populatedCallGraphList() *testfakes.FakeQueryCallGraph {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "cg-1", NodeCount: 3, EdgeCount: 2},
-		{ModulePath: "example.com/dep", ModuleVersion: "v2.0.0", PipelineVersion: "cg-1", NodeCount: 1, EdgeCount: 0},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion, NodeCount: 3, EdgeCount: 2},
+		{ModulePath: "example.com/dep", ModuleVersion: "v2.0.0", PipelineVersion: cgapp.PipelineVersion, NodeCount: 1, EdgeCount: 0},
 	})
 	return uc
 }
@@ -31,7 +32,7 @@ func populatedCallGraphList() *testfakes.FakeQueryCallGraph {
 // facts that separate a mis-spelled filter from an absent record.
 func TestRunCallGraphList_UnmatchedFilterNamesItsScope(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if err := runCallGraphList(context.Background(), "no-such-module-anywhere", 20, 0,
+	if err := runCallGraphList(context.Background(), "no-such-module-anywhere", 20, 0, false,
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestRunCallGraphList_UnmatchedFilterNamesItsScope(t *testing.T) {
 // The two cases have different remedies, so they must not share a sentence.
 func TestRunCallGraphList_EmptyStoreIsNotAnUnmatchedFilter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if err := runCallGraphList(context.Background(), "no-such-module-anywhere", 20, 0,
+	if err := runCallGraphList(context.Background(), "no-such-module-anywhere", 20, 0, false,
 		testfakes.NewFakeQueryCallGraph(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestRunCallGraphList_EmptyStoreIsNotAnUnmatchedFilter(t *testing.T) {
 // cannot tell it from either of the others.
 func TestRunCallGraphList_OffsetPastTheEndSaysSo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 99,
+	if err := runCallGraphList(context.Background(), "", 20, 99, false,
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestRunCallGraphList_OffsetPastTheEndSaysSo(t *testing.T) {
 // explain a zero, and printing it on every read would tell an operator nothing.
 func TestRunCallGraphList_PopulatedResultPrintsNoNotice(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0,
+	if err := runCallGraphList(context.Background(), "", 20, 0, false,
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestRunCallGraphList_JSONCarriesTheZeroScopeInTheDocument(t *testing.T) {
 	defer func() { jsonOut = prev }()
 
 	var stdout, stderr bytes.Buffer
-	if err := runCallGraphList(context.Background(), "no-such-module-anywhere", 20, 0,
+	if err := runCallGraphList(context.Background(), "no-such-module-anywhere", 20, 0, false,
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestRunCallGraphList_JSONEmptyStoreSaysStoreEmpty(t *testing.T) {
 	defer func() { jsonOut = prev }()
 
 	var stdout, stderr bytes.Buffer
-	if err := runCallGraphList(context.Background(), "anything", 20, 0,
+	if err := runCallGraphList(context.Background(), "anything", 20, 0, false,
 		testfakes.NewFakeQueryCallGraph(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -182,7 +183,7 @@ func TestRunCallGraphList_JSONPopulatedCarriesNoZeroNotice(t *testing.T) {
 	defer func() { jsonOut = prev }()
 
 	var stdout, stderr bytes.Buffer
-	if err := runCallGraphList(context.Background(), "", 20, 0,
+	if err := runCallGraphList(context.Background(), "", 20, 0, false,
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "interface-list",
 			run: func(stdout, stderr io.Writer) error {
-				return interfaceListWith(context.Background(), 20, 0,
+				return interfaceListWith(context.Background(), 20, 0, false,
 					testfakes.NewFakeQueryInterface(), stdout, stderr)
 			},
 			want: []string{"the store holds no interface record at all",
@@ -241,7 +242,7 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "examples-list",
 			run: func(stdout, stderr io.Writer) error {
-				return runExamplesList(context.Background(), 20, 0,
+				return runExamplesList(context.Background(), 20, 0, false,
 					testfakes.NewFakeQueryExamples(), stdout, stderr)
 			},
 			want: []string{"the store holds no example record at all",

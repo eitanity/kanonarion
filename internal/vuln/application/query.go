@@ -22,6 +22,9 @@ func NewQueryVulnUseCase(store ports.VulnerabilityStore) *QueryVulnUseCase {
 }
 
 // GetRecord retrieves a vulnerability record by coordinate, pipeline version, and snapshot.
+//
+// The composed record comes back beside a *recordseal.SetAside naming the
+// generations it was composed without; see recordseal.SetAside.
 func (uc *QueryVulnUseCase) GetRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
@@ -30,12 +33,13 @@ func (uc *QueryVulnUseCase) GetRecord(
 ) (domain.VulnerabilityRecord, bool, error) {
 	rec, found, err := uc.store.GetVulnerabilityRecord(ctx, coord, pipelineVersion, snapshot)
 	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("getting vulnerability record for %s: %w", coord, err)
+		return rec, found, fmt.Errorf("getting vulnerability record for %s: %w", coord, err)
 	}
 	return rec, found, nil
 }
 
-// GetLatestRecord returns the most recently scanned record for a coordinate and pipeline version.
+// GetLatestRecord returns the most recently scanned record for a coordinate and
+// pipeline version, on the same set-aside terms as GetRecord.
 func (uc *QueryVulnUseCase) GetLatestRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
@@ -43,7 +47,7 @@ func (uc *QueryVulnUseCase) GetLatestRecord(
 ) (domain.VulnerabilityRecord, bool, error) {
 	rec, found, err := uc.store.GetLatestVulnerabilityRecord(ctx, coord, pipelineVersion)
 	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("getting latest vulnerability record for %s: %w", coord, err)
+		return rec, found, fmt.Errorf("getting latest vulnerability record for %s: %w", coord, err)
 	}
 	return rec, found, nil
 }
@@ -131,10 +135,13 @@ func (uc *QueryVulnUseCase) ListRecordGenerationsForModule(
 // has since acquired. It is the read a caller serving a stored run needs: a
 // report assembled from "latest per module" could mix generations and present a
 // summary no single run ever produced.
+//
+// The records come back beside a *recordseal.SetAside when the store set
+// generations aside, so the report can be served and the generations stated.
 func (uc *QueryVulnUseCase) ListRecordsForRun(ctx context.Context, runID string) ([]domain.VulnerabilityRecord, error) {
 	recs, err := uc.store.ListVulnerabilityRecords(ctx, runID)
 	if err != nil {
-		return nil, fmt.Errorf("listing vulnerability records for scan run %q: %w", runID, err)
+		return recs, fmt.Errorf("listing vulnerability records for scan run %q: %w", runID, err)
 	}
 	return recs, nil
 }

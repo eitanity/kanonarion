@@ -10,6 +10,8 @@ import (
 
 	"golang.org/x/mod/modfile"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -400,6 +402,9 @@ type ScanModuleUseCase struct {
 	pipelineVersion  string
 	logger           *slog.Logger
 	audit            ports.AuditSink // optional; nil disables audit emission
+	// setAside states the generations a write or reuse read set aside; nil logs
+	// them at warn level instead.
+	setAside SetAsideReporter
 }
 
 // NewScanModuleUseCase returns a new ScanModuleUseCase.
@@ -717,10 +722,12 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 			if herr != nil {
 				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", herr)
 			}
-			if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, sealed); perr != nil {
+			if perr := putRecord(ctx, uc.vulnStore, sealed, uc.setAside, uc.logger); perr != nil {
 				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", perr)
 			}
 			return sealed, nil
+		case interrupt.Cancelled(ctx, err):
+			return domain.VulnerabilityRecord{}, fmt.Errorf("metadata check: %w", err)
 		case err != nil:
 			uc.logger.Warn("metadata check failed, proceeding with full scan", "error", err)
 		case isVulnerable:
@@ -749,6 +756,10 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		// project selected rather than whatever a network tidy would pick.
 		BuildList: params.SelectedVersions,
 	})
+	if interrupt.Cancelled(ctx, err) {
+		// Stopped by the run's cancellation: no failed-scan record is made of it.
+		return domain.VulnerabilityRecord{}, fmt.Errorf("scanning %s: %w", params.Coordinate, err)
+	}
 	if err != nil {
 		uc.logger.Error("vulnerability scan failed", "coordinate", params.Coordinate, "error", err)
 		record = domain.VulnerabilityRecord{
@@ -843,7 +854,7 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	}
 
 	// 8. Durability (T6: Aggregate Persistence)
-	if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
+	if err := putRecord(ctx, uc.vulnStore, record, uc.setAside, uc.logger); err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("persisting vulnerability record: %w", err)
 	}
 
@@ -865,7 +876,9 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 // time. ScanFailed is also never served from cache: it represents a transient
 // infrastructure failure (govulncheck crash, temp dir cleaned up, network blip)
 // not a stable analysis verdict — caching it would permanently block retry
-// without --force. A store lookup error is treated as a cache miss.
+// without --force. A store lookup error is treated as a cache miss. A record
+// composed without generations this build cannot reproduce is reused, and the
+// set-aside generations are stated.
 //
 // A reuse writes nothing. It used to re-stamp the walk reference and the scan
 // time onto the stored record and write it back, which was an UPDATE of a
@@ -879,7 +892,10 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 		return domain.VulnerabilityRecord{}, false, nil
 	}
 	rec, ok, err := uc.vulnStore.GetVulnerabilityRecordAt(ctx, params.Coordinate, uc.pipelineVersion, snapshot, domain.RootingIsolated)
-	if err != nil || !ok {
+	// A miss states nothing here: the fresh scan's write states any set-aside
+	// generation, and stating it twice would read as two.
+	var aside *recordseal.SetAside
+	if err != nil && !errors.As(err, &aside) || !ok {
 		return domain.VulnerabilityRecord{}, false, nil //nolint:nilerr // a lookup failure is treated as a cache miss; the scan proceeds fresh
 	}
 	// Whether a stored verdict is worth reusing is a coverage question — a failed
@@ -890,6 +906,9 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 		return domain.VulnerabilityRecord{}, false, nil
 	}
 	uc.logger.Debug("vulnerability scan cache hit", "coordinate", params.Coordinate, "status", rec.OverallStatus, "scanned_at", rec.ScannedAt, "measured_in_walk", rec.WalkID)
+	if aside != nil {
+		reportSetAside(uc.setAside, uc.logger, aside.Rows)
+	}
 	rec.Reused = true
 	return rec, true, nil
 }
@@ -1340,7 +1359,7 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing metadata-only record: %w", err)
 	}
-	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, record); perr != nil {
+	if perr := putRecord(ctx, uc.vulnStore, record, uc.setAside, uc.logger); perr != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("persisting metadata-only record: %w", perr)
 	}
 	return record, nil
@@ -1383,7 +1402,9 @@ func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanM
 			// what tells "requested and failed" apart from "never requested", which
 			// are otherwise the same absence.
 			findings[i].ReachabilityNote = buildReachabilityFailureNote(rerr)
-			uc.logger.Warn("reachability analysis failed", "coordinate", params.Coordinate, "finding", finding.ID, "error", rerr)
+			if !interrupt.Cancelled(ctx, rerr) {
+				uc.logger.Warn("reachability analysis failed", "coordinate", params.Coordinate, "finding", finding.ID, "error", rerr)
+			}
 			continue
 		}
 		findings[i].Reachable = &result
@@ -1433,7 +1454,9 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 			// Not found — fall through to spawn.
 		default:
 			// Integrity or other store error — don't spawn over a broken record.
-			uc.logger.Warn("callgraph store check failed before spawn", "coordinate", params.Coordinate, "error", loadErr)
+			if !interrupt.Cancelled(ctx, loadErr) {
+				uc.logger.Warn("callgraph store check failed before spawn", "coordinate", params.Coordinate, "error", loadErr)
+			}
 			return fmt.Sprintf("callgraph store check failed: %v", loadErr)
 		}
 	}
@@ -1452,6 +1475,10 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 	stderr, spawnErr := uc.callGraphSpawner.Spawn(ctx, params.Coordinate, params.Force, params.WalkID)
 	if spawnErr != nil {
 		note := buildCallGraphSpawnNote(spawnErr, stderr)
+		if interrupt.Cancelled(ctx, spawnErr) {
+			interrupt.Note(interrupt.CallGraph)
+			return note
+		}
 		uc.logger.Warn("callgraph subprocess failed", "coordinate", params.Coordinate, "note", note)
 		return note
 	}

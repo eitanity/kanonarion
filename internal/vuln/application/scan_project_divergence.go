@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/failurecause"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
@@ -160,6 +161,9 @@ func (uc *ScanWalkUseCase) scanProjectDiverged(
 		// already exists for the one other case where the analysis could not have
 		// reported an advisory at all, and it means the same thing here.
 		findings, err := uc.mergeCoordinateFindings(ctx, coord, nil, false, *snapshot)
+		if interrupt.Cancelled(ctx, err) {
+			return fmt.Errorf("matching advisories for %s: %w", coord, err)
+		}
 		if err != nil {
 			uc.logger.Error("diverged project scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
 			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), failurecause.Unrecorded, surface, gotoolchain.Unrecorded, params, snapshot)

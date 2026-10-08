@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/audit"
@@ -50,6 +51,11 @@ var ErrCallGraphNotFound = errors.New("call graph record not found")
 // tamper. It lives here rather than in the adapter so a caller can match the
 // failure without importing the store.
 var ErrVulnIntegrity = errors.New("vulnerability record integrity check failed")
+
+// ErrWalkScanRunExists is returned by PutWalkScanRun when the store already holds
+// a run under the id being written. A run is written once: merging a second scan
+// into it would leave one id naming two scans' records.
+var ErrWalkScanRunExists = errors.New("walk scan run already recorded")
 
 // ErrSnapshotIntegrity is returned by the vulnerability store when the advisory
 // database snapshot itself fails its integrity check: on write when the
@@ -238,6 +244,10 @@ type UnreadableRow struct {
 	// for a run.
 	Generation RowGeneration
 
+	// ContentHash is the seal the stored bytes carry, empty when the head did not
+	// yield one. It is what names one generation among a coordinate's many.
+	ContentHash string
+
 	// Reason is the read failure exactly as it was reported, so a caller that
 	// wants to tell generation drift from altered bytes can still match on it.
 	Reason error
@@ -298,6 +308,39 @@ func (e *UnreadableRows) Error() string {
 // now.
 func (e *UnreadableRows) Unwrap() error { return ErrVulnIntegrity }
 
+// SetAsideKindRun and SetAsideKindRecord are how a set-aside run and record
+// name their kind.
+const (
+	SetAsideKindRun    = "walk scan run"
+	SetAsideKindRecord = "vulnerability record"
+)
+
+// SetAside converts a row this listing excused as drift into the shared
+// set-aside row, under the kind and generation its readers state it in.
+func (r UnreadableRow) SetAside() recordseal.SetAsideRow {
+	if r.Kind == RowKindRun {
+		return recordseal.SetAsideRow{
+			Kind: SetAsideKindRun, ID: r.ID,
+			Generation:  recordseal.Generation{PipelineVersion: r.Generation.PipelineVersion},
+			ContentHash: r.ContentHash, Reason: r.Reason,
+		}
+	}
+	return recordseal.SetAsideRow{
+		Kind: SetAsideKindRecord,
+		ID:   r.ID,
+		Generation: recordseal.Generation{
+			PipelineVersion: r.Generation.PipelineVersion,
+			Snapshot: recordseal.Snapshot{
+				Name:    "vuln-db",
+				Source:  r.Generation.SnapshotSource,
+				Version: r.Generation.SnapshotVersion,
+			},
+		},
+		ContentHash: r.ContentHash,
+		Reason:      r.Reason,
+	}
+}
+
 // VulnerabilityStore defines the port for persisting vulnerability records.
 //
 // The zero coordinate is the one value the signatures cannot exclude: Go
@@ -324,12 +367,22 @@ type VulnerabilityStore interface {
 	// record: two distinct scans of one coordinate — under two snapshots, in two
 	// analysis frames, or simply repeated — are always two records, and only a
 	// byte-identical re-write is idempotent.
+	//
+	// The findings index is reconciled over the generations of the record's group
+	// this build can reproduce. When it set any aside, the write has committed
+	// and a *recordseal.SetAside naming them is returned; a generation whose bytes
+	// do not hash to their own seal aborts the write.
 	PutVulnerabilityRecord(ctx context.Context, record domain.VulnerabilityRecord) error
 
 	// GetVulnerabilityRecord returns the composed record for a coordinate,
 	// pipeline version and snapshot, across every analysis frame the ledger holds.
 	// It is the read for a caller that has declined to name a frame; see
 	// domain.Compose for the ladder it serves on.
+	//
+	// It composes over the generations this build can reproduce and returns a
+	// *recordseal.SetAside beside the answer naming the rest. A group whose every
+	// generation was set aside answers found=false with that error: no record
+	// this build can serve.
 	GetVulnerabilityRecord(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -345,6 +398,8 @@ type VulnerabilityStore interface {
 	// GetVulnerabilityRecord. An isolated scan and a target-rooted scan answer
 	// different questions, so serving one for the other attributes a reachability
 	// finding to a build it was never computed against.
+	//
+	// Set-aside generations on GetVulnerabilityRecord's terms.
 	GetVulnerabilityRecordAt(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -367,7 +422,8 @@ type VulnerabilityStore interface {
 
 	// GetLatestVulnerabilityRecord returns the composed record for a coordinate
 	// and pipeline version across every snapshot and frame the ledger holds.
-	// Returns (zero, false, nil) if no record exists.
+	// Returns (zero, false, nil) if no record exists. Set-aside generations on
+	// GetVulnerabilityRecord's terms.
 	GetLatestVulnerabilityRecord(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -397,17 +453,21 @@ type VulnerabilityStore interface {
 		walkID string,
 	) ([]domain.VulnerabilityRecord, error)
 
-	// PutWalkScanRun persists the aggregate result of a walk scan.
+	// PutWalkScanRun persists the aggregate result of a walk scan. An id the
+	// store already holds is refused with ErrWalkScanRunExists and the stored run
+	// is left as it was.
 	PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) error
 
-	// GetWalkScanRun retrieves a walk scan run by its ID.
+	// GetWalkScanRun retrieves a walk scan run by its ID. A run whose bytes do
+	// not hash to their seal is *UnreadableRows; one whose bytes do but which
+	// this build cannot reproduce is *recordseal.NothingServable.
 	GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanRun, bool, error)
 
 	// ListWalkScanRuns lists all scan runs for a specific walk.
 	//
 	// A row that fails its seal does not end the listing — see the partial-result
 	// rule on ListVulnerabilityRecordsByFindingID, which every listing on this
-	// port follows.
+	// port follows, drifted runs coming back as *recordseal.SetAside.
 	ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error)
 
 	// ListAllWalkScanRuns lists all scan runs across all walks, most recent first,
@@ -447,21 +507,27 @@ type VulnerabilityStore interface {
 	// silently dropped instead would answer a question about the store with a
 	// list that is not true of it.
 	//
-	// The line is what the read RETURNS, not how many rows it touches. A read
-	// that hands back rows may hand back the ones it has; a read that COMPOSES a
-	// verdict out of them may not, because a verdict composed over a candidate
-	// set with a row missing states a finding the store cannot support. So
-	// GetLatestVulnerabilityRecord, ListVulnerabilityRecords and the point-in-time
-	// gets fail closed, and the listings here do not.
+	// When every row it could not verify is a generation this build cannot
+	// reproduce — its bytes hash to their own seal — the error is a
+	// *recordseal.SetAside instead, which does not unwrap to ErrVulnIntegrity: a
+	// consumer serves the rows it has and states the ones set aside. One altered
+	// row makes it *UnreadableRows again, every unreadable row included.
+	//
+	// The reads that COMPOSE a verdict — GetLatestVulnerabilityRecord,
+	// ListVulnerabilityRecords and the point-in-time gets — compose over the
+	// generations this build can reproduce, return the rest as set aside, and
+	// fail closed on an altered row.
 	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error)
 
 	// ListVulnerabilityRecords returns all vulnerability records for a walk scan
 	// run.
 	//
-	// It does NOT relax on an unreadable row the way the listings above do: it
-	// composes one verdict per module out of the generations the run reached, and
-	// a verdict composed over a candidate set that is missing a row states a
-	// finding the store cannot support. It fails closed.
+	// It composes one verdict per module out of the generations the run reached,
+	// so it fails closed on an altered row. A generation this build cannot
+	// reproduce is set aside and named in a *recordseal.SetAside returned beside
+	// the records; a module whose pinned generation was set aside is left out,
+	// because composing its other generations would report a record the run
+	// never produced.
 	ListVulnerabilityRecords(ctx context.Context, walkScanRunID string) ([]domain.VulnerabilityRecord, error)
 
 	// ListVulnerabilityRecordsForModule returns every generation the ledger holds
@@ -833,6 +899,23 @@ type CallGraphLoader interface {
 	Load(ctx context.Context, coord coordinate.ModuleCoordinate) (CallGraphProjection, error)
 }
 
+// WalkProjectDirReader answers where the working tree a walk was rooted at is,
+// for a refusal that has to name the command that analyses it.
+//
+// It exists because the directory is recorded and was being ignored. A
+// project-rooted walk stores the tree it ran in, so a refusal that said "no
+// stored record names the working tree" about such a frame was stating
+// something the store contradicts — and printing a sentence where a command
+// belongs. It is a read of ONE column and is declared narrowly rather than
+// taken as the walk store, because nothing here may walk, scan or write.
+//
+// The bool is false when the walk names no directory, which a coordinate walk
+// legitimately does not. An error is a store fault and leaves the caller with
+// no directory, never with a wrong one.
+type WalkProjectDirReader interface {
+	WalkProjectDir(ctx context.Context, walkID string) (string, bool, error)
+}
+
 // CallGraphProjection is the minimal view of a call graph the reachability
 // analyser consumes: the nodes and the directed call edges between them, plus
 // the fidelity signature that backed them.
@@ -873,6 +956,22 @@ type CallGraphProjection struct {
 	// because this port must stay free of that domain — the rule lives beside
 	// composition and the reachability adapter applies it.
 	ServableAsCacheHit bool
+	// StdlibPackages is the standard-library closure of the build this graph was
+	// taken of: every standard-library import path the go command resolved for
+	// it. It says what the binary CONTAINS, which the graph itself cannot — a
+	// package the build links and never calls holds no node either.
+	//
+	// It is what lets a read continue a traversal into the standard library's own
+	// graph without following edges into packages the binary does not link. Empty
+	// means the record predates the field and the closure is unknown, never that
+	// the build links no standard library: a reader must refuse to act on it
+	// rather than read it as an empty set.
+	StdlibPackages []string
+	// AnalysisRoot is the working tree this graph was taken of, empty for a graph
+	// built from anything else. It is carried so a refusal about this graph can
+	// name the directory a re-analysis must run in, rather than telling the
+	// reader a tree is unnamed when the record names it.
+	AnalysisRoot string
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.

@@ -133,6 +133,13 @@ const (
 	// it. Distinct from not_run, which claims nothing looked; here a build was
 	// measured and the module was not in it.
 	sectionStatusNotInWalk = "not_in_basis_walk"
+	// sectionStatusSetAside: every stored generation this build reads for the
+	// coordinate was written in a canonical shape this build cannot reproduce, so
+	// it serves none of them. The error field names them.
+	sectionStatusSetAside = "set_aside"
+	// sectionStatusDivergent: the module's fetch records disagree on a hash they
+	// both carry. The error field states the disagreement.
+	sectionStatusDivergent = "divergent"
 )
 
 // Fork-heuristic status strings, mirrored from the domain status names so the
@@ -151,7 +158,10 @@ type contextVerification struct {
 	// record either states a retraction or states there is none, and Status
 	// names the sections where no record was read at all.
 	Retracted bool   `json:"retracted"`
-	Error     string `json:"error,omitempty"` // set when status is read_error
+	Error     string `json:"error,omitempty"` // set when status is read_error, set_aside or divergent
+	// SetAside names the stored fetch records the section's read left out because
+	// this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 type contextDependency struct {
@@ -249,6 +259,9 @@ type contextLicense struct {
 	// acquisition instead. Absent for every other module.
 	Custody *contextLicenseCustody `json:"custody,omitempty"`
 	Error   string                 `json:"error,omitempty"`
+	// SetAside names the stored licence generations the section's read left out
+	// because this build cannot reproduce them. Absent when nothing was.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // contextLicenseCustody states what a standard-library licence identity rests
@@ -330,6 +343,9 @@ type contextExamples struct {
 	Count    int              `json:"count"`
 	Examples []contextExample `json:"examples,omitempty"`
 	Error    string           `json:"error,omitempty"`
+	// SetAside names the stored example generations the section's read left out
+	// because this build cannot reproduce them. Absent when nothing was.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 type contextCVE struct {
@@ -434,6 +450,12 @@ type contextVulnerabilities struct {
 	SnapshotRetrievedAt string `json:"snapshot_retrieved_at,omitempty"`
 	SnapshotAgeDays     *int   `json:"snapshot_age_days"`
 	Error               string `json:"error,omitempty"`
+	// SetAside names the stored generations the section's reads left out because
+	// this build cannot reproduce them. Absent when nothing was set aside.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
+	// aside collects those generations while the section is built; SetAside is
+	// its projection.
+	aside setAsideRows
 }
 
 // errContextOutputWrite marks a failure to WRITE the answer, as distinct from a

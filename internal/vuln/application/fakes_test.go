@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/versionorder"
 
@@ -117,6 +119,9 @@ func (f *fakeBlob) GetPath(_ context.Context, identity fetchports.BlobIdentity) 
 type fakeFacts struct {
 	mu      sync.Mutex
 	records map[string]fetchdomain.FactRecord
+	// setAside answers a coordinate with no readable record as one whose every
+	// record was set aside.
+	setAside bool
 }
 
 func newFakeFacts() *fakeFacts { return &fakeFacts{records: make(map[string]fetchdomain.FactRecord)} }
@@ -162,9 +167,15 @@ func (f *fakeFacts) ComposeFetchRecord(_ context.Context, coord coordinate.Modul
 	for _, r := range f.records {
 		held = append(held, r)
 	}
+	setAside := f.setAside
 	f.mu.Unlock()
+	rec, ok, err := fetchtest.ComposeCoordinate(coord, held)
+	if err == nil && !ok && setAside {
+		return fetchdomain.CompositeRecord{}, false, &recordseal.NothingServable{Kind: "fetch record", ID: coord.String(),
+			Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{{ContentHash: "sha256:aa", Reason: recordseal.Drift(errors.New("mismatch"))}}}}
+	}
 	//nolint:wrapcheck // test fake; the helper already names the coordinate
-	return fetchtest.ComposeCoordinate(coord, held)
+	return rec, ok, err
 }
 
 // fakeVulnStore is an append-only ledger, like the real store: records holds
@@ -197,6 +208,9 @@ type fakeVulnStore struct {
 	// leg that only runs after other records have already been stored. Off by
 	// default: the zero coordinate never matches a real one.
 	errOnPutRecordFor coordinate.ModuleCoordinate
+	// runsAside, when set, is returned beside every run listing as the runs the
+	// store set aside because this build cannot reproduce them.
+	runsAside []recordseal.SetAsideRow
 }
 
 func newFakeVulnStore() *fakeVulnStore {
@@ -436,6 +450,10 @@ func (f *fakeVulnStore) PutWalkScanRun(_ context.Context, run domain.WalkScanRun
 	if f.errOnPutRun != nil {
 		return f.errOnPutRun
 	}
+	// As the real store: a held id is refused, so no test passes on an overwrite.
+	if _, held := f.runs[run.ID]; held {
+		return fmt.Errorf("%w: %s", ports.ErrWalkScanRunExists, run.ID)
+	}
 	f.runs[run.ID] = run
 	return nil
 }
@@ -470,6 +488,9 @@ func (f *fakeVulnStore) ListWalkScanRuns(_ context.Context, walkID string) ([]do
 		if run.WalkID == walkID {
 			runs = append(runs, run)
 		}
+	}
+	if len(f.runsAside) > 0 {
+		return runs, &recordseal.SetAside{Rows: f.runsAside}
 	}
 	return runs, nil
 }
@@ -883,6 +904,25 @@ func (f *fakeDatabase) LookupFindings(_ context.Context, coord coordinate.Module
 type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
+
+// steppedClock holds still until the test advances it, for a test that needs a
+// second scan to start at a later instant than the first.
+type steppedClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *steppedClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *steppedClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
 
 // callCountingScanner wraps a VulnerabilityScanner and records whether Scan was called.
 type callCountingScanner struct {

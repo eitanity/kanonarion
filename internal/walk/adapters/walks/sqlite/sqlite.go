@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
@@ -23,7 +24,17 @@ import (
 // Store is the SQLite-backed walk store.
 type Store struct {
 	db sqlitestore.DB
+	// setAside receives a walk this build cannot reproduce; see ReportSetAside.
+	setAside recordseal.Reporter
 }
+
+// RecordKind is how a set-aside walk names its kind.
+const RecordKind = "walk record"
+
+// ReportSetAside states where the store names a walk it could not serve because
+// this build cannot reproduce it. The read also refuses with it, so a caller
+// that swallows the refusal still leaves it stated.
+func (s *Store) ReportSetAside(r func([]recordseal.SetAsideRow)) { s.setAside = r }
 
 // New returns a new Store using the provided database handle.
 func New(db sqlitestore.DB) *Store {
@@ -455,7 +466,9 @@ func scanPresentIDs(rows *sql.Rows, present map[string]bool) (retErr error) {
 }
 
 // GetWalk retrieves a walk record by ID. Returns ErrWalkNotFound if absent.
-// Returns ErrWalkIntegrity if the stored hash does not verify.
+// Returns ErrWalkIntegrity if the stored bytes do not hash to their seal. A walk
+// whose bytes hash to their seal in a shape this build cannot reproduce is
+// *recordseal.NothingServable: a walk has no other generation to serve instead.
 func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, error) {
 	const q = `SELECT serialised, content_hash, project_dir, identity_hash FROM walks WHERE id = ?`
 	row := s.db.DB().QueryRowContext(ctx, q, id)
@@ -481,7 +494,19 @@ func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, erro
 	}
 
 	if verr := h.VerifyContentHash(rec); verr != nil {
-		return domain.WalkRecord{}, fmt.Errorf("%w: %w", walkports.ErrWalkIntegrity, verr)
+		cerr := recordseal.Classify(blob, rec.ContentHash, verr)
+		// Intact bytes filed under another seal are still an altered row.
+		if !errors.Is(cerr, recordseal.ErrGenerationDrift) || rec.ContentHash != storedHash {
+			return domain.WalkRecord{}, fmt.Errorf("%w: %w", walkports.ErrWalkIntegrity, cerr)
+		}
+		row := recordseal.SetAsideRow{
+			Kind: RecordKind, ID: id,
+			Generation:  recordseal.Generation{PipelineVersion: rec.PipelineVersion},
+			ContentHash: storedHash, Reason: cerr,
+		}
+		s.setAside.Report([]recordseal.SetAsideRow{row})
+		return domain.WalkRecord{}, &recordseal.NothingServable{Kind: RecordKind, ID: id,
+			Aside: &recordseal.SetAside{Rows: []recordseal.SetAsideRow{row}}}
 	}
 	// The project directory rides beside the sealed blob, not inside it: the
 	// canonical form the hash covers has no such field, so a column that differs

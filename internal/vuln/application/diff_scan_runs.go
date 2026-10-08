@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -41,14 +42,26 @@ func (uc *DiffScanRunsUseCase) Diff(ctx context.Context, runIDA, runIDB string) 
 		return domain.ScanRunDiff{}, fmt.Errorf("scan runs belong to different walks: %s vs %s", runA.WalkID, runB.WalkID)
 	}
 
+	// Generations this build cannot reproduce are left out of both sides and
+	// returned beside the diff, which was computed without them; an altered row
+	// still refuses.
+	var aside []recordseal.SetAsideRow
 	recsA, err := uc.vulnStore.ListVulnerabilityRecords(ctx, runIDA)
-	if err != nil {
+	if aside, _ = recordseal.MergeSetAside(aside, err); err != nil && !isSetAside(err) {
 		return domain.ScanRunDiff{}, fmt.Errorf("listing vulnerability records for run A: %w", err)
 	}
 	recsB, err := uc.vulnStore.ListVulnerabilityRecords(ctx, runIDB)
-	if err != nil {
+	if aside, _ = recordseal.MergeSetAside(aside, err); err != nil && !isSetAside(err) {
 		return domain.ScanRunDiff{}, fmt.Errorf("listing vulnerability records for run B: %w", err)
 	}
 
-	return domain.DiffScanRuns(runA, runB, recsA, recsB), nil
+	diff := domain.DiffScanRuns(runA, runB, recsA, recsB)
+	if len(aside) > 0 {
+		return diff, &recordseal.SetAside{Rows: aside}
+	}
+	return diff, nil
 }
+
+// isSetAside reports whether err is the store's report of generations it set
+// aside, the one error a read returns beside a complete answer.
+func isSetAside(err error) bool { return recordseal.IsSetAside(err) }

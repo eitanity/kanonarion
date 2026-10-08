@@ -38,7 +38,7 @@ func (uc *FetchModuleUseCase) revalidateIfForced(
 	if !req.Force {
 		return nil, nil
 	}
-	existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
+	existing, ok, err := ports.AbsentIfNothingServable(uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion))
 	if err != nil {
 		return nil, fmt.Errorf("reading the record to revalidate: %w", err)
 	}

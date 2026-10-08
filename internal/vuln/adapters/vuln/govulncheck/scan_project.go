@@ -134,6 +134,9 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	_ = pr.Close()
 	waitErr := <-waitErrCh
 
+	if serr := stoppedScan(ctx, waitErr); serr != nil {
+		return domain.ProjectScanResult{}, serr
+	}
 	if waitErr != nil {
 		stderrStr := stderr.String()
 		s.logger.Debug("vuln-scan: project-rooted govulncheck exited with error", "error", waitErr, "stderr", stderrStr)

@@ -328,8 +328,10 @@ func InferRepublication(modulePath string, attributions []CopyrightAttribution, 
 	return indicators
 }
 
-// dedupeRelated collapses the candidate list to one entry per path, in path
-// order, keeping the strongest relation for each.
+// dedupeRelated collapses the candidate list to one entry per module, in path
+// order, keeping the strongest relation for each. Paths that differ only by
+// case or major version are one module; the entry named is the lexically
+// smallest path among those carrying the strongest relation.
 //
 // A replace counterpart can also sit in the licence ledger, and the two
 // relations are not equal evidence: the directive says the two modules stand in
@@ -337,22 +339,25 @@ func InferRepublication(modulePath string, attributions []CopyrightAttribution, 
 // here. Ordering by path keeps the indicator list deterministic under a store
 // whose listing order is not.
 func dedupeRelated(related []RelatedModule) []RelatedModule {
-	strongest := make(map[string]ModuleRelation, len(related))
+	chosen := make(map[string]RelatedModule, len(related))
 	for _, r := range related {
 		if r.Path == "" {
 			continue
 		}
-		if prev, ok := strongest[r.Path]; ok && prev >= r.Relation {
-			continue
+		key := normalizeModulePath(r.Path)
+		if prev, ok := chosen[key]; ok {
+			if prev.Relation > r.Relation || (prev.Relation == r.Relation && prev.Path <= r.Path) {
+				continue
+			}
 		}
-		strongest[r.Path] = r.Relation
+		chosen[key] = r
 	}
-	out := make([]RelatedModule, 0, len(strongest))
-	for path, rel := range strongest {
-		out = append(out, RelatedModule{Path: path, Relation: rel})
+	out := make([]RelatedModule, 0, len(chosen))
+	for _, r := range chosen {
+		out = append(out, r)
 	}
-	// Path is a map key here, so no two entries share one and the relation is a
-	// tiebreak that can never be reached; it is keyed anyway so the comparator
+	// A path determines its key, so no two entries share one and the relation is
+	// a tiebreak that can never be reached; it is keyed anyway so the comparator
 	// reads as a total order without a reader having to trace the map back.
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Path != out[j].Path {
@@ -377,9 +382,15 @@ func dedupeRelated(related []RelatedModule) []RelatedModule {
 // re-acquires the blindness the name-path heuristic is documented as having: the
 // replaced module is the one a fork was published to displace, whatever it was
 // renamed to on the way.
+//
+// For a ledger neighbour, a holder that names the module's own owner is skipped:
+// it is the module's own copyright, evidence of one owner rather than a copy.
+// This also covers a neighbour under the same owner. A replace counterpart is
+// exempt, because the directive itself is the evidence.
 func holderPathMatches(modulePath string, attributions []CopyrightAttribution, holders []string, related []RelatedModule) []RepublicationIndicator {
 	self := normalizeModulePath(modulePath)
 	selfBase := moduleBaseName(modulePath)
+	selfOwner := pathOwner(modulePath)
 	var out []RepublicationIndicator
 
 	for _, candidate := range related {
@@ -389,9 +400,12 @@ func holderPathMatches(modulePath string, attributions []CopyrightAttribution, h
 		if candidate.Relation == RelatedByLedger && !baseNamesOverlap(selfBase, moduleBaseName(candidate.Path)) {
 			continue
 		}
-		owners := pathOwnerElements(candidate.Path)
+		owner := pathOwner(candidate.Path)
 		for _, holder := range holders {
-			if !holderNamesOwner(holder, owners) {
+			if candidate.Relation == RelatedByLedger && holderNamesOwner(holder, selfOwner) {
+				continue
+			}
+			if !holderNamesOwner(holder, owner) {
 				continue
 			}
 			out = append(out, RepublicationIndicator{
@@ -409,8 +423,9 @@ func holderPathMatches(modulePath string, attributions []CopyrightAttribution, h
 
 // relatedStatement phrases the inference in the terms of the relation that
 // produced the candidate, so a reader can tell which fact the tool is standing
-// on: a module of the same name that happens to be in this store, or a replace
-// directive naming the module this one stands in for.
+// on: a module under a different path owner with an overlapping name that
+// happens to be in this store, or a replace directive naming the module this
+// one stands in for.
 func relatedStatement(holder string, candidate RelatedModule) string {
 	if candidate.Relation == RelatedByReplace {
 		return fmt.Sprintf(
@@ -418,7 +433,7 @@ func relatedStatement(holder string, candidate RelatedModule) string {
 			holder, candidate.Path)
 	}
 	return fmt.Sprintf(
-		"copyright holder %q names the owner of %s, a differently-owned module of the same name held in this store — path suggests a republication of it; verify via VCS origin or content comparison",
+		"copyright holder %q names the owner of %s, a module under a different path owner with an overlapping name held in this store — path suggests a republication of it; verify via VCS origin or content comparison",
 		holder, candidate.Path)
 }
 
@@ -431,35 +446,48 @@ const holderMinTokenLen = 5
 // one- or two-character name overlaps almost everything.
 const baseNameMinLen = 3
 
+// holderBoilerplateTokens are copyright-line words that name no one ("The Go
+// Authors", "JS Foundation and other contributors"). They are dropped before
+// matching, as the length floor drops "inc" and "the".
+var holderBoilerplateTokens = map[string]bool{
+	"authors": true, "contributors": true, "foundation": true, "rights": true,
+	"reserved": true, "other": true, "others": true, "project": true,
+	"developers": true, "team": true, "limited": true, "corporation": true,
+	"company": true, "incorporated": true, "software": true, "copyright": true,
+	"present": true, "holders": true,
+}
+
 // holderNameTokenRe splits a holder name into alphanumeric tokens.
 var holderNameTokenRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 // holderNamesOwner reports whether any sufficiently distinctive token of holder
-// appears within one of a path's owner elements, in either direction — "Dave
-// Grijalva" names the owner of github.com/dgrijalva/jwt-go.
-func holderNamesOwner(holder string, owners []string) bool {
+// appears within a path's owner, in either direction — "Dave Grijalva" names the
+// owner of github.com/dgrijalva/jwt-go. The owner is held to the same length
+// floor as the token, so "authors" cannot match an owner such as "rs".
+func holderNamesOwner(holder, owner string) bool {
+	if len(owner) < holderMinTokenLen {
+		return false
+	}
 	for _, tok := range holderNameTokenRe.Split(strings.ToLower(holder), -1) {
-		if len(tok) < holderMinTokenLen {
+		if len(tok) < holderMinTokenLen || holderBoilerplateTokens[tok] {
 			continue
 		}
-		for _, owner := range owners {
-			if strings.Contains(owner, tok) || strings.Contains(tok, owner) {
-				return true
-			}
+		if strings.Contains(owner, tok) || strings.Contains(tok, owner) {
+			return true
 		}
 	}
 	return false
 }
 
-// pathOwnerElements returns the lowercased path elements after the host, with
-// any trailing major-version element already stripped by normalisation. The host
-// is excluded: every module on a forge shares it, so it names no owner.
-func pathOwnerElements(path string) []string {
-	parts := strings.Split(normalizeModulePath(path), "/")
-	if len(parts) <= 1 {
-		return nil
+// pathOwner returns a normalised path's owner, the first element after the host
+// ("" for a bare host). Deeper elements name a repository or package, not who
+// owns it.
+func pathOwner(path string) string {
+	parts := strings.SplitN(normalizeModulePath(path), "/", 3)
+	if len(parts) < 2 {
+		return ""
 	}
-	return parts[1:]
+	return parts[1]
 }
 
 // baseNamesOverlap reports whether two module base names describe the same

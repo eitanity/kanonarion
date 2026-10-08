@@ -42,6 +42,13 @@ For each module in the scope, `audit` emits a single line containing:
 - **Verification** - outcome of sumdb/VCS cross-verification (`Verified`,
   `VerifiedBySumDBOnly`, `VerifiedByGoSum`, `UnverifiedNoSumDB`, etc.). See
   [Local `go.sum` verification](#local-gosum-verification) for `VerifiedByGoSum`.
+  `(set aside)` when every fetch record of the module was written in a shape
+  this build cannot reproduce; the run names each one on stderr.
+  `(integrity check failed)` when a stored fetch record was altered after it was
+  written; the table is still printed, then `audit` exits `10` naming the
+  record. `(divergent fetch records)` when two of the module's fetch records
+  disagree on a hash they both carry; the exit is unaffected.
+  `(fetch record unreadable)` for any other read failure.
 - **License** - primary SPDX identifier; annotated with status when ambiguous
   (e.g. `Apache-2.0 [Multiple]`)
 - **Staleness** - `current` when the pinned version is the latest published,
@@ -74,7 +81,10 @@ For each module in the scope, `audit` emits a single line containing:
   `ScanFailed`, `(not scanned)` when no record exists at any pipeline version, or
   `(superseded)` when the store holds records for the module only at pipeline
   versions this build no longer reads — the module has been scanned, and the row's
-  reason names the generations held and says to re-scan. A module whose every
+  reason names the generations held and says to re-scan. `(set aside)` when every
+  record this build reads for the module was written in a canonical shape it
+  cannot reproduce; the reason names each by `content_hash` (see [A stored record
+  this build cannot verify](vuln.md#a-stored-record-this-build-cannot-verify)). A module whose every
   matched advisory was retracted upstream reads `Withdrawn`, and its count is
   reported as *retracted* rather than as findings: only one of the two is
   something to act on. A module carrying both reads
@@ -240,7 +250,7 @@ kanonarion audit --gomod ./go.mod --json
   },
   "scan": {
     "answered": true,
-    "run_id": "vscan-01M0ADKD8WXT7JA8219Z7XRGEC-1787056207",
+    "run_id": "vscan-01M0ADKD8WXT7JA8219Z7XRGEC-1787056207164093528",
     "reused": true,
     "snapshot": { "source": "vuln.go.dev", "version": "2026-08-14T16:22:54Z" }
   },
@@ -355,8 +365,8 @@ included. `vuln_withdrawn` is the retracted subset and live advisories are the
 difference between the two. Both are emitted on every row, `0` included: `0`
 means no advisory covering this module was retracted, and it is a measurement,
 not a gap. A row with no scan at all reports `0` for both and says which absence
-it is in `vuln_status` (`(not scanned)`, `(superseded)`, `(scan record
-unreadable)`) and `vuln_reason`.
+it is in `vuln_status` (`(not scanned)`, `(superseded)`, `(set aside)`, `(scan
+record unreadable)`) and `vuln_reason`.
 
 `latest_release_age_days` is **how long ago the latest release shipped**, not how
 far behind the pin is. There is no `days_behind` field. See
@@ -573,7 +583,7 @@ Every run reports, on **stderr**, where its two expensive answers came from:
 ```
 derivation:
   walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
-  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability answers came from the source that run read, which this run did not re-read (--force to re-measure)
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889502117346 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability answers came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 or, when the run measured for itself:
@@ -653,7 +663,7 @@ The refresh states its outcome in the derivation block on **stderr**:
 derivation:
   walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
   advisory database: checked vuln.go.dev and found it unchanged at 2026-07-27T20:14:16Z; nothing was downloaded and the stored snapshot was kept
-  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889502117346 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
 ```
 
 The outcomes the line distinguishes:

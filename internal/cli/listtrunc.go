@@ -178,6 +178,10 @@ type listDocumentJSON struct {
 	// superseded records were excluded — the text path says so on its own line,
 	// and a machine reader that is told less than a person is a defect.
 	Generation any `json:"generation,omitempty"`
+	// SetAside names the stored generations the listing's reads left out because
+	// this build cannot reproduce them. It is not a superseded generation: the
+	// row was written for this pipeline, in a shape this build cannot re-derive.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // listDocumentFacts are the statements a listing may add beside its records,
@@ -211,8 +215,12 @@ func writeListDocumentWith[T any](stdout io.Writer, records []T, t listTruncatio
 		listTruncationJSON: t.statement(),
 		Scope:              facts.scope,
 		Generation:         facts.generation,
+		// Taken here rather than passed by each listing, so no listing's
+		// document can omit what its reads set aside.
+		SetAside: storeSetAside.take().json(),
 	}
-	if zero != nil {
+	// Rows the listing's reads set aside are held, so the listing is not a zero.
+	if zero != nil && len(doc.SetAside) == 0 {
 		statement := listZeroStatementJSON(*zero)
 		doc.ZeroResult = &statement
 	}

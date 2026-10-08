@@ -49,10 +49,11 @@ func BenchmarkExtract_Sequential_vs_Parallel(b *testing.B) {
 
 		b.Run(fmt.Sprintf("modules=%d/workers=1", n), func(b *testing.B) {
 			rs := &mockExtractionStore{runs: make(map[string]domain.ExtractionRun)}
-			uc := NewExtractUseCase(Config{
+			uc := mustExtractUseCase(b, Config{
 				Runs:      rs,
 				Walks:     ws,
 				Extractor: &slowExtractor{delay: stageDelay},
+				Stages:    mockStageRegistry{},
 				Clock:     fakeClock{t: testClockTime},
 				Stopwatch: fakeStopwatch{},
 				Workers:   1,
@@ -68,10 +69,11 @@ func BenchmarkExtract_Sequential_vs_Parallel(b *testing.B) {
 
 		b.Run(fmt.Sprintf("modules=%d/workers=parallel", n), func(b *testing.B) {
 			rs := &mockExtractionStore{runs: make(map[string]domain.ExtractionRun)}
-			uc := NewExtractUseCase(Config{
+			uc := mustExtractUseCase(b, Config{
 				Runs:      rs,
 				Walks:     ws,
 				Extractor: &slowExtractor{delay: stageDelay},
+				Stages:    mockStageRegistry{},
 				Clock:     fakeClock{t: testClockTime},
 				Stopwatch: fakeStopwatch{},
 				Workers:   0, // runtime.NumCPU()

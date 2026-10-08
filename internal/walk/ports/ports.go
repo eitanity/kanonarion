@@ -29,7 +29,7 @@ type AuditSink interface {
 var ErrWalkNotFound = errors.New("walk record not found")
 
 // ErrWalkIntegrity is returned by WalkStore.GetWalk when the stored record's
-// content hash does not match the recomputed hash, indicating tampering or
+// stored bytes do not hash to the seal they carry, indicating tampering or
 // corruption.
 var ErrWalkIntegrity = errors.New("walk record integrity check failed")
 
@@ -213,8 +213,9 @@ type WalkStore interface {
 	PutWalk(ctx context.Context, rec walkdomain.WalkRecord) error
 
 	// GetWalk retrieves the walk record with the given ID. Returns
-	// ErrWalkNotFound if not found, ErrWalkIntegrity if the stored hash
-	// does not match.
+	// ErrWalkNotFound if not found, ErrWalkIntegrity if the stored bytes do not
+	// hash to their seal, and *recordseal.NothingServable if they do but this
+	// build cannot reproduce them.
 	GetWalk(ctx context.Context, id string) (walkdomain.WalkRecord, error)
 
 	// ListWalks returns summaries matching the filter, ordered by started_at

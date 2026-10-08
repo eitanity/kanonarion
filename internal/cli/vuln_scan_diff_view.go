@@ -36,6 +36,9 @@ type scanRunDiffDocument struct {
 	WithdrawnFindings   []scanFindingDeltaJSON       `json:"withdrawn_findings"`
 	ReachabilityChanges []scanReachabilityChangeJSON `json:"reachability_changes"`
 	UnresolvedFindings  []scanUnresolvedFindingJSON  `json:"unresolved_findings"`
+	// SetAside names the stored generations the diff was computed without,
+	// because this build cannot reproduce them. Absent when nothing was set aside.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // scanRunJSON is one of the two runs the diff compares.

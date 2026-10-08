@@ -204,7 +204,7 @@ func (r *Resolver) LatestInfo(ctx context.Context, path string) (ports.LatestInf
 				slog.Int("attempt", attempt),
 				slog.String("reason", serr.Error()),
 			)
-			return info, err //nolint:wrapcheck // deliberate pass-through of the wrapped resolver's error
+			return info, stoppedRetry{err: err, stop: serr}
 		}
 		totalBackoff += delay
 	}
@@ -260,3 +260,11 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
+
+// stoppedRetry is the error that prompted a retry the context cut short. It
+// reads as that error, which is what the caller asked about, and it is also the
+// cancellation, so a caller can tell a stopped run from a failed lookup.
+type stoppedRetry struct{ err, stop error }
+
+func (e stoppedRetry) Error() string   { return e.err.Error() }
+func (e stoppedRetry) Unwrap() []error { return []error{e.err, e.stop} }

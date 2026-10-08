@@ -59,7 +59,7 @@ func auditFixture(t *testing.T, sink ports.AuditSink) (*ExtractUseCase, string) 
 			{Coordinate: root, ResolutionSource: walkdomain.ResolutionLocalMainModule},
 		}},
 	}
-	uc := NewExtractUseCase(Config{
+	uc := mustExtractUseCase(t, Config{
 		Runs:      &mockExtractionStore{runs: make(map[string]domain.ExtractionRun)},
 		Walks:     &mockWalkStore{walks: map[string]walkdomain.WalkRecord{walkID: walk}},
 		Extractor: &mockExtractor{},

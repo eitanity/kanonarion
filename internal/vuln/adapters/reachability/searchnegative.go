@@ -3,6 +3,7 @@ package reachability
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,9 +42,39 @@ import (
 // record with none: the graph is loaded only after a finding has asked for it.
 type NegativeSearcher struct {
 	loader ports.CallGraphLoader
+	// dirs answers where a frame's working tree is, for the refusal that has to
+	// name the command analysing it. Optional: without one a refusal says it
+	// cannot name the tree rather than naming the wrong one.
+	dirs ports.WalkProjectDirReader
 
 	mu    sync.Mutex
-	cache map[coordinate.ModuleCoordinate]*cachedProjection
+	cache map[graphKey]*cachedProjection
+}
+
+// WithProjectDirs gives the searcher the walk ledger's record of where a
+// project-rooted frame's tree is, so a refusal about that frame names a command
+// instead of a sentence. It returns the receiver for chaining, on the same
+// terms as every other optional dependency in this repository.
+func (s *NegativeSearcher) WithProjectDirs(r ports.WalkProjectDirReader) *NegativeSearcher {
+	if s != nil {
+		s.dirs = r
+	}
+	return s
+}
+
+// graphKey identifies one loaded-and-rooted graph. The frame is part of it
+// because the standard library's search is a JOIN: the graph searched for
+// stdlib@v1.26.5 inside one project is not the graph searched for it inside
+// another, and a cache keyed on the coordinate alone would serve the first
+// project's build as the second's answer.
+type graphKey struct {
+	coord coordinate.ModuleCoordinate
+	frame string
+	// walk is the run the record came from. It is part of the key because the
+	// tree a refusal names is read off that walk: two walks of one project at
+	// two checkouts are two answers, and a cache that could not tell them apart
+	// would name the first project's directory in the second's refusal.
+	walk string
 }
 
 // cachedProjection is one coordinate's loaded graph, or the recorded fact that
@@ -70,12 +101,33 @@ type cachedProjection struct {
 	// loadErr is why the load failed, kept so the refusal a reader is shown names
 	// the cause rather than asserting the commonest one.
 	loadErr error
+	// missing is the coordinate the failed load was for. On a joined search two
+	// graphs are loaded, so a refusal that named the record's own coordinate
+	// would send the reader after the wrong one.
+	missing coordinate.ModuleCoordinate
+	// searched names the stored records this graph is made of, so an answer says
+	// what it was derived from rather than leaving the reader to guess which
+	// generation answered.
+	searched []string
+	// joined says the graph is a consumer's build with the standard library's own
+	// graph attached at its external leaves. Such a graph IS the record's frame,
+	// which is what lets a path found in it contradict the recorded negative.
+	joined bool
+	// subject is the coordinate the targets are looked for in — the record's own.
+	subject coordinate.ModuleCoordinate
+	// analysisRoot is the working tree the missing graph would be taken of, when
+	// anything in the store names one. Empty is "not known", never a guess.
+	analysisRoot string
+	// notSearched is a refusal that is not a load failure: the graphs loaded and
+	// the search still could not be made soundly. It is kept apart from loadErr
+	// so the reason a reader sees names what actually stopped the search.
+	notSearched string
 }
 
 // NewNegativeSearcher returns a searcher reading graphs through loader. A nil
 // loader disables it: every Search then leaves the record exactly as stored.
 func NewNegativeSearcher(loader ports.CallGraphLoader) *NegativeSearcher {
-	return &NegativeSearcher{loader: loader, cache: make(map[coordinate.ModuleCoordinate]*cachedProjection)}
+	return &NegativeSearcher{loader: loader, cache: make(map[graphKey]*cachedProjection)}
 }
 
 // Search attaches a domain.NegativeSearch to every finding in rec whose negative
@@ -105,10 +157,10 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 			continue
 		}
 		if graph == nil {
-			graph = s.graphFor(ctx, rec.Coordinate)
+			graph = s.graphForRecord(ctx, rec)
 		}
 		if !graph.loaded {
-			f.NegativeSearch = &domain.NegativeSearch{NotSearched: graph.loadRefusal(rec.Coordinate)}
+			f.NegativeSearch = &domain.NegativeSearch{NotSearched: graph.loadRefusal()}
 			continue
 		}
 		if len(graph.shippedRoots) == 0 {
@@ -119,7 +171,7 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 			}
 			continue
 		}
-		targets := buildTargetSet(graph.projection, symbolRefsFor(rec.Coordinate, f.AffectedSymbols))
+		targets := buildTargetSet(graph.projection, symbolRefsFor(rec.Coordinate, f.AffectedPackages, f.AffectedSymbols))
 		if len(targets) == 0 {
 			// The graph holds none of the symbols the advisory named. That is not a
 			// search that came back empty — there was nothing here to look for — and
@@ -153,7 +205,12 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 			// this very module — the project's own scan of itself — and speaks about
 			// a different build when the record was measured inside a consumer's.
 			// domain.NegativeSearch.InRecordedFrame says what each case may mean.
-			InRecordedFrame: rec.Rooting.IsRootedAtPath(rec.Coordinate.Path()),
+			InRecordedFrame: graph.joined || rec.Rooting.IsRootedAtPath(rec.Coordinate.Path()),
+			// Which stored records the traversal ran over. A joined search reads two
+			// of them, and an answer that named neither would leave the reader
+			// unable to check it or to see that the standard library's own graph was
+			// what made the rung possible.
+			GraphsSearched: graph.searched,
 			// What the traversal below could NOT follow. It is the same list for
 			// every finding over this graph, because it is a property of the graph
 			// rather than of the advisory, and it is stated even when empty: empty
@@ -252,13 +309,35 @@ func searchableNegative(f domain.VulnerabilityFinding) bool {
 }
 
 // symbolRefsFor scopes the advisory's short symbol names to the record's own
-// module, on the same terms as the scan-time conversion: the advisory names
-// symbols of the module it is filed against, and an unscoped name would match a
-// same-named symbol in any module the graph holds.
-func symbolRefsFor(coord coordinate.ModuleCoordinate, symbols []string) []ports.SymbolReference {
-	refs := make([]ports.SymbolReference, 0, len(symbols))
+// module, and to the PACKAGES the advisory names them in where it names any.
+//
+// The module scope is the scan-time rule: the advisory names symbols of the
+// module it is filed against, and an unscoped name would match a same-named
+// symbol in any module the graph holds. The package scope is the same rule one
+// level down, and it is what the standard library forced: "stdlib" is one
+// coordinate spanning 362 packages, so an advisory about encoding/xml's
+// Decoder.Decode matched encoding/json's, encoding/gob's and encoding/asn1's
+// too — and a search told to look for all four reported a route to a package
+// the advisory is not about.
+//
+// NARROWING a target set is the direction that makes a negative easier to
+// confirm, so it is only legitimate because the advisory itself states the
+// packages: a same-named symbol in another package is not the vulnerable
+// symbol. Where the finding names none — every record written before the field
+// existed — nothing is narrowed and the search behaves exactly as it did.
+func symbolRefsFor(coord coordinate.ModuleCoordinate, packages, symbols []string) []ports.SymbolReference {
+	if len(packages) == 0 {
+		refs := make([]ports.SymbolReference, 0, len(symbols))
+		for _, sym := range symbols {
+			refs = append(refs, ports.SymbolReference{Module: coord.Path(), Symbol: sym})
+		}
+		return refs
+	}
+	refs := make([]ports.SymbolReference, 0, len(symbols)*len(packages))
 	for _, sym := range symbols {
-		refs = append(refs, ports.SymbolReference{Module: coord.Path(), Symbol: sym})
+		for _, pkg := range packages {
+			refs = append(refs, ports.SymbolReference{Module: coord.Path(), Package: pkg, Symbol: sym})
+		}
 	}
 	return refs
 }
@@ -266,10 +345,20 @@ func symbolRefsFor(coord coordinate.ModuleCoordinate, symbols []string) []ports.
 // loadRefusal names why the graph could not be loaded, in the terms the reader
 // can act on: the store either holds no record for the coordinate — which a
 // command fixes — or refused the one it holds, which is a different problem.
-func (c *cachedProjection) loadRefusal(coord coordinate.ModuleCoordinate) string {
+func (c *cachedProjection) loadRefusal() string {
+	if c.notSearched != "" {
+		return c.notSearched
+	}
+	coord := c.missing
 	if errors.Is(c.loadErr, ports.ErrCallGraphNotFound) {
+		// The remedy comes from the call-graph domain rather than being spelled
+		// here, so a coordinate the `callgraph` command cannot take — a working
+		// tree, and until this ledger existed the standard library — is told to run
+		// the command that does analyse it. A remedy that cannot run costs the
+		// reader exactly the round trip it existed to save.
 		return "the store holds no call graph for " + coord.String() +
-			", so there was no graph to search; extract one with: kanonarion callgraph " + coord.String()
+			", so there was no graph to search" +
+			remedyClause("extract one with", coord, c.analysisRoot, false)
 	}
 	if c.loadErr != nil {
 		return "the stored call graph for " + coord.String() + " could not be read: " + c.loadErr.Error()
@@ -291,10 +380,11 @@ func (c *cachedProjection) kind() string {
 func (s *NegativeSearcher) graphFor(ctx context.Context, coord coordinate.ModuleCoordinate) *cachedProjection {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cached, ok := s.cache[coord]; ok {
+	key := graphKey{coord: coord}
+	if cached, ok := s.cache[key]; ok {
 		return cached
 	}
-	entry := &cachedProjection{}
+	entry := &cachedProjection{missing: coord, subject: coord}
 	proj, err := s.loader.Load(ctx, coord)
 	if err != nil {
 		entry.loadErr = err
@@ -303,8 +393,341 @@ func (s *NegativeSearcher) graphFor(ctx context.Context, coord coordinate.Module
 		entry.shippedRoots = collectEntryPoints(proj)
 		entry.entryRoots = collectNamedEntryPoints(proj)
 		entry.reflectSites = reflectiveDispatchSites(proj, entry.entryRoots)
+		entry.searched = []string{graphLabel(coord, proj)}
 		entry.loaded = true
 	}
-	s.cache[coord] = entry
+	s.cache[key] = entry
 	return entry
+}
+
+// graphForRecord picks the graph a record's negatives are searched over.
+//
+// For every coordinate but one that is the coordinate's own stored graph. The
+// standard library is the exception, and it is not an exception of convenience:
+// its own graph rooted at its own exported API answers a question nobody asked.
+// Almost every symbol an advisory names there IS exported API, so it is its own
+// traversal root and is reached in zero hops whatever any consumer does — the
+// same defect that made every application-rooted negative uncertifiable. What a
+// reader asks about a standard-library advisory is whether THEIR build reaches
+// it, and the graph that answers that is their own, continued through the
+// external leaves where it stops.
+func (s *NegativeSearcher) graphForRecord(ctx context.Context, rec *domain.VulnerabilityRecord) *cachedProjection {
+	if !rec.Coordinate.IsStdlib() {
+		return s.graphFor(ctx, rec.Coordinate)
+	}
+	target := rec.Rooting.RootTarget()
+	if target == "" {
+		// The record does not say which build it was measured in, so there is no
+		// consumer graph to continue from and nothing to join. The standard
+		// library's own graph is loaded instead, and the entry-point rooting it
+		// carries is what stops it confirming anything out of a root set made of
+		// the vulnerable symbols themselves.
+		return s.graphFor(ctx, rec.Coordinate)
+	}
+	return s.joinedGraphFor(ctx, rec.Coordinate, target, rec.WalkID)
+}
+
+// joinedGraphFor loads the frame's own call graph and the standard library's,
+// and returns the one graph that is both.
+//
+// The join is by node identity and needs nothing else. A call-graph node is
+// identified by its package path and symbol — "crypto/tls.(*Conn).Handshake" —
+// so the leaf a consumer's graph records where it stops at the standard library
+// is spelled exactly as the standard library's own graph spells that function.
+// Replacing the leaf with the owned node both attaches its outgoing edges and
+// makes it a legitimate target: buildTargetSet skips external nodes, so an
+// advisory symbol that stayed a leaf could never be searched for.
+//
+// The ROOTS come from the consumer's graph alone. Rooting the joined graph
+// would make every exported standard-library function an entry point, and the
+// vulnerable symbol would be reached in zero hops from itself.
+func (s *NegativeSearcher) joinedGraphFor(
+	ctx context.Context,
+	std coordinate.ModuleCoordinate,
+	frameTarget string,
+	walkID string,
+) *cachedProjection {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := graphKey{coord: std, frame: frameTarget, walk: walkID}
+	if cached, ok := s.cache[key]; ok {
+		return cached
+	}
+	entry := &cachedProjection{subject: std, missing: std, joined: true}
+	s.cache[key] = entry
+
+	frameCoord, err := coordinate.ParseModuleCoordinate(frameTarget)
+	if err != nil {
+		entry.notSearched = "the frame this record was measured in, " + frameTarget +
+			", is not a coordinate, so the build it names cannot be loaded: " + err.Error()
+		return entry
+	}
+	consumer, consumerErr := s.loader.Load(ctx, frameCoord)
+	stdlib, stdlibErr := s.loader.Load(ctx, std)
+	// Both graphs are loaded before either failure is reported, because a join
+	// needs both and a refusal that named only the first would send the reader
+	// back for the second. Where neither is held — the ordinary state of a store
+	// that has analysed neither the project nor its toolchain — one sentence
+	// names both and both remedies.
+	// Where the frame's tree is, so a refusal about it names a command. The
+	// graph's own analysis root is preferred — it is the tree that graph was
+	// taken of — and the walk's recorded directory answers when no graph exists
+	// to carry one.
+	frameDir := consumer.AnalysisRoot
+	if frameDir == "" {
+		frameDir = s.projectDir(ctx, walkID)
+	}
+	if why := joinLoadRefusal(frameCoord, consumerErr, std, stdlibErr, frameDir); why != "" {
+		entry.notSearched = why
+		return entry
+	}
+	if len(consumer.StdlibPackages) == 0 {
+		// The frame's graph does not say which standard-library packages its build
+		// links, and without that the join cannot be made SOUNDLY. A class-hierarchy
+		// graph of the whole standard library resolves one indirect call on a
+		// func() variable to every func() in 23,000 functions, so a traversal that
+		// followed those edges would walk into packages the binary does not contain
+		// and report a contradiction out of code that is not there. Measured on this
+		// store: softmagic-cli, which links none of net/http, net/url or crypto/tls,
+		// reached net/url.(*URL).Parse through flag's default usage function.
+		//
+		// Refusing is the only honest answer. The recorded derivation keeps the
+		// rung, and the remedy names the one command that records the closure.
+		// --force, because a graph IS held: without it the re-run is served the very
+		// record that cannot be joined.
+		entry.notSearched = "the stored call graph of " + frameCoord.String() +
+			" does not record which standard-library packages its build links, so the standard library's own " +
+			"graph cannot be joined to it without following calls into packages the binary does not contain" +
+			remedyClause("re-analyse it with", frameCoord, frameDir, true)
+		return entry
+	}
+	entry.projection = joinProjections(consumer, stdlib)
+	// Selected over the consumer's graph, never the joined one: see above.
+	entry.shippedRoots = collectEntryPoints(consumer)
+	entry.entryRoots = collectNamedEntryPoints(consumer)
+	entry.reflectSites = reflectiveDispatchSites(entry.projection, entry.entryRoots)
+	entry.searched = []string{
+		graphLabel(frameCoord, consumer),
+		graphRestrictedLabel(std, stdlib, len(consumer.StdlibPackages)),
+	}
+	entry.loaded = true
+	return entry
+}
+
+// joinProjections attaches the standard library's graph to a consumer's at the
+// external leaves where the consumer's stops.
+//
+// Completeness is the WEAKER of the two, because a path is only as good as its
+// worst hop: a negative certified across a joined graph rests on both halves
+// having been built with bodies, and reporting the consumer's level alone would
+// let a type-only standard library confirm an absence it never searched for.
+//
+// The artifact kind is the CONSUMER's, because the kind is what decides rooting
+// and the roots are the consumer's.
+func joinProjections(consumer, stdlib ports.CallGraphProjection) ports.CallGraphProjection {
+	linked := make(map[string]bool, len(consumer.StdlibPackages))
+	for _, pkg := range consumer.StdlibPackages {
+		linked[pkg] = true
+	}
+
+	// Every standard-library node is kept, linked or not. A node is the statement
+	// that the function EXISTS at this toolchain version, which is what lets an
+	// advisory's symbols be found at all; dropping the unlinked ones would report
+	// "the graph holds none of the symbols the advisory names", which is a
+	// different and weaker answer than "this build contains none of that code".
+	byID := make(map[string]bool, len(stdlib.Nodes))
+	nodes := make([]ports.CallGraphNode, 0, len(consumer.Nodes)+len(stdlib.Nodes))
+	for _, n := range stdlib.Nodes {
+		byID[n.ID] = true
+		nodes = append(nodes, n)
+	}
+	for _, n := range consumer.Nodes {
+		if byID[n.ID] {
+			// The standard library's own node already describes this function, with
+			// its module attribution and its exported-API axis measured rather than
+			// guessed from outside. The consumer's leaf adds nothing.
+			continue
+		}
+		nodes = append(nodes, n)
+	}
+
+	// The EDGES are what the closure restricts. An edge whose caller or callee
+	// sits in a standard-library package this build does not link describes a
+	// call between functions the binary does not contain, so it is not a call
+	// this build can make. The consumer's own edges are untouched: a build links
+	// what it calls.
+	edges := make([]ports.CallGraphEdge, 0, len(consumer.Edges)+len(stdlib.Edges))
+	edges = append(edges, consumer.Edges...)
+	pkgOf := make(map[string]string, len(stdlib.Nodes))
+	for _, n := range stdlib.Nodes {
+		pkgOf[n.ID] = n.Package
+	}
+	for _, e := range stdlib.Edges {
+		if !inBuild(linked, pkgOf, e.FromID) || !inBuild(linked, pkgOf, e.ToID) {
+			continue
+		}
+		edges = append(edges, e)
+	}
+
+	var reflect []ports.CallGraphReflectSite
+	reflect = append(reflect, consumer.ReflectiveDispatch...)
+	for _, site := range stdlib.ReflectiveDispatch {
+		if !inBuild(linked, pkgOf, site.CallerID) {
+			continue
+		}
+		reflect = append(reflect, site)
+	}
+
+	return ports.CallGraphProjection{
+		Nodes: nodes,
+		Edges: edges,
+		Completeness: string(callgraphdomain.WeakerCompleteness(
+			callgraphdomain.CompletenessLevel(consumer.Completeness),
+			callgraphdomain.CompletenessLevel(stdlib.Completeness))),
+		Algorithm:          consumer.Algorithm,
+		ArtifactKind:       consumer.ArtifactKind,
+		ReflectiveDispatch: reflect,
+		ServableAsCacheHit: consumer.ServableAsCacheHit && stdlib.ServableAsCacheHit,
+		StdlibPackages:     consumer.StdlibPackages,
+	}
+}
+
+// inBuild reports whether a standard-library node belongs to a package this
+// build links. A node the standard library's graph does not name is one of the
+// consumer's own and is always in the build; a node whose package could not be
+// resolved — the shared functions SSA synthesises for an interface method —
+// belongs to no package and is kept, because excluding it would cut a hop every
+// build makes.
+func inBuild(linked map[string]bool, pkgOf map[string]string, id string) bool {
+	pkg, known := pkgOf[id]
+	if !known || pkg == "" {
+		return true
+	}
+	return linked[pkg]
+}
+
+// graphLabel names one stored graph the way an answer cites it: the coordinate
+// it is of, and how big and how complete it is. It carries no content hash
+// because the projection does not hold one — the label says which graph, and
+// callgraph-show is what says which generation.
+func graphLabel(coord coordinate.ModuleCoordinate, proj ports.CallGraphProjection) string {
+	return fmt.Sprintf("%s (%s, %d nodes, %d edges)",
+		coord, proj.Completeness, len(proj.Nodes), len(proj.Edges))
+}
+
+// graphRestrictedLabel is graphLabel for the standard library's graph as the
+// join uses it: the edges a build does not contain are not traversed, and an
+// answer that did not say so would overstate what was searched.
+func graphRestrictedLabel(coord coordinate.ModuleCoordinate, proj ports.CallGraphProjection, linked int) string {
+	return fmt.Sprintf("%s (%s, %d nodes, %d edges, traversed only within the %d standard-library packages this build links)",
+		coord, proj.Completeness, len(proj.Nodes), len(proj.Edges), linked)
+}
+
+// joinLoadRefusal states why a joined search could not be made, naming every
+// graph it needed and could not get, and "" when both loaded.
+//
+// Both halves are named together on purpose. A standard-library answer rests on
+// two records, and a store that holds neither is the ordinary state of one that
+// has analysed neither the project nor its toolchain — so a refusal naming one
+// of them costs the reader a second round trip to discover the other.
+//
+// A load that failed for any other reason is reported as itself: a graph that
+// exists and will not decode is a different problem from one that was never
+// taken, and a remedy for the second does not address the first.
+func joinLoadRefusal(
+	frame coordinate.ModuleCoordinate, frameErr error,
+	std coordinate.ModuleCoordinate, stdErr error,
+	frameRoot string,
+) string {
+	switch {
+	case frameErr != nil && !errors.Is(frameErr, ports.ErrCallGraphNotFound):
+		return "the stored call graph for " + frame.String() + " could not be read: " + frameErr.Error()
+	case stdErr != nil && !errors.Is(stdErr, ports.ErrCallGraphNotFound):
+		return "the stored call graph for " + std.String() + " could not be read: " + stdErr.Error()
+	case frameErr == nil && stdErr == nil:
+		return ""
+	}
+	var missing, remedies []string
+	unnamed := ""
+	if frameErr != nil {
+		missing = append(missing, frame.String()+" (the build this record was measured in)")
+		if line, ok := callgraphdomain.ReanalysisCommand(frame, frameRoot, false); ok {
+			remedies = append(remedies, line)
+		} else {
+			// No command can be named for this half, so none is printed for it. The
+			// reason is stated as its own sentence rather than inside the remedy,
+			// where it would read as the command and is not one.
+			unnamed = ". " + unnamedTreeSentence(false)
+		}
+	}
+	if stdErr != nil {
+		missing = append(missing, std.String()+" (the standard library this build links)")
+		if line, ok := callgraphdomain.ReanalysisCommand(std, "", false); ok {
+			remedies = append(remedies, line)
+		}
+	}
+	why := "a standard-library negative is searched by joining the build's own call graph to the standard " +
+		"library's, and the store holds no call graph for " + strings.Join(missing, " or ")
+	if len(remedies) > 0 {
+		why += "; extract " + itOrThem(len(remedies)) + " with: " + strings.Join(remedies, "; ")
+	}
+	return why + unnamed
+}
+
+// remedyClause renders ", <lead> with: <command>" for a refusal, and the
+// sentence that says why no command can be named where none can.
+//
+// It is one function because the two outcomes share a slot and must never share
+// a shape: a slot takes a command or takes nothing, and a sentence spliced into
+// one reads as an invocation the parser would reject.
+func remedyClause(lead string, coord coordinate.ModuleCoordinate, dir string, force bool) string {
+	if line, ok := callgraphdomain.ReanalysisCommand(coord, dir, force); ok {
+		return "; " + lead + ": " + line
+	}
+	return ". " + unnamedTreeSentence(force)
+}
+
+// unnamedTreeSentence states, as a sentence, that no directory can be named and
+// what the reader must do from inside the tree. force carries through, because
+// a held record answers a re-run that does not ask past it.
+func unnamedTreeSentence(force bool) string {
+	flags := ""
+	if force {
+		flags = " --force"
+	}
+	return capitalise(callgraphdomain.UnnamedWorkingTreeLead) +
+		", so run kanonarion local" + flags + " from inside it"
+}
+
+// capitalise raises the first letter so a lead written to open a clause can
+// open a sentence instead.
+func capitalise(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// projectDir asks the walk ledger where the frame's tree is, and answers "" for
+// every way it cannot know: no reader wired, no walk named, a walk that records
+// no directory, or a store that would not answer. A directory that is not known
+// is never guessed.
+func (s *NegativeSearcher) projectDir(ctx context.Context, walkID string) string {
+	if s.dirs == nil || walkID == "" {
+		return ""
+	}
+	dir, ok, err := s.dirs.WalkProjectDir(ctx, walkID)
+	if err != nil || !ok {
+		return ""
+	}
+	return dir
+}
+
+// itOrThem renders the pronoun for the remedy count above, so a one-graph
+// refusal never reads "extract them with".
+func itOrThem(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }

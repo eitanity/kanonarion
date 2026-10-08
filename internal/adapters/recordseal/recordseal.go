@@ -50,8 +50,8 @@ import (
 // Stores wrap it INSIDE their own integrity error rather than instead of it, so
 // existing callers that match on the domain's integrity sentinel keep behaving
 // as they did, while anything that wants to tell the two apart now can. The
-// remedy differs: a drifted record is re-extracted, an altered one is
-// investigated.
+// remedy differs: a drifted record is re-derived or read with the build that
+// wrote it, an altered one is investigated.
 var ErrGenerationDrift = errors.New("record written by a different canonical shape")
 
 // contentHashKey is the field every record domain seals into.
@@ -228,9 +228,7 @@ func (x Exclusions) Classify(raw []byte, storedHash string, verifyErr error) err
 	if err != nil || !consistent {
 		return verifyErr
 	}
-	return fmt.Errorf("%w: the stored bytes hash to their own seal, so nothing has been altered — "+
-		"this build cannot reproduce them, which means the record predates a change to its canonical "+
-		"shape and should be re-extracted rather than investigated: %w", ErrGenerationDrift, verifyErr)
+	return Drift(verifyErr)
 }
 
 // ReplaceTopLevelContentHash returns raw with the value of its top-level

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -117,6 +118,9 @@ func (uc *ScanWalkUseCase) RefreshSnapshot(ctx context.Context, walkID string) (
 	base := SnapshotRefresh{PriorVersion: stored.Version()}
 
 	published, verr := uc.moduleScanner.database.LatestVersion(ctx)
+	if interrupt.Cancelled(ctx, verr) {
+		return SnapshotRefresh{}, fmt.Errorf("reading the published advisory generation: %w", verr)
+	}
 	if verr != nil {
 		uc.logger.Warn("advisory database refresh: published generation unreadable, downloading",
 			"error", verr, "stored_version", stored.Version())
@@ -137,6 +141,9 @@ func (uc *ScanWalkUseCase) RefreshSnapshot(ctx context.Context, walkID string) (
 		"stored_version", stored.Version(), "published_version", published, "walk_id", walkID)
 
 	changed, compared, ierr := uc.walkAdvisoriesChanged(ctx, walkID, stored)
+	if interrupt.Cancelled(ctx, ierr) {
+		return SnapshotRefresh{}, fmt.Errorf("comparing the walk's advisories: %w", ierr)
+	}
 	if ierr != nil {
 		uc.logger.Warn("advisory database refresh: advisory comparison unavailable, downloading",
 			"error", ierr, "walk_id", walkID)

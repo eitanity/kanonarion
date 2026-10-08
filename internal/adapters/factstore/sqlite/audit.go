@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -210,6 +211,9 @@ func (s *AuditingStore) PutFetchRecord(ctx context.Context, sealed domain2.Seale
 	}
 	return s.audit.Record(sealed.Record())
 }
+
+// ReportSetAside delegates to the inner store.
+func (s *AuditingStore) ReportSetAside(r func([]recordseal.SetAsideRow)) { s.inner.ReportSetAside(r) }
 
 // GetFetchRecord delegates to the inner store.
 func (s *AuditingStore) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.CompositeRecord, bool, error) {

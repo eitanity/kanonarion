@@ -195,15 +195,17 @@ FROM vulnerability_findings_index`
 // frame carries, or nil plus the reason there is none.
 //
 // A generation that fails its content-hash check stops the whole answer rather
-// than being skipped: decodeRecord verifies, so an unreadable generation is
+// than being skipped: splitRecordRow verifies, so an unreadable generation is
 // already reported by every read path, and treating it as agreement here would
-// let the one check aimed at this defect class be the one that looks away.
+// let the one check aimed at this defect class be the one that looks away. A
+// drifted generation is set aside exactly as the write's reconciliation sets it
+// aside, so the check composes the same set the index was written from.
 func (s *Store) composedFindingIDs(
 	ctx context.Context,
 	path, version, pipeline, snapSource, snapVersion string,
 	rooting domain.Rooting,
 ) (map[string]bool, string) {
-	generations, err := s.listGenerations(ctx, s.db.DB(), path, version, pipeline, snapSource, snapVersion)
+	generations, _, err := s.listGenerations(ctx, s.db.DB(), path, version, pipeline, snapSource, snapVersion)
 	if err != nil {
 		return nil, reasonUndecodable
 	}

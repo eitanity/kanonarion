@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -231,7 +232,10 @@ func (c *Cache) goVersionOf(ctx context.Context, coord coordinate.ModuleCoordina
 func (c *Cache) report(ctx context.Context, leg string, r modcache.Report) {
 	c.logger.DebugContext(ctx, "callgraph_modcache_populated",
 		slog.String("leg", leg), slog.Int("written", r.Written), slog.Int("requested", r.Requested))
-	if !r.Complete() {
+	if !r.Complete() && interrupt.Stopped(ctx) {
+		c.logger.DebugContext(ctx, "callgraph_modcache_cancelled",
+			slog.String("leg", leg), slog.Int("written", r.Written), slog.Int("requested", r.Requested))
+	} else if !r.Complete() {
 		c.logger.WarnContext(ctx, "callgraph_modcache_incomplete",
 			slog.String("leg", leg),
 			slog.Int("written", r.Written), slog.Int("requested", r.Requested),
@@ -251,7 +255,10 @@ func (c *Cache) prefetchSource(ctx context.Context, coords []coordinate.ModuleCo
 		if ctx.Err() != nil {
 			return
 		}
-		record, ok, err := fetchports.ComposedFetchRecord(ctx, c.facts, coord)
+		record, ok, err := fetchports.AbsentIfNothingServable(fetchports.ComposedFetchRecord(ctx, c.facts, coord))
+		if interrupt.Cancelled(ctx, err) {
+			return
+		}
 		if err != nil {
 			c.logger.WarnContext(ctx, "callgraph_modcache_prefetch_check_failed",
 				slog.String("module", coord.String()), slog.String("error", err.Error()))
@@ -261,7 +268,10 @@ func (c *Cache) prefetchSource(ctx context.Context, coords []coordinate.ModuleCo
 			continue
 		}
 		c.logger.InfoContext(ctx, "callgraph_modcache_prefetch", slog.String("module", coord.String()))
-		if ferr := c.fetcher.FetchModule(ctx, coord); ferr != nil {
+		if ferr := c.fetcher.FetchModule(ctx, coord); interrupt.Cancelled(ctx, ferr) {
+			interrupt.Note(interrupt.ModuleFetch)
+			return
+		} else if ferr != nil {
 			c.logger.WarnContext(ctx, "callgraph_modcache_prefetch_failed",
 				slog.String("module", coord.String()), slog.String("error", ferr.Error()))
 		}
@@ -280,7 +290,10 @@ func (c *Cache) prefetchGoMod(ctx context.Context, coords []coordinate.ModuleCoo
 		if ctx.Err() != nil {
 			return
 		}
-		_, ok, err := fetchports.ComposedFetchRecord(ctx, c.facts, coord)
+		_, ok, err := fetchports.AbsentIfNothingServable(fetchports.ComposedFetchRecord(ctx, c.facts, coord))
+		if interrupt.Cancelled(ctx, err) {
+			return
+		}
 		if err != nil {
 			c.logger.WarnContext(ctx, "callgraph_modcache_prefetch_check_failed",
 				slog.String("module", coord.String()), slog.String("error", err.Error()))
@@ -290,7 +303,10 @@ func (c *Cache) prefetchGoMod(ctx context.Context, coords []coordinate.ModuleCoo
 			continue
 		}
 		c.logger.InfoContext(ctx, "callgraph_modcache_prefetch_gomod", slog.String("module", coord.String()))
-		if ferr := c.fetcher.FetchModuleGoMod(ctx, coord); ferr != nil {
+		if ferr := c.fetcher.FetchModuleGoMod(ctx, coord); interrupt.Cancelled(ctx, ferr) {
+			interrupt.Note(interrupt.ModuleFetch)
+			return
+		} else if ferr != nil {
 			c.logger.WarnContext(ctx, "callgraph_modcache_prefetch_gomod_failed",
 				slog.String("module", coord.String()), slog.String("error", ferr.Error()))
 		}

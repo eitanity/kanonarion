@@ -22,22 +22,34 @@ import (
 // a coordinate's history vanished for the one row that had drifted. These tests
 // pin all three parts of the replacement — the readable records are served, the
 // unreadable one is named in place, and the command exits 0 — plus the
-// fail-closed direction for the read that composes a single verdict.
+// fail-closed direction for the read that composes a single verdict over an
+// altered row.
 
-// driftedRecords is the error a record listing returns for a row sealed by a
-// generation this build no longer produces. The identity is bare and the
-// generation rides beside it, which is the shape the store hands over.
+// driftedRecords is the error a record listing returns when its only unreadable
+// row was sealed in a canonical shape this build cannot reproduce: set aside,
+// not an integrity failure. The identity is bare and the generation rides beside
+// it, which is the shape the store hands over.
 func driftedRecords(coord string) error {
-	return &vulnports.UnreadableRows{Rows: []vulnports.UnreadableRow{{
-		Kind: vulnports.RowKindRecord,
+	return &recordseal.SetAside{Rows: []recordseal.SetAsideRow{{
+		Kind: "vulnerability record",
 		ID:   coord,
-		Generation: vulnports.RowGeneration{
+		Generation: recordseal.Generation{
 			PipelineVersion: "v25",
-			SnapshotSource:  "govulndb",
-			SnapshotVersion: "v2026-01-01",
+			Snapshot:        recordseal.Snapshot{Name: "vuln-db", Source: "govulndb", Version: "v2026-01-01"},
 		},
+		ContentHash: "sha256:00c9783d",
 		Reason: fmt.Errorf("%w: content hash mismatch: stored %q, computed %q",
 			recordseal.ErrGenerationDrift, "00c9783d", "0498eace"),
+	}}}
+}
+
+// alteredRecords is the error a record listing returns for a row whose bytes do
+// not hash to their own seal: an integrity failure.
+func alteredRecords(coord string) error {
+	return &vulnports.UnreadableRows{Rows: []vulnports.UnreadableRow{{
+		Kind:   vulnports.RowKindRecord,
+		ID:     coord,
+		Reason: fmt.Errorf("content hash mismatch: stored %q, computed %q", "00c9783d", "0498eace"),
 	}}}
 }
 
@@ -87,7 +99,7 @@ func TestRunVulnByID_ServesReadableRecordsAndNamesTheUnreadable(t *testing.T) {
 		t.Errorf("output does not mark the row unreadable:\n%s", got)
 	}
 	// Drift is not tampering, and the wording must not let a reader conclude it was.
-	if !strings.Contains(got, "sealed by an earlier record generation; re-scan to reseal") {
+	if !strings.Contains(got, recordseal.SetAsideRemedy) {
 		t.Errorf("output does not report the row as generation drift:\n%s", got)
 	}
 }
@@ -250,16 +262,16 @@ func TestRunVulnShowHistory_JSONCarriesTheUnreadableRow(t *testing.T) {
 }
 
 // The other half of the contract: a command that serves ONE verdict keeps
-// failing closed, because a verdict selected from a set with a row missing can
-// be a Clean standing where a finding was. What it gains is the survey that
-// does list the row.
+// failing closed on an altered row, because a verdict selected from a set with
+// that row missing can be a Clean standing where a finding was. What it gains is
+// the survey that does list the row.
 func TestRunVulnShow_FailsClosedAndNamesTheHistory(t *testing.T) {
 	coord := mustVulnCoord(t, "example.com/bravo", "v2.0.0")
 	uc := testfakes.NewFakeQueryVuln()
-	uc.PartialErr = driftedRecords("example.com/bravo@v2.0.0")
+	uc.PartialErr = alteredRecords("example.com/bravo@v2.0.0")
 
 	err := runVulnShow(context.Background(), coord.String(), "", "", buildTargetFlags{}, false, false, false,
-		uc, nil, nil, nil, nil, io.Discard)
+		uc, nil, nil, nil, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("runVulnShow() = nil; a single-verdict read over a partly unreadable ledger must refuse")
 	}

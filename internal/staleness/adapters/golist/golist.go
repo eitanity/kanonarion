@@ -110,15 +110,21 @@ func (r *Resolver) LatestBatch(ctx context.Context, paths []string) (map[string]
 		return nil, ErrNoUpdateCheck
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	callCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
 	args := append([]string{"list", "-m", "-u", "-json", "-mod=readonly"}, paths...)
-	cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are module paths resolved by the go command itself from this project's own build list
+	cmd := childproc.CommandContext(callCtx, "go", args...) // #nosec G204 -- args are module paths resolved by the go command itself from this project's own build list
 	cmd.Dir = r.dir
 	cmd.Env = r.childEnv()
 	out, err := cmd.Output()
 	if err != nil {
+		// A child killed because the caller was cancelled reports only
+		// "signal: killed"; the cancellation is what happened, so it is what is
+		// returned. The adapter's own timeout stays a failure.
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, fmt.Errorf("go %s: %w", strings.Join(args[:4], " "), cerr)
+		}
 		return nil, r.execError(args, err)
 	}
 

@@ -167,17 +167,21 @@ type Container struct {
 	DiffInterface    DiffInterfaceUseCase
 
 	// callgraph
-	ExtractCallGraph      ExtractCallGraphUseCase
-	ExtractLocalCallGraph ExtractLocalCallGraphUseCase
-	QueryCallGraph        QueryCallGraphUseCase
+	ExtractCallGraph       ExtractCallGraphUseCase
+	ExtractLocalCallGraph  ExtractLocalCallGraphUseCase
+	ExtractStdlibCallGraph ExtractStdlibCallGraphUseCase
+	QueryCallGraph         QueryCallGraphUseCase
 
 	// examples
 	ExtractExample ExtractExampleUseCase
 	QueryExamples  QueryExamplesUseCase
 
 	// vuln
-	ScanModule          ScanModuleUseCase
-	ScanWalk            ScanWalkUseCase
+	ScanModule ScanModuleUseCase
+	ScanWalk   ScanWalkUseCase
+	// SetAside is where the scans state the stored generations their writes and
+	// reuse reads set aside; a scanning command points it at its stderr.
+	SetAside            *setAsideRelay
 	RescanWalk          RescanWalkUseCase
 	QueryVuln           QueryVulnUseCase
 	QueryScanRuns       QueryScanRunsUseCase
@@ -186,7 +190,8 @@ type Container struct {
 	VulnPipelineVersion string
 	// NegativeSearch is the read-time call-graph search over stored negatives.
 	// QueryVuln already applies it; this is for the read paths that go to the
-	// vuln store directly rather than through the query use case.
+	// vuln store directly rather than through the query use case, and for the
+	// records a fresh scan prints without reading them back.
 	NegativeSearch *reachability.NegativeSearcher
 
 	// sbom
@@ -387,6 +392,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 	// ---- factstore (auditing) ----
 	rawStore := fetchsqlite.New(dbHandle)
+	rawStore.ReportSetAside(storeSetAside.report)
 	factStore, err := fetchsqlite.NewAuditingStore(rawStore, filepath.Join(storeRoot, "audit.jsonl"))
 	if err != nil {
 		_ = dbHandle.Close()
@@ -411,7 +417,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// from whichever tree was analysed last — and from outside any module, or in a
 	// module the ledger has never been run in, the read is exactly what it was.
 	cgStore.PreferWorktree(callerWorktree(logger))
+	// A generation this build cannot reproduce is composed around and named; see
+	// storeSetAside for where.
+	cgStore.ReportSetAside(storeSetAside.report)
+	licStore.ReportSetAside(storeSetAside.report)
+	walkStore.ReportSetAside(storeSetAside.report)
+	extStore.ReportSetAside(storeSetAside.report)
 	exStore := exsqlite.New(dbHandle)
+	exStore.ReportSetAside(storeSetAside.report)
 	vulnStore := vulnsqlite.New(dbHandle)
 	sbomStore := sbomstore.New(dbHandle)
 
@@ -473,10 +486,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// environment may leave the building — and only the second one governs here.
 	if offlineStdlibAnchor(modcacheMode) {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, factStore, logger), skipVCSVerify)
+			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, factStore, logger, storeSetAside.report), skipVCSVerify)
 	} else {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewStdlibAcquirer(dbHandle, blobs, clk, factStore, logger), skipVCSVerify)
+			composition.NewStdlibAcquirer(dbHandle, blobs, clk, factStore, logger, storeSetAside.report), skipVCSVerify)
 	}
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 
@@ -530,6 +543,16 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
+	// The recorded chain of custody, read by the stdlib call-graph stage to anchor
+	// its record and by every command asked about the stdlib coordinate.
+	stdlibCustody := stdlibsqlite.New(dbHandle)
+	stdlibCustody.ReportSetAside(storeSetAside.report)
+	cgStdlibExtractUC := cgapp.NewExtractStdlibCallGraphUseCase(cgapp.StdlibConfig{
+		Store: cgStore, Analyser: cgAnalyser,
+		Toolchains: newToolchainLocator(goBinary),
+		Custody:    stdlibCustodyProjection{reader: stdlibCustody},
+		Clock:      clk, Stopwatch: stopwatch, Logger: logger,
+	}).WithAudit(factStore)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
@@ -572,7 +595,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		"callgraph": "0.1.0",
 		"example":   "0.1.0",
 	}
-	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
+	extractUC, err := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:             extStore,
 		Walks:            walkStore,
 		Extractor:        adapterExtractor,
@@ -581,11 +604,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Stopwatch:        stopwatch,
 		PipelineVersions: pipelineVersions,
 		Logger:           logger,
-	}).WithAudit(factStore)
+	})
+	if err != nil {
+		_ = dbHandle.Close()
+		return nil, nil, fmt.Errorf("wiring extract use case: %w", err)
+	}
+	extractUC = extractUC.WithAudit(factStore)
 	queryExtractUC := extractapp.NewQueryExtractionUseCase(extStore)
 
 	// ---- license query / notice / compatibility / diff use cases ----
-	stdlibCustody := stdlibsqlite.New(dbHandle)
 	queryLicenseUC := licapp.NewQueryLicenseUseCaseWithWalks(licStore, walkStore)
 	diffLicenseUC := licapp.NewDiffLicenseUseCase(licStore)
 	checkCompatUC := licapp.NewCheckCompatibilityUseCase(licStore, walkStore)
@@ -620,11 +647,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// heaviest module able to take the host by the other route.
 	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary, callgraphCeiling, callgraphNarration).
 		WithMemoryCeiling(callgraphBound.CeilingBytes)
+	setAside := newSetAsideRelay(logger)
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,
 		scanner, database, reach,
 		clk, vulnapp.PipelineVersion, logger,
-	).WithCallGraphLoader(cgLoader).
+	).WithSetAsideReporter(setAside.report).
+		WithCallGraphLoader(cgLoader).
 		WithCallGraphSpawner(cgSpawner).
 		WithRouteAnnotator(routeAnnotator).
 		// A module scan resolves its own snapshot when no walk scan handed it one,
@@ -666,7 +695,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// reaches a surface, so a negative another analyser only stayed silent about
 	// is answered by a search wherever a graph exists for the coordinate. It
 	// writes nothing: see searchedVulnQuery.
-	negSearcher := reachability.NewNegativeSearcher(cgLoader)
+	negSearcher := reachability.NewNegativeSearcher(cgLoader).
+		WithProjectDirs(walkProjectDirs{walks: queryWalksUC})
 	queryVulnUC := newSearchedVulnQuery(vulnapp.NewQueryVulnUseCase(vulnStore), negSearcher)
 	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, walkStore)
 	diffScanRunsUC := newSearchedDiffScanRuns(vulnapp.NewDiffScanRunsUseCase(vulnStore), negSearcher)
@@ -791,15 +821,17 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		QueryInterface:   queryIfaceUC,
 		DiffInterface:    diffIfaceUC,
 
-		ExtractCallGraph:      cgExtractUC,
-		ExtractLocalCallGraph: cgLocalExtractUC,
-		QueryCallGraph:        queryCGUC,
+		ExtractCallGraph:       cgExtractUC,
+		ExtractLocalCallGraph:  cgLocalExtractUC,
+		ExtractStdlibCallGraph: cgStdlibExtractUC,
+		QueryCallGraph:         queryCGUC,
 
 		ExtractExample: exExtractUC,
 		QueryExamples:  queryExamplesUC,
 
 		ScanModule:          moduleScannerUC,
 		ScanWalk:            walkScannerUC,
+		SetAside:            setAside,
 		RescanWalk:          rescanWalkUC,
 		QueryVuln:           queryVulnUC,
 		QueryScanRuns:       queryScanRunsUC,

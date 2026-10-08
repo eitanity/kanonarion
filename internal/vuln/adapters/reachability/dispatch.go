@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -145,7 +146,7 @@ func (a *DispatchAnnotator) serve(ctx context.Context, coord coordinate.ModuleCo
 	}
 
 	answer, err := a.reader.ReadCallSites(ctx, coord, all)
-	if err != nil {
+	if err != nil && !interrupt.Cancelled(ctx, err) {
 		// Recorded on every hop that wanted it, not only logged. A read that failed
 		// is not a module with no graph, and the record has to carry the difference
 		// or the reason a hop is unannotated is a guess made at read time.

@@ -2,9 +2,12 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
@@ -86,6 +89,12 @@ func (a *LocalAcquirer) Acquire(ctx context.Context, goVersionRaw string, opts O
 
 	if !opts.Force {
 		facts, ok, err := a.store.Get(ctx, version)
+		if errors.As(err, new(*recordseal.NothingServable)) {
+			// Every held measurement was set aside and the store named each; this
+			// build measures one it can serve.
+			a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_set_aside", slog.String("go_version", version))
+			ok, err = false, nil
+		}
 		if err != nil {
 			return domain.Facts{}, fmt.Errorf("reading stdlib fact cache for %s: %w", version, err)
 		}
@@ -185,8 +194,10 @@ func (a *LocalAcquirer) identifyLicense(ctx context.Context, version, goRoot str
 	}
 	spdx, err := a.licenses.Identify(ctx, text)
 	if err != nil {
-		a.logger.WarnContext(ctx, "stdlib.license.identify_failed",
-			slog.String("go_version", version), slog.String("error", err.Error()))
+		if !interrupt.Cancelled(ctx, err) {
+			a.logger.WarnContext(ctx, "stdlib.license.identify_failed",
+				slog.String("go_version", version), slog.String("error", err.Error()))
+		}
 		return "", licenseClassifierFailed
 	}
 	if spdx == "" {

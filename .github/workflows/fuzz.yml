@@ -49,7 +49,8 @@ jobs:
       - id: find
         name: Enumerate packages with fuzz targets
         run: |
-          pkgs=$(git grep -l '^func Fuzz' \
+          set -euo pipefail
+          pkgs=$(git grep -l '^func Fuzz' -- '*_test.go' \
             | xargs -n1 dirname | sort -u | sed 's#^#./#')
           json=$(printf '%s\n' "$pkgs" | jq -R . | jq -cs '{pkg: .}')
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
@@ -90,18 +91,31 @@ jobs:
       - name: Run every fuzz target in the package
         env:
           FUZZTIME: ${{ github.event.inputs.fuzztime || '5m' }}
+          PKG: ${{ matrix.pkg }}
         run: |
+          set -euo pipefail
+          # The list runs outside the for so its exit status is checked: a
+          # package that does not compile must fail, not fuzz nothing and pass.
+          if ! list=$(go test -list '^Fuzz' "$PKG"); then
+            echo "::error::go test -list failed in $PKG"
+            exit 1
+          fi
+          fns=$(printf '%s\n' "$list" | grep '^Fuzz' || true)
+          if [ -z "$fns" ]; then
+            echo "::error::no Fuzz targets listed in $PKG"
+            exit 1
+          fi
           failed=""
-          for fn in $(go test -list '^Fuzz' "${{ matrix.pkg }}" | grep '^Fuzz'); do
-            echo "::group::${{ matrix.pkg }} $fn (fuzztime=$FUZZTIME)"
+          for fn in $fns; do
+            echo "::group::$PKG $fn (fuzztime=$FUZZTIME)"
             if ! go test -run='^$' -fuzz="^$fn$" -fuzztime="$FUZZTIME" \
-                -test.timeout=20m "${{ matrix.pkg }}"; then
+                -test.timeout=20m "$PKG"; then
               failed="$failed $fn"
             fi
             echo "::endgroup::"
           done
           if [ -n "$failed" ]; then
-            echo "::error::fuzz failures in ${{ matrix.pkg }}:$failed"
+            echo "::error::fuzz failures in $PKG:$failed"
             exit 1
           fi
 

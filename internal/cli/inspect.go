@@ -218,6 +218,9 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if err != nil {
 		return fmt.Errorf("extract: %w", err)
 	}
+	if ierr := stopIfInterrupted(ctx, "extract", nil); ierr != nil {
+		return ierr
+	}
 	printExtractionFailures(stderr, extractRun)
 
 	// Step 4: vuln-scan
@@ -676,40 +679,12 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	scanState := inspectStageNotRun
 	extractFailures := []extractStageFailure{}
 	if walkID != "" {
-		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: extracting walk %s (frame %s)\n", walkID, projectWalk.BuildFrame())
-		ef := extractFlags{
-			goBinary:   f.goBinary,
-			stages:     []string{"license", "interface", "callgraph", "example"},
-			force:      f.force,
-			noProgress: f.noProgress,
+		st, serr := runInspectGoModStages(ctx, f, walkID, projectWalk.BuildFrame(), stderr)
+		if serr != nil {
+			return serr
 		}
-		extractRun, eerr := extractWalk(ctx, walkID, ef, stderr)
-		extractFails, extractFailures = inspectExtractTally(extractRun, eerr)
-		if eerr != nil {
-			_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
-		}
-		printExtractionFailures(stderr, extractRun)
-
-		// The project walk roots at the consumer module but analyses its own code
-		// in consumer-mode, so the target's call graph is never loaded into the
-		// store. Reachability therefore roots at the dependency closure, one hop
-		// short of the project entrypoints. Disclose that up front so a reader
-		// cannot mistake a dep-closure verdict for an app-rooted one.
-		if f.reachable {
-			printReachabilityClosureBanner(stderr, f.gomodPath)
-		}
-
-		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: vuln-scanning walk %s\n", walkID)
-		// stderr, not io.Discard — see the note on the same call in runInspect:
-		// the grouped roll-up is the concise presentation and belongs to the
-		// reader, while stdout stays reserved for the context output.
-		var verr error
-		scanFacts, verr = runVulnScanReporting(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, true, stderr, stderr)
-		scanState = inspectScanState(scanFacts, verr)
-		if verr != nil {
-			_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
-			scanFails = 1
-		}
+		extractFails, extractFailures = st.extractFails, st.extractFailures
+		scanFacts, scanState, scanFails = st.scanFacts, st.scanState, st.scanFails
 	}
 
 	// --size-only asks what the context this pipeline just made answerable
@@ -917,6 +892,7 @@ func readInspectScanRun(ctx context.Context, ctr *Container, walkID string, stde
 		return 0, "", ""
 	}
 	runs, rerr := ctr.QueryScanRuns.ListRunsForWalk(ctx, walkID)
+	rerr = storeSetAside.collect(rerr)
 	switch {
 	case rerr != nil:
 		_, _ = fmt.Fprintf(stderr, "==> inspect: reading scan run for walk %s: %v\n", walkID, rerr)
@@ -936,4 +912,60 @@ func readInspectScanRun(ctx context.Context, ctr *Container, walkID string, stde
 		snapshotVersion = runs[0].Snapshot.Version()
 	}
 	return affectedCount, snapshotVersion, scanStatus
+}
+
+// inspectGoModStages is what the extract and vuln-scan stages of a project
+// inspect established.
+type inspectGoModStages struct {
+	extractFails    int
+	extractFailures []extractStageFailure
+	scanFacts       vulnScanRunFacts
+	scanState       string
+	scanFails       int
+}
+
+// runInspectGoModStages extracts and vuln-scans the project walk. A failed stage
+// is tallied and the run carries on; an interrupted one ends the run.
+func runInspectGoModStages(ctx context.Context, f inspectFlags, walkID, frame string, stderr io.Writer) (inspectGoModStages, error) {
+	_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: extracting walk %s (frame %s)\n", walkID, frame)
+	ef := extractFlags{
+		goBinary:   f.goBinary,
+		stages:     []string{"license", "interface", "callgraph", "example"},
+		force:      f.force,
+		noProgress: f.noProgress,
+	}
+	var st inspectGoModStages
+	extractRun, eerr := extractWalk(ctx, walkID, ef, stderr)
+	if ierr := stopIfInterrupted(ctx, "extract", eerr); ierr != nil {
+		return st, ierr
+	}
+	st.extractFails, st.extractFailures = inspectExtractTally(extractRun, eerr)
+	if eerr != nil {
+		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
+	}
+	printExtractionFailures(stderr, extractRun)
+
+	// The project walk roots at the consumer module but analyses its own code
+	// in consumer-mode, so the target's call graph is never loaded into the
+	// store. Reachability therefore roots at the dependency closure, one hop
+	// short of the project entrypoints. Disclose that up front so a reader
+	// cannot mistake a dep-closure verdict for an app-rooted one.
+	if f.reachable {
+		printReachabilityClosureBanner(stderr, f.gomodPath)
+	}
+
+	_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: vuln-scanning walk %s\n", walkID)
+	// stderr, not io.Discard — see the note on the same call in runInspect:
+	// the grouped roll-up is the concise presentation and belongs to the
+	// reader, while stdout stays reserved for the context output.
+	scanFacts, verr := runVulnScanReporting(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, true, stderr, stderr)
+	if ierr := stopIfInterrupted(ctx, "vuln-scan", verr); ierr != nil {
+		return st, ierr
+	}
+	st.scanFacts, st.scanState = scanFacts, inspectScanState(scanFacts, verr)
+	if verr != nil {
+		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
+		st.scanFails = 1
+	}
+	return st, nil
 }

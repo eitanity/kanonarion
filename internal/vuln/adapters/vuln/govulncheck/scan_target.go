@@ -103,6 +103,9 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// scan's own exit status rather than pre-empted here.
 	s.logger.Info("vuln-scan: downloading target dependencies", "dir", scanDir)
 	if out, dlErr := runGoChild(ctx, toolchains, env, scanDir, "mod", "download"); dlErr != nil {
+		if serr := stoppedScan(ctx, dlErr); serr != nil {
+			return domain.ProjectScanResult{}, serr
+		}
 		s.logger.Debug("vuln-scan: go mod download failed for target", "error", dlErr, "output", string(out))
 	}
 	s.logMem(ctx, "target_deps_downloaded")
@@ -130,6 +133,9 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 
 	if run.waitErr != nil {
 		waitErr, stderrStr := run.waitErr, run.detail
+		if serr := stoppedScan(ctx, waitErr); serr != nil {
+			return domain.ProjectScanResult{}, serr
+		}
 		s.logger.Debug("vuln-scan: target-rooted govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
 		f := classifyScanFailure(waitErr, stderrStr, tool)
 		return domain.ProjectScanResult{

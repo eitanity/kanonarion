@@ -420,7 +420,9 @@ module as carrying nothing.
 
 Under `--json` every row carries `generation` and `superseded`, whether or not
 the record is superseded, so a consumer reads one field rather than inferring a
-fact from a key's absence.
+fact from a key's absence. The document carries a `generation` object naming the
+generation served; see [The generation a listing
+serves](conventions.md#the-generation-a-listing-serves).
 
 ### Two records for one version
 
@@ -472,10 +474,15 @@ kanonarion native-list --presence present_identified --json
   ],
   "truncated": false,
   "limit": 50,
-  "subject": "native records at generation 0.3.0+recipes.1",
+  "subject": "native records",
   "remedy": "--limit 0",
   "offset": 0,
-  "next_offset": 50
+  "next_offset": 50,
+  "generation": {
+    "served": "0.3.0+recipes.1",
+    "all_generations": false,
+    "remedy": "--all-generations"
+  }
 }
 ```
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/spf13/cobra"
 )
@@ -12,6 +13,7 @@ import (
 func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var moduleFilter string
 	var limit, offset int
+	var allGenerations bool
 
 	cmd := &cobra.Command{
 		Use: "callgraph-list [<module>]",
@@ -20,8 +22,16 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "List extracted call graph records",
+		Long: `callgraph-list reads back the records 'kanonarion callgraph' writes, one row
+per module coordinate, optionally restricted to one module path.
+
+By default only records at the pipeline version this build serves are listed,
+one row per coordinate. A record from an earlier pipeline version answers no
+query, so listing it beside the others would pad the count of what is known.
+--all-generations includes them and marks each one.`,
 		Example: `  kanonarion callgraph-list
-  kanonarion callgraph-list github.com/spf13/cobra`,
+  kanonarion callgraph-list github.com/spf13/cobra
+  kanonarion callgraph-list --all-generations --limit 0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
 				return fmt.Errorf("accepts at most 1 arg, received %d", len(args))
@@ -35,12 +45,14 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runCallGraphList(cmd.Context(), moduleFilter, limit, offset, ctr.QueryCallGraph, stdout, stderr)
+			return runCallGraphList(cmd.Context(), moduleFilter, limit, offset, allGenerations, ctr.QueryCallGraph, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of records to return (0 = unlimited)")
 	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
+	cmd.Flags().BoolVar(&allGenerations, "all-generations", false,
+		"also list records extracted at a superseded pipeline version, which this build does not serve")
 
 	return cmd
 }
@@ -64,51 +76,66 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 // Composition remains exactly as it was for the reads that serve ONE coordinate
 // — callgraph-show, callers, callees — where picking a winner is the question
 // being asked.
-func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset int, uc QueryCallGraphUseCase, stdout, stderr io.Writer) error {
+func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset int, allGenerations bool, uc QueryCallGraphUseCase, stdout, stderr io.Writer) error {
+	gen := callGraphListGeneration(allGenerations)
 	// One row more than will be printed: the extra row's presence is what tells
 	// this listing whether it withheld anything, and it costs one row rather
 	// than a second read.
 	coords, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{
-		ModulePath: moduleFilter,
-		Limit:      truncationFetchLimit(limit),
-		Offset:     offset,
+		ModulePath:      moduleFilter,
+		PipelineVersion: gen.filterVersion(),
+		Limit:           truncationFetchLimit(limit),
+		Offset:          offset,
 	})
 	if err != nil {
 		return fmt.Errorf("listing callgraph records: %w", err)
 	}
 	coords, truncated := truncateList(coords, limit)
-	trunc := listTruncation{limit: limit, subject: "call graph records", truncated: truncated, offset: offset}
+	trunc := listTruncation{limit: limit, subject: gen.subject, truncated: truncated, offset: offset}
 
 	if jsonOut {
 		out := make([]callGraphListEntry, 0, len(coords))
 		for _, c := range coords {
-			out = append(out, callGraphListJSON(c))
+			out = append(out, callGraphListJSON(c, gen))
 		}
 		var zero *listZeroScope
 		if len(coords) == 0 {
-			scope, serr := callGraphListZeroScope(ctx, moduleFilter, offset, uc)
+			scope, serr := callGraphListZeroScope(ctx, moduleFilter, offset, gen, uc)
 			if serr != nil {
 				return serr
 			}
 			zero = &scope
 		}
-		return writeListDocument(stdout, out, trunc, zero)
+		return writeListDocumentWith(stdout, out, trunc, zero, listDocumentFacts{generation: gen.statement()})
 	}
 
 	if len(coords) == 0 {
-		scope, serr := callGraphListZeroScope(ctx, moduleFilter, offset, uc)
+		scope, serr := callGraphListZeroScope(ctx, moduleFilter, offset, gen, uc)
 		if serr != nil {
 			return serr
 		}
 		return writeListZeroNotice(stdout, scope)
 	}
 
+	superseded := 0
 	for _, c := range coords {
-		if err := writeCallGraphListRow(stdout, c); err != nil {
+		if gen.superseded(c.PipelineVersion) {
+			superseded++
+		}
+		if err := writeCallGraphListRow(stdout, c, gen.mark(c.PipelineVersion)); err != nil {
 			return err
 		}
 	}
+	if gerr := gen.writeNotice(stdout, superseded, len(coords)); gerr != nil {
+		return gerr
+	}
 	return writeListTruncationNotice(stdout, trunc)
+}
+
+// callGraphListGeneration is callgraph-list's generation contract.
+func callGraphListGeneration(allGenerations bool) listGeneration {
+	return pipelineGeneration("call graph records", cgapp.PipelineVersion, allGenerations,
+		"kanonarion callgraph <module>@<version>")
 }
 
 // writeCallGraphListRow prints ONE line per coordinate, whatever its history.
@@ -130,15 +157,15 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 // asked a listing for. callgraph-show --history is where a coordinate's
 // generations belong, and it prints what a listing structurally cannot — the
 // toolchain, the origin, and which generation is served.
-func writeCallGraphListRow(stdout io.Writer, c ports.CallGraphCoordinate) error {
+func writeCallGraphListRow(stdout io.Writer, c ports.CallGraphCoordinate, mark string) error {
 	coord := c.ModulePath + "@" + c.ModuleVersion
 	head, ok := headlineGeneration(c)
 	if !ok {
 		// A store that lists coordinates without enumerating their generations has
 		// no counts to print, and inventing zeroes would read as a measured empty
 		// graph.
-		_, err := fmt.Fprintf(stdout, "%-60s %-12s (this store reports no per-generation counts)\n",
-			coord, c.PipelineVersion)
+		_, err := fmt.Fprintf(stdout, "%-60s %-12s (this store reports no per-generation counts)%s\n",
+			coord, c.PipelineVersion, mark)
 		if err != nil {
 			return fmt.Errorf("writing summary: %w", err)
 		}
@@ -146,8 +173,8 @@ func writeCallGraphListRow(stdout io.Writer, c ports.CallGraphCoordinate) error 
 	}
 
 	if c.GenerationsDiffer {
-		_, err := fmt.Fprintf(stdout, "%-60s %-12s %d generations state different counts, status or completeness; run: kanonarion callgraph-show %s --history\n",
-			coord, c.PipelineVersion, len(c.Generations), coord)
+		_, err := fmt.Fprintf(stdout, "%-60s %-12s %d generations state different counts, status or completeness; run: kanonarion callgraph-show %s --history%s\n",
+			coord, c.PipelineVersion, len(c.Generations), coord, mark)
 		if err != nil {
 			return fmt.Errorf("writing summary: %w", err)
 		}
@@ -161,6 +188,7 @@ func writeCallGraphListRow(stdout io.Writer, c ports.CallGraphCoordinate) error 
 		line += fmt.Sprintf("  [%d generations; counts from %s]",
 			len(c.Generations), ledgerStamp(head.ExtractedAt))
 	}
+	line += mark
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing summary: %w", err)
 	}
@@ -198,9 +226,13 @@ func headlineGeneration(c ports.CallGraphCoordinate) (ports.CallGraphGeneration,
 // invocation per coordinate to rebuild what this call already read. The two
 // surfaces carry different amounts of detail; they state no different facts.
 type callGraphListEntry struct {
-	Module            string                    `json:"module"`
-	Version           string                    `json:"version"`
-	PipelineVersion   string                    `json:"pipeline_version"`
+	Module          string `json:"module"`
+	Version         string `json:"version"`
+	PipelineVersion string `json:"pipeline_version"`
+	// Superseded says this build does not serve the row's pipeline version. It
+	// is emitted at false too, so a servable row is told apart from one the
+	// field was never computed for.
+	Superseded        bool                      `json:"superseded"`
 	Status            *string                   `json:"status"`
 	NodeCount         *int                      `json:"node_count"`
 	EdgeCount         *int                      `json:"edge_count"`
@@ -217,11 +249,12 @@ type callGraphGenerationJSON struct {
 	ContentHash string `json:"content_hash"`
 }
 
-func callGraphListJSON(c ports.CallGraphCoordinate) callGraphListEntry {
+func callGraphListJSON(c ports.CallGraphCoordinate, gen listGeneration) callGraphListEntry {
 	e := callGraphListEntry{
 		Module:          c.ModulePath,
 		Version:         c.ModuleVersion,
 		PipelineVersion: c.PipelineVersion,
+		Superseded:      gen.superseded(c.PipelineVersion),
 	}
 	head, ok := headlineGeneration(c)
 	if !ok {
@@ -260,8 +293,8 @@ func callGraphListJSON(c ports.CallGraphCoordinate) callGraphListEntry {
 // are there" is a question about the ledger's keys, and asking it of the
 // composing listing made the cheapest possible answer — an empty one — the most
 // expensive command in the store.
-func callGraphListZeroScope(ctx context.Context, moduleFilter string, offset int, uc QueryCallGraphUseCase) (listZeroScope, error) {
-	all, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{})
+func callGraphListZeroScope(ctx context.Context, moduleFilter string, offset int, gen listGeneration, uc QueryCallGraphUseCase) (listZeroScope, error) {
+	all, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{PipelineVersion: gen.filterVersion()})
 	if err != nil {
 		return listZeroScope{}, fmt.Errorf("counting callgraph records for the zero-result notice: %w", err)
 	}

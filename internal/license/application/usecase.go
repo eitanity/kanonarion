@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -204,6 +206,12 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 			log.InfoContext(ctx, "licence_cache_conflict_remeasuring",
 				slog.String("conflict", cerr.Error()),
 			)
+		case errors.As(cerr, new(*recordseal.NothingServable)):
+			// Every held generation was set aside, and the store named each; this
+			// build measures one it can serve.
+			log.InfoContext(ctx, "licence_cache_set_aside_remeasuring",
+				slog.String("reason", cerr.Error()),
+			)
 		case cerr != nil && !errors.Is(cerr, ports.ErrLicenceIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking license store: %w", cerr)
 		}
@@ -241,6 +249,10 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 
 	// Steps 4–7: extract license files, run detection, derive status.
 	record, extractErr := uc.extractFromZip(ctx, log, req.Coordinate, zipData, req.PerFile)
+	if interrupt.Cancelled(ctx, extractErr) {
+		// Stopped by the run's cancellation: no failed-extraction record is made of it.
+		return ExtractResult{}, fmt.Errorf("extracting the licence of %s: %w", req.Coordinate, extractErr)
+	}
 	if extractErr != nil {
 		record = domain2.LicenseRecord{
 			SchemaVersion:   domain2.LicenseSchemaVersion,
@@ -333,6 +345,11 @@ func (uc *ExtractLicenseUseCase) identicalGeneration(
 		return domain2.LicenseRecord{}, false
 	}
 	held, found, err := reader.IdenticalGeneration(ctx, record)
+	if interrupt.Cancelled(ctx, err) {
+		// The run was stopped; the write that follows fails on the same
+		// cancellation and says so.
+		return domain2.LicenseRecord{}, false
+	}
 	if err != nil {
 		log.WarnContext(ctx, "licence_held_generation_unreadable_appending",
 			slog.String("reason", err.Error()),

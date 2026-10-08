@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 )
 
@@ -237,6 +239,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	// comparing two runs of one command had no way to see the difference between
 	// them.
 	sqlitestore.ResetRetries()
+	interrupt.Reset()
 	defer func() {
 		if notice := sqlitestore.ContentionNotice(sqlitestore.Retries()); notice != "" {
 			_, _ = fmt.Fprint(stderr, notice)
@@ -246,8 +249,60 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	root := newRootCmd(stdout, stderr)
 	installDefaultSubcommands(root)
 	root.SetArgs(args)
-	if err := root.ExecuteContext(ctx); err != nil {
-		return fmt.Errorf("execute root command: %w", err)
+	err := root.ExecuteContext(ctx)
+	storeSetAside.flush(stderr, err)
+	if err == nil {
+		// A signal that arrived after the work was done stopped nothing.
+		return nil
 	}
-	return nil
+	if cause := interruptCause(ctx); cause != nil && !answeredDespite(err) {
+		// The operator stopped the run: it is said once, here, and exits
+		// Cancelled whatever the command made of its cancelled context.
+		_, _ = fmt.Fprintln(stderr, interrupt.Statement(cause))
+		return &interruptedError{err: err}
+	}
+	return fmt.Errorf("execute root command: %w", err)
+}
+
+// interruptCause returns the signal that cancelled ctx, or nil when no signal
+// did.
+func interruptCause(ctx context.Context) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	return context.Cause(ctx) //nolint:wrapcheck // the signal's own words, rendered once, never propagated
+}
+
+// answeredDespite reports whether err is a completed command's answer that a
+// late signal stopped nothing of: a partial result, an absent record, a policy
+// verdict or an integrity finding. Any other error under a signal is the
+// interruption's consequence.
+func answeredDespite(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	switch ExitCodeForError(err) {
+	case ExitPartial, ExitNotFound, ExitPolicy, ExitIntegrity:
+		return true
+	default:
+		return false
+	}
+}
+
+// interruptedError is a run stopped by a signal. It carries ExitCancelled ahead
+// of whatever code the command's own error would have mapped to, because the
+// command's failure is the interruption's consequence rather than its own.
+type interruptedError struct{ err error }
+
+func (e *interruptedError) Error() string { return "execute root command: " + e.err.Error() }
+
+func (e *interruptedError) Unwrap() error { return e.err }
+
+// stepError names a step that ended in err as failed, or as stopped when the
+// run's cancellation is what ended it: a stopped step failed nothing.
+func stepError(ctx context.Context, step string, err error) error {
+	if interrupt.Cancelled(ctx, err) {
+		return fmt.Errorf("%s stopped: %w", step, err)
+	}
+	return fmt.Errorf("%s failed: %w", step, err)
 }

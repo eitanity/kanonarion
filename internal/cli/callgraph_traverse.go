@@ -436,6 +436,9 @@ type transitiveResult struct {
 	// "nothing was excluded" — the rows carry is_test, which describes the rows
 	// PRESENT and says nothing about the rows removed.
 	Scope string `json:"scope"`
+	// SetAside names the stored call graph generations the reads behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions, progress ports.TraversalProgressReporter) error {
@@ -652,6 +655,7 @@ func printTransitiveResult(direction, root string, maxDepth int, res cgapp.Trave
 			Nodes:     nodes,
 			Edges:     toEdgeRefsJSON(edges),
 			Scope:     edgeScopeLine(direction, opts),
+			SetAside:  storeSetAside.take().json(),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

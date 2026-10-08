@@ -14,9 +14,10 @@ func TestAnalysisSources_CoversTheDimension(t *testing.T) {
 
 	got := domain.AnalysisSources()
 	want := map[domain.AnalysisSource]bool{
-		domain.AnalysisSourceModuleZip:  false,
-		domain.AnalysisSourceWorktree:   false,
-		domain.AnalysisSourceUnrecorded: false,
+		domain.AnalysisSourceModuleZip:       false,
+		domain.AnalysisSourceWorktree:        false,
+		domain.AnalysisSourceToolchainSource: false,
+		domain.AnalysisSourceUnrecorded:      false,
 	}
 	for _, s := range got {
 		if _, ok := want[s]; !ok {

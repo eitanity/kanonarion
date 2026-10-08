@@ -657,6 +657,15 @@ func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, filter ifac
 		}
 		out = kept
 	}
+	if filter.PipelineVersion != "" {
+		kept := make([]ifaceports.InterfaceSummary, 0, len(out))
+		for _, s := range out {
+			if s.PipelineVersion == filter.PipelineVersion {
+				kept = append(kept, s)
+			}
+		}
+		out = kept
+	}
 	if filter.Offset > 0 {
 		if filter.Offset >= len(out) {
 			return nil, nil
@@ -1228,12 +1237,15 @@ type FakeQueryExamples struct {
 	// assert that a listing which returned rows read the store exactly once and
 	// did not also pay the survey read the zero-result notice needs.
 	ListCalls int
-	mu        sync.Mutex
-	records   map[string]exdomain.ExampleRecord
-	history   map[string][]exdomain.ExampleRecord
-	list      []exports.ExampleSummary
-	refs      []exports.ExampleRef
-	Err       error
+	// ListFilters records every filter the listing method was given, so a test
+	// can assert what a listing asked the store for.
+	ListFilters []exports.ExampleFilter
+	mu          sync.Mutex
+	records     map[string]exdomain.ExampleRecord
+	history     map[string][]exdomain.ExampleRecord
+	list        []exports.ExampleSummary
+	refs        []exports.ExampleRef
+	Err         error
 }
 
 func NewFakeQueryExamples() *FakeQueryExamples {
@@ -1294,7 +1306,19 @@ func (f *FakeQueryExamples) ListExampleRecords(_ context.Context, filter exports
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ListCalls++
+	f.ListFilters = append(f.ListFilters, filter)
 	out := f.list
+	// The generation restriction is applied before paging, as the adapter
+	// applies it before the collapse.
+	if filter.PipelineVersion != "" {
+		kept := make([]exports.ExampleSummary, 0, len(out))
+		for _, s := range out {
+			if s.PipelineVersion == filter.PipelineVersion {
+				kept = append(kept, s)
+			}
+		}
+		out = kept
+	}
 	if filter.Offset > 0 {
 		if filter.Offset >= len(out) {
 			return nil, nil

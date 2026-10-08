@@ -462,11 +462,12 @@ relationships within that walk.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_fetched` / `read_error` / verification status (e.g. `Verified`) |
+| `status` | string | `not_fetched` / `set_aside` / `divergent` / `read_error` / verification status (e.g. `Verified`) |
 | `extracted_at` | string | RFC3339 fetch timestamp |
 | `git_url` | string | Resolved VCS URL |
 | `retracted` | bool | True when the version is retracted. Always present; `false` is the measurement that the author has not withdrawn it |
-| `error` | string | Set when `status` is `read_error` |
+| `error` | string | Set when `status` is `read_error`, `set_aside` or `divergent`. For `divergent` it names the hash the module's fetch records disagree on and their content hashes |
+| `set_aside` | array | Stored fetch records the read left out because this build cannot reproduce them, as for `license`. Absent when none. See [fetch](fetch.md#a-stored-record-this-build-cannot-reproduce) |
 
 ### `provenance`
 
@@ -489,13 +490,14 @@ suggests a fork of `<canonical>` - verify"* - never a verdict.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / detector status (e.g. `Detected`, `Unclassified`) |
+| `status` | string | `not_run` / `set_aside` / `read_error` / detector status (e.g. `Detected`, `Unclassified`) |
 | `spdx` | string | Primary SPDX identifier; empty when `status` is `Unclassified` |
 | `low_confidence_spdx` | string | A recognisable but sub-threshold licence fragment, set only when `spdx` is empty. Present when a root licence file was found and a known licence was partially matched but coverage fell below the substantive floor - e.g. a truncated AGPL-3.0 whose only matching span is the "how to apply" appendix |
 | `low_confidence_coverage` | float\|null | Coverage fraction (0.0-1.0) of the `low_confidence_spdx` match. Always present; `null` when no sub-threshold fragment was matched, which is every confidently classified module |
 | `extracted_at` | string | RFC3339 extraction timestamp |
 | `custody` | object | Standard library only - the chain of custody its licence identity comes from (see below) |
-| `error` | string | Set when `status` is `read_error` or extraction detail |
+| `error` | string | Set when `status` is `read_error` or `set_aside`, or extraction detail |
+| `set_aside` | array | Stored licence generations the read left out because this build cannot reproduce them: `kind`, `coordinate`, `pipeline_version`, `content_hash`, `reason`. Absent when none. See [licence](license.md#a-stored-record-this-build-cannot-verify) |
 
 An `Unclassified` status means a licence file **was** found at the module root
 but could not be confidently classified - it is never shown as a blank
@@ -571,7 +573,7 @@ measurement carried one - the same two words `audit` prints for the same node.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / `Found` / `None` |
+| `status` | string | `not_run` / `set_aside` / `read_error` / `Found` / `None` |
 | `count` | int | Number of examples (after any `--package` filter). Always present; `0` is the measurement that the module has none |
 | `examples` | array | Example entries |
 | `examples[].name` | string | Example function name |
@@ -580,7 +582,8 @@ measurement carried one - the same two words `audit` prints for the same node.
 | `examples[].output` | string | `// Output:` block contents |
 | `examples[].doc` | string | Doc comment (omitted unless `--full`) |
 | `extracted_at` | string | RFC3339 extraction timestamp |
-| `error` | string | Set when `status` is `read_error` |
+| `error` | string | Set when `status` is `read_error` or `set_aside` |
+| `set_aside` | array | Stored example generations the read left out because this build cannot reproduce them, as for `license`. Absent when none. See [examples](examples.md#a-stored-record-this-build-cannot-verify) |
 
 ### `vulnerabilities`
 
@@ -653,8 +656,10 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `superseded` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
+| `status` | string | `not_run` / `superseded` / `set_aside` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
 | | | `superseded`: the store holds records for this module only at pipeline versions this build no longer serves. `error` carries the statement, the generations held, and the re-scan to run. It is not `not_run`: the scan ran. |
+| | | `set_aside`: every record this build reads for this module was written in a canonical shape it cannot reproduce. `error` names each by `content_hash`. See [vuln](vuln.md#a-stored-record-this-build-cannot-verify). |
+| `set_aside` | array | Stored generations the section's reads left out because this build cannot reproduce them: `kind`, `coordinate` (or `id`), `pipeline_version`, `database_snapshot`, `content_hash`, `reason`. Absent when none |
 | `findings` | array | CVE findings |
 | `findings[].id` | string | Primary CVE / GHSA identifier |
 | `findings[].aliases` | array | Alternative identifiers |
@@ -685,7 +690,7 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `snapshot_retrieved_at` | string | When that snapshot was fetched. Absent when the record's snapshot carries no retrieval time |
 | `snapshot_age_days` | int\|null | How old the snapshot was when the answer was validated. Always present; `0` is the freshest answer the field has — validated against a snapshot pulled the same day — and `null` means the snapshot carries no retrieval time to measure from |
 | `extracted_at` | string | RFC3339 scan timestamp |
-| `error` | string | Set when `status` is `read_error` |
+| `error` | string | Set when `status` is `read_error`, `superseded` or `set_aside` |
 
 The walk-level annotation carries two independent axes and prints each when it
 says something this module's own line does not, together when both do:

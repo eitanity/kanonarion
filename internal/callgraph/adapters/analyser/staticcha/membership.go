@@ -51,6 +51,13 @@ type moduleMembership struct {
 	// gave it: the path alone names a module the record is not about, at a
 	// version nobody stated.
 	pkgVersion map[string]string
+	// stdlib switches the rule to the standard library's own, where neither the
+	// loader's module answer nor a path prefix can decide: the toolchain places
+	// every std package in no module, and no std import path begins with
+	// "stdlib". Membership is then the `std` pattern's own closure — the go
+	// command's answer to "what is the standard library" — so a package the
+	// loader resolved under it belongs to the coordinate and nothing else does.
+	stdlib bool
 }
 
 // newModuleMembership records what the loader reported about every package it
@@ -84,6 +91,21 @@ func newModuleMembership(coord coordinate.ModuleCoordinate, loaded []*packages.P
 	return m
 }
 
+// newStdlibMembership records the standard library's own package set, taken
+// from what the loader resolved for the `std` pattern.
+//
+// It is a measurement and not a reconstruction: `std` is the go command's own
+// name for the standard library, and the closure it returns is the toolchain's
+// answer to which packages are in it. The prefix fallback cannot be used here at
+// all — no std import path begins with "stdlib" — and the loader's module answer
+// is empty for every one of them, so without this rule the analysis would call
+// the entire standard library external and record an empty graph.
+func newStdlibMembership(coord coordinate.ModuleCoordinate, loaded []*packages.Package) moduleMembership {
+	m := newModuleMembership(coord, loaded)
+	m.stdlib = true
+	return m
+}
+
 // membershipByPrefix is the membership of a coordinate about which the loader
 // said nothing: every decision falls back to the path prefix. It knows no
 // package universe, so it can name no package as prefix-attributed either — it
@@ -99,6 +121,10 @@ func (m moduleMembership) path() string { return m.coord.Path() }
 func (m moduleMembership) contains(pkgPath string) bool {
 	if pkgPath == "" {
 		return false
+	}
+	if m.stdlib {
+		_, resolved := m.pkgModule[pkgPath]
+		return resolved
 	}
 	if modPath, ok := m.pkgModule[pkgPath]; ok && modPath != "" {
 		return modPath == m.coord.Path()
@@ -128,6 +154,11 @@ func (m moduleMembership) byPrefix(pkgPath string) bool {
 // no loader answer at all (membershipByPrefix) knows no package paths, so it
 // reports none — which is why the analysis builds the real one from the load.
 func (m moduleMembership) prefixAttributed() []string {
+	if m.stdlib {
+		// Nothing was attributed by prefix: the standard library's membership is
+		// the toolchain's own `std` closure, so there is no reconstruction to name.
+		return nil
+	}
 	var out []string
 	for pkgPath, modPath := range m.pkgModule {
 		if modPath != "" {
@@ -140,6 +171,32 @@ func (m moduleMembership) prefixAttributed() []string {
 	sort.Strings(out)
 	return out
 }
+
+// stdlibPackages is the sorted set of standard-library import paths this load
+// resolved — the build's standard-library closure, measured by the go command
+// rather than reconstructed.
+//
+// It is what lets a later read know which standard-library code is actually IN
+// a build. A call graph records a dependency's functions only where an edge
+// touches them, so the graph alone cannot distinguish a package the build links
+// and never calls from one it does not link at all — and the difference decides
+// whether a CHA over-approximation into that package describes a call that
+// could happen or a function the binary does not contain.
+func (m moduleMembership) stdlibPackages() []string {
+	var out []string
+	for pkgPath, modPath := range m.pkgModule {
+		if modPath != "" || !isStdlibPackagePath(pkgPath) {
+			continue
+		}
+		out = append(out, pkgPath)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// isStdlibPackagePath is the callgraph domain's rule, named here so the one
+// statement of it serves both the analysis and the reads.
+func isStdlibPackagePath(pkgPath string) bool { return domain.IsStdlibPackage(pkgPath) }
 
 // foreignModules names every module other than the analysed one that the loader
 // placed one of pkgPaths in, with the version it resolved, sorted and

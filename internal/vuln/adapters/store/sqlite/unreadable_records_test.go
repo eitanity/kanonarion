@@ -20,9 +20,8 @@ import (
 // stored record this build cannot verify took out every other record in the
 // answer, so a single drifted row for one module hid every other module an
 // advisory touched. These tests pin the replacement contract at the seam every
-// record listing goes through, and pin the reads that compose a verdict as
-// still failing closed — a verdict chosen from a candidate set with a row
-// missing is not founded on the ledger.
+// record listing goes through: the rows that verify come back, a drifted row is
+// set aside and named, and an altered row still fails as an integrity error.
 
 // driftedRecordStore returns a store holding three records for one finding, one
 // of which is sealed the way a different canonical shape would have sealed it.
@@ -120,9 +119,9 @@ func sealIn(t *testing.T, blob []byte) string {
 }
 
 // TestRecordListings_ReportUnreadableRowsAndKeepTheRest is the regression: the
-// records that verify come back, the one that does not is named rather than
-// dropped, and the failure still answers to the integrity sentinel so a
-// consuming command's fail-closed branch is unchanged.
+// records that verify come back and the one that does not is named rather than
+// dropped. It is drift, so it is set aside rather than reported as an integrity
+// failure: a consuming command serves the rest and states it.
 func TestRecordListings_ReportUnreadableRowsAndKeepTheRest(t *testing.T) {
 	ctx := t.Context()
 	store, bad := driftedRecordStore(t)
@@ -166,14 +165,14 @@ func TestRecordListings_ReportUnreadableRowsAndKeepTheRest(t *testing.T) {
 				}
 			}
 
-			var unreadable *ports.UnreadableRows
-			if !errors.As(err, &unreadable) {
-				t.Fatalf("error = %v, want *ports.UnreadableRows", err)
+			var aside *recordseal.SetAside
+			if !errors.As(err, &aside) {
+				t.Fatalf("error = %v, want *recordseal.SetAside", err)
 			}
-			if len(unreadable.Rows) != 1 {
-				t.Fatalf("unreadable = %v, want exactly the one bad row", unreadable.Rows)
+			if len(aside.Rows) != 1 {
+				t.Fatalf("set aside = %v, want exactly the one drifted row", aside.Rows)
 			}
-			row := unreadable.Rows[0]
+			row := aside.Rows[0]
 			// Naming the row is the point: a caller told only that something is
 			// wrong cannot go and look at it. The identity is BARE — a machine
 			// surface renders it under the key a readable record uses, so a
@@ -182,28 +181,33 @@ func TestRecordListings_ReportUnreadableRowsAndKeepTheRest(t *testing.T) {
 			if row.ID != bad.Coordinate.String() {
 				t.Errorf("unreadable row ID = %q, want the bare coordinate %s", row.ID, bad.Coordinate)
 			}
-			if row.Kind != ports.RowKindRecord {
-				t.Errorf("row kind = %q, want %q", row.Kind, ports.RowKindRecord)
+			if row.Kind != "vulnerability record" {
+				t.Errorf("row kind = %q, want %q", row.Kind, "vulnerability record")
 			}
 			// The generation travels beside the identity, because a coordinate
 			// alone does not pick one row out of a history.
 			if row.Generation.PipelineVersion != bad.PipelineVersion {
 				t.Errorf("pipeline version = %q, want %q", row.Generation.PipelineVersion, bad.PipelineVersion)
 			}
-			if row.Generation.SnapshotVersion != bad.DatabaseSnapshot.Version() {
-				t.Errorf("snapshot version = %q, want %q", row.Generation.SnapshotVersion, bad.DatabaseSnapshot.Version())
+			if row.Generation.Snapshot.Version != bad.DatabaseSnapshot.Version() {
+				t.Errorf("snapshot version = %q, want %q", row.Generation.Snapshot.Version, bad.DatabaseSnapshot.Version())
 			}
-			if row.Generation.SnapshotSource != bad.DatabaseSnapshot.Source() {
-				t.Errorf("snapshot source = %q, want %q", row.Generation.SnapshotSource, bad.DatabaseSnapshot.Source())
+			if row.Generation.Snapshot.Source != bad.DatabaseSnapshot.Source() {
+				t.Errorf("snapshot source = %q, want %q", row.Generation.Snapshot.Source, bad.DatabaseSnapshot.Source())
 			}
 			// A generation this build no longer seals must not be reported in the
 			// words reserved for altered bytes.
 			if !errors.Is(row.Reason, recordseal.ErrGenerationDrift) {
 				t.Errorf("reason = %v, want it to classify as generation drift", row.Reason)
 			}
-			// Consuming commands match this sentinel and must keep failing closed.
-			if !errors.Is(err, ports.ErrVulnIntegrity) {
-				t.Error("errors.Is(err, ErrVulnIntegrity) = false; consuming callers would stop failing closed")
+			// The generation is named by its seal, which is what picks it out of a
+			// coordinate's history.
+			if row.ContentHash == "" || row.ContentHash != sealInRow(t, store, bad) {
+				t.Errorf("set-aside content hash = %q, want the drifted row's own seal", row.ContentHash)
+			}
+			// Drift is excused: a consuming command must not fail closed on it.
+			if errors.Is(err, ports.ErrVulnIntegrity) {
+				t.Error("errors.Is(err, ErrVulnIntegrity) = true for a drifted row; consumers would refuse to answer")
 			}
 		})
 	}
@@ -241,30 +245,59 @@ func TestRecordListings_CleanStoreIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestComposingReadsStillFailClosed pins the other half of the rule. A read
-// that hands back rows may hand back the ones it has; a read that composes ONE
-// verdict out of them may not, because a Clean composed from a candidate set
-// with a row missing is a finding the store cannot support.
-func TestComposingReadsStillFailClosed(t *testing.T) {
+// TestComposingReads_AllDriftedIsNoServableRecord pins what a composing read
+// answers when the only generation it holds is drifted: no record this build can
+// serve, with the set-aside report saying why — never an empty success, and
+// never an integrity failure.
+func TestComposingReads_AllDriftedIsNoServableRecord(t *testing.T) {
 	ctx := t.Context()
 	store, bad := driftedRecordStore(t)
 
-	rec, found, err := store.GetLatestVulnerabilityRecord(ctx, bad.Coordinate, "v1")
-	if found || err == nil {
-		t.Fatalf("GetLatestVulnerabilityRecord = (%v, found %v, %v), want a refusal", rec.Coordinate, found, err)
+	type answer struct {
+		found bool
+		err   error
 	}
-	if !errors.Is(err, ports.ErrVulnIntegrity) {
-		t.Errorf("errors.Is(err, ErrVulnIntegrity) = false for %v", err)
+	for name, read := range map[string]func() answer{
+		"GetLatest": func() answer {
+			_, found, err := store.GetLatestVulnerabilityRecord(ctx, bad.Coordinate, "v1")
+			return answer{found, err}
+		},
+		"Get": func() answer {
+			_, found, err := store.GetVulnerabilityRecord(ctx, bad.Coordinate, "v1", snap("govulndb", "v2024-01-01"))
+			return answer{found, err}
+		},
+		"GetAt": func() answer {
+			_, found, err := store.GetVulnerabilityRecordAt(ctx, bad.Coordinate, "v1", snap("govulndb", "v2024-01-01"), domain.RootingUnrecorded)
+			return answer{found, err}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := read()
+			found, err := got.found, got.err
+			var aside *recordseal.SetAside
+			if found || !errors.As(err, &aside) {
+				t.Fatalf("read = (found %v, %v), want no servable record with the generation set aside", found, err)
+			}
+			if len(aside.Rows) != 1 || aside.Rows[0].ID != bad.Coordinate.String() {
+				t.Errorf("set aside = %v, want the one drifted generation of %s", aside.Rows, bad.Coordinate)
+			}
+			if errors.Is(err, ports.ErrVulnIntegrity) {
+				t.Errorf("an all-drifted group was reported as an integrity failure: %v", err)
+			}
+		})
 	}
+}
 
-	// The point-in-time get reads generations directly and must refuse too.
-	_, found, err = store.GetVulnerabilityRecord(ctx, bad.Coordinate, "v1", snap("govulndb", "v2024-01-01"))
-	if found || err == nil {
-		t.Fatalf("GetVulnerabilityRecord = (found %v, %v), want a refusal", found, err)
+// sealInRow reads the content hash column of rec's stored row.
+func sealInRow(t *testing.T, store *sqlite.Store, rec domain.VulnerabilityRecord) string {
+	t.Helper()
+	var hash string
+	if err := store.InternalDB().DB().QueryRowContext(t.Context(),
+		`SELECT content_hash FROM vulnerability_records WHERE module_path = ? AND module_version = ?`,
+		rec.Coordinate.Path(), rec.Coordinate.Version()).Scan(&hash); err != nil {
+		t.Fatalf("reading the stored seal: %v", err)
 	}
-	if !errors.Is(err, ports.ErrVulnIntegrity) {
-		t.Errorf("errors.Is(err, ErrVulnIntegrity) = false for %v", err)
-	}
+	return hash
 }
 
 // TestRecordListings_UnparseableRowIsStillReported covers the row that will not

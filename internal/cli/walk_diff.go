@@ -47,6 +47,9 @@ func runWalkDiff(ctx context.Context, idA, idB string, uc DiffWalksUseCase, walk
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: "walk record integrity check failed"}
 		}
+		if none := walkNotServable(err); none != nil {
+			return none
+		}
 		return fmt.Errorf("computing diff: %w", err)
 	}
 

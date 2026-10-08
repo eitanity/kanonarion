@@ -360,7 +360,7 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 func TestScanWalk_FreshFetch(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	clock := fixedClock{t: now}
+	clock := &steppedClock{t: now}
 
 	coord := coordinatetest.MustNew("m1", "v1")
 	walkStore := newFakeWalkStore()
@@ -410,6 +410,7 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 
 	// 4. Scan WITH fresh=true, against a generation whose advisories for this
 	// walk's module changed -> should fetch fresh.
+	clock.advance(time.Millisecond)
 	run, err = walkUC.Scan(ctx, application.ScanWalkParams{WalkID: "w1", Fresh: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)

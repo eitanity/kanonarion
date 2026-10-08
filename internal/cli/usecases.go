@@ -162,6 +162,12 @@ type ExtractLocalCallGraphUseCase interface {
 	Execute(ctx context.Context, req cgapp.LocalExtractRequest) (cgapp.ExtractResult, error)
 }
 
+// ExtractStdlibCallGraphUseCase is the interface for extracting the call graph
+// of the Go standard library from an installed toolchain's own source tree.
+type ExtractStdlibCallGraphUseCase interface {
+	Execute(ctx context.Context, req cgapp.ExtractRequest) (cgapp.ExtractResult, error)
+}
+
 // QueryCallGraphUseCase is the interface for querying call graph records.
 type QueryCallGraphUseCase interface {
 	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (callgraphdomain.CallGraphRecord, bool, error)

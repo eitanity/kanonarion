@@ -2,11 +2,13 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -110,6 +112,11 @@ func (uc *GenerateNoticeUseCase) processModule(
 ) (*licensedomain.NoticeEntry, *licensedomain.ReviewItem, error) {
 	declarations := req.Declarations
 	rec, found, err := uc.licenses.GetLicenseRecord(ctx, coord, uc.pipelineVersion)
+	// No generation this build can serve reads as no record: the store named each
+	// one it set aside, and `kanonarion license` measures one this build can.
+	if errors.As(err, new(*recordseal.NothingServable)) {
+		err, found = nil, false
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting license record: %w", err)
 	}

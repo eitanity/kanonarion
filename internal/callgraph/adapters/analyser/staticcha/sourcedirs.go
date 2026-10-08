@@ -3,6 +3,8 @@ package staticcha
 import (
 	"context"
 	"log/slog"
+
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 )
 
 // SourceDirsProbe asks the Go toolchain the analysis is about to drive to name
@@ -56,6 +58,9 @@ func noSourceDirs(context.Context, string, []string) (SourceDirs, error) { retur
 // one written with them.
 func (a *Analyser) probeSourceDirs(ctx context.Context, dir string, env []string) SourceDirs {
 	dirs, err := sourceDirsProbe(ctx, dir, env)
+	if err != nil && interrupt.Stopped(ctx) {
+		return SourceDirs{}
+	}
 	if err != nil {
 		a.logger.WarnContext(ctx, "callgraph_source_dirs_unknown",
 			slog.String("dir", dir),

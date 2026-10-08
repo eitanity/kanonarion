@@ -563,6 +563,9 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 			logger.Warn("vuln-scan: store cleanup failed", "error", cerr)
 		}
 	}()
+	// Generations the scan's writes set aside are statements, so they go to
+	// stderr beside the progress, under --json as well.
+	ctr.SetAside.to(stderr)
 
 	// Progress preamble goes to stderr so stdout is a clean data channel —
 	// under --json, callers pipe stdout straight into jq and a preamble line
@@ -644,7 +647,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		},
 	})
 	if err != nil {
-		return vulnScanRunFacts{}, fmt.Errorf("vuln scan failed: %w", err)
+		return vulnScanRunFacts{}, stepError(ctx, "vuln scan", err)
 	}
 
 	// The toolchain axis goes to stderr, beside the result. It is also the
@@ -655,7 +658,7 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		return vulnScanRunFacts{}, terr
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain,
+	if perr := printFreshScanResult(ctx, ctr.NegativeSearch, run, rollups, reach, toolchain,
 		nativeRollupOver(ctx, ctr.QueryNative, nativeWalkCoords(ctx, ctr.QueryWalks, run.WalkID)), jsonOut, stdout); perr != nil {
 		return vulnScanRunFacts{}, perr
 	}
@@ -751,6 +754,29 @@ func (r *vulnScanRollups) add(coord coordinate.ModuleCoordinate, record vuldomai
 	}
 }
 
+// printFreshScanResult prints a scan this process just ran. Its records come
+// from the scan, not from the store, so they have not been through the read-time
+// call-graph search every stored read passes through; they are searched here so
+// the scan states the rung a later read of the same records states. The search
+// sets only an unserialised field, so nothing stored changes.
+func printFreshScanResult(ctx context.Context, searcher negativeSearcher, run vuldomain.WalkScanRun, rollups *vulnScanRollups, reach vulnScanReachability, toolchain vulnScanToolchainJSON, native *nativeWalkRollup, jsonOut bool, stdout io.Writer) error {
+	rollups.searchNegatives(ctx, searcher)
+	return printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, toolchain, native, jsonOut, stdout)
+}
+
+// searchNegatives puts the affected and withdrawn records through searcher,
+// leaving them as they are when there is no searcher to apply.
+func (r *vulnScanRollups) searchNegatives(ctx context.Context, searcher negativeSearcher) {
+	if searcher == nil {
+		return
+	}
+	for _, bucket := range [][]vulnScanAffected{r.affected, r.withdrawn} {
+		for i := range bucket {
+			searcher.Search(ctx, &bucket[i].record)
+		}
+	}
+}
+
 // serveStoredScanRun reports a scan run that already exists instead of
 // re-deriving it, and states on stderr that it did.
 //
@@ -772,10 +798,14 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		return vulnScanRunFacts{}, fmt.Errorf("witnessing the served scan run: %w", err)
 	}
 
+	// Generations this build cannot reproduce are left out of the report and
+	// stated on stderr beside it; an altered row still refuses.
+	var aside setAsideRows
 	recs, err := ctr.QueryVuln.ListRecordsForRun(ctx, run.ID)
-	if err != nil {
+	if err := aside.take(err); err != nil {
 		return vulnScanRunFacts{}, fmt.Errorf("reading the reused scan run's records: %w", err)
 	}
+	aside.write(stderr)
 
 	rollups := newVulnScanRollups()
 	for _, rec := range recs {
@@ -1324,6 +1354,7 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 		req.Snapshot = &snap
 	}
 
+	ctr.SetAside.to(stderr)
 	return rescanWith(ctx, ctr.RescanWalk, req, f.policyPath, f.noProgress, stdout, stderr)
 }
 
@@ -1380,7 +1411,7 @@ func rescanWith(
 			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
 				"vuln-scan-rescan refused: %v. %s", err, remedyRescanProject(frame.ProjectDir))}
 		}
-		return fmt.Errorf("vuln-scan-rescan failed: %w", err)
+		return stepError(ctx, "vuln-scan-rescan", err)
 	}
 
 	if jsonOut {

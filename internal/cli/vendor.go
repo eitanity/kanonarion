@@ -214,6 +214,7 @@ command exits non-zero when a finding's policy outcome is "warn".
 
 Exit codes:
   0  no finding resolves to a blocking policy outcome
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   5  the governance gate fired: drift or inconsistency violates policy
   20 bad invocation, no vendor/ tree, or a policy file that could not be read
 

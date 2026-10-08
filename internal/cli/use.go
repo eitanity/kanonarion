@@ -15,6 +15,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	factstoresqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
@@ -70,6 +71,7 @@ Exit codes:
   1  some, but not all, reached it — the cache is incomplete and the message
      says how many of how many
   2  nothing reached the cache, though at least one module had an artefact
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   4  no walk record for the target, or a --walk-id the store does not hold
   20 bad invocation, or a --walk-id rooted at a different target`,
 		Args: cobra.ExactArgs(1),
@@ -155,7 +157,9 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	defer func() { _ = dbHandle.Close() }()
 
 	walkStore := walksqlite.New(dbHandle)
+	walkStore.ReportSetAside(storeSetAside.report)
 	factStore := factstoresqlite.New(dbHandle)
+	factStore.ReportSetAside(storeSetAside.report)
 	blobStore := localfs.New(storeRoot)
 
 	// 1. Find the walk whose version set is copied.
@@ -197,6 +201,9 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	// last-resort fallback both go.
 	tally := copySelection(ctx, selection, factStore, blobStore, modCache, logger,
 		useLineWriter(stdout, jsonOut), stderr)
+	if tally.stopped != nil {
+		return fmt.Errorf("copying the version set of walk %s: %w", walk.ID, tally.stopped)
+	}
 	writeUseSummary(tally, stderr)
 
 	if jsonOut {
@@ -382,6 +389,9 @@ type useOutcome struct {
 // project walk.
 type useTally struct {
 	outcomes []useOutcome
+	// stopped is the cancellation that ended the copy early. The modules after
+	// it were not attempted, so no count of them is a statement about the cache.
+	stopped error
 }
 
 // of returns the outcomes of one kind, in selection order.
@@ -463,6 +473,11 @@ func copySelection(
 			continue
 		}
 		landed, err := copyToModCache(ctx, c.coord, factStore, blobStore, modCache, logger)
+		if interrupt.Cancelled(ctx, err) {
+			interrupt.Note(interrupt.ModuleCopy)
+			tally.stopped = err
+			return tally
+		}
 		if err != nil {
 			tally.outcomes = append(tally.outcomes, useOutcome{candidate: c, kind: useFailed, err: err})
 			_, _ = fmt.Fprintf(stderr, "==> use: %s did not reach the cache: %v\n", c.coord, err)

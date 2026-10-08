@@ -16,6 +16,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
 
 	"github.com/spf13/cobra"
@@ -568,7 +569,11 @@ func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
 	// so `go list -deps` over one tree answers differently for each. The pair is
 	// written here rather than left to whatever the parent process exported, so
 	// the set this resolves is the one the invocation declared.
-	cmd.Env = declaredTarget.Apply(os.Environ())
+	// A list the cancellation kills cannot remove its work directory (-test
+	// writes one), so it gets a temp root removed once it has exited.
+	scratch, removeScratch := childproc.Scratch()
+	defer removeScratch()
+	cmd.Env = append(declaredTarget.Apply(os.Environ()), scratch...)
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -791,7 +796,9 @@ func mergeWorkspaceRequires(goworkPath string, reqVersions map[string]string) er
 	workDir := filepath.Dir(goworkPath)
 	for _, use := range wf.Use {
 		modPath := filepath.Join(workDir, use.Path, "go.mod")
-		mdata, merr := os.ReadFile(filepath.Clean(modPath))
+		// Use paths come from the operator's own go.work and may point outside
+		// the workspace (use ../other); the go command reads these same files.
+		mdata, merr := os.ReadFile(filepath.Clean(modPath)) // #nosec G703 -- operator's go.work use path; confining it breaks valid workspaces
 		if merr != nil {
 			continue // best-effort: skip unreadable modules
 		}
@@ -848,6 +855,7 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 // cliClock is deliberately absent: it is the test seam SetClockForTest pins
 // BEFORE the invocation runs, and resetting it here would unpin every golden.
 func resetInvocationState() {
+	storeSetAside.reset()
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""
 	// The built-in defaults, which is what a store with no config file loads —
@@ -1669,6 +1677,9 @@ func proxyAdapterError(err error) error {
 // Used by main to translate categorised errors (e.g. ExitNotFound) into
 // distinct process exit codes rather than the catch-all ExitConfig.
 func ExitCodeFromError(err error) (int, bool) {
+	if _, ok := errors.AsType[*interruptedError](err); ok {
+		return ExitCancelled, true
+	}
 	if ee, ok := errors.AsType[*exitError](err); ok {
 		return ee.code, true
 	}
@@ -1694,6 +1705,7 @@ var evidenceInDoubt = []error{
 	extractports.ErrExtractionRunIntegrity,
 	vulnports.ErrVulnIntegrity, vulnports.ErrSnapshotIntegrity,
 	stdlibports.ErrFactsIntegrity, stdlibports.ErrFactsConflict,
+	fetchports.ErrFetchRecordIntegrity,
 	nativeports.ErrNativeConflict,
 }
 
@@ -1722,6 +1734,13 @@ func ExitCodeForError(err error) int {
 		if errors.Is(err, sentinel) {
 			return ExitIntegrity
 		}
+	}
+	// Every stored generation was set aside, or a refusal was decided without
+	// one: nothing this build can serve to answer, which is an absence. A
+	// set-aside reaches here only as a failure, since reads return it beside an
+	// answer; checked after the sentinels so an altered row still wins.
+	if _, ok := errors.AsType[*recordseal.SetAside](err); ok {
+		return ExitNotFound
 	}
 	// A divergence — two records for one coordinate disagreeing on a hash they
 	// both carry — is an integrity failure, not a configuration error. A
@@ -1772,7 +1791,10 @@ type unreadableRowEntry struct {
 	PipelineVersion string
 	SnapshotSource  string
 	SnapshotVersion string
-	Reason          string
+	// ContentHash is the seal a record row's bytes carry, empty for a run or
+	// where the head did not yield one.
+	ContentHash string
+	Reason      string
 }
 
 // label renders one row for a text listing, where prose is the right form: the
@@ -1793,6 +1815,9 @@ func (e unreadableRowEntry) label() string {
 	}).String(); gen != "" {
 		id += " " + gen
 	}
+	if e.ContentHash != "" {
+		id += " content_hash " + e.ContentHash
+	}
 	return id
 }
 
@@ -1809,23 +1834,51 @@ func (e unreadableRowEntry) label() string {
 // Runs and records come through it alike. The fact is the same fact and the
 // commands that render it are the same commands, so a second reporter for
 // records would be a second place for this rule to be got wrong.
+//
+// A record listing whose only unreadable rows are set-aside generations reports
+// them the same way: a survey lists every row it holds, readable or not.
 func unreadableRowReport(err error) ([]unreadableRowEntry, bool) {
 	var unreadable *vulnports.UnreadableRows
-	if !errors.As(err, &unreadable) {
+	var aside *recordseal.SetAside
+	switch {
+	case errors.As(err, new(*recordseal.NothingServable)):
+		// No row to list beside: the read has no answer for this build.
+		return nil, false
+	case errors.As(err, &unreadable):
+		entries := make([]unreadableRowEntry, 0, len(unreadable.Rows))
+		for _, r := range unreadable.Rows {
+			entries = append(entries, unreadableRowEntry{
+				ID:              r.ID,
+				Kind:            r.Kind,
+				PipelineVersion: r.Generation.PipelineVersion,
+				SnapshotSource:  r.Generation.SnapshotSource,
+				SnapshotVersion: r.Generation.SnapshotVersion,
+				ContentHash:     r.ContentHash,
+				Reason:          unreadableRowReason(r.Reason),
+			})
+		}
+		return entries, true
+	case errors.As(err, &aside):
+		entries := make([]unreadableRowEntry, 0, len(aside.Rows))
+		for _, r := range aside.Rows {
+			kind := vulnports.RowKindRecord
+			if r.Kind == vulnports.SetAsideKindRun {
+				kind = vulnports.RowKindRun
+			}
+			entries = append(entries, unreadableRowEntry{
+				ID:              r.ID,
+				Kind:            kind,
+				PipelineVersion: r.Generation.PipelineVersion,
+				SnapshotSource:  r.Generation.Snapshot.Source,
+				SnapshotVersion: r.Generation.Snapshot.Version,
+				ContentHash:     r.ContentHash,
+				Reason:          unreadableRowReason(r.Reason),
+			})
+		}
+		return entries, true
+	default:
 		return nil, false
 	}
-	entries := make([]unreadableRowEntry, 0, len(unreadable.Rows))
-	for _, r := range unreadable.Rows {
-		entries = append(entries, unreadableRowEntry{
-			ID:              r.ID,
-			Kind:            r.Kind,
-			PipelineVersion: r.Generation.PipelineVersion,
-			SnapshotSource:  r.Generation.SnapshotSource,
-			SnapshotVersion: r.Generation.SnapshotVersion,
-			Reason:          unreadableRowReason(r),
-		})
-	}
-	return entries, true
 }
 
 // statusUnreadable is the status a survey reports for a row it listed but could
@@ -1883,13 +1936,13 @@ func writeUnreadableRows(stdout io.Writer, entries []unreadableRowEntry, idWidth
 //
 // The two cases are not interchangeable and must not be reported alike. A
 // record whose stored bytes still hash to the seal they carry has not been
-// altered; this build simply cannot reproduce it, because it was sealed by an
-// earlier canonical shape — the remedy is a re-scan. Where that cannot be
-// established the wording stays neutral: an unverified record is reported as
-// unverified, and nothing is insinuated about how it got that way.
-func unreadableRowReason(r vulnports.UnreadableRow) string {
-	if errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
-		return "sealed by an earlier record generation; re-scan to reseal"
+// altered; this build simply cannot reproduce it, because an earlier or a later
+// build wrote it in another canonical shape. Where that cannot be established
+// the wording stays neutral: an unverified record is reported as unverified, and
+// nothing is insinuated about how it got that way.
+func unreadableRowReason(reason error) string {
+	if errors.Is(reason, recordseal.ErrGenerationDrift) {
+		return recordseal.SetAsideRemedy
 	}
-	return "could not be verified: " + r.Reason.Error()
+	return "could not be verified: " + reason.Error()
 }

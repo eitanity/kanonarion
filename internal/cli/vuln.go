@@ -48,21 +48,21 @@ func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout)
+			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout, stderr)
 		},
 	}
 
 	return cmd
 }
 
-func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, natives nativeRecordReader, stdout io.Writer) error {
+func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, natives nativeRecordReader, stdout, stderr io.Writer) error {
 	// runs is unused on this path — it only explains a walk-scoped miss, and
 	// this command names no walk — but it is threaded rather than nil so the
 	// two entry points cannot drift into different behaviour. walks is used:
 	// the no-record refusal names a succeeded walk if one exists.
 	// `vuln` names no build, so it declares no target: the zero value settles
 	// nothing and leaves the composed read exactly as it was.
-	return runVulnShow(ctx, arg, "", "", buildTargetFlags{}, false, jsonOut, false, uc, runs, walks, graphs, natives, stdout)
+	return runVulnShow(ctx, arg, "", "", buildTargetFlags{}, false, jsonOut, false, uc, runs, walks, graphs, natives, stdout, stderr)
 }
 
 // printVulnRecord renders a single VulnerabilityRecord in human-readable form;

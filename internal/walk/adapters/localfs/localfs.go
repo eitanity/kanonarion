@@ -59,7 +59,7 @@ func (f *Fetcher) EnsureFetchedFromPath(
 	absPath string,
 ) (walkports.LocalModuleFetchResult, error) {
 	if !coord.IsLocal() {
-		existing, ok, err := f.facts.GetFetchRecord(ctx, coord, PipelineVersion)
+		existing, ok, err := fetchports.AbsentIfNothingServable(f.facts.GetFetchRecord(ctx, coord, PipelineVersion))
 		if err != nil {
 			return walkports.LocalModuleFetchResult{}, fmt.Errorf("checking cache for %s: %w", coord, err)
 		}

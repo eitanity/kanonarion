@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
@@ -149,6 +151,12 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 			log.InfoContext(ctx, "example_cache_conflict_remeasuring",
 				slog.String("conflict", cerr.Error()),
 			)
+		case errors.As(cerr, new(*recordseal.NothingServable)):
+			// Every held generation was set aside, and the store named each; this
+			// build measures one it can serve.
+			log.InfoContext(ctx, "example_cache_set_aside_remeasuring",
+				slog.String("reason", cerr.Error()),
+			)
 		case cerr != nil && !errors.Is(cerr, ports.ErrExampleIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking example store: %w", cerr)
 		}
@@ -184,6 +192,10 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 	log.InfoContext(ctx, "blob_read", slog.Int("zip_bytes", len(zipData)))
 
 	record, extractErr := uc.extractFromZip(ctx, log, req.Coordinate, zipData)
+	if interrupt.Cancelled(ctx, extractErr) {
+		// Stopped by the run's cancellation: no failed-extraction record is made of it.
+		return ExtractResult{}, fmt.Errorf("extracting the examples of %s: %w", req.Coordinate, extractErr)
+	}
 	if extractErr != nil {
 		record = domain2.ExampleRecord{
 			SchemaVersion:   domain2.ExampleSchemaVersion,
@@ -265,6 +277,11 @@ func (uc *ExtractExampleUseCase) identicalGeneration(
 		return domain2.ExampleRecord{}, false
 	}
 	held, found, err := reader.IdenticalGeneration(ctx, record)
+	if interrupt.Cancelled(ctx, err) {
+		// The run was stopped; the write that follows fails on the same
+		// cancellation and says so.
+		return domain2.ExampleRecord{}, false
+	}
 	if err != nil {
 		log.WarnContext(ctx, "example_held_generation_unreadable_appending",
 			slog.String("reason", err.Error()),

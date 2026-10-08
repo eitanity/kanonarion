@@ -234,6 +234,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	if err != nil {
 		return fmt.Errorf("opening fact store: %w", err)
 	}
+	rawStore.ReportSetAside(storeSetAside.report)
 	factStore, err := sqlite2.NewAuditingStore(rawStore, storeRoot+"/audit.jsonl")
 	if err != nil {
 		return fmt.Errorf("creating auditing store: %w", err)

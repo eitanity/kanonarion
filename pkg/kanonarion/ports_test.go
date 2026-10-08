@@ -124,6 +124,9 @@ var allowedPortAliases = map[string]bool{
 	"ConfigStore": true, "Clock": true, "ModuleProxy": true,
 	"VCSClient": true, "SumDBClient": true,
 	"Signer": true, "SubjectDigest": true, "Attestation": true,
+	// The partial-result error the VulnerabilityStore port returns beside an
+	// answer: an implementer returns it and a caller matches it.
+	"UnreadableRows": true, "UnreadableRow": true,
 }
 
 // facadeAlias is one exported type-alias declaration in the façade package.

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -128,4 +129,26 @@ func firstJSONDocument(out string) string {
 		return out
 	}
 	return string(doc)
+}
+
+// A licence generation the reads behind the report set aside is named inside
+// the document, so a consumer can tell an unmeasured input from an unextracted
+// one.
+func TestLicenseCompat_JSONCarriesSetAside(t *testing.T) {
+	ctr, root, target := compatWithPreModulesClosure(t)
+	storeSetAside.reset()
+	t.Cleanup(storeSetAside.reset)
+	storeSetAside.report([]recordseal.SetAsideRow{{
+		Kind: "licence record", ID: "example.com/unmodelled@v1.0.0", ContentHash: "sha256:aa",
+		Reason: recordseal.ErrGenerationDrift,
+	}})
+
+	out, _ := runCompat(t, ctr, root, target, true)
+	var doc asideDoc
+	if err := json.Unmarshal([]byte(firstJSONDocument(out)), &doc); err != nil {
+		t.Fatalf("decoding document: %v\n%s", err, out)
+	}
+	if h := doc.hashes(); len(h) != 1 || h["sha256:aa"] != "example.com/unmodelled@v1.0.0" {
+		t.Errorf("set_aside = %+v, want the reported generation", doc.SetAside)
+	}
 }

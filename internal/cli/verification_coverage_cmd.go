@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/spf13/cobra"
@@ -113,10 +114,17 @@ func runVerificationCoverage(
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}
 		}
+		if none := walkNotServable(err); none != nil {
+			return none
+		}
 		return fmt.Errorf("getting walk: %w", err)
 	}
 
 	rows := graphVerificationRows(ctx, rec.Graph.Nodes, records)
+	// A figure a gate asserts on is not served around altered evidence.
+	if err := coverageIntegrityErr(rows); err != nil {
+		return err
+	}
 	obs := make([]fetchdomain.CoverageObservation, 0, len(rows))
 	for _, r := range rows {
 		obs = append(obs, r.observation)
@@ -131,7 +139,9 @@ func runVerificationCoverage(
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if encErr := enc.Encode(verificationCoverageJSON(rec.ID, coverage, rows, vendoring, walkBuildOf(rec))); encErr != nil {
+		doc := verificationCoverageJSON(rec.ID, coverage, rows, vendoring, walkBuildOf(rec))
+		doc.SetAside = storeSetAside.take().json()
+		if encErr := enc.Encode(doc); encErr != nil {
 			return fmt.Errorf("encoding coverage: %w", encErr)
 		}
 		return nil
@@ -255,6 +265,9 @@ type coverageJSON struct {
 	LocalSource    int `json:"local_source"`
 	Unrecorded     int `json:"unrecorded"`
 	Unrecognised   int `json:"unrecognised"`
+	// Divergent is the modules whose fetch records disagree on a hash they both
+	// carry: recorded, but outside cross_verifiable.
+	Divergent int `json:"divergent"`
 
 	// Collapsed is the condition this report exists to surface: a graph with
 	// something to cross-verify, none of which was. It is derived rather than
@@ -287,6 +300,10 @@ type coverageJSON struct {
 	// output, and a flag to opt into being told why is a flag to opt into an
 	// answer that can be checked.
 	Modules []moduleVerification `json:"modules"`
+
+	// SetAside names the stored fetch records the reads left out because this
+	// build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 // coverageSharesJSON is each bucket as a percentage of the graph, plus the one
@@ -310,6 +327,7 @@ type coverageSharesJSON struct {
 	LocalSource    float64 `json:"local_source"`
 	Unrecorded     float64 `json:"unrecorded"`
 	Unrecognised   float64 `json:"unrecognised"`
+	Divergent      float64 `json:"divergent"`
 	// CrossVerifiedOfApplicable is the share over the honest denominator: the
 	// modules that have a published artefact to anchor. It differs from
 	// CrossVerified whenever the graph holds local source or the standard
@@ -364,6 +382,7 @@ func verificationCoverageJSON(
 		LocalSource:                    c.LocalSource,
 		Unrecorded:                     c.Unrecorded,
 		Unrecognised:                   c.Unrecognised,
+		Divergent:                      c.Divergent,
 		Collapsed:                      c.IsCollapsed(),
 		Shares: coverageSharesJSON{
 			CrossVerified:             sharePercent(c.CrossVerified, c.Total),
@@ -373,6 +392,7 @@ func verificationCoverageJSON(
 			LocalSource:               sharePercent(c.LocalSource, c.Total),
 			Unrecorded:                sharePercent(c.Unrecorded, c.Total),
 			Unrecognised:              sharePercent(c.Unrecognised, c.Total),
+			Divergent:                 sharePercent(c.Divergent, c.Total),
 			CrossVerifiedOfApplicable: sharePercent(c.CrossVerified, c.CrossVerifiable()),
 			CrossVerifiedModulePathURLOfCrossVerified: sharePercent(c.CrossVerifiedModulePathURL, c.CrossVerified),
 			CrossVerifiedProxyNamedURLOfCrossVerified: sharePercent(c.CrossVerifiedProxyNamedURL, c.CrossVerified),
@@ -385,4 +405,21 @@ func verificationCoverageJSON(
 			Unavailable: c.VCSUnavailable,
 		},
 	}
+}
+
+// coverageIntegrityErr refuses a coverage report when a module's fetch record
+// failed its integrity check: counting it as unrecorded would state an absence
+// the store does not hold.
+func coverageIntegrityErr(rows []moduleVerification) error {
+	var failed []string
+	for _, r := range rows {
+		if r.integrity != nil {
+			failed = append(failed, r.integrity.Error())
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("verification-coverage refused: %d module(s) with a fetch record that failed its integrity check:\n  %s",
+		len(failed), strings.Join(failed, "\n  "))}
 }

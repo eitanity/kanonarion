@@ -836,6 +836,29 @@ two walks of one project taken from two checkouts are the same walk, and a walk
 whose checkout has since moved still verifies. It is stored in its own column,
 which is why recording it needed no pipeline bump and no purge of existing rows.
 
+## A stored walk this build cannot verify
+
+A walk written by a build with a different canonical shape may not be
+reproducible by this binary, though its bytes still hash to the seal it carries,
+so nothing was altered. A walk has no other generation to serve in its place, so
+`walk-show`, `walk-diff`, `walk-list --walk-id` and every command whose answer
+needs the walk (`vuln-scan <walk-id>`, `extract <walk-id>`, `use`, and a read
+given `--walk-id`, such as `context`, `dependents` or `licence-list`) exit `4`
+with the statement:
+
+```
+no walk record for 01JS0NGARD0000000000000WA1 that this build can serve: set aside 1 stored walk record generation: 01JS0NGARD0000000000000WA1 content_hash sha256:4be0…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+```
+
+A command that only uses the walk to add detail answers without it and names
+it on stderr (`set aside walk record …`), or in its document's `set_aside` under
+`--json`, as `kind: "walk record"` with the walk under `id`. A cached walk this
+build cannot read is walked again. `walk-list` reads its columns rather than the
+record, so it lists the walk.
+
+A walk whose bytes do **not** hash to their seal has been altered, and every
+command that meets one refuses at exit `10`, as before.
+
 ## Assurance log
 
 Each successful walk appends a `walk_completed` event to the append-only audit
@@ -869,7 +892,7 @@ nothing.
 | `1` | Partial walk (without `--allow-partial`) |
 | `2` | Failed walk |
 | `3` | Cancelled |
-| `4` | The walk you named does not exist (`walk-show`, `walk-diff`, `walk-list --walk-id`, `walk-list --latest-success`). `walk-diff` names which of its two IDs was missing |
+| `4` | The walk you named does not exist (`walk-show`, `walk-diff`, `walk-list --walk-id`, `walk-list --latest-success`). `walk-diff` names which of its two IDs was missing. Also: the walk is stored but this build cannot reproduce it (see above) |
 | `10` | Walk record integrity check failed |
 | `20` | Configuration error |
 

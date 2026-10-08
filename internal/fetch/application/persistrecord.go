@@ -2,10 +2,12 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/audit"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -52,7 +54,9 @@ func (uc *FetchModuleUseCase) WithAllowVerificationDowngrade(allow bool) *FetchM
 // nothing is destroyed — but retiring it is a deliberate follow-up so this
 // change does one thing.
 func (uc *FetchModuleUseCase) persistRecord(ctx context.Context, log *slog.Logger, req FetchRequest, m domain2.FetchedModule) (domain2.CompositeRecord, error) {
-	existing, ok, err := uc.facts.GetFetchRecord(ctx, m.Coordinate, m.PipelineVersion)
+	// Measurements this build cannot reproduce are not compared against: the
+	// store names them, and appending leaves them as written.
+	existing, ok, err := ports.AbsentIfNothingServable(uc.facts.GetFetchRecord(ctx, m.Coordinate, m.PipelineVersion))
 	if err != nil {
 		// Not readable means not decidable, and a bad run writes nothing: a store
 		// that cannot be read may hold a tamper or a divergence, and appending on
@@ -166,6 +170,10 @@ func (uc *FetchModuleUseCase) inheritLegs(ctx context.Context, log *slog.Logger,
 		return m, nil
 	}
 	prior, err := lister.ListFetchRecords(ctx, m.Coordinate, m.PipelineVersion)
+	if errors.As(err, new(*recordseal.NothingServable)) {
+		// No earlier measurement this build can verify, so none to inherit from.
+		return m, nil
+	}
 	if err != nil {
 		return domain2.FetchedModule{}, fmt.Errorf("reading earlier measurements to inherit validation legs: %w", err)
 	}

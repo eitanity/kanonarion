@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
@@ -462,6 +463,10 @@ func runLatestModules(ctx context.Context, modules []string, lookup stalenessLoo
 		// latest places the probe's starting major, so a bare path whose newest
 		// release is a +incompatible v2 still probes from /v3.
 		ans, err := lookup.Resolve(ctx, modulePath, "")
+		if interrupt.Cancelled(ctx, err) {
+			interrupt.Note(interrupt.StalenessLookup)
+			return fmt.Errorf("querying latest for %s: %w", modulePath, err)
+		}
 		if err != nil && ans.LatestVersion == "" {
 			if errors.Is(err, errStalenessOffline) {
 				return latestOfflineRefusal(modulePath)
@@ -604,6 +609,10 @@ func latestReleaseAgeDays(publishedAt time.Time) *int {
 // per-row condition and is rendered as one, exactly as before.
 func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned string, stderr io.Writer) (latestResult, error) {
 	ans, lerr := lookup.Resolve(ctx, path, pinned)
+	if interrupt.Cancelled(ctx, lerr) {
+		interrupt.Note(interrupt.StalenessLookup)
+		return latestResult{Module: path, Pinned: pinned}, fmt.Errorf("resolving latest for %s: %w", path, lerr)
+	}
 	if ans.LatestVersion == "" {
 		if errors.Is(lerr, errStalenessOffline) {
 			// Not a failure: the environment forbids asking and nothing recorded
@@ -749,6 +758,11 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, exclu
 		row, rerr := latestRowFor(ctx, lookup, dep.path, dep.version, stderr)
 		row.DependencyScope = scopeField
 		row.Replace = dep.replace
+		if interrupt.Cancelled(ctx, rerr) {
+			// The run was stopped; the rows not yet measured are not lookups that
+			// failed, so no table of them is printed.
+			return fmt.Errorf("resolving the latest version of the %s dependency set: %w", scope, ctx.Err())
+		}
 		if errors.Is(rerr, staleapp.ErrBatchUnavailable) {
 			// The batched call answers for every module at once, so this is not
 			// one dependency's failure and must not be rendered as one: printing

@@ -50,6 +50,8 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		// restated in the vuln context: the on-demand spawner asks the same
 		// question the extraction use case asks, and both must get the same answer.
 		ServableAsCacheHit: callgraphdomain.RecordIsCacheable(rec),
+		StdlibPackages:     rec.StdlibPackages,
+		AnalysisRoot:       rec.AnalysisRoot,
 	}
 	for _, n := range rec.Nodes {
 		proj.Nodes = append(proj.Nodes, ports.CallGraphNode{

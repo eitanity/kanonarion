@@ -765,6 +765,24 @@ type CallGraphRecord struct {
 	// on the terms every additive field here has used, so every stored record
 	// re-marshals to the bytes it was sealed over.
 	ForeignModulesBuilt []ForeignModule
+	// StdlibPackages is the standard-library closure of the build this analysis
+	// loaded: every standard-library import path the go command resolved for it,
+	// sorted. It is a measurement of what the binary CONTAINS, not of what the
+	// graph records.
+	//
+	// It exists because a call graph alone cannot answer that question. A graph
+	// holds a dependency's function only where an edge touches it, so a package
+	// the build links and never calls looks exactly like one the build does not
+	// link at all — and the two are opposites when a read continues a traversal
+	// into the standard library's own graph. An edge into a package the binary
+	// does not contain describes a call that cannot happen, and following it
+	// turns an absence into a contradiction out of nothing.
+	//
+	// Empty means the record predates the field, never that the build links no
+	// standard library — every Go build links some. A read that needs the
+	// closure must therefore refuse to act on an empty one rather than treat it
+	// as an empty set.
+	StdlibPackages []string
 	// DerivedBy states WHY this generation exists: which reuse gate governed the
 	// append, and whether the run asked it or forced past it. See
 	// GenerationDerivation.

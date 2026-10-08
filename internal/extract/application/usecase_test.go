@@ -136,7 +136,7 @@ func TestExtractUseCase_Execute(t *testing.T) {
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{walkID: walk}}
 	extractor := &mockExtractor{}
 
-	uc := NewExtractUseCase(Config{
+	uc := mustExtractUseCase(t, Config{
 		Runs:      runs,
 		Walks:     walks,
 		Extractor: extractor,
@@ -381,7 +381,7 @@ func TestExtractUseCase_localReplaceNodesSkipped(t *testing.T) {
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{walkID: walk}}
 	extractor := &mockExtractor{}
 
-	uc := NewExtractUseCase(Config{
+	uc := mustExtractUseCase(t, Config{
 		Runs:      runs,
 		Walks:     walks,
 		Extractor: extractor,
@@ -448,7 +448,7 @@ func TestExtractUseCase_localMainModuleRootSkippedNotFailed(t *testing.T) {
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{walkID: walk}}
 	extractor := &mockExtractor{}
 
-	uc := NewExtractUseCase(Config{
+	uc := mustExtractUseCase(t, Config{
 		Runs:      runs,
 		Walks:     walks,
 		Extractor: extractor,
@@ -540,7 +540,7 @@ func TestExtractUseCase_Execute_ReportsProgress(t *testing.T) {
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{walkID: walk}}
 	extractor := &mockExtractor{}
 
-	uc := NewExtractUseCase(Config{
+	uc := mustExtractUseCase(t, Config{
 		Runs:      runs,
 		Walks:     walks,
 		Extractor: extractor,

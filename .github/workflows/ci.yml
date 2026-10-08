@@ -217,7 +217,10 @@ jobs:
           cache: true
       - name: Run benchmarks
         run: |
-          go test -bench . -benchmem ./internal/iface/... ./internal/callgraph/... | tee /tmp/bench.txt
+          set -euo pipefail
+          # Every package, so a broken benchmark cannot sit outside the step;
+          # -run '^$' keeps the test job's tests from running a second time.
+          go test -run '^$' -bench . -benchmem ./... | tee /tmp/bench.txt
       - name: Summary
         run: |
           {

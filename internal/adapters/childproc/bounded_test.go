@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +115,27 @@ func TestRunBounded_CallersCancellationIsNotADeadline(t *testing.T) {
 	}
 	if errors.Is(err, ErrStalled) || errors.Is(err, ErrCeiling) {
 		t.Errorf("cancellation reported as a deadline: %v", err)
+	}
+	// The cancellation rides on the error, so a caller does not read the SIGKILL
+	// as the operating system ending the child; the exit and its text stay.
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("the cancellation is missing from the killed child's error: %v", err)
+	}
+	if _, ok := errors.AsType[*exec.ExitError](err); !ok || err.Error() != "signal: killed" {
+		t.Errorf("err = %q, want the child's own exit error", err)
+	}
+}
+
+// A child killed by something other than the caller's cancellation carries no
+// cancellation: the classifiers must still see an outside kill as one.
+func TestRunBounded_OutsideKillIsNotACancellation(t *testing.T) {
+	t.Parallel()
+	_, err := RunBounded(t.Context(), Bounds{}, "/bin/sh", "-c", "kill -9 $$")
+	if err == nil {
+		t.Fatal("expected an error from the killed child")
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Errorf("an outside kill was reported as the caller's cancellation: %v", err)
 	}
 }
 

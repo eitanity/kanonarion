@@ -7,12 +7,15 @@ import (
 	"strings"
 	"time"
 
+	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	exsqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
+	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -46,12 +49,16 @@ func isoTime(t time.Time) string {
 
 func buildVerification(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryFetchUseCase) contextVerification {
 	rec, found, err := uc.ComposeFetchRecord(ctx, coord)
+	aside, none := sectionSetAside(fetchsqlite.RecordKind, coord, err)
+	if none {
+		return contextVerification{Status: sectionStatusSetAside, Error: aside.statement(), SetAside: aside.json()}
+	}
 	if err != nil {
 		// A divergence is named as such rather than folded into a generic read
 		// error. This command inspects the store, so it reports the contradiction
 		// and still exits 0; the commands that consume the records fail closed.
 		if msg, ok := divergenceMessage(err); ok {
-			return contextVerification{Status: sectionStatusReadError, Error: msg}
+			return contextVerification{Status: sectionStatusDivergent, Error: msg}
 		}
 		return contextVerification{Status: sectionStatusReadError, Error: err.Error()}
 	}
@@ -65,6 +72,7 @@ func buildVerification(ctx context.Context, coord coordinate.ModuleCoordinate, u
 		Status:      rec.VerificationStatus,
 		GitURL:      rec.GitURL,
 		Retracted:   rec.Retracted,
+		SetAside:    aside.json(),
 	}
 }
 
@@ -222,6 +230,10 @@ func buildLicense(
 		return buildStdlibLicense(ctx, coord, custody)
 	}
 	rec, found, err := uc.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
+	aside, none := sectionSetAside(licsqlite.RecordKind, coord, err)
+	if none {
+		return contextLicense{Status: sectionStatusSetAside, Error: aside.statement(), SetAside: aside.json()}
+	}
 	if err != nil {
 		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
 	}
@@ -238,6 +250,7 @@ func buildLicense(
 		Status:          rec.OverallStatus.String(),
 		CopyrightStatus: rec.CopyrightStatus.String(),
 		Error:           rec.FailureDetail,
+		SetAside:        aside.json(),
 	}
 	// When the root licence could not be classified, surface any recognisable
 	// but sub-threshold fragment (highest-coverage root-level match) so the
@@ -491,6 +504,10 @@ const compactExampleBodyLimit = 500
 
 func buildExamples(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryExamplesUseCase, compact bool, pkgFilter string) contextExamples {
 	rec, found, err := uc.GetExampleRecord(ctx, coord, exapp.PipelineVersion)
+	aside, none := sectionSetAside(exsqlite.RecordKind, coord, err)
+	if none {
+		return contextExamples{Status: sectionStatusSetAside, Error: aside.statement(), SetAside: aside.json()}
+	}
 	if err != nil {
 		return contextExamples{Status: sectionStatusReadError, Error: err.Error()}
 	}
@@ -501,6 +518,7 @@ func buildExamples(ctx context.Context, coord coordinate.ModuleCoordinate, uc Qu
 		ExtractedAt: isoTime(rec.ExtractedAt),
 		Status:      rec.OverallStatus.String(),
 		Error:       rec.FailureDetail,
+		SetAside:    aside.json(),
 	}
 
 	// Derive the module-relative subdirectory for the filtered package so we

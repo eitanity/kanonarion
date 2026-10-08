@@ -255,6 +255,11 @@ func TestCancellationDuringBackoffStopsRetrying(t *testing.T) {
 	if err == nil || err.Error() != transient.Error() {
 		t.Fatalf("error = %v, want the fetch error %v", err, transient)
 	}
+	// The stop rides on the error, so the walk does not log a fetch the run's
+	// cancellation cut short as a failed one.
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, transient) {
+		t.Errorf("error %v must be both the fetch error and the cancellation", err)
+	}
 	if inner.calls != 1 {
 		t.Errorf("inner called %d times, want 1 (backoff was cut short)", inner.calls)
 	}

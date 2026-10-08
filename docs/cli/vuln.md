@@ -115,6 +115,7 @@ begun. What is offered here is the truthful statement kanonarion can make today.
 | 0 | `Complete` | every module was analysed, findings or not |
 | 1 | partial | some modules were not analysed |
 | 2 | none | nothing was analysed; the run established nothing |
+| 3 | - | the run was interrupted (see [Interrupting a run](conventions.md#interrupting-a-run)) |
 
 Findings do not change the exit code. Whether a finding should fail a build is a
 policy question, and `audit` answers it.
@@ -352,7 +353,7 @@ When a scan run of the same walk against the same advisory snapshot already
 exists, its result is served and `govulncheck` does not run:
 
 ```
-vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability answers came from the source that run read, which this run did not re-read (--force to re-measure)
+vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889502117346 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability answers came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 The line names the run whose answers you are reading and when it was made. The
@@ -609,8 +610,11 @@ Scanning walk 01KQDBVW092ER1HNXZ60X27CMD...
   [2/3] github.com/spf13/cobra@v1.8.1 - Clean
   [3/3] golang.org/x/net@v0.0.0-20210405180319-a5a99cb37ef4 - Affected
       GO-2022-0969 (CVE-2022-27664): HTTP/2 server DoS
-Scan completed: Complete, Affected (2)  Run ID: 01KQDBVW092ER1HNXZ60X27CME
+Scan completed: Complete, Affected (2)  Run ID: vscan-01KQDBVW092ER1HNXZ60X27CMD-1786116020645803117
 ```
+
+The run id is `vscan-<walk id>-<start time in Unix nanoseconds>`. Runs recorded
+by earlier releases end in whole seconds instead and keep that id.
 
 The completion line reports two independent axes, because a run answers two
 different questions: **coverage** — was every module in the build list analysed?
@@ -760,7 +764,7 @@ than printed as though it resolves:
 
 ```
 $ kanonarion vuln-scan-list --limit 0
-vscan-01KYBTWG8TW0KY1ME26KXZTH6X-1784956207  walk=01KYBTWG8TW0KY1ME26KXZTH6X  status=Affected      2026-07-25T05:12:12Z  inputs unresolvable: walk absent from this store
+vscan-01KYBTWG8TW0KY1ME26KXZTH6X-1784956207339475210  walk=01KYBTWG8TW0KY1ME26KXZTH6X  status=Affected      2026-07-25T05:12:12Z  inputs unresolvable: walk absent from this store
 ```
 
 The findings stand; what cannot be recovered is *what was scanned* - which
@@ -817,7 +821,18 @@ Reachability of 61 finding(s):
   undecided        33 — a recorded negative no search stands behind; none of these is a clean negative
     inferred       31 — no search ran; the negative reads a source-fidelity analysis's silence
     unsearchable    2 — the advisory names no symbol for this module path, so no search was ever possible
+...
+
+Affected modules (2):
+  golang.org/x/crypto@v0.31.0
+    GO-2025-3487 [not reachable in call graph — inferred]
+    GO-2025-0001 [reachable]
+  ...
 ```
+
+Each finding is listed on its own line under its module, with the same
+reachability label `vuln-scan` prints for it. A withdrawn advisory carries its
+retraction date instead of a label.
 
 #### The build the run's answers are about
 
@@ -946,7 +961,7 @@ the walk you were looking at is not what excluded it.
 
 ```
 no scan run matched run id "vscan-NOPE" — the value is compared for exact equality against the run id of
-all 15 scan run(s) in the store (e.g. vscan-01KQDBVW092ER1HNXZ60X27CMD-1786116020); to list every scan
+all 15 scan run(s) in the store (e.g. vscan-01KQDBVW092ER1HNXZ60X27CMD-1786116020645803117); to list every scan
 run: kanonarion vuln-scan-list --limit 0
 ```
 
@@ -1534,10 +1549,67 @@ index answer rather than being dropped.
 
 ### A stored record this build cannot verify
 
-A record is sealed by the build that wrote it. A later build with a different
-canonical shape cannot always reproduce that seal — the bytes are intact and hash
-to the seal they carry, but this binary cannot rebuild them — and the row is then
-**unreadable** rather than wrong.
+A record is sealed by the build that wrote it. A build with a different
+canonical shape — an earlier one or a later one — cannot always reproduce that
+seal. The bytes are intact and hash to the seal they carry, but this binary
+cannot rebuild them. Such a generation is **set aside**: it is left out of the
+answer and named by its `content_hash`. Nothing about it is wrong; read it with
+the build that wrote it, or upgrade.
+
+A record whose bytes do **not** hash to their own seal has been altered. Every
+command that meets one refuses at exit `10`, as before.
+
+#### Commands that answer for one coordinate
+
+`vuln-show`, `reachability --vuln` and `context` answer from the generations this
+build can reproduce, and state the ones set aside:
+
+```
+$ kanonarion vuln-show example.com/bravo@v2.0.0
+set aside vulnerability record example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01) content_hash sha256:a2546bf0…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+...the record...
+```
+
+The statement goes to stderr on the text path. Under `--json` it is in the
+document instead, as `set_aside`; the key is absent when nothing was set aside:
+
+```json
+"set_aside": [
+  {
+    "kind": "vulnerability record",
+    "coordinate": "example.com/bravo@v2.0.0",
+    "pipeline_version": "v25",
+    "database_snapshot": { "source": "govulndb", "version": "v2026-01-01" },
+    "content_hash": "sha256:a2546bf0…",
+    "reason": "written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade"
+  }
+]
+```
+
+Every `set_aside` entry, in every command's document, states `kind`, so a
+document that reads several stores tells its entries apart: `vulnerability
+record`, `call graph record`, `licence record`, `example record`, `walk record`,
+`extraction run`, `walk scan run` or `stdlib custody measurement`. A record
+filed under a module states `coordinate`; the last four state `id` instead.
+
+When **every** generation this build reads for the coordinate was set aside,
+there is no record this build can serve. The command exits `4`, names the
+generations, and names the re-scan that writes one this build can read.
+
+`context` reports that case as `status: set_aside`, with the statement in `error`.
+`audit` reports it as `(set aside)` in the vuln column. A record served beside a
+set-aside generation carries the statement in `set_aside` (`context`) or in
+`vuln_reason` (`audit`).
+
+#### Scans
+
+`vuln-scan`, `vuln-scan-rescan` and the scan inside `audit` write their records as usual
+when a group holds a set-aside generation, and state it on stderr, once per
+generation. A served stored run states the generations its report was built
+without the same way. A module whose own pinned record was set aside is left out
+of that report.
+
+#### Surveys
 
 The surveys list every record they can verify and **name the ones they cannot, in
 place**, exiting `0`:
@@ -1546,7 +1618,7 @@ place**, exiting `0`:
 $ kanonarion vuln-by-id GO-2026-9001
 example.com/charlie@v3.0.0            Affected  vuln-db=v2026-01-01  scanned=2026-02-01T02:00:00Z  pipeline=v25
 example.com/alpha@v1.0.0              Affected  vuln-db=v2026-01-01  scanned=2026-02-01T00:00:00Z  pipeline=v25
-example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01)  status=unreadable  sealed by an earlier record generation; re-scan to reseal
+example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01) content_hash sha256:a2546bf0…  status=unreadable  written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
 ```
 
 An omitted row and a row reported as unreadable say different things about the
@@ -1563,8 +1635,9 @@ consumer filtering on status sees it and cannot mistake it for one:
   "coordinate": "example.com/bravo@v2.0.0",
   "pipeline_version": "v25",
   "database_snapshot": { "source": "govulndb", "version": "v2026-01-01" },
+  "content_hash": "sha256:a2546bf0…",
   "overall_status": "unreadable",
-  "reason": "sealed by an earlier record generation; re-scan to reseal"
+  "reason": "written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade"
 }
 ```
 
@@ -1579,12 +1652,27 @@ prose is the right form there.
 `vuln-scan-list` and `vuln-scan-show` report unreadable **scan runs** the same
 way.
 
-The reads that answer for **one** coordinate do not relax: plain `vuln-show`,
-`reachability` and the report a stored run is rebuilt into keep failing closed at
-exit `10`, because an answer composed from a candidate set with a row missing can
-report `Clean` where the store holds a finding. `vuln-show`'s refusal names the history
-as the survey that does list the row. The remedy for a drifted row is a re-scan,
-never an investigation: nothing has been altered.
+#### A scan run this build cannot verify
+
+A **scan run** written in a canonical shape this build cannot reproduce is set
+aside the same way. A run has no other generation to serve in its place, so:
+
+- `vuln-scan-show` and `vuln-scan-diff` naming it exit `4` with the statement.
+- `vuln-scan-list` and `vuln-scan-history` list the other runs and name it: on
+  stderr on the text path, in the document's `set_aside` under `--json`, with
+  `kind: "walk scan run"` and the run under `id`:
+
+```
+set aside walk scan run 01JS0NGARD0000000000000RN1 (pipeline v25) content_hash sha256:9c1e…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+```
+
+- `vuln-scan` does not reuse it, and names it.
+- `vuln-scan-rescan` of a local project whose walk records no directory refuses
+  at exit `4`, naming it, when no readable run settles the analysis frame
+  without it.
+
+A run whose bytes do **not** hash to their own seal is still reported as
+`unreadable`, and a command that consumes it refuses at exit `10`.
 
 ---
 

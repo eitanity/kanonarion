@@ -91,6 +91,14 @@ type FindingSet struct {
 	// coverage gap is how a stale cache comes to read as a dependency nobody
 	// has ever checked.
 	SupersededOnly map[coordinate.ModuleCoordinate]struct{}
+	// SetAsideOnly is every coordinate whose every record at the loader's
+	// pipeline version was set aside: written in a canonical shape this build
+	// cannot reproduce.
+	SetAsideOnly map[coordinate.ModuleCoordinate]struct{}
+	// SetAside names, one line each, every stored generation the seed was drawn
+	// without because this build cannot reproduce it. It is reported with the
+	// answer, for the reason Restriction is.
+	SetAside []string
 	// Restriction states, in one line, which records the loader was willing to
 	// draw this seed from. It is reported with the answer: a store holding
 	// several projects' scans holds several answers per coordinate, and which of

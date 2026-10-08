@@ -118,11 +118,13 @@ fork inference. It is a pure function of the path.
 Copyright-attribution signal: read the module's stored licence record and
 report a caveated republication inference when the licence text attributes
 copyright to more than one distinct holder, or when a holder names the owner of
-a related module — one of the same name held in this store, or the module this
-one replaces under a go.mod replace directive recorded in a walk. This is the
-tier that can see a republication, which the name-path heuristic cannot: a
-republication changes the path, so nothing about the new path collides with the
-old one.
+a related module — one under a different path owner with an overlapping name
+held in this store, or the module this one replaces under a go.mod replace
+directive recorded in a walk. A path's owner is its first element after the
+host. For a module held in this store, a holder that also names the subject's
+own owner is not compared. This is the tier that can see a republication, which
+the name-path heuristic cannot: a republication changes the path, so nothing
+about the new path collides with the old one.
 
 Without @version the copyright signal reads the record for the NEWEST version
 the store holds, and where it holds several the output says a choice was made

@@ -40,6 +40,14 @@ const (
 	// may legitimately describe different code. WorktreeDigest is what tells them
 	// apart.
 	AnalysisSourceWorktree AnalysisSource = "worktree"
+	// AnalysisSourceToolchainSource is a graph built from an installed Go
+	// toolchain's own standard-library source tree, $GOROOT/src. It is a third
+	// source because it is neither of the other two: no proxy published it, and
+	// it is not a mutable checkout — a released toolchain's src is fixed by its
+	// version. The artefact identity names the published source tarball the
+	// custody chain holds for that version; WorktreeDigest names the bytes this
+	// analysis actually read, so the two claims stay separable.
+	AnalysisSourceToolchainSource AnalysisSource = "toolchain-source"
 )
 
 // String renders the source, showing the zero value as "not recorded" rather
@@ -57,6 +65,7 @@ func AnalysisSources() []AnalysisSource {
 	return []AnalysisSource{
 		AnalysisSourceModuleZip,
 		AnalysisSourceWorktree,
+		AnalysisSourceToolchainSource,
 		AnalysisSourceUnrecorded,
 	}
 }
@@ -99,6 +108,12 @@ func RecordAnalysisSource(r CallGraphRecord) (AnalysisSource, string) {
 	switch r.AnalysisSource {
 	case AnalysisSourceWorktree:
 		return AnalysisSourceWorktree, r.WorktreeDigest
+	case AnalysisSourceToolchainSource:
+		// The digest, not the artefact identity: the identity names the published
+		// tarball the custody chain holds for this toolchain version, and what this
+		// analysis read is the installed toolchain's source tree. The discriminator
+		// has to be the bytes that were read.
+		return AnalysisSourceToolchainSource, r.WorktreeDigest
 	case AnalysisSourceModuleZip:
 		return AnalysisSourceModuleZip, r.ArtefactIdentity
 	case AnalysisSourceUnrecorded:

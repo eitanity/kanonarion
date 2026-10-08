@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
@@ -72,7 +74,29 @@ type Config struct {
 	Workers int
 }
 
-func NewExtractUseCase(cfg Config) *ExtractUseCase {
+// ErrMissingDependency is returned by NewExtractUseCase when a required
+// dependency is nil.
+var ErrMissingDependency = errors.New("extract use case: required dependency is nil")
+
+// NewExtractUseCase refuses a Config missing a required dependency, so a
+// miswired build fails at construction instead of panicking mid-run.
+// Logger is optional.
+func NewExtractUseCase(cfg Config) (*ExtractUseCase, error) {
+	for _, d := range []struct {
+		name    string
+		missing bool
+	}{
+		{"Runs", cfg.Runs == nil},
+		{"Walks", cfg.Walks == nil},
+		{"Extractor", cfg.Extractor == nil},
+		{"Stages", cfg.Stages == nil},
+		{"Clock", cfg.Clock == nil},
+		{"Stopwatch", cfg.Stopwatch == nil},
+	} {
+		if d.missing {
+			return nil, fmt.Errorf("%w: %s", ErrMissingDependency, d.name)
+		}
+	}
 	return &ExtractUseCase{
 		runs:             cfg.Runs,
 		walks:            cfg.Walks,
@@ -83,7 +107,7 @@ func NewExtractUseCase(cfg Config) *ExtractUseCase {
 		pipelineVersions: cfg.PipelineVersions,
 		logger:           cfg.Logger,
 		workers:          cfg.Workers,
-	}
+	}, nil
 }
 
 // WithAudit wires an audit sink so a run appends one extraction_run_completed
@@ -374,7 +398,7 @@ func (uc *ExtractUseCase) checkpointRun(ctx context.Context, run domain.Extracti
 			// nothing new — it never said it.
 			lastWritten = len(results)
 		}
-		if err != nil {
+		if err != nil && !interrupt.Cancelled(ctx, err) {
 			uc.log().WarnContext(ctx, "extraction_run_checkpoint_failed",
 				slog.String("extraction.run.id", run.ID),
 				slog.String("extraction.walk.id", run.WalkID),

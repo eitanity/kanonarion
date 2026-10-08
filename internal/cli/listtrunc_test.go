@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	exapp "github.com/eitanity/kanonarion/internal/example/application"
+	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +155,7 @@ func interfaceSurface() listingSurface {
 	for i := range truncPopulation {
 		sums = append(sums, ifaceports.InterfaceSummary{
 			ModulePath: fmt.Sprintf("example.com/mod%d", i), ModuleVersion: "v1.0.0", PackageCount: 2,
+			PipelineVersion: ifaceapp.PipelineVersion,
 		})
 	}
 	uc.SetList(sums)
@@ -162,7 +166,7 @@ func interfaceSurface() listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := interfaceListWith(context.Background(), limit, offset, uc, &stdout, &stderr); err != nil {
+			if err := interfaceListWith(context.Background(), limit, offset, false, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("interfaceListWith: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -177,6 +181,7 @@ func examplesSurface() listingSurface {
 	for i := range truncPopulation {
 		sums = append(sums, exports.ExampleSummary{
 			ModulePath: fmt.Sprintf("example.com/mod%d", i), ModuleVersion: "v1.0.0", ExampleCount: 3,
+			PipelineVersion: exapp.PipelineVersion,
 		})
 	}
 	uc.SetList(sums)
@@ -187,7 +192,7 @@ func examplesSurface() listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runExamplesList(context.Background(), limit, offset, uc, &stdout, &stderr); err != nil {
+			if err := runExamplesList(context.Background(), limit, offset, false, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runExamplesList: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -202,7 +207,7 @@ func callGraphSurface() listingSurface {
 	for i := range truncPopulation {
 		sums = append(sums, cgports.CallGraphSummary{
 			ModulePath: fmt.Sprintf("example.com/mod%d", i), ModuleVersion: "v1.0.0",
-			PipelineVersion: "cg-1", NodeCount: 4, EdgeCount: 3,
+			PipelineVersion: cgapp.PipelineVersion, NodeCount: 4, EdgeCount: 3,
 		})
 	}
 	uc.SetList(sums)
@@ -216,7 +221,7 @@ func callGraphSurface() listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runCallGraphList(context.Background(), "", limit, offset, uc, &stdout, &stderr); err != nil {
+			if err := runCallGraphList(context.Background(), "", limit, offset, false, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runCallGraphList: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -597,31 +602,36 @@ showing first 3 license records — more exist (--limit 0 for all, --offset 3 fo
 `,
 			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Detected","license":"MIT","copyright_status":"found","pipeline_version":"1.4.0","superseded":false,"source":"scanner"}`,
 		},
+		// interface-list, examples-list and callgraph-list gained the generation
+		// line, and their rows carry pipeline_version and superseded at the
+		// served generation, superseded false. Rows and truncation lines are
+		// otherwise unchanged.
 		"interface-list": {
-			text: `example.com/mod0@v1.0.0                            Unknown      2 package(s)  [superseded pipeline ]
-example.com/mod1@v1.0.0                            Unknown      2 package(s)  [superseded pipeline ]
-example.com/mod2@v1.0.0                            Unknown      2 package(s)  [superseded pipeline ]
-3 of 3 listed record(s) were produced by superseded extraction logic; this build serves pipeline 0.6.0 and answers no query from them. Re-extract one:
-  kanonarion interface <module>@<version>
+			text: `example.com/mod0@v1.0.0                            Unknown      2 package(s)
+example.com/mod1@v1.0.0                            Unknown      2 package(s)
+example.com/mod2@v1.0.0                            Unknown      2 package(s)
+listing interface records at pipeline 0.6.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 showing first 3 interface records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
-			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"","superseded":true,"package_count":2}`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"0.6.0","superseded":false,"package_count":2}`,
 		},
 		"examples-list": {
 			text: `example.com/mod0@v1.0.0                            Unknown      3 example(s)
 example.com/mod1@v1.0.0                            Unknown      3 example(s)
 example.com/mod2@v1.0.0                            Unknown      3 example(s)
+listing example records at pipeline 0.3.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 showing first 3 example records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
-			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","example_count":3}`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"0.3.0","superseded":false,"example_count":3}`,
 		},
 		"callgraph-list": {
-			text: `example.com/mod0@v1.0.0                                      cg-1         Unknown     4 nodes     3 edges
-example.com/mod1@v1.0.0                                      cg-1         Unknown     4 nodes     3 edges
-example.com/mod2@v1.0.0                                      cg-1         Unknown     4 nodes     3 edges
+			text: `example.com/mod0@v1.0.0                                      0.7.0        Unknown     4 nodes     3 edges
+example.com/mod1@v1.0.0                                      0.7.0        Unknown     4 nodes     3 edges
+example.com/mod2@v1.0.0                                      0.7.0        Unknown     4 nodes     3 edges
+listing call graph records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 showing first 3 call graph records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
-			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","pipeline_version":"cg-1","status":"Unknown","node_count":4,"edge_count":3,"generations_differ":false}`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","pipeline_version":"0.7.0","superseded":false,"status":"Unknown","node_count":4,"edge_count":3,"generations_differ":false}`,
 		},
 		"vuln-scan-list": {
 			text: `run-0                       walk=walk-0                      status=AllClean      2026-01-01T00:00:00Z
@@ -657,12 +667,15 @@ showing first 3 directive scans — more exist (--limit 0 for all, --offset 3 fo
 `,
 			firstRecord: `{"id":"scan-0","project":"example.com/proj","completed_at":"2026-01-01T00:00:00Z","directive_count":0,"content_hash":"sha256:abc","pipeline_version":"dir-1"}`,
 		},
+		// native-list's subject no longer carries the generation, which moved to
+		// the document's generation object; the truncation line names the bare
+		// plural like every other listing.
 		"native-list": {
 			text: `example.com/mod0@v1.0.0                                 absent                 —
 example.com/mod1@v1.0.0                                 absent                 —
 example.com/mod2@v1.0.0                                 absent                 —
 listing native records at generation ` + nativedomain.PipelineFingerprint() + `, the generation this build serves; records from a superseded generation are not shown (--all-generations)
-showing first 3 native records at generation ` + nativedomain.PipelineFingerprint() + ` — more exist (--limit 0 for all, --offset 3 for the next page)
+showing first 3 native records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
 			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","presence":"absent","generation":"` +
 				nativedomain.PipelineFingerprint() +

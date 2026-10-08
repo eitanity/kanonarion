@@ -99,7 +99,10 @@ func TestGoListChildDiesWithAKilledParent(t *testing.T) {
 	controlPIDFile := filepath.Join(tmp, "control.pid")
 
 	helper := exec.Command(os.Args[0], "-test.run=TestGoListChildDiesWithAKilledParent", "-test.v") // #nosec G204 G702 -- re-execs this very test binary; the args are literals
+	// The helper is SIGKILLed, so nothing it makes under TMPDIR is removed by it;
+	// pointing TMPDIR at this test's own temp dir lets the test remove it.
 	helper.Env = append(os.Environ(),
+		"TMPDIR="+tmp,
 		goListOrphanHelperEnv+"=1",
 		goListOrphanHardenedPID+"="+hardenedPIDFile,
 		goListOrphanControlPID+"="+controlPIDFile,

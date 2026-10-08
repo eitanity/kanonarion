@@ -12,7 +12,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -228,7 +230,7 @@ func (a *Analyser) Analyse(
 	goModCache, cleanupCache := a.prepareModuleCache(ctx, tempDir, coord)
 	defer cleanupCache()
 
-	rec, err = a.analyseDir(ctx, tempDir, coord, synth, nil, false, goModCache)
+	rec, err = a.analyseDir(ctx, tempDir, coord, synth, nil, modeModuleZip, goModCache)
 	if err != nil {
 		return rec, err
 	}
@@ -339,7 +341,7 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	// A working tree resolves from the developer's own module cache: it is their
 	// build being described, and a cache materialised from the store would be a
 	// different one. See loadenv.go for the same split on the workspace.
-	rec, err = a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, true, "")
+	rec, err = a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read, modeWorktree, "")
 	if err != nil {
 		return rec, err
 	}
@@ -450,7 +452,7 @@ func (a *Analyser) analyseDir(
 	coord coordinate.ModuleCoordinate,
 	synth domain.SynthesisedGoMod,
 	read *[]string,
-	worktree bool,
+	mode analysisMode,
 	goModCache string,
 ) (domain.CallGraphRecord, error) {
 	toolchains := goenv.NewToolchains()
@@ -460,9 +462,12 @@ func (a *Analyser) analyseDir(
 		}
 	}()
 
-	rec, err := a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, goModCache, toolchains)
+	rec, err := a.analyseDirOnce(ctx, tempDir, coord, synth, read, mode, goModCache, toolchains)
 	if err != nil {
 		return rec, err
+	}
+	if stoppedLoad(ctx, &rec) {
+		return rec, nil
 	}
 	retry, refusal := toolchains.Escalate(rec.FailureDetail)
 	if refusal != "" {
@@ -477,7 +482,25 @@ func (a *Analyser) analyseDir(
 		slog.String("version", coord.Version()),
 		slog.String("toolchain", toolchains.Selected()),
 	)
-	return a.analyseDirOnce(ctx, tempDir, coord, synth, read, worktree, goModCache, toolchains)
+	rec, err = a.analyseDirOnce(ctx, tempDir, coord, synth, read, mode, goModCache, toolchains)
+	if err == nil {
+		stoppedLoad(ctx, &rec)
+	}
+	return rec, err
+}
+
+// stoppedLoad restates a load failure the run's cancellation caused as the
+// Cancelled record it is, and reports whether it did. A go command the
+// cancellation killed says nothing about whether the module loads.
+func stoppedLoad(ctx context.Context, rec *domain.CallGraphRecord) bool {
+	if rec.OverallStatus != domain.CallGraphStatusLoadFailed || !interrupt.Stopped(ctx) {
+		return false
+	}
+	rec.OverallStatus = domain.CallGraphStatusCancelled
+	rec.Completeness = domain.CompletenessUnknown
+	rec.FailureCause = domain.FailureCauseEnvironment
+	rec.FailureDetail = "cancelled during load: " + rec.FailureDetail
+	return true
 }
 
 // analyseDirOnce holds the shared post-extraction analysis pipeline: load
@@ -500,15 +523,16 @@ func (a *Analyser) analyseDir(
 // a load that failed is an answer about the module, not an error — and threading
 // a second value through a dozen of them would obscure that.
 //
-// worktree selects the environment: a published zip's go.work is dev-time
-// configuration that does not apply, and a working tree's is the build.
+// mode selects the environment, the load pattern and the membership rule — see
+// analysisMode. A published zip's go.work is dev-time configuration that does
+// not apply, a working tree's is the build, and the standard library is neither.
 func (a *Analyser) analyseDirOnce(
 	ctx context.Context,
 	tempDir string,
 	coord coordinate.ModuleCoordinate,
 	synth domain.SynthesisedGoMod,
 	read *[]string,
-	worktree bool,
+	mode analysisMode,
 	goModCache string,
 	toolchains *goenv.Toolchains,
 ) (rec domain.CallGraphRecord, err error) {
@@ -562,12 +586,12 @@ func (a *Analyser) analyseDirOnce(
 	// thing this branch decides — an extracted zip's go.work is packaging and is
 	// disabled, a working tree's is the build and is honoured — and building both
 	// leaves a reader unable to tell which one the child was handed.
-	if worktree {
-		env = goenv.Worktree(os.Environ(), tempDir)
-	} else {
-		env = analysisEnv(goModCache)
-	}
-	env = toolchains.Apply(env)
+	env = toolchains.Apply(childEnv(mode, tempDir, goModCache))
+	// A go command the cancellation kills cannot remove its own work directory,
+	// so every child of this analysis gets a temp root removed when it returns.
+	scratch, removeScratch := childproc.Scratch()
+	defer removeScratch()
+	env = append(env, scratch...)
 
 	// Which toolchain ran is stamped on EVERY record this function returns,
 	// successes and failures alike, because a graph carries the toolchain's own
@@ -598,7 +622,7 @@ func (a *Analyser) analyseDirOnce(
 	}
 
 	a.step(coord, "loading package metadata")
-	pkgsMeta, err := packages.Load(cfgMeta, "./...")
+	pkgsMeta, err := packages.Load(cfgMeta, metaPattern(mode))
 	if err != nil {
 		// A Load error is the driver failing, and the driver is the go command. It
 		// is raised both by a module whose graph will not resolve and by a PATH with
@@ -634,7 +658,7 @@ func (a *Analyser) analyseDirOnce(
 	// fork republished under a new path that never rewrote its module directive
 	// still declares — and its consumers still import — the original path, and
 	// testing against the coordinate matched none of its own packages.
-	target := targetCoordinate(tempDir, coord)
+	target := analysedCoordinate(mode, tempDir, coord)
 
 	// The pattern list for the syntax load below. This is deliberately NOT the
 	// membership rule, and the prefix here is not a fifth spelling of it: this
@@ -645,13 +669,7 @@ func (a *Analyser) analyseDirOnce(
 	// to the module the toolchain says it came from. Narrowing this test instead
 	// would drop those bodies, which is a change to the graph's fidelity and a
 	// separate decision from correcting who owns a node.
-	var targetPkgPaths []string
-	packages.Visit(pkgsMeta, nil, func(p *packages.Package) {
-		isTarget := p.PkgPath == target.Path() || strings.HasPrefix(p.PkgPath, target.Path()+"/")
-		if isTarget {
-			targetPkgPaths = append(targetPkgPaths, p.PkgPath)
-		}
-	})
+	targetPkgPaths := selectTargetPackages(mode, pkgsMeta, target)
 
 	if len(targetPkgPaths) == 0 {
 		// The loader ran, returned packages, and not one of them belongs to the
@@ -663,7 +681,7 @@ func (a *Analyser) analyseDirOnce(
 			classifyLoad(detail), detail), nil
 	}
 
-	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, target, targetPkgPaths, env)
+	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, target, targetPkgPaths, env, mode)
 	if err != nil {
 		// The only error this returns is a syntax-load failure, which is again the
 		// go command failing; same question, same way of answering it.
@@ -850,6 +868,15 @@ func (a *Analyser) analyseDirOnce(
 	// says the loader named every in-module package itself; non-empty is the
 	// reconstruction, stated rather than hidden inside the membership answer.
 	rec.PrefixAttributedPackages = mem.prefixAttributed()
+	// Which standard-library packages this build links, for the consuming side of
+	// a joined read: a traversal that continues into the standard library's own
+	// graph has to know which of the toolchain's packages are in the binary at
+	// all, and an edge into one that is not describes a function the program does
+	// not contain. The standard library's own graph records none — every package
+	// in it is in it by definition, and the field is a claim about a CONSUMER.
+	if mode != modeStdlib {
+		rec.StdlibPackages = mem.stdlibPackages()
+	}
 	// Every module other than this one whose packages this analysis built with
 	// bodies. The selection above is deliberately wider than membership, so this
 	// is what stops BUILT_WITH_BODIES being claimed uniformly over code belonging

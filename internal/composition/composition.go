@@ -20,6 +20,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
@@ -106,13 +107,15 @@ func Migrations() []sqlitestore.Migration {
 // here and the CLI container) share it so stdlib custody behaves identically —
 // including the assurance log: audit is wired here rather than at each call site
 // so neither root can be the quieter one.
-func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger) *stdlibbridge.Bridge {
+//
+// setAside receives a stored measurement this build cannot reproduce; nil logs it.
+func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger, setAside recordseal.Reporter) *stdlibbridge.Bridge {
 	godev := stdlibgodev.New()
 	acquirer := stdlibapp.NewAcquirer(
 		godev, godev,
 		stdlibgit.New(),
 		stdliblic.New(licdet.New()),
-		stdlibsqlite.New(db),
+		stdlibStore(db, setAside),
 		blobs, clk, logger,
 	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
@@ -125,15 +128,74 @@ func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchp
 // the same licence detector and version-keyed fact cache the online path uses
 // classify and persist the result. No network client is wired — the offline path
 // performs no I/O beyond the local filesystem. goBinary may be empty (PATH "go").
-func NewOfflineStdlibAcquirer(db sqlitestore.DB, goBinary string, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger) *stdlibbridge.Bridge {
+func NewOfflineStdlibAcquirer(db sqlitestore.DB, goBinary string, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger, setAside recordseal.Reporter) *stdlibbridge.Bridge {
 	acquirer := stdlibapp.NewLocalAcquirer(
 		stdlibtoolchain.New(goBinary, logger),
 		stdliblocalsrc.New(),
 		stdliblic.New(licdet.New()),
-		stdlibsqlite.New(db),
+		stdlibStore(db, setAside),
 		clk, logger,
 	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
+}
+
+// fetchStore is the fetch ledger naming each measurement it sets aside through
+// setAside; nil logs it.
+func fetchStore(db sqlitestore.DB, setAside recordseal.Reporter) *fetchsqlite.Store {
+	st := fetchsqlite.New(db)
+	st.ReportSetAside(setAside)
+	return st
+}
+
+func stdlibStore(db sqlitestore.DB, setAside recordseal.Reporter) *stdlibsqlite.Store {
+	st := stdlibsqlite.New(db)
+	st.ReportSetAside(setAside)
+	return st
+}
+
+// Option configures a composition root.
+type Option func(*options)
+
+type options struct {
+	setAside recordseal.Reporter
+}
+
+// WithSetAsideReporter states where the stores a root builds name each stored
+// record they left out because this build cannot reproduce it. Without it each
+// is logged at warn level.
+func WithSetAsideReporter(r func([]recordseal.SetAsideRow)) Option {
+	return func(o *options) { o.setAside = r }
+}
+
+func applyOptions(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
+// storeSet is the record stores whose reads set a generation aside, built with
+// one reporter so no root can wire one and forget another.
+type storeSet struct {
+	walks   *walksqlite.Store
+	extract *extstore.Store
+	licence *licsqlite.Store
+	callgr  *cgsqlite.Store
+	example *exsqlite.Store
+}
+
+func newStoreSet(db sqlitestore.DB, setAside recordseal.Reporter) storeSet {
+	s := storeSet{
+		walks: walksqlite.New(db), extract: extstore.New(db), licence: licsqlite.New(db),
+		callgr: cgsqlite.New(db), example: exsqlite.New(db),
+	}
+	s.walks.ReportSetAside(setAside)
+	s.extract.ReportSetAside(setAside)
+	s.licence.ReportSetAside(setAside)
+	s.callgr.ReportSetAside(setAside)
+	s.example.ReportSetAside(setAside)
+	return s
 }
 
 // Queries is the read-only consumption surface: every Query* use case the public
@@ -167,7 +229,8 @@ type Queries struct {
 // about a store one millisecond old and a false one about the store the caller
 // meant. Only read stores are wired — no proxy, VCS, extractor, or signer — so
 // the read surface stays independent of the pipeline-construction machinery.
-func NewQueries(storeRoot string) (*Queries, func() error, error) {
+func NewQueries(storeRoot string, opts ...Option) (*Queries, func() error, error) {
+	o := applyOptions(opts)
 	dbPath := filepath.Join(storeRoot, "mirror.db")
 	db, err := sqlitestore.Open(dbPath, Migrations(), sqlitestore.IntentRead)
 	if err != nil {
@@ -180,17 +243,17 @@ func NewQueries(storeRoot string) (*Queries, func() error, error) {
 		return nil
 	}
 
-	walkStore := walksqlite.New(db)
-	licStore := licsqlite.New(db)
+	stores := newStoreSet(db, o.setAside)
+	walkStore := stores.walks
 
 	q := &Queries{
-		Fetch:      fetchapp.NewQueryFetchUseCase(fetchsqlite.New(db)),
+		Fetch:      fetchapp.NewQueryFetchUseCase(fetchStore(db, o.setAside)),
 		Walks:      walkapp.NewQueryWalksUseCase(walkStore),
-		License:    licapp.NewQueryLicenseUseCaseWithWalks(licStore, walkStore),
+		License:    licapp.NewQueryLicenseUseCaseWithWalks(stores.licence, walkStore),
 		Interface:  ifaceapp.NewQueryInterfaceUseCase(ifacesqlite.New(db)),
-		CallGraph:  cgapp.NewQueryCallGraphUseCase(cgsqlite.New(db)),
-		Examples:   exapp.NewQueryExamplesUseCase(exsqlite.New(db)),
-		Extraction: extractapp.NewQueryExtractionUseCase(extstore.New(db)),
+		CallGraph:  cgapp.NewQueryCallGraphUseCase(stores.callgr),
+		Examples:   exapp.NewQueryExamplesUseCase(stores.example),
+		Extraction: extractapp.NewQueryExtractionUseCase(stores.extract),
 		Vuln:       vulnapp.NewQueryVulnUseCase(vulnsqlite.New(db)),
 		ScanRuns:   vulnapp.NewQueryScanRunsUseCase(vulnsqlite.New(db), walkStore),
 		SBOM:       sbomapp.NewQuerySBOMUseCase(sbomstore.New(db)),
@@ -272,19 +335,20 @@ type Driver struct {
 // proxy.golang.org); the verification path is identical to the CLI fetch — this
 // surface only re-shapes the result, never the integrity checks. Diagnostics
 // are discarded: a serving consumer drives its own logging around the call.
-func NewDriver(storeRoot string) (*Driver, func() error, error) {
+func NewDriver(storeRoot string, opts ...Option) (*Driver, func() error, error) {
 	kanonarionBinary, err := os.Executable()
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
-	return newDriver(storeRoot, extextractor.NewOsSubprocessExecutor(kanonarionBinary, 0, nil))
+	return newDriver(storeRoot, extextractor.NewOsSubprocessExecutor(kanonarionBinary, 0, nil), opts...)
 }
 
 // newDriver is NewDriver with the callgraph child's executor injected. The
 // executor is the only seam: it is what turns the child's argv into a process,
 // so it is also the only place a test can observe the arguments the driver
 // builds without spawning anything.
-func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecutor) (*Driver, func() error, error) {
+func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecutor, opts ...Option) (*Driver, func() error, error) {
+	o := applyOptions(opts)
 	// This surface writes, so it creates the root it writes into: a first fetch
 	// or walk on a clean machine must not need a preparatory step. NewQueries,
 	// which only reads, deliberately does the opposite.
@@ -310,7 +374,7 @@ func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecuto
 		return nil
 	}
 
-	factStore, err := fetchsqlite.NewAuditingStore(fetchsqlite.New(db), filepath.Join(storeRoot, "audit.jsonl"))
+	factStore, err := fetchsqlite.NewAuditingStore(fetchStore(db, o.setAside), filepath.Join(storeRoot, "audit.jsonl"))
 	if err != nil {
 		_ = db.Close()
 		return nil, nil, fmt.Errorf("creating auditing fetch store: %w", err)
@@ -348,9 +412,15 @@ func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecuto
 		// log is not a quieter one.
 		WithAudit(factStore)
 
+	localWalkExtract, err := newLocalWalkExtract(db, blobs, factStore, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot, o.setAside)
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, err
+	}
+
 	d := &Driver{
 		FetchServe:       fetchapp.NewServeModuleUseCase(fetchUC, blobs).WithAudit(factStore),
-		LocalWalkExtract: newLocalWalkExtract(db, blobs, factStore, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot),
+		LocalWalkExtract: localWalkExtract,
 		ValidateIngest:   fetchapp.NewValidateAndIngestUseCase(factStore).WithAudit(factStore),
 	}
 	return d, cleanup, nil
@@ -375,13 +445,11 @@ func newLocalWalkExtract(
 	logger *slog.Logger,
 	cgSubprocessExec extextractor.SubprocessExecutor,
 	storeRoot string,
-) *driver.LocalWalkExtractUseCase {
-	walkStore := walksqlite.New(db)
-	extStore := extstore.New(db)
-	licStore := licsqlite.New(db)
+	setAside recordseal.Reporter,
+) (*driver.LocalWalkExtractUseCase, error) {
+	stores := newStoreSet(db, setAside)
+	walkStore, extStore, licStore, cgStore, exStore := stores.walks, stores.extract, stores.licence, stores.callgr, stores.example
 	ifaceStore := ifacesqlite.New(db)
-	cgStore := cgsqlite.New(db)
-	exStore := exsqlite.New(db)
 
 	// ---- project-walk pipeline ----
 	// The driver always fetches over the network, so transient proxy failures are
@@ -395,9 +463,9 @@ func newLocalWalkExtract(
 	// that dials.
 	var stdlibAcquirer *stdlibbridge.Bridge
 	if goenv.NetworkForbidden() {
-		stdlibAcquirer = NewOfflineStdlibAcquirer(db, "", clk, factStore, logger)
+		stdlibAcquirer = NewOfflineStdlibAcquirer(db, "", clk, factStore, logger, setAside)
 	} else {
-		stdlibAcquirer = NewStdlibAcquirer(db, blobs, clk, factStore, logger)
+		stdlibAcquirer = NewStdlibAcquirer(db, blobs, clk, factStore, logger, setAside)
 	}
 	resolver := walkapp.NewGraphResolver(walkgomod.New(), fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New("", logger)).
@@ -423,7 +491,7 @@ func newLocalWalkExtract(
 	// One reporter for both uses: the bound is sized from it once, and the
 	// headroom gate re-reads it before each analysis starts.
 	driverHostMemory := meminfo.New()
-	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
+	extractUC, err := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:  extStore,
 		Walks: walkStore,
 		// The callgraph stage is a fresh kanonarion process; it inherits none of
@@ -452,7 +520,10 @@ func newLocalWalkExtract(
 			"example":   stagePipelineVersion,
 		},
 		Logger: logger,
-	}).WithAudit(factStore)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wiring extract use case: %w", err)
+	}
 
-	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC, stages.Stages())
+	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC.WithAudit(factStore), stages.Stages()), nil
 }

@@ -203,7 +203,9 @@ func usageWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoord
 	}
 
 	if jsonOut {
-		if encErr := encodeJSON(stdout, toUsageJSON(report)); encErr != nil {
+		doc := toUsageJSON(report)
+		doc.SetAside = storeSetAside.take().json()
+		if encErr := encodeJSON(stdout, doc); encErr != nil {
 			return encErr
 		}
 		return usageVerdictExit(report)
@@ -354,11 +356,11 @@ func joinUsage(
 	sites := map[usageSite]struct{}{}
 
 	for _, e := range bound.Record.Edges {
-		owner, ok := cgdomain.ResolveSymbolModule(e.ToID, owners)
+		callee := nodes[e.ToID]
+		owner, ok := usageOwner(callee, e.ToID, module, owners)
 		if !ok || owner != module.Path() {
 			continue
 		}
-		callee := nodes[e.ToID]
 		caller := nodes[e.FromID]
 		site := usageSite{
 			Caller: e.FromID,
@@ -602,6 +604,28 @@ func usageModulePaths(scope coordinate.ModuleSet, stored []cgports.CallGraphCoor
 	return out
 }
 
+// usageOwner names the module a graph node belongs to, for the two joins this
+// report makes.
+//
+// The standard library is the one coordinate the id rule cannot decide. Its
+// node ids are an import path and a symbol — "net/http.Get" — and no module
+// path is a prefix of one, so resolving by id answered "not this module" for
+// every node of it: a public API of zero over a graph that declares 11,000, and
+// a used-symbol count of zero over a project that calls it on every line. The
+// node itself says instead — its own graph attributes it to the coordinate, and
+// a consumer's graph records the package the callee is in.
+func usageOwner(
+	n cgdomain.CallNode, id string, module coordinate.ModuleCoordinate, owners []string,
+) (string, bool) {
+	if !module.IsStdlib() {
+		return cgdomain.ResolveSymbolModule(id, owners)
+	}
+	if n.Module == coordinate.StdlibPath || (n.Module == "" && cgdomain.IsStdlibPackage(n.Package)) {
+		return coordinate.StdlibPath, true
+	}
+	return "", false
+}
+
 // usageModuleSurface reads the module's OWN call graph for the two facts the
 // project's graph cannot supply: its public API, and the interfaces it declares.
 //
@@ -625,7 +649,7 @@ func usageModuleSurface(rep *usageReport, rec cgdomain.CallGraphRecord, module c
 		// "(*pkg.T).M" — could never match a callee, so listing it would put a
 		// permanently unreachable row in the unreached set; and a node belonging
 		// to a nested module of a different path is not this module's API.
-		if owner, ok := cgdomain.ResolveSymbolModule(n.ID, owners); !ok || owner != module.Path() {
+		if owner, ok := usageOwner(n, n.ID, module, owners); !ok || owner != module.Path() {
 			continue
 		}
 		rep.PublicAPI++
@@ -1269,6 +1293,9 @@ type usageJSON struct {
 	Confidence string `json:"confidence_note"`
 	Answer     string `json:"answer"`
 	AnswerWhy  string `json:"answer_reason,omitempty"`
+	// SetAside names the stored call graph generations the reads behind this
+	// document left out because this build cannot reproduce them.
+	SetAside []setAsideJSON `json:"set_aside,omitempty"`
 }
 
 func toUsageJSON(r *usageReport) usageJSON {

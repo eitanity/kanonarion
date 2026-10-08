@@ -375,6 +375,19 @@ type NegativeSearch struct {
 	// no such site. A reader must be able to tell that from a search that never
 	// looked, which is what NotSearched above says.
 	ReflectiveDispatch []ReflectiveDispatchSite
+	// GraphsSearched names the stored call graphs the traversal ran over, one
+	// entry per graph, each naming the coordinate, the fidelity and the size.
+	//
+	// It exists because a search is no longer always over one graph. A
+	// standard-library negative is answered by JOINING the consuming build's own
+	// graph to the standard library's at the external leaves where the first
+	// stops, and a rung reached that way rests on two records. An answer that
+	// named neither would be uncheckable, and would hide that the standard
+	// library's own graph is what made the rung possible.
+	//
+	// Empty on a search that could not be made, on the same terms as every other
+	// field beside NotSearched.
+	GraphsSearched []string
 	// InRecordedFrame reports whether the graph searched is a graph OF the frame
 	// the record was measured in — the analysed module's own build — rather than
 	// a graph of the module standing alone inside someone else's.
@@ -557,7 +570,7 @@ func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness,
 		}
 		switch {
 		case s.PathFound && s.InRecordedFrame:
-			return SoundnessDisputed, disputedReason(d, s)
+			return SoundnessDisputed, disputedReason(d, s) + searchedGraphsNote(s)
 		case s.PathFound:
 			// A path inside the module's own graph is not a contradiction of a
 			// negative measured in another build. The recorded rung stands, and the
@@ -565,14 +578,14 @@ func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness,
 			// and did not report is the one outcome a reachability tool must never
 			// produce.
 			rung, reason := soundnessFromDerivation(d)
-			return rung, reason + crossFrameNote(s)
+			return rung, reason + crossFrameNote(s) + searchedGraphsNote(s)
 		default:
 			// Nothing the analysis can name as an entry point reaches the vulnerable
 			// symbol. That is the search rules 3 to 5 weigh, so the derivation
 			// becomes this tool's own, at the fidelity of the graph it ran over.
 			rung, reason := soundnessFromDerivation(
 				ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting})
-			return rung, reason + entryPointRootingNote(s)
+			return rung, reason + entryPointRootingNote(s) + searchedGraphsNote(s)
 		}
 	}
 	return soundnessFromDerivation(d)
@@ -623,6 +636,27 @@ func entryPointRootingNote(s *NegativeSearch) string {
 	}
 	return note + ". That is a different claim from this one, made from roots nothing established are entered," +
 		" and it is stated so the reader can weigh it rather than discover it later"
+}
+
+// searchedGraphsNote names the stored graphs the traversal ran over.
+//
+// A rung is a claim about a measurement, and a reader cannot weigh it without
+// knowing which records it was made over — least of all for the standard
+// library, whose rung rests on the consuming build's graph CONTINUED through
+// the standard library's own. Naming them is also what lets the answer be
+// checked: each is a coordinate callgraph-show will print.
+func searchedGraphsNote(s *NegativeSearch) string {
+	switch len(s.GraphsSearched) {
+	case 0:
+		return ""
+	case 1:
+		return ". The search ran over the stored call graph of " + s.GraphsSearched[0]
+	default:
+		last := len(s.GraphsSearched) - 1
+		return ". The search ran over the stored call graph of " +
+			strings.Join(s.GraphsSearched[:last], ", ") +
+			", joined at the call sites where it leaves its own module to that of " + s.GraphsSearched[last]
+	}
 }
 
 // plural renders a count with its noun, so a reason never reads "1 entry

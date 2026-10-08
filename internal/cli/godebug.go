@@ -93,6 +93,7 @@ outcome is "warn".
 
 Exit codes:
   0  no applied setting resolves to a blocking policy outcome
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   5  the governance gate fired: one or more applied settings violate policy
   20 bad invocation, or a policy file that could not be read`,
 		Example: `  kanonarion godebug

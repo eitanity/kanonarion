@@ -18,9 +18,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -90,11 +93,12 @@ project's own build dependencies (the code your packages import, incl. tests);
 
 Exit codes:
   0  every dependency resolved and no licence-policy block
+  3  interrupted (SIGINT, SIGTERM or SIGHUP) before it completed
   5  the governance gate fired: dependencies with an undetermined licence are
      blocked by policy (unknown_license=block), or the licence gate could not
      be evaluated because the policy scope in force matches no license_policy
      rule — the table is still printed either way
-  10 a walk node failed its integrity check
+  10 a walk node or a module's fetch record failed its integrity check
   20 bad invocation, unresolvable go.mod, or a policy file that could not be read`,
 		Example: `  kanonarion audit
   kanonarion audit --gomod ./go.mod
@@ -357,6 +361,9 @@ type auditModuleResult struct {
 	// field here would change the documented `audit --json` array element for
 	// every consumer to carry a per-row copy of a whole-graph figure.
 	coverage fetchdomain.CoverageObservation
+	// integrity is the failure of a stored record behind this row that was
+	// altered after it was written; the run exits on it once the table is out.
+	integrity error
 }
 
 func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error {
@@ -522,13 +529,30 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		if err := enc.Encode(newAuditOutput(envelope, run, results)); err != nil {
 			return fmt.Errorf("encoding results: %w", err)
 		}
-		return auditBlockingErr(results)
+		return auditOutcomeErr(results)
 	}
 
 	if err := printAuditTable(stdout, results); err != nil {
 		return err
 	}
-	return auditBlockingErr(results)
+	return auditOutcomeErr(results)
+}
+
+// auditOutcomeErr is the run's exit once the table is out: a stored record that
+// failed its integrity check outranks the licence gate, as it does on every
+// command that reads one.
+func auditOutcomeErr(results []auditModuleResult) error {
+	var failed []string
+	for _, r := range results {
+		if r.integrity != nil {
+			failed = append(failed, r.integrity.Error())
+		}
+	}
+	if len(failed) == 0 {
+		return auditBlockingErr(results)
+	}
+	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("%d dependency(ies) with a stored record that failed its integrity check:\n  %s",
+		len(failed), strings.Join(failed, "\n  "))}
 }
 
 // auditDerivation records where an audit's two expensive answers came from: the
@@ -727,7 +751,11 @@ func auditScope(
 	ef := extractFlags{stages: []string{"license"}, force: f.force, noProgress: f.noProgress}
 	// extractWalk, not runExtract: audit reports per-module licence rows and must
 	// not take the extraction's own exit code, which now reads partiality.
-	if _, eerr := extractWalk(ctx, walkID, ef, stderr); eerr != nil {
+	_, eerr := extractWalk(ctx, walkID, ef, stderr)
+	if ierr := stopIfInterrupted(ctx, "extracting licences for walk "+walkID, eerr); ierr != nil {
+		return nil, derivation, ierr
+	}
+	if eerr != nil {
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
 
@@ -742,6 +770,9 @@ func auditScope(
 		_, _ = fmt.Fprintf(progressOut, "==> audit: refreshing the advisory database\n")
 		derivation.refreshed = true
 		refresh, frerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
+		if ierr := stopIfInterrupted(ctx, "refreshing the advisory database", frerr); ierr != nil {
+			return nil, derivation, ierr
+		}
 		if frerr != nil {
 			derivation.refreshErr = frerr
 		} else {
@@ -753,7 +784,11 @@ func auditScope(
 	// run that answered, and answered with the same lookup the scan itself makes:
 	// audit narrates the whole derivation in one place, so runVulnScan is told not
 	// to announce the reuse a second time.
-	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, filepath.Dir(f.gomodPath)); rerr != nil {
+	prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, filepath.Dir(f.gomodPath))
+	if ierr := stopIfInterrupted(ctx, "finding a reusable scan of walk "+walkID, rerr); ierr != nil {
+		return nil, derivation, ierr
+	}
+	if rerr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
 	} else if ok && !f.force {
 		derivation.scanReused = true
@@ -763,9 +798,11 @@ func auditScope(
 		// for itself pays nothing for it. A read that fails is reported rather than
 		// silently collapsing the count to nought, because nought is also the
 		// answer that removes the statement.
-		if recs, lerr := ctr.QueryVuln.ListRecordsForRun(ctx, prior.ID); lerr != nil {
+		var aside setAsideRows
+		if recs, lerr := ctr.QueryVuln.ListRecordsForRun(ctx, prior.ID); aside.take(lerr) != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: reading the reused run's records: %v\n", lerr)
 		} else {
+			aside.write(stderr)
 			derivation.scanReachabilityVerdicts = reachabilityVerdicts(recs)
 		}
 	}
@@ -780,6 +817,9 @@ func auditScope(
 	// could answer with a different run.
 	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
 	scanFacts, verr := runVulnScanReporting(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceAudit, false, f.noProgress, false, true, io.Discard, stderr)
+	if ierr := stopIfInterrupted(ctx, "scanning vulnerabilities for walk "+walkID, verr); ierr != nil {
+		return nil, derivation, ierr
+	}
 	if verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
@@ -806,6 +846,9 @@ func auditScope(
 	// rule domain that governs it rather than under a scope no rule matches.
 	policyScope := policyScopeForWalkScope(walkScope)
 	for _, node := range depNodes {
+		if ierr := stopIfInterrupted(ctx, "auditing "+node.Coordinate.String(), nil); ierr != nil {
+			return nil, derivation, ierr
+		}
 		res, rerr := buildAuditResult(ctx, node, walkFrameAnchor(walkID, rec.Target), policyScope, overrides, staleness, ctr, stderr)
 		if rerr != nil {
 			return nil, derivation, rerr
@@ -814,6 +857,19 @@ func auditScope(
 		results = append(results, res)
 	}
 	return results, derivation, nil
+}
+
+// stopIfInterrupted ends an audit the operator interrupted. The phases tolerate
+// one another's failures, but none carries on past a cancelled run: what it
+// went on to print would read as columns that had been measured.
+func stopIfInterrupted(ctx context.Context, step string, err error) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	return fmt.Errorf("%s: %w", step, err)
 }
 
 // auditDependencyNodes returns the dependency nodes of a project walk: every
@@ -864,7 +920,9 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 		return res, nil
 	}
 
-	if frec, found, ferr := ctr.QueryFetch.ComposeFetchRecord(ctx, coord); ferr == nil && found {
+	frec, found, ferr := ctr.QueryFetch.ComposeFetchRecord(ctx, coord)
+	switch {
+	case ferr == nil && found:
 		res.Verification = frec.VerificationStatus
 		res.coverage = fetchdomain.CoverageObservation{
 			Bucket: fetchdomain.BucketForFetchRecord(
@@ -875,7 +933,19 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 			UnderLedger: frec.MeasurementKind != "",
 			Recorded:    true,
 		}
-	} else if !found {
+	case errors.As(ferr, new(*recordseal.NothingServable)):
+		// Records are held, none this build can serve; the run names each one.
+		res.Verification = "(set aside)"
+	case errors.As(ferr, new(*fetchdomain.Divergence)):
+		// Records exist and disagree; the coverage aggregate counts them apart.
+		res.Verification = "(divergent fetch records)"
+		res.coverage = fetchdomain.CoverageObservation{Bucket: fetchdomain.BucketDivergent, Recorded: true}
+	case errors.Is(ferr, fetchports.ErrFetchRecordIntegrity):
+		res.Verification = "(integrity check failed)"
+		res.integrity = ferr
+	case ferr != nil:
+		res.Verification = "(fetch record unreadable)"
+	default:
 		res.Verification = "(not fetched)"
 	}
 
@@ -910,11 +980,28 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 	// frame-blind read this replaces ranked every frame the coordinate was
 	// measured in against each other, so a store holding a second project's scans
 	// could put that project's verdict in this project's audit row.
-	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
+	vrec, found, vaside, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
 		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
+	res.VulnStatus, res.VulnReason = auditSetAside(res.VulnStatus, res.VulnReason, found, verr, vaside)
 
 	return res, nil
+}
+
+// auditSetAside states, in the row, the generations the walk-frame read set
+// aside. A row with nothing this build can serve says so in its status; a row
+// that was served carries the statement beside its own reason.
+func auditSetAside(status, reason string, found bool, verr error, aside setAsideRows) (string, string) {
+	if len(aside) == 0 || verr != nil {
+		return status, reason
+	}
+	if !found {
+		return "(set aside)", aside.statement()
+	}
+	if reason == "" {
+		return status, aside.statement()
+	}
+	return status, reason + "; " + aside.statement()
 }
 
 // auditSupersededReason is the row's explanation when the walk-frame read found
@@ -1018,6 +1105,10 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 		// the mode working as designed and is already stated in the column, the
 		// coverage line and the JSON.
 		if lerr != nil && !errors.Is(lerr, errStalenessOffline) {
+			if interrupt.Cancelled(ctx, lerr) {
+				res.markStalenessUnmeasured(stalenessLookupFailed)
+				return
+			}
 			// errStalenessBatchReported is the exception: the batched resolution
 			// failed for the WHOLE set and has already said so once. Every row is
 			// still marked unmeasured; only the repeated sentence is dropped.
@@ -1174,6 +1265,10 @@ func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error
 	case lerr == nil:
 		display = "(not run)"
 		status = "(not run)"
+	case errors.As(lerr, new(*recordseal.NothingServable)):
+		// Records are held, none this build can serve; the run names each one.
+		display = "(set aside)"
+		status = "(set aside)"
 	}
 	return display, status, resolvedSPDX, uncertaintyReason, arms
 }
@@ -1298,9 +1393,10 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, policyScope)
 	applyPolicyEvaluation(&res, eval, "")
 
-	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
+	vrec, found, vaside, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
 		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
+	res.VulnStatus, res.VulnReason = auditSetAside(res.VulnStatus, res.VulnReason, found, verr, vaside)
 	return res
 }
 

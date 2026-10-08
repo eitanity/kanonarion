@@ -180,7 +180,10 @@ func (c CallGraphConflict) Remedy() Remedy {
 		// naming --source zip for one directs the reader at a record that cannot
 		// exist.
 		readable := AnalysisSourceModuleZip
-		if !IsReFetchable(c.Coordinate) {
+		switch {
+		case c.Coordinate.IsStdlib():
+			readable = AnalysisSourceToolchainSource
+		case !IsReFetchable(c.Coordinate):
 			readable = AnalysisSourceWorktree
 		}
 		return Remedy{
@@ -218,12 +221,12 @@ func (c CallGraphConflict) Remedy() Remedy {
 		return Remedy{Lead: lead, Lines: lines}
 	case ConflictFieldArtefactIdentity:
 		if !IsReFetchable(c.Coordinate) {
-			// A project coordinate names a working tree, not published bytes. There
-			// is nothing to fetch, and two identities for it mean two trees were
-			// analysed under one name — which only re-analysing the tree in hand
-			// settles.
+			// Nothing published these bytes — a working tree, or the standard
+			// library, which arrives with the toolchain. There is nothing to fetch,
+			// and two identities under one name mean two source trees were analysed
+			// as one, which only re-analysing the tree in hand settles.
 			return Remedy{
-				Lead: "Two records read different bytes for one project coordinate, so two working trees were analysed under one name. " +
+				Lead: "Two records read different bytes for one unpublished coordinate, so two source trees were analysed under one name. " +
 					"Inspect the generations, then analyse the tree you mean",
 				Lines: []string{
 					"kanonarion callgraph-show " + coord + " --history",
@@ -612,9 +615,10 @@ func withSource(records []CallGraphRecord, want AnalysisSource) []CallGraphRecor
 func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGraphRecord, error) {
 	zip := withSource(records, AnalysisSourceModuleZip)
 	tree := withSource(records, AnalysisSourceWorktree)
+	toolchain := withSource(records, AnalysisSourceToolchainSource)
 	silent := withSource(records, AnalysisSourceUnrecorded)
 
-	if len(zip)+len(tree)+len(silent) != len(records) {
+	if len(zip)+len(tree)+len(toolchain)+len(silent) != len(records) {
 		// A record carries a source this domain does not define — written by a newer
 		// build, or corrupt. Refusing is the only honest answer: picking a group
 		// would serve an answer about a source nothing here can name.
@@ -626,6 +630,16 @@ func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGra
 			Values:          distinctSources(records),
 			ContentHashes:   hashesForSources(records),
 		}
+	}
+
+	// A toolchain-source record is a graph of the standard library's own tree, and
+	// the coordinate carrying one is reachable by no other route: nothing fetches
+	// it and no working tree declares it. It therefore answers alongside the
+	// records that name no source at all, and where a zip or a tree record somehow
+	// shares the group it steps aside with them — a measurement that cannot be
+	// attributed to the question being asked does not get to answer it.
+	if len(toolchain) > 0 && len(zip) == 0 && len(tree) == 0 {
+		return inAppendOrder(records, toolchain, silent), nil
 	}
 
 	switch {

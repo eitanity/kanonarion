@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/failurecause"
 
@@ -70,6 +72,9 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	// working tree, so there is no vendor/ tree that could be the surface.
 
 	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, target)
+	if interrupt.Cancelled(ctx, err) {
+		return false, fmt.Errorf("reading the fetch record of %s: %w", target, err)
+	}
 	if err != nil {
 		uc.logger.Warn("target-rooted scan: could not read the target's fetch record, falling back to isolated scans",
 			"target", target, "error", err)
@@ -91,6 +96,9 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		return false, nil
 	}
 	blob, err := uc.moduleScanner.blobs.Get(ctx, zipIdentity)
+	if interrupt.Cancelled(ctx, err) {
+		return false, fmt.Errorf("retrieving the content of %s: %w", target, err)
+	}
 	if err != nil {
 		uc.logger.Warn("target-rooted scan: could not retrieve the target's module content, falling back to isolated scans",
 			"target", target, "error", err)
@@ -106,6 +114,10 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		DBDir:        vulnDBDir,
 		BuildList:    buildList,
 	})
+	if interrupt.Cancelled(ctx, err) {
+		interrupt.Note(interrupt.ModuleScan)
+		return false, fmt.Errorf("target-rooted scan of %s: %w", target, err)
+	}
 	if err != nil {
 		uc.logger.Warn("target-rooted scan failed, falling back to isolated scans", "target", target, "error", err)
 		return false, nil
@@ -146,6 +158,9 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		// OSV matching structurally cannot reach a verdict on, so its coordinate
 		// matches carry no reachability rather than a fabricated not-reachable.
 		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target, *snapshot)
+		if interrupt.Cancelled(ctx, err) {
+			return false, fmt.Errorf("matching advisories for %s: %w", coord, err)
+		}
 		if err != nil {
 			// A coordinate whose advisory set could not be read has not been
 			// checked. Recording it Clean would be a false negative, so it carries
