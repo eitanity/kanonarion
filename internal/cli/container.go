@@ -595,7 +595,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		"callgraph": "0.1.0",
 		"example":   "0.1.0",
 	}
-	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
+	extractUC, err := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:             extStore,
 		Walks:            walkStore,
 		Extractor:        adapterExtractor,
@@ -604,7 +604,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Stopwatch:        stopwatch,
 		PipelineVersions: pipelineVersions,
 		Logger:           logger,
-	}).WithAudit(factStore)
+	})
+	if err != nil {
+		_ = dbHandle.Close()
+		return nil, nil, fmt.Errorf("wiring extract use case: %w", err)
+	}
+	extractUC = extractUC.WithAudit(factStore)
 	queryExtractUC := extractapp.NewQueryExtractionUseCase(extStore)
 
 	// ---- license query / notice / compatibility / diff use cases ----

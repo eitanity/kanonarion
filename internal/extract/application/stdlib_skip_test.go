@@ -36,7 +36,7 @@ func TestExtractUseCase_stdlibNodeSkippedNotFailed(t *testing.T) {
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{walkID: walk}}
 	extractor := &mockExtractor{}
 
-	uc := NewExtractUseCase(Config{
+	uc := mustExtractUseCase(t, Config{
 		Runs:      runs,
 		Walks:     walks,
 		Extractor: extractor,

@@ -8,6 +8,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	domain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // makeLargeRecord builds a record with n nodes and n edges to simulate a
@@ -36,6 +37,7 @@ func makeLargeRecord(n int) domain.CallGraphRecord {
 	}
 	return domain.CallGraphRecord{
 		SchemaVersion:   domain.CallGraphSchemaVersion,
+		Ecosystem:       fetchdomain.EcosystemGo,
 		Coordinate:      coord,
 		Algorithm:       domain.AlgorithmCHA,
 		Nodes:           nodes,

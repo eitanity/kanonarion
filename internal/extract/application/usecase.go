@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -73,7 +74,29 @@ type Config struct {
 	Workers int
 }
 
-func NewExtractUseCase(cfg Config) *ExtractUseCase {
+// ErrMissingDependency is returned by NewExtractUseCase when a required
+// dependency is nil.
+var ErrMissingDependency = errors.New("extract use case: required dependency is nil")
+
+// NewExtractUseCase refuses a Config missing a required dependency, so a
+// miswired build fails at construction instead of panicking mid-run.
+// Logger is optional.
+func NewExtractUseCase(cfg Config) (*ExtractUseCase, error) {
+	for _, d := range []struct {
+		name    string
+		missing bool
+	}{
+		{"Runs", cfg.Runs == nil},
+		{"Walks", cfg.Walks == nil},
+		{"Extractor", cfg.Extractor == nil},
+		{"Stages", cfg.Stages == nil},
+		{"Clock", cfg.Clock == nil},
+		{"Stopwatch", cfg.Stopwatch == nil},
+	} {
+		if d.missing {
+			return nil, fmt.Errorf("%w: %s", ErrMissingDependency, d.name)
+		}
+	}
 	return &ExtractUseCase{
 		runs:             cfg.Runs,
 		walks:            cfg.Walks,
@@ -84,7 +107,7 @@ func NewExtractUseCase(cfg Config) *ExtractUseCase {
 		pipelineVersions: cfg.PipelineVersions,
 		logger:           cfg.Logger,
 		workers:          cfg.Workers,
-	}
+	}, nil
 }
 
 // WithAudit wires an audit sink so a run appends one extraction_run_completed

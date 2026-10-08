@@ -86,8 +86,9 @@ func walkOf(t *testing.T, n int) (walkdomain.WalkRecord, []coordinate.ModuleCoor
 	return walkdomain.WalkRecord{Target: coords[0], Graph: walkdomain.Graph{Nodes: nodes}}, coords
 }
 
-func checkpointUseCase(runs ports.ExtractionStore, walks *mockWalkStore, ex ports.Extractor, every time.Duration) *ExtractUseCase {
-	return NewExtractUseCase(Config{
+func checkpointUseCase(t *testing.T, runs ports.ExtractionStore, walks *mockWalkStore, ex ports.Extractor, every time.Duration) *ExtractUseCase {
+	t.Helper()
+	return mustExtractUseCase(t, Config{
 		Runs:      runs,
 		Walks:     walks,
 		Extractor: ex,
@@ -107,7 +108,7 @@ func TestExtract_LeavesARunBeforeItReachesTheFirstModule(t *testing.T) {
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{"walk-1": walk}}
 	ex := &blockingExtractor{entered: make(chan struct{}, 3), release: make(chan struct{})}
 
-	uc := checkpointUseCase(runs, walks, ex, -1) // no ticker: the opening write is what is under test
+	uc := checkpointUseCase(t, runs, walks, ex, -1) // no ticker: the opening write is what is under test
 
 	done := make(chan struct{})
 	go func() {
@@ -147,7 +148,7 @@ func TestExtract_CheckpointNamesWhatItHasCompleted(t *testing.T) {
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{"walk-1": walk}}
 	ex := &blockingExtractor{entered: make(chan struct{}, 3), release: make(chan struct{}, 3)}
 
-	uc := checkpointUseCase(runs, walks, ex, 5*time.Millisecond)
+	uc := checkpointUseCase(t, runs, walks, ex, 5*time.Millisecond)
 
 	done := make(chan struct{})
 	go func() {
@@ -197,7 +198,7 @@ func TestExtract_AFinishedRunOverwritesItsCheckpoint(t *testing.T) {
 	runs := &recordingExtractionStore{}
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{"walk-1": walk}}
 
-	uc := checkpointUseCase(runs, walks, &mockExtractor{}, 5*time.Millisecond)
+	uc := checkpointUseCase(t, runs, walks, &mockExtractor{}, 5*time.Millisecond)
 	run, err := uc.Execute(t.Context(), ExtractRequest{WalkID: "walk-1", Stages: []string{"license"}})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -233,7 +234,7 @@ func TestExtract_ACheckpointThatCannotBeWrittenDoesNotFailTheRun(t *testing.T) {
 	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{"walk-1": walk}}
 	runs := &recordingExtractionStore{failAll: errors.New("database is locked")}
 
-	uc := checkpointUseCase(runs, walks, &mockExtractor{}, -1)
+	uc := checkpointUseCase(t, runs, walks, &mockExtractor{}, -1)
 	_, err := uc.Execute(t.Context(), ExtractRequest{WalkID: "walk-1", Stages: []string{"license"}})
 	// The final seal still fails — that is the run's own record and always has
 	// been — but the checkpoint must not be what fails it.

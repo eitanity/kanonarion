@@ -412,9 +412,15 @@ func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecuto
 		// log is not a quieter one.
 		WithAudit(factStore)
 
+	localWalkExtract, err := newLocalWalkExtract(db, blobs, factStore, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot, o.setAside)
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, err
+	}
+
 	d := &Driver{
 		FetchServe:       fetchapp.NewServeModuleUseCase(fetchUC, blobs).WithAudit(factStore),
-		LocalWalkExtract: newLocalWalkExtract(db, blobs, factStore, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot, o.setAside),
+		LocalWalkExtract: localWalkExtract,
 		ValidateIngest:   fetchapp.NewValidateAndIngestUseCase(factStore).WithAudit(factStore),
 	}
 	return d, cleanup, nil
@@ -440,7 +446,7 @@ func newLocalWalkExtract(
 	cgSubprocessExec extextractor.SubprocessExecutor,
 	storeRoot string,
 	setAside recordseal.Reporter,
-) *driver.LocalWalkExtractUseCase {
+) (*driver.LocalWalkExtractUseCase, error) {
 	stores := newStoreSet(db, setAside)
 	walkStore, extStore, licStore, cgStore, exStore := stores.walks, stores.extract, stores.licence, stores.callgr, stores.example
 	ifaceStore := ifacesqlite.New(db)
@@ -485,7 +491,7 @@ func newLocalWalkExtract(
 	// One reporter for both uses: the bound is sized from it once, and the
 	// headroom gate re-reads it before each analysis starts.
 	driverHostMemory := meminfo.New()
-	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
+	extractUC, err := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:  extStore,
 		Walks: walkStore,
 		// The callgraph stage is a fresh kanonarion process; it inherits none of
@@ -514,7 +520,10 @@ func newLocalWalkExtract(
 			"example":   stagePipelineVersion,
 		},
 		Logger: logger,
-	}).WithAudit(factStore)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wiring extract use case: %w", err)
+	}
 
-	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC, stages.Stages())
+	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC.WithAudit(factStore), stages.Stages()), nil
 }
