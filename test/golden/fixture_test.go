@@ -39,6 +39,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -132,13 +133,27 @@ func fixtureClean(t testing.TB) coordinate.ModuleCoordinate {
 	return fixtureCoord(t, "example.com/clean", "v1.0.0")
 }
 
+// fixtureZipEntry adds one entry to a fixture zip, stored with a fixed time.
+// Deflate output changes between Go releases and the goldens record hashes of
+// these bytes, so a compressed entry would move them on a toolchain bump.
+func fixtureZipEntry(zw *zip.Writer, name string) (io.Writer, error) {
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store, Modified: fixtureZipModified})
+	if err != nil {
+		return nil, fmt.Errorf("creating fixture zip entry %s: %w", name, err)
+	}
+	return w, nil
+}
+
+// fixtureZipModified is the one Modified time every fixture zip entry carries.
+var fixtureZipModified = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // fixtureArtefact builds a deterministic module zip for coord. salt varies the
 // bytes, which is how one coordinate acquires two artefact identities.
 func fixtureArtefact(t testing.TB, coord coordinate.ModuleCoordinate, salt string) ([]byte, fetchdomain.ModuleHash, fetchports.BlobIdentity) {
 	t.Helper()
 	buf := new(bytes.Buffer)
 	zw := zip.NewWriter(buf)
-	f, err := zw.Create(coord.Path() + "@" + coord.Version() + "/README")
+	f, err := fixtureZipEntry(zw, coord.Path()+"@"+coord.Version()+"/README")
 	if err != nil {
 		t.Fatalf("fixture zip entry: %v", err)
 	}

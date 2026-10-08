@@ -205,7 +205,7 @@ func auditVulnDB(t *testing.T) []byte {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	add := func(name, body string) {
-		w, err := zw.Create(name)
+		w, err := fixtureZipEntry(zw, name)
 		if err != nil {
 			t.Fatalf("creating %s in the advisory database: %v", name, err)
 		}
@@ -270,7 +270,7 @@ func publishFixtureModule(t *testing.T, proxy, path, version, license, source st
 		{filepath.Base(path) + ".go", source},
 	}
 	for _, e := range entries {
-		w, err := zw.Create(prefix + e.name)
+		w, err := fixtureZipEntry(zw, prefix+e.name)
 		if err != nil {
 			t.Fatalf("creating %s in the %s zip: %v", e.name, path, err)
 		}
