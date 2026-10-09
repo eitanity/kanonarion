@@ -14,12 +14,18 @@ import (
 	"github.com/eitanity/kanonarion/internal/example/ports"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // PipelineVersion identifies this release of the example extraction pipeline.
 // Bump this constant whenever extraction logic changes to ensure old records
 // are not confused with new ones.
 const PipelineVersion = "0.3.0"
+
+// oldestWriterGo is the oldest Go a build writing PipelineVersion records could
+// be compiled with: the release that introduced it declared go 1.26.4. A stored
+// parse failure can be a refusal of newer syntax only above it.
+const oldestWriterGo = "go1.26.4"
 
 // ExtractExampleUseCase harvests Example* functions from a module's _test.go
 // files and persists an ExampleRecord.
@@ -160,7 +166,12 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 		case cerr != nil && !errors.Is(cerr, ports.ErrExampleIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking example store: %w", cerr)
 		}
-		if found {
+		switch {
+		case found && !domain2.RecordIsCacheable(existing, uc.goDirectiveFor(ctx, existing, factRecord), oldestWriterGo):
+			// It may hold files a binary too old for the source could not read;
+			// this one measures them rather than serve that record back.
+			log.InfoContext(ctx, "example_cache_not_servable_remeasuring")
+		case found:
 			log.InfoContext(ctx, "example_cache_hit")
 			return ExtractResult{Record: existing, FromCache: true}, nil
 		}
@@ -291,6 +302,29 @@ func (uc *ExtractExampleUseCase) identicalGeneration(
 	return held, found
 }
 
+// goDirectiveFor reads the module's go directive from its fetched go.mod, and
+// only for a record with parse failures, the one case the cache rule asks it.
+// "" when the go.mod is not held, which the rule reads as no directive.
+func (uc *ExtractExampleUseCase) goDirectiveFor(ctx context.Context, r domain2.ExampleRecord, fact domain.FactRecord) (directive string) {
+	if len(r.ParseFailures) == 0 {
+		return ""
+	}
+	id, ok, err := fetchports.GoModIdentity(fact)
+	if err != nil || !ok {
+		return ""
+	}
+	rc, err := uc.blobs.Get(ctx, id)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = rc.Close() }() //nolint:errcheck // read-only blob
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return ""
+	}
+	return gotoolchain.GoDirective(data)
+}
+
 // requireFetchRecord asks the ledger what it has measured about coord and
 // returns the record composition serves. Returns ErrModuleNotFetched when
 // nothing has been measured.
@@ -326,10 +360,11 @@ func (uc *ExtractExampleUseCase) extractFromZip(
 	}
 
 	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
-	examples, failures, err := uc.parser.Parse(zipData, modulePrefix)
+	parsed, err := uc.parser.Parse(zipData, modulePrefix)
 	if err != nil {
 		return domain2.ExampleRecord{}, fmt.Errorf("parsing module zip: %w", err)
 	}
+	examples, failures := parsed.Examples, parsed.Failures
 
 	for _, pf := range failures {
 		log.InfoContext(ctx, "example_parse_failure",
@@ -347,6 +382,7 @@ func (uc *ExtractExampleUseCase) extractFromZip(
 		ParseFailures:   failures,
 		ExtractedAt:     uc.clock.Now().UTC(),
 		PipelineVersion: uc.pipelineVersion,
+		AnalyserLimit:   parsed.Unread,
 	}
 	r.SortExamples()
 

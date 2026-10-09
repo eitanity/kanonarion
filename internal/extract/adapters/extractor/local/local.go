@@ -22,6 +22,7 @@ import (
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/failurecause"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
@@ -306,11 +307,11 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleC
 		case ifacedomain.InterfaceStatusUnknown, ifacedomain.InterfaceStatusExtractionFailed, ifacedomain.InterfaceStatusCancelled:
 			status = domain.StageFailed
 		}
-		return ports.StageResult{
+		return limitedStage(stage, ports.StageResult{
 			RecordID: res.Record.ContentHash,
 			Status:   status,
 			Error:    failureReason(stage, status, res.Record.OverallStatus.String(), res.Record.FailureDetail),
-		}, nil
+		}, res.Record.OverallStatus.String(), res.Record.AnalyserLimit), nil
 
 	case "callgraph":
 		return a.extractCallgraphSubprocess(ctx, coord, force, walkID)
@@ -325,11 +326,11 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleC
 		case exdomain.ExampleStatusUnknown, exdomain.ExampleStatusExtractionFailed, exdomain.ExampleStatusCancelled:
 			status = domain.StageFailed
 		}
-		return ports.StageResult{
+		return limitedStage(stage, ports.StageResult{
 			RecordID: res.Record.ContentHash,
 			Status:   status,
 			Error:    failureReason(stage, status, res.Record.OverallStatus.String(), res.Record.FailureDetail),
-		}, nil
+		}, res.Record.OverallStatus.String(), res.Record.AnalyserLimit), nil
 
 	default:
 		return ports.StageResult{}, fmt.Errorf("unknown stage: %s", stage)
@@ -401,6 +402,11 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	status := domain.StageSucceeded
 	switch rec.OverallStatus {
 	case cgdomain.CallGraphStatusUnknown, cgdomain.CallGraphStatusExtractionFailed, cgdomain.CallGraphStatusCancelled, cgdomain.CallGraphStatusLoadFailed:
+		status = domain.StageFailed
+	}
+	// A graph short of packages this binary could not read is not a clean
+	// stage: only a newer build of it can complete it, as callgraph says by 20.
+	if _, ok := cgdomain.AnalyserLimitOf(rec.FailureDetail); ok && rec.OverallStatus == cgdomain.CallGraphStatusPartial {
 		status = domain.StageFailed
 	}
 	return ports.StageResult{
@@ -506,6 +512,19 @@ func raiseCeilingRemedy(walkID string) string {
 		return "give it longer with --callgraph-timeout"
 	}
 	return fmt.Sprintf("give it longer with: kanonarion extract %s --stages callgraph --callgraph-timeout 4h", walkID)
+}
+
+// limitedStage fails a stage whose record met an analyser limit binding this
+// binary, on this host's account, with the shared statement: the module was not
+// judged, and only a newer build of this binary can measure it.
+func limitedStage(stage string, res ports.StageResult, recordStatus string, u *gotoolchain.UnreadSource) ports.StageResult {
+	if u == nil || !u.Limit.Binds() {
+		return res
+	}
+	res.Status = domain.StageFailed
+	res.Cause = failurecause.Environment
+	res.Error = failureReason(stage, domain.StageFailed, recordStatus, u.Summary()+"; "+u.Limit.Statement())
+	return res
 }
 
 // failureReason builds the diagnostic string surfaced via StageResult.Error

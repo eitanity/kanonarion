@@ -84,8 +84,12 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 		frame = hostFrame()
 	}
 	ctxt := buildContext(frame, sourceTree)
+	// A parse refusal is this binary's limit, not the module's fault, only when
+	// the module asks for a newer Go than the one compiled into the binary.
+	limit, limited := gotoolchain.LimitForDirective(goDirective(sourceTree))
 
 	var pkgs []domain.PackageInterface
+	var unread []string
 
 	for _, dir := range dirs {
 		if ctx.Err() != nil {
@@ -100,12 +104,17 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 				ExtractedAt:     e.clock.Now().UTC(),
 				PipelineVersion: e.pipelineVersion,
 			}
+			r.AnalyserLimit = gotoolchain.NewUnreadSource(limit, unread)
 			r.Sort()
 			r.FailureDetail = cancelDetail(ctx.Err(), len(r.Packages), len(dirs), r.Packages)
+			if r.AnalyserLimit != nil {
+				r.FailureDetail += "; " + r.AnalyserLimit.Summary()
+			}
 			return r, nil //nolint:nilerr // intentional: context cancellation is reported via OverallStatus, not error
 		}
 
-		pkg, err := parsePackageDir(sourceTree, ctxt, dir, coord)
+		pkg, refused, err := parsePackageDir(sourceTree, ctxt, dir, coord, limited)
+		unread = append(unread, refused...)
 		if err != nil {
 			// A directory that yields no package at all still yields a fact: the
 			// reason it could not be read. It is recorded as a package carrying
@@ -138,15 +147,23 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 		OverallStatus:   domain.InterfaceStatusExtracted,
 		ExtractedAt:     e.clock.Now().UTC(),
 		PipelineVersion: e.pipelineVersion,
+		AnalyserLimit:   gotoolchain.NewUnreadSource(limit, unread),
 	}
 	r.Sort()
 	// Status and reason are derived from the same fact, after the sort, so a
 	// record can never say Partial without saying why — the boolean this
 	// replaced collapsed every parse failure to one word and left the reason
 	// nowhere in the record at all.
+	var details []string
+	if r.AnalyserLimit != nil {
+		details = append(details, r.AnalyserLimit.Summary())
+	}
 	if detail := partialDetail(r.Packages); detail != "" {
+		details = append(details, detail)
+	}
+	if len(details) > 0 {
 		r.OverallStatus = domain.InterfaceStatusPartial
-		r.FailureDetail = detail
+		r.FailureDetail = strings.Join(details, "; ")
 	}
 	return r, nil
 }
@@ -329,12 +346,14 @@ func packageImportPath(modulePath, dir string) string {
 }
 
 // parsePackageDir parses the non-test .go files in dir that ctxt's build frame
-// contains, and returns a PackageInterface.
-func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordinate.ModuleCoordinate) (domain.PackageInterface, error) {
+// contains, and returns a PackageInterface. Under limited, a file the parser
+// refuses is returned as refused rather than recorded as a parse failure.
+func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordinate.ModuleCoordinate, limited bool) (domain.PackageInterface, []string, error) {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return domain.PackageInterface{}, fmt.Errorf("reading dir %s: %w", dir, err)
+		return domain.PackageInterface{}, nil, fmt.Errorf("reading dir %s: %w", dir, err)
 	}
+	var refused []string
 
 	fset := token.NewFileSet()
 	var parsed []*ast.File
@@ -377,6 +396,10 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 		}
 
 		f, perr := parser.ParseFile(fset, filePath, data, parser.ParseComments)
+		if perr != nil && limited {
+			refused = append(refused, filePath)
+			continue
+		}
 		if perr != nil {
 			failures = append(failures, domain.ParseFailure{File: filePath, Error: perr.Error()})
 			continue
@@ -387,12 +410,13 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 	importPath := packageImportPath(coord.Path(), dir)
 
 	if len(parsed) == 0 {
-		if len(failures) > 0 {
-			// Return a partial package with just the failures recorded.
+		if len(failures) > 0 || len(refused) > 0 {
+			// Return a partial package with just the failures recorded; the
+			// refused files are on the record's analyser limit.
 			return domain.PackageInterface{
 				ImportPath:    importPath,
 				ParseFailures: failures,
-			}, nil
+			}, refused, nil
 		}
 		if sawGoSource {
 			// The directory holds Go source, all of it for other platforms. That
@@ -405,9 +429,9 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 				Name:       path.Base(importPath),
 				IsInternal: isInternalPath(importPath),
 				OutOfFrame: true,
-			}, nil
+			}, nil, nil
 		}
-		return domain.PackageInterface{}, fmt.Errorf("no parseable Go files in %s", dir)
+		return domain.PackageInterface{}, nil, fmt.Errorf("no parseable Go files in %s", dir)
 	}
 
 	// A directory that declares one identifier twice is not a package Go would
@@ -415,14 +439,14 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 	// iteration order. Recording the survivor states an API this build never had,
 	// and states a different one on the next run, so the failure is the fact.
 	if dups := duplicateDecls(fset, parsed); len(dups) > 0 {
-		return domain.PackageInterface{}, fmt.Errorf("%w in %s: %s", errDuplicateDecl, importPath, strings.Join(dups, "; "))
+		return domain.PackageInterface{}, refused, fmt.Errorf("%w in %s: %s", errDuplicateDecl, importPath, strings.Join(dups, "; "))
 	}
 
 	// Use go/doc to build a structured view of the package's exported API.
 	// Pass the full import path so go/doc resolves cross-package references correctly.
 	dpkg, err := doc.NewFromFiles(fset, parsed, importPath, doc.PreserveAST)
 	if err != nil {
-		return domain.PackageInterface{}, fmt.Errorf("go/doc for %s: %w", importPath, err)
+		return domain.PackageInterface{}, refused, fmt.Errorf("go/doc for %s: %w", importPath, err)
 	}
 
 	pi := domain.PackageInterface{
@@ -445,7 +469,17 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 	pi.Consts = extractValues(fset, dpkg.Consts, generatedFiles)
 	pi.Vars = extractValues(fset, dpkg.Vars, generatedFiles)
 
-	return pi, nil
+	return pi, refused, nil
+}
+
+// goDirective reads the go directive from the module's go.mod, or "" when the
+// tree has none.
+func goDirective(fsys fs.FS) string {
+	data, err := fs.ReadFile(fsys, "go.mod")
+	if err != nil {
+		return ""
+	}
+	return gotoolchain.GoDirective(data)
 }
 
 func extractTypes(fset *token.FileSet, types []*doc.Type, generated map[string]bool) []domain.TypeDecl {

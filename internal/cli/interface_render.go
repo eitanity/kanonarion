@@ -243,6 +243,9 @@ func printRecordText(r domain.InterfaceRecord, idx promotionIndex, stdout io.Wri
 	if _, err := fmt.Fprintf(stdout, "toolchain:   %s\n", r.Toolchain.String()); err != nil {
 		return fmt.Errorf("writing toolchain: %w", err)
 	}
+	if err := writeAnalyserLimit(stdout, "", r.AnalyserLimit, "kanonarion interface "+r.Coordinate.String()); err != nil {
+		return err
+	}
 	for _, pkg := range r.Packages {
 		if pkg.OutOfFrame {
 			if _, err := fmt.Fprintf(stdout, "\npackage %s // %s — not in this build frame\n", pkg.Name, pkg.ImportPath); err != nil {
@@ -250,7 +253,8 @@ func printRecordText(r domain.InterfaceRecord, idx promotionIndex, stdout io.Wri
 			}
 			continue
 		}
-		if _, err := fmt.Fprintf(stdout, "\npackage %s // %s\n", pkg.Name, pkg.ImportPath); err != nil {
+		if _, err := fmt.Fprintf(stdout, "\npackage %s // %s%s\n", pkg.Name, pkg.ImportPath,
+			unreadSuffix(r.AnalyserLimit, r.Coordinate.Path(), pkg.ImportPath)); err != nil {
 			return fmt.Errorf("writing package header: %w", err)
 		}
 		for _, t := range pkg.Types {

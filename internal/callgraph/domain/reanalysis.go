@@ -2,25 +2,14 @@ package domain
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
-// analysingGo is the Go this binary was compiled with: it decides whether a
-// recorded analyser limit still binds, or was written by an older build.
-var analysingGo = runtime.Version()
-
-// SetAnalysingGo replaces the Go this binary reports itself built with and
-// returns the restore. It is a test seam: a suite runs on one toolchain and
-// must still exercise a limit that binds and one that does not.
-func SetAnalysingGo(v string) (restore func()) {
-	prev := analysingGo
-	analysingGo = v
-	return func() { analysingGo = prev }
-}
+// SetAnalysingGo is gotoolchain.SetAnalysingGo, kept for this package's callers.
+func SetAnalysingGo(v string) (restore func()) { return gotoolchain.SetAnalysingGo(v) }
 
 // DroppedPackageReason says why a package's edges are missing, read from the
 // failure detail of the record that dropped them: a package the analysing
@@ -50,7 +39,7 @@ func AnalyserLimitCaveat(detail string) (clause, remedy string, ok bool) {
 // clears is not one: re-analysing lifts it.
 func AnalyserLimitOf(detail string) (gotoolchain.AnalyserLimit, bool) {
 	l, ok := gotoolchain.ReadAnalyserLimit(detail)
-	return l, ok && !l.ClearedBy(analysingGo)
+	return l, ok && !l.ClearedBy(gotoolchain.AnalysingGo())
 }
 
 // LocalDirPlaceholder is the token a remedy must never contain. No builder
@@ -172,12 +161,12 @@ func IncompleteGraphRemedy(coord coordinate.ModuleCoordinate, cause FailureCause
 	// Ahead of every branch: the source was never judged, so advice about the
 	// source or the cache would send the reader after a fault that is not there.
 	if l, ok := gotoolchain.ReadAnalyserLimit(detail); ok {
-		if !l.ClearedBy(analysingGo) {
+		if !l.ClearedBy(gotoolchain.AnalysingGo()) {
 			// No --force: such a record is never served back, so a plain re-run measures.
 			return "  " + l.Statement() + "\n  " + l.Remedy() + " Then re-analyse:\n  " + ReanalysisInstruction(coord, dir)
 		}
 		return "  A kanonarion built with " + l.Built + " wrote this record and could not read code requiring " +
-			l.Required + "; this one was built with " + analysingGo + ". Re-analyse:\n  " +
+			l.Required + "; this one was built with " + gotoolchain.AnalysingGo() + ". Re-analyse:\n  " +
 			ReanalysisInstruction(coord, dir)
 	}
 	// Ahead of the cause branches below: this shares their axis and contradicts

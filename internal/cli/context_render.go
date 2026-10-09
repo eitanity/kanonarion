@@ -239,6 +239,7 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		w.printf("  Interface:       %d package(s), %d symbol(s) (%s)\n",
 			len(out.Interface.Packages), total,
 			statusWithReason(out.Interface.Status, out.Interface.Error))
+		printAnalyserLimitLine(w, "  Analyser limit:  ", out.Interface.AnalyserLimit)
 	}
 
 	switch out.CallGraph.Status {
@@ -327,7 +328,21 @@ func printExamplesSummary(w *errWriter, out contextOutput) {
 		w.printf("  Examples:        %d (%s)\n", out.Examples.Count,
 			statusWithReason(out.Examples.Status, out.Examples.Error))
 		printSetAsideLines(w, "  Set aside:       ", out.Examples.SetAside)
+		printAnalyserLimitLine(w, "  Analyser limit:  ", out.Examples.AnalyserLimit)
 	}
+}
+
+// printAnalyserLimitLine states a section's analyser limit and, while it binds
+// this binary, the remedy.
+func printAnalyserLimitLine(w *errWriter, label string, l *analyserLimitJSON) {
+	if l == nil {
+		return
+	}
+	line := l.Statement + "."
+	if l.Remedy != "" {
+		line += " " + l.Remedy
+	}
+	w.printf("%s%s\n", label, line)
 }
 
 // printVulnerabilitiesSummary is the vulnerabilities line of the summary, split

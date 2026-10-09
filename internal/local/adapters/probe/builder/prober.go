@@ -30,6 +30,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/interrupt"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -269,8 +270,15 @@ func buildLibraryProbe(ctx context.Context, tc *goenv.Toolchains, root, harnessD
 		return fmt.Errorf("listing workspace packages: %w", err)
 	}
 
-	// Parse exported functions from.go source files in each package.
-	exports, err := enumerateExportedFuncs(pkgs)
+	// Parse exported functions from.go source files in each package. A file this
+	// binary's parser refuses under a newer go directive would drop its exports
+	// from the harness, and their symbols from the answer, without a word.
+	var limit gotoolchain.AnalyserLimit
+	limited := false
+	if goMod, rerr := os.ReadFile(filepath.Join(root, "go.mod")); rerr == nil { // #nosec G304 -- the workspace root the caller named
+		limit, limited = gotoolchain.LimitForDirective(gotoolchain.GoDirective(goMod))
+	}
+	exports, err := enumerateExportedFuncs(pkgs, limit, limited)
 	if err != nil {
 		return fmt.Errorf("enumerating exported functions: %w", err)
 	}
@@ -316,8 +324,10 @@ type exportedFunc struct {
 }
 
 // enumerateExportedFuncs parses the.go files in each package and collects
-// exported function and method declarations.
-func enumerateExportedFuncs(pkgs []goListPackage) (map[string][]exportedFunc, error) {
+// exported function and method declarations. Under limited, a file the parser
+// refuses is the analyser limit rather than a file to skip: the harness build
+// would compile it, so only this binary's parser could not read it.
+func enumerateExportedFuncs(pkgs []goListPackage, limit gotoolchain.AnalyserLimit, limited bool) (map[string][]exportedFunc, error) {
 	// map: package import path → exported funcs
 	result := make(map[string][]exportedFunc)
 	fset := token.NewFileSet()
@@ -329,8 +339,11 @@ func enumerateExportedFuncs(pkgs []goListPackage) (map[string][]exportedFunc, er
 			}
 			fullPath := filepath.Join(pkg.Dir, goFile)
 			f, err := parser.ParseFile(fset, fullPath, nil, 0)
+			if err != nil && limited {
+				return nil, &gotoolchain.AnalyserLimitError{Limit: limit}
+			}
 			if err != nil {
-				continue // skip unparseable files
+				continue // the harness build reports a file that does not compile
 			}
 			for _, decl := range f.Decls {
 				fd, ok := decl.(*ast.FuncDecl)

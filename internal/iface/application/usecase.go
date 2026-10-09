@@ -158,7 +158,13 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 		case cerr != nil && !errors.Is(cerr, ports.ErrInterfaceIntegrity):
 			return ExtractResult{}, fmt.Errorf("checking interface store: %w", cerr)
 		}
-		if found {
+		switch {
+		case found && !domain3.RecordIsCacheable(existing):
+			// It may hold files a binary too old for the source could not read;
+			// this one measures them rather than serve that record back.
+			log.InfoContext(ctx, "interface_cache_not_servable_remeasuring",
+				slog.String("toolchain", existing.Toolchain.String()))
+		case found:
 			log.InfoContext(ctx, "interface_cache_hit")
 			return ExtractResult{Record: existing, FromCache: true}, nil
 		}

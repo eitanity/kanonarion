@@ -56,6 +56,29 @@ github.com/spf13/cobra@v1.8.1: Found - 42 example(s)
 | `--json` | false | Emit full `ExampleRecord` as JSON |
 | `--log-level` | `warn` | Log level: `debug\|info\|warn\|error` |
 
+**Code newer than this kanonarion.** kanonarion parses `_test.go` files with
+the `go/parser` compiled into the binary. When the module's `go` directive is
+newer than the Go it was built with, a file it cannot parse is **not
+analysed** rather than a parse failure, and the examples in it are not in the
+record:
+
+```
+example.com/mod@v1.0.0: Found — 1 example(s)
+  not analysed: 1 file (example_test.go): the kanonarion that ran was built with go1.26.6 and the code requires go1.27.2.
+  Use a kanonarion built with go1.27.2 or newer: a newer release, or `go install github.com/eitanity/kanonarion@latest` run with go1.27.2 or newer.
+  ExamplePlain (plain:plain_test) → Plain [validated]
+```
+
+The record is stored and the command exits `20`. Under `--json` the record
+carries `AnalyserLimit` (`Limit.Required`, `Limit.Built`, `Files`); it is absent
+when every file was read. Such a record is never served as a cache hit. Nor is a
+record with parse failures in a module whose `go` directive is newer than
+go1.26.4, the oldest Go a kanonarion writing these records can be built with:
+it may hold that build's limit filed as the module's failure, so it is measured
+again. The `context` examples section states the limit; `examples-list
+<module>` states it on stderr, and `examples-show` names it when the example
+asked for is not in the record.
+
 ### `examples-show` - print a specific example
 
 ```
@@ -183,4 +206,7 @@ every command that meets one refuses at exit `10`, as before.
   exported interface) is not yet populated - it requires M2.2 (interface
   extraction) to be integrated at the M2.5 orchestration stage.
 - Files that fail to parse produce a `ParseFailure` entry in the record rather
-  than halting extraction.
+  than halting extraction. A file this kanonarion is too old to parse is listed
+  under `AnalyserLimit` instead.
+- `examples-list` without a module reads stored columns, so its rows do not
+  carry the limit; `examples <module>@<version>` does.

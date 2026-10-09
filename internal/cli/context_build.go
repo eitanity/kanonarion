@@ -391,6 +391,8 @@ func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 		Status:      rec.OverallStatus.String(),
 		BuildFrame:  rec.BuildFrame.String(),
 		Error:       rec.FailureDetail,
+		// Carried whatever --package names: a filtered view is still short of them.
+		AnalyserLimit: toAnalyserLimitJSON(rec.AnalyserLimit),
 	}
 	for _, pkg := range rec.Packages {
 		if pkg.IsInternal || pkg.IsMain {
@@ -519,6 +521,8 @@ func buildExamples(ctx context.Context, coord coordinate.ModuleCoordinate, uc Qu
 		Status:      rec.OverallStatus.String(),
 		Error:       rec.FailureDetail,
 		SetAside:    aside.json(),
+		// Carried whatever --package names: an unread file may be in that package.
+		AnalyserLimit: toAnalyserLimitJSON(rec.AnalyserLimit),
 	}
 
 	// Derive the module-relative subdirectory for the filtered package so we

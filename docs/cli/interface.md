@@ -114,6 +114,31 @@ bytes read and `source_content_hash` the fetch record that supplied them; both
 are absent together on a record that names no artefact, which reads as "not
 recorded", never as "derived from nothing".
 
+#### Code newer than this kanonarion
+
+kanonarion parses source with the `go/parser` compiled into the binary, so the
+`go` on `PATH` and `GOTOOLCHAIN` do not change what it can read. When the
+module's `go` directive is newer than the Go this kanonarion was built with, a
+file it cannot parse is **not analysed**, not a parse failure of the module:
+
+```
+$ kanonarion interface example.com/mod@v1.0.0
+example.com/mod@v1.0.0: Partial — 2 package(s), build frame linux/amd64 (cgo on)
+  failure: not analysed: 1 file (mod.go): the kanonarion that ran was built with go1.26.6 and the code requires go1.27.2
+  Use a kanonarion built with go1.27.2 or newer: a newer release, or `go install github.com/eitanity/kanonarion@latest` run with go1.27.2 or newer.
+  example.com/mod                                              0T 0F 0C 0V (1 file not analysed)
+error: example.com/mod@v1.0.0: Partial — this kanonarion cannot read this code: it was built with go1.26.6 and the code requires go1.27.2. ...
+```
+
+The record is stored and the command exits `20`. Under `--json` the record
+carries `analyser_limit`, with `required`, `built`, `files`, `statement`, and
+`remedy` while the limit still binds this kanonarion; it is absent when every
+file was read. Such a record is never served as a cache hit, and nor is a record
+with parse failures written by a kanonarion built with an older Go, so a newer
+kanonarion measures the module again. `interface-show`, `interface-list` and the
+`context` interface section state the limit too; `interface-list <module>`
+states it on stderr.
+
 ### `interface-show`
 
 Show the full interface record for a module, optionally filtered.

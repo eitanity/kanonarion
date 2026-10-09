@@ -621,10 +621,13 @@ LIMIT 2`
 func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.InterfaceFilter) ([]ports.InterfaceSummary, error) {
 	// No LIMIT or OFFSET here: paging happens after the collapse, on modules
 	// rather than rows.
+	// The blob is read for a Partial row only: the status an analyser limit
+	// comes with, and rare enough that the listing stays a column read.
 	q := `SELECT module_path, module_version, pipeline_version,
-	             overall_status, package_count, extracted_at, content_hash
+	             overall_status, package_count, extracted_at, content_hash,
+	             CASE WHEN overall_status = ? THEN serialised END
 	      FROM interface_records`
-	var args []any
+	args := []any{int(domain2.InterfaceStatusPartial)}
 	var where []string
 	if filter.Coordinate != nil {
 		where = append(where, "module_path = ? AND module_version = ?")
@@ -652,13 +655,15 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 	counts := map[generationKey]int{}
 	first := map[generationKey]ports.InterfaceSummary{}
 
+	partialBlobs := map[string][]byte{} // content hash -> blob, Partial rows only
 	for rows.Next() {
 		var sum ports.InterfaceSummary
 		var extractedAt string
 		var status int
+		var blob []byte
 		if serr := rows.Scan(
 			&sum.ModulePath, &sum.ModuleVersion, &sum.PipelineVersion,
-			&status, &sum.PackageCount, &extractedAt, &sum.ContentHash,
+			&status, &sum.PackageCount, &extractedAt, &sum.ContentHash, &blob,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning interface summary: %w", serr)
 		}
@@ -673,6 +678,9 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 		if counts[k] == 0 {
 			order = append(order, k)
 			first[k] = sum
+			if sum.OverallStatus == domain2.InterfaceStatusPartial {
+				partialBlobs[sum.ContentHash] = blob
+			}
 		}
 		counts[k]++
 	}
@@ -684,8 +692,17 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 	for _, k := range order {
 		if counts[k] == 1 {
 			// The overwhelming majority: one generation, so the columns already
-			// describe the served record and no blob is decoded to learn it.
-			out = append(out, first[k])
+			// describe the served record and no blob is decoded to learn it —
+			// except a Partial one, the only status an analyser limit comes with.
+			sum := first[k]
+			if blob, ok := partialBlobs[sum.ContentHash]; ok {
+				rec, derr := decodeRecord(blob, sum.ContentHash)
+				if derr != nil {
+					return nil, derr
+				}
+				sum.AnalyserLimit = rec.AnalyserLimit
+			}
+			out = append(out, sum)
 			continue
 		}
 		coord, cerr := coordinate.NewModuleCoordinate(k.path, k.version)
@@ -718,6 +735,7 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 			PackageCount:    len(served.Packages),
 			ExtractedAt:     served.ExtractedAt.UTC(),
 			ContentHash:     served.ContentHash,
+			AnalyserLimit:   served.AnalyserLimit,
 		})
 	}
 

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // Tests for unexported helpers in the probe builder package.
@@ -166,7 +168,7 @@ func Exported() {}
 func unexported() {}
 `)
 	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"pkg.go"}}}
-	result, err := enumerateExportedFuncs(pkgs)
+	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
 	if err != nil {
 		t.Fatalf("enumerateExportedFuncs: %v", err)
 	}
@@ -190,7 +192,7 @@ func (e Exported) Method() {}
 func (u unexported) Method() {}
 `)
 	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"pkg.go"}}}
-	result, err := enumerateExportedFuncs(pkgs)
+	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
 	if err != nil {
 		t.Fatalf("enumerateExportedFuncs: %v", err)
 	}
@@ -213,7 +215,7 @@ func (m *MyType) PtrMethod() {}
 func (m MyType) ValMethod() {}
 `)
 	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"pkg.go"}}}
-	result, err := enumerateExportedFuncs(pkgs)
+	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
 	if err != nil {
 		t.Fatalf("enumerateExportedFuncs: %v", err)
 	}
@@ -249,7 +251,7 @@ func TestOnly() {}
 		Dir:        dir,
 		GoFiles:    []string{"pkg.go", "pkg_test.go"},
 	}}
-	result, err := enumerateExportedFuncs(pkgs)
+	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
 	if err != nil {
 		t.Fatalf("enumerateExportedFuncs: %v", err)
 	}
@@ -266,7 +268,7 @@ func TestEnumerateExportedFuncs_EmptyPackage(t *testing.T) {
 	writeFile(t, dir, "pkg.go", `package mypkg
 `)
 	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"pkg.go"}}}
-	result, err := enumerateExportedFuncs(pkgs)
+	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
 	if err != nil {
 		t.Fatalf("enumerateExportedFuncs: %v", err)
 	}

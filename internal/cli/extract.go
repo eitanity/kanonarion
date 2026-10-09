@@ -13,6 +13,7 @@ import (
 	domain "github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
 	"github.com/eitanity/kanonarion/internal/failurecause"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/spf13/cobra"
 )
 
@@ -130,6 +131,15 @@ func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.W
 // exit code is the only part of this output a CI step reads. Only Succeeded is
 // enumerated as clean, so a status added later cannot default into one.
 func extractionExit(run domain.ExtractionRun) error {
+	// 20 ahead of 1 and 2: a stage this binary could not read the code for is
+	// remedied by another build of it, which no invocation of this one runs.
+	if run.OverallStatus == domain.ExtractionRunFailed || run.OverallStatus == domain.ExtractionRunPartial {
+		if l, ok := runAnalyserLimit(run); ok {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"extraction %s: %d stage(s) failed; run %s records which modules and stages. %s %s",
+				run.OverallStatus, len(extractionFailures(run)), run.ID, l.Statement(), l.Remedy())}
+		}
+	}
 	switch run.OverallStatus {
 	case domain.ExtractionRunSucceeded:
 		return nil
@@ -151,6 +161,17 @@ func extractionExit(run domain.ExtractionRun) error {
 			"extraction %s: %d stage(s) failed; run %s records which modules and stages",
 			run.OverallStatus, len(extractionFailures(run)), run.ID)}
 	}
+}
+
+// runAnalyserLimit reads the highest analyser limit binding this binary out of
+// the run's failed stages.
+func runAnalyserLimit(run domain.ExtractionRun) (gotoolchain.AnalyserLimit, bool) {
+	var errs []string
+	for _, f := range extractionFailures(run) {
+		errs = append(errs, f.Error)
+	}
+	l, ok := gotoolchain.ReadAnalyserLimit(strings.Join(errs, "\n"))
+	return l, ok && l.Binds()
 }
 
 // extractStageFailure is one module/stage pair an extraction run recorded as

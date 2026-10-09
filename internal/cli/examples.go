@@ -64,7 +64,7 @@ func newExamplesCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
-func runExamplesExtract(ctx context.Context, arg string, f exampleFlags, stdout, stderr io.Writer) error {
+func runExamplesExtract(ctx context.Context, arg string, f exampleFlags, stdout, stderr io.Writer) (retErr error) {
 	logger := buildLogger(logLevel, stderr)
 
 	coord, err := parseCoordinate(arg)
@@ -93,6 +93,13 @@ func runExamplesExtract(ctx context.Context, arg string, f exampleFlags, stdout,
 	if err := printExampleRecord(result.Record, result.FromCache || result.Reused, jsonOut, stdout); err != nil {
 		return err
 	}
+	// The record is stored; the refusal says the examples in some files were
+	// never read, which only a newer build of this binary can do.
+	defer func() {
+		if retErr == nil {
+			retErr = analyserLimitExit(result.Record.Coordinate.String()+": "+result.Record.OverallStatus.String(), result.Record.AnalyserLimit)
+		}
+	}()
 	if result.Reused {
 		// Said plainly, because the two are different facts and the distinction is
 		// the one a reader chasing a stale answer needs: the extraction DID run,
@@ -149,10 +156,14 @@ func runExamplesHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		if artefact == "" {
 			artefact = "(no artefact recorded)"
 		}
+		unread := ""
+		if r.AnalyserLimit != nil {
+			unread = fmt.Sprintf(", %d file(s) not analysed (%s)", len(r.AnalyserLimit.Files), r.AnalyserLimit.Limit.Clause())
+		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %d example(s), %d parse failure(s)\n    artefact: %s\n    record:   %s\n",
+			"%s %s  %-16s %d example(s), %d parse failure(s)%s\n    artefact: %s\n    record:   %s\n",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
-			len(r.Examples), len(r.ParseFailures), artefact, r.ContentHash); werr != nil {
+			len(r.Examples), len(r.ParseFailures), unread, artefact, r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -194,6 +205,9 @@ func printExampleRecord(r domain.ExampleRecord, fromCache bool, jsonOut bool, st
 		if _, err := fmt.Fprintf(stdout, "  failure: %s\n", r.FailureDetail); err != nil {
 			return fmt.Errorf("writing failure detail: %w", err)
 		}
+	}
+	if err := writeAnalyserLimit(stdout, "  ", r.AnalyserLimit, "kanonarion examples "+r.Coordinate.String()); err != nil {
+		return err
 	}
 	for _, e := range r.Examples {
 		validates := ""
@@ -281,7 +295,16 @@ func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut
 		return nil
 	}
 
-	return &exitError{code: ExitNotFound, msg: fmt.Sprintf("example %q not found in record for %s", exampleName, coord)}
+	msg := fmt.Sprintf("example %q not found in record for %s", exampleName, coord)
+	// The example may be in a file this record never read; saying only "not
+	// found" would deny one nobody looked for.
+	if u := r.AnalyserLimit; u != nil {
+		msg += "; " + u.Summary()
+		if u.Limit.Binds() {
+			msg += ". " + u.Limit.Remedy()
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: msg}
 }
 
 // -- examples-find command --
@@ -512,6 +535,10 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 	}
 	if !found {
 		return exampleRecordMiss(ctx, uc, coord, jsonOut, stderr)
+	}
+	// On stderr: both outputs below are bare lists with no room for the fact.
+	if err := writeAnalyserLimit(stderr, "", r.AnalyserLimit, "kanonarion examples "+r.Coordinate.String()); err != nil {
+		return err
 	}
 	if jsonOut {
 		out := make([]exampleRefJSON, 0, len(r.Examples))

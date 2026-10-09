@@ -170,6 +170,7 @@ func printFullInterface(w *errWriter, ifc contextInterface, cmd string) {
 		if ifc.Error != "" {
 			w.printf("Detail:       %s\n", ifc.Error)
 		}
+		printAnalyserLimitLine(w, "Limit:        ", ifc.AnalyserLimit)
 		for _, pkg := range ifc.Packages {
 			w.printf("\n  %s\n", pkg.ImportPath)
 			for _, t := range pkg.Types {
@@ -252,6 +253,7 @@ func printFullExamples(w *errWriter, ex contextExamples, cmd string) {
 			w.printf("Detail:       %s\n", ex.Error)
 		}
 		printSetAsideLines(w, "Set Aside:    ", ex.SetAside)
+		printAnalyserLimitLine(w, "Limit:        ", ex.AnalyserLimit)
 		for _, e := range ex.Examples {
 			printFullExample(w, e)
 		}

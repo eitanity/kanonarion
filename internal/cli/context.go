@@ -306,6 +306,9 @@ type contextInterface struct {
 	BuildFrame string           `json:"build_frame,omitempty"`
 	Packages   []contextPackage `json:"packages,omitempty"`
 	Error      string           `json:"error,omitempty"`
+	// AnalyserLimit names the files this kanonarion could not read; absent when
+	// it read them all.
+	AnalyserLimit *analyserLimitJSON `json:"analyser_limit,omitempty"`
 }
 
 type contextCallGraph struct {
@@ -346,6 +349,9 @@ type contextExamples struct {
 	// SetAside names the stored example generations the section's read left out
 	// because this build cannot reproduce them. Absent when nothing was.
 	SetAside []setAsideJSON `json:"set_aside,omitempty"`
+	// AnalyserLimit names the _test.go files this kanonarion could not read, so
+	// their examples are not counted; absent when it read them all.
+	AnalyserLimit *analyserLimitJSON `json:"analyser_limit,omitempty"`
 }
 
 type contextCVE struct {

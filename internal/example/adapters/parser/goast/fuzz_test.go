@@ -84,7 +84,8 @@ func ExampleFoo() {
 	f.Fuzz(func(t *testing.T, zipData []byte, modulePrefix string) {
 		// Contract: no panic. A bad zip yields an error; bad Go inside a
 		// _test.go yields a ParseFailure, not a crash.
-		examples, failures, err := p.Parse(zipData, modulePrefix)
+		res, err := p.Parse(zipData, modulePrefix)
+		examples, failures := res.Examples, res.Failures
 		if err != nil {
 			if examples != nil || failures != nil {
 				t.Fatalf("Parse returned data alongside error: ex=%v fail=%v err=%v",
@@ -140,7 +141,8 @@ func FuzzParseSource(f *testing.F) {
 			prefix + "ex_test.go": src,
 		})
 
-		examples, failures, err := p.Parse(zipData, prefix)
+		res, err := p.Parse(zipData, prefix)
+		examples, failures := res.Examples, res.Failures
 		if err != nil {
 			// The zip is always valid here, so Parse must not error.
 			t.Fatalf("Parse errored on a valid zip with fuzzed source: %v", err)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/example/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // AuditSink appends an audit event to the assurance log. The shared JSONL
@@ -52,8 +53,18 @@ var ErrExampleConflict = errors.New("conflicting example records")
 // ExampleParser parses Example* functions out of a module's _test.go files.
 type ExampleParser interface {
 	// Parse scans every _test.go entry under modulePrefix in the module zip
-	// and returns the examples found plus any files that failed to parse.
-	Parse(zipData []byte, modulePrefix string) ([]domain.ExampleEntry, []domain.ParseFailure, error)
+	// and returns the examples found, the files that failed to parse, and the
+	// files this binary could not read.
+	Parse(zipData []byte, modulePrefix string) (ParseResult, error)
+}
+
+// ParseResult is what one parse of a module zip found.
+type ParseResult struct {
+	Examples []domain.ExampleEntry
+	Failures []domain.ParseFailure
+	// Unread is nil unless the module's go directive is newer than this
+	// binary's Go and the parser refused files; those are not Failures.
+	Unread *gotoolchain.UnreadSource
 }
 
 // ExampleStore persists ExampleRecords and supports queries.

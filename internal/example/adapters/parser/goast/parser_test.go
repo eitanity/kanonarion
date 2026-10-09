@@ -42,7 +42,8 @@ func ExampleAdd() {
 		"add.go":      "package foo\n",
 	})
 
-	entries, failures, err := Parser{}.Parse(zipData, prefix)
+	res, err := Parser{}.Parse(zipData, prefix)
+	entries, failures := res.Examples, res.Failures
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -93,7 +94,8 @@ func ExampleClient_Do() { fmt.Println("ok") }
 		"sub/external_test.go": "package sub_test\n" + sharedName,
 	})
 
-	entries, failures, err := Parser{}.Parse(zipData, prefix)
+	res, err := Parser{}.Parse(zipData, prefix)
+	entries, failures := res.Examples, res.Failures
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -117,7 +119,7 @@ func ExampleClient_Do() { fmt.Println("ok") }
 }
 
 func TestParse_BadZip(t *testing.T) {
-	if _, _, err := (Parser{}).Parse([]byte("not a zip"), "x/"); err == nil {
+	if _, err := (Parser{}).Parse([]byte("not a zip"), "x/"); err == nil {
 		t.Fatal("expected error for invalid zip")
 	}
 }
@@ -127,7 +129,8 @@ func TestParse_RecordsParseFailure(t *testing.T) {
 	zipData := buildZip(t, prefix, map[string]string{
 		"broken_test.go": "package foo_test\nfunc (\n",
 	})
-	entries, failures, err := Parser{}.Parse(zipData, prefix)
+	res, err := Parser{}.Parse(zipData, prefix)
+	entries, failures := res.Examples, res.Failures
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

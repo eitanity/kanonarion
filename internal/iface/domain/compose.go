@@ -298,9 +298,14 @@ func APIDigest(r InterfaceRecord) string {
 func rank(r InterfaceRecord) int {
 	switch r.OverallStatus {
 	case InterfaceStatusExtracted:
-		return 2
+		return 3
 	case InterfaceStatusPartial:
-		return 1
+		// Files the binary could not read are a weaker measurement than files the
+		// module itself failed to parse: a newer binary reads them.
+		if r.AnalyserLimit != nil {
+			return 1
+		}
+		return 2
 	case InterfaceStatusUnknown, InterfaceStatusExtractionFailed, InterfaceStatusCancelled:
 		return 0
 	default:

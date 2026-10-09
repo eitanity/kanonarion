@@ -53,7 +53,7 @@ func newInterfaceCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
-func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, stderr io.Writer) error {
+func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, stderr io.Writer) (retErr error) {
 	logger := buildLogger(logLevel, stderr)
 
 	coord, err := parseCoordinate(arg)
@@ -82,6 +82,13 @@ func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, 
 	if err := printInterfaceRecord(result.Record, result.FromCache || result.Reused, jsonOut, stdout); err != nil {
 		return err
 	}
+	// The record is stored; the refusal says the API in it is short of files
+	// this binary cannot read, which only a newer build of it can.
+	defer func() {
+		if retErr == nil {
+			retErr = analyserLimitExit(result.Record.Coordinate.String()+": "+result.Record.OverallStatus.String(), result.Record.AnalyserLimit)
+		}
+	}()
 	if result.Reused {
 		// Said plainly, because the two are different facts and the distinction is
 		// the one a reader chasing a stale answer needs: the extraction DID run,
@@ -145,10 +152,14 @@ func runInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		if artefact == "" {
 			artefact = "(no artefact recorded)"
 		}
+		unread := ""
+		if r.AnalyserLimit != nil {
+			unread = fmt.Sprintf(", %d file(s) not analysed (%s)", len(r.AnalyserLimit.Files), r.AnalyserLimit.Limit.Clause())
+		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %d package(s)\n    artefact: %s\n    api:      %s\n    record:   %s\n",
+			"%s %s  %-16s %d package(s)%s\n    artefact: %s\n    api:      %s\n    record:   %s\n",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
-			len(r.Packages), artefact, domain.APIDigest(r), r.ContentHash); werr != nil {
+			len(r.Packages), unread, artefact, domain.APIDigest(r), r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -186,6 +197,10 @@ func printInterfaceRecord(r domain.InterfaceRecord, fromCache bool, jsonOut bool
 			return fmt.Errorf("writing failure detail: %w", err)
 		}
 	}
+	// The failure line above already states the limit; the remedy follows it.
+	if err := writeAnalyserLimitRemedy(stdout, "  ", r.AnalyserLimit, "kanonarion interface "+r.Coordinate.String()); err != nil {
+		return err
+	}
 	for _, pkg := range r.Packages {
 		if pkg.OutOfFrame {
 			if _, err := fmt.Fprintf(stdout, "  %-60s not in this build frame\n", pkg.ImportPath); err != nil {
@@ -193,9 +208,10 @@ func printInterfaceRecord(r domain.InterfaceRecord, fromCache bool, jsonOut bool
 			}
 			continue
 		}
-		if _, err := fmt.Fprintf(stdout, "  %-60s %dT %dF %dC %dV\n",
+		if _, err := fmt.Fprintf(stdout, "  %-60s %dT %dF %dC %dV%s\n",
 			pkg.ImportPath,
 			len(pkg.Types), len(pkg.Funcs), len(pkg.Consts), len(pkg.Vars),
+			unreadSuffix(r.AnalyserLimit, r.Coordinate.Path(), pkg.ImportPath),
 		); err != nil {
 			return fmt.Errorf("writing package line: %w", err)
 		}
@@ -546,6 +562,10 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 	if !found {
 		return interfaceRecordMiss(ctx, ctr.QueryInterface, coord, jsonOut, stderr)
 	}
+	// On stderr: both outputs below are bare lists with no room for the fact.
+	if err := writeAnalyserLimit(stderr, "", r.AnalyserLimit, "kanonarion interface "+r.Coordinate.String()); err != nil {
+		return err
+	}
 
 	if jsonOut {
 		summaries := make([]packageSummary, 0, len(r.Packages))
@@ -709,6 +729,8 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 			Superseded      bool   `json:"superseded"`
 			PackageCount    int    `json:"package_count"`
 			Conflict        string `json:"conflict,omitempty"`
+			// AnalyserLimit is absent when this kanonarion read every file.
+			AnalyserLimit *analyserLimitJSON `json:"analyser_limit,omitempty"`
 		}
 		entries := make([]interfaceListEntry, 0, len(sums))
 		var jsonConflicts []error
@@ -730,6 +752,7 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 				PipelineVersion: s.PipelineVersion,
 				Superseded:      gen.superseded(s.PipelineVersion),
 				PackageCount:    s.PackageCount,
+				AnalyserLimit:   toAnalyserLimitJSON(s.AnalyserLimit),
 			})
 		}
 		var empty *listZeroScope
@@ -762,10 +785,15 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 			}
 			continue
 		}
-		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d package(s)%s\n",
+		limit := ""
+		if s.AnalyserLimit != nil {
+			limit = " — " + s.AnalyserLimit.Summary()
+		}
+		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d package(s)%s%s\n",
 			s.ModulePath+"@"+s.ModuleVersion,
 			s.OverallStatus.String(),
 			s.PackageCount,
+			limit,
 			mark,
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)

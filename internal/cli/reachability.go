@@ -1521,7 +1521,7 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 
 	result, err := uc.Execute(ctx, abs)
 	if err != nil {
-		return reachabilityOutput{}, fmt.Errorf("local reachability analysis: %w", err)
+		return reachabilityOutput{}, localAnalysisErr("local reachability analysis", err)
 	}
 
 	return reachabilityResultToOutput(result), nil

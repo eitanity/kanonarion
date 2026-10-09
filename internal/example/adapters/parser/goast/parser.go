@@ -3,6 +3,7 @@ package goast
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // Parser implements ports.ExampleParser.
@@ -27,20 +29,23 @@ func New() *Parser { return &Parser{} }
 
 // Parse constructs a zip reader over zipData and scans all _test.go entries
 // under modulePrefix for Example* functions.
-func (Parser) Parse(zipData []byte, modulePrefix string) ([]domain.ExampleEntry, []domain.ParseFailure, error) {
+func (Parser) Parse(zipData []byte, modulePrefix string) (ports.ParseResult, error) {
 	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
-		return nil, nil, fmt.Errorf("parsing zip: %w", err)
+		return ports.ParseResult{}, fmt.Errorf("parsing zip: %w", err)
 	}
-	examples, failures := parseTestFiles(zr, modulePrefix)
-	return examples, failures, nil
+	return parseTestFiles(zr, modulePrefix), nil
 }
 
 // parseTestFiles scans all _test.go entries in the zip for the given module
 // prefix and returns the examples found and any files that failed to parse.
-func parseTestFiles(zr *zip.Reader, modulePrefix string) ([]domain.ExampleEntry, []domain.ParseFailure) {
+// When the module asks for a newer Go than this binary's, a file the parser
+// refuses is unread rather than failed: its examples were never looked at.
+func parseTestFiles(zr *zip.Reader, modulePrefix string) ports.ParseResult {
 	var examples []domain.ExampleEntry
 	var failures []domain.ParseFailure
+	var unread []string
+	limit, limited := gotoolchain.LimitForDirective(goDirective(zr, modulePrefix))
 
 	for _, f := range zr.File {
 		if !strings.HasPrefix(f.Name, modulePrefix) {
@@ -56,6 +61,10 @@ func parseTestFiles(zr *zip.Reader, modulePrefix string) ([]domain.ExampleEntry,
 		}
 
 		fileExamples, err := parseOneTestFile(f, relPath)
+		if errors.As(err, new(syntaxError)) && limited {
+			unread = append(unread, relPath)
+			continue
+		}
 		if err != nil {
 			failures = append(failures, domain.ParseFailure{
 				File:  relPath,
@@ -66,7 +75,35 @@ func parseTestFiles(zr *zip.Reader, modulePrefix string) ([]domain.ExampleEntry,
 		examples = append(examples, fileExamples...)
 	}
 
-	return examples, failures
+	return ports.ParseResult{Examples: examples, Failures: failures, Unread: gotoolchain.NewUnreadSource(limit, unread)}
+}
+
+// syntaxError marks a file go/parser refused, as opposed to one the zip could
+// not hand over: only a refusal can be this binary's limit. It adds no text.
+type syntaxError struct{ err error }
+
+func (e syntaxError) Error() string { return e.err.Error() }
+func (e syntaxError) Unwrap() error { return e.err }
+
+// goDirective reads the go directive from the module's go.mod in the zip, or
+// "" when there is none.
+func goDirective(zr *zip.Reader, modulePrefix string) (directive string) {
+	for _, f := range zr.File {
+		if f.Name != modulePrefix+"go.mod" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return ""
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close() //nolint:errcheck // read-only; a short read is caught by err
+		if err != nil {
+			return ""
+		}
+		return gotoolchain.GoDirective(data)
+	}
+	return ""
 }
 
 // parseOneTestFile reads and parses a single _test.go zip entry, returning
@@ -90,7 +127,7 @@ func parseOneTestFile(f *zip.File, relPath string) (_ []domain.ExampleEntry, ret
 	fset := token.NewFileSet()
 	astFile, err := parser.ParseFile(fset, relPath, src, parser.ParseComments)
 	if err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", relPath, err)
+		return nil, fmt.Errorf("parsing %s: %w", relPath, syntaxError{err})
 	}
 
 	// Use "dir:pkgname" rather than the bare AST package name. Two sources of
