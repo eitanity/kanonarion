@@ -183,12 +183,28 @@ func (m moduleMembership) prefixAttributed() []string {
 // whether a CHA over-approximation into that package describes a call that
 // could happen or a function the binary does not contain.
 func (m moduleMembership) stdlibPackages() []string {
+	return m.closure(func(pkgPath, modPath string) bool {
+		return modPath == "" && isStdlibPackagePath(pkgPath)
+	})
+}
+
+// dependencyPackages is the sorted set of import paths this load placed in a
+// module other than the analysed one: the build's dependency closure, which a
+// joined read restricts a dependency's own graph to, as stdlibPackages does
+// for the standard library's.
+func (m moduleMembership) dependencyPackages() []string {
+	return m.closure(func(_, modPath string) bool {
+		return modPath != "" && modPath != m.coord.Path()
+	})
+}
+
+// closure is the sorted set of resolved import paths keep admits.
+func (m moduleMembership) closure(keep func(pkgPath, modPath string) bool) []string {
 	var out []string
 	for pkgPath, modPath := range m.pkgModule {
-		if modPath != "" || !isStdlibPackagePath(pkgPath) {
-			continue
+		if keep(pkgPath, modPath) {
+			out = append(out, pkgPath)
 		}
-		out = append(out, pkgPath)
 	}
 	sort.Strings(out)
 	return out

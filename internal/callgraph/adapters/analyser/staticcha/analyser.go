@@ -887,6 +887,7 @@ func (a *Analyser) analyseDirOnce(
 	// in it is in it by definition, and the field is a claim about a CONSUMER.
 	if mode != modeStdlib {
 		rec.StdlibPackages = mem.stdlibPackages()
+		rec.DependencyPackages = mem.dependencyPackages()
 	}
 	// Every module other than this one whose packages this analysis built with
 	// bodies. The selection above is deliberately wider than membership, so this

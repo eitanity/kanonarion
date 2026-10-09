@@ -61,7 +61,9 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 			ID: "github.com/foo/bar.parse", Module: "github.com/foo/bar", Package: "github.com/foo/bar", Symbol: "parse",
 			ExportDirective: callgraphdomain.ExportDirective{Kind: callgraphdomain.ExportWasm, Name: "parse"},
 		}},
-		Edges: []callgraphdomain.CallEdge{{FromID: "github.com/foo/bar.Fn", ToID: "net/http.Get"}},
+		Edges:              []callgraphdomain.CallEdge{{FromID: "github.com/foo/bar.Fn", ToID: "net/http.Get"}},
+		StdlibPackages:     []string{"net/http"},
+		DependencyPackages: []string{"golang.org/x/text/language"},
 	}
 	l := reachability.NewCallGraphStoreLoader(&fakeStore{record: rec, found: true}, "p1")
 
@@ -101,6 +103,10 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 	}
 	if len(proj.Edges) != 1 || proj.Edges[0].FromID != "github.com/foo/bar.Fn" || proj.Edges[0].ToID != "net/http.Get" {
 		t.Errorf("Edges = %+v", proj.Edges)
+	}
+	// Both closures survive: a joined search restricts the other graph to them.
+	if !slices.Equal(proj.StdlibPackages, rec.StdlibPackages) || !slices.Equal(proj.DependencyPackages, rec.DependencyPackages) {
+		t.Errorf("closures = %v / %v, want %v / %v", proj.StdlibPackages, proj.DependencyPackages, rec.StdlibPackages, rec.DependencyPackages)
 	}
 }
 

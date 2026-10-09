@@ -278,10 +278,13 @@ func TestSearchNegative_PathInTheRecordedFrameDisputes(t *testing.T) {
 }
 
 // TestSearchNegative_PathOutsideTheRecordedFrameDoesNotDispute pins the
-// asymmetry. A record measured in a consumer's build is not contradicted by a
-// path inside the dependency's own graph; the path is stated, not ruled on.
+// asymmetry. Where the consumer's build has no graph to join, a record measured
+// in it is not contradicted by a path inside the dependency's own graph; the
+// path is stated, not ruled on.
 func TestSearchNegative_PathOutsideTheRecordedFrameDoesNotDispute(t *testing.T) {
-	loader := &countingLoader{projection: libraryGraph("BUILT_WITH_BODIES", true)}
+	loader := &byCoordinateLoader{graphs: map[string]ports.CallGraphProjection{
+		searchedModule + "@v1.0.0": libraryGraph("BUILT_WITH_BODIES", true),
+	}}
 	rec := searchedRecord("target-rooted:example.com/consumer@local", []string{"vulnerable"})
 
 	reachability.NewNegativeSearcher(loader).Search(t.Context(), &rec)

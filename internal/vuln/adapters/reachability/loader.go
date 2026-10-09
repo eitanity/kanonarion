@@ -51,6 +51,7 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		// question the extraction use case asks, and both must get the same answer.
 		ServableAsCacheHit: callgraphdomain.RecordIsCacheable(rec),
 		StdlibPackages:     rec.StdlibPackages,
+		DependencyPackages: rec.DependencyPackages,
 		AnalysisRoot:       rec.AnalysisRoot,
 	}
 	for _, n := range rec.Nodes {

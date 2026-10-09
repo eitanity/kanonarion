@@ -37,6 +37,7 @@ var sealedCallGraphCollections = map[string]bool{
 	"Nodes":                     true,
 	"PrefixAttributedPackages":  true,
 	"StdlibPackages":            true,
+	"DependencyPackages":        true,
 	"SynthesisedGoMod.Requires": true,
 }
 
@@ -121,6 +122,7 @@ func makeTiedCallGraphRecord() domain.CallGraphRecord {
 		FailedPackages:           []string{"example.com/mod/broken", "example.com/mod/worse"},
 		PrefixAttributedPackages: []string{"example.com/mod/x", "example.com/mod/y"},
 		StdlibPackages:           []string{"encoding/json", "net/http", "os"},
+		DependencyPackages:       []string{"example.com/dep", "example.com/dep/sub", "gopkg.in/yaml.v2"},
 		ForeignModulesBuilt: []domain.ForeignModule{
 			{Path: "example.com/mod/nested", Version: "v1.0.0"},
 			{Path: "example.com/mod/nested", Version: "v1.1.0"},
@@ -167,6 +169,9 @@ func shuffleCallGraphRecord(rng *rand.Rand, r *domain.CallGraphRecord) {
 	})
 	rng.Shuffle(len(r.StdlibPackages), func(i, j int) {
 		r.StdlibPackages[i], r.StdlibPackages[j] = r.StdlibPackages[j], r.StdlibPackages[i]
+	})
+	rng.Shuffle(len(r.DependencyPackages), func(i, j int) {
+		r.DependencyPackages[i], r.DependencyPackages[j] = r.DependencyPackages[j], r.DependencyPackages[i]
 	})
 	rng.Shuffle(len(r.PrefixAttributedPackages), func(i, j int) {
 		r.PrefixAttributedPackages[i], r.PrefixAttributedPackages[j] = r.PrefixAttributedPackages[j], r.PrefixAttributedPackages[i]

@@ -967,6 +967,11 @@ type CallGraphProjection struct {
 	// the build links no standard library: a reader must refuse to act on it
 	// rather than read it as an empty set.
 	StdlibPackages []string
+	// DependencyPackages is the build's dependency closure: every import path
+	// placed in a module other than the analysed one. A join keeps only these
+	// packages of a dependency's own graph. Empty on a record from before the
+	// field, so a reader refuses the join rather than read it as an empty set.
+	DependencyPackages []string
 	// AnalysisRoot is the working tree this graph was taken of, empty for a graph
 	// built from anything else. It is carried so a refusal about this graph can
 	// name the directory a re-analysis must run in, rather than telling the

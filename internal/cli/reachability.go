@@ -666,8 +666,12 @@ type negativeSearchOutput struct {
 	// rung beside it can be checked against the records that produced it. A
 	// standard-library answer names two: the consuming build's graph and the
 	// standard library's own, joined at the first's external leaves.
-	GraphsSearched []string                  `json:"graphs_searched,omitempty"`
-	Routes         []reachabilityRouteOutput `json:"routes,omitempty"`
+	GraphsSearched []string `json:"graphs_searched,omitempty"`
+	// NotJoined says the search ran over the coordinate's own graph because the
+	// build the record was measured in has none, and names the command that
+	// analyses it.
+	NotJoined string                    `json:"not_joined,omitempty"`
+	Routes    []reachabilityRouteOutput `json:"routes,omitempty"`
 	// ReflectiveDispatch is what the search could NOT follow. Where a search ran,
 	// its zero counts are evidence — the graph was looked at and holds no such
 	// site — which an absent key cannot say, so it is emitted rather than omitted.
@@ -727,6 +731,7 @@ func negativeSearchToOutput(s *vuldomain.NegativeSearch, classify routeRootFunc)
 		WholeGraphPathFound: s.ShippedCodePathFound,
 		InRecordedFrame:     s.InRecordedFrame,
 		GraphsSearched:      s.GraphsSearched,
+		NotJoined:           s.NotJoined,
 		ReflectiveDispatch:  reflectiveDispatchToOutput(s),
 	}
 	// Every route the search found, from either rooting. A route this tool

@@ -165,10 +165,11 @@ Two consequences worth knowing before you read a negative:
   `unconfirmed`. Where the store holds a call graph for the coordinate, that
   silence is put through kanonarion's own search when you read the finding, and
   when `vuln-scan` prints it, which is what can raise it to `confirmed` or
-  `disputed` with no re-scan. A search over a dependency's own graph can
-  confirm a negative in any frame, but contradicts
-  one only in the frame it was measured in; a path found in another frame is
-  reported in the reason and does not change the rung. Which roots that search
+  `disputed` with no re-scan. A negative measured in your build is searched
+  over your build's graph joined to the dependency's (see below). Where your
+  build has no graph, the dependency's own graph is searched instead: that can
+  confirm a negative, but a path found in it is reported in the reason and does
+  not change the rung. Which roots that search
   starts from is what decides whether it can confirm at all — see below.
 - **A reachable answer states no soundness.** A route is its own evidence, so the
   text prints no rung for a positive. The JSON still carries the `soundness` key,
@@ -197,11 +198,12 @@ function an entry point, because something outside Go calls it:
 
 govulncheck roots only at `main` and `init`, so a vulnerable symbol reached only
 through an export reads as not reachable there. Where the confirming search runs
-over a graph holding the export — the standard library's joined search, or a
-module's own record — it finds the route, and the rung reads `disputed` with the
-route starting at the export. An advisory against any other dependency is
-searched over that dependency's own graph, which holds none of your exports, so
-its rung does not change. The directive is recorded only when the build that
+over a graph holding the export — your build's graph joined to the dependency's
+or the standard library's, or a module's own record — it finds the route, and
+the rung reads `disputed` with the route starting at the export. The join needs
+your project's own graph. Without it, a dependency's advisory is searched over
+that dependency's own graph, which holds none of your exports, so its rung does
+not change, and the answer names the `kanonarion local <dir>` that adds it. The directive is recorded only when the build that
 was analysed includes the file, and only on a package-level function; a method
 carrying one records nothing.
 
@@ -311,7 +313,8 @@ the coordinate, or the graph names none of the advisory's symbols — which is n
 | `whole_graph_path_found` | Whether a path was found with the module's whole graph rooted. A different claim; it never decides the rung and is never dropped. |
 | `in_recorded_frame` | Whether the graph searched is a graph of the build this record was measured in. A clean search confirms in any frame; a found path contradicts only in this one. |
 | `routes` | Every route the search found, from either rooting, each naming its own root. |
-| `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two for a standard-library answer, which is a join — see below. |
+| `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two for a negative measured in your build, which is a join — see below. |
+| `not_joined` | Why a negative measured in your build was searched over the dependency's own graph instead of the join, and the command that analyses your build. Absent where the join ran or none was needed. |
 | `reflective_dispatch` | What the search could not follow: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
 
 The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
@@ -368,6 +371,33 @@ imprecise:
 
 A path found in a joined graph IS in the frame the record was measured in, so it
 can contradict the recorded negative and the rung reads `disputed`.
+
+### A dependency's negative is searched the same way
+
+An advisory against a dependency, measured in your build, is searched over your
+build's graph joined to the dependency's own graph (`kanonarion callgraph
+<mod>@<version>`), rooted at your build's entry points. A dependency's own graph
+is rooted at its own exported API, and the advisory's symbol is usually part of
+that API, so on its own it can neither dispute nor confirm the record.
+
+- **Only the dependency's packages your build links are kept.** Your build's call
+  graph records them, and the count is stated in `graphs_searched`. An advisory
+  whose symbols are all in packages your build does not link is not searched,
+  and the reason says so.
+- **A graph that does not record that closure is not joined.** Re-analyse it with
+  `kanonarion local <dir> --force`; the refusal names the command.
+- **With no graph of your build in the store**, the dependency's own graph is
+  searched as before, and the answer names `kanonarion local <dir>` in
+  `not_joined` and in the reason.
+- **A call into a third module ends the joined search there.** Only your build's
+  graph and the advisory's dependency are joined, so a route through another
+  module (your code calls `example.com/wrap`, which calls the dependency) is not
+  in either. Where your entry points reach such a call and no path is found, the
+  dependency's own graph is searched instead, and `not_joined` names the calls.
+
+With the join, a path from one of your entry points reads `disputed`. No path
+over two graphs built with bodies, with no call into a third module on the way,
+reads `confirmed`.
 
 ### Every surface that publishes an answer carries the rung
 

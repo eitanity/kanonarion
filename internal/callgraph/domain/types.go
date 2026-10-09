@@ -786,6 +786,12 @@ type CallGraphRecord struct {
 	// closure must therefore refuse to act on an empty one rather than treat it
 	// as an empty set.
 	StdlibPackages []string
+	// DependencyPackages is the build's dependency closure: every import path
+	// the go command placed in a module other than the analysed one, sorted. A
+	// read joining a dependency's own graph to this one keeps only these
+	// packages of it. Empty is a build that links no other module, or a record
+	// from before the field.
+	DependencyPackages []string
 	// DerivedBy states WHY this generation exists: which reuse gate governed the
 	// append, and whether the run asked it or forced past it. See
 	// GenerationDerivation.

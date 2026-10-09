@@ -111,7 +111,11 @@ import (
 // Bumped to "0.8.0" when a node started recording its export directive
 // (//go:wasmexport, //export, //go:interrupt). A 0.7.0 record of a module that
 // carries one is wrong by omission: the function the host calls reads as unrooted.
-const PipelineVersion = "0.8.0"
+//
+// Bumped to "0.9.0" when a record started carrying its build's dependency
+// closure (DependencyPackages). Without it a dependency's negative cannot be
+// searched from the project's own entry points.
+const PipelineVersion = "0.9.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

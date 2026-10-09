@@ -116,6 +116,25 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Call graph record: pipeline `0.8.0` → `0.9.0`
+
+**Record shape change; no schema bump, no store migration.** A call-graph
+record gains `dependency_packages`, omitted when empty: every import path of
+the analysed build that the go command placed in a module other than the
+analysed one, sorted. It is inside the record's content hash. Records live in
+the sealed blob, so no table changes. Records are keyed `(module, version,
+pipeline_version)`, so the bump is the migration: `0.8.0` rows stay, become
+unreachable, and are never served for a `0.9.0` request. Cost is one
+re-extraction per coordinate on its next `callgraph` run. Ingested working
+trees are stranded on the same terms: run `kanonarion local .` in each tree
+whose answers you rely on.
+
+**What a `0.8.0` record gets wrong.** A dependency's vulnerability negative
+measured in a project is searched over the dependency's own graph only, which
+holds none of the project's entry points, so it can neither be disputed nor
+confirmed from them. With a `0.9.0` project graph the search joins the
+project's graph to the dependency's, kept to the packages listed here.
+
 ## Call graph record: pipeline `0.7.0` → `0.8.0`
 
 **Record shape change; no schema bump, no store migration.** A call-graph node
