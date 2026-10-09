@@ -313,8 +313,8 @@ the coordinate, or the graph names none of the advisory's symbols — which is n
 | `whole_graph_path_found` | Whether a path was found with the module's whole graph rooted. A different claim; it never decides the rung and is never dropped. |
 | `in_recorded_frame` | Whether the graph searched is a graph of the build this record was measured in. A clean search confirms in any frame; a found path contradicts only in this one. |
 | `routes` | Every route the search found, from either rooting, each naming its own root. |
-| `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two for a negative measured in your build, which is a join — see below. |
-| `not_joined` | Why a negative measured in your build was searched over the dependency's own graph instead of the join, and the command that analyses your build. Absent where the join ran or none was needed. |
+| `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two or three for a negative measured in your build, which is a join — see below. The middle entry, where present, counts the further dependency graphs joined and names the first three. |
+| `not_joined` | Why the join could not settle a negative measured in your build: your build has no graph (the command that analyses it is named), or your entry points reach calls the join cannot follow (the calls are named, with why each was not joined and the `callgraph` command where one would join it). Absent where the join ran and followed every call. |
 | `reflective_dispatch` | What the search could not follow: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
 
 The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
@@ -372,6 +372,32 @@ imprecise:
 A path found in a joined graph IS in the frame the record was measured in, so it
 can contradict the recorded negative and the rung reads `disputed`.
 
+**Your dependencies' graphs are joined too.** Every dependency of your build
+whose call graph the store holds (`kanonarion callgraph <mod>@<version>`) is
+joined as well, kept to the packages your build links and without its test
+code, so a route through a dependency (your code calls `example.com/wrap`, which
+calls `mime/multipart`) is followed. The modules come from the walk the record
+was scanned in. A dependency graph built below `BUILT_WITH_BODIES` lowers the
+rung only when your entry points reach into it. `graphs_searched` counts the
+dependency graphs joined.
+
+**A call the join cannot follow keeps the recorded rung.** Where your entry
+points reach a call into a module the join does not hold and no path is found,
+the rung stays where govulncheck's answer puts it (`inferred` for a source
+scan), and `not_joined` names the calls and why each was not joined:
+
+- the store holds no call graph for the module: the answer names the
+  `kanonarion callgraph <mod>@<version>` that extracts it;
+- the module is replaced by a local directory, which no stored graph is taken
+  of;
+- the module's stored graph holds no node for the call, or could not be read;
+- your build's graph does not record which packages of other modules it links:
+  re-analyse it with `kanonarion local <dir> --force`;
+- no walk lists the modules your build selected.
+
+A confirmed standard-library negative therefore means every call your entry
+points reached was followed through a graph built with function bodies.
+
 ### A dependency's negative is searched the same way
 
 An advisory against a dependency, measured in your build, is searched over your
@@ -389,15 +415,17 @@ that API, so on its own it can neither dispute nor confirm the record.
 - **With no graph of your build in the store**, the dependency's own graph is
   searched as before, and the answer names `kanonarion local <dir>` in
   `not_joined` and in the reason.
-- **A call into a third module ends the joined search there.** Only your build's
-  graph and the advisory's dependency are joined, so a route through another
-  module (your code calls `example.com/wrap`, which calls the dependency) is not
-  in either. Where your entry points reach such a call and no path is found, the
-  dependency's own graph is searched instead, and `not_joined` names the calls.
+- **The other dependencies' graphs are joined as well**, as for a
+  standard-library negative, so a route through another module (your code calls
+  `example.com/wrap`, which calls the dependency) is followed when the store
+  holds `example.com/wrap`'s graph. Where your entry points reach a call the
+  join cannot follow and no path is found, the dependency's own graph is
+  searched instead, and `not_joined` names the calls and the command that would
+  join each.
 
 With the join, a path from one of your entry points reads `disputed`. No path
-over two graphs built with bodies, with no call into a third module on the way,
-reads `confirmed`.
+over graphs built with bodies, with every reached call followed, reads
+`confirmed`.
 
 ### Every surface that publishes an answer carries the rung
 

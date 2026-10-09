@@ -916,6 +916,20 @@ type WalkProjectDirReader interface {
 	WalkProjectDir(ctx context.Context, walkID string) (string, bool, error)
 }
 
+// BuildModule is one module a walk selected for its build. LocalReplace marks
+// a module replaced by a directory, which no stored call graph is taken of.
+type BuildModule struct {
+	Coordinate   coordinate.ModuleCoordinate
+	LocalReplace bool
+}
+
+// WalkModuleReader answers which modules a walk selected, so a joined search
+// can load the call graph the store holds for each. Declared narrowly for the
+// same reason as WalkProjectDirReader. The bool is false for a walk not found.
+type WalkModuleReader interface {
+	WalkModules(ctx context.Context, walkID string) ([]BuildModule, bool, error)
+}
+
 // CallGraphProjection is the minimal view of a call graph the reachability
 // analyser consumes: the nodes and the directed call edges between them, plus
 // the fidelity signature that backed them.

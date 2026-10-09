@@ -667,9 +667,9 @@ type negativeSearchOutput struct {
 	// standard-library answer names two: the consuming build's graph and the
 	// standard library's own, joined at the first's external leaves.
 	GraphsSearched []string `json:"graphs_searched,omitempty"`
-	// NotJoined says the search ran over the coordinate's own graph because the
-	// build the record was measured in has none, and names the command that
-	// analyses it.
+	// NotJoined says why the join could not settle the negative: the build has
+	// no graph (naming the command that analyses it), or its entry points reach
+	// calls into modules the join does not hold (naming the calls).
 	NotJoined string                    `json:"not_joined,omitempty"`
 	Routes    []reachabilityRouteOutput `json:"routes,omitempty"`
 	// ReflectiveDispatch is what the search could NOT follow. Where a search ran,

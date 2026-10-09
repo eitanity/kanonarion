@@ -37,18 +37,38 @@ import (
 // analysis can name — see callgraphdomain.SelectEntryPointRoots — and the
 // whole-graph result is carried beside it rather than dropped.
 //
-// Cost is one call-graph decode per coordinate that has a negative worth
-// searching, memoised for the life of the searcher, and exactly zero for a
-// record with none: the graph is loaded only after a finding has asked for it.
+// Cost is one call-graph decode per graph a search needs — the coordinate's,
+// and for a joined search the frame's and every dependency graph held for its
+// build — each memoised for the life of the searcher, and exactly zero for a
+// record with no negative: nothing is loaded until a finding asks for it.
 type NegativeSearcher struct {
 	loader ports.CallGraphLoader
 	// dirs answers where a frame's working tree is, for the refusal that has to
 	// name the command analysing it. Optional: without one a refusal says it
 	// cannot name the tree rather than naming the wrong one.
 	dirs ports.WalkProjectDirReader
+	// modules answers which modules a frame's walk selected, so the join can
+	// take in every dependency graph the store holds for that build. Optional:
+	// without one no dependency graph is joined, and the answer says so.
+	modules ports.WalkModuleReader
 
 	mu    sync.Mutex
 	cache map[graphKey]*cachedProjection
+	// loads memoises every graph read, by coordinate, so the dependency graphs
+	// shared by every subject in one frame are decoded once.
+	loads map[coordinate.ModuleCoordinate]loadResult
+	// frames is each frame's graph with its held dependency graphs joined, by
+	// (frame, walk).
+	frames map[graphKey]*frameBuild
+}
+
+// WithWalkModules gives the searcher the walk ledger's build list, so a joined
+// search takes in the dependency graphs the store holds for that build.
+func (s *NegativeSearcher) WithWalkModules(r ports.WalkModuleReader) *NegativeSearcher {
+	if s != nil {
+		s.modules = r
+	}
+	return s
 }
 
 // WithProjectDirs gives the searcher the walk ledger's record of where a
@@ -130,14 +150,22 @@ type cachedProjection struct {
 	fallback *cachedProjection
 	// unjoinedCalls is every external leaf of the consumer's graph the entry
 	// points reach that the join did not replace, outside the standard library:
-	// a call into a module whose graph is not held here.
+	// a call into a module whose graph is not held here. Set on both joins.
 	unjoinedCalls []string
+	// unjoinedWhy says why those calls were not joined, with the command that
+	// would join each where one exists.
+	unjoinedWhy string
 }
 
 // NewNegativeSearcher returns a searcher reading graphs through loader. A nil
 // loader disables it: every Search then leaves the record exactly as stored.
 func NewNegativeSearcher(loader ports.CallGraphLoader) *NegativeSearcher {
-	return &NegativeSearcher{loader: loader, cache: make(map[graphKey]*cachedProjection)}
+	return &NegativeSearcher{
+		loader: loader,
+		cache:  make(map[graphKey]*cachedProjection),
+		loads:  make(map[coordinate.ModuleCoordinate]loadResult),
+		frames: make(map[graphKey]*frameBuild),
+	}
 }
 
 // Search attaches a domain.NegativeSearch to every finding in rec whose negative
@@ -169,19 +197,29 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 		if graph == nil {
 			graph = s.graphForRecord(ctx, rec)
 		}
-		result := graph.search(rec, *f)
-		if graph.fallback != nil && len(graph.unjoinedCalls) > 0 && result.NotSearched == "" && !result.PathFound {
-			// The join stops at calls into modules whose graphs it does not hold, so
-			// a clean search over it cannot show the symbol is not reached through
-			// them. The dependency's own graph is searched instead, as before.
-			result = graph.fallback.search(rec, *f)
-			result.NotJoined = "the search from the entry points of the build this record was measured in found no path, " +
-				"but it reached " + plural(len(graph.unjoinedCalls), "call") + " into modules whose call graphs are not joined (" +
-				strings.Join(firstN(graph.unjoinedCalls, 3), ", ") + "), so it cannot show the vulnerable code is not reached " +
-				"through them; no command joins them, so the search ran over the own graph of " + rec.Coordinate.String() + " instead"
-		}
-		f.NegativeSearch = result
+		f.NegativeSearch = graph.guardUnjoined(rec, *f, graph.search(rec, *f))
 	}
+}
+
+// guardUnjoined stops a clean joined search certifying an absence when the
+// entry points reach calls into modules the join does not hold. A dependency
+// falls back to its own graph; the standard library has none, so its rung stays.
+func (c *cachedProjection) guardUnjoined(rec *domain.VulnerabilityRecord, f domain.VulnerabilityFinding, result *domain.NegativeSearch) *domain.NegativeSearch {
+	if len(c.unjoinedCalls) == 0 || result.NotSearched != "" || result.PathFound {
+		return result
+	}
+	why := "the search from the entry points of the build this record was measured in found no path, " +
+		"but it reached " + plural(len(c.unjoinedCalls), "call") + " into modules whose call graphs are not joined (" +
+		strings.Join(firstN(c.unjoinedCalls, 3), ", ") + "), so it cannot show the vulnerable code is not reached " +
+		"through them; " + c.unjoinedWhy
+	if c.fallback != nil {
+		result = c.fallback.search(rec, f)
+		result.NotJoined = why + ", so the search ran over the own graph of " + rec.Coordinate.String() + " instead"
+		return result
+	}
+	result.UnjoinedCalls = c.unjoinedCalls
+	result.NotJoined = why + ", so the search does not confirm the negative"
+	return result
 }
 
 // search runs the negative search for one finding over this graph, or states
@@ -558,8 +596,8 @@ func (s *NegativeSearcher) joinedGraphFor(
 			", is not a coordinate, so the build it names cannot be loaded: " + err.Error()
 		return entry
 	}
-	consumer, consumerErr := s.loader.Load(ctx, frameCoord)
-	own, ownErr := s.loader.Load(ctx, subject)
+	consumer, consumerErr := s.load(ctx, frameCoord)
+	own, ownErr := s.load(ctx, subject)
 	// Where the frame's tree is, so a refusal about it names a command. The
 	// graph's own analysis root is preferred — it is the tree that graph was
 	// taken of — and the walk's recorded directory answers when no graph exists
@@ -598,18 +636,22 @@ func (s *NegativeSearcher) joinedGraphFor(
 			remedyClause("re-analyse it with", frameCoord, frameDir, true)
 		return entry
 	}
-	entry.projection = joinProjections(consumer, own, linked, rule.keepUnlinked)
+	frame := s.frameFor(ctx, frameCoord, walkID, consumer, frameDir)
+	entry.projection = frame.base
+	if _, held := frame.holds(subject); !held {
+		entry.projection = joinProjections(frame.base, own, linked, rule.keepUnlinked)
+	}
 	// Selected over the consumer's graph, never the joined one: see above.
 	entry.shippedRoots = collectEntryPoints(consumer)
 	entry.entryRoots = collectNamedEntryPoints(consumer)
+	entry.projection.Completeness = frame.reachedCompleteness(entry.projection, entry.entryRoots, consumer, own)
 	entry.reflectSites = reflectiveDispatchSites(entry.projection, entry.entryRoots)
-	entry.searched = []string{
-		graphLabel(frameCoord, consumer),
-		rule.restrictedLabel(subject, own, len(linked)),
-	}
+	entry.searched = append([]string{graphLabel(frameCoord, consumer)}, frame.label(subject)...)
+	entry.searched = append(entry.searched, rule.restrictedLabel(subject, own, len(linked)))
+	entry.unjoinedCalls = unjoinedCalls(entry.projection, entry.entryRoots)
+	entry.unjoinedWhy = frame.unjoinedWhy(entry.projection, entry.unjoinedCalls)
 	if !rule.keepUnlinked {
 		entry.fallback = ownGraph(subject, own)
-		entry.unjoinedCalls = unjoinedCalls(entry.projection, entry.entryRoots)
 	}
 	entry.loaded = true
 	return entry
@@ -632,6 +674,11 @@ func joinProjections(consumer, subject ports.CallGraphProjection, linked []strin
 	pkgOf := make(map[string]string, len(subject.Nodes))
 	for _, n := range subject.Nodes {
 		pkgOf[n.ID] = n.Package
+		if n.IsTest && !keepUnlinked {
+			// A dependency's test code is not compiled into the build that
+			// depends on it, so it is outside the closure like an unlinked package.
+			pkgOf[n.ID] = testOnly
+		}
 	}
 	owned := make(map[string]bool, len(consumer.Nodes))
 	for _, n := range consumer.Nodes {

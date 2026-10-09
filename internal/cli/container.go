@@ -696,7 +696,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// is answered by a search wherever a graph exists for the coordinate. It
 	// writes nothing: see searchedVulnQuery.
 	negSearcher := reachability.NewNegativeSearcher(cgLoader).
-		WithProjectDirs(walkProjectDirs{walks: queryWalksUC})
+		WithProjectDirs(walkProjectDirs{walks: queryWalksUC}).
+		WithWalkModules(walkProjectDirs{walks: queryWalksUC})
 	queryVulnUC := newSearchedVulnQuery(vulnapp.NewQueryVulnUseCase(vulnStore), negSearcher)
 	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, walkStore)
 	diffScanRunsUC := newSearchedDiffScanRuns(vulnapp.NewDiffScanRunsUseCase(vulnStore), negSearcher)

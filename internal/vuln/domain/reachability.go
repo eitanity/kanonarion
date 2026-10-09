@@ -401,10 +401,14 @@ type NegativeSearch struct {
 	// another build asked, and contradicting that record with it would report a
 	// disagreement that does not exist.
 	InRecordedFrame bool
-	// NotJoined is why a record measured in another build was searched over the
-	// coordinate's own graph rather than joined to that build's, with the
-	// command that lets the join run. Empty where no join was owed or it ran.
+	// NotJoined is why the join could not settle a record measured in another
+	// build: that build has no graph (with the command that analyses it), or the
+	// search reached calls into unjoined modules (naming them). Empty otherwise.
 	NotJoined string
+	// UnjoinedCalls are calls the entry points reach into modules whose graphs
+	// the searched graph does not hold. A clean search past any of them does not
+	// confirm: the route may continue there. Empty where none was reached.
+	UnjoinedCalls []string
 }
 
 // ReflectiveDispatchSite is one call the search could not follow: a call site in
@@ -592,6 +596,12 @@ func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness R
 		// produce.
 		rung, reason := soundnessFromDerivation(d)
 		return rung, reason + crossFrameNote(s) + searchedGraphsNote(s)
+	case len(s.UnjoinedCalls) > 0:
+		// The traversal stopped at calls into modules it holds no graph for, so its
+		// empty result is not an absence; the recorded derivation keeps the rung.
+		rung, reason := soundnessFromDerivation(d)
+		return rung, reason + ". A call-graph search from the entry points found no path" +
+			entryPointRootingNote(s) + searchedGraphsNote(s)
 	default:
 		// Nothing the analysis can name as an entry point reaches the vulnerable
 		// symbol. That is the search rules 3 to 5 weigh, so the derivation
