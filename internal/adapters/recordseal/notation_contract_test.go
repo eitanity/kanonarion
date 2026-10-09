@@ -96,9 +96,21 @@ func populated[R any]() R {
 	return r
 }
 
+// validFills are value objects whose exported fields carry an invariant the
+// hasher enforces, so a field-by-field fill would forge one it refuses. Each is
+// set to a valid non-zero value instead.
+var validFills = map[reflect.Type]reflect.Value{
+	reflect.TypeFor[callgraphdomain.ExportDirective](): reflect.ValueOf(
+		callgraphdomain.ExportDirective{Kind: callgraphdomain.ExportWasm, Name: "x"}),
+}
+
 // fill sets v to a non-zero value, descending into composites.
 func fill(v reflect.Value, depth int) {
 	if depth > fillDepth || !v.CanSet() {
+		return
+	}
+	if valid, ok := validFills[v.Type()]; ok {
+		v.Set(valid)
 		return
 	}
 	if v.Type() == reflect.TypeOf(time.Time{}) {

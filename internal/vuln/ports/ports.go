@@ -987,6 +987,11 @@ type CallGraphNode struct {
 	// selection is fed the fact rather than a zero value that reads as "not a
 	// test", leaving the scope the only thing that decides.
 	IsTest bool
+	// ExportKind and ExportName are the node's export directive, as opaque
+	// strings so this port stays free of the callgraph domain; both empty when
+	// it carries none.
+	ExportKind string
+	ExportName string
 }
 
 // CallGraphEdge is a directed call edge between two node IDs.

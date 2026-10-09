@@ -153,3 +153,30 @@ func TestArtifactKindString_NamesTheZeroValue(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectEntryPointRoots_RootsAnExportedFunction is the entry the host or C
+// code drives: main is empty, and the export is the only way in. A directive in
+// a test file follows the test axis like any other test declaration.
+func TestSelectEntryPointRoots_RootsAnExportedFunction(t *testing.T) {
+	candidates := []domain.RootCandidate{
+		{ID: "main", Package: "example.com/wvuln", Symbol: "main"},
+		{ID: "parse", Package: "example.com/wvuln", Symbol: "parse",
+			Export: domain.ExportDirective{Kind: domain.ExportWasm, Name: "parse"}},
+		{ID: "goParse", Package: "example.com/wvuln", Symbol: "goParse",
+			Export: domain.ExportDirective{Kind: domain.ExportC, Name: "goParse"}},
+		{ID: "irq", Package: "example.com/wvuln", Symbol: "irq",
+			Export: domain.ExportDirective{Kind: domain.ExportInterrupt}},
+		{ID: "unused", Package: "example.com/wvuln", Symbol: "unused"},
+		{ID: "testExport", Package: "example.com/wvuln", Symbol: "testExport", IsTest: true,
+			Export: domain.ExportDirective{Kind: domain.ExportWasm, Name: "testExport"}},
+	}
+
+	prod := domain.SelectEntryPointRoots(candidates, domain.RootScopeProduction)
+	if want := []string{"goParse", "irq", "main", "parse"}; !slices.Equal(prod, want) {
+		t.Errorf("production roots = %v, want %v", prod, want)
+	}
+	withTests := domain.SelectEntryPointRoots(candidates, domain.RootScopeWithTests)
+	if !slices.Contains(withTests, "testExport") {
+		t.Errorf("a test-file export is not a root when tests are in scope: %v", withTests)
+	}
+}

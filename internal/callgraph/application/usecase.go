@@ -107,7 +107,11 @@ import (
 // graphs of one artefact as non-determinism in the analyser: cobra@v1.10.2,
 // which has no cgo at all, refuses on nothing but its two synthetic .test mains.
 // The bump is what tells the ledger the analyser changed.
-const PipelineVersion = "0.7.0"
+//
+// Bumped to "0.8.0" when a node started recording its export directive
+// (//go:wasmexport, //export, //go:interrupt). A 0.7.0 record of a module that
+// carries one is wrong by omission: the function the host calls reads as unrooted.
+const PipelineVersion = "0.8.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

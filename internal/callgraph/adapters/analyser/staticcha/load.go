@@ -134,6 +134,8 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	if mode == modeStdlib {
 		res.Membership = newStdlibMembership(coord, loaded)
 	}
+	// Read here for the same reason: the syntax is dropped once the packages build.
+	res.ExportDirectives = a.readExportDirectives(ctx, coord, loaded, fset)
 
 	// Pass 1: register every target package from syntax. This must complete
 	// before any Build, and before the type-only dependency sweep below: a
@@ -321,6 +323,9 @@ type ssaBuildResult struct {
 	// digest is taken over, so the digest describes the bytes that were analysed
 	// rather than the bytes that happened to be on disk beforehand.
 	SourceFiles []string
+	// ExportDirectives is the export directive of each package-level function the
+	// analysed packages declare, keyed by node ID.
+	ExportDirectives map[string]domain.ExportDirective
 }
 
 // Registered returns every package registered from syntax, production and test

@@ -57,6 +57,9 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 		}, {
 			ID: "github.com/foo/bar_test.TestFn", Module: "github.com/foo/bar",
 			Package: "github.com/foo/bar_test", Symbol: "TestFn", IsExportedAPI: true, IsTest: true,
+		}, {
+			ID: "github.com/foo/bar.parse", Module: "github.com/foo/bar", Package: "github.com/foo/bar", Symbol: "parse",
+			ExportDirective: callgraphdomain.ExportDirective{Kind: callgraphdomain.ExportWasm, Name: "parse"},
 		}},
 		Edges: []callgraphdomain.CallEdge{{FromID: "github.com/foo/bar.Fn", ToID: "net/http.Get"}},
 	}
@@ -87,6 +90,11 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 	}, {
 		ID: "github.com/foo/bar_test.TestFn", Module: "github.com/foo/bar",
 		Package: "github.com/foo/bar_test", Symbol: "TestFn", IsExportedAPI: true, IsTest: true,
+	}, {
+		// The export directive survives for the same reason: the entry-point
+		// selector reads it here.
+		ID: "github.com/foo/bar.parse", Module: "github.com/foo/bar", Package: "github.com/foo/bar", Symbol: "parse",
+		ExportKind: "wasmexport", ExportName: "parse",
 	}}
 	if !slices.Equal(proj.Nodes, want) {
 		t.Errorf("Nodes = %+v, want %+v", proj.Nodes, want)

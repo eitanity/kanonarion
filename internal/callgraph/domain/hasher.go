@@ -134,6 +134,10 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			IsAssemblyOrLinkname: cn.IsAssemblyOrLinkname,
 			UsesPlugin:           cn.UsesPlugin,
 			IsTest:               cn.IsTest,
+			ExportDirective:      ExportDirective{Kind: ExportKind(cn.ExportDirective.Kind), Name: cn.ExportDirective.Name},
+		}
+		if err := nodes[i].ExportDirective.Validate(); err != nil {
+			return CallGraphRecord{}, fmt.Errorf("node %s: %w", cn.ID, err)
 		}
 	}
 	var ifaces []InterfaceType
@@ -345,18 +349,38 @@ type canonicalPos struct {
 }
 
 type canonicalNode struct {
-	ID                   string       `json:"id"`
-	IsAssemblyOrLinkname bool         `json:"is_assembly_or_linkname"`
-	IsExportedAPI        bool         `json:"is_exported_api"`
-	IsExternal           bool         `json:"is_external"`
-	IsTest               bool         `json:"is_test"`
-	Module               string       `json:"module"`
-	Package              string       `json:"package"`
-	Position             canonicalPos `json:"position"`
-	Receiver             string       `json:"receiver"`
-	Symbol               string       `json:"symbol"`
-	UsesPlugin           bool         `json:"uses_plugin"`
-	UsesUnsafePointer    bool         `json:"uses_unsafe_pointer"`
+	// ExportDirective is omitted when absent, so a node without one marshals to
+	// the bytes it always did.
+	ExportDirective      canonicalExportDirective `json:"export_directive,omitzero"`
+	ID                   string                   `json:"id"`
+	IsAssemblyOrLinkname bool                     `json:"is_assembly_or_linkname"`
+	IsExportedAPI        bool                     `json:"is_exported_api"`
+	IsExternal           bool                     `json:"is_external"`
+	IsTest               bool                     `json:"is_test"`
+	Module               string                   `json:"module"`
+	Package              string                   `json:"package"`
+	Position             canonicalPos             `json:"position"`
+	Receiver             string                   `json:"receiver"`
+	Symbol               string                   `json:"symbol"`
+	UsesPlugin           bool                     `json:"uses_plugin"`
+	UsesUnsafePointer    bool                     `json:"uses_unsafe_pointer"`
+}
+
+// validateExportDirectives refuses a record whose node carries a directive this
+// build would not have recorded, on the write leg as Unmarshal does on the read.
+func validateExportDirectives(nodes []CallNode) error {
+	for _, n := range nodes {
+		if err := n.ExportDirective.Validate(); err != nil {
+			return fmt.Errorf("node %s: %w", n.ID, err)
+		}
+	}
+	return nil
+}
+
+// canonicalExportDirective is the wire shape of domain.ExportDirective.
+type canonicalExportDirective struct {
+	Kind string `json:"kind"`
+	Name string `json:"name,omitzero"`
 }
 
 type canonicalInterface struct {
@@ -606,6 +630,7 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 			Symbol:               n.Symbol,
 			UsesPlugin:           n.UsesPlugin,
 			UsesUnsafePointer:    n.UsesUnsafePointer,
+			ExportDirective:      canonicalExportDirective{Kind: string(n.ExportDirective.Kind), Name: n.ExportDirective.Name},
 		}
 	}
 	var cIfaces []canonicalInterface
@@ -741,6 +766,9 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 }
 
 func marshalCanonical(r CallGraphRecord) ([]byte, error) {
+	if err := validateExportDirectives(r.Nodes); err != nil {
+		return nil, err
+	}
 	edges := canonicalEdgeOrder(r.Edges)
 	c := canonicalShell(r)
 	c.Edges = make([]canonicalEdge, len(edges))
@@ -787,6 +815,9 @@ const edgesPlaceholder = `"edges":null`
 // a failure rather than a guess — guessing which span to replace would seal a
 // record over bytes nobody chose.
 func hashCanonical(r CallGraphRecord) (string, error) {
+	if err := validateExportDirectives(r.Nodes); err != nil {
+		return "", err
+	}
 	edges := canonicalEdgeOrder(r.Edges)
 	shell, err := canonicalMarshal(canonicalShell(r))
 	if err != nil {

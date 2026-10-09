@@ -807,6 +807,10 @@ func (a *Analyser) analyseDirOnce(
 	// call's key rather than being recorded twice under two kinds.
 	nodes, edges = a.collectReferenceEdges(ctx, prog, ordered, mem, fset, roots, nodes, edges)
 
+	// Stamped once every node exists, so a node any pass added carries its
+	// directive too.
+	attachExportDirectives(nodes, build.ExportDirectives)
+
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
 	// go to implementations — so the edge collections cannot answer "what must

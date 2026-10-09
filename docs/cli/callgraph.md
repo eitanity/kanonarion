@@ -1096,10 +1096,10 @@ recently extracted one:
 
 ```
 $ kanonarion callgraph-list
-golang.org/x/text@v0.42.0              0.7.0  Extracted  5931 nodes 48484 edges
-github.com/spf13/cobra@v1.10.2         0.7.0  Extracted  1404 nodes  6583 edges  [2 generations; counts from 2026-09-20T11:30:56.168419348Z]
-github.com/eitanity/kanonarion@local   0.7.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show github.com/eitanity/kanonarion@local --history
-listing call graph records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+golang.org/x/text@v0.42.0              0.8.0  Extracted  5931 nodes 48484 edges
+github.com/spf13/cobra@v1.10.2         0.8.0  Extracted  1404 nodes  6583 edges  [2 generations; counts from 2026-09-20T11:30:56.168419348Z]
+github.com/eitanity/kanonarion@local   0.8.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show github.com/eitanity/kanonarion@local --history
+listing call graph records at pipeline 0.8.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 ```
 
 Those counts belong to the generation the row names, which is **not**
@@ -1371,6 +1371,7 @@ constructing them by hand.
 | `is_assembly_or_linkname` | The function has no Go body (assembly or `//go:linkname`) |
 | `uses_plugin` | The body references the Go `plugin` package |
 | `position_file`, `position_line` | Where the symbol is declared. Absent when the record states no position — see below |
+| `export_directive` | The function hands itself to a caller outside Go. `kind` is `wasmexport` (`//go:wasmexport`), `export` (`//export`, and TinyGo's `//go:export`) or `interrupt` (TinyGo's `//go:interrupt`); `name` is the exported name, absent for an interrupt. Read from the doc comment of a package-level function in the analysed packages; a method records none. Absent when the function carries no directive |
 
 The three body-level facts are ones a callee-identity map cannot witness. They
 are used by [`capability`](capability.md) analysis and by the answer layer,

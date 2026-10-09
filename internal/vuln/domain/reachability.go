@@ -607,7 +607,7 @@ func (s *NegativeSearch) unsearchedReason() string {
 		return s.NotSearched
 	}
 	if s.EntryPointRoots == 0 {
-		return "the call graph names no entry point at all — no public API, no package initialiser, no command — so a traversal over it would start nowhere and could only come back empty"
+		return "the call graph names no entry point at all — no public API, no package initialiser, no command, no export directive, no http.Handler — so a traversal over it would start nowhere and could only come back empty"
 	}
 	return ""
 }
@@ -622,7 +622,8 @@ func (s *NegativeSearch) unsearchedReason() string {
 // because it started somewhere the analysis could not name.
 func entryPointRootingNote(s *NegativeSearch) string {
 	note := ", rooted at the " + plural(s.EntryPointRoots, "entry point") +
-		" the analysis can name — the public API, package init and the process entry point"
+		" the analysis can name — the public API, package init, the process entry point, export directives and" +
+		" http.Handler methods"
 	if s.ArtifactKind != "" {
 		note += "; the graph is " + s.ArtifactKind
 	}

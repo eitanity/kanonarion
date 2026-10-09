@@ -229,6 +229,10 @@ func rootCandidates(cg ports.CallGraphProjection) []callgraphdomain.RootCandidat
 			IsExternal:    node.IsExternal,
 			IsExportedAPI: node.IsExportedAPI,
 			IsTest:        node.IsTest,
+			Export: callgraphdomain.ExportDirective{
+				Kind: callgraphdomain.ExportKind(node.ExportKind),
+				Name: node.ExportName,
+			},
 		})
 	}
 	return candidates

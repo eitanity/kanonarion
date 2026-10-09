@@ -412,6 +412,9 @@ type CallNode struct {
 	// production blast radius of a change from its test surface without hiding
 	// either: both are in the graph, and the caller chooses.
 	IsTest bool
+	// ExportDirective is the directive that hands a package-level function to a
+	// caller outside Go, read from its doc comment; zero when it carries none.
+	ExportDirective ExportDirective
 }
 
 // InterfaceType is an interface declared in the analysed module, made

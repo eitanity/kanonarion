@@ -460,6 +460,13 @@ type callNodeJSON struct {
 	PositionLine  int    `json:"position_line,omitempty"`
 	IsTest        bool   `json:"is_test"`
 	Role          string `json:"role"`
+	// ExportDirective is absent when the function carries none.
+	ExportDirective *callNodeExportJSON `json:"export_directive,omitempty"`
+}
+
+type callNodeExportJSON struct {
+	Kind string `json:"kind"`
+	Name string `json:"name,omitempty"`
 }
 
 type callEdgeJSON struct {
@@ -841,6 +848,9 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 			PositionLine:  n.Position.Line,
 			IsTest:        n.IsTest,
 			Role:          callNodeRole(n),
+		}
+		if !n.ExportDirective.IsZero() {
+			nodes[i].ExportDirective = &callNodeExportJSON{Kind: string(n.ExportDirective.Kind), Name: n.ExportDirective.Name}
 		}
 	}
 	edges := make([]callEdgeJSON, len(r.Edges))

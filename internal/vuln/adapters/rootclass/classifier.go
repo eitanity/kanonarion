@@ -167,7 +167,7 @@ func (c *Classifier) facts(ctx context.Context, coord coordinate.ModuleCoordinat
 // drift into different ideas of an entry point. The edge case it adds is one
 // only a graph can witness: a dependency calling back into the analysed module.
 func externalInvocation(g *graph, node callgraphdomain.CallNode) string {
-	if reason := callgraphdomain.ExternalEntryPointReason(node.Symbol, node.Receiver); reason != "" {
+	if reason := callgraphdomain.ExternalEntryPointReason(node.Symbol, node.Receiver, node.ExportDirective); reason != "" {
 		return reason
 	}
 	if g.externalCallers[node.ID] > 0 {
@@ -253,7 +253,7 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 	external := make(map[string]bool, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		external[n.ID] = n.IsExternal
-		if reason := callgraphdomain.ExternalEntryPointReason(n.Symbol, n.Receiver); reason != "" && !n.IsExternal {
+		if reason := callgraphdomain.ExternalEntryPointReason(n.Symbol, n.Receiver, n.ExportDirective); reason != "" && !n.IsExternal {
 			g.entryReason[n.ID] = reason
 		}
 		if n.IsExternal {

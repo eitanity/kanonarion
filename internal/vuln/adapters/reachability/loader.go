@@ -63,6 +63,8 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 			IsExternal:    n.IsExternal,
 			IsExportedAPI: n.IsExportedAPI,
 			IsTest:        n.IsTest,
+			ExportKind:    string(n.ExportDirective.Kind),
+			ExportName:    n.ExportDirective.Name,
 		})
 	}
 	// Reference edges are projected alongside calls, deliberately. A handler

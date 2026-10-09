@@ -116,6 +116,31 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Call graph record: pipeline `0.7.0` → `0.8.0`
+
+**Record shape change; no schema bump, no store migration.** A call-graph node
+gains `export_directive`, omitted when absent, so a node without one marshals to
+the bytes it always did. Nodes live in the sealed record blob, not in a column,
+so no table changes. Records are keyed `(module, version, pipeline_version)`, so
+the bump is the migration: `0.7.0` rows stay, become unreachable, and are never
+served for a `0.8.0` request. Cost is one re-extraction per coordinate on its
+next `callgraph` run. Ingested working trees are stranded on the same terms: run
+`kanonarion local .` in each tree whose answers you rely on.
+
+**What the field holds.** The directive a package-level function's doc comment
+carries — `kind` is `wasmexport`, `export` (`//export`, and TinyGo's
+`//go:export`) or `interrupt` (TinyGo's `//go:interrupt`) — and the exported
+`name`, absent for an interrupt. A directive on a method, or one with no name,
+records nothing and is logged as `callgraph_export_directive_unattributed`. A
+record carrying an unknown kind, an export with no name or an interrupt with one
+is refused on write and on read.
+
+**What a `0.7.0` record gets wrong.** A function the WebAssembly host, C code or
+the hardware calls is not an entry point. A route rooted at it classifies
+`internal`, and the read-time negative search does not root at it, so a
+vulnerable symbol reached only through it is not reported as disputed. Re-extract
+to correct it.
+
 ## `audit`, `context` and `latest` --json: the per-module envelope
 
 **Breaking output-shape change; no store migration, no record or pipeline bump.**

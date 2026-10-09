@@ -148,7 +148,7 @@ The rungs, most to least sound:
 
 | `soundness` | What was searched |
 |---|---|
-| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, an `http.Handler`. The only rung a clean negative may rest on. |
+| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
 | `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
@@ -181,10 +181,29 @@ Two consequences worth knowing before you read a negative:
 An absence is only as good as the set of starting points it was searched from, so
 the rung names it. The confirming search starts at what the analysis can name as a
 way INTO the module — its public API, its package initialisers, a command's
-`main`, an `http.Handler` — because those are the only ways a consumer's build
-enters it. The `main` the go command synthesises to run a test binary is not one
-of them, and neither is a dependency's `_test.go` file, which your build does not
-compile.
+`main`, a function with an export directive, an `http.Handler` — because those
+are the only ways a consumer's build enters it. The `main` the go command
+synthesises to run a test binary is not one of them, and neither is a
+dependency's `_test.go` file, which your build does not compile.
+
+An export directive in a package-level function's doc comment makes that
+function an entry point, because something outside Go calls it:
+
+| Directive | Who calls it | The `reason` reads |
+|---|---|---|
+| `//go:wasmexport <name>` | the WebAssembly host | a function exported to the WebAssembly host (`//go:wasmexport <name>`) — the host invokes it |
+| `//export <name>`, and TinyGo's `//go:export <name>` | C code, assembly or a vector table | a function exported to C (`//export <name>`) — C code, assembly or a vector table invokes it |
+| `//go:interrupt` (TinyGo) | the hardware | an interrupt handler (`//go:interrupt`) — the hardware invokes it |
+
+govulncheck roots only at `main` and `init`, so a vulnerable symbol reached only
+through an export reads as not reachable there. Where the confirming search runs
+over a graph holding the export — the standard library's joined search, or a
+module's own record — it finds the route, and the rung reads `disputed` with the
+route starting at the export. An advisory against any other dependency is
+searched over that dependency's own graph, which holds none of your exports, so
+its rung does not change. The directive is recorded only when the build that
+was analysed includes the file, and only on a package-level function; a method
+carrying one records nothing.
 
 That is a narrower set than the one a *positive* is found from. Reachability roots
 an application at every function it ships, deliberately, because an application is
@@ -516,7 +535,7 @@ over — the test axis, the exported-API flag, and the edges into the node.
 
 | Kind | Means |
 |---|---|
-| `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, or a function a dependency calls back into. The `reason` says which. |
+| `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, a function exported to the WebAssembly host or to C, an interrupt handler, or a function a dependency calls back into. The `reason` says which. |
 | `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
 | `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
 | `test` | The root is a test-scope declaration. This is printed **on the same line as the answer**, so a test-only reach is never read as a production one. |
