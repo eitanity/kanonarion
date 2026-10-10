@@ -239,7 +239,10 @@ func TestMigrate_StoreMetaUpdatesOnNewMigration(t *testing.T) {
 
 func TestFakeDB(t *testing.T) {
 	// FakeDB is just a wrapper, but let's test it for completeness
-	sqlDB, _ := sql.Open("sqlite", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("opening an in-memory database: %v", err)
+	}
 	f := &sqlitestore.FakeDB{SqlDB: sqlDB}
 	if f.DB() != sqlDB {
 		t.Error("FakeDB.DB() returned wrong pointer")

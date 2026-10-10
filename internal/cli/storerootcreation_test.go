@@ -41,7 +41,10 @@ func missingRoot(t *testing.T) (root, parent string) {
 func assertNothingCreated(t *testing.T, root, parent string) {
 	t.Helper()
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		entries, _ := os.ReadDir(root)
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatalf("ReadDir: %v", err)
+		}
 		names := make([]string, 0, len(entries))
 		for _, e := range entries {
 			names = append(names, e.Name())

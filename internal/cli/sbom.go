@@ -218,7 +218,7 @@ func runSBOMGenerate(
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return sbomGenerateWith(ctx, ctr, walkID, f, generatedAt, stdout, stderr)
 }
@@ -457,7 +457,7 @@ func runSBOMShow(ctx context.Context, id, storeRoot string, stdout, stderr io.Wr
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	record, err := ctr.QuerySBOM.GetSBOMRecord(ctx, id)
 	if err != nil {
@@ -476,7 +476,7 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	records, err := ctr.QuerySBOM.ListSBOMRecords(ctx, walkID)
 	if err != nil {

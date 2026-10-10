@@ -50,10 +50,12 @@ var _ licenseports.LicenseStore = (*queryLicFakeStore)(nil)
 func TestQueryLicenseUseCase_GetLicenseRecord(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	store := &queryLicFakeStore{}
-	_ = store.PutLicenseRecord(context.Background(), domain.LicenseRecord{
+	if err := store.PutLicenseRecord(context.Background(), domain.LicenseRecord{
 		Coordinate:      coord,
 		PipelineVersion: "0.1.0",
-	})
+	}); err != nil {
+		t.Fatalf("PutLicenseRecord: %v", err)
+	}
 
 	uc := application.NewQueryLicenseUseCase(store)
 

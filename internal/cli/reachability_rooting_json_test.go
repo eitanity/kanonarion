@@ -84,7 +84,7 @@ func TestReachabilityJSON_ConfirmedNegativeCarriesItsRooting(t *testing.T) {
 	if _, present := search["whole_graph_path_found"]; !present {
 		t.Error("whole_graph_path_found is absent, so the two claims cannot be told apart")
 	}
-	reason, _ := doc["soundness_reason"].(string)
+	reason := optAs[string](t, doc["soundness_reason"])
 	if !strings.Contains(reason, "entry point") {
 		t.Errorf("soundness_reason does not name the root set: %q", reason)
 	}
@@ -118,7 +118,7 @@ func TestReachabilityJSON_SoundnessIsNeverAbsentAndNeverCollapsed(t *testing.T) 
 		if !present {
 			t.Fatalf("%s: soundness is absent from the payload", name)
 		}
-		rung, _ := got.(string)
+		rung := optAs[string](t, got)
 		if rung == "" {
 			t.Errorf("%s: soundness is empty, which reads as a positive verdict", name)
 		}
@@ -158,7 +158,7 @@ func TestReachabilityRefusalJSON_IsNotEmptyStdout(t *testing.T) {
 	if _, present := doc["reachability_state"]; present {
 		t.Error("a refusal published a verdict; an absent answer is not 'not affected'")
 	}
-	if got, _ := doc["refusal"].(string); !strings.Contains(got, "vuln-scan") {
+	if got := optAs[string](t, doc["refusal"]); !strings.Contains(got, "vuln-scan") {
 		t.Errorf("the refusal dropped the remedy the text surface names: %q", got)
 	}
 	if doc["module"] != "golang.org/x/text" || doc["version"] != "v0.3.7" {
@@ -191,7 +191,7 @@ func TestReachabilityJSON_ASkippedSearchSaysSoOnTheWire(t *testing.T) {
 	if !ok {
 		t.Fatalf("a skipped search published no key at all, which is the silence this closes: %v", doc)
 	}
-	got, _ := search["not_searched"].(string)
+	got := optAs[string](t, search["not_searched"])
 	if got == "" {
 		t.Error("not_searched is absent, so the skip is invisible to a machine reader")
 	}
@@ -201,7 +201,7 @@ func TestReachabilityJSON_ASkippedSearchSaysSoOnTheWire(t *testing.T) {
 	if search["entry_point_path_found"] != false || search["whole_graph_path_found"] != false {
 		t.Error("a skipped search published a path claim it never measured")
 	}
-	if reason, _ := doc["soundness_reason"].(string); !strings.Contains(reason, got) {
+	if reason := optAs[string](t, doc["soundness_reason"]); !strings.Contains(reason, got) {
 		t.Errorf("the text-facing reason does not carry the skip: %q", reason)
 	}
 }

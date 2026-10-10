@@ -178,8 +178,16 @@ func (s *Store) ListExtractionRuns(ctx context.Context, filter ports.ExtractionR
 			return nil, fmt.Errorf("scanning summary: %w", err)
 		}
 
-		sTime, _ := time.Parse(time.RFC3339, row.StartedAt)
-		cTime, _ := time.Parse(time.RFC3339, row.CompletedAt)
+		// Both columns are written by PutExtractionRun as RFC 3339; one that does
+		// not parse is a damaged row, not a run that started at the zero time.
+		sTime, err := time.Parse(time.RFC3339, row.StartedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parsing started_at of extraction run %s: %w", row.ID, err)
+		}
+		cTime, err := time.Parse(time.RFC3339, row.CompletedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parsing completed_at of extraction run %s: %w", row.ID, err)
+		}
 
 		summary := ports.ExtractionRunSummary{
 			ID:            row.ID,
@@ -189,11 +197,13 @@ func (s *Store) ListExtractionRuns(ctx context.Context, filter ports.ExtractionR
 			OverallStatus: domain.ExtractionRunStatus(row.OverallStatus),
 		}
 
-		// Unmarshal data to get module count
+		// The module count is read from the record; one that does not decode is
+		// a damaged row, not a run that covered no modules.
 		run, err := s.hasher.Unmarshal(row.RawRecord)
-		if err == nil {
-			summary.ModuleCount = len(run.PerModuleResults)
+		if err != nil {
+			return nil, fmt.Errorf("decoding raw_record of extraction run %s: %w", row.ID, err)
 		}
+		summary.ModuleCount = len(run.PerModuleResults)
 
 		summaries = append(summaries, summary)
 	}

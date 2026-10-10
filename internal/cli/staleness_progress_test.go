@@ -45,7 +45,7 @@ func TestStalenessRetry_NarratesAndIsSilencedByNoProgress(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 					return
 				}
-				_, _ = io.WriteString(w, `{"Version":"v1.3.0","Time":"2025-06-01T00:00:00Z"}`)
+				_, _ = io.WriteString(w, `{"Version":"v1.3.0","Time":"2025-06-01T00:00:00Z"}`) //nolint:errcheck // a failed write is seen by the client under test
 			}))
 			defer srv.Close()
 
@@ -81,7 +81,7 @@ func TestStalenessRetry_NarratesAndIsSilencedByNoProgress(t *testing.T) {
 // does not hit a transient failure writes exactly the bytes it wrote before.
 func TestStalenessRetry_SilentWhenNothingRetries(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"Version":"v1.3.0","Time":"2025-06-01T00:00:00Z"}`)
+		_, _ = io.WriteString(w, `{"Version":"v1.3.0","Time":"2025-06-01T00:00:00Z"}`) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 	defer srv.Close()
 

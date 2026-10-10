@@ -59,7 +59,7 @@ func TestStoreSchemaGate_RefusesAnOlderBinaryAgainstANewerStore(t *testing.T) {
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, domain.DefaultConfig(), quietLogger())
 	if cleanup != nil {
 		t.Error("a refused container must hand back no cleanup function: there is nothing for the caller to close")
-		_ = cleanup()
+		_ = cleanup() //nolint:errcheck // the failure is reported above; this only releases it
 	}
 	if err == nil {
 		t.Fatal("NewContainer opened a store carrying migrations this binary does not know; every write against it would fail and be reported as a completed run")

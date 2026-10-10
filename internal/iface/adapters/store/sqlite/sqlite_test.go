@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -95,7 +96,7 @@ func TestStore_PutGet_RoundTrip(t *testing.T) {
 
 func TestStore_GetNotFound(t *testing.T) {
 	s := openStore(t)
-	coord, _ := coordinate.NewModuleCoordinate("example.com/missing", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/missing", "v1.0.0")
 	_, found, err := s.GetInterfaceRecord(context.Background(), coord, "0.1.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -165,7 +166,10 @@ func TestStore_GetInterfaceRecord_IntegrityError(t *testing.T) {
 	db := s.InternalDB().DB()
 	r.ContentHash = "sha256:invalid"
 	var h domain2.InterfaceRecordHasher
-	blob, _ := h.Marshal(r)
+	blob, merr := h.Marshal(r)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if _, err := db.Exec("UPDATE interface_records SET serialised = ?", blob); err != nil {
 		t.Fatalf("failed to tamper with db: %v", err)
 	}
@@ -256,7 +260,7 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 	s := openStore(t)
 
 	// Two packages in the same module both export "Marshal".
-	coord, _ := coordinate.NewModuleCoordinate("example.com/multi", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/multi", "v1.0.0")
 	r := domain2.InterfaceRecord{
 		SchemaVersion: domain2.InterfaceSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,

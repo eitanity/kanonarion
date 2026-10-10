@@ -57,7 +57,7 @@ the callers and callees queries also accept.`,
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err

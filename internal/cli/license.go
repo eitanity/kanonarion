@@ -83,7 +83,7 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// The standard library never arrives through the module proxy, so extraction
 	// has nothing to open and the refusal it produced named `kanonarion fetch` —
@@ -1080,7 +1080,7 @@ and marks each one.`,
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			ovSet, err := ctr.LicenseOverrides.LoadOverrides(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("loading license overrides: %w", err)

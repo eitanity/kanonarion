@@ -702,7 +702,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	vulnBatch, err := loadVulnBatchCtx(ctx, ctr.QueryScanRuns, ctr.QueryWalks)
 	if err != nil {

@@ -438,7 +438,7 @@ func TestInspectRunNotStarted_StatesTheStagesItDidNotRun(t *testing.T) {
 			t.Errorf("the run section omits %q: %s", key, raw)
 		}
 	}
-	if _, ok := doc["toolchain"].(map[string]any)["judged"]; !ok {
+	if _, ok := mustAs[map[string]any](t, doc["toolchain"])["judged"]; !ok {
 		t.Errorf("the toolchain section omits judged: %s", raw)
 	}
 }

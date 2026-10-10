@@ -284,7 +284,7 @@ func runReachabilityStoredQuery(ctx context.Context, coordArg string, f reachabi
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 	return runVulnReachability(ctx, coordArg, f.vulnID, f.walkID, f.gomod, gomodSet,
 		jsonOut, ctr.QueryVuln, ctr.QueryWalks, ctr.QueryCallGraph, stdout, stderr)
 }
@@ -450,7 +450,11 @@ func runVulnReachabilityQuery(
 			return ambiguousFrameRefusal(
 				fmt.Sprintf("kanonarion reachability %s --vuln %s", coord, vulnID), coord, frames)
 		}
-		rec, aside, hasAside, found = selectConsumerRecord(recs, coord)
+		var cerr error
+		rec, aside, hasAside, found, cerr = selectConsumerRecord(recs, coord)
+		if cerr != nil {
+			return fmt.Errorf("getting vulnerability record: %w", cerr)
+		}
 		if !found && len(setAside) > 0 {
 			return setAside.noServable(coord, remedyScanModule(coord).String())
 		}
@@ -494,15 +498,18 @@ func runVulnReachabilityQuery(
 //
 // The empty group is answered here rather than propagated as the domain's
 // "nothing to compose" error: an unscanned module is an absence the caller
-// already reports (with the command that fixes it), not a fault.
-func selectConsumerRecord(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, vuldomain.VulnerabilityRecord, bool, bool) {
+// already reports (with the command that fixes it), not a fault. Any other
+// composition error, such as two toolchains disagreeing, is returned: read as
+// found, it served an empty record as the verdict.
+func selectConsumerRecord(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, vuldomain.VulnerabilityRecord, bool, bool, error) {
 	if len(recs) == 0 {
-		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false
+		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, nil
 	}
-	// The error is discarded because it has exactly one cause — an empty group —
-	// and the line above rules it out.
-	rec, aside, hasAside, _ := vuldomain.ComposeForConsumer(recs, coord)
-	return rec, aside, hasAside, true
+	rec, aside, hasAside, err := vuldomain.ComposeForConsumer(recs, coord)
+	if err != nil {
+		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, err)
+	}
+	return rec, aside, hasAside, true, nil
 }
 
 // isolatedAside is what an isolated-frame record says about the queried
@@ -1512,7 +1519,7 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 	if err != nil {
 		return reachabilityOutput{}, fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	vulnLoader := localvulnstore.New(ctr.VulnStore, localVulnPipelineVersion).
 		WithNegativeSearcher(ctr.NegativeSearch)

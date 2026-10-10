@@ -431,10 +431,16 @@ var V = "hello"
 		Marshal(domain2.InterfaceRecord) ([]byte, error)
 	} = domain2.InterfaceRecordHasher{}
 
-	r1, _ = h.SetContentHash(r1)
-	r2, _ = h.SetContentHash(r2)
-	b1, _ := h.Marshal(r1)
-	b2, _ := h.Marshal(r2)
+	r1, err1 = h.SetContentHash(r1)
+	r2, err2 = h.SetContentHash(r2)
+	if err1 != nil || err2 != nil {
+		t.Fatalf("SetContentHash: %v / %v", err1, err2)
+	}
+	b1, err1 := h.Marshal(r1)
+	b2, err2 := h.Marshal(r2)
+	if err1 != nil || err2 != nil {
+		t.Fatalf("Marshal: %v / %v", err1, err2)
+	}
 	if string(b1) != string(b2) {
 		t.Error("two identical extractions produced different output")
 	}

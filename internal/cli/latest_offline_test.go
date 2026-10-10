@@ -140,8 +140,11 @@ func TestLatestRowFor_OfflineWithoutARowIsUnmeasuredNotAnError(t *testing.T) {
 	t.Cleanup(restore)
 
 	var stderr bytes.Buffer
-	row, _ := latestRowFor(context.Background(), newOfflineStalenessLookup(offlineLedger(t), time.Hour),
+	row, err := latestRowFor(context.Background(), newOfflineStalenessLookup(offlineLedger(t), time.Hour),
 		offlineLatestModule, "v1.0.0", &stderr)
+	if err != nil {
+		t.Fatalf("latestRowFor: %v", err)
+	}
 	if row.Latest == "(error)" {
 		t.Errorf("offline row reported as an error: %+v", row)
 	}

@@ -72,7 +72,7 @@ func TestLocalWalkExtract_AnalyseLocalRoot_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDriver: %v", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer mustClose(t, cleanup)
 
 	ctx := context.Background()
 	root := coordinatetest.MustNew("example.test/proj", coordinate.LocalVersion)
@@ -127,7 +127,7 @@ func TestLocalWalkExtract_AnalyseLocalRoot_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewQueries: %v", err)
 	}
-	defer func() { _ = qcleanup() }()
+	defer mustClose(t, qcleanup)
 
 	// The root licence record is the project's own outbound declaration.
 	licRec, found, err := queries.License.GetLicenseRecord(ctx, root, licapp.PipelineVersion)
@@ -181,7 +181,7 @@ func TestLocalWalkExtract_DefaultRootStaysSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDriver: %v", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer mustClose(t, cleanup)
 
 	root := coordinatetest.MustNew("example.test/proj", coordinate.LocalVersion)
 	res, err := drv.LocalWalkExtract.Run(context.Background(), driver.LocalWalkExtractRequest{
@@ -207,5 +207,14 @@ func TestLocalWalkExtract_DefaultRootStaysSkipped(t *testing.T) {
 	}
 	if res.Walk.OverallStatus != walkdomain.WalkPartial {
 		t.Errorf("walk status = %s, want partial", res.Walk.OverallStatus)
+	}
+}
+
+// mustClose runs a store's cleanup at the end of a test and fails the test if
+// the store reports an error closing.
+func mustClose(t *testing.T, cleanup func() error) {
+	t.Helper()
+	if err := cleanup(); err != nil {
+		t.Errorf("closing the store: %v", err)
 	}
 }

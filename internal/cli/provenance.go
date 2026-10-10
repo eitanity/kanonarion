@@ -151,7 +151,7 @@ nothing to report either way.`,
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runProvenance(cmd.Context(), path, version, ctr.QueryLicense, ctr.QueryWalks, stdout)
 		},
 	}

@@ -112,7 +112,7 @@ func TestReachabilityJSON_ViaReferenceIsEmittedAtFalse(t *testing.T) {
 	if got != false {
 		t.Errorf("via_reference = %v on a path of direct calls, want false", got)
 	}
-	if calls["found"] != true || calls["hops"].(float64) != 1 {
+	if calls["found"] != true || mustAs[float64](t, calls["hops"]) != 1 {
 		t.Fatalf("the ancestry search did not measure the fixture (found=%v hops=%v); the false above would then be vacuous", calls["found"], calls["hops"])
 	}
 

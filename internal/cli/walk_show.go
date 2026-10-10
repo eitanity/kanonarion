@@ -27,7 +27,7 @@ func newWalkShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runWalkShow(cmd.Context(), args[0], ctr.QueryWalks, stdout, stderr)
 		},
 	}

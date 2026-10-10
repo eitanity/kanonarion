@@ -47,7 +47,7 @@ func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout, stderr)
 		},
 	}

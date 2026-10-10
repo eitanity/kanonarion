@@ -1,6 +1,7 @@
 package staticcha
 
 import (
+	"fmt"
 	"go/types"
 
 	"golang.org/x/tools/go/callgraph"
@@ -89,12 +90,17 @@ func chaCallees(funcs map[*ssa.Function]bool) func(site ssa.CallInstruction) []*
 			if f.Name() == "init" && f.Synthetic == "package initializer" {
 				continue
 			}
-			bySig, _ := funcsBySig.At(f.Signature).([]*ssa.Function)
-			funcsBySig.Set(f.Signature, append(bySig, f))
+			funcsBySig.Set(f.Signature, append(funcsWithSig(&funcsBySig, f.Signature), f))
 			continue
 		}
 		if obj := f.Object(); obj != nil {
-			id := obj.(*types.Func).Id()
+			// A function with a receiver is a method, and go/types gives every
+			// method a *types.Func; anything else means the SSA program is broken.
+			fn, ok := obj.(*types.Func)
+			if !ok {
+				panic(fmt.Sprintf("staticcha: method %s has object %T, not *types.Func", f, obj))
+			}
+			id := fn.Id()
 			methodsByID[id] = append(methodsByID[id], f)
 		}
 	}
@@ -114,8 +120,22 @@ func chaCallees(funcs map[*ssa.Function]bool) func(site ssa.CallInstruction) []*
 			if _, isBuiltin := call.Value.(*ssa.Builtin); isBuiltin {
 				return nil
 			}
-			fns, _ := funcsBySig.At(call.Signature()).([]*ssa.Function)
-			return fns
+			return funcsWithSig(&funcsBySig, call.Signature())
 		}
 	}
+}
+
+// funcsWithSig reads the signature index. Only this file writes it, and only
+// with []*ssa.Function, so a nil entry is an unseen signature and any other
+// type is a bug here rather than something the input program can cause.
+func funcsWithSig(m *typeutil.Map, sig types.Type) []*ssa.Function {
+	v := m.At(sig)
+	if v == nil {
+		return nil
+	}
+	fns, ok := v.([]*ssa.Function)
+	if !ok {
+		panic(fmt.Sprintf("staticcha: signature index holds %T, not []*ssa.Function", v))
+	}
+	return fns
 }

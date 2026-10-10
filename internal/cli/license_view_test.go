@@ -329,8 +329,14 @@ func TestLicenseViewRenamesKeysAndChangesNoValue(t *testing.T) {
 	}
 
 	if !reflect.DeepEqual(renamed, newDoc) {
-		gotRaw, _ := json.MarshalIndent(newDoc, "", "  ")
-		wantRaw, _ := json.MarshalIndent(renamed, "", "  ")
+		gotRaw, err := json.MarshalIndent(newDoc, "", "  ")
+		if err != nil {
+			t.Fatalf("MarshalIndent: %v", err)
+		}
+		wantRaw, err := json.MarshalIndent(renamed, "", "  ")
+		if err != nil {
+			t.Fatalf("MarshalIndent: %v", err)
+		}
 		t.Errorf("the document is not the old one with its keys renamed — a value changed somewhere:\n"+
 			"--- the old document, keys renamed ---\n%s\n--- what the command writes ---\n%s", wantRaw, gotRaw)
 	}

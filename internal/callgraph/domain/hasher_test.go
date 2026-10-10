@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -379,7 +379,7 @@ func TestHasherMarshalRoundTrip_ManyNodes(t *testing.T) {
 }
 
 func TestCanonicalEdgeTieBreaking(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		SchemaVersion: domain2.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
@@ -400,7 +400,7 @@ func TestCanonicalEdgeTieBreaking(t *testing.T) {
 }
 
 func TestCanonicalEdgeSameFromDifferentTo(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		SchemaVersion: domain2.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
@@ -436,7 +436,7 @@ func canonicalEdgesOf(t *testing.T, r domain2.CallGraphRecord) []domain2.CallEdg
 // only in FromID, ToID, File, and Line respectively.
 func TestMarshalCanonical_AllEdgeSortBranches(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		SchemaVersion:   domain2.CallGraphSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,
@@ -500,7 +500,10 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
 	r := makeTestRecord()
 	r.Ecosystem = "npm"
-	hashed, _ := h.SetContentHash(r)
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	blob, err := h.Marshal(hashed)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

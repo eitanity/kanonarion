@@ -698,7 +698,10 @@ func copyToModCache(
 	info.Origin.Hash = record.GitCommitHash
 	info.Origin.Ref = record.GitRef
 
-	infoData, _ := json.Marshal(info)
+	infoData, encErr := json.Marshal(info)
+	if encErr != nil {
+		return useLanding{}, fmt.Errorf("encoding info for %s: %w", coord, encErr)
+	}
 	if _, err := root.Stat(filepath.Join(relDir, coord.Version()+".info")); err != nil {
 		if err := root.WriteFile(filepath.Join(relDir, coord.Version()+".info"), infoData, 0o600); err != nil {
 			return useLanding{}, fmt.Errorf("writing info: %w", err)

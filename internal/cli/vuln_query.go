@@ -76,7 +76,7 @@ marks them superseded.`,
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runVulnShow(cmd.Context(), args[0], walkID, gomod, target, cmd.Flags().Changed("gomod"), jsonOut, history,
 				ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout, stderr)
 		},
@@ -152,7 +152,10 @@ func runVulnShow(
 		if frames := consumerFrames(recs, coord); len(frames) > 1 {
 			return ambiguousFrameRefusal("kanonarion vuln-show "+coord.String(), coord, frames)
 		}
-		r, isoAside, has, ok := selectConsumerRecord(recs, coord)
+		r, isoAside, has, ok, cerr := selectConsumerRecord(recs, coord)
+		if cerr != nil {
+			return vulnShowReadRefusal(coord, cerr)
+		}
 		if !ok && len(aside) > 0 {
 			return aside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan <walk-id>")
 		}
@@ -676,7 +679,7 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
 		},
 	}

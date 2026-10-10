@@ -76,7 +76,7 @@ func TestQueryCommands_LogsGoToStderrNotStdout(t *testing.T) {
 			// The query itself is expected to fail — the store is empty. The
 			// invariant under test is where the log line went, not whether the
 			// record was found.
-			_ = Run(args, &stdout, &stderr)
+			_ = Run(args, &stdout, &stderr) //nolint:errcheck // expected to fail on the empty store; see above
 
 			// Checked before the vacuity guard below, so a line that went to
 			// the wrong writer is reported as the defect it is rather than as

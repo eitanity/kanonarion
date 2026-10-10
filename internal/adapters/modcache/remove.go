@@ -27,7 +27,7 @@ func Remove(dir string) error {
 	// children; a regular file needs write to be removed on stricter
 	// filesystems. Walk errors are ignored here — os.RemoveAll below surfaces
 	// the real failure if anything is still unremovable.
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, _ error) error {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, _ error) error { //nolint:errcheck // the callback only returns nil
 		// Best-effort: skip entries WalkDir could not stat (d == nil); the final
 		// os.RemoveAll surfaces anything still unremovable.
 		if d == nil {
@@ -46,7 +46,7 @@ func Remove(dir string) error {
 		}
 		// #nosec G122 -- dir is a process-private os.MkdirTemp tree we created and
 		// own; symlinks are skipped above, so there is no untrusted-path traversal.
-		_ = os.Chmod(path, mode)
+		_ = os.Chmod(path, mode) //nolint:errcheck // best-effort; RemoveAll reports what stays
 		return nil
 	})
 

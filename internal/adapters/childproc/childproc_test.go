@@ -101,14 +101,14 @@ func TestCancellationKillsGrandchildren(t *testing.T) {
 	}
 
 	cancel()
-	_ = cmd.Wait()
+	_ = cmd.Wait() //nolint:errcheck // a cancelled child exits with an error by design
 
 	if !waitGone(t, cmd.Process.Pid, 5*time.Second) {
 		t.Errorf("child %d survived cancellation", cmd.Process.Pid)
 	}
 	if !waitGone(t, grandchild, 5*time.Second) {
 		// Kill it so a failing test does not leave a 60s sleeper behind.
-		_ = syscall.Kill(grandchild, syscall.SIGKILL)
+		_ = syscall.Kill(grandchild, syscall.SIGKILL) //nolint:errcheck // best-effort cleanup on a failing test
 		t.Errorf("grandchild %d survived cancellation of its parent's group", grandchild)
 	}
 }
@@ -120,7 +120,7 @@ func TestChildLeadsItsOwnProcessGroup(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	defer func() { _ = killGroup(cmd); _ = cmd.Wait() }()
+	defer func() { _ = killGroup(cmd); _ = cmd.Wait() }() //nolint:errcheck // teardown of a child the test killed
 
 	pgid, err := syscall.Getpgid(cmd.Process.Pid)
 	if err != nil {
@@ -181,7 +181,7 @@ func TestRunSetsWaitDelay(t *testing.T) {
 	elapsed := time.Since(start)
 
 	grandchild := readPIDFile(t, pidFile)
-	defer func() { _ = syscall.Kill(grandchild, syscall.SIGKILL) }()
+	defer func() { _ = syscall.Kill(grandchild, syscall.SIGKILL) }() //nolint:errcheck // reaping a child that may already be gone
 
 	if elapsed > WaitDelay+5*time.Second {
 		t.Errorf("Run blocked for %v on an inherited pipe; WaitDelay is %v", elapsed, WaitDelay)

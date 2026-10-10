@@ -52,7 +52,7 @@ func primeInvocation(t *testing.T, args ...string) string {
 	var stdout, stderr bytes.Buffer
 	root := newRootCmd(&stdout, &stderr)
 	root.SetArgs(args)
-	_ = root.Execute()
+	_ = root.Execute() //nolint:errcheck // the subject is what the run writes to stderr
 	return stderr.String()
 }
 

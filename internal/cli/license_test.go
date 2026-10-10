@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 
@@ -151,7 +152,7 @@ func TestPrintLicenseRecursive_AllSameLicense(t *testing.T) {
 		{ID: "WALK001", Target: coord, StartedAt: time.Now(), OverallStatus: walkdomain.WalkSucceeded},
 	})
 
-	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	dep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
 	queryUC := testfakes.NewFakeQueryLicense()
 	queryUC.AddRecord(coord, licapp.PipelineVersion, domain.LicenseRecord{
 		Coordinate:    coord,
@@ -180,7 +181,7 @@ func TestPrintLicenseRecursive_DifferentLicenses(t *testing.T) {
 		{ID: "WALK001", Target: coord, StartedAt: time.Now(), OverallStatus: walkdomain.WalkSucceeded},
 	})
 
-	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	dep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
 	queryUC := testfakes.NewFakeQueryLicense()
 	queryUC.AddRecord(coord, licapp.PipelineVersion, domain.LicenseRecord{
 		Coordinate: coord, OverallStatus: domain.LicenseStatusDetected, PrimarySPDX: "MIT",
@@ -207,7 +208,7 @@ func TestPrintLicenseRecursive_AllFlag(t *testing.T) {
 		{ID: "WALK001", Target: coord, StartedAt: time.Now(), OverallStatus: walkdomain.WalkSucceeded},
 	})
 
-	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	dep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
 	queryUC := testfakes.NewFakeQueryLicense()
 	queryUC.SetResolveResult([]licapp.DepLicenseResult{
 		{Coordinate: dep, PrimarySPDX: "MIT"},
@@ -231,7 +232,7 @@ func TestPrintLicenseRecursive_AllFlagWithError(t *testing.T) {
 		{ID: "WALK001", Target: coord, StartedAt: time.Now(), OverallStatus: walkdomain.WalkSucceeded},
 	})
 
-	dep, _ := coordinate.NewModuleCoordinate("example.com/failing", "v1.0.0")
+	dep := coordinatetest.MustNew("example.com/failing", "v1.0.0")
 	queryUC := testfakes.NewFakeQueryLicense()
 	queryUC.SetResolveResult([]licapp.DepLicenseResult{
 		{Coordinate: dep, Err: errTest},

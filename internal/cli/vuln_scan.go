@@ -537,8 +537,10 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 		goDir := filepath.Dir(goBinary)
 		binDir, err := os.MkdirTemp("", "kanonarion-bin-*")
 		if err == nil {
-			goSymlink := filepath.Join(binDir, "go")
-			_ = os.Symlink(goBinary, goSymlink)
+			if lerr := linkGoBinary(binDir, goBinary); lerr != nil {
+				_ = os.RemoveAll(binDir)
+				return vulnScanRunFacts{}, lerr
+			}
 			goDir = binDir
 			defer func() { _ = os.RemoveAll(binDir) }()
 		}
@@ -1290,6 +1292,16 @@ func applyRescanVCSHosts(ctx context.Context, rescan RescanWalkUseCase, policyPa
 	return nil
 }
 
+// linkGoBinary links --go-binary into binDir as "go". Without the link the PATH
+// lookup falls through to the next go on PATH, and the scan runs under a
+// toolchain the operator did not name.
+func linkGoBinary(binDir, goBinary string) error {
+	if err := os.Symlink(goBinary, filepath.Join(binDir, "go")); err != nil {
+		return fmt.Errorf("linking --go-binary %s into %s: %w", goBinary, binDir, err)
+	}
+	return nil
+}
+
 func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
@@ -1297,8 +1309,10 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 		goDir := filepath.Dir(f.goBinary)
 		binDir, err := os.MkdirTemp("", "kanonarion-bin-*")
 		if err == nil {
-			goSymlink := filepath.Join(binDir, "go")
-			_ = os.Symlink(f.goBinary, goSymlink)
+			if lerr := linkGoBinary(binDir, f.goBinary); lerr != nil {
+				_ = os.RemoveAll(binDir)
+				return lerr
+			}
 			goDir = binDir
 			defer func() { _ = os.RemoveAll(binDir) }()
 		}

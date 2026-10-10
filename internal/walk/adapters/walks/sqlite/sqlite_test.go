@@ -239,7 +239,10 @@ func TestListWalks_Limit(t *testing.T) {
 		rec.StartedAt = time.Date(2025, 1, 15+i, 12, 0, 0, 0, time.UTC)
 		rec.CompletedAt = rec.StartedAt.Add(200 * time.Millisecond)
 		var h domain.WalkRecordHasher
-		rec, _ = h.SetContentHash(rec)
+		rec, serr := h.SetContentHash(rec)
+		if serr != nil {
+			t.Fatalf("SetContentHash: %v", serr)
+		}
 		if err := s.PutWalk(ctx, rec); err != nil {
 			t.Fatalf("PutWalk %s: %v", id, err)
 		}
@@ -265,7 +268,10 @@ func TestListWalks_Offset(t *testing.T) {
 		rec := buildWalkRecord(id)
 		rec.StartedAt = time.Date(2025, 1, 15+i, 12, 0, 0, 0, time.UTC)
 		var h domain.WalkRecordHasher
-		rec, _ = h.SetContentHash(rec)
+		rec, serr := h.SetContentHash(rec)
+		if serr != nil {
+			t.Fatalf("SetContentHash: %v", serr)
+		}
 		if err := s.PutWalk(ctx, rec); err != nil {
 			t.Fatal(err)
 		}
@@ -292,7 +298,10 @@ func TestGetWalk_IntegrityError(t *testing.T) {
 	db := s.InternalDB().DB()
 	rec.ContentHash = "sha256:invalid"
 	var h domain.WalkRecordHasher
-	blob, _ := h.Marshal(rec)
+	blob, merr := h.Marshal(rec)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if _, err := db.Exec("UPDATE walks SET serialised = ?", blob); err != nil {
 		t.Fatalf("failed to tamper with db: %v", err)
 	}

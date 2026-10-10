@@ -158,7 +158,7 @@ func runFIPS(ctx context.Context, gomodFlag string, stdout, stderr io.Writer) er
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return fipsWith(ctx, ctr, gomodPath, stdout)
 }

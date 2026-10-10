@@ -100,12 +100,12 @@ func TestTransitiveJSON_MaxDepthIsEmittedAtZero(t *testing.T) {
 	if !present {
 		t.Fatal("max_depth is absent on an unbounded traversal; unbounded is the answer, and a reader cannot tell it from a report that does not state depth")
 	}
-	if got.(float64) != 0 {
+	if mustAs[float64](t, got) != 0 {
 		t.Errorf("max_depth = %v on an unbounded traversal, want 0", got)
 	}
 
 	// Non-zero control: the bound the caller asked for is carried through.
-	if got := render(3)["max_depth"]; got.(float64) != 3 {
+	if got := render(3)["max_depth"]; mustAs[float64](t, got) != 3 {
 		t.Errorf("max_depth = %v under --depth 3, want 3", got)
 	}
 }
@@ -146,14 +146,14 @@ func TestWalkSelectionJSON_CandidatesIsNullWhenNothingWasEnumerated(t *testing.T
 	// Non-zero control: a choice made among candidates carries the count it was
 	// made from, through the same renderer.
 	chosen := keys(walkChoice{rule: walkChosenRecencyNoMatch, candidates: 5}.selection())
-	if got := chosen["candidates"]; got == nil || got.(float64) != 5 {
+	if got := chosen["candidates"]; got == nil || mustAs[float64](t, got) != 5 {
 		t.Errorf("candidates = %v for a choice among five walks, want 5", got)
 	}
 
 	// The count of one is the case omitempty could not erase but the reader
 	// still needs: a sole walk was enumerated, and one was found.
 	sole := keys(walkChoice{rule: walkChosenSole, candidates: 1}.selection())
-	if got := sole["candidates"]; got == nil || got.(float64) != 1 {
+	if got := sole["candidates"]; got == nil || mustAs[float64](t, got) != 1 {
 		t.Errorf("candidates = %v for a sole walk, want 1", got)
 	}
 }
@@ -197,15 +197,15 @@ func TestInterfaceDiffJSON_CallerLineIsAbsentOnlyWhenNoPositionWasRecorded(t *te
 	if uerr := json.Unmarshal(data, &decoded); uerr != nil {
 		t.Fatalf("unmarshalling used symbols: %v", uerr)
 	}
-	rows, _ := decoded[0]["callers"].([]any)
+	rows := optAs[[]any](t, decoded[0]["callers"])
 	if len(rows) != 2 {
 		t.Fatalf("callers = %v, want 2", decoded[0]["callers"])
 	}
 
 	// Non-zero control: the caller whose declaration the analysis did locate
 	// carries the line it was declared at.
-	located := rows[0].(map[string]any)
-	if got := located["line"]; got == nil || got.(float64) != 42 {
+	located := mustAs[map[string]any](t, rows[0])
+	if got := located["line"]; got == nil || mustAs[float64](t, got) != 42 {
 		t.Errorf("line = %v for a caller with a recorded position, want 42", got)
 	}
 	if located["file"] != "main.go" {
@@ -214,7 +214,7 @@ func TestInterfaceDiffJSON_CallerLineIsAbsentOnlyWhenNoPositionWasRecorded(t *te
 
 	// The absent case, and why it is honest: no line AND no file. The two
 	// vanish together because they are one fact, and neither says "line 0".
-	unlocated := rows[1].(map[string]any)
+	unlocated := mustAs[map[string]any](t, rows[1])
 	if _, present := unlocated["line"]; present {
 		t.Errorf("line is present (%v) for a caller with no recorded position; the exemption in the guard assumes it is absent here", unlocated["line"])
 	}

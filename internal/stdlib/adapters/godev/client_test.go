@@ -14,9 +14,9 @@ func TestClient_FetchReleasesAndDownload(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/dl/":
-			_, _ = w.Write([]byte(manifest))
+			_, _ = w.Write([]byte(manifest)) //nolint:errcheck // a failed write is seen by the client under test
 		case "/dl/go1.26.4.src.tar.gz":
-			_, _ = w.Write([]byte("tarball-bytes"))
+			_, _ = w.Write([]byte("tarball-bytes")) //nolint:errcheck // a failed write is seen by the client under test
 		default:
 			http.NotFound(w, r)
 		}
@@ -62,7 +62,7 @@ func TestClient_Non200IsError(t *testing.T) {
 
 func TestClient_BadJSONIsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("{not json"))
+		_, _ = w.Write([]byte("{not json")) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 	defer srv.Close()
 

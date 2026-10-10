@@ -195,7 +195,7 @@ func TestFetchStaleness_SurvivesATransientEmptyProxyAnswer(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_, _ = io.WriteString(w, `{"Version":"v1.3.0","Time":"2025-06-01T00:00:00Z"}`)
+		_, _ = io.WriteString(w, `{"Version":"v1.3.0","Time":"2025-06-01T00:00:00Z"}`) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 	defer srv.Close()
 

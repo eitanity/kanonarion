@@ -687,3 +687,16 @@ func TestSelectRootsProductionScopeExcludesTestNodes(t *testing.T) {
 		t.Errorf("SelectRoots with tests = %v, want %v", got, want)
 	}
 }
+
+// TestWidestQueueRefusesAForeignItem pins the miss handling of the queue's
+// type assertion: a value that is not a widestItem stops the analysis loudly
+// instead of being pushed as a zero item that would settle a node at rank 0.
+func TestWidestQueueRefusesAForeignItem(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Push accepted a value that is not a widestItem")
+		}
+	}()
+	q := &widestQueue{}
+	q.Push("not an item")
+}

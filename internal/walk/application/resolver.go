@@ -750,7 +750,9 @@ func (r *GraphResolver) fetchLevel(ctx context.Context, coords []fetchCoord, wor
 			return nil
 		})
 	}
-	_ = g.Wait()
+	// Every worker returns nil, so Wait has nothing to report: a failure travels
+	// in its result, and a cancelled fetch carries the context's error there.
+	_ = g.Wait() //nolint:errcheck // workers return nil
 	return results
 }
 
@@ -1214,9 +1216,9 @@ func (r *GraphResolver) fetchParseLevel(ctx context.Context, items []bfsItem, wo
 			return nil
 		})
 	}
-	// Workers never return an error; Wait only surfaces context cancellation,
-	// which is already reflected in each cancelled outcome's fetchErr.
-	_ = g.Wait()
+	// Every worker returns nil, so Wait has nothing to report: a failure travels
+	// in its outcome, and a cancelled fetch carries the context's error there.
+	_ = g.Wait() //nolint:errcheck // workers return nil
 	return outcomes
 }
 

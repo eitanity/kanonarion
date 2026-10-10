@@ -439,7 +439,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// Which lookup answers the staleness column, and why, is decided in one
 	// place so the offline and online wirings cannot drift apart.

@@ -462,7 +462,7 @@ func TestCallGraphShowDiff_TwoMeasurementsAreUnchanged(t *testing.T) {
 			}
 			doc := diffJSON(t, uc, coord, "", "")
 			for _, side := range []string{"left", "right"} {
-				if _, ok := doc[side].(map[string]any)["selected_by"]; ok {
+				if _, ok := mustAs[map[string]any](t, doc[side])["selected_by"]; ok {
 					t.Errorf("%s carries a selection basis where the ladder offered one pair: %v", side, doc[side])
 				}
 			}
@@ -486,7 +486,7 @@ func TestCallGraphShowDiff_JSONStatesWhyThePairWasChosen(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := diffJSON(t, uc, coord, tc.from, tc.to)
 			for side, want := range map[string]string{"left": tc.wantLeft, "right": tc.wantRight} {
-				got, _ := doc[side].(map[string]any)["selected_by"].(string)
+				got := optAs[string](t, mustAs[map[string]any](t, doc[side])["selected_by"])
 				if got != want {
 					t.Errorf("%s.selected_by = %q, want %q", side, got, want)
 				}

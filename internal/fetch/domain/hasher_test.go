@@ -47,8 +47,14 @@ func TestCanonicalHasher_SetAndVerify(t *testing.T) {
 
 func TestCanonicalHasher_Deterministic(t *testing.T) {
 	h := domain2.CanonicalHasher{}
-	r1, _ := h.SetContentHash(sampleRecord())
-	r2, _ := h.SetContentHash(sampleRecord())
+	r1, err := h.SetContentHash(sampleRecord())
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	r2, err := h.SetContentHash(sampleRecord())
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	if r1.ContentHash != r2.ContentHash {
 		t.Errorf("non-deterministic: %q vs %q", r1.ContentHash, r2.ContentHash)
 	}
@@ -56,7 +62,10 @@ func TestCanonicalHasher_Deterministic(t *testing.T) {
 
 func TestCanonicalHasher_TamperDetection(t *testing.T) {
 	h := domain2.CanonicalHasher{}
-	r, _ := h.SetContentHash(sampleRecord())
+	r, err := h.SetContentHash(sampleRecord())
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	r.ModuleHash = "h1:tampered=="
 	if err := h.VerifyContentHash(r); err == nil {
 		t.Error("expected tamper detection, got nil error")
@@ -66,7 +75,10 @@ func TestCanonicalHasher_TamperDetection(t *testing.T) {
 func TestCanonicalHasher_MarshalUnmarshal(t *testing.T) {
 	h := domain2.CanonicalHasher{}
 	r := sampleRecord()
-	r, _ = h.SetContentHash(r)
+	r, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 
 	data, err := h.Marshal(r)
 	if err != nil {
@@ -94,7 +106,10 @@ func TestCanonicalHasher_MarshalUnmarshal(t *testing.T) {
 
 func TestCanonicalHasher_EcosystemPresentAfterRoundTrip(t *testing.T) {
 	h := domain2.CanonicalHasher{}
-	r, _ := h.SetContentHash(sampleRecord())
+	r, err := h.SetContentHash(sampleRecord())
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 
 	data, err := h.Marshal(r)
 	if err != nil {
@@ -115,7 +130,10 @@ func TestCanonicalHasher_EcosystemPresentAfterRoundTrip(t *testing.T) {
 
 func TestCanonicalHasher_RejectsForeignEcosystem(t *testing.T) {
 	h := domain2.CanonicalHasher{}
-	r, _ := h.SetContentHash(sampleRecord())
+	r, err := h.SetContentHash(sampleRecord())
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	r.Ecosystem = "npm"
 	data, err := h.Marshal(r)
 	if err != nil {

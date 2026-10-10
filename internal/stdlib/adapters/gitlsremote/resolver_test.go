@@ -68,7 +68,7 @@ func TestResolveCommit_EnclosingRepoConfigDoesNotRewriteURL(t *testing.T) {
 
 	// Expected to fail: the host does not resolve, so the test performs no real
 	// network egress. Where it failed to reach is the assertion.
-	_, _ = gitlsremote.New().ResolveCommit(context.Background(),
+	_, _ = gitlsremote.New().ResolveCommit(context.Background(), //nolint:errcheck // expected to fail; the assertion is where it connected
 		"https://kanonarion-test.invalid/go", "go1.24.0")
 
 	if got := connections.Load(); got != 0 {
@@ -107,7 +107,7 @@ func TestResolveCommit_PoisonedHomeConfigDoesNotRewriteURL(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	_, _ = gitlsremote.New().ResolveCommit(context.Background(),
+	_, _ = gitlsremote.New().ResolveCommit(context.Background(), //nolint:errcheck // expected to fail; the assertion is where it connected
 		"https://kanonarion-test.invalid/go", "go1.24.0")
 
 	if got := connections.Load(); got != 0 {

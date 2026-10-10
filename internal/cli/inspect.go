@@ -174,7 +174,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// Step 1: walk
 	if _, err := fmt.Fprintf(stderr, "==> inspect: walking %s\n", arg); err != nil {
@@ -647,7 +647,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	modulePath, err := readGoModulePath(f.gomodPath)
 	if err != nil {
@@ -800,7 +800,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	// Write errors on this tail are ignored exactly as the lines above ignore
 	// them: the summary is the last thing printed, and a stdout that has stopped
 	// accepting bytes is not something the exit code can usefully re-report.
-	_ = writeNativeCoverageSummary(stdout, native)
+	_ = writeNativeCoverageSummary(stdout, native) //nolint:errcheck // see above
 	if walkID != "" {
 		_, _ = fmt.Fprintf(stdout, "Walk ID:  %s\n", walkID)
 		_, _ = fmt.Fprintf(stdout, "Frame:    %s\n", projectWalk.BuildFrame())

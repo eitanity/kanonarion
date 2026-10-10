@@ -48,10 +48,10 @@ func TestChildDiesWhenParentIsKilled(t *testing.T) {
 	}
 
 	child := readPIDFile(t, pidFile)
-	defer func() { _ = syscall.Kill(child, syscall.SIGKILL) }()
+	defer func() { _ = syscall.Kill(child, syscall.SIGKILL) }() //nolint:errcheck // reaping a child that may already be gone
 
 	// The helper SIGKILLs itself once the pid is published.
-	_ = helper.Wait()
+	_ = helper.Wait() //nolint:errcheck // the helper kills itself; its exit is the expected error
 	if !waitGone(t, helper.Process.Pid, 5*time.Second) {
 		t.Fatalf("helper parent %d did not die", helper.Process.Pid)
 	}
@@ -77,6 +77,7 @@ func runSuicidalParent(t *testing.T) {
 		t.Fatalf("helper: write pid file: %v", err)
 	}
 
-	_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+	_ = syscall.Kill(os.Getpid(), syscall.SIGKILL) //nolint:errcheck // nothing runs after a successful kill
+
 	select {} // unreachable; the signal is not catchable
 }

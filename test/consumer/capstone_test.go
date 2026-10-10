@@ -169,7 +169,10 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	got, _ := io.ReadAll(rc)
+	got, rerr := io.ReadAll(rc)
+	if rerr != nil {
+		t.Fatalf("ReadAll: %v", rerr)
+	}
 	_ = rc.Close()
 	if string(got) != "module-zip-bytes" {
 		t.Errorf("Get returned %q, want the stored bytes", got)
@@ -294,7 +297,11 @@ func TestConsumer_LocalWalkExtractAndDeltaBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	dir := writeLocalModule(t)
 	res, err := driver.LocalWalkExtract.Run(ctx, kanonarion.LocalWalkExtractRequest{Dir: dir})
@@ -363,7 +370,11 @@ func TestConsumer_ValidateIngestFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	// A forged record — well-formed shape, but a content hash the consumer cannot
 	// legitimately produce — is refused fail-closed, surfacing ErrVerificationFailed.
@@ -407,7 +418,11 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	if producer.FetchServe == nil {
 		t.Fatal("OpenDriver left the verified fetch/serve driver unwired")
@@ -455,7 +470,11 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver (consumer): %v", err)
 	}
-	t.Cleanup(func() { _ = cleanupC() })
+	t.Cleanup(func() {
+		if cerr := cleanupC(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	if err := consumer.ValidateIngest.Ingest(ctx, rec.FactRecord); err != nil {
 		t.Fatalf("Ingest of a valid fetched record: %v", err)

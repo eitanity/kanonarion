@@ -65,7 +65,7 @@ func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, 
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	if f.history {
 		return runInterfaceHistory(ctx, coord, ctr.QueryInterface, stdout)
@@ -259,7 +259,7 @@ func runInterfaceShow(ctx context.Context, moduleArg, pkgFilter, symbolFilter st
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	r, found, err := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion)
 	if err != nil {
@@ -375,7 +375,7 @@ func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScope
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	sc, err := scopeFlags.resolve(ctx, ctr.QueryWalks)
 	if err != nil {
@@ -553,7 +553,7 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	r, found, err := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion)
 	if err != nil {
@@ -603,7 +603,7 @@ func runInterfaceList(ctx context.Context, limit, offset int, allGenerations boo
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return interfaceListWith(ctx, limit, offset, allGenerations, ctr.QueryInterface, stdout, stderr)
 }

@@ -30,7 +30,7 @@ func newWalkDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runWalkDiff(cmd.Context(), args[0], args[1], ctr.DiffWalks, ctr.QueryWalks, stdout, stderr)
 		},
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
+	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -134,7 +135,7 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	sc, err := f.scope.resolve(ctx, ctr.QueryWalks)
 	if err != nil {
@@ -212,10 +213,11 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 		return conflictErr
 	}
 
-	entries, err := buildSymbolContextEntries(ctx, ctr, refs, ifaceapp.PipelineVersion)
+	entries, carried, err := buildSymbolContextEntries(ctx, ctr, refs, ifaceapp.PipelineVersion)
 	if err != nil {
 		return err
 	}
+	conflictErr = errors.Join(conflictErr, carried)
 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
@@ -281,7 +283,10 @@ func sortSymbolRefs(refs []ifaceports.SymbolRef) {
 // buildSymbolContextEntries assembles one entry per SymbolRef, loading
 // InterfaceRecords once per module for godoc and fetching scoped examples.
 // Refs are sorted for deterministic output before grouping.
-func buildSymbolContextEntries(ctx context.Context, ctr *Container, refs []ifaceports.SymbolRef, pipelineVersion string) ([]symbolContextEntry, error) {
+//
+// A conflict in either read is returned as carried, beside the entries, so the
+// caller renders them and fails afterwards; any other read failure is err.
+func buildSymbolContextEntries(ctx context.Context, ctr *Container, refs []ifaceports.SymbolRef, pipelineVersion string) (entries []symbolContextEntry, carried, err error) {
 	sortSymbolRefs(refs)
 
 	type moduleKey struct{ path, version string }
@@ -296,15 +301,23 @@ func buildSymbolContextEntries(ctx context.Context, ctr *Container, refs []iface
 		byModule[k] = append(byModule[k], ref)
 	}
 
-	entries := make([]symbolContextEntry, 0, len(refs))
+	var conflicts []error
+	entries = make([]symbolContextEntry, 0, len(refs))
 	for _, mk := range order {
 		coord, cErr := coordinate.NewModuleCoordinate(mk.path, mk.version)
 		if cErr != nil {
-			return nil, fmt.Errorf("symbol reference %s@%s names no module: %w", mk.path, mk.version, cErr)
+			return nil, nil, fmt.Errorf("symbol reference %s@%s names no module: %w", mk.path, mk.version, cErr)
 		}
 
-		// Best-effort: missing interface record means empty doc.
-		ifaceRec, _, _ := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, pipelineVersion)
+		// A missing interface record means an empty doc. A record the store
+		// cannot verify or compose is not missing, so it is not shown as one.
+		ifaceRec, _, ierr := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, pipelineVersion)
+		switch {
+		case errors.Is(ierr, ifaceports.ErrInterfaceConflict):
+			conflicts = append(conflicts, ierr)
+		case ierr != nil:
+			return nil, nil, fmt.Errorf("reading the godoc for %s: %w", coord, ierr)
+		}
 
 		for _, ref := range byModule[mk] {
 			qualName := ref.PackagePath + "." + ref.SymbolName
@@ -314,7 +327,13 @@ func buildSymbolContextEntries(ctx context.Context, ctr *Container, refs []iface
 
 			doc := symbolDoc(ifaceRec, ref)
 
-			exRefs, _ := ctr.QueryExamples.FindBySymbolInModule(ctx, coord, ref.SymbolName, exapp.PipelineVersion)
+			exRefs, eerr := ctr.QueryExamples.FindBySymbolInModule(ctx, coord, ref.SymbolName, exapp.PipelineVersion)
+			switch {
+			case errors.Is(eerr, exampleports.ErrExampleConflict):
+				conflicts = append(conflicts, eerr)
+			case eerr != nil:
+				return nil, nil, fmt.Errorf("reading the examples for %s: %w", qualName, eerr)
+			}
 			examples := make([]symbolContextExample, 0, len(exRefs))
 			for _, er := range exRefs {
 				examples = append(examples, symbolContextExample{
@@ -336,7 +355,7 @@ func buildSymbolContextEntries(ctx context.Context, ctr *Container, refs []iface
 			})
 		}
 	}
-	return entries, nil
+	return entries, errors.Join(conflicts...), nil
 }
 
 // symbolDoc looks up the doc comment for ref inside the full interface record.

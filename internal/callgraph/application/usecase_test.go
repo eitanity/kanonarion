@@ -15,13 +15,14 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
 var (
-	testCoord, _  = coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	testCoord     = coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	testPipelineV = "0.1.0"
 	testFetchPipV = "0.1.0"
 	testTime      = time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -84,8 +85,10 @@ func TestExecute_CacheHit(t *testing.T) {
 		PipelineVersion: testPipelineV,
 		ExtractedAt:     testTime,
 	}
-	cached, _ = h.SetContentHash(cached)
-	store.PutCallGraphRecord(context.Background(), cached) //nolint:errcheck,gosec
+	cached = mustSeal(t, h, cached)
+	if err := store.PutCallGraphRecord(context.Background(), cached); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
 
 	uc := buildUseCase(facts, blobs, store, analyser)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: testCoord})
@@ -204,8 +207,10 @@ func TestExecute_Force(t *testing.T) {
 		PipelineVersion: testPipelineV,
 		ExtractedAt:     testTime,
 	}
-	cached, _ = h.SetContentHash(cached)
-	store.PutCallGraphRecord(context.Background(), cached) //nolint:errcheck,gosec
+	cached = mustSeal(t, h, cached)
+	if err := store.PutCallGraphRecord(context.Background(), cached); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
 
 	analyser := &fakeAnalyser{
 		record: domain2.CallGraphRecord{
@@ -478,8 +483,8 @@ func TestExecute_ExcludedByConfig(t *testing.T) {
 	if r.ContentHash == "" {
 		t.Error("excluded record must have a content hash")
 	}
-	if _, ok, _ := store.GetCallGraphRecord(context.Background(), testCoord, testPipelineV); !ok {
-		t.Error("excluded record was not persisted")
+	if _, ok, rerr := store.GetCallGraphRecord(context.Background(), testCoord, testPipelineV); rerr != nil || !ok {
+		t.Errorf("excluded record was not persisted (read error: %v)", rerr)
 	}
 }
 
@@ -596,3 +601,13 @@ func TestExecute_MaterialisesBlobWhenNoPathOptimizer(t *testing.T) {
 // Compile-time check: pathlessBlobStore is a BlobStore but deliberately not a
 // BlobPathOptimizer.
 var _ fetchports.BlobStore = (*pathlessBlobStore)(nil)
+
+// mustSeal seals r, failing the test if the hasher refuses it.
+func mustSeal(t *testing.T, h domain2.CallGraphRecordHasher, r domain2.CallGraphRecord) domain2.CallGraphRecord {
+	t.Helper()
+	sealed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	return sealed
+}

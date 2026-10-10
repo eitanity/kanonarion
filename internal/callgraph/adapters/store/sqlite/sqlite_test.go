@@ -10,12 +10,13 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 var (
-	testCoord, _ = coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
-	testTime     = time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	testCoord = coordinatetest.MustNew("example.com/mod", "v1.0.0")
+	testTime  = time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 )
 
 func openTestStore(t *testing.T) *sqlite.Store {
@@ -180,7 +181,7 @@ func TestListCallGraphRecords(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	coord2, _ := coordinate.NewModuleCoordinate("example.com/other", "v2.0.0")
+	coord2 := coordinatetest.MustNew("example.com/other", "v2.0.0")
 	r1 := makeRecord(testCoord, "0.1.0")
 	r2 := makeRecord(coord2, "0.1.0")
 
@@ -274,7 +275,7 @@ func TestListCallGraphRecords_LimitOffset(t *testing.T) {
 
 	coords := []coordinate.ModuleCoordinate{}
 	for _, path := range []string{"example.com/a", "example.com/b", "example.com/c"} {
-		c, _ := coordinate.NewModuleCoordinate(path, "v1.0.0")
+		c := coordinatetest.MustNew(path, "v1.0.0")
 		coords = append(coords, c)
 	}
 	for _, c := range coords {
@@ -335,7 +336,10 @@ func TestGetCallGraphRecord_IntegrityError(t *testing.T) {
 	db := s.InternalDB().DB()
 	rec.ContentHash = "sha256:invalid"
 	var h domain2.CallGraphRecordHasher
-	blob, _ := h.Marshal(rec)
+	blob, merr := h.Marshal(rec)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if _, err := db.Exec("UPDATE callgraph_records SET serialised = ?", blob); err != nil {
 		t.Fatalf("failed to tamper with db: %v", err)
 	}

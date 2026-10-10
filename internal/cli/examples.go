@@ -76,7 +76,7 @@ func runExamplesExtract(ctx context.Context, arg string, f exampleFlags, stdout,
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	if f.history {
 		return runExamplesHistory(ctx, coord, ctr.QueryExamples, stdout)
@@ -247,7 +247,7 @@ func newExamplesShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runExamplesShow(cmd.Context(), args[0], args[1], jsonOut, ctr.QueryExamples, stdout, stderr)
 		},
 	}
@@ -335,7 +335,7 @@ func newExamplesFindCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			sc, serr := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if serr != nil {
 				return serr
@@ -507,7 +507,7 @@ query, so listing it beside the others would pad the count of what is known.
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			if len(args) == 1 {
 				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout, stderr)
 			}

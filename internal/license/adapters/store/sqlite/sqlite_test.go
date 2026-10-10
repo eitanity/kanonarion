@@ -207,7 +207,10 @@ func TestGetLicenseRecord_IntegrityError(t *testing.T) {
 	db := s.InternalDB().DB()
 	r.ContentHash = "sha256:invalid"
 	var h domain2.LicenseRecordHasher
-	blob, _ := h.Marshal(r)
+	blob, merr := h.Marshal(r)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if _, err := db.Exec("UPDATE licence_records SET serialised = ?", blob); err != nil {
 		t.Fatalf("failed to tamper with db: %v", err)
 	}

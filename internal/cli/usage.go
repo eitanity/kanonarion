@@ -171,7 +171,7 @@ func runUsage(ctx context.Context, arg string, f buildScopeFlags, stdout, stderr
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return usageWith(ctx, ctr, coord, f, stdout, stderr)
 }

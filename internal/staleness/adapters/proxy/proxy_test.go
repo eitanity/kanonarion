@@ -62,7 +62,7 @@ func TestLatestInfo_ResolvesAVersion(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"Version": "v7.2.1", "Time": "2026-01-19T08:00:00Z"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"Version": "v7.2.1", "Time": "2026-01-19T08:00:00Z"}) //nolint:errcheck // a failed write is seen by the client under test
 	})
 	got, err := b.LatestInfo(context.Background(), "example.com/mod/v7")
 	if err != nil {
@@ -97,7 +97,7 @@ func TestLatestInfo_ProbeOutcomesAreThreeWay(t *testing.T) {
 		{
 			name: "a resolving path is an answer",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
-				_ = json.NewEncoder(w).Encode(map[string]any{"Version": "v2.1.30"})
+				_ = json.NewEncoder(w).Encode(map[string]any{"Version": "v2.1.30"}) //nolint:errcheck // a failed write is seen by the client under test
 			},
 			wantOK: true,
 		},

@@ -97,7 +97,7 @@ func TestNoRetryReportsNothing(t *testing.T) {
 				t.Error("backoff slept on a lookup that should not retry")
 				return nil
 			}
-			_, _ = r.LatestInfo(context.Background(), "example.com/mod/v2")
+			_, _ = r.LatestInfo(context.Background(), "example.com/mod/v2") //nolint:errcheck // one case answers and one is a negative; the subject is the progress
 			if len(prog.lines) != 0 {
 				t.Errorf("reported %v, want nothing", prog.lines)
 			}

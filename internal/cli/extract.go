@@ -94,7 +94,7 @@ func extractWalk(ctx context.Context, walkID string, f extractFlags, stderr io.W
 	if err != nil {
 		return domain.ExtractionRun{}, fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// Status preamble must go to stderr so that stdout is a clean data
 	// channel — under --json, callers pipe stdout straight into jq and a
@@ -247,7 +247,7 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 
 			run, err := ctr.QueryExtract.GetExtractionRun(cmd.Context(), args[0])
 			if err != nil {
@@ -301,7 +301,7 @@ func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runExtractList(cmd.Context(), limit, offset, ctr.QueryExtract, stdout, stderr)
 		},
 	}

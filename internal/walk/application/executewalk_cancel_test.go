@@ -60,7 +60,7 @@ func TestExecuteWalkUseCase_IdentityReadStoppedByTheCancellationIsNotUnreadable(
 			if !tc.cancelled {
 				store.cancel = func() {}
 			}
-			_, _ = uc.Execute(ctx, req)
+			_, _ = uc.Execute(ctx, req) //nolint:errcheck // the subject is what it logs
 			logged := strings.Contains(logs.String(), "walk_identity_match_unreadable")
 			if tc.cancelled && logged {
 				t.Errorf("a stopped read was logged as an unreadable walk:\n%s", logs.String())

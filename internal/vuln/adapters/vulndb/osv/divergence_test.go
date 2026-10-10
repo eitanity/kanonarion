@@ -34,7 +34,7 @@ func divergenceWindow(t *testing.T) (*osv.Database, *atomic.Int64) {
 		hits.Add(1)
 		switch {
 		case r.URL.Path == "/index/modules.json.gz":
-			_, _ = w.Write(gzipJSON(t, []map[string]any{{"path": modulePath, "vulns": []map[string]any{
+			_, _ = w.Write(gzipJSON(t, []map[string]any{{"path": modulePath, "vulns": []map[string]any{ //nolint:errcheck // a failed write is seen by the client under test
 				{"id": pinnedAdvisory, "fixed": "1.27.0-rc.3"},
 				{"id": advisoryPublishedSince, "fixed": "1.27.0-rc.3"},
 			}}}))
@@ -42,7 +42,7 @@ func divergenceWindow(t *testing.T) (*osv.Database, *atomic.Int64) {
 			// A fixed body: the server exists to be counted, not to be correct, and
 			// echoing the requested path back into it would be reflecting a request
 			// into a response for no gain.
-			_, _ = io.WriteString(w, `{"id":"`+advisoryPublishedSince+`","summary":"published after the snapshot"}`)
+			_, _ = io.WriteString(w, `{"id":"`+advisoryPublishedSince+`","summary":"published after the snapshot"}`) //nolint:errcheck // a failed write is seen by the client under test
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

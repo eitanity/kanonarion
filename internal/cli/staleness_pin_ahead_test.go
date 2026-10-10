@@ -156,9 +156,12 @@ func TestLatestRow_PinAheadOfLatestOffersNoTarget(t *testing.T) {
 	published := time.Now().Add(-30 * 24 * time.Hour)
 	for _, tc := range pinAheadCases {
 		t.Run(tc.name, func(t *testing.T) {
-			row, _ := latestRowFor(context.Background(),
+			row, err := latestRowFor(context.Background(),
 				datedStalenessLookup{latest: tc.latest, publishedAt: published},
 				"example.com/mod", tc.pinned, io.Discard)
+			if err != nil {
+				t.Fatalf("latestRowFor: %v", err)
+			}
 			if row.IsLatest == nil {
 				t.Fatalf("row is unmeasured (%q); the lookup answered", row.StalenessUnmeasured)
 			}

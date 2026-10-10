@@ -59,7 +59,7 @@ func runLicenseDiff(ctx context.Context, argA, argB string, stdout, stderr io.Wr
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return licenseDiffWith(ctx, ctr, coordA, coordB, stdout)
 }

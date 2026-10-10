@@ -126,7 +126,7 @@ func runDirectivesList(ctx context.Context, project, gomodPath string, limit, of
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return directivesListWith(ctx, ctr, project, limit, offset, stdout, stderr)
 }
@@ -323,7 +323,7 @@ func runDirectivesShow(ctx context.Context, scanID string, stdout, stderr io.Wri
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return directivesShowWith(ctx, ctr, scanID, stdout, stderr)
 }
@@ -383,7 +383,7 @@ func runDirectivesDiff(ctx context.Context, scanA, scanB string, stdout, stderr 
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return directivesDiffWith(ctx, ctr, scanA, scanB, stdout)
 }

@@ -51,7 +51,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runWalkList(cmd.Context(), target, since, statusStr, scopeStr, walkID, limit, offset, latest, latestSuccess, ctr.QueryWalks, stdout, stderr)
 		},
 	}

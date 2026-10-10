@@ -98,7 +98,7 @@ func TestCallGraphShowJSON_ReflectAttributeIsAlwaysPresent(t *testing.T) {
 			t.Errorf("the edge to %v carries no reflect_dispatch key: %v", e["to_id"], e)
 			continue
 		}
-		to, _ := e["to_id"].(string)
+		to := optAs[string](t, e["to_id"])
 		if got != want[to] {
 			t.Errorf("the edge to %s reports reflect_dispatch %v, want %t", to, got, want[to])
 		}

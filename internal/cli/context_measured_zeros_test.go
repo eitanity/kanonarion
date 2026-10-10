@@ -149,7 +149,7 @@ func dependenciesSection(t *testing.T, rec walkdomain.WalkRecord) map[string]any
 func TestContextJSON_DependencyCountAndPartialAreEmittedAtZero(t *testing.T) {
 	leaf := dependenciesSection(t, walkForContext("example.com/leaf", false))
 	if got := requireKey(t, leaf, "count",
-		"a module with no direct dependencies still had its dependencies counted"); got.(float64) != 0 {
+		"a module with no direct dependencies still had its dependencies counted"); mustAs[float64](t, got) != 0 {
 		t.Errorf("count = %v on a leaf module, want 0", got)
 	}
 	if got := requireKey(t, leaf, "partial",
@@ -160,7 +160,7 @@ func TestContextJSON_DependencyCountAndPartialAreEmittedAtZero(t *testing.T) {
 	// Non-zero control: two direct dependencies, from a walk that left part of
 	// the graph unresolved. Both values are derived from the record.
 	rich := dependenciesSection(t, walkForContext("example.com/app", true, "example.com/a", "example.com/b"))
-	if got := rich["count"]; got.(float64) != 2 {
+	if got := rich["count"]; mustAs[float64](t, got) != 2 {
 		t.Errorf("count = %v, want 2", got)
 	}
 	if got := rich["partial"]; got != true {
@@ -204,7 +204,7 @@ func TestContextJSON_LowConfidenceCoverageIsNullNotAbsent(t *testing.T) {
 		},
 	})
 	fragment := sectionKeys(t, buildLicense(context.Background(), coord, unclassified, nil))
-	if got := fragment["low_confidence_coverage"]; got == nil || got.(float64) != 0.0279 {
+	if got := fragment["low_confidence_coverage"]; got == nil || mustAs[float64](t, got) != 0.0279 {
 		t.Errorf("low_confidence_coverage = %v on a fragment match, want 0.0279", got)
 	}
 	if fragment["low_confidence_spdx"] != "AGPL-3.0-or-later" {
@@ -250,7 +250,7 @@ func TestContextJSON_CallGraphCountsAreEmittedAtZero(t *testing.T) {
 	empty := callGraphSection(t, callGraphFor("example.com/mod"), "")
 	for _, key := range []string{"node_count", "edge_count"} {
 		if got := requireKey(t, empty, key,
-			"an extracted graph with nothing in it is a measurement about the module, not a gap in the report"); got.(float64) != 0 {
+			"an extracted graph with nothing in it is a measurement about the module, not a gap in the report"); mustAs[float64](t, got) != 0 {
 			t.Errorf("%s = %v on an empty graph, want 0", key, got)
 		}
 	}
@@ -268,17 +268,17 @@ func TestContextJSON_CallGraphCountsAreEmittedAtZero(t *testing.T) {
 	rec.NodeCount = len(rec.Nodes)
 	filteredEmpty := callGraphSection(t, rec, "example.com/mod/internal")
 	if got := requireKey(t, filteredEmpty, "entry_point_count",
-		"a named package that exports nothing was counted, and the count is zero"); got.(float64) != 0 {
+		"a named package that exports nothing was counted, and the count is zero"); mustAs[float64](t, got) != 0 {
 		t.Errorf("entry_point_count = %v for a package with no exported API, want 0", got)
 	}
 
 	// Non-zero control: the same graph, filtered to the package that does
 	// export. The count is derived by the builder from the record's nodes.
 	filtered := callGraphSection(t, rec, "example.com/mod/api")
-	if got := filtered["entry_point_count"]; got == nil || got.(float64) != 2 {
+	if got := filtered["entry_point_count"]; got == nil || mustAs[float64](t, got) != 2 {
 		t.Errorf("entry_point_count = %v for a package exporting two symbols, want 2", got)
 	}
-	if got := filtered["node_count"]; got.(float64) != 2 {
+	if got := filtered["node_count"]; mustAs[float64](t, got) != 2 {
 		t.Errorf("node_count = %v under --package, want the filtered count 2", got)
 	}
 }
@@ -297,7 +297,7 @@ func TestContextJSON_ExampleCountIsEmittedAtZero(t *testing.T) {
 	})
 	keys := sectionKeys(t, buildExamples(context.Background(), coord, none, true, ""))
 	if got := requireKey(t, keys, "count",
-		"a harvested module with no examples is a measurement; absent, it reads as a build that does not harvest"); got.(float64) != 0 {
+		"a harvested module with no examples is a measurement; absent, it reads as a build that does not harvest"); mustAs[float64](t, got) != 0 {
 		t.Errorf("count = %v on a module with no examples, want 0", got)
 	}
 
@@ -313,7 +313,7 @@ func TestContextJSON_ExampleCountIsEmittedAtZero(t *testing.T) {
 		},
 	})
 	got := sectionKeys(t, buildExamples(context.Background(), coord, some, true, ""))
-	if got["count"].(float64) != 2 {
+	if mustAs[float64](t, got["count"]) != 2 {
 		t.Errorf("count = %v, want 2", got["count"])
 	}
 }
@@ -349,7 +349,7 @@ func TestContextJSON_SnapshotAgeDaysIsEmittedAtZero(t *testing.T) {
 		DatabaseSnapshot: snapshotAt(t, scanned.Add(-2*time.Hour)),
 	})
 	if got := requireKey(t, sameDay, "snapshot_age_days",
-		"a same-day snapshot is the freshest measurement this field reports, and it was the one being erased"); got.(float64) != 0 {
+		"a same-day snapshot is the freshest measurement this field reports, and it was the one being erased"); mustAs[float64](t, got) != 0 {
 		t.Errorf("snapshot_age_days = %v for a snapshot pulled the same day, want 0", got)
 	}
 	if _, present := sameDay["snapshot_retrieved_at"]; !present {
@@ -363,7 +363,7 @@ func TestContextJSON_SnapshotAgeDaysIsEmittedAtZero(t *testing.T) {
 		ScannedAt:        scanned,
 		DatabaseSnapshot: snapshotAt(t, scanned.AddDate(0, 0, -9)),
 	})
-	if got := stale["snapshot_age_days"]; got == nil || got.(float64) != 9 {
+	if got := stale["snapshot_age_days"]; got == nil || mustAs[float64](t, got) != 9 {
 		t.Errorf("snapshot_age_days = %v for a nine-day-old snapshot, want 9", got)
 	}
 
@@ -395,7 +395,7 @@ func TestContextJSON_FindingScoreAndReachableStateTheirAbsence(t *testing.T) {
 	if !ok || len(findings) != 1 {
 		t.Fatalf("findings = %v, want one finding", bare["findings"])
 	}
-	finding := findings[0].(map[string]any)
+	finding := mustAs[map[string]any](t, findings[0])
 	if got := requireKey(t, finding, "score",
 		"an advisory publishing no severity must say so; absent, it reads as a build that does not report severities"); got != nil {
 		t.Errorf("score = %v on an advisory with no severity, want null", got)
@@ -423,12 +423,12 @@ func TestContextJSON_FindingScoreAndReachableStateTheirAbsence(t *testing.T) {
 			},
 		},
 	})
-	rows := scored["findings"].([]any)
+	rows := mustAs[[]any](t, scored["findings"])
 	if len(rows) != 2 {
 		t.Fatalf("findings = %d, want 2", len(rows))
 	}
-	high := rows[0].(map[string]any)
-	if got := high["score"]; got == nil || got.(float64) != 9.8 {
+	high := mustAs[map[string]any](t, rows[0])
+	if got := high["score"]; got == nil || mustAs[float64](t, got) != 9.8 {
 		t.Errorf("score = %v, want 9.8", got)
 	}
 	if got := high["reachable"]; got != true {
@@ -436,8 +436,8 @@ func TestContextJSON_FindingScoreAndReachableStateTheirAbsence(t *testing.T) {
 	}
 	// A published severity of 0.0 is the case a plain float could never tell
 	// from an advisory with no severity at all.
-	none := rows[1].(map[string]any)
-	if got := requireKey(t, none, "score", "a published severity of 0.0 is a score"); got == nil || got.(float64) != 0 {
+	none := mustAs[map[string]any](t, rows[1])
+	if got := requireKey(t, none, "score", "a published severity of 0.0 is a score"); got == nil || mustAs[float64](t, got) != 0 {
 		t.Errorf("score = %v for a published 0.0 severity, want 0", got)
 	}
 	if got := none["reachable"]; got != false {

@@ -13,7 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -24,10 +24,10 @@ import (
 // The set-aside and unreadable-row types are the internal ones, so a consumer
 // matching the façade name matches what the stores return.
 var (
-	_ *kanonarion.SetAside        = (*recordseal.SetAside)(nil)
-	_ *kanonarion.NothingServable = (*recordseal.NothingServable)(nil)
+	_ *kanonarion.SetAside        = (*recordseal.SetAside)(nil)        //nolint:errcheck // a compile-time type identity, not a call
+	_ *kanonarion.NothingServable = (*recordseal.NothingServable)(nil) //nolint:errcheck // as above
 	_ kanonarion.SetAsideRow      = recordseal.SetAsideRow{}
-	_ *kanonarion.UnreadableRows  = (*vulnports.UnreadableRows)(nil)
+	_ *kanonarion.UnreadableRows  = (*vulnports.UnreadableRows)(nil) //nolint:errcheck // as above
 	_ kanonarion.UnreadableRow    = vulnports.UnreadableRow{}
 )
 
@@ -53,7 +53,11 @@ func TestOpen_SetAsideReachesTheLibraryCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	_, err = queries.Walks.GetWalk(context.Background(), walkID)
 	var none *kanonarion.NothingServable
@@ -72,7 +76,7 @@ func seedDriftedWalk(t *testing.T, dbPath, walkID string) string {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	target, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	target := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	at := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	rec := walkdomain.NewWalkRecord(walkID, "lib", "1", walkdomain.WalkScopeCode, walkdomain.WalkDepthFull,
 		walkdomain.WalkOutcome{
@@ -88,7 +92,10 @@ func seedDriftedWalk(t *testing.T, dbPath, walkID string) string {
 	if err := walksqlite.New(db).PutWalk(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := walkdomain.WalkRecordHasher{}.Marshal(rec)
+	raw, merr := walkdomain.WalkRecordHasher{}.Marshal(rec)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	widened := append([]byte(`{"retired_field":"x",`), raw[1:]...)
 	stamped := []byte(`"content_hash":"` + rec.ContentHash + `"`)
 	sum := sha256.Sum256(bytes.Replace(widened, stamped, []byte(`"content_hash":""`), 1))

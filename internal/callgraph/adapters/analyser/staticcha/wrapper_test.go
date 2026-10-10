@@ -10,10 +10,10 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
-var wrapCoord, _ = coordinate.NewModuleCoordinate("example.com/wrapmod", "v1.0.0")
+var wrapCoord = coordinatetest.MustNew("example.com/wrapmod", "v1.0.0")
 
 // wrapModuleFiles carries the two kinds of method value side by side, because
 // they are not the same fact and a fix that treats them alike is wrong.

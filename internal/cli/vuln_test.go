@@ -16,6 +16,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
@@ -26,7 +27,7 @@ import (
 // TestVulnScanProgressScanFailedReason verifies that the progress callback
 // prints a reason sub-line when ErrorDetail is set on a ScanFailed record.
 func TestVulnScanProgressScanFailedReason(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	record := vuldomain.VulnerabilityRecord{
 		Coordinate:    coord,
 		OverallStatus: vuldomain.StatusScanFailed,
@@ -50,7 +51,7 @@ func TestVulnScanProgressScanFailedReason(t *testing.T) {
 // text is constant across every module carrying the reason, so it belongs to the
 // end-of-run roll-up; the label is the part that varies per module and stays.
 func TestVulnScanProgressUnscannableReason(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/nogomod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/nogomod", "v1.0.0")
 	record := vuldomain.VulnerabilityRecord{
 		Coordinate:        coord,
 		OverallStatus:     vuldomain.StatusUnscannable,
@@ -73,7 +74,7 @@ func TestVulnScanProgressUnscannableReason(t *testing.T) {
 // TestVulnScanProgressNoReasonWhenEmpty verifies that no reason sub-line is
 // printed when ErrorDetail / UnscannableReason is empty.
 func TestVulnScanProgressNoReasonWhenEmpty(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 
 	for _, status := range []vuldomain.VulnerabilityStatus{
 		vuldomain.StatusScanFailed,
@@ -1437,7 +1438,7 @@ func TestVulnScanCmd_ToolNoGomodFound(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chdir(orig) }()
+	defer mustChdir(t, orig)
 
 	var stdout, stderr bytes.Buffer
 	runErr := Run([]string{"vuln-scan", "--tool"}, &stdout, &stderr)
@@ -1485,5 +1486,20 @@ func TestVulnScanRescan_DeprecatedRegateAlias(t *testing.T) {
 	}
 	if !cmd.HasAlias("vuln-scan-regate") {
 		t.Errorf("expected deprecated alias 'vuln-scan-regate', aliases: %v", cmd.Aliases)
+	}
+}
+
+// A --go-binary that cannot be linked into the scratch bin directory is
+// refused. Unchecked, the empty directory went first on PATH and the scan ran
+// under whichever go came next.
+func TestLinkGoBinary_RefusesALinkThatCannotBeMade(t *testing.T) {
+	binDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(binDir, "go"), []byte("occupied"))
+	err := linkGoBinary(binDir, "/opt/go/bin/go1.27")
+	if err == nil || !strings.Contains(err.Error(), "--go-binary") {
+		t.Fatalf("linkGoBinary = %v, want a refusal naming --go-binary", err)
+	}
+	if err := linkGoBinary(t.TempDir(), "/opt/go/bin/go1.27"); err != nil {
+		t.Fatalf("linkGoBinary into an empty directory: %v", err)
 	}
 }

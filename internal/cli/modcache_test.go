@@ -170,8 +170,8 @@ func TestResolveModcacheMode_MissingCacheDirErrors(t *testing.T) {
 	resetModcacheGlobals(t)
 	projectDir := t.TempDir()
 	gomod := filepath.Join(projectDir, "go.mod")
-	_ = os.WriteFile(gomod, []byte("module x\n"), 0o600)
-	_ = os.WriteFile(filepath.Join(projectDir, "go.sum"), []byte(""), 0o600)
+	mustWriteFile(t, gomod, []byte("module x\n"))
+	mustWriteFile(t, filepath.Join(projectDir, "go.sum"), []byte(""))
 
 	if err := resolveModcacheMode(t.Context(), filepath.Join(t.TempDir(), "does-not-exist"), gomod); err == nil {
 		t.Fatalf("want error for a missing cache dir, got nil")
@@ -185,7 +185,7 @@ func TestResolveModcacheMode_MissingGoSumErrors(t *testing.T) {
 	resetModcacheGlobals(t)
 	projectDir := t.TempDir()
 	gomod := filepath.Join(projectDir, "go.mod")
-	_ = os.WriteFile(gomod, []byte("module x\n"), 0o600)
+	mustWriteFile(t, gomod, []byte("module x\n"))
 	// No go.sum written.
 	if err := resolveModcacheMode(t.Context(), t.TempDir(), gomod); err == nil {
 		t.Fatalf("want error when go.sum is absent, got nil")

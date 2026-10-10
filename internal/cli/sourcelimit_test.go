@@ -155,7 +155,10 @@ func TestReaders_StateTheAnalyserLimit(t *testing.T) {
 		{[]string{"context", limitProbe.String()}, "stdout", "Analyser limit:  not analysed: 1 file (genmeth.go)"},
 		{[]string{"context", limitProbe.String(), "--json"}, "stdout", `"analyser_limit": {`},
 	} {
-		stdout, stderr, _ := runAside(append(tc.args, "--store-root", root)...)
+		stdout, stderr, err := runAside(append(tc.args, "--store-root", root)...)
+		if err != nil {
+			t.Fatalf("runAside: %v", err)
+		}
 		got := stdout
 		if tc.in == "stderr" {
 			got = stderr

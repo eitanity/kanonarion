@@ -109,7 +109,7 @@ func FuzzArchive(f *testing.F) {
 		}
 
 		fsys := a.FS("")
-		_ = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, werr error) error {
+		_ = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, werr error) error { //nolint:errcheck // a malformed archive may stop the walk; only a panic fails
 			if werr != nil {
 				return werr
 			}
@@ -133,7 +133,7 @@ func FuzzArchive(f *testing.F) {
 		// HashModuleZip only over modestly-sized archives — it reads every
 		// entry, so a bomb would otherwise dominate the fuzzer's time budget.
 		if uncompressedTotal(data) <= capBytes {
-			_, _ = ziparchive.HashModuleZip(data)
+			_, _ = ziparchive.HashModuleZip(data) //nolint:errcheck // a malformed archive is refused; only a panic fails
 		}
 
 		// ExtractStream must be zip-slip safe: every file it creates stays
@@ -142,7 +142,7 @@ func FuzzArchive(f *testing.F) {
 		dest := t.TempDir()
 		if err := ziparchive.ExtractStream(bytes.NewReader(data), dest); err == nil {
 			cleanDest := filepath.Clean(dest)
-			_ = filepath.WalkDir(dest, func(p string, _ fs.DirEntry, werr error) error {
+			walkErr := filepath.WalkDir(dest, func(p string, _ fs.DirEntry, werr error) error {
 				if werr != nil {
 					return werr
 				}
@@ -151,6 +151,9 @@ func FuzzArchive(f *testing.F) {
 				}
 				return nil
 			})
+			if walkErr != nil {
+				t.Fatalf("walking the extracted tree: %v", walkErr)
+			}
 		}
 	})
 }

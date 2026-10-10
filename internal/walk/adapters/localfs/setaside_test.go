@@ -39,7 +39,7 @@ func TestEnsureFetchedFromPath_EverythingSetAsideRereads(t *testing.T) {
 	if err != nil || res.FromCache {
 		t.Fatalf("EnsureFetchedFromPath = %+v, %v; want the tree re-read", res.FromCache, err)
 	}
-	if _, ok, _ := facts.fakeFacts.GetFetchRecord(context.Background(), coord, localfs.PipelineVersion); !ok {
-		t.Error("no measurement was recorded")
+	if _, ok, rerr := facts.fakeFacts.GetFetchRecord(context.Background(), coord, localfs.PipelineVersion); rerr != nil || !ok {
+		t.Errorf("no measurement was recorded (read error: %v)", rerr)
 	}
 }

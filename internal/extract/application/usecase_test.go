@@ -120,7 +120,7 @@ func (m *mockExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoor
 
 func TestExtractUseCase_Execute(t *testing.T) {
 	ctx := t.Context()
-	coord1, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord1 := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walkID := "walk-123"
 
 	walk := walkdomain.WalkRecord{
@@ -306,7 +306,7 @@ func TestExtractUseCase_Execute(t *testing.T) {
 	})
 
 	t.Run("Unexpected error", func(t *testing.T) {
-		coord2, _ := coordinate.NewModuleCoordinate("github.com/foo/baz", "v2.0.0")
+		coord2 := coordinatetest.MustNew("github.com/foo/baz", "v2.0.0")
 		walks.walks["unexpected-walk"] = walkdomain.WalkRecord{
 			Target: coord2,
 			Graph: walkdomain.Graph{
@@ -359,8 +359,8 @@ func TestExtractUseCase_Execute(t *testing.T) {
 // ErrModuleNotFetched).
 func TestExtractUseCase_localReplaceNodesSkipped(t *testing.T) {
 	ctx := t.Context()
-	target, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
-	localDep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	target := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	localDep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
 	walkID := "walk-localreplace"
 
 	walk := walkdomain.WalkRecord{
@@ -431,7 +431,7 @@ func TestExtractUseCase_localReplaceNodesSkipped(t *testing.T) {
 func TestExtractUseCase_localMainModuleRootSkippedNotFailed(t *testing.T) {
 	ctx := t.Context()
 	root := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
-	dep, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	dep := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walkID := "walk-localroot"
 
 	walk := walkdomain.WalkRecord{
@@ -517,9 +517,9 @@ func (f *fakeProgressReporter) Advance(done int) {
 // heartbeat has something to report on a long or cold run.
 func TestExtractUseCase_Execute_ReportsProgress(t *testing.T) {
 	ctx := t.Context()
-	coordA, _ := coordinate.NewModuleCoordinate("github.com/foo/a", "v1.0.0")
-	coordB, _ := coordinate.NewModuleCoordinate("github.com/foo/b", "v1.0.0")
-	coordC, _ := coordinate.NewModuleCoordinate("github.com/foo/c", "v1.0.0")
+	coordA := coordinatetest.MustNew("github.com/foo/a", "v1.0.0")
+	coordB := coordinatetest.MustNew("github.com/foo/b", "v1.0.0")
+	coordC := coordinatetest.MustNew("github.com/foo/c", "v1.0.0")
 	walkID := "walk-progress"
 
 	walk := walkdomain.WalkRecord{

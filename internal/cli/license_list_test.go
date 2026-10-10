@@ -152,20 +152,20 @@ func TestRunLicenseList_EveryRowStatesCopyrightGenerationAndSupersession(t *test
 	})
 
 	doc := licenseListDoc(t, licenseListFlags{limit: 50}, nil, uc)
-	records, _ := doc["records"].([]any)
+	records := optAs[[]any](t, doc["records"])
 	if len(records) != 2 {
 		t.Fatalf("listed %d rows, want 2: %v", len(records), doc)
 	}
 	want := map[string]string{"example.com/analysed": "found", "example.com/unanalysed": "not_analysed"}
 	for _, raw := range records {
-		row, _ := raw.(map[string]any)
+		row := optAs[map[string]any](t, raw)
 		for _, key := range []string{"copyright_status", "pipeline_version", "superseded"} {
 			if _, ok := row[key]; !ok {
 				t.Errorf("row %v carries no %q", row["module"], key)
 			}
 		}
-		if got := row["copyright_status"]; got != want[row["module"].(string)] {
-			t.Errorf("%v copyright_status = %v, want %v", row["module"], got, want[row["module"].(string)])
+		if got := row["copyright_status"]; got != want[mustAs[string](t, row["module"])] {
+			t.Errorf("%v copyright_status = %v, want %v", row["module"], got, want[mustAs[string](t, row["module"])])
 		}
 		if row["superseded"] != false {
 			t.Errorf("%v superseded = %v, want false — the record is at the served version",
@@ -224,10 +224,10 @@ func TestRunLicenseList_AllGenerationsMarksTheSupersededRows(t *testing.T) {
 	}
 
 	doc := licenseListDoc(t, f, nil, uc)
-	records, _ := doc["records"].([]any)
+	records := optAs[[]any](t, doc["records"])
 	marked := 0
 	for _, raw := range records {
-		if row, _ := raw.(map[string]any); row["superseded"] == true {
+		if row := optAs[map[string]any](t, raw); row["superseded"] == true {
 			marked++
 		}
 	}
@@ -275,25 +275,25 @@ func TestRunLicenseList_ScopeNamesTheModulesHoldingNoRecord(t *testing.T) {
 	}
 
 	doc := licenseListDoc(t, licenseListFlags{limit: 50}, scope, uc)
-	got, _ := doc["scope"].(map[string]any)
+	got := optAs[map[string]any](t, doc["scope"])
 	if got == nil {
 		t.Fatalf("the document carries no scope: %v", doc)
 	}
 	if got["kind"] != "package" || got["value"] != "./cmd/x" || got["module_count"] != float64(2) {
 		t.Errorf("scope = %v, want the package pattern and its module count", got)
 	}
-	without, _ := got["without_record"].([]any)
+	without := optAs[[]any](t, got["without_record"])
 	if len(without) != 1 {
 		t.Fatalf("without_record = %v, want the one module holding no record", got["without_record"])
 	}
-	entry, _ := without[0].(map[string]any)
+	entry := optAs[map[string]any](t, without[0])
 	if entry["module"] != "example.com/missing" || entry["version"] != "v1.0.0" {
 		t.Errorf("without_record[0] = %v, want the module holding no record", entry)
 	}
 	if entry["kind"] != absenceNotExtracted || entry["remedy"] != "run 'kanonarion license example.com/missing@v1.0.0'" {
 		t.Errorf("without_record[0] = %v, want a not_extracted entry carrying the command that fills it", entry)
 	}
-	records, _ := doc["records"].([]any)
+	records := optAs[[]any](t, doc["records"])
 	if len(records) != 1 {
 		t.Errorf("listed %d rows, want only the module in scope that holds a record", len(records))
 	}
@@ -310,7 +310,7 @@ func TestRunLicenseList_ScopeWithEveryRecordStatesAnEmptyWithoutRecord(t *testin
 	scope := licenceScopeOf(t, "go.mod", "./go.mod", "example.com/recorded")
 
 	doc := licenseListDoc(t, licenseListFlags{limit: 50}, scope, uc)
-	got, _ := doc["scope"].(map[string]any)
+	got := optAs[map[string]any](t, doc["scope"])
 	without, ok := got["without_record"].([]any)
 	if !ok {
 		t.Fatalf("without_record is not an array: %v", got)
@@ -336,10 +336,10 @@ func TestRunLicenseList_ScopedZeroCarriesBothStatements(t *testing.T) {
 	scope := licenceScopeOf(t, "package", "./cmd/x", "example.com/missing")
 
 	doc := licenseListDoc(t, licenseListFlags{limit: 50}, scope, uc)
-	if records, _ := doc["records"].([]any); len(records) != 0 {
+	if records := optAs[[]any](t, doc["records"]); len(records) != 0 {
 		t.Fatalf("listed %d rows over a scope holding no record", len(records))
 	}
-	zero, _ := doc["zero_result"].(map[string]any)
+	zero := optAs[map[string]any](t, doc["zero_result"])
 	if zero == nil {
 		t.Fatalf("the zero page carries no zero_result: %v", doc)
 	}
@@ -348,7 +348,7 @@ func TestRunLicenseList_ScopedZeroCarriesBothStatements(t *testing.T) {
 	if zero["records_considered"] != float64(0) || zero["store_empty"] != true {
 		t.Errorf("zero_result = %v, want a corpus of 0 over the scope", zero)
 	}
-	got, _ := doc["scope"].(map[string]any)
+	got := optAs[map[string]any](t, doc["scope"])
 	if got == nil || got["module_count"] != float64(1) {
 		t.Errorf("the zero page dropped the scope: %v", doc["scope"])
 	}
@@ -365,10 +365,10 @@ func TestRunLicenseList_OverPagedRequestNamesThePaging(t *testing.T) {
 	})
 
 	doc := licenseListDoc(t, licenseListFlags{limit: 50, offset: 10}, nil, uc)
-	if records, _ := doc["records"].([]any); len(records) != 0 {
+	if records := optAs[[]any](t, doc["records"]); len(records) != 0 {
 		t.Fatalf("a page past the population returned %d rows", len(records))
 	}
-	zero, _ := doc["zero_result"].(map[string]any)
+	zero := optAs[map[string]any](t, doc["zero_result"])
 	if zero == nil || zero["paged_past"] != true {
 		t.Fatalf("zero_result = %v, want paged_past true", zero)
 	}
@@ -397,11 +397,11 @@ func TestRunLicenseList_CopyrightStatusFilterReachesTheStore(t *testing.T) {
 	doc := licenseListDoc(t, licenseListFlags{
 		limit: 50, copyrightStatus: []licdomain.CopyrightStatus{licdomain.CopyrightStatusNoneFound},
 	}, nil, uc)
-	records, _ := doc["records"].([]any)
+	records := optAs[[]any](t, doc["records"])
 	if len(records) != 1 {
 		t.Fatalf("listed %d rows, want only the blocking module: %v", len(records), doc)
 	}
-	row, _ := records[0].(map[string]any)
+	row := optAs[map[string]any](t, records[0])
 	if row["module"] != "example.com/blocking" || row["copyright_status"] != "none_found" {
 		t.Errorf("listed %v, want the module whose record found no copyright", row)
 	}
@@ -540,7 +540,7 @@ func TestRunLicenseList_ConflictRowCarriesTheGenerationAndFailsTheRun(t *testing
 // generationOf reads the document's generation object.
 func generationOf(t *testing.T, doc map[string]any) map[string]any {
 	t.Helper()
-	got, _ := doc["generation"].(map[string]any)
+	got := optAs[map[string]any](t, doc["generation"])
 	if got == nil {
 		t.Fatalf("the listing document carries no generation statement: %v", doc)
 	}
@@ -578,7 +578,7 @@ func TestRunLicenseList_DocumentAlwaysStatesTheGeneration(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := licenseListDoc(t, tc.flags, tc.scope, tc.uc)
-			if records, _ := doc["records"].([]any); len(records) != tc.wantRows {
+			if records := optAs[[]any](t, doc["records"]); len(records) != tc.wantRows {
 				t.Fatalf("listed %d rows, want %d", len(records), tc.wantRows)
 			}
 			gen := generationOf(t, doc)
@@ -617,7 +617,7 @@ func TestRunLicenseList_TextAndDocumentAgreeOnTheGeneration(t *testing.T) {
 
 	text := licenseListText(t, licenseListFlags{limit: 50}, nil, uc)
 	gen := generationOf(t, licenseListDoc(t, licenseListFlags{limit: 50}, nil, uc))
-	if !strings.Contains(text, gen["served"].(string)) || !strings.Contains(text, gen["remedy"].(string)) {
+	if !strings.Contains(text, mustAs[string](t, gen["served"])) || !strings.Contains(text, mustAs[string](t, gen["remedy"])) {
 		t.Errorf("the text line and the document disagree:\n%s\n%v", text, gen)
 	}
 }
@@ -688,10 +688,10 @@ func TestRunLicenseList_WalkScopeNamesTheOneExtractionThatFillsThemAll(t *testin
 // scopeEntry reads one module's without_record entry out of the document.
 func scopeEntry(t *testing.T, scope *licenceListScope, uc QueryLicenseUseCase, module string) map[string]any {
 	t.Helper()
-	got, _ := licenseListDoc(t, licenseListFlags{limit: 50}, scope, uc)["scope"].(map[string]any)
-	without, _ := got["without_record"].([]any)
+	got := optAs[map[string]any](t, licenseListDoc(t, licenseListFlags{limit: 50}, scope, uc)["scope"])
+	without := optAs[[]any](t, got["without_record"])
 	for _, raw := range without {
-		if e, _ := raw.(map[string]any); e["module"] == module {
+		if e := optAs[map[string]any](t, raw); e["module"] == module {
 			return e
 		}
 	}
@@ -724,15 +724,15 @@ func TestRunLicenseList_WithoutRecordIsPartitionedByWhyTheRecordIsAbsent(t *test
 	}}
 
 	doc := licenseListDoc(t, licenseListFlags{limit: 50}, scope, uc)
-	got, _ := doc["scope"].(map[string]any)
-	without, _ := got["without_record"].([]any)
+	got := optAs[map[string]any](t, doc["scope"])
+	without := optAs[[]any](t, got["without_record"])
 	if len(without) != 5 {
 		t.Fatalf("without_record holds %d entries, want all five modules", len(without))
 	}
 	byModule := map[string]map[string]any{}
 	for _, raw := range without {
-		e, _ := raw.(map[string]any)
-		byModule[e["module"].(string)] = e
+		e := optAs[map[string]any](t, raw)
+		byModule[mustAs[string](t, e["module"])] = e
 	}
 
 	bulk := "kanonarion extract " + walkID + " --stages license"
@@ -760,10 +760,10 @@ func TestRunLicenseList_WithoutRecordIsPartitionedByWhyTheRecordIsAbsent(t *test
 		if e["kind"] != tc.kind {
 			t.Errorf("%s kind = %v, want %s", tc.module, e["kind"], tc.kind)
 		}
-		if !strings.Contains(e["reason"].(string), tc.reasonHas) {
+		if !strings.Contains(mustAs[string](t, e["reason"]), tc.reasonHas) {
 			t.Errorf("%s reason = %q, want it to say %q", tc.module, e["reason"], tc.reasonHas)
 		}
-		remedy, _ := e["remedy"].(string)
+		remedy := optAs[string](t, e["remedy"])
 		if tc.wantRemedy != "" && remedy != tc.wantRemedy {
 			t.Errorf("%s remedy = %q, want %q", tc.module, remedy, tc.wantRemedy)
 		}

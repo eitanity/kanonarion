@@ -56,7 +56,7 @@ func TestImplementersJSON_StatesWhatWasSearchedWithoutTestsExcluded(t *testing.T
 	}
 	// The sentence stays: it is what the text renders, and removing it would be a
 	// break with no benefit.
-	if s, _ := doc["scope"].(string); !strings.Contains(s, implModule) {
+	if s := optAs[string](t, doc["scope"]); !strings.Contains(s, implModule) {
 		t.Errorf("scope sentence lost the module it names: %q", s)
 	}
 }

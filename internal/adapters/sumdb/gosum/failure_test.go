@@ -168,7 +168,7 @@ func TestSecurityErrorIsNotReportedAsTransient(t *testing.T) {
 	o := &ops{}
 	transient := fmt.Errorf("sumdb HTTP 503 for https://example.com/mod/lookup/x: %w",
 		&fetchdomain.ProxyStatusError{StatusCode: 503, URL: "https://example.com/mod/lookup/x"})
-	_ = o.recordRemoteErr(transient)
+	_ = o.recordRemoteErr(transient) //nolint:errcheck // returns its argument; what it retains is the subject
 	o.SecurityError("tree head inconsistent with previous")
 
 	// The chain is flattened by the time it reaches the adapter, exactly as
@@ -193,7 +193,7 @@ func TestRecoveredTransportErrorIsCleared(t *testing.T) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_, _ = w.Write([]byte("tile data"))
+		_, _ = w.Write([]byte("tile data")) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 	defer ts.Close()
 

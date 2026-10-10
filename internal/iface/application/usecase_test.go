@@ -85,8 +85,13 @@ func TestExecute_ForceBypassesCache(t *testing.T) {
 		PipelineVersion: application.PipelineVersion,
 	}
 	var h domain3.InterfaceRecordHasher
-	existing, _ = h.SetContentHash(existing)
-	_ = ifaceStore.PutInterfaceRecord(context.Background(), existing)
+	existing, serr := h.SetContentHash(existing)
+	if serr != nil {
+		t.Fatalf("SetContentHash: %v", serr)
+	}
+	if err := ifaceStore.PutInterfaceRecord(context.Background(), existing); err != nil {
+		t.Fatalf("PutInterfaceRecord: %v", err)
+	}
 
 	ext := &fakeExtractor{record: domain3.InterfaceRecord{
 		SchemaVersion:   domain3.InterfaceSchemaVersion,
@@ -278,7 +283,10 @@ func testStrippedFS_OpenRead(t *testing.T, fsys fs.FS) {
 	defer func() {
 		_ = f.Close()
 	}()
-	info, _ := f.Stat()
+	info, ierr := f.Stat()
+	if ierr != nil {
+		t.Fatalf("Stat: %v", ierr)
+	}
 	if info.Name() != "a.go" {
 		t.Errorf("expected a.go, got %s", info.Name())
 	}
@@ -334,22 +342,11 @@ func testStrippedFS_SyntheticDir(t *testing.T, fsys fs.FS) {
 	defer func() {
 		_ = d.Close()
 	}()
-	dinfo, _ := d.Stat()
-	if !dinfo.IsDir() {
-		t.Error("expected sub to be a directory")
+	dinfo, ierr := d.Stat()
+	if ierr != nil {
+		t.Fatalf("Stat: %v", ierr)
 	}
-	if dinfo.Size() != 0 {
-		t.Errorf("expected size 0 for synthetic dir, got %d", dinfo.Size())
-	}
-	if dinfo.Mode() != fs.ModeDir|0555 {
-		t.Errorf("expected mode dr-xr-xr-x (0555|ModeDir), got %v", dinfo.Mode())
-	}
-	if !dinfo.ModTime().IsZero() {
-		t.Error("expected zero mod time for synthetic dir")
-	}
-	if dinfo.Sys() != nil {
-		t.Error("expected nil sys for synthetic dir")
-	}
+	checkSyntheticDirInfo(t, dinfo)
 
 	dr, ok := d.(fs.ReadDirFile)
 	if !ok {
@@ -368,7 +365,10 @@ func testStrippedFS_SyntheticDir(t *testing.T, fsys fs.FS) {
 	if entries[0].Type() != 0 {
 		t.Errorf("expected type 0 for b.go entry, got %v", entries[0].Type())
 	}
-	einfo, _ := entries[0].Info()
+	einfo, ierr := entries[0].Info()
+	if ierr != nil {
+		t.Fatalf("Info: %v", ierr)
+	}
 	if einfo.Name() != "b.go" {
 		t.Errorf("expected b.go, got %s", einfo.Name())
 	}
@@ -382,13 +382,20 @@ func testStrippedFS_ZipFileWrapperReadDir(t *testing.T, fsys fs.FS) {
 	defer func() {
 		_ = zf.Close()
 	}()
-	if _, err := zf.(fs.ReadDirFile).ReadDir(0); err == nil {
+	dirFile, isDirFile := zf.(fs.ReadDirFile)
+	if !isDirFile {
+		t.Fatalf("the wrapper is %T, which has no ReadDir", zf)
+	}
+	if _, err := dirFile.ReadDir(0); err == nil {
 		t.Error("zipFileWrapper ReadDir should fail")
 	}
 }
 
 func testStrippedFS_SyntheticDirEntry(t *testing.T, fsys fs.FS) {
-	entries, _ := fs.ReadDir(fsys, ".")
+	entries, derr := fs.ReadDir(fsys, ".")
+	if derr != nil {
+		t.Fatalf("ReadDir: %v", derr)
+	}
 	var subEntry fs.DirEntry
 	for _, e := range entries {
 		if e.Name() == "sub" {
@@ -525,3 +532,23 @@ func buildModuleZip(t *testing.T, coord coordinate.ModuleCoordinate, files map[s
 
 // Compile-time check.
 var _ fetchports.FactStore = (*fakeFactStore)(nil)
+
+// checkSyntheticDirInfo asserts the FileInfo a synthesised directory reports.
+func checkSyntheticDirInfo(t *testing.T, dinfo fs.FileInfo) {
+	t.Helper()
+	if !dinfo.IsDir() {
+		t.Error("expected sub to be a directory")
+	}
+	if dinfo.Size() != 0 {
+		t.Errorf("expected size 0 for synthetic dir, got %d", dinfo.Size())
+	}
+	if dinfo.Mode() != fs.ModeDir|0555 {
+		t.Errorf("expected mode dr-xr-xr-x (0555|ModeDir), got %v", dinfo.Mode())
+	}
+	if !dinfo.ModTime().IsZero() {
+		t.Error("expected zero mod time for synthetic dir")
+	}
+	if dinfo.Sys() != nil {
+		t.Error("expected nil sys for synthetic dir")
+	}
+}

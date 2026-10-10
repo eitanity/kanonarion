@@ -183,7 +183,7 @@ func TestCheckoutToDir_InsteadOfRewriteDoesNotReachRewrittenHost(t *testing.T) {
 	c.SetFetchBounds(1, 5*time.Second)
 	// The fetch is expected to fail — the host does not resolve. What matters
 	// is where it failed to reach, not that it failed.
-	_ = c.CheckoutToDir(context.Background(),
+	_ = c.CheckoutToDir(context.Background(), //nolint:errcheck // expected to fail; the assertion is where it connected
 		"https://kanonarion-test.invalid/example/mod", strings.Repeat("a", 40), t.TempDir())
 
 	if got := connections.Load(); got != 0 {
@@ -364,7 +364,7 @@ func TestResolveTag_EnclosingRepoConfigDoesNotRewriteURL(t *testing.T) {
 	c := gitexec.NewWithProtocols("https:http")
 	// Expected to fail: the host does not resolve. Where it failed to reach is
 	// the assertion.
-	_, _ = c.ResolveTag(context.Background(),
+	_, _ = c.ResolveTag(context.Background(), //nolint:errcheck // expected to fail; the assertion is where it connected
 		"https://kanonarion-test.invalid/example/mod", "refs/tags/v1.0.0")
 
 	if got := connections.Load(); got != 0 {

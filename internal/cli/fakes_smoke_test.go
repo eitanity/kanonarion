@@ -15,6 +15,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	exports "github.com/eitanity/kanonarion/internal/example/ports"
@@ -67,7 +68,10 @@ func TestFakeQueryFetch_GetFetchRecord(t *testing.T) {
 	if err != nil || !ok || rec.ModulePath != c.Path() {
 		t.Fatalf("expected record, got ok=%v err=%v", ok, err)
 	}
-	_, ok2, _ := f.GetFetchRecord(context.Background(), c, cgapp.PipelineVersion)
+	_, ok2, err := f.GetFetchRecord(context.Background(), c, cgapp.PipelineVersion)
+	if err != nil {
+		t.Fatalf("GetFetchRecord: %v", err)
+	}
 	if ok2 {
 		t.Fatal("expected not found for wrong version")
 	}
@@ -355,7 +359,7 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 		t.Fatalf("ListRecordsByFindingID: %v %v", byID, err)
 	}
 
-	empty, _ := coordinate.NewModuleCoordinate("example.com/z", "v1.0.0")
+	empty := coordinatetest.MustNew("example.com/z", "v1.0.0")
 	list2, err := f.ListRecordsForModule(context.Background(), empty, "0.1.0")
 	if err != nil || list2 != nil {
 		t.Fatalf("empty ListRecordsForModule: %v %v", list2, err)
@@ -393,7 +397,10 @@ func TestFakeQueryScanRuns_AllMethods(t *testing.T) {
 	if err != nil || !found || got.ID != "SR1" {
 		t.Fatalf("GetRun: %v %v %v", got, found, err)
 	}
-	_, found2, _ := f.GetRun(context.Background(), "MISSING")
+	_, found2, err := f.GetRun(context.Background(), "MISSING")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
 	if found2 {
 		t.Fatal("expected not found")
 	}
@@ -402,7 +409,10 @@ func TestFakeQueryScanRuns_AllMethods(t *testing.T) {
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("ListRunsForWalk: %v %v", runs, err)
 	}
-	empty, _ := f.ListRunsForWalk(context.Background(), "OTHER")
+	empty, err := f.ListRunsForWalk(context.Background(), "OTHER")
+	if err != nil {
+		t.Fatalf("ListRunsForWalk: %v", err)
+	}
 	if empty != nil {
 		t.Fatalf("expected nil for different walk: %v", empty)
 	}
@@ -466,7 +476,9 @@ func TestFakeGenerateSBOM_Generate(t *testing.T) {
 func TestFakeQuerySBOM_AllMethods(t *testing.T) {
 	f := testfakes.NewFakeQuerySBOM()
 
-	_, _ = f.GetSBOMRecord(context.Background(), "MISSING")
+	if _, err := f.GetSBOMRecord(context.Background(), "MISSING"); err != nil {
+		t.Fatalf("GetSBOMRecord: %v", err)
+	}
 
 	list, err := f.ListSBOMRecords(context.Background(), "W1")
 	if err != nil || list != nil {

@@ -71,7 +71,10 @@ func TestRunWalkProject_BuildListUnavailableIsStatedAndExitsPartial(t *testing.T
 	}
 
 	t.Run("states the gap on stdout", func(t *testing.T) {
-		out, _, _ := run(t, buildListToolchainReason, true)
+		out, _, err := run(t, buildListToolchainReason, true)
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
 		if !strings.Contains(out, "build list unavailable") {
 			t.Errorf("stdout does not say the build list was unavailable:\n%s", out)
 		}
@@ -114,12 +117,15 @@ func TestRunWalkProject_BuildListUnavailableIsStatedAndExitsPartial(t *testing.T
 	t.Run("--json keeps stdout a document", func(t *testing.T) {
 		jsonOut = true
 		t.Cleanup(func() { jsonOut = false })
-		out, errOut, _ := run(t, buildListToolchainReason, true)
+		out, errOut, err := run(t, buildListToolchainReason, true)
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
 		var doc map[string]any
 		if uerr := json.Unmarshal([]byte(out), &doc); uerr != nil {
 			t.Fatalf("stdout is not one JSON document (%v):\n%s", uerr, out)
 		}
-		graph, _ := doc["graph"].(map[string]any)
+		graph := optAs[map[string]any](t, doc["graph"])
 		if graph["build_list_unavailable"] != buildListToolchainReason {
 			t.Errorf("the document does not carry the gap at .graph.build_list_unavailable: %v", graph["build_list_unavailable"])
 		}

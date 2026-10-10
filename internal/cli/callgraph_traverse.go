@@ -88,7 +88,7 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err
@@ -219,7 +219,7 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err

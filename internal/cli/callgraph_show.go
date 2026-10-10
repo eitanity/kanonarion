@@ -68,7 +68,7 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runCallGraphShow(cmd.Context(), args[0], f, jsonOut, ctr.QueryCallGraph, stdout)
 		},
 	}

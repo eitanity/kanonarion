@@ -21,13 +21,13 @@ func bomComponents(t *testing.T, content []byte) (map[string]any, map[string]map
 	if err := json.Unmarshal(content, &bom); err != nil {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
-	meta, _ := bom["metadata"].(map[string]any)
-	primary, _ := meta["component"].(map[string]any)
+	meta := optAs[map[string]any](t, bom["metadata"])
+	primary := optAs[map[string]any](t, meta["component"])
 	byPURL := map[string]map[string]any{}
-	comps, _ := bom["components"].([]any)
+	comps := optAs[[]any](t, bom["components"])
 	for _, c := range comps {
-		cm, _ := c.(map[string]any)
-		purl, _ := cm["purl"].(string)
+		cm := optAs[map[string]any](t, c)
+		purl := optAs[string](t, cm["purl"])
 		byPURL[purl] = cm
 	}
 	return primary, byPURL
@@ -35,14 +35,15 @@ func bomComponents(t *testing.T, content []byte) (map[string]any, map[string]map
 
 // externalRefs returns a component's external references as (type, url, comment)
 // triples in document order.
-func externalRefs(comp map[string]any) [][3]string {
-	raw, _ := comp["externalReferences"].([]any)
+func externalRefs(t *testing.T, comp map[string]any) [][3]string {
+	t.Helper()
+	raw := optAs[[]any](t, comp["externalReferences"])
 	out := make([][3]string, 0, len(raw))
 	for _, r := range raw {
-		rm, _ := r.(map[string]any)
-		typ, _ := rm["type"].(string)
-		url, _ := rm["url"].(string)
-		comment, _ := rm["comment"].(string)
+		rm := optAs[map[string]any](t, r)
+		typ := optAs[string](t, rm["type"])
+		url := optAs[string](t, rm["url"])
+		comment := optAs[string](t, rm["comment"])
 		out = append(out, [3]string{typ, url, comment})
 	}
 	return out
@@ -78,7 +79,7 @@ func TestComponentReferencesOnlyRecordedOrigin(t *testing.T) {
 	}
 	primary, byPURL := bomComponents(t, rec.Content)
 
-	got := externalRefs(byPURL["pkg:golang/github.com/example/ulid/v2@v2.1.0"])
+	got := externalRefs(t, byPURL["pkg:golang/github.com/example/ulid/v2@v2.1.0"])
 	want := [][3]string{{
 		"vcs",
 		"https://github.com/example/ulid",
@@ -88,17 +89,17 @@ func TestComponentReferencesOnlyRecordedOrigin(t *testing.T) {
 		t.Errorf("recorded-origin component references = %v, want %v", got, want)
 	}
 
-	if refs := externalRefs(byPURL["pkg:golang/golang.org/x/mod@v0.14.0"]); len(refs) != 0 {
+	if refs := externalRefs(t, byPURL["pkg:golang/golang.org/x/mod@v0.14.0"]); len(refs) != 0 {
 		t.Errorf("component with no recorded origin has references %v, want none", refs)
 	}
-	if refs := externalRefs(primary); len(refs) != 0 {
+	if refs := externalRefs(t, primary); len(refs) != 0 {
 		t.Errorf("local main subject has references %v, want none", refs)
 	}
 
 	// No component anywhere may assert a download location: nothing recorded
 	// supports one.
 	for purl, comp := range byPURL {
-		for _, r := range externalRefs(comp) {
+		for _, r := range externalRefs(t, comp) {
 			if r[0] == "distribution" {
 				t.Errorf("%s asserts a distribution reference %q; the fetch ledger records no download address", purl, r[1])
 			}
@@ -151,7 +152,7 @@ func TestReplacedComponentReferencesTheReplacementOrigin(t *testing.T) {
 		t.Fatalf("Generate: %v", err)
 	}
 	_, byPURL := bomComponents(t, rec.Content)
-	refs := externalRefs(byPURL["pkg:golang/github.com/fork/goqu/v9@v9.18.4"])
+	refs := externalRefs(t, byPURL["pkg:golang/github.com/fork/goqu/v9@v9.18.4"])
 	if len(refs) != 1 {
 		t.Fatalf("replaced component references = %v, want exactly one", refs)
 	}
@@ -177,7 +178,7 @@ func TestPseudoVersionOriginCommentNamesTheCommit(t *testing.T) {
 		t.Fatalf("Generate: %v", err)
 	}
 	_, byPURL := bomComponents(t, rec.Content)
-	refs := externalRefs(byPURL["pkg:golang/github.com/example/dep@v0.0.0-20190221195224-5a805980a5f3"])
+	refs := externalRefs(t, byPURL["pkg:golang/github.com/example/dep@v0.0.0-20190221195224-5a805980a5f3"])
 	if len(refs) != 1 {
 		t.Fatalf("references = %v, want exactly one", refs)
 	}

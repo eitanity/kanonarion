@@ -9,6 +9,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
@@ -109,7 +110,7 @@ func (f *fakeSBOMGenerator) GeneratorMetadata() ports.GeneratorMetadata {
 // ---- helpers ----
 
 func makeWalk(id string) walkdomain.WalkRecord {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	return walkdomain.WalkRecord{
 		ID: id,
 		Graph: walkdomain.Graph{
@@ -215,9 +216,9 @@ func TestGenerateSBOM_Force(t *testing.T) {
 // binary's import closure: only listed modules reach the generator, the cache is
 // bypassed, and the scoped result is not persisted.
 func TestGenerateSBOM_AllowList(t *testing.T) {
-	coordA, _ := coordinate.NewModuleCoordinate("example.com/a", "v1.0.0")
-	coordB, _ := coordinate.NewModuleCoordinate("example.com/b", "v2.0.0")
-	coordC, _ := coordinate.NewModuleCoordinate("example.com/c", "v3.0.0")
+	coordA := coordinatetest.MustNew("example.com/a", "v1.0.0")
+	coordB := coordinatetest.MustNew("example.com/b", "v2.0.0")
+	coordC := coordinatetest.MustNew("example.com/c", "v3.0.0")
 
 	// Walk has three modules; only A and B are in the binary's import closure.
 	ws := &fakeWalkStore{walk: makeMultiNodeWalk("walk-1", []coordinate.ModuleCoordinate{coordA, coordB, coordC})}
@@ -263,8 +264,8 @@ func TestGenerateSBOM_AllowList(t *testing.T) {
 // must keep it anyway; otherwise a --package SBOM silently omits the standard
 // library (and the --stdlib-from-gomod-pinned Go version the release depends on).
 func TestGenerateSBOM_AllowListKeepsStdlibNode(t *testing.T) {
-	coordA, _ := coordinate.NewModuleCoordinate("example.com/a", "v1.0.0")
-	stdlib, _ := coordinate.NewModuleCoordinate(walkdomain.StdlibModulePath, "v1.22")
+	coordA := coordinatetest.MustNew("example.com/a", "v1.0.0")
+	stdlib := coordinatetest.MustNew(walkdomain.StdlibModulePath, "v1.22")
 
 	// Walk carries A, the stdlib node, and a root->stdlib edge, mirroring what
 	// injectStdlib produces. The allow-list holds only A (stdlib is never listed).
@@ -301,9 +302,9 @@ func TestGenerateSBOM_AllowListKeepsStdlibNode(t *testing.T) {
 // rqlite/go-sqlite3), losing its whole capability and licence surface even
 // though it is linked into the binary.
 func TestGenerateSBOM_AllowListKeepsReplaceToForkNode(t *testing.T) {
-	orig, _ := coordinate.NewModuleCoordinate("github.com/mattn/go-sqlite3", "v1.14.44")
-	fork, _ := coordinate.NewModuleCoordinate("github.com/rqlite/go-sqlite3", "v1.47.0")
-	rootDep, _ := coordinate.NewModuleCoordinate("example.com/a", "v1.0.0")
+	orig := coordinatetest.MustNew("github.com/mattn/go-sqlite3", "v1.14.44")
+	fork := coordinatetest.MustNew("github.com/rqlite/go-sqlite3", "v1.47.0")
+	rootDep := coordinatetest.MustNew("example.com/a", "v1.0.0")
 
 	// The graph carries the fork node keyed by its replacement coordinate, with
 	// the original require coordinate in OriginalCoordinate, plus an edge from a
@@ -340,7 +341,7 @@ func TestGenerateSBOM_AllowListKeepsReplaceToForkNode(t *testing.T) {
 // two diverge, looking up under the SBOM version misses every record and the
 // generated SBOM silently carries no licences.
 func TestGenerateSBOM_LooksUpLicencesUnderLicencePipelineVersion(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	ws := &fakeWalkStore{walk: makeWalk("walk-1")}
 	ls := &fakeLicenseStore{
 		pipelineVersion: testLicensePipelineVersion,
@@ -367,8 +368,8 @@ func TestGenerateSBOM_LooksUpLicencesUnderLicencePipelineVersion(t *testing.T) {
 // A scoped request prunes edges whose endpoints fall outside the allow-list,
 // so the generated graph never references a component that was filtered out.
 func TestGenerateSBOM_AllowListPrunesDanglingEdges(t *testing.T) {
-	coordA, _ := coordinate.NewModuleCoordinate("example.com/a", "v1.0.0")
-	coordB, _ := coordinate.NewModuleCoordinate("example.com/b", "v2.0.0")
+	coordA := coordinatetest.MustNew("example.com/a", "v1.0.0")
+	coordB := coordinatetest.MustNew("example.com/b", "v2.0.0")
 
 	walk := makeMultiNodeWalk("walk-1", []coordinate.ModuleCoordinate{coordA, coordB})
 	// A depends on B; scoping to {A} must drop both node B and the A->B edge.
@@ -547,8 +548,8 @@ func (f *fakeOriginReader) ModuleOrigin(
 // generator. A component's external references are built from this map and from
 // nothing else, so a module missing from it asserts no origin.
 func TestGenerateSBOM_PassesRecordedOriginsForEveryNode(t *testing.T) {
-	withOrigin, _ := coordinate.NewModuleCoordinate("example.com/withorigin", "v1.0.0")
-	without, _ := coordinate.NewModuleCoordinate("example.com/without", "v2.0.0")
+	withOrigin := coordinatetest.MustNew("example.com/withorigin", "v1.0.0")
+	without := coordinatetest.MustNew("example.com/without", "v2.0.0")
 	walk := makeMultiNodeWalk("walk-origins", []coordinate.ModuleCoordinate{withOrigin, without})
 	ws := &fakeWalkStore{walk: walk}
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-origins"}}

@@ -219,7 +219,7 @@ func runNative(ctx context.Context, arg string, force bool, stdout, stderr io.Wr
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	result, err := ctr.ExtractNative.Execute(ctx, nativeapp.ExtractRequest{Coordinate: coord, Force: force})
 	if err != nil {

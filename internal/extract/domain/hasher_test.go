@@ -8,16 +8,17 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestExtractionRunHasher(t *testing.T) {
-	coord1, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
-	coord2, _ := coordinate.NewModuleCoordinate("github.com/baz/qux", "v2.0.0")
+	coord1 := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	coord2 := coordinatetest.MustNew("github.com/baz/qux", "v2.0.0")
 	// Same Path as coord1, different Version: exercises the Version-comparison
 	// branch of marshalCanonicalRun's coordinate sort when Path is equal.
-	coord3, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.1.0")
+	coord3 := coordinatetest.MustNew("github.com/foo/bar", "v1.1.0")
 
 	run := ExtractionRun{
 		SchemaVersion:   ExtractionRunSchemaVersion,
@@ -81,7 +82,10 @@ func TestExtractionRunHasher(t *testing.T) {
 	})
 
 	t.Run("Marshal and Unmarshal Canonical", func(t *testing.T) {
-		runWithHash, _ := hasher.SetContentHash(run)
+		runWithHash, err := hasher.SetContentHash(run)
+		if err != nil {
+			t.Fatalf("SetContentHash: %v", err)
+		}
 		data, err := json.Marshal(runWithHash)
 		if err != nil {
 			t.Fatalf("json.Marshal(run) error = %v", err)
@@ -131,7 +135,10 @@ func TestExtractionRunHasher(t *testing.T) {
 	})
 
 	t.Run("ecosystem present after round-trip", func(t *testing.T) {
-		runWithHash, _ := hasher.SetContentHash(run)
+		runWithHash, err := hasher.SetContentHash(run)
+		if err != nil {
+			t.Fatalf("SetContentHash: %v", err)
+		}
 		data, err := hasher.Marshal(runWithHash)
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
@@ -151,7 +158,10 @@ func TestExtractionRunHasher(t *testing.T) {
 	t.Run("rejects foreign ecosystem", func(t *testing.T) {
 		foreign := run
 		foreign.Ecosystem = "npm"
-		hashed, _ := hasher.SetContentHash(foreign)
+		hashed, err := hasher.SetContentHash(foreign)
+		if err != nil {
+			t.Fatalf("SetContentHash: %v", err)
+		}
 		data, err := hasher.Marshal(hashed)
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
@@ -194,7 +204,7 @@ func TestVerifyContentHash_MarshalFailure(t *testing.T) {
 
 func TestUnmarshal_MalformedInputs(t *testing.T) {
 	hasher := ExtractionRunHasher{}
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	run := ExtractionRun{
 		SchemaVersion: ExtractionRunSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,

@@ -114,11 +114,11 @@ func TestGoListChildDiesWithAKilledParent(t *testing.T) {
 	hardened := awaitPID(t, hardenedPIDFile)
 	control := awaitPID(t, controlPIDFile)
 	defer func() {
-		_ = syscall.Kill(hardened, syscall.SIGKILL)
-		_ = syscall.Kill(control, syscall.SIGKILL)
+		_ = syscall.Kill(hardened, syscall.SIGKILL) //nolint:errcheck // reaping a child that may already be gone
+		_ = syscall.Kill(control, syscall.SIGKILL)  //nolint:errcheck // as above
 	}()
 
-	_ = helper.Wait()
+	_ = helper.Wait() //nolint:errcheck // the helper kills itself; its exit is the expected error
 	if !awaitGone(helper.Process.Pid, 10*time.Second) {
 		t.Fatalf("helper parent %d did not die", helper.Process.Pid)
 	}
@@ -153,7 +153,7 @@ func runGoListOrphanHelper(t *testing.T) {
 
 	// context.Background, not t.Context: the test framework's cancellation must
 	// not be what kills either child.
-	go func() { _, _ = runGoList(context.Background(), hardenedDir, []string{"list", "./..."}) }()
+	go func() { _, _ = runGoList(context.Background(), hardenedDir, []string{"list", "./..."}) }() //nolint:errcheck // the process is killed under it by design
 
 	control := exec.CommandContext(context.Background(), controlGo, "list", "./...") // #nosec G204 -- controlGo is this test's own fixture path
 	control.Dir = controlDir
@@ -170,6 +170,7 @@ func runGoListOrphanHelper(t *testing.T) {
 		_ = os.RemoveAll(store) // #nosec G703 -- the temp store directory TestMain itself created
 	}
 
-	_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+	_ = syscall.Kill(os.Getpid(), syscall.SIGKILL) //nolint:errcheck // nothing runs after a successful kill
+
 	select {} // unreachable; SIGKILL is not catchable
 }

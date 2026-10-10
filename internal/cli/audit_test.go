@@ -354,7 +354,7 @@ func TestAuditCmd_GomodDefault_NotFound(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chdir(orig) }()
+	defer mustChdir(t, orig)
 
 	var stdout, stderr bytes.Buffer
 	runErr := Run([]string{"audit"}, &stdout, &stderr)
@@ -380,7 +380,7 @@ func TestAuditCmd_GomodDefault_Found(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chdir(orig) }()
+	defer mustChdir(t, orig)
 
 	var stdout, stderr bytes.Buffer
 	runErr := Run([]string{"audit"}, &stdout, &stderr)

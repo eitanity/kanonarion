@@ -71,8 +71,8 @@ func TestExecute_EverythingSetAsideRemeasures(t *testing.T) {
 			if res.FromCache || res.Record.ContentHash == "" {
 				t.Errorf("FromCache = %v, record %q; want a fresh, sealed measurement", res.FromCache, res.Record.ContentHash)
 			}
-			if _, ok, _ := facts.fakeFacts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); !ok {
-				t.Error("no measurement was appended")
+			if _, ok, rerr := facts.fakeFacts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); rerr != nil || !ok {
+				t.Errorf("no measurement was appended (read error: %v)", rerr)
 			}
 		})
 	}

@@ -19,7 +19,9 @@ func TestNew_GOPROXY_CommaSeparated(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
-	_, _ = p.Info(context.Background(), coord)
+	if _, err := p.Info(context.Background(), coord); err != nil {
+		t.Fatalf("Info through the first GOPROXY entry: %v", err)
+	}
 }
 
 func TestProxy_InvalidURL(t *testing.T) {

@@ -344,7 +344,10 @@ func (b *vulnBatchCtx) anchoredVulnerabilities(ctx context.Context, coord coordi
 		// Narrowed to run.Snapshot (the snapshot the scan used), not the latest
 		// snapshot, exactly as the per-run store read was keyed.
 		atSnapshot := recordsAtSnapshot(recs, run.Snapshot)
-		rec, found := b.selectForBatch(atSnapshot, coord)
+		rec, found, err := b.selectForBatch(atSnapshot, coord)
+		if err != nil {
+			return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
+		}
 		if !found {
 			continue
 		}
@@ -354,7 +357,10 @@ func (b *vulnBatchCtx) anchoredVulnerabilities(ctx context.Context, coord coordi
 	}
 	// No run of the anchored walk covers the module with a readable record, so
 	// the whole ledger answers — still in the anchored frame.
-	rec, found := b.selectForBatch(recs, coord)
+	rec, found, err := b.selectForBatch(recs, coord)
+	if err != nil {
+		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
+	}
 	if found {
 		return vulnRecordToContext(&rec, "", "")
 	}
@@ -377,7 +383,10 @@ func (b *vulnBatchCtx) anchoredVulnerabilities(ctx context.Context, coord coordi
 // build that produced this verdict", not "in the newest build covering the
 // module".
 func (b *vulnBatchCtx) recordFirstVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, recs []vuldomain.VulnerabilityRecord, vulnUC QueryVulnUseCase) contextVulnerabilities {
-	rec, found := b.selectForBatch(recs, coord)
+	rec, found, err := b.selectForBatch(recs, coord)
+	if err != nil {
+		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
+	}
 	if !found {
 		return contextVulnerabilities{Status: sectionStatusNotRun}
 	}
@@ -471,13 +480,13 @@ func (b *vulnBatchCtx) nameRecordBasis(ctx context.Context, result *contextVulne
 // selectForBatch picks the record a batch report serves for one coordinate: in
 // the anchored build's frame when the caller named a build, and frame-first
 // among consumers when it did not.
-func (b *vulnBatchCtx) selectForBatch(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, bool) {
+func (b *vulnBatchCtx) selectForBatch(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, bool, error) {
 	if b.anchored && b.anchor.rooting.IsRecorded() {
-		rec, _, _, ok := selectRecordInFrame(recs, b.anchor.rooting)
-		return rec, ok
+		rec, _, _, ok, err := selectRecordInFrame(recs, b.anchor.rooting)
+		return rec, ok, err
 	}
-	rec, _, _, ok := selectConsumerRecord(recs, coord)
-	return rec, ok
+	rec, _, _, ok, err := selectConsumerRecord(recs, coord)
+	return rec, ok, err
 }
 
 // recordsAtSnapshot narrows a coordinate's generations to the ones reached

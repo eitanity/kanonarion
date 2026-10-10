@@ -115,8 +115,8 @@ func TestExecute_ReplacedModule_TargetAbsentFromGoSumIsAHardStop(t *testing.T) {
 			t.Errorf("refusal %q does not name %q", err, want)
 		}
 	}
-	if _, ok, _ := facts.GetFetchRecord(context.Background(), forkCoord, "test-0.1.0"); ok {
-		t.Error("a record was persisted for a fork with no go.sum anchor; want none")
+	if _, ok, rerr := facts.GetFetchRecord(context.Background(), forkCoord, "test-0.1.0"); rerr != nil || ok {
+		t.Errorf("a record was persisted for a fork with no go.sum anchor; want none (read error: %v)", rerr)
 	}
 }
 
@@ -133,8 +133,8 @@ func TestExecute_UnreplacedModule_AbsentFromGoSumStillFallsThrough(t *testing.T)
 	if result.Record.VerificationStatus == string(domain2.VerifiedByGoSum) {
 		t.Error("an absent go.sum entry was reported as a go.sum verification")
 	}
-	if _, ok, _ := facts.GetFetchRecord(context.Background(), testCoord, "test-0.1.0"); !ok {
-		t.Error("no record persisted for an unreplaced module absent from go.sum")
+	if _, ok, rerr := facts.GetFetchRecord(context.Background(), testCoord, "test-0.1.0"); rerr != nil || !ok {
+		t.Errorf("no record persisted for an unreplaced module absent from go.sum (read error: %v)", rerr)
 	}
 }
 

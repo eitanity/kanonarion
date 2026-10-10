@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -27,7 +29,7 @@ func TestStore(t *testing.T) {
 		t.Fatalf("failed to open store: %v", err)
 	}
 
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	hasher := domain.ExtractionRunHasher{}
 
 	run := domain.ExtractionRun{
@@ -49,7 +51,10 @@ func TestStore(t *testing.T) {
 		OverallStatus: domain.ExtractionRunSucceeded,
 		ContentHash:   "",
 	}
-	run, _ = hasher.SetContentHash(run)
+	run, serr := hasher.SetContentHash(run)
+	if serr != nil {
+		t.Fatalf("SetContentHash: %v", serr)
+	}
 
 	t.Run("Put and Get", func(t *testing.T) {
 		err := store.PutExtractionRun(ctx, run)
@@ -86,8 +91,13 @@ func TestStore(t *testing.T) {
 		run2.ID = "run-2"
 		run2.WalkID = "walk-2"
 		run2.OverallStatus = domain.ExtractionRunPartial
-		run2, _ = hasher.SetContentHash(run2)
-		_ = store.PutExtractionRun(ctx, run2)
+		run2, serr := hasher.SetContentHash(run2)
+		if serr != nil {
+			t.Fatalf("SetContentHash: %v", serr)
+		}
+		if perr := store.PutExtractionRun(ctx, run2); perr != nil {
+			t.Fatalf("PutExtractionRun: %v", perr)
+		}
 
 		summaries, err := store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})
 		if err != nil {
@@ -98,14 +108,14 @@ func TestStore(t *testing.T) {
 		}
 
 		// Filter by WalkID
-		summaries, _ = store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{WalkID: "walk-2"})
+		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{WalkID: "walk-2"})
 		if len(summaries) != 1 || summaries[0].ID != "run-2" {
 			t.Errorf("WalkID filter failed: got %v", summaries)
 		}
 
 		// Filter by Status
 		partial := domain.ExtractionRunPartial
-		summaries, _ = store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{OverallStatus: &partial})
+		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{OverallStatus: &partial})
 		if len(summaries) != 1 || summaries[0].ID != "run-2" {
 			t.Errorf("Status filter failed: got %v", summaries)
 		}
@@ -113,19 +123,19 @@ func TestStore(t *testing.T) {
 		// Filter by Since/Until
 		since := run.StartedAt.Add(-time.Hour)
 		until := run.StartedAt.Add(time.Hour)
-		summaries, _ = store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{Since: &since, Until: &until})
+		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{Since: &since, Until: &until})
 		if len(summaries) < 1 {
 			t.Errorf("Since/Until filter failed: got %d", len(summaries))
 		}
 
 		// Limit and Offset
-		summaries, _ = store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{Limit: 1, Offset: 1})
+		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{Limit: 1, Offset: 1})
 		if len(summaries) != 1 {
 			t.Errorf("Limit/Offset filter failed: got %d", len(summaries))
 		}
 
 		// Filter by ID
-		summaries, _ = store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{IDs: []string{"run-2"}})
+		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{IDs: []string{"run-2"}})
 		if len(summaries) != 1 || summaries[0].ID != "run-2" {
 			t.Errorf("IDs filter failed: got %v", summaries)
 		}
@@ -143,4 +153,33 @@ func TestStore(t *testing.T) {
 			t.Error("GetExtractionRun should have failed for tampered data")
 		}
 	})
+
+	// A record that does not decode is a damaged row. It used to be listed as a
+	// run that covered no modules. run-1 was made undecodable above.
+	t.Run("Undecodable record", func(t *testing.T) {
+		if _, err := store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{IDs: []string{"run-1"}}); err == nil {
+			t.Error("ListExtractionRuns listed a run whose raw_record does not decode")
+		}
+	})
+
+	// A timestamp column that does not parse is a damaged row. It used to be
+	// listed as a run that started and completed at the zero time.
+	t.Run("Unparseable timestamp", func(t *testing.T) {
+		if _, err := store.db.DB().ExecContext(ctx, "UPDATE extraction_runs SET started_at = ? WHERE id = ?", "not-a-time", "run-2"); err != nil {
+			t.Fatalf("failed to tamper with DB: %v", err)
+		}
+		if _, err := store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{IDs: []string{"run-2"}}); err == nil {
+			t.Error("ListExtractionRuns listed a run whose started_at does not parse")
+		}
+	})
+}
+
+// mustList lists extraction runs, failing the test if the read fails.
+func mustList(ctx context.Context, t *testing.T, store *Store, filter ports.ExtractionRunFilter) []ports.ExtractionRunSummary {
+	t.Helper()
+	summaries, err := store.ListExtractionRuns(ctx, filter)
+	if err != nil {
+		t.Fatalf("ListExtractionRuns(%+v): %v", filter, err)
+	}
+	return summaries
 }

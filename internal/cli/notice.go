@@ -191,7 +191,7 @@ func runNotice(ctx context.Context, f noticeFlags, stdout, stderr io.Writer) err
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// The snippet root is the directory holding the resolved go.mod, derived
 	// here rather than by the caller so the two scopes it depends on arrive

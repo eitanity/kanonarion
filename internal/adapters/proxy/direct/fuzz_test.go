@@ -87,9 +87,9 @@ func FuzzProxyResponses(f *testing.F) {
 
 		ctx := context.Background()
 		// Each parser must return (zero, error) or a value — never panic.
-		_, _ = p.Info(ctx, coord)
-		_, _ = p.LatestInfo(ctx, "rsc.io/quote")
-		_, _ = p.ListVersions(ctx, "rsc.io/quote")
-		_, _ = p.Download(ctx, coord)
+		_, _ = p.Info(ctx, coord)                  //nolint:errcheck // only a panic fails the fuzz target
+		_, _ = p.LatestInfo(ctx, "rsc.io/quote")   //nolint:errcheck // only a panic fails the fuzz target
+		_, _ = p.ListVersions(ctx, "rsc.io/quote") //nolint:errcheck // only a panic fails the fuzz target
+		_, _ = p.Download(ctx, coord)              //nolint:errcheck // only a panic fails the fuzz target
 	})
 }

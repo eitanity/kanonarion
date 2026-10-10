@@ -8,6 +8,7 @@ import (
 
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
@@ -17,7 +18,7 @@ var nestedLoader = domain2.ForeignModule{Path: "example.com/mod/nested", Version
 
 // foreignControlCoord is the zero-paired control's coordinate: a second module
 // in the same store whose record names no foreign module at all.
-var foreignControlCoord, _ = coordinate.NewModuleCoordinate("example.com/other", "v2.0.0")
+var foreignControlCoord = coordinatetest.MustNew("example.com/other", "v2.0.0")
 
 // TestForeignModulesColumn_WriteLegCopiesWhatTheRecordStates: the column is a
 // derived copy of the sealed blob, written in the same transaction, so a row

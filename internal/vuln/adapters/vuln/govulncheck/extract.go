@@ -82,7 +82,7 @@ func (s *Scanner) extractZip(ctx context.Context, r io.Reader, dest string) erro
 // Falls back to "./..." if no such directory is found.
 func findFirstGoPackage(root string) string {
 	var found string
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error { //nolint:errcheck // the callback returns only nil, SkipDir or SkipAll
 		if found != "" || err != nil {
 			return filepath.SkipAll
 		}

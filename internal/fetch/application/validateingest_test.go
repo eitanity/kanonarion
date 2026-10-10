@@ -80,8 +80,8 @@ func TestValidateAndIngest_Ingest_TamperedRejectedFailClosed(t *testing.T) {
 		t.Fatalf("want ErrVerificationFailed, got %v", err)
 	}
 	// Fail-closed: nothing reached the store.
-	if _, found, _ := store.GetFetchRecord(context.Background(), rec.Coordinate(), rec.PipelineVersion); found {
-		t.Fatal("tampered record was persisted; ingest is not fail-closed")
+	if _, found, rerr := store.GetFetchRecord(context.Background(), rec.Coordinate(), rec.PipelineVersion); rerr != nil || found {
+		t.Fatalf("tampered record was persisted; ingest is not fail-closed (read error: %v)", rerr)
 	}
 }
 

@@ -54,7 +54,7 @@ func TestAcquire_ClassifierStoppedByTheCancellationIsNotLogged(t *testing.T) {
 					cancel()
 				}
 				defer cancel()
-				_ = acquire(ctx, fakeLicense{err: tc.err}, slog.New(slog.NewTextHandler(&logs, nil)))
+				_ = acquire(ctx, fakeLicense{err: tc.err}, slog.New(slog.NewTextHandler(&logs, nil))) //nolint:errcheck // the subject is what it logs
 				logged := strings.Contains(logs.String(), "stdlib.license.identify_failed")
 				if tc.cancelled == logged {
 					t.Errorf("cancelled=%v but logged=%v:\n%s", tc.cancelled, logged, logs.String())

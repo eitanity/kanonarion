@@ -3,6 +3,7 @@ package modcache_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -69,7 +70,10 @@ type fakeBlobStore struct {
 }
 
 func (s *fakeBlobStore) Put(_ context.Context, identity fetchports.BlobIdentity, r io.Reader) error {
-	data, _ := io.ReadAll(r)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("reading blob %s: %w", identity, err)
+	}
 	s.blobs[identity.String()] = data
 	return nil
 }
@@ -491,5 +495,38 @@ func TestPopulateGoModClosure_ReportsUnreachableLevel(t *testing.T) {
 	}
 	if summary := report.FailureSummary(10); !strings.Contains(summary, "example.com/absent@v1.9.9") {
 		t.Errorf("FailureSummary = %q, want it to name the unreachable version", summary)
+	}
+}
+
+// A fetch time JSON cannot encode (a year past 9999) is reported for the
+// module. Unchecked, the encode failure left an empty .info in the cache.
+func TestPopulate_UnencodableInfoIsReported(t *testing.T) {
+	rec := fetchtest.Record(
+		t,
+		fetchtest.Module("example.com/mod", "v1.0.0"),
+		fetchtest.PipelineVersion("0.1.0"),
+		fetchtest.Content("fake:zip"),
+		fetchtest.ModuleHash(fetchtest.H1("abcdef")),
+		fetchtest.FetchedAt(time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)),
+	)
+	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{
+		"example.com/mod@v1.0.0|0.1.0": rec,
+	}}
+	blobs := &fakeBlobStore{blobs: map[string][]byte{
+		fetchtest.ZipIdentity(t, rec).String(): []byte("fake-zip-content"),
+	}}
+	cacheDir := t.TempDir()
+	coord := newCoord(t, "example.com/mod", "v1.0.0")
+
+	report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord})
+	if report.Complete() {
+		t.Fatal("Populate reported a module whose .info could not be encoded as complete")
+	}
+	if got := report.FailureSummary(0); !strings.Contains(got, "encoding info") {
+		t.Errorf("failure summary = %q, want the encode failure", got)
+	}
+	info := filepath.Join(cacheDir, "cache", "download", "example.com", "mod", "@v", "v1.0.0.info")
+	if _, err := os.Stat(info); err == nil {
+		t.Errorf("an .info was written for a fetch time that cannot be encoded")
 	}
 }

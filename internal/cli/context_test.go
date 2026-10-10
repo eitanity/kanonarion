@@ -935,8 +935,14 @@ func TestContextSizeHintMeasuresJSONDocument(t *testing.T) {
 		if m == nil {
 			t.Fatalf("compact=%t: no Context size hint naming its document in output:\n%s", compact, buf.String())
 		}
-		gotTokens, _ := strconv.Atoi(m[1])
-		gotBytes, _ := strconv.Atoi(m[2])
+		gotTokens, aerr := strconv.Atoi(m[1])
+		if aerr != nil {
+			t.Fatalf("Atoi: %v", aerr)
+		}
+		gotBytes, aerr := strconv.Atoi(m[2])
+		if aerr != nil {
+			t.Fatalf("Atoi: %v", aerr)
+		}
 		if gotBytes != wantBytes || gotTokens != wantBytes/4 {
 			t.Errorf("compact=%t: hint reports ~%d tokens (%d bytes); the JSON document measures ~%d tokens (%d bytes)",
 				compact, gotTokens, gotBytes, wantBytes/4, wantBytes)

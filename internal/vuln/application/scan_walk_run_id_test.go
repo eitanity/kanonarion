@@ -38,15 +38,15 @@ func TestScanWalk_TwoScansInOneSecondAreTwoCompleteRuns(t *testing.T) {
 
 	m1 := coordinatetest.MustNew("m1", "v1")
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    "w1",
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: m1}}},
-	})
+	}))
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(m1), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(m1), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip")))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip")))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(m1), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))))
 
 	snapshot := vulntest.MustNewAt("test", "v1", now.Add(-time.Hour))
 	if err := vulnStore.PutDatabaseSnapshot(ctx, snapshot, strings.NewReader("cached")); err != nil {

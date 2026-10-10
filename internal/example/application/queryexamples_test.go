@@ -67,10 +67,12 @@ var _ exampleports.ExampleStore = (*queryExFakeStore)(nil)
 func TestQueryExamplesUseCase_GetExampleRecord(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	store := &queryExFakeStore{}
-	_ = store.PutExampleRecord(context.Background(), domain.ExampleRecord{
+	if err := store.PutExampleRecord(context.Background(), domain.ExampleRecord{
 		Coordinate:      coord,
 		PipelineVersion: "0.1.0",
-	})
+	}); err != nil {
+		t.Fatalf("PutExampleRecord: %v", err)
+	}
 
 	uc := application.NewQueryExamplesUseCase(store)
 

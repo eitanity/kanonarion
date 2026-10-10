@@ -216,7 +216,10 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 	var h domain2.ExampleRecordHasher
 	r := buildExampleRecord(t)
 	r.Ecosystem = "npm"
-	hashed, _ := h.SetContentHash(r)
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	blob, err := h.Marshal(hashed)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -229,7 +232,10 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 func TestHasher_Unmarshal_MalformedExtractedAt(t *testing.T) {
 	var h domain2.ExampleRecordHasher
 	r := buildExampleRecord(t)
-	hashed, _ := h.SetContentHash(r)
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	blob, err := h.Marshal(hashed)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -243,7 +249,10 @@ func TestHasher_Unmarshal_MalformedExtractedAt(t *testing.T) {
 func TestHasher_Unmarshal_MalformedCoordinate(t *testing.T) {
 	var h domain2.ExampleRecordHasher
 	r := buildExampleRecord(t)
-	hashed, _ := h.SetContentHash(r)
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	blob, err := h.Marshal(hashed)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

@@ -145,8 +145,8 @@ func TestWorktree_LeavesAnIncompleteTreeUntouched(t *testing.T) {
 		t.Errorf("go.mod was rewritten by the analysis:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 	if _, err := os.Stat(gosum); err == nil {
-		written, _ := os.ReadFile(gosum) // #nosec G304 -- written by the child into this test's t.TempDir()
-		t.Errorf("the analysis wrote a go.sum into the tree it was asked to measure:\n%s", written)
+		written, rerr := os.ReadFile(gosum) // #nosec G304 -- written by the child into this test's t.TempDir()
+		t.Errorf("the analysis wrote a go.sum into the tree it was asked to measure (read error: %v):\n%s", rerr, written)
 	}
 }
 

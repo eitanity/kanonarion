@@ -51,8 +51,8 @@ func TestResolveProjectGoSum_NoopInModcacheMode(t *testing.T) {
 	modcacheMode = true
 	dir := t.TempDir()
 	gomod := filepath.Join(dir, "go.mod")
-	_ = os.WriteFile(gomod, []byte("module x\n"), 0o600)
-	_ = os.WriteFile(filepath.Join(dir, "go.sum"), []byte(""), 0o600)
+	mustWriteFile(t, gomod, []byte("module x\n"))
+	mustWriteFile(t, filepath.Join(dir, "go.sum"), []byte(""))
 
 	resolveProjectGoSum(gomod)
 	if projectGoSumPath != "" {

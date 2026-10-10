@@ -80,7 +80,7 @@ func TestOps(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/test-path" {
-			_, _ = w.Write([]byte("test data"))
+			_, _ = w.Write([]byte("test data")) //nolint:errcheck // a failed write is seen by the client under test
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}

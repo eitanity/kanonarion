@@ -167,7 +167,8 @@ func statementsIn(out string, everyLine bool) []string {
 			cur = &strings.Builder{}
 			cur.WriteString(line)
 		case cur != nil && strings.TrimSpace(line) != "" && (line[0] == ' ' || line[0] == '\t' || line[0] == '#'):
-			cur.WriteString(" " + strings.TrimSpace(line))
+			cur.WriteString(" ")
+			cur.WriteString(strings.TrimSpace(line))
 		default:
 			flush()
 		}
@@ -650,10 +651,10 @@ func TestRunLevelFactParity(t *testing.T) {
 		}
 
 		var textOut, textErr bytes.Buffer
-		_ = Run(append([]string{}, base...), &textOut, &textErr)
+		_ = Run(append([]string{}, base...), &textOut, &textErr) //nolint:errcheck // a refusal is a statement too; the two runs are compared
 
 		var jsonOutBuf, jsonErrBuf bytes.Buffer
-		_ = Run(append(append([]string{}, base...), "--json"), &jsonOutBuf, &jsonErrBuf)
+		_ = Run(append(append([]string{}, base...), "--json"), &jsonOutBuf, &jsonErrBuf) //nolint:errcheck // as above
 
 		docs, derr := decodeJSONStream(jsonOutBuf.Bytes())
 		shape := topLevelShape(docs, jsonOutBuf.Bytes())

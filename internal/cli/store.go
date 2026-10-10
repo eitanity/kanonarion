@@ -141,7 +141,7 @@ type storeCleanResult struct {
 // number beside it is a report of it.
 func dirSize(path string) int64 {
 	var total int64
-	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error { //nolint:errcheck // the callback returns only nil
 		if err != nil || d.IsDir() {
 			return nil //nolint:nilerr // a file that cannot be read is not counted, not a refusal
 		}

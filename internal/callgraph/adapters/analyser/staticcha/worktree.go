@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -169,11 +170,10 @@ func hashTreeFiles(root string, rel []string, scheme string) (string, error) {
 }
 
 // writeFramed writes a length-prefixed string into the digest.
-func writeFramed(h io.Writer, s string) {
-	// hash.Hash never returns an error from Write, which is why the interface's
-	// own documentation says so; the values are ignored here rather than in a
-	// wrapper that would have to invent an error path with no producer.
-	_, _ = io.WriteString(h, strconv.Itoa(len(s))+"\x00"+s+"\x00")
+func writeFramed(h hash.Hash, s string) {
+	// hash.Hash documents that Write never returns an error, so there is no
+	// failure here to report; the parameter type is what makes that true.
+	_, _ = io.WriteString(h, strconv.Itoa(len(s))+"\x00"+s+"\x00") //nolint:errcheck // hash.Hash.Write never fails
 }
 
 // worktreeFiles lists the slash-separated relative paths the digest covers.

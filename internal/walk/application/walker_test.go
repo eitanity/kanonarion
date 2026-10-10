@@ -396,7 +396,7 @@ func TestWalker_ContextCancellation(t *testing.T) {
 
 	resultCh := make(chan domain.WalkOutcome, 1)
 	go func() {
-		o, _ := w.Walk(ctx, application2.WalkRequest{
+		o, _ := w.Walk(ctx, application2.WalkRequest{ //nolint:errcheck // cancelled mid-walk by design; the outcome is the subject
 			Target: coord("example.com/target", "v1.0.0"),
 		})
 		resultCh <- o

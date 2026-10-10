@@ -6,7 +6,7 @@ import (
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
@@ -22,7 +22,7 @@ import (
 // stage it always was.
 func TestAdapterExtractor_AnalyserLimitFailsTheStage(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/genmeth", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/genmeth", "v1.0.0")
 	u := gotoolchain.NewUnreadSource(gotoolchain.AnalyserLimit{Required: "go1.27.2", Built: "go1.26.6"}, []string{"genmeth.go"})
 	cgDetail := "/src/genmeth.go:1:1: package requires newer Go version go1.27.2 (application built with go1.26.6)"
 	stages := map[string]*AdapterExtractor{

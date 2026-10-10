@@ -2,6 +2,7 @@ package domain
 
 import (
 	"container/heap"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -217,7 +218,7 @@ func widestPaths(
 	}
 
 	for pq.Len() > 0 {
-		it := heap.Pop(pq).(widestItem)
+		it := popWidest(pq)
 		if settled[it.id] {
 			continue
 		}
@@ -405,7 +406,25 @@ func (q widestQueue) Less(i, j int) bool {
 
 func (q widestQueue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
 
-func (q *widestQueue) Push(x any) { *q = append(*q, x.(widestItem)) }
+// Push is called by container/heap with what heap.Push was given, and only
+// this file calls heap.Push, always with a widestItem.
+func (q *widestQueue) Push(x any) {
+	it, ok := x.(widestItem)
+	if !ok {
+		panic(fmt.Sprintf("capability: widestQueue pushed %T, not widestItem", x))
+	}
+	*q = append(*q, it)
+}
+
+// popWidest pops the next item. The queue holds widestItem only (see Push).
+func popWidest(pq *widestQueue) widestItem {
+	x := heap.Pop(pq)
+	it, ok := x.(widestItem)
+	if !ok {
+		panic(fmt.Sprintf("capability: widestQueue popped %T, not widestItem", x))
+	}
+	return it
+}
 
 func (q *widestQueue) Pop() any {
 	old := *q

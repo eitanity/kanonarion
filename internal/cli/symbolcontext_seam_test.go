@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
@@ -31,9 +33,9 @@ func TestBuildSymbolContextEntries_GroupsSortsAndAttachesExamples(t *testing.T) 
 		QueryExamples:  examples,
 	}
 
-	entries, err := buildSymbolContextEntries(context.Background(), ctr, refs, "1.0.0")
-	if err != nil {
-		t.Fatalf("buildSymbolContextEntries: %v", err)
+	entries, carried, err := buildSymbolContextEntries(context.Background(), ctr, refs, "1.0.0")
+	if err != nil || carried != nil {
+		t.Fatalf("buildSymbolContextEntries: carried %v, err %v", carried, err)
 	}
 	if len(entries) != 2 {
 		t.Fatalf("want 2 entries, got %d", len(entries))
@@ -54,5 +56,46 @@ func TestBuildSymbolContextEntries_GroupsSortsAndAttachesExamples(t *testing.T) 
 	// z.io/mod symbol has no example (its coordinate did not match).
 	if len(entries[1].Examples) != 0 {
 		t.Errorf("z.io/mod should have no examples, got: %+v", entries[1].Examples)
+	}
+}
+
+// A store read that fails is not an absence. Examples or a godoc the store
+// could not verify used to render as "none" with exit 0; now an integrity
+// failure stops the command and a conflict is carried beside the entries.
+func TestBuildSymbolContextEntries_ReadFailuresAreNotAbsences(t *testing.T) {
+	refs := []ifaceports.SymbolRef{
+		{ModulePath: "a.io/mod", ModuleVersion: "v1.0.0", PackagePath: "a.io/mod", SymbolKind: "func", SymbolName: "Do"},
+	}
+	for _, tc := range []struct {
+		name         string
+		ifaceErr     error
+		examplesErr  error
+		wantErr      error
+		wantCarried  error
+		wantEntryLen int
+	}{
+		{name: "example integrity", examplesErr: fmt.Errorf("finding: %w", exports.ErrExampleIntegrity), wantErr: exports.ErrExampleIntegrity},
+		{name: "example conflict", examplesErr: fmt.Errorf("finding: %w", exports.ErrExampleConflict), wantCarried: exports.ErrExampleConflict, wantEntryLen: 1},
+		{name: "interface integrity", ifaceErr: fmt.Errorf("getting: %w", ifaceports.ErrInterfaceIntegrity), wantErr: ifaceports.ErrInterfaceIntegrity},
+		{name: "interface conflict", ifaceErr: fmt.Errorf("getting: %w", ifaceports.ErrInterfaceConflict), wantCarried: ifaceports.ErrInterfaceConflict, wantEntryLen: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			iface := testfakes.NewFakeQueryInterface()
+			iface.Err = tc.ifaceErr
+			examples := testfakes.NewFakeQueryExamples()
+			examples.Err = tc.examplesErr
+			ctr := &Container{QueryInterface: iface, QueryExamples: examples}
+
+			entries, carried, err := buildSymbolContextEntries(context.Background(), ctr, refs, "1.0.0")
+			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if !errors.Is(carried, tc.wantCarried) || (tc.wantCarried == nil && carried != nil) {
+				t.Fatalf("carried = %v, want %v", carried, tc.wantCarried)
+			}
+			if len(entries) != tc.wantEntryLen {
+				t.Fatalf("entries = %d, want %d", len(entries), tc.wantEntryLen)
+			}
+		})
 	}
 }

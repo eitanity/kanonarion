@@ -398,7 +398,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 			_, _ = fmt.Fprintf(stderr, "staleness ledger unavailable, resolving live: %v\n", lerr)
 		}
 	} else {
-		defer func() { _ = closeLedger() }()
+		defer releaseStore(closeLedger)
 	}
 	// --fresh belongs here: the subject of this command IS the latest answer, so
 	// asking for a fresh one is asking for the ledger to be bypassed.

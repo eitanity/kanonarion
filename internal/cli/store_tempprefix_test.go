@@ -61,7 +61,10 @@ func TestStoreCleanCoversEveryTempPrefix(t *testing.T) {
 			if !ok {
 				return true // a constant expression; the scratch prefix is checked above
 			}
-			pattern, _ := strconv.Unquote(lit.Value)
+			pattern, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				t.Fatalf("Unquote: %v", err)
+			}
 			seen++
 			if !covered(pattern) {
 				t.Errorf("%s: os.%s pattern %q is not in tempPrefixes, so store clean never recovers it", path, sel.Sel.Name, pattern)

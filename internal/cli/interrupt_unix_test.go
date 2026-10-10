@@ -69,7 +69,7 @@ func TestInterruptedRunExitsCancelledWithOneStatement(t *testing.T) {
 			case werr := <-done:
 				t.Fatalf("the run ended (%v) before its fetch reached the proxy; stderr:\n%s", werr, stderr.String())
 			case <-time.After(30 * time.Second):
-				_ = cmd.Process.Kill()
+				_ = cmd.Process.Kill() //nolint:errcheck // teardown before the Fatalf below
 				<-done
 				t.Fatalf("the fetch never reached the proxy; stderr:\n%s", stderr.String())
 			}

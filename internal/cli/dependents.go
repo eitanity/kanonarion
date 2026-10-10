@@ -153,7 +153,7 @@ func runDependents(ctx context.Context, moduleArg, storeRoot string, f dependent
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return dependentsWith(ctx, ctr, coord, f, jsonOut, stdout, stderr)
 }

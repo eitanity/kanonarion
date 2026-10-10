@@ -333,7 +333,10 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 		PipelineVersion: "0.1.0",
 	}
 	var h domain2.LicenseRecordHasher
-	hashed, _ := h.SetContentHash(r)
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	blob, err := h.Marshal(hashed)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

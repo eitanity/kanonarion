@@ -135,8 +135,8 @@ func TestLocalExecute_AuditSinkFailureIsReported(t *testing.T) {
 	}
 	// The record is persisted before the event: the write happened, and the
 	// failure is about recording it, not about performing it.
-	if _, ok, _ := store.GetCallGraphRecord(context.Background(), testCoord, testPipelineV); !ok {
-		t.Errorf("record not persisted; the append failure must not undo the write")
+	if _, ok, rerr := store.GetCallGraphRecord(context.Background(), testCoord, testPipelineV); rerr != nil || !ok {
+		t.Errorf("record not persisted; the append failure must not undo the write (read error: %v)", rerr)
 	}
 }
 

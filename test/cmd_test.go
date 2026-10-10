@@ -194,9 +194,13 @@ func cmdSeedWalk(args []string) {
 			os.Exit(1)
 		}
 		modContent := []byte("module " + node.Coordinate.Path() + "\n")
-		modHash, _ := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
+		modHash, herr := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(modContent)), nil
 		})
+		if herr != nil {
+			_ = db.Close()
+			os.Exit(1)
+		}
 
 		// This is a testscript subprocess entry point: it calls os.Exit and has no
 		// testing handle, so it cannot use the fetchtest builder. It seals through
@@ -390,9 +394,13 @@ func buildFixtureWalkRecords() []domain.WalkRecord {
 	}
 	var hasher domain.WalkRecordHasher
 	recA := domain.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "fixture", "1.0.0", domain.WalkScopeCode, domain.WalkDepthFull, outcomeA, domain.DefaultDepthPolicy(), "")
-	recA, _ = hasher.SetContentHash(recA)
+	recA, errA := hasher.SetContentHash(recA)
 	recB := domain.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FBB", "fixture", "1.0.0", domain.WalkScopeCode, domain.WalkDepthFull, outcomeB, domain.DefaultDepthPolicy(), "")
-	recB, _ = hasher.SetContentHash(recB)
+	recB, errB := hasher.SetContentHash(recB)
+	if errA != nil || errB != nil {
+		// A seed subprocess has no test to fail; an unsealed fixture must not be seeded.
+		os.Exit(1)
+	}
 	return []domain.WalkRecord{recA, recB}
 }
 
@@ -481,7 +489,11 @@ func cmdSeedCallGraph(args []string) {
 		ArtefactIdentity: appArtefact.String(),
 	}
 	var hasher cgdomain.CallGraphRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err = hasher.SetContentHash(rec)
+	if err != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 
 	if err := store.PutCallGraphRecord(context.Background(), rec); err != nil {
 		_ = db.Close()
@@ -517,7 +529,11 @@ func cmdSeedLicense(args []string) {
 	}
 	rec.SortFiles()
 	var hasher licdomain.LicenseRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err = hasher.SetContentHash(rec)
+	if err != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 
 	if err := store.PutLicenseRecord(context.Background(), rec); err != nil {
 		_ = db.Close()
@@ -558,7 +574,11 @@ func cmdSeedIface(args []string) {
 		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
 	var hasher ifdomain.InterfaceRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err = hasher.SetContentHash(rec)
+	if err != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 
 	if err := store.PutInterfaceRecord(context.Background(), rec); err != nil {
 		_ = db.Close()
@@ -608,7 +628,11 @@ func cmdSeedExamples(args []string) {
 		ArtefactIdentity: appArtefact.String(),
 	}
 	var hasher exdomain.ExampleRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err = hasher.SetContentHash(rec)
+	if err != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 
 	if err := store.PutExampleRecord(context.Background(), rec); err != nil {
 		_ = db.Close()

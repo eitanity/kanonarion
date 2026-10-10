@@ -74,7 +74,7 @@ func TestRunScanList_JSONStatesUnresolvableInputs(t *testing.T) {
 	decodeListingRecords(t, out.String(), &entries)
 	byID := make(map[string]map[string]any, len(entries))
 	for _, e := range entries {
-		id, _ := e["id"].(string)
+		id := optAs[string](t, e["id"])
 		byID[id] = e
 	}
 	note, ok := byID["vscan-dangling"]["inputs_unresolvable"].(string)

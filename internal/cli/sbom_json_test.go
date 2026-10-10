@@ -158,7 +158,7 @@ func TestSBOMListJSONCarriesOperatorAndLicenceCompleteness(t *testing.T) {
 
 	byID := make(map[string]map[string]any, len(rows))
 	for _, r := range rows {
-		id, _ := r["id"].(string)
+		id := optAs[string](t, r["id"])
 		byID[id] = r
 	}
 

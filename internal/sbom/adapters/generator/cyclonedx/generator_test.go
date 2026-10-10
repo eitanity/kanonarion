@@ -102,10 +102,10 @@ func TestComponentsSortedByPURL(t *testing.T) {
 	if err := json.Unmarshal(rec.Content, &bom); err != nil {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
-	components := bom["components"].([]any)
+	components := mustAs[[]any](t, bom["components"])
 	purls := make([]string, len(components))
 	for i, c := range components {
-		purls[i] = c.(map[string]any)["purl"].(string)
+		purls[i] = mustAs[string](t, mustAs[map[string]any](t, c)["purl"])
 	}
 	for i := 1; i < len(purls); i++ {
 		if purls[i] < purls[i-1] {
@@ -289,12 +289,12 @@ func TestCopyrightField(t *testing.T) {
 	if err := json.Unmarshal(rec.Content, &bom); err != nil {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
-	components := bom["components"].([]any)
+	components := mustAs[[]any](t, bom["components"])
 
 	byPURL := make(map[string]map[string]any, len(components))
 	for _, c := range components {
-		comp := c.(map[string]any)
-		byPURL[comp["purl"].(string)] = comp
+		comp := mustAs[map[string]any](t, c)
+		byPURL[mustAs[string](t, comp["purl"])] = comp
 	}
 
 	withPURL := "pkg:golang/github.com/example/licensed@v1.0.0"
@@ -348,8 +348,8 @@ func TestCopyrightDeduplicates(t *testing.T) {
 	if err := json.Unmarshal(rec.Content, &bom); err != nil {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
-	for _, c := range bom["components"].([]any) {
-		comp := c.(map[string]any)
+	for _, c := range mustAs[[]any](t, bom["components"]) {
+		comp := mustAs[map[string]any](t, c)
 		if comp["purl"] == "pkg:golang/github.com/example/dup@v1.0.0" {
 			if comp["copyright"] != dup {
 				t.Errorf("copyright = %q, want the single deduplicated line %q", comp["copyright"], dup)
@@ -425,13 +425,13 @@ func TestAllComponentsHaveGoPURL(t *testing.T) {
 		}
 	}
 
-	components, _ := bom["components"].([]any)
+	components := optAs[[]any](t, bom["components"])
 	for i, c := range components {
-		comp := c.(map[string]any)
+		comp := mustAs[map[string]any](t, c)
 		checkPURL(fmt.Sprintf("components[%d]", i), comp["purl"])
 	}
 
-	meta, _ := bom["metadata"].(map[string]any)
+	meta := optAs[map[string]any](t, bom["metadata"])
 	if primary, ok := meta["component"].(map[string]any); ok {
 		checkPURL("metadata.component", primary["purl"])
 	}
@@ -465,7 +465,7 @@ func TestComponentsHaveEcosystemProperty(t *testing.T) {
 			return
 		}
 		for _, p := range props {
-			prop := p.(map[string]any)
+			prop := mustAs[map[string]any](t, p)
 			if prop["name"] == "kanonarion:ecosystem" {
 				if prop["value"] != "go" {
 					t.Errorf("%s: kanonarion:ecosystem = %q, want go", label, prop["value"])
@@ -476,12 +476,12 @@ func TestComponentsHaveEcosystemProperty(t *testing.T) {
 		t.Errorf("%s: no kanonarion:ecosystem property found", label)
 	}
 
-	components, _ := bom["components"].([]any)
+	components := optAs[[]any](t, bom["components"])
 	for i, c := range components {
-		checkEcosystem(fmt.Sprintf("components[%d]", i), c.(map[string]any))
+		checkEcosystem(fmt.Sprintf("components[%d]", i), mustAs[map[string]any](t, c))
 	}
 
-	meta, _ := bom["metadata"].(map[string]any)
+	meta := optAs[map[string]any](t, bom["metadata"])
 	if primary, ok := meta["component"].(map[string]any); ok {
 		checkEcosystem("metadata.component", primary)
 	}
@@ -520,7 +520,7 @@ func TestProjectWalkSubjectIsLocalModule(t *testing.T) {
 	}
 
 	// metadata.component is the local main module.
-	meta, _ := bom["metadata"].(map[string]any)
+	meta := optAs[map[string]any](t, bom["metadata"])
 	primary, ok := meta["component"].(map[string]any)
 	if !ok {
 		t.Fatalf("metadata.component absent")
@@ -538,10 +538,10 @@ func TestProjectWalkSubjectIsLocalModule(t *testing.T) {
 	}
 
 	// components carry the full require closure.
-	components, _ := bom["components"].([]any)
+	components := optAs[[]any](t, bom["components"])
 	gotPURLs := map[string]bool{}
 	for _, c := range components {
-		gotPURLs[c.(map[string]any)["purl"].(string)] = true
+		gotPURLs[mustAs[string](t, mustAs[map[string]any](t, c)["purl"])] = true
 	}
 	for _, want := range []string{
 		"pkg:golang/github.com/example/dep-a@v0.5.0",
@@ -575,7 +575,7 @@ func TestMainComponentOverrides(t *testing.T) {
 	if err := json.Unmarshal(rec.Content, &bom); err != nil {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
-	meta, _ := bom["metadata"].(map[string]any)
+	meta := optAs[map[string]any](t, bom["metadata"])
 	primary, ok := meta["component"].(map[string]any)
 	if !ok {
 		t.Fatalf("metadata.component absent")
@@ -596,12 +596,12 @@ func TestMainComponentOverrides(t *testing.T) {
 		t.Errorf("subject externalReferences = %v, want none (no origin is recorded for a local main module)", refs)
 	}
 	// licence attached from the override.
-	lics, _ := primary["licenses"].([]any)
+	lics := optAs[[]any](t, primary["licenses"])
 	if len(lics) == 0 {
 		t.Fatalf("licenses absent; want Apache-2.0")
 	}
-	lic0, _ := lics[0].(map[string]any)
-	licObj, _ := lic0["license"].(map[string]any)
+	lic0 := optAs[map[string]any](t, lics[0])
+	licObj := optAs[map[string]any](t, lic0["license"])
 	if licObj["id"] != "Apache-2.0" {
 		t.Errorf("license id = %v, want Apache-2.0", licObj["id"])
 	}
@@ -627,8 +627,8 @@ func TestMainComponentOverridesIgnoredForPublishedTarget(t *testing.T) {
 	if err := json.Unmarshal(rec.Content, &bom); err != nil {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
-	meta, _ := bom["metadata"].(map[string]any)
-	primary, _ := meta["component"].(map[string]any)
+	meta := optAs[map[string]any](t, bom["metadata"])
+	primary := optAs[map[string]any](t, meta["component"])
 	if primary["version"] != "v3.0.0" {
 		t.Errorf("version = %v, want v3.0.0 (override must not apply)", primary["version"])
 	}
@@ -784,4 +784,26 @@ func TestGenerate_SuppliedTimestampKeepsDeterminism(t *testing.T) {
 	if bytes.Equal(first, at("2026-08-02T12:00:00Z")) {
 		t.Error("two generations with different supplied timestamps are identical")
 	}
+}
+
+// mustAs returns v as T, failing the test when it is anything else. It is the
+// checked form of a type assertion on a decoded JSON document.
+func mustAs[T any](t testing.TB, v any) T {
+	t.Helper()
+	got, ok := v.(T)
+	if !ok {
+		t.Fatalf("decoded value is %T, want %T", v, got)
+	}
+	return got
+}
+
+// optAs is mustAs for a key that may be absent: nil reads as T's zero value, as
+// the comma-ok form it replaces read it, and any other type fails the test.
+func optAs[T any](t testing.TB, v any) T {
+	t.Helper()
+	if v == nil {
+		var zero T
+		return zero
+	}
+	return mustAs[T](t, v)
 }

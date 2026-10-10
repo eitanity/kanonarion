@@ -785,7 +785,7 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 		if err != nil {
 			return fmt.Errorf("beginning transaction: %w", err)
 		}
-		defer func() { _ = tx.Rollback() }()
+		defer func() { _ = tx.Rollback() }() //nolint:errcheck // rollback after commit is a no-op
 
 		if existing, ok, ferr := s.firstScannedAt(ctx, tx, record); ferr != nil {
 			return ferr
@@ -1365,7 +1365,7 @@ func (s *Store) PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) erro
 		if err != nil {
 			return fmt.Errorf("beginning transaction: %w", err)
 		}
-		defer func() { _ = tx.Rollback() }()
+		defer func() { _ = tx.Rollback() }() //nolint:errcheck // rollback after commit is a no-op
 
 		const q = `
 INSERT INTO walk_scan_runs (

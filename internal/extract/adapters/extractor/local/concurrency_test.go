@@ -237,7 +237,7 @@ func TestCallgraphConcurrency_ARunThatEndsWhileWaitingRecordsTheHost(t *testing.
 
 	// Fill the single slot with a subprocess that does not return until the
 	// deferred release at the end of the test.
-	go func() { _, _ = adapter.Extract(context.Background(), coord, "callgraph", false, "") }()
+	go func() { _, _ = adapter.Extract(context.Background(), coord, "callgraph", false, "") }() //nolint:errcheck // only holds the slot; released at the end
 	for exec.inFlight.Load() == 0 {
 		runtime.Gosched()
 	}
@@ -276,7 +276,7 @@ func TestCallgraphConcurrency_CheapStagesAreNotBoundedByIt(t *testing.T) {
 	}
 
 	// One call-graph subprocess holds the only slot for the whole test.
-	go func() { _, _ = adapter.Extract(context.Background(), coord, "callgraph", false, "") }()
+	go func() { _, _ = adapter.Extract(context.Background(), coord, "callgraph", false, "") }() //nolint:errcheck // only holds the slot; released at the end
 	for exec.inFlight.Load() == 0 {
 		runtime.Gosched()
 	}

@@ -25,8 +25,8 @@ func respell(t *testing.T, s *sqlite.Store, r domain2.FactRecord) string {
 	if err != nil {
 		t.Fatalf("installing the respelt row: %v", err)
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		t.Fatalf("respelt %d rows, want 1", n)
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("respelt %d rows (err %v), want 1", n, err)
 	}
 	return seal
 }

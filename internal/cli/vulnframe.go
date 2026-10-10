@@ -136,36 +136,45 @@ func writeFrameAnchorNotice(stdout io.Writer, anchor vulnFrameAnchor, ok bool) {
 // carried on the composed one: the two frames disagreeing is information, and a
 // reader who has seen the isolated verdict elsewhere is owed the reason it is
 // not the headline.
+//
+// A conflict in the frame that answers is returned, not read as "no record":
+// two toolchains disagreeing is an answer the store holds. A conflict among
+// isolated records offered only as the aside drops the aside, as
+// ComposeForConsumer does.
 func selectRecordInFrame(
 	recs []vuldomain.VulnerabilityRecord,
 	rooting vuldomain.Rooting,
-) (vuldomain.VulnerabilityRecord, vuldomain.VulnerabilityRecord, bool, bool) {
+) (vuldomain.VulnerabilityRecord, vuldomain.VulnerabilityRecord, bool, bool, error) {
 	if len(recs) == 0 {
-		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false
+		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, nil
 	}
 	rec, found, err := vuldomain.ComposeAt(recs, rooting)
 	if err != nil {
-		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false
+		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, fmt.Errorf("composing vulnerability record in frame %s: %w", rooting, err)
 	}
 	if !found {
 		isolated, hasIsolated, ierr := vuldomain.ComposeAt(isolatedOnly(recs), vuldomain.RootingIsolated)
-		if ierr != nil || !hasIsolated {
-			return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false
+		if ierr != nil {
+			return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, fmt.Errorf("composing the isolated-frame record: %w", ierr)
+		}
+		if !hasIsolated {
+			return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, nil
 		}
 		// Served as the answer, not as an aside: it IS the answer, and the record
 		// states the isolated frame itself on every surface that prints one.
-		return isolated, vuldomain.VulnerabilityRecord{}, false, true
+		return isolated, vuldomain.VulnerabilityRecord{}, false, true, nil
 	}
 	if vuldomain.RecordRooting(rec) == vuldomain.RootingIsolated {
 		// An aside drawn from the frame that produced the answer is the same
 		// record printed twice.
-		return rec, vuldomain.VulnerabilityRecord{}, false, true
+		return rec, vuldomain.VulnerabilityRecord{}, false, true, nil
 	}
 	isolated, hasIsolated, ierr := vuldomain.ComposeAt(isolatedOnly(recs), vuldomain.RootingIsolated)
 	if ierr != nil {
-		return rec, vuldomain.VulnerabilityRecord{}, false, true
+		// The disputed aside is dropped, not the answer: see above.
+		isolated, hasIsolated = vuldomain.VulnerabilityRecord{}, false
 	}
-	return rec, isolated, hasIsolated, true
+	return rec, isolated, hasIsolated, true, nil
 }
 
 // isolatedOnly narrows a candidate set to the records that state the isolated
@@ -212,10 +221,13 @@ func recordInWalkFrame(
 		return vuldomain.VulnerabilityRecord{}, false, aside, nil
 	}
 	if anchor.rooting.IsRecorded() {
-		rec, _, _, found = selectRecordInFrame(candidates, anchor.rooting)
-		return rec, found, aside, nil
+		rec, _, _, found, err = selectRecordInFrame(candidates, anchor.rooting)
+	} else {
+		rec, _, _, found, err = selectConsumerRecord(candidates, coord)
 	}
-	rec, _, _, found = selectConsumerRecord(candidates, coord)
+	if err != nil {
+		return vuldomain.VulnerabilityRecord{}, false, nil, fmt.Errorf("selecting the vulnerability record for %s in walk %s: %w", coord, anchor.walkID, err)
+	}
 	return rec, found, aside, nil
 }
 
@@ -246,15 +258,13 @@ func selectAnchoredRecord(
 	cmdline string,
 ) (vuldomain.VulnerabilityRecord, vuldomain.VulnerabilityRecord, bool, bool, error) {
 	if anchor.rooting.IsRecorded() {
-		rec, aside, has, ok := selectRecordInFrame(candidates, anchor.rooting)
-		return rec, aside, has, ok, nil
+		return selectRecordInFrame(candidates, anchor.rooting)
 	}
 	if frames := consumerFrames(candidates, coord); len(frames) > 1 {
 		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false,
 			ambiguousFrameRefusal(cmdline, coord, frames)
 	}
-	rec, aside, has, ok := selectConsumerRecord(candidates, coord)
-	return rec, aside, has, ok, nil
+	return selectConsumerRecord(candidates, coord)
 }
 
 // framesPresent lists, deduplicated and in a stable order, the frames the

@@ -61,7 +61,10 @@ func TestLicenseCompat_JSONStdoutIsOneDocument_WithPreModulesCaveat(t *testing.T
 // consumer can act on the narrowed scope rather than re-deriving it.
 func TestLicenseCompat_JSONCarriesPreModulesCaveatField(t *testing.T) {
 	ctr, root, target := compatWithPreModulesClosure(t)
-	out, _ := runCompat(t, ctr, root, target, true)
+	out, err := runCompat(t, ctr, root, target, true)
+	if err == nil {
+		t.Fatal("the closure holds an open review item; want a non-clean result")
+	}
 
 	var doc struct {
 		PreModulesCaveat *struct {
@@ -94,7 +97,10 @@ func TestLicenseCompat_JSONOmitsCaveatWithoutPreModules(t *testing.T) {
 	ctr, root := compatFromRecords(t, map[string]licdomain.LicenseRecord{
 		"example.com/unmodelled@v1.0.0": simpleLicenceRecord("CC-BY-SA-4.0"),
 	})
-	out, _ := runCompat(t, ctr, root, "Apache-2.0", true)
+	out, err := runCompat(t, ctr, root, "Apache-2.0", true)
+	if err == nil {
+		t.Fatal("the closure holds an open review item; want a non-clean result")
+	}
 	doc := assertSingleJSONDocument(t, "license-compat --json", []byte(out))
 	if _, present := doc["pre_modules_caveat"]; present {
 		t.Errorf("pre_modules_caveat must be absent when no module in the closure is one:\n%s", out)
@@ -105,7 +111,10 @@ func TestLicenseCompat_JSONOmitsCaveatWithoutPreModules(t *testing.T) {
 // in both. A reader of the text output must still see it, naming the modules.
 func TestLicenseCompat_TextKeepsPreModulesCaveat(t *testing.T) {
 	ctr, root, target := compatWithPreModulesClosure(t)
-	out, _ := runCompat(t, ctr, root, target, false)
+	out, err := runCompat(t, ctr, root, target, false)
+	if err == nil {
+		t.Fatal("the closure holds an open review item; want a non-clean result")
+	}
 	if !strings.Contains(out, "caveat:") {
 		t.Fatalf("text output lost the pre-modules caveat:\n%s", out)
 	}
@@ -143,7 +152,10 @@ func TestLicenseCompat_JSONCarriesSetAside(t *testing.T) {
 		Reason: recordseal.ErrGenerationDrift,
 	}})
 
-	out, _ := runCompat(t, ctr, root, target, true)
+	out, err := runCompat(t, ctr, root, target, true)
+	if err == nil {
+		t.Fatal("the closure holds an open review item; want a non-clean result")
+	}
 	var doc asideDoc
 	if err := json.Unmarshal([]byte(firstJSONDocument(out)), &doc); err != nil {
 		t.Fatalf("decoding document: %v\n%s", err, out)

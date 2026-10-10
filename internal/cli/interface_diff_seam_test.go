@@ -181,7 +181,7 @@ func TestInterfaceDiffJSON_ShapeAndNaming(t *testing.T) {
 			t.Errorf("JSON missing key %q: %s", key, raw)
 		}
 	}
-	if decoded["breaking_count"].(float64) != 1 {
+	if mustAs[float64](t, decoded["breaking_count"]) != 1 {
 		t.Errorf("breaking_count = %v, want 1", decoded["breaking_count"])
 	}
 	if _, ok := decoded["used_by"]; ok {

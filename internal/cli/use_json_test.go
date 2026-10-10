@@ -196,7 +196,7 @@ func TestUseJSON_StdoutIsOneDocumentNamingEveryModule(t *testing.T) {
 	// blobs, so the copy fails and the run exits non-zero. What it wrote to
 	// stdout is the assertion, and a failing run is the case that matters —
 	// it is the one whose answer used to be invisible there.
-	_ = Run([]string{"use", jsonDocRootCoord, "--recursive", "--walk-id", jsonDocWalkID,
+	_ = Run([]string{"use", jsonDocRootCoord, "--recursive", "--walk-id", jsonDocWalkID, //nolint:errcheck // fails by design; see above
 		"--mod-cache", cache, "--json", "--store-root", fx.storeRoot}, &stdout, &stderr)
 
 	doc := assertSingleJSONDocument(t, "use --json", stdout.Bytes())

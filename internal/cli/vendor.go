@@ -242,7 +242,7 @@ func runVendor(ctx context.Context, gomodFlag string, vendorOnly bool, stdout, s
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// The flag OR the configured posture enables vendor-only mode.
 	vendorOnly = vendorOnly || activeConfig.VendorPolicy.VendorOnly

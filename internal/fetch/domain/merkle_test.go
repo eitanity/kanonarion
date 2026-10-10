@@ -70,8 +70,14 @@ func TestMerkleRoot_StructuralVectors(t *testing.T) {
 
 func TestMerkleRoot_OrderSensitive(t *testing.T) {
 	t.Parallel()
-	a, _ := MerkleRoot([][]byte{leaf(0), leaf(1)})
-	b, _ := MerkleRoot([][]byte{leaf(1), leaf(0)})
+	a, err := MerkleRoot([][]byte{leaf(0), leaf(1)})
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
+	b, err := MerkleRoot([][]byte{leaf(1), leaf(0)})
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
 	if bytes.Equal(a, b) {
 		t.Error("root is order-insensitive; reordered leaves produced the same root")
 	}
@@ -106,8 +112,14 @@ func TestInclusionProof_RoundTrip(t *testing.T) {
 func TestVerifyMerkleProof_Rejects(t *testing.T) {
 	t.Parallel()
 	set := leaves(7)
-	root, _ := MerkleRoot(set)
-	proof, _ := BuildMerkleProof(set, 3)
+	root, err := MerkleRoot(set)
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
+	proof, err := BuildMerkleProof(set, 3)
+	if err != nil {
+		t.Fatalf("BuildMerkleProof: %v", err)
+	}
 
 	t.Run("wrong entry", func(t *testing.T) {
 		t.Parallel()
@@ -172,7 +184,10 @@ func TestBuildMerkleProof_Errors(t *testing.T) {
 func TestSingleLeafProof_IsEmpty(t *testing.T) {
 	t.Parallel()
 	set := leaves(1)
-	root, _ := MerkleRoot(set)
+	root, err := MerkleRoot(set)
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
 	proof, err := BuildMerkleProof(set, 0)
 	if err != nil {
 		t.Fatalf("BuildMerkleProof: %v", err)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
@@ -514,7 +515,10 @@ func (f *fakeVulnStore) PutDatabaseSnapshot(_ context.Context, snapshot domain.D
 	if f.errOnPutSnap != nil {
 		return f.errOnPutSnap
 	}
-	data, _ := io.ReadAll(content)
+	data, err := io.ReadAll(content)
+	if err != nil {
+		return fmt.Errorf("reading snapshot %s: %w", snapshot.Version(), err)
+	}
 	f.snapshots[snapshot.Source()+"@"+snapshot.Version()] = data
 	f.latestSnapshot = &snapshot
 	return nil
@@ -1042,4 +1046,13 @@ func (f *fakeReachabilityAnalyser) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+// mustSucceed fails the test when a setup step returns an error, so a fixture
+// that was never stored cannot pass as the state under test.
+func mustSucceed(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
 }

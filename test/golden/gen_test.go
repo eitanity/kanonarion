@@ -70,8 +70,14 @@ func TestGoldenFactRecord(t *testing.T) {
 	if err := json.Unmarshal(want, &wantJSON); err != nil {
 		t.Fatalf("parsing want: %v", err)
 	}
-	gotBytes, _ := json.Marshal(gotJSON)
-	wantBytes, _ := json.Marshal(wantJSON)
+	gotBytes, merr := json.Marshal(gotJSON)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
+	wantBytes, merr := json.Marshal(wantJSON)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if string(gotBytes) != string(wantBytes) {
 		t.Errorf("golden mismatch\ngot:  %s\nwant: %s", gotBytes, wantBytes)
 	}

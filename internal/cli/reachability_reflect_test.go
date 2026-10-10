@@ -200,7 +200,7 @@ func TestReachabilityJSON_NegativeNamesTheReflectiveDispatchItCouldNotFollow(t *
 		if !ok {
 			t.Fatalf("a site is not an object: %v", raw)
 		}
-		callSite, _ := site["call_site"].(string)
+		callSite := optAs[string](t, site["call_site"])
 		byCallSite[callSite] = site
 	}
 	// Two calls from one function to one reflect method on two lines are two
@@ -577,9 +577,9 @@ func TestReachabilityJSON_ReachIsDerivedByWalkingARealGraph(t *testing.T) {
 		if !ok {
 			t.Fatalf("a site is not an object: %v", raw)
 		}
-		caller, _ := site["caller"].(string)
-		callee, _ := site["callee"].(string)
-		reachable, _ := site["reachable_from_entry_point"].(bool)
+		caller := optAs[string](t, site["caller"])
+		callee := optAs[string](t, site["callee"])
+		reachable := optAs[bool](t, site["reachable_from_entry_point"])
 		reach[caller+" -> "+callee] = reachable
 	}
 	const zstd = "github.com/klauspost/compress/zstd"

@@ -41,7 +41,7 @@ func TestLatestCmd_NoArgs_NoGomod(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chdir(orig) }()
+	defer mustChdir(t, orig)
 
 	var stdout, stderr bytes.Buffer
 	runErr := Run([]string{"latest"}, &stdout, &stderr)
@@ -66,7 +66,7 @@ func TestLatestCmd_NoArgs_GomodFound(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chdir(orig) }()
+	defer mustChdir(t, orig)
 
 	var stdout, stderr bytes.Buffer
 	runErr := Run([]string{"latest"}, &stdout, &stderr)
@@ -163,11 +163,15 @@ func fakeLatestProxy(t *testing.T, versions map[string]string) *httptest.Server 
 		for mod, ver := range versions {
 			if strings.HasSuffix(r.URL.Path, mod+"/@latest") {
 				w.Header().Set("Content-Type", "application/json")
-				payload, _ := json.Marshal(map[string]any{
+				payload, err := json.Marshal(map[string]any{
 					"Version": ver,
 					"Time":    time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
 				})
-				_, _ = w.Write(payload)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				_, _ = w.Write(payload) //nolint:errcheck // a failed write is seen by the client under test
 				return
 			}
 		}

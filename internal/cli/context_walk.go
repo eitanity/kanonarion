@@ -51,7 +51,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	rec, err := contextWalkRecord(ctx, ctr.QueryWalks, f.walkID, stderr)
 	if err != nil {

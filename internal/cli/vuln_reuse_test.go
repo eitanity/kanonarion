@@ -207,7 +207,7 @@ func TestVulnScanJSON_CarriesTheReachabilityBasis(t *testing.T) {
 	if err := json.Unmarshal(fresh.Bytes(), &doc); err != nil {
 		t.Fatalf("decoding the fresh document: %v", err)
 	}
-	if basis, _ := doc["reachability_basis"].(map[string]any); basis["source_read_by_this_run"] != true {
+	if basis := optAs[map[string]any](t, doc["reachability_basis"]); basis["source_read_by_this_run"] != true {
 		t.Errorf("a run that measured for itself reports source_read_by_this_run = %v, want true", basis["source_read_by_this_run"])
 	}
 }

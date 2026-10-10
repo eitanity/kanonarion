@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/wireshape"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -89,7 +89,7 @@ func TestCallGraphRecord_ContentHashIsIndependentOfInputOrder(t *testing.T) {
 // makeTiedCallGraphRecord populates every sealed collection, with pairs that
 // tie on the leading key of each comparator.
 func makeTiedCallGraphRecord() domain.CallGraphRecord {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	return domain.CallGraphRecord{
 		SchemaVersion: domain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,

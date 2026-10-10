@@ -82,7 +82,7 @@ func TestOnDemandCallGraph_SpawnedOnMiss(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -135,7 +135,7 @@ func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -224,7 +224,7 @@ func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -297,7 +297,7 @@ func TestOnDemandCallGraph_ForceBypassesCache(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -339,7 +339,7 @@ func TestOnDemandCallGraph_NoSpawnForClean(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{snapshot: snap} // no vulnerabilities
 	scanner := &fakeScanner{}           // returns StatusClean
@@ -379,7 +379,7 @@ func TestOnDemandCallGraph_NoSpawnWhenSymbolsEmpty(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -439,7 +439,7 @@ func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{
 		snapshot: snap,
@@ -486,13 +486,15 @@ func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 		wg.Add(1)
 		go func(c coordinate.ModuleCoordinate) {
 			defer wg.Done()
-			_, _ = uc.Scan(ctx, application.ScanModuleParams{
+			if _, err := uc.Scan(ctx, application.ScanModuleParams{
 				Coordinate:         c,
 				WalkID:             "walk-1",
 				Snapshot:           &snap,
 				EnableReachability: true,
 				CallGraphSem:       sem,
-			})
+			}); err != nil {
+				t.Errorf("Scan %s: %v", c, err)
+			}
 		}(coord)
 	}
 	wg.Wait()
@@ -524,7 +526,7 @@ func TestReachability_FailedAnalysisIsRecordedNotOnlyLogged(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -585,7 +587,7 @@ func TestReachability_NotRequestedIsNotAFailedAttempt(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNew("test", "v1")
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	db := &fakeDatabase{
 		snapshot:    snap,

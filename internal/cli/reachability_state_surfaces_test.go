@@ -111,7 +111,7 @@ func TestVulnShowJSONPublishesTheState(t *testing.T) {
 
 	// The bit stays beside the state, and the pair is exactly why the state is
 	// needed: on the package-level finding the bit reads true.
-	pkg := findings["GO-2026-0003"]["reachable"].(map[string]any)
+	pkg := mustAs[map[string]any](t, findings["GO-2026-0003"]["reachable"])
 	if pkg["is_reachable"] != true {
 		t.Fatalf("the fixture no longer reproduces the measured shape: is_reachable = %v, want true", pkg["is_reachable"])
 	}

@@ -157,13 +157,13 @@ func TestPutWalkScanRun_RetryAfterLockContentionIsNotADuplicate(t *testing.T) {
 		}
 		if _, err := tx.Exec(`CREATE TABLE lock_holder (v TEXT)`); err != nil {
 			held.Done()
-			_ = tx.Rollback()
+			_ = tx.Rollback() //nolint:errcheck // releasing the lock is the point; there is no write to keep
 			t.Errorf("holder write: %v", err)
 			return
 		}
 		held.Done()
 		time.Sleep(400 * time.Millisecond)
-		_ = tx.Rollback()
+		_ = tx.Rollback() //nolint:errcheck // releasing the lock is the point; there is no write to keep
 	}()
 	held.Wait()
 

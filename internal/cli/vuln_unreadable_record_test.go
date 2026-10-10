@@ -138,11 +138,11 @@ func TestRunVulnByID_JSONCarriesTheUnreadableRecord(t *testing.T) {
 	if last["pipeline_version"] != "v25" {
 		t.Errorf("pipeline_version = %v, want the generation beside the coordinate", last["pipeline_version"])
 	}
-	snapshot, _ := last["database_snapshot"].(map[string]any)
+	snapshot := optAs[map[string]any](t, last["database_snapshot"])
 	if snapshot["version"] != "v2026-01-01" || snapshot["source"] != "govulndb" {
 		t.Errorf("database_snapshot = %v, want the snapshot the head named", last["database_snapshot"])
 	}
-	if reason, _ := last["reason"].(string); reason == "" {
+	if reason := optAs[string](t, last["reason"]); reason == "" {
 		t.Error("the unreadable row carries no reason; a consumer cannot act on a bare flag")
 	}
 

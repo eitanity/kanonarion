@@ -116,8 +116,8 @@ func TestExecute_AppendsExtractionRunCompletedEvent(t *testing.T) {
 			t.Errorf("payload[%q] = %v, want %v", k, got, v)
 		}
 	}
-	stages, _ := ev.Payload["requested_stages"].([]string)
-	if len(stages) != 2 || stages[0] != "license" || stages[1] != "interface" {
+	stages, isStrings := ev.Payload["requested_stages"].([]string)
+	if !isStrings || len(stages) != 2 || stages[0] != "license" || stages[1] != "interface" {
 		t.Errorf("payload requested_stages = %v, want [license interface]", ev.Payload["requested_stages"])
 	}
 	if run.ContentHash == "" {

@@ -133,7 +133,7 @@ func runInterfaceDiff(ctx context.Context, argA, argB string, f interfaceDiffFla
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return interfaceDiffWith(ctx, ctr, coordA, coordB, f, stdout)
 }

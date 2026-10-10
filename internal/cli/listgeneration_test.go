@@ -287,7 +287,7 @@ func TestGenerationListings_EveryRowStatesItsGenerationAndSupersession(t *testin
 					t.Errorf("row %v carries no superseded", row["module"])
 					continue
 				}
-				gen, _ := row[s.genField].(string)
+				gen := optAs[string](t, row[s.genField])
 				switch sup {
 				case true:
 					trueRows++

@@ -430,7 +430,10 @@ func writeInfo(base, version string, fetchedAt time.Time) error {
 		Version string    `json:"Version"`
 		Time    time.Time `json:"Time"`
 	}
-	infoData, _ := json.Marshal(infoFile{Version: version, Time: fetchedAt.UTC()})
+	infoData, err := json.Marshal(infoFile{Version: version, Time: fetchedAt.UTC()})
+	if err != nil {
+		return fmt.Errorf("encoding info for %s: %w", version, err)
+	}
 	if err := writeIfAbsent(base+".info", infoData); err != nil {
 		return fmt.Errorf("writing info: %w", err)
 	}

@@ -186,7 +186,11 @@ func TestRunStoreConfigShow_UnreadableFileIsRefused(t *testing.T) {
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	t.Cleanup(func() {
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Errorf("restoring %s: %v", path, err)
+		}
+	})
 
 	for _, asJSON := range []bool{false, true} {
 		var buf bytes.Buffer

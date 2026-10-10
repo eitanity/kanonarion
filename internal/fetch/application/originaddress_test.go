@@ -39,7 +39,10 @@ func TestExecute_OriginNameResolvingIntoPrivateSpaceIsRefused(t *testing.T) {
 	// The refused Origin falls through to the inferred URL by design, so the
 	// measurement that matters is WHICH host git was given — never the one the
 	// proxy named, only the one the module path did.
-	last, _ := vcs.lastURL.Load().(string)
+	last, isString := vcs.lastURL.Load().(string)
+	if !isString {
+		t.Fatal("git was never handed a URL")
+	}
 	if strings.Contains(last, "internal-metadata.example.com") {
 		t.Errorf("git was handed the refused Origin host: %q", last)
 	}

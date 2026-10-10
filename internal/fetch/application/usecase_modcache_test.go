@@ -125,8 +125,8 @@ func TestExecuteModcache_RecordsTheSameIdentityAsEveryOtherMode(t *testing.T) {
 	if _, ok := blobs.held[wantZip.String()]; !ok {
 		t.Errorf("zip was not stored under %q; --from-modcache must populate its store", wantZip)
 	}
-	if _, ok, _ := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); !ok {
-		t.Errorf("fact record was not persisted")
+	if _, ok, rerr := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); rerr != nil || !ok {
+		t.Errorf("fact record was not persisted (read error: %v)", rerr)
 	}
 }
 
@@ -160,8 +160,8 @@ func TestExecuteGoModOnlyModcache_RecordsGoModOnly(t *testing.T) {
 	if got, want := res.Record.VerificationStatus, string(domain2.VerifiedByGoSum); got != want {
 		t.Errorf("VerificationStatus = %q, want %q", got, want)
 	}
-	if _, ok, _ := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); !ok {
-		t.Errorf("fact record was not persisted")
+	if _, ok, rerr := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); rerr != nil || !ok {
+		t.Errorf("fact record was not persisted (read error: %v)", rerr)
 	}
 }
 
@@ -180,8 +180,8 @@ func TestExecuteGoModOnlyModcache_GoModHashMismatchHardFails(t *testing.T) {
 	if !errors.Is(err, application.ErrGoSumVerification) {
 		t.Fatalf("expected ErrGoSumVerification on go.mod hash mismatch, got %v", err)
 	}
-	if _, ok, _ := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); ok {
-		t.Errorf("a record must not be persisted when go.sum verification fails")
+	if _, ok, rerr := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); rerr != nil || ok {
+		t.Errorf("a record must not be persisted when go.sum verification fails (read error: %v)", rerr)
 	}
 }
 

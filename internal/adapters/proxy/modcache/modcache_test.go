@@ -107,7 +107,10 @@ func TestDownload_ComputesHashesFromBytes(t *testing.T) {
 		t.Errorf("GoModHash = %q, want %q", dl.GoModHash, wantMod)
 	}
 
-	gotMod, _ := io.ReadAll(dl.GoMod)
+	gotMod, err := io.ReadAll(dl.GoMod)
+	if err != nil {
+		t.Fatalf("reading go.mod: %v", err)
+	}
 	if !bytes.Equal(gotMod, goMod) {
 		t.Errorf("returned go.mod bytes = %q, want %q", gotMod, goMod)
 	}
@@ -137,7 +140,10 @@ func TestDownloadGoMod_ReadsOnlyGoMod(t *testing.T) {
 	if dl.GoModHash.String() != wantMod {
 		t.Errorf("GoModHash = %q, want %q", dl.GoModHash, wantMod)
 	}
-	gotMod, _ := io.ReadAll(dl.GoMod)
+	gotMod, err := io.ReadAll(dl.GoMod)
+	if err != nil {
+		t.Fatalf("reading go.mod: %v", err)
+	}
 	if !bytes.Equal(gotMod, goMod) {
 		t.Errorf("returned go.mod bytes = %q, want %q", gotMod, goMod)
 	}

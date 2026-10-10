@@ -34,7 +34,9 @@ func TestCopyToModCache_FindsARecordUnderAnyPipelineVersion(t *testing.T) {
 	const storedPV = "9.9.9"
 
 	facts := newPVFakeFacts()
-	_ = facts.PutFetchRecord(context.Background(), fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion(storedPV), fetchtest.Content("fake:zip")))
+	if perr := facts.PutFetchRecord(context.Background(), fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion(storedPV), fetchtest.Content("fake:zip"))); perr != nil {
+		t.Fatalf("PutFetchRecord: %v", perr)
+	}
 	blobs := newPVFakeBlobs() // Get always errors — we only care about the lookup
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

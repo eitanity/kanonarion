@@ -78,7 +78,7 @@ func TestVulnRecordJSON_KeepsFirstScannedAtAndStatesItsAnchor(t *testing.T) {
 	if _, present := rows[0]["first_scanned_at"]; !present {
 		t.Error("first_scanned_at is gone from the wire; consumers read that key")
 	}
-	anchor, _ := rows[0]["first_scanned_at_anchor"].(string)
+	anchor := optAs[string](t, rows[0]["first_scanned_at_anchor"])
 	if !strings.Contains(anchor, "not first awareness") {
 		t.Errorf("first_scanned_at_anchor = %q, want it to state the grain", anchor)
 	}

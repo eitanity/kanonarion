@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -14,7 +14,7 @@ import (
 // order to the sort, so the canonical bytes depend on the order they arrived
 // in.
 func tiedRecord() domain2.CallGraphRecord {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	site := domain2.SourcePosition{File: "a.go", Line: 7}
 	return domain2.CallGraphRecord{
 		SchemaVersion: domain2.CallGraphSchemaVersion,

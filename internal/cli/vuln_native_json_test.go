@@ -50,7 +50,7 @@ func TestVulnRecordNativeJSON_AddsTheStatementAndMovesNothingElse(t *testing.T) 
 	if !present {
 		t.Fatalf("the projection carries no native_coverage key:\n%s", withNative)
 	}
-	block := got.(map[string]any)
+	block := mustAs[map[string]any](t, got)
 	if block["state"] != string(nativeStateIdentified) {
 		t.Errorf("state = %v, want %q", block["state"], nativeStateIdentified)
 	}
@@ -59,8 +59,14 @@ func TestVulnRecordNativeJSON_AddsTheStatementAndMovesNothingElse(t *testing.T) 
 	}
 
 	delete(after, "native_coverage")
-	a, _ := json.Marshal(after)
-	b, _ := json.Marshal(before)
+	a, merr := json.Marshal(after)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
+	b, merr := json.Marshal(before)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if string(a) != string(b) {
 		t.Errorf("a key other than native_coverage moved:\n before %s\n after  %s", b, a)
 	}

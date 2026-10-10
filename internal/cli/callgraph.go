@@ -78,9 +78,9 @@ different budget: see 'kanonarion extract --help'.`,
 	cmd.Flags().StringVar(&f.fromWalk, "from-walk", "",
 		"pin a pre-modules module's require directives to the versions this walk resolved")
 	cmd.Flags().BoolVar(&localShim, "local", false, "")
-	_ = cmd.Flags().MarkHidden("local")
+	hideFlag(cmd, "local")
 	cmd.Flags().BoolVar(&f.narrate, "narrate-progress", false, "")
-	_ = cmd.Flags().MarkHidden("narrate-progress")
+	hideFlag(cmd, "narrate-progress")
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 
@@ -120,7 +120,7 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	var run callGraphRunJSON
 	var inputs cgdomain.AnalysisInputs

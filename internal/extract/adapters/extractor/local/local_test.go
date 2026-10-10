@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 
@@ -103,7 +104,7 @@ func newCallgraphAdapter(exec SubprocessExecutor, reader CallGraphReader) *Adapt
 
 func TestAdapterExtractor_Extract_License(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("license success", func(t *testing.T) {
 		lic := &mockLicenseUseCase{
@@ -193,7 +194,7 @@ func TestAdapterExtractor_Extract_License(t *testing.T) {
 
 func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("interface success", func(t *testing.T) {
 		iface := &mockInterfaceUseCase{
@@ -280,7 +281,7 @@ func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 
 func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("exit 0 reads record and marks succeeded", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
@@ -444,7 +445,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 // stage the largest consumer of memory in an extraction run.
 func TestAdapterExtractor_CallGraph_ReadsWhatWasJustWritten(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("the stage reports the generation the narrow read names", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
@@ -538,7 +539,7 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			coord, _ := coordinate.NewModuleCoordinate("github.com/foo/mod", "v1.0.0")
+			coord := coordinatetest.MustNew("github.com/foo/mod", "v1.0.0")
 			res, err := adapter.Extract(t.Context(), coord, "callgraph", false, "")
 			if err != nil {
 				t.Errorf("Extract failed: %v", err)
@@ -564,7 +565,7 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 
 func TestAdapterExtractor_Extract_Example(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("example success", func(t *testing.T) {
 		ex := &mockExampleUseCase{
@@ -638,7 +639,7 @@ func TestAdapterExtractor_Extract_Example(t *testing.T) {
 // blank.
 func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("license failed with detail propagates detail", func(t *testing.T) {
 		lic := &mockLicenseUseCase{
@@ -650,7 +651,10 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil)
-		res, _ := adapter.Extract(ctx, coord, "license", false, "")
+		res, err := adapter.Extract(ctx, coord, "license", false, "")
+		if err != nil {
+			t.Fatalf("Extract: %v", err)
+		}
 		if res.Status != domain.StageFailed {
 			t.Fatalf("Status = %v, want Failed", res.Status)
 		}
@@ -674,7 +678,10 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 			},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
-		res, _ := adapter.Extract(ctx, coord, "callgraph", false, "")
+		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
+		if err != nil {
+			t.Fatalf("Extract: %v", err)
+		}
 		if res.Status != domain.StageFailed {
 			t.Fatalf("Status = %v, want Failed", res.Status)
 		}
@@ -698,7 +705,10 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil)
-		res, _ := adapter.Extract(ctx, coord, "interface", false, "")
+		res, err := adapter.Extract(ctx, coord, "interface", false, "")
+		if err != nil {
+			t.Fatalf("Extract: %v", err)
+		}
 		if res.Status != domain.StageFailed {
 			t.Fatalf("Status = %v, want Failed", res.Status)
 		}
@@ -717,7 +727,10 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex)
-		res, _ := adapter.Extract(ctx, coord, "example", false, "")
+		res, err := adapter.Extract(ctx, coord, "example", false, "")
+		if err != nil {
+			t.Fatalf("Extract: %v", err)
+		}
 		if res.Status != domain.StageFailed {
 			t.Fatalf("Status = %v, want Failed", res.Status)
 		}
@@ -729,14 +742,20 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 	t.Run("succeeded stages do not pollute Error", func(t *testing.T) {
 		t.Run("license", func(t *testing.T) {
 			lic := &mockLicenseUseCase{res: licapp.ExtractResult{Record: licdomain.LicenseRecord{OverallStatus: licdomain.LicenseStatusDetected}}}
-			res, _ := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil).Extract(ctx, coord, "license", false, "")
+			res, err := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil).Extract(ctx, coord, "license", false, "")
+			if err != nil {
+				t.Fatalf("NewAdapterExtractor: %v", err)
+			}
 			if res.Error != "" {
 				t.Errorf("succeeded license Error = %q, want empty", res.Error)
 			}
 		})
 		t.Run("interface", func(t *testing.T) {
 			iface := &mockInterfaceUseCase{res: ifaceapp.ExtractResult{Record: ifacedomain.InterfaceRecord{OverallStatus: ifacedomain.InterfaceStatusExtracted}}}
-			res, _ := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil).Extract(ctx, coord, "interface", false, "")
+			res, err := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil).Extract(ctx, coord, "interface", false, "")
+			if err != nil {
+				t.Fatalf("NewAdapterExtractor: %v", err)
+			}
 			if res.Error != "" {
 				t.Errorf("succeeded interface Error = %q, want empty", res.Error)
 			}
@@ -744,14 +763,20 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 		t.Run("callgraph", func(t *testing.T) {
 			exec := &fakeSubprocessExecutor{}
 			reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
-			res, _ := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false, "")
+			res, err := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false, "")
+			if err != nil {
+				t.Fatalf("newCallgraphAdapter: %v", err)
+			}
 			if res.Error != "" {
 				t.Errorf("succeeded callgraph Error = %q, want empty", res.Error)
 			}
 		})
 		t.Run("example", func(t *testing.T) {
 			ex := &mockExampleUseCase{res: exapp.ExtractResult{Record: exdomain.ExampleRecord{OverallStatus: exdomain.ExampleStatusFound}}}
-			res, _ := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex).Extract(ctx, coord, "example", false, "")
+			res, err := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex).Extract(ctx, coord, "example", false, "")
+			if err != nil {
+				t.Fatalf("NewAdapterExtractor: %v", err)
+			}
 			if res.Error != "" {
 				t.Errorf("succeeded example Error = %q, want empty", res.Error)
 			}
@@ -886,7 +911,7 @@ func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestAdapterExtractor_Extract_Misc(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("unknown stage", func(t *testing.T) {
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil, nil)
@@ -902,7 +927,7 @@ func TestAdapterExtractor_Extract_Misc(t *testing.T) {
 // that as an execution fault reported measured modules as unmeasured.
 func TestAdapterExtractor_CallGraph_PartialChildExit(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	// A child that exited Partial built a graph and stored it. The stage is
 	// classified from that record, exactly as it is on a clean exit: reading the
@@ -980,7 +1005,7 @@ func TestAdapterExtractor_CallGraph_PartialChildExit(t *testing.T) {
 // whether THIS HOST or the module is why, because only the first is repaired by
 // changing something and running again.
 func TestAdapterExtractor_CallGraph_NamesWhatAGapIsAStatementAbout(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("a stalled child marks StageFailed and says the host is why", func(t *testing.T) {
 		// The executor owns both deadlines now, so what the stage classifies is the

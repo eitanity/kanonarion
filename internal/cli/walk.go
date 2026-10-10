@@ -206,7 +206,7 @@ func runWalkGoMod(ctx context.Context, f walkFlags, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rt.cleanup() }()
+	defer releaseStore(rt.cleanup)
 	return runWalkCmdProject(ctx, f, rt.progress, rt.execute, rt.records, stdout, stderr)
 }
 
@@ -218,7 +218,7 @@ func runWalkModule(ctx context.Context, arg string, f walkFlags, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rt.cleanup() }()
+	defer releaseStore(rt.cleanup)
 	return runWalkCmdModule(ctx, arg, f, rt.progress, rt.execute, rt.records, stdout, stderr)
 }
 

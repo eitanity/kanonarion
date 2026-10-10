@@ -322,7 +322,7 @@ func (s *Scanner) prepareScanDir(
 func locateGoMod(root string) (string, bool) {
 	scanDir := root
 	found := false
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error { //nolint:errcheck // the callback returns only nil or SkipDir
 		if err == nil && !info.IsDir() && info.Name() == "go.mod" {
 			scanDir = filepath.Dir(path)
 			found = true

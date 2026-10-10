@@ -135,7 +135,11 @@ func TestClose_ReportsADirectoryItCannotRemove(t *testing.T) {
 	if err := os.Chmod(parent, 0o500); err != nil { // #nosec G302 -- making a directory unwritable is the condition under test
 		t.Fatalf("making the parent read-only: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(parent, 0o750) }) // #nosec G302 -- restoring the directory so t.TempDir can remove it
+	t.Cleanup(func() {
+		if err := os.Chmod(parent, 0o750); err != nil { // #nosec G302 -- restoring the directory so t.TempDir can remove it
+			t.Errorf("restoring %s: %v", parent, err)
+		}
+	})
 
 	tc := &Toolchains{shimDir: staged}
 	err := tc.Close()

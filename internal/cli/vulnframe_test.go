@@ -492,7 +492,10 @@ func TestSelectRecordInFrame_FallsBackToIsolatedButNeverToAnotherConsumer(t *tes
 			scannedAt:    time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), reachable: true}),
 	}
 
-	rec, _, _, ok := selectRecordInFrame(recs, vuldomain.TargetRootedAt(projectRoot(t, "example.com/project-a")))
+	rec, _, _, ok, err := selectRecordInFrame(recs, vuldomain.TargetRootedAt(projectRoot(t, "example.com/project-a")))
+	if err != nil {
+		t.Fatalf("selectRecordInFrame: %v", err)
+	}
 	if !ok {
 		t.Fatal("an isolated record answers a frame the walk itself never measured; want it served")
 	}
@@ -501,7 +504,7 @@ func TestSelectRecordInFrame_FallsBackToIsolatedButNeverToAnotherConsumer(t *tes
 	}
 
 	onlyOtherConsumer := recs[:1]
-	if _, _, _, ok := selectRecordInFrame(onlyOtherConsumer, vuldomain.TargetRootedAt(projectRoot(t, "example.com/project-a"))); ok {
+	if _, _, _, ok, err := selectRecordInFrame(onlyOtherConsumer, vuldomain.TargetRootedAt(projectRoot(t, "example.com/project-a"))); err != nil || ok {
 		t.Error("another consumer's record must never answer for this one's frame")
 	}
 }
@@ -550,5 +553,41 @@ func TestContextBatch_AnchoredReportAnswersOnlyInTheAnchoredWalksFrame(t *testin
 	}
 	if gotA.Frame == gotB.Frame {
 		t.Fatal("two builds, one coordinate: the anchored answers must differ, or the anchor does nothing")
+	}
+}
+
+// Two toolchains that scanned one frame and disagree are a conflict the store
+// holds, not an absence and not an empty verdict. The consumer read used to
+// discard the error and serve a zero record as found; the frame read used to
+// report "no record".
+func TestFrameSelection_AToolchainConflictIsReturned(t *testing.T) {
+	coord := twoProjectCoord(t)
+	snap := vulntest.MustNew("test", "v1")
+	frame := vuldomain.TargetRootedAt(projectRoot(t, "example.com/project-a"))
+	recs := []vuldomain.VulnerabilityRecord{
+		frameRecord(t, frameRecordSpec{coord: coord, snapshot: snap, rooting: frame, toolchain: "go1.26.6",
+			scannedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), reachable: true}),
+		frameRecord(t, frameRecordSpec{coord: coord, snapshot: snap, rooting: frame, toolchain: "go1.27.1",
+			scannedAt: time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC), reachable: false}),
+	}
+
+	isConflict := func(err error) bool {
+		c, ok := errors.AsType[vuldomain.ToolchainConflict](err)
+		return ok && c.Coordinate == coord
+	}
+	if _, _, _, ok, err := selectConsumerRecord(recs, coord); !isConflict(err) || ok {
+		t.Errorf("selectConsumerRecord: ok %v, err %v; want the toolchain conflict", ok, err)
+	}
+	if _, _, _, ok, err := selectRecordInFrame(recs, frame); !isConflict(err) || ok {
+		t.Errorf("selectRecordInFrame: ok %v, err %v; want the toolchain conflict", ok, err)
+	}
+	isolated := []vuldomain.VulnerabilityRecord{
+		frameRecord(t, frameRecordSpec{coord: coord, snapshot: snap, rooting: vuldomain.RootingIsolated, toolchain: "go1.26.6",
+			scannedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), reachable: true}),
+		frameRecord(t, frameRecordSpec{coord: coord, snapshot: snap, rooting: vuldomain.RootingIsolated, toolchain: "go1.27.1",
+			scannedAt: time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC), reachable: false}),
+	}
+	if _, _, _, ok, err := selectRecordInFrame(isolated, frame); !isConflict(err) || ok {
+		t.Errorf("isolated fallback: ok %v, err %v; want the toolchain conflict", ok, err)
 	}
 }

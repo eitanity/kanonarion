@@ -71,7 +71,11 @@ func TestDriverCallGraphSubprocessNamesTheDriverStoreRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newDriver: %v", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("closing the store: %v", err)
+		}
+	}()
 
 	if _, err := drv.LocalWalkExtract.Run(context.Background(), driver.LocalWalkExtractRequest{
 		Dir:              projDir,

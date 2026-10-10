@@ -418,7 +418,7 @@ func TestResolveGoModPath_DefaultFound(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chdir(orig) }()
+	defer mustChdir(t, orig)
 
 	if err := os.WriteFile("go.mod", []byte("module example.com/m\n\ngo 1.21\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -442,7 +442,7 @@ func TestResolveGoModPath_DefaultMissing(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chdir(orig) }()
+	defer mustChdir(t, orig)
 
 	_, err = resolveGoModPath("")
 	if err == nil {
@@ -654,5 +654,52 @@ func TestReadPackageModules_LiveRepo(t *testing.T) {
 		if strings.Contains(c, "golangci-lint") {
 			t.Errorf("dev tool golangci-lint must not appear in binary deps: %q", c)
 		}
+	}
+}
+
+// mustAs returns v as T, failing the test when it is anything else. It is the
+// checked form of a type assertion on a decoded JSON document.
+func mustAs[T any](t testing.TB, v any) T {
+	t.Helper()
+	got, ok := v.(T)
+	if !ok {
+		t.Fatalf("decoded value is %T, want %T", v, got)
+	}
+	return got
+}
+
+// optAs is mustAs for a key that may be absent: nil reads as T's zero value, as
+// the comma-ok form it replaces read it, and any other type fails the test.
+func optAs[T any](t testing.TB, v any) T {
+	t.Helper()
+	if v == nil {
+		var zero T
+		return zero
+	}
+	return mustAs[T](t, v)
+}
+
+// mustChdir returns to dir at the end of a test that moved the process.
+func mustChdir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Chdir(dir); err != nil {
+		t.Errorf("returning to %s: %v", dir, err)
+	}
+}
+
+// mustClose runs a store's cleanup at the end of a test and fails the test if
+// the store reports an error closing.
+func mustClose(t *testing.T, cleanup func() error) {
+	t.Helper()
+	if err := cleanup(); err != nil {
+		t.Errorf("closing the store: %v", err)
+	}
+}
+
+// mustWriteFile writes a fixture file, failing the test if it cannot.
+func mustWriteFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
 	}
 }

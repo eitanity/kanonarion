@@ -73,9 +73,11 @@ func TestGetFetchRecord_MultiplePipelineVersions(t *testing.T) {
 
 	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
 
-	got1, ok1, _ := s.GetFetchRecord(ctx, coord, "0.1.0")
-	got2, ok2, _ := s.GetFetchRecord(ctx, coord, "0.2.0")
-
+	got1, ok1, err1 := s.GetFetchRecord(ctx, coord, "0.1.0")
+	got2, ok2, err2 := s.GetFetchRecord(ctx, coord, "0.2.0")
+	if err1 != nil || err2 != nil {
+		t.Fatalf("reading the migrated records: %v, %v", err1, err2)
+	}
 	if !ok1 || !ok2 {
 		t.Fatalf("expected both records; ok1=%v ok2=%v", ok1, ok2)
 	}

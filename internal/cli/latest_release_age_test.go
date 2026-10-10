@@ -51,7 +51,7 @@ func TestLatestJSON_NamesTheAgeOfTheLatestRelease(t *testing.T) {
 	if !present {
 		t.Fatal("latest_release_age_days is absent for a module whose latest release has a publication date")
 	}
-	if got := int(age.(float64)); got != 2 {
+	if got := int(mustAs[float64](t, age)); got != 2 {
 		t.Errorf("latest_release_age_days = %d, want 2 (the age of v1.83.0, not the distance from v1.61.1)", got)
 	}
 }
@@ -153,7 +153,7 @@ func TestLatestJSON_KeepsAZeroAgeForAReleaseShippedToday(t *testing.T) {
 	if age == nil {
 		t.Fatal("latest_release_age_days is null for a release shipped today; null means the date is unknown")
 	}
-	if got := int(age.(float64)); got != 0 {
+	if got := int(mustAs[float64](t, age)); got != 0 {
 		t.Errorf("latest_release_age_days = %d, want 0", got)
 	}
 
@@ -189,7 +189,7 @@ func TestAuditJSON_NamesTheAgeOfTheLatestRelease(t *testing.T) {
 	}
 	if got, present := decoded["latest_release_age_days"]; !present {
 		t.Error("audit --json does not emit latest_release_age_days")
-	} else if int(got.(float64)) != 2 {
+	} else if int(mustAs[float64](t, got)) != 2 {
 		t.Errorf("latest_release_age_days = %v, want 2", got)
 	}
 }

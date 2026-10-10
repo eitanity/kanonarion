@@ -96,7 +96,7 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX, walkID string, stdou
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return licenseCompatWith(ctx, ctr, coord, targetSPDX, walkID, stdout, stderr)
 }

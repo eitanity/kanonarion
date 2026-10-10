@@ -56,7 +56,7 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runScanList(cmd.Context(), walkID, limit, offset, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
@@ -256,7 +256,7 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, ctr.QueryCallGraph, ctr.QueryWalks, ctr.QueryNative, stdout, stderr)
 		},
 	}
@@ -795,7 +795,7 @@ func newVulnScanHistoryCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runScanHistory(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, stdout)
 		},
 	}
@@ -904,7 +904,7 @@ func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runScanDiff(cmd.Context(), args[0], args[1], jsonOut, ctr.DiffScanRuns, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}

@@ -239,7 +239,7 @@ func TestStoreCleanJSON_StatesZeroRatherThanNothing(t *testing.T) {
 				if !ok {
 					t.Fatalf("%s is absent: an omitted count reads as success at something", key)
 				}
-				if v.(float64) != 0 {
+				if mustAs[float64](t, v) != 0 {
 					t.Errorf("%s = %v, want 0", key, v)
 				}
 			}
@@ -248,7 +248,7 @@ func TestStoreCleanJSON_StatesZeroRatherThanNothing(t *testing.T) {
 				if !ok {
 					t.Fatalf("%s is absent from the document", section)
 				}
-				if sub["removed"].(float64) != 0 || sub["bytes_reclaimed"].(float64) != 0 {
+				if mustAs[float64](t, sub["removed"]) != 0 || mustAs[float64](t, sub["bytes_reclaimed"]) != 0 {
 					t.Errorf("%s = %v, want zeros", section, sub)
 				}
 			}
@@ -295,14 +295,14 @@ func TestStoreCleanJSON_StatesWhatWentAndWhatStayed(t *testing.T) {
 	}
 	doc := decodeDocument(t, "store clean --json (something to clean)", out)
 
-	if got := doc["removed_total"].(float64); got != 2 {
+	if got := mustAs[float64](t, doc["removed_total"]); got != 2 {
 		t.Errorf("removed_total = %v, want 2", got)
 	}
-	if got := doc["bytes_reclaimed"].(float64); got != blobBytes+tempBytes {
+	if got := mustAs[float64](t, doc["bytes_reclaimed"]); got != blobBytes+tempBytes {
 		t.Errorf("bytes_reclaimed = %v, want %d", got, blobBytes+tempBytes)
 	}
-	blobs := doc["blob_temps"].(map[string]any)
-	if blobs["removed"].(float64) != 1 || blobs["bytes_reclaimed"].(float64) != blobBytes {
+	blobs := mustAs[map[string]any](t, doc["blob_temps"])
+	if mustAs[float64](t, blobs["removed"]) != 1 || mustAs[float64](t, blobs["bytes_reclaimed"]) != blobBytes {
 		t.Errorf("blob_temps = %v, want one file of %d bytes", blobs, blobBytes)
 	}
 	// Each sweep names where it looked. Two directories are swept and the
@@ -310,18 +310,18 @@ func TestStoreCleanJSON_StatesWhatWentAndWhatStayed(t *testing.T) {
 	if want := filepath.Join(root, "blobs"); blobs["dir"] != want {
 		t.Errorf("blob_temps.dir = %v, want %s", blobs["dir"], want)
 	}
-	temps := doc["temp_entries"].(map[string]any)
-	if temps["removed"].(float64) != 1 || temps["bytes_reclaimed"].(float64) != tempBytes {
+	temps := mustAs[map[string]any](t, doc["temp_entries"])
+	if mustAs[float64](t, temps["removed"]) != 1 || mustAs[float64](t, temps["bytes_reclaimed"]) != tempBytes {
 		t.Errorf("temp_entries = %v, want one entry of %d bytes", temps, tempBytes)
 	}
 	if temps["dir"] != tmp {
 		t.Errorf("temp_entries.dir = %v, want %s", temps["dir"], tmp)
 	}
-	if temps["kept"].(float64) != 1 {
+	if mustAs[float64](t, temps["kept"]) != 1 {
 		t.Errorf("temp_entries.kept = %v, want 1: the blast radius is a number a caller can read",
 			temps["kept"])
 	}
-	paths, _ := temps["paths"].([]any)
+	paths := optAs[[]any](t, temps["paths"])
 	if len(paths) != 1 || paths[0] != owned {
 		t.Errorf("temp_entries.paths = %v, want [%s]", paths, owned)
 	}
@@ -422,11 +422,11 @@ func TestStoreCleanJSON_CarriesWarningsInTheDocument(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 	doc := decodeDocument(t, "store clean --json (warning)", out)
-	warnings, _ := doc["warnings"].([]any)
+	warnings := optAs[[]any](t, doc["warnings"])
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want the one failure the sweep reported", warnings)
 	}
-	if !strings.Contains(warnings[0].(string), "cleaning blob temps") {
+	if !strings.Contains(mustAs[string](t, warnings[0]), "cleaning blob temps") {
 		t.Errorf("warning = %q, want the blob-temp failure", warnings[0])
 	}
 }
@@ -508,7 +508,7 @@ func TestConfigGetJSON_ReadsSourceForAStructuredKey(t *testing.T) {
 	if doc["source"] != configSourceFile {
 		t.Errorf("source = %v, want %q", doc["source"], configSourceFile)
 	}
-	if !strings.Contains(doc["value"].(string), "MIT") {
+	if !strings.Contains(mustAs[string](t, doc["value"]), "MIT") {
 		t.Errorf("value = %v, want the category the file names", doc["value"])
 	}
 }

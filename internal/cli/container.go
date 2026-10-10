@@ -284,6 +284,13 @@ func offlineStdlibAnchor(modcacheMode bool) bool {
 	return modcacheMode || goenv.NetworkForbidden()
 }
 
+// releaseStore closes a store handle once a command is done with it. Every
+// record the command wrote was committed before this runs, so a close error
+// loses nothing and cannot change what the command has already reported.
+func releaseStore(closeStore func() error) {
+	_ = closeStore() //nolint:errcheck // nothing committed is lost; see above
+}
+
 func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg domain.Config, logger *slog.Logger) (*Container, func() error, error) {
 	// The store root is created only for a command that declared it writes
 	// records. Every other command gets a container over a store that already

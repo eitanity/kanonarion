@@ -128,7 +128,7 @@ func TestAuditParity_ContainerAndLibraryPathsAppendIdentically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewContainer: %v", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer mustClose(t, cleanup)
 
 	target, err := coordinate.NewLocalCoordinate("example.test/proj")
 	if err != nil {
@@ -160,7 +160,7 @@ func TestAuditParity_ContainerAndLibraryPathsAppendIdentically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDriver: %v", err)
 	}
-	defer func() { _ = libCleanup() }()
+	defer mustClose(t, libCleanup)
 
 	if _, err := drv.LocalWalkExtract.Run(ctx, driver.LocalWalkExtractRequest{
 		Dir:              projDir,

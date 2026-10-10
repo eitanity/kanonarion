@@ -52,7 +52,7 @@ func TestNew_GOPROXY(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
 
 	// Just verify it doesn't panic; the fake proxy may 404 for unknown paths.
-	_, _ = p.Info(context.Background(), coord)
+	_, _ = p.Info(context.Background(), coord) //nolint:errcheck // only a panic fails this test
 }
 
 // TestNew_GOPROXY_DirectRefuses: `direct` asks for VCS-origin fetching, which

@@ -1,6 +1,7 @@
 package staticcha
 
 import (
+	"fmt"
 	"go/types"
 	"sort"
 
@@ -59,7 +60,7 @@ func runtimeTypeClosure(prog *ssa.Program) []types.Type {
 	var visit func(T types.Type, skip bool)
 	visit = func(T types.Type, skip bool) {
 		u := types.Unalias(T)
-		st, _ := seen.At(u).(*visitState)
+		st := visitStateOf(&seen, u)
 		if st == nil {
 			st = &visitState{}
 			seen.Set(u, st)
@@ -81,8 +82,8 @@ func runtimeTypeClosure(prog *ssa.Program) []types.Type {
 		// types are reachable by reflection from the method, the tuples holding
 		// them are not.
 		mset := msets.MethodSet(u)
-		for i := range mset.Len() {
-			sig, ok := mset.At(i).Type().(*types.Signature)
+		for sel := range mset.Methods() {
+			sig, ok := sel.Type().(*types.Signature)
 			if !ok || sig.TypeParams() != nil {
 				continue
 			}
@@ -110,12 +111,12 @@ func runtimeTypeClosure(prog *ssa.Program) []types.Type {
 			visit(t.Params(), true)
 			visit(t.Results(), true)
 		case *types.Struct:
-			for i := range t.NumFields() {
-				visit(t.Field(i).Type(), false)
+			for field := range t.Fields() {
+				visit(field.Type(), false)
 			}
 		case *types.Tuple:
-			for i := range t.Len() {
-				visit(t.At(i).Type(), false)
+			for v := range t.Variables() {
+				visit(v.Type(), false)
 			}
 		case *types.Named:
 			if t.TypeParams() != nil {
@@ -174,9 +175,13 @@ func closedFunctionSet(prog *ssa.Program) map[*ssa.Function]bool {
 			return
 		}
 		mset := prog.MethodSets.MethodSet(T)
-		for i := range mset.Len() {
-			sel := mset.At(i)
-			if sel.Obj().(*types.Func).Signature().TypeParams() != nil {
+		for sel := range mset.Methods() {
+			// A method set holds methods only, and go/types gives each a *types.Func.
+			fn, ok := sel.Obj().(*types.Func)
+			if !ok {
+				panic(fmt.Sprintf("staticcha: method set of %s holds %T, not *types.Func", T, sel.Obj()))
+			}
+			if fn.Signature().TypeParams() != nil {
 				continue // a generic method has no single function
 			}
 			function(prog.MethodValue(sel))
@@ -255,4 +260,19 @@ func orderedFunctions(funcs map[*ssa.Function]bool) []*ssa.Function {
 		return ap.Offset < bp.Offset
 	})
 	return out
+}
+
+// visitStateOf reads the closure's visit index. runtimeTypeClosure writes it
+// with *visitState only, so nil is a type not met yet and any other type is a
+// bug here.
+func visitStateOf(seen *typeutil.Map, u types.Type) *visitState {
+	v := seen.At(u)
+	if v == nil {
+		return nil
+	}
+	st, ok := v.(*visitState)
+	if !ok {
+		panic(fmt.Sprintf("staticcha: type closure holds %T, not *visitState", v))
+	}
+	return st
 }
