@@ -47,8 +47,8 @@ func TestGoldenFactRecord(t *testing.T) {
 
 	goldenPath := "gorilla-mux-v1.8.1.json"
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
-		if err := os.WriteFile(goldenPath, append(got, '\n'), 0o600); err != nil {
-			t.Fatalf("writing golden: %v", err)
+		if werr := os.WriteFile(goldenPath, append(got, '\n'), 0o600); werr != nil {
+			t.Fatalf("writing golden: %v", werr)
 		}
 		t.Log("golden file updated")
 		return

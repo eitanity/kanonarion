@@ -98,8 +98,8 @@ func TestNewDriver_DoesNotRefuseAStoreThisBuildKnows(t *testing.T) {
 	if drv == nil {
 		t.Error("NewDriver returned no error and no driver")
 	}
-	if err := cleanup(); err != nil {
-		t.Fatalf("cleanup: %v", err)
+	if cerr := cleanup(); cerr != nil {
+		t.Fatalf("cleanup: %v", cerr)
 	}
 
 	// And it really migrated, so "did not refuse" is not being read as "did not

@@ -218,8 +218,8 @@ func TestLatestJSON_ReplacedRowCarriesTheRequireEntry(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if uerr := json.Unmarshal(raw, &got); uerr != nil {
+		t.Fatalf("unmarshal: %v", uerr)
 	}
 	rep, ok := got["replace"].(map[string]any)
 	if !ok {

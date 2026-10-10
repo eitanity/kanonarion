@@ -158,8 +158,8 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBlobIdentity: %v", err)
 	}
-	if err := bs.Put(ctx, handle, strings.NewReader("module-zip-bytes")); err != nil {
-		t.Fatalf("Put: %v", err)
+	if perr := bs.Put(ctx, handle, strings.NewReader("module-zip-bytes")); perr != nil {
+		t.Fatalf("Put: %v", perr)
 	}
 	present, err := bs.Exists(ctx, handle)
 	if err != nil || !present {
@@ -384,8 +384,8 @@ func TestConsumer_ValidateIngestFailClosed(t *testing.T) {
 		PipelineVersion: "0.0.0",
 		ContentHash:     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 	}
-	if err := driver.ValidateIngest.Ingest(ctx, forged); !errors.Is(err, kanonarion.ErrVerificationFailed) {
-		t.Fatalf("Ingest of a forged record: got %v, want ErrVerificationFailed", err)
+	if ierr := driver.ValidateIngest.Ingest(ctx, forged); !errors.Is(ierr, kanonarion.ErrVerificationFailed) {
+		t.Fatalf("Ingest of a forged record: got %v, want ErrVerificationFailed", ierr)
 	}
 
 	// An absent coordinate reads back as a clean unknown: not found, no error.
@@ -462,8 +462,8 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bundle MerkleRoot: %v", err)
 	}
-	if _, err := (fakeKeyedSigner{}).Sign(ctx, root); err != nil {
-		t.Fatalf("signing the bundle root: %v", err)
+	if _, serr := (fakeKeyedSigner{}).Sign(ctx, root); serr != nil {
+		t.Fatalf("signing the bundle root: %v", serr)
 	}
 
 	consumer, cleanupC, err := kanonarion.OpenDriver(t.TempDir())
@@ -476,8 +476,8 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 		}
 	})
 
-	if err := consumer.ValidateIngest.Ingest(ctx, rec.FactRecord); err != nil {
-		t.Fatalf("Ingest of a valid fetched record: %v", err)
+	if ierr := consumer.ValidateIngest.Ingest(ctx, rec.FactRecord); ierr != nil {
+		t.Fatalf("Ingest of a valid fetched record: %v", ierr)
 	}
 	got, found, err := consumer.ValidateIngest.ReadVerified(ctx, rec.Coordinate(), rec.PipelineVersion)
 	if err != nil || !found {

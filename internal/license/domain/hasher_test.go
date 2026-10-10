@@ -136,8 +136,8 @@ func TestRoundTrip_LowConfidenceFieldsHashedAndPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if err := h.VerifyContentHash(got); err != nil {
-		t.Fatalf("VerifyContentHash after round-trip: %v", err)
+	if verr := h.VerifyContentHash(got); verr != nil {
+		t.Fatalf("VerifyContentHash after round-trip: %v", verr)
 	}
 	if got.LicenseFiles[0].LowConfidenceSPDX != "AGPL-3.0-or-later" {
 		t.Errorf("LowConfidenceSPDX not preserved: got %q", got.LicenseFiles[0].LowConfidenceSPDX)

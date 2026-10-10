@@ -379,8 +379,8 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return terr
 	}
 
-	if err := resolveModcacheMode(ctx, f.fromModcache, gomodPath); err != nil {
-		return err
+	if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
+		return merr
 	}
 	// On the normal network path, layer the project go.sum on as an always-on
 	// offline integrity check. No-op in --from-modcache mode.
@@ -425,8 +425,8 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		if jsonOut {
 			enc := json.NewEncoder(stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(newAuditOutput(envelope, unauditedRunJSON(), nil)); err != nil {
-				return fmt.Errorf("encoding results: %w", err)
+			if eerr := enc.Encode(newAuditOutput(envelope, unauditedRunJSON(), nil)); eerr != nil {
+				return fmt.Errorf("encoding results: %w", eerr)
 			}
 			return nil
 		}

@@ -653,8 +653,8 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	}
 
 	// 2. Cache Check (T1: Memoization).
-	if rec, handled, err := uc.tryReuseCachedRecord(ctx, params, snapshot); handled || err != nil {
-		return rec, err
+	if rec, handled, reuseErr := uc.tryReuseCachedRecord(ctx, params, snapshot); handled || reuseErr != nil {
+		return rec, reuseErr
 	}
 
 	// 3. Dependency Check (T2: Structural Dependency)
@@ -696,9 +696,9 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// 3.5 Metadata-based Filtering (Optimization)
 	// Check if this module or any of its dependencies have known vulnerabilities.
 	if !params.Force {
-		isVulnerable, err := uc.checkVulnerabilities(ctx, params.Coordinate, params.WalkID, snapshot)
+		isVulnerable, checkErr := uc.checkVulnerabilities(ctx, params.Coordinate, params.WalkID, snapshot)
 		switch {
-		case err == nil && !isVulnerable:
+		case checkErr == nil && !isVulnerable:
 			uc.logger.Info("metadata check: no known vulnerabilities in module or dependencies, skipping heavy scan", "coordinate", params.Coordinate)
 			now := uc.clock.Now()
 			record := domain.VulnerabilityRecord{
@@ -726,10 +726,10 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", perr)
 			}
 			return sealed, nil
-		case interrupt.Cancelled(ctx, err):
-			return domain.VulnerabilityRecord{}, fmt.Errorf("metadata check: %w", err)
-		case err != nil:
-			uc.logger.Warn("metadata check failed, proceeding with full scan", "error", err)
+		case interrupt.Cancelled(ctx, checkErr):
+			return domain.VulnerabilityRecord{}, fmt.Errorf("metadata check: %w", checkErr)
+		case checkErr != nil:
+			uc.logger.Warn("metadata check failed, proceeding with full scan", "error", checkErr)
 		case isVulnerable:
 			uc.logger.Info("metadata check: potential vulnerabilities found, proceeding with heavy scan", "coordinate", params.Coordinate)
 		}
@@ -823,8 +823,8 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// applied", never "no advisories could have been matched". This runs before
 	// reachability so a coordinate-matched finding is still eligible for the
 	// call-graph analysis below.
-	if err := uc.attributeCoordinateFindings(ctx, &record, params.Coordinate); err != nil {
-		return domain.VulnerabilityRecord{}, err
+	if aerr := uc.attributeCoordinateFindings(ctx, &record, params.Coordinate); aerr != nil {
+		return domain.VulnerabilityRecord{}, aerr
 	}
 
 	// 6. Reachability Analysis (T4: Conditional Static Analysis)

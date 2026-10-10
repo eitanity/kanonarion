@@ -53,8 +53,8 @@ func TestEdgeKindSurvivesTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, rec); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, rec); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 
 	// The record read: the kind must come back on the reconstructed edge, and

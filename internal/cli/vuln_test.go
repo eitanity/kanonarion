@@ -1390,11 +1390,11 @@ func TestRunVulnShowHistory_JSON(t *testing.T) {
 // twice sequentially on the same store root does not leave a dangling DB
 // connection that would cause SQLITE_BUSY on the second open.
 func TestNewContainer_NoConcurrentDBLeak(t *testing.T) {
-	storeRoot := t.TempDir()
+	root := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	for i := range 2 {
-		ctr, cleanup, err := NewContainer(storeRoot, "", "", false, domain.DefaultConfig(), logger)
+		ctr, cleanup, err := NewContainer(root, "", "", false, domain.DefaultConfig(), logger)
 		if err != nil {
 			t.Fatalf("iteration %d: NewContainer: %v", i, err)
 		}

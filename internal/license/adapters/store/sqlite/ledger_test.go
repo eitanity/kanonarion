@@ -387,8 +387,8 @@ func TestMigration7_CarriesExistingRowsInUnpurged(t *testing.T) {
 	noID := ledgerRecord(t, legacy, "Apache-2.0", 0.8, time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC), "")
 	seedPreLedgerRow(t, pre, noID)
 	want[legacy.String()] = noID.ContentHash
-	if err := pre.Close(); err != nil {
-		t.Fatalf("closing at migration 6: %v", err)
+	if cerr := pre.Close(); cerr != nil {
+		t.Fatalf("closing at migration 6: %v", cerr)
 	}
 
 	store, err := licensesqlite.Open(dsn)

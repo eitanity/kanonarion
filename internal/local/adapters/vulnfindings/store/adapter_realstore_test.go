@@ -42,8 +42,8 @@ func TestLoadFindings_TwoConsumersInOneLedger(t *testing.T) {
 		ledgerRecord(t, dep, ownFrame, false, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)),
 		ledgerRecord(t, dep, otherFrame, true, time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)),
 	} {
-		if err := ledger.PutVulnerabilityRecord(ctx, rec); err != nil {
-			t.Fatalf("PutVulnerabilityRecord: %v", err)
+		if perr := ledger.PutVulnerabilityRecord(ctx, rec); perr != nil {
+			t.Fatalf("PutVulnerabilityRecord: %v", perr)
 		}
 	}
 

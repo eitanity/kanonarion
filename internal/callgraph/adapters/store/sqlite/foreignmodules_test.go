@@ -35,8 +35,8 @@ func TestForeignModulesColumn_WriteLegCopiesWhatTheRecordStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, sealed); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, sealed); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 
 	columns, err := s.ForeignModulesColumnsForTest(ctx)
@@ -77,14 +77,14 @@ func TestForeignModulesBuilt_IsReadFromTheColumnNotTheRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, sealed); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, sealed); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
-	if err := s.CorruptSerialisedBlobsForTest(ctx); err != nil {
-		t.Fatalf("CorruptSerialisedBlobsForTest: %v", err)
+	if corruptErr := s.CorruptSerialisedBlobsForTest(ctx); corruptErr != nil {
+		t.Fatalf("CorruptSerialisedBlobsForTest: %v", corruptErr)
 	}
-	if err := s.HideEdgeTableForTest(ctx); err != nil {
-		t.Fatalf("HideEdgeTableForTest: %v", err)
+	if herr := s.HideEdgeTableForTest(ctx); herr != nil {
+		t.Fatalf("HideEdgeTableForTest: %v", herr)
 	}
 
 	mods, found, err := s.ForeignModulesBuilt(ctx, testCoord, "0.1.0", gotoolchain.Version(""))
@@ -163,22 +163,22 @@ func TestBackfillForeignModulesBuilt_ReadsEveryRowsOwnBlob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, holds); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, holds); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 	// The zero-paired control, and the population the back-fill mostly meets: a
 	// record naming no foreign module at all.
 	none := makeRecord(foreignControlCoord, "0.1.0")
-	if err := s.PutCallGraphRecord(ctx, none); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, none); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 
 	// Put the store back into the state the ALTER TABLE leaves it in.
-	if err := s.ClearForeignModulesColumnForTest(ctx); err != nil {
-		t.Fatalf("ClearForeignModulesColumnForTest: %v", err)
+	if clearErr := s.ClearForeignModulesColumnForTest(ctx); clearErr != nil {
+		t.Fatalf("ClearForeignModulesColumnForTest: %v", clearErr)
 	}
-	if err := s.BackfillForeignModulesBuiltForTest(ctx); err != nil {
-		t.Fatalf("BackfillForeignModulesBuiltForTest: %v", err)
+	if berr := s.BackfillForeignModulesBuiltForTest(ctx); berr != nil {
+		t.Fatalf("BackfillForeignModulesBuiltForTest: %v", berr)
 	}
 
 	columns, err := s.ForeignModulesColumnsForTest(ctx)

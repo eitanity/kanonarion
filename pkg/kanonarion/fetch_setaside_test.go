@@ -24,8 +24,8 @@ func TestOpen_FetchSetAsideReachesTheLibraryCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if err := cleanup(); err != nil {
-		t.Fatal(err)
+	if cerr := cleanup(); cerr != nil {
+		t.Fatal(cerr)
 	}
 	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("0.4.0"),
@@ -38,12 +38,12 @@ func TestOpen_FetchSetAsideReachesTheLibraryCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fetchsqlite.New(db).PutFetchRecord(context.Background(), sealed); err != nil {
-		t.Fatal(err)
+	if perr := fetchsqlite.New(db).PutFetchRecord(context.Background(), sealed); perr != nil {
+		t.Fatal(perr)
 	}
 	fetchedAt, seal := fetchtest.Respelt(t, r)
-	if _, err := db.DB().Exec(`UPDATE fetch_records SET fetched_at = ?, content_hash = ?`, fetchedAt, seal); err != nil {
-		t.Fatal(err)
+	if _, eerr := db.DB().Exec(`UPDATE fetch_records SET fetched_at = ?, content_hash = ?`, fetchedAt, seal); eerr != nil {
+		t.Fatal(eerr)
 	}
 	_ = db.Close()
 

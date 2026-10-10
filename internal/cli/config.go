@@ -441,8 +441,8 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	}
 
 	configPath := filepath.Join(root, "config.yaml")
-	if err := config.EnsureConfig(configPath); err != nil {
-		return fmt.Errorf("ensuring config file: %w", err)
+	if eerr := config.EnsureConfig(configPath); eerr != nil {
+		return fmt.Errorf("ensuring config file: %w", eerr)
 	}
 
 	data, err := os.ReadFile(configPath) // #nosec G304 -- operator-supplied store-root path
@@ -451,8 +451,8 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	}
 
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("parsing config YAML: %w", err)
+	if uerr := yaml.Unmarshal(data, &doc); uerr != nil {
+		return fmt.Errorf("parsing config YAML: %w", uerr)
 	}
 
 	valueNode, err := parseConfigValue(key, value)
@@ -466,31 +466,31 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	// configuration was rejected.
 	prevValue, prevSource := previousConfigValue(&doc, yamlPath, key)
 
-	if err := refuseProvenanceLoss(&doc, yamlPath, key); err != nil {
-		return err
+	if perr := refuseProvenanceLoss(&doc, yamlPath, key); perr != nil {
+		return perr
 	}
 
-	if err := setYAMLNode(&doc, yamlPath, valueNode); err != nil {
-		return err
+	if serr := setYAMLNode(&doc, yamlPath, valueNode); serr != nil {
+		return serr
 	}
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
+	if eerr := enc.Encode(&doc); eerr != nil {
+		return fmt.Errorf("marshaling config: %w", eerr)
 	}
-	if err := enc.Close(); err != nil {
-		return fmt.Errorf("finalising config: %w", err)
+	if cerr := enc.Close(); cerr != nil {
+		return fmt.Errorf("finalising config: %w", cerr)
 	}
-	if err := os.WriteFile(configPath, buf.Bytes(), 0o600); err != nil { // #nosec G304 G703 -- operator-supplied path
-		return fmt.Errorf("writing config %s: %w", configPath, err)
+	if werr := os.WriteFile(configPath, buf.Bytes(), 0o600); werr != nil { // #nosec G304 G703 -- operator-supplied path
+		return fmt.Errorf("writing config %s: %w", configPath, werr)
 	}
 
 	if asJSON {
-		written, err := marshalConfigYAML(valueNode)
-		if err != nil {
-			return err
+		written, merr := marshalConfigYAML(valueNode)
+		if merr != nil {
+			return merr
 		}
 		return encodeJSON(stdout, configSetResult{
 			Key:            key,

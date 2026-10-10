@@ -99,8 +99,8 @@ func TestExecute_AppendsExamplesExtractedEvent(t *testing.T) {
 	if ev.Type != audit.EventExamplesExtracted {
 		t.Errorf("event type = %q, want %q", ev.Type, audit.EventExamplesExtracted)
 	}
-	if err := ev.Validate(); err != nil {
-		t.Errorf("event does not validate: %v", err)
+	if verr := ev.Validate(); verr != nil {
+		t.Errorf("event does not validate: %v", verr)
 	}
 	// The payload must identify the write without carrying the examples.
 	want := map[string]any{

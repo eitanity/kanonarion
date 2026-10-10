@@ -292,8 +292,8 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 		t.Fatalf("SetContentHash: %v", err)
 	}
 
-	if err := s.PutInterfaceRecord(context.Background(), r); err != nil {
-		t.Fatal(err)
+	if perr := s.PutInterfaceRecord(context.Background(), r); perr != nil {
+		t.Fatal(perr)
 	}
 
 	refs, err := s.FindSymbol(context.Background(), "Marshal", r.PipelineVersion, coordinate.ModuleSet{})
@@ -384,8 +384,8 @@ func TestStore_PartialRecordStatesItsReasonThroughTheReadPath(t *testing.T) {
 	}
 
 	s := openStore(t)
-	if err := s.PutInterfaceRecord(context.Background(), rec); err != nil {
-		t.Fatalf("PutInterfaceRecord: %v", err)
+	if perr := s.PutInterfaceRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("PutInterfaceRecord: %v", perr)
 	}
 
 	got, found, err := s.GetInterfaceRecord(context.Background(), coord, "0.1.0")
@@ -440,8 +440,8 @@ func TestStore_CompleteRecordStatesNoReasonThroughTheReadPath(t *testing.T) {
 	}
 
 	s := openStore(t)
-	if err := s.PutInterfaceRecord(context.Background(), rec); err != nil {
-		t.Fatalf("PutInterfaceRecord: %v", err)
+	if perr := s.PutInterfaceRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("PutInterfaceRecord: %v", perr)
 	}
 	got, found, err := s.GetInterfaceRecord(context.Background(), coord, "0.1.0")
 	if err != nil || !found {

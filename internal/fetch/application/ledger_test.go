@@ -189,11 +189,11 @@ func realZipProxy(t *testing.T, coord coordinateFor) (*fakeProxy, []byte) {
 	if err != nil {
 		t.Fatalf("creating zip entry: %v", err)
 	}
-	if _, err := io.WriteString(f, "module "+coord.Path()+"\n"); err != nil {
-		t.Fatalf("writing zip entry: %v", err)
+	if _, werr := io.WriteString(f, "module "+coord.Path()+"\n"); werr != nil {
+		t.Fatalf("writing zip entry: %v", werr)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("closing zip: %v", err)
+	if cerr := zw.Close(); cerr != nil {
+		t.Fatalf("closing zip: %v", cerr)
 	}
 	zipData := buf.Bytes()
 
@@ -315,8 +315,8 @@ func TestExecute_ForceOverCorruptedArtefactsDownloadsInstead(t *testing.T) {
 
 	// Replace the held zip with bytes that do not hash to the record.
 	identity := fetchtest.ZipIdentity(t, first.Record.FactRecord)
-	if err := blobs.fakeBlob.Put(ctx, identity, strings.NewReader("not the recorded bytes")); err != nil {
-		t.Fatalf("corrupting the held artefact: %v", err)
+	if perr := blobs.fakeBlob.Put(ctx, identity, strings.NewReader("not the recorded bytes")); perr != nil {
+		t.Fatalf("corrupting the held artefact: %v", perr)
 	}
 
 	forced, err := uc.Execute(ctx, application.FetchRequest{Coordinate: testCoord, Force: true})

@@ -689,8 +689,8 @@ func writeWalkRecordWithCoverageJSON(w io.Writer, r domain.WalkRecord, coverage 
 		return fmt.Errorf("marshalling walk record: %w", err)
 	}
 	doc := map[string]json.RawMessage{}
-	if err := json.Unmarshal(b, &doc); err != nil {
-		return fmt.Errorf("reading the marshalled walk record: %w", err)
+	if uerr := json.Unmarshal(b, &doc); uerr != nil {
+		return fmt.Errorf("reading the marshalled walk record: %w", uerr)
 	}
 	cov, err := json.Marshal(coverage)
 	if err != nil {

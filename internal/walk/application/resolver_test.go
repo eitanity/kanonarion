@@ -1057,11 +1057,11 @@ require example.com/dep v1.0.0
 	if err != nil {
 		t.Fatalf("creating zip entry: %v", err)
 	}
-	if _, err := io.WriteString(f, "readme"); err != nil {
-		t.Fatalf("writing zip entry: %v", err)
+	if _, werr := io.WriteString(f, "readme"); werr != nil {
+		t.Fatalf("writing zip entry: %v", werr)
 	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("closing zip: %v", err)
+	if cerr := w.Close(); cerr != nil {
+		t.Fatalf("closing zip: %v", cerr)
 	}
 	seedZipBlob(t, blobs, rec, buf.Bytes())
 

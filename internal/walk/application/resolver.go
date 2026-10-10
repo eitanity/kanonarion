@@ -1393,9 +1393,9 @@ func (r *GraphResolver) extractGoMod(ctx context.Context, fact domain2.FactRecor
 		return nil, fmt.Errorf("deriving go.mod address for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
 	}
 	if hasGoMod {
-		data, err := r.readBlob(ctx, goModIdentity)
-		if err != nil {
-			return nil, fmt.Errorf("reading go.mod blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
+		data, rerr := r.readBlob(ctx, goModIdentity)
+		if rerr != nil {
+			return nil, fmt.Errorf("reading go.mod blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, rerr)
 		}
 		// An empty standalone go.mod is equivalent to "no go.mod" — preserve
 		// the leaf-node semantics of the zip-scan path.

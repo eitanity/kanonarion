@@ -343,8 +343,8 @@ func TestAuditJSON_CarriesTheTwoMajorFactsInSeparateKeys(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+	if uerr := json.Unmarshal(raw, &got); uerr != nil {
+		t.Fatalf("Unmarshal: %v", uerr)
 	}
 	for k, want := range map[string]any{
 		"republished_module": "github.com/go-chi/chi/v3",

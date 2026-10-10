@@ -87,17 +87,17 @@ func (f *Fetcher) EnsureFetchedFromPath(
 	}
 	mv := module.Version{Path: coord.Path(), Version: zipVersion}
 	var zipBuf bytes.Buffer
-	if err := modzip.CreateFromDir(&zipBuf, mv, absPath); err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("creating zip from %q: %w", absPath, err)
+	if zerr := modzip.CreateFromDir(&zipBuf, mv, absPath); zerr != nil {
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("creating zip from %q: %w", absPath, zerr)
 	}
 	zipData := zipBuf.Bytes()
 	if coord.IsLocal() {
-		rewritten, err := rewriteZipPrefix(zipData,
+		rewritten, rerr := rewriteZipPrefix(zipData,
 			coord.Path()+"@"+zipVersion+"/",
 			coord.Path()+"@"+coord.Version()+"/",
 		)
-		if err != nil {
-			return walkports.LocalModuleFetchResult{}, fmt.Errorf("rewriting zip prefix for %s: %w", coord, err)
+		if rerr != nil {
+			return walkports.LocalModuleFetchResult{}, fmt.Errorf("rewriting zip prefix for %s: %w", coord, rerr)
 		}
 		zipData = rewritten
 	}
@@ -124,15 +124,15 @@ func (f *Fetcher) EnsureFetchedFromPath(
 	if err != nil {
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("addressing zip blob for %s: %w", coord, err)
 	}
-	if err := f.blobs.Put(ctx, zipIdentity, bytes.NewReader(zipData)); err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("storing zip blob for %s: %w", coord, err)
+	if perr := f.blobs.Put(ctx, zipIdentity, bytes.NewReader(zipData)); perr != nil {
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("storing zip blob for %s: %w", coord, perr)
 	}
 	goModIdentity, err := fetchports.NewBlobIdentity(fetchports.BlobKindGoMod, goModHash)
 	if err != nil {
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("addressing go.mod blob for %s: %w", coord, err)
 	}
-	if err := f.blobs.Put(ctx, goModIdentity, bytes.NewReader(goModData)); err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("storing go.mod blob for %s: %w", coord, err)
+	if perr := f.blobs.Put(ctx, goModIdentity, bytes.NewReader(goModData)); perr != nil {
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("storing go.mod blob for %s: %w", coord, perr)
 	}
 
 	m := fetchdomain.FetchedModule{
@@ -157,8 +157,8 @@ func (f *Fetcher) EnsureFetchedFromPath(
 	if err != nil {
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("sealing local measurement of %s: %w", coord, err)
 	}
-	if err := f.facts.PutFetchRecord(ctx, sealed); err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("appending fact record for %s: %w", coord, err)
+	if perr := f.facts.PutFetchRecord(ctx, sealed); perr != nil {
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("appending fact record for %s: %w", coord, perr)
 	}
 	composed, err := fetchdomain.Compose([]fetchdomain.FactRecord{sealed.Record()})
 	if err != nil {

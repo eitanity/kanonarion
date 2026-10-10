@@ -215,8 +215,8 @@ func reserialise(t *testing.T, v any) string {
 		t.Fatalf("marshalling %T: %v", v, err)
 	}
 	var doc any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("decoding %T: %v", v, err)
+	if uerr := json.Unmarshal(raw, &doc); uerr != nil {
+		t.Fatalf("decoding %T: %v", v, uerr)
 	}
 	out, err := json.Marshal(doc)
 	if err != nil {

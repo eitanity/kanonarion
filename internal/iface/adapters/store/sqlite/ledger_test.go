@@ -707,8 +707,8 @@ func TestMigration4_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 	want[legacy.String()] = noID.ContentHash
 	wantKids[noID.ContentHash] = 1
 
-	if err := pre.Close(); err != nil {
-		t.Fatalf("closing at migration 3: %v", err)
+	if cerr := pre.Close(); cerr != nil {
+		t.Fatalf("closing at migration 3: %v", cerr)
 	}
 
 	store, err := ifacesqlite.Open(dsn)
@@ -716,14 +716,14 @@ func TestMigration4_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 		t.Fatalf("migrating to head: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := store.Close(); err != nil {
-			t.Errorf("Close: %v", err)
+		if cerr := store.Close(); cerr != nil {
+			t.Errorf("Close: %v", cerr)
 		}
 	})
 
 	var total int
-	if err := store.InternalDB().DB().QueryRow(`SELECT count(*) FROM interface_records`).Scan(&total); err != nil {
-		t.Fatalf("counting rows: %v", err)
+	if serr := store.InternalDB().DB().QueryRow(`SELECT count(*) FROM interface_records`).Scan(&total); serr != nil {
+		t.Fatalf("counting rows: %v", serr)
 	}
 	if total != len(coords) {
 		t.Errorf("ledger holds %d rows after the conversion, want %d — rows were purged", total, len(coords))
@@ -1146,8 +1146,8 @@ func TestLedger_ListRestrictedToOneGeneration(t *testing.T) {
 		ledgerRecord(t, b, domain2.InterfaceStatusExtracted, []string{"Open"},
 			time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC), artefact),
 	} {
-		if err := s.PutInterfaceRecord(ctx, r); err != nil {
-			t.Fatalf("PutInterfaceRecord: %v", err)
+		if perr := s.PutInterfaceRecord(ctx, r); perr != nil {
+			t.Fatalf("PutInterfaceRecord: %v", perr)
 		}
 	}
 

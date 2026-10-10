@@ -420,7 +420,7 @@ func runVulnReachabilityQuery(
 		// The candidate set spans every frame of that generation, so ranking it
 		// blind is what answered a corteza question from a langchaingo scan.
 		candidates, cerr := uc.ListRecordsForModuleInWalk(ctx, coord, localVulnPipelineVersion, anchor.walkID)
-		if cerr := setAside.take(cerr); cerr != nil {
+		if cerr = setAside.take(cerr); cerr != nil {
 			return fmt.Errorf("getting vulnerability record: %w", cerr)
 		}
 		var serr error
@@ -441,7 +441,7 @@ func runVulnReachabilityQuery(
 		}
 	} else {
 		recs, lerr := uc.ListRecordsForModule(ctx, coord, localVulnPipelineVersion)
-		if lerr := setAside.take(lerr); lerr != nil {
+		if lerr = setAside.take(lerr); lerr != nil {
 			return fmt.Errorf("getting vulnerability record: %w", lerr)
 		}
 		// Two consumers' builds, one coordinate, no flag naming which: the store

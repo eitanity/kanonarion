@@ -204,8 +204,8 @@ func TestBackfillAnalyser_IsABackfillNotAPurge(t *testing.T) {
 		}
 	}
 
-	if err := s.BackfillAnalyserForTest(ctx); err != nil {
-		t.Fatalf("BackfillAnalyserForTest: %v", err)
+	if berr := s.BackfillAnalyserForTest(ctx); berr != nil {
+		t.Fatalf("BackfillAnalyserForTest: %v", berr)
 	}
 
 	after, err := s.AnalyserColumnsForTest(ctx)
@@ -401,8 +401,8 @@ func TestBackfillAnalyser_LadderIsUnchangedForAMixedCoordinate(t *testing.T) {
 		t.Fatalf("SetContentHash: %v", err)
 	}
 	for _, r := range []domain2.CallGraphRecord{strong, weak} {
-		if err := s.SeedDatedRowForTest(ctx, r); err != nil {
-			t.Fatalf("SeedDatedRowForTest: %v", err)
+		if serr := s.SeedDatedRowForTest(ctx, r); serr != nil {
+			t.Fatalf("SeedDatedRowForTest: %v", serr)
 		}
 	}
 
@@ -414,8 +414,8 @@ func TestBackfillAnalyser_LadderIsUnchangedForAMixedCoordinate(t *testing.T) {
 		t.Fatalf("before the migration the ladder served %s, want %s", rec.ContentHash, strong.ContentHash)
 	}
 
-	if err := s.BackfillAnalyserForTest(ctx); err != nil {
-		t.Fatalf("BackfillAnalyserForTest: %v", err)
+	if berr := s.BackfillAnalyserForTest(ctx); berr != nil {
+		t.Fatalf("BackfillAnalyserForTest: %v", berr)
 	}
 
 	rec, found, err = s.GetCallGraphRecord(ctx, coord, "0.5.0")

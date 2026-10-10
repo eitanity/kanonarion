@@ -145,8 +145,8 @@ func TestForeignModulesBuilt_SealsVerifiesAndRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := h.VerifyContentHash(sealed); err != nil {
-		t.Fatalf("a sealed record with foreign modules does not verify: %v", err)
+	if verr := h.VerifyContentHash(sealed); verr != nil {
+		t.Fatalf("a sealed record with foreign modules does not verify: %v", verr)
 	}
 	data, err := h.Marshal(sealed)
 	if err != nil {

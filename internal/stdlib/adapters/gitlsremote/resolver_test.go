@@ -33,8 +33,8 @@ func TestResolveCommit_EnclosingRepoConfigDoesNotRewriteURL(t *testing.T) {
 	var connections atomic.Int64
 	go func() {
 		for {
-			conn, err := ln.Accept()
-			if err != nil {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
 				return
 			}
 			connections.Add(1)
@@ -48,8 +48,8 @@ func TestResolveCommit_EnclosingRepoConfigDoesNotRewriteURL(t *testing.T) {
 	cmd := exec.Command("git", "init")
 	cmd.Dir = repo
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
+	if out, oerr := cmd.CombinedOutput(); oerr != nil {
+		t.Fatalf("git init: %v\n%s", oerr, out)
 	}
 	cfg := fmt.Sprintf("\n[url \"https://%s/\"]\n\tinsteadOf = https://kanonarion-test.invalid/\n", ln.Addr())
 	// #nosec G304 -- the path is rooted in t.TempDir, not in any input

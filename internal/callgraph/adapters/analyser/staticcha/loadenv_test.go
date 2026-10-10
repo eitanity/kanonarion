@@ -94,8 +94,8 @@ func TestAnalyseDir_ChildProcessEnvironmentIsHermetic(t *testing.T) {
 		t.Fatalf("coordinate: %v", err)
 	}
 	a := New("0.0.0-test", fakeGo, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := a.AnalyseDir(context.Background(), dir, coord); err != nil {
-		t.Fatalf("AnalyseDir: %v", err)
+	if _, aerr := a.AnalyseDir(context.Background(), dir, coord); aerr != nil {
+		t.Fatalf("AnalyseDir: %v", aerr)
 	}
 
 	raw, err := os.ReadFile(recorded) // #nosec G304 -- written by this test into its own t.TempDir()
@@ -186,8 +186,8 @@ func TestAnalyseDir_WorkingTreeUnderAWorkspaceKeepsIt(t *testing.T) {
 		t.Fatalf("coordinate: %v", err)
 	}
 	a := New("0.0.0-test", fakeGo, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := a.AnalyseDir(context.Background(), dir, coord); err != nil {
-		t.Fatalf("AnalyseDir: %v", err)
+	if _, aerr := a.AnalyseDir(context.Background(), dir, coord); aerr != nil {
+		t.Fatalf("AnalyseDir: %v", aerr)
 	}
 
 	raw, err := os.ReadFile(recorded) // #nosec G304 -- written by this test into its own t.TempDir()

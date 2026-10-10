@@ -100,8 +100,8 @@ func TestExecute_AppendsInterfaceExtractedEvent(t *testing.T) {
 	if ev.Type != audit.EventInterfaceExtracted {
 		t.Errorf("event type = %q, want %q", ev.Type, audit.EventInterfaceExtracted)
 	}
-	if err := ev.Validate(); err != nil {
-		t.Errorf("event does not validate: %v", err)
+	if verr := ev.Validate(); verr != nil {
+		t.Errorf("event does not validate: %v", verr)
 	}
 	// The payload must identify the write without carrying the API.
 	want := map[string]any{

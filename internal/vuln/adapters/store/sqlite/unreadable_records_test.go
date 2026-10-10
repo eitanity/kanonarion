@@ -317,14 +317,14 @@ func TestRecordListings_UnparseableRowIsStillReported(t *testing.T) {
 	good := recordAt(t, "example.com/alpha", "v1.0.0", snapshot, time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC))
 	bad := recordAt(t, "example.com/bravo", "v2.0.0", snapshot, time.Date(2024, 2, 1, 1, 0, 0, 0, time.UTC))
 	for _, rec := range []domain.VulnerabilityRecord{good, bad} {
-		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
-			t.Fatalf("PutVulnerabilityRecord(%s): %v", rec.Coordinate, err)
+		if perr := store.PutVulnerabilityRecord(ctx, rec); perr != nil {
+			t.Fatalf("PutVulnerabilityRecord(%s): %v", rec.Coordinate, perr)
 		}
 	}
-	if _, err := db.DB().ExecContext(ctx,
+	if _, eerr := db.DB().ExecContext(ctx,
 		`UPDATE vulnerability_records SET serialised = ? WHERE module_path = ?`,
-		[]byte("not json at all"), bad.Coordinate.Path()); err != nil {
-		t.Fatalf("installing unparseable row: %v", err)
+		[]byte("not json at all"), bad.Coordinate.Path()); eerr != nil {
+		t.Fatalf("installing unparseable row: %v", eerr)
 	}
 
 	records, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-9001", "")
@@ -364,13 +364,13 @@ func TestRecordListings_RowWithNoReadableCoordinateIsReportedUnnamed(t *testing.
 
 			snapshot := snap("govulndb", "v2024-01-01")
 			bad := recordAt(t, "example.com/bravo", "v2.0.0", snapshot, time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC))
-			if err := store.PutVulnerabilityRecord(ctx, bad); err != nil {
-				t.Fatalf("PutVulnerabilityRecord: %v", err)
+			if perr := store.PutVulnerabilityRecord(ctx, bad); perr != nil {
+				t.Fatalf("PutVulnerabilityRecord: %v", perr)
 			}
-			if _, err := db.DB().ExecContext(ctx,
+			if _, eerr := db.DB().ExecContext(ctx,
 				`UPDATE vulnerability_records SET serialised = ? WHERE module_path = ?`,
-				[]byte(blob), bad.Coordinate.Path()); err != nil {
-				t.Fatalf("installing the damaged row: %v", err)
+				[]byte(blob), bad.Coordinate.Path()); eerr != nil {
+				t.Fatalf("installing the damaged row: %v", eerr)
 			}
 
 			_, err = store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-9001", "")

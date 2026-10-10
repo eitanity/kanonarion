@@ -60,14 +60,14 @@ func reIngest(t *testing.T, facts *fakeFactStore, coord coordinate.ModuleCoordin
 	if err != nil {
 		t.Fatalf("GetFetchRecord: %v", err)
 	}
-	if err := facts.PutFetchRecord(context.Background(), fetchtest.Sealed(
+	if perr := facts.PutFetchRecord(context.Background(), fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion(testFetchPipV),
 		fetchtest.Content("blob:test"),
 		fetchtest.FetchedAt(at),
-	)); err != nil {
-		t.Fatalf("PutFetchRecord: %v", err)
+	)); perr != nil {
+		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 	after, _, err := facts.GetFetchRecord(context.Background(), coord, testFetchPipV)
 	if err != nil {

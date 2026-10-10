@@ -127,14 +127,14 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 
 	// Step 3: verify against the local go.sum. A missing entry or a hash
 	// mismatch is a hard failure — no blob is stored and no record is written.
-	if err := uc.verifyAgainstGoSum(ctx, req.Coordinate, req.OriginalCoordinate, dl); err != nil {
-		return FetchResult{}, err
+	if verr := uc.verifyAgainstGoSum(ctx, req.Coordinate, req.OriginalCoordinate, dl); verr != nil {
+		return FetchResult{}, verr
 	}
 	log.InfoContext(ctx, "gosum_verified", slog.String("zip_hash", dl.ZipHash.String()))
 
 	// Sign-on-process call site 1: fetch-receive.
-	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(zipData)); err != nil {
-		return FetchResult{}, err
+	if serr := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(zipData)); serr != nil {
+		return FetchResult{}, serr
 	}
 
 	// Step 4: store the bytes under the identities just measured. The module-cache
@@ -145,11 +145,11 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 	if err != nil {
 		return FetchResult{}, err
 	}
-	if err := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); err != nil {
-		return FetchResult{}, fmt.Errorf("storing zip blob: %w", err)
+	if perr := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); perr != nil {
+		return FetchResult{}, fmt.Errorf("storing zip blob: %w", perr)
 	}
-	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
-		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
+	if perr := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); perr != nil {
+		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", perr)
 	}
 
 	// Step 5: construct the record. Retraction is still parsed from go.mod; VCS
@@ -241,13 +241,13 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 
 	// Step 3: verify the go.mod h1 against the local go.sum. A missing entry or a
 	// mismatch is a hard failure — no record is written.
-	if err := uc.verifyGoModAgainstGoSum(ctx, req.Coordinate, req.OriginalCoordinate, dl); err != nil {
-		return FetchResult{}, err
+	if verr := uc.verifyGoModAgainstGoSum(ctx, req.Coordinate, req.OriginalCoordinate, dl); verr != nil {
+		return FetchResult{}, verr
 	}
 	log.InfoContext(ctx, "gosum_verified", slog.String("go_mod_hash", dl.GoModHash.String()))
 
-	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(goModData)); err != nil {
-		return FetchResult{}, err
+	if serr := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(goModData)); serr != nil {
+		return FetchResult{}, serr
 	}
 
 	// Step 4: store the go.mod alone — there is no zip in a go.mod-only fetch.
@@ -255,8 +255,8 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 	if err != nil {
 		return FetchResult{}, fmt.Errorf("addressing go.mod blob: %w", err)
 	}
-	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
-		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
+	if perr := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); perr != nil {
+		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", perr)
 	}
 
 	retracted := parseRetracted(goModData, req.Coordinate.Version())

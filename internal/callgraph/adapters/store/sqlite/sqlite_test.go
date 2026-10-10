@@ -359,8 +359,8 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	if err := s1.Close(); err != nil {
-		t.Errorf("close s1: %v", err)
+	if cerr := s1.Close(); cerr != nil {
+		t.Errorf("close s1: %v", cerr)
 	}
 
 	s2, err := sqlite.Open(dbPath)
@@ -390,8 +390,8 @@ func TestGetStaleSchemaRecordTreatedAsAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, rehashed); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, rehashed); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 
 	got, found, err := s.GetCallGraphRecord(ctx, testCoord, "0.1.0")

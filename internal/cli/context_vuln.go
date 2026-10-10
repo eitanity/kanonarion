@@ -281,7 +281,7 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 	// defect class.
 	var aside setAsideRows
 	recs, err := vulnUC.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
-	if err := aside.take(err); err != nil {
+	if err = aside.take(err); err != nil {
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	var section contextVulnerabilities

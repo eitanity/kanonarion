@@ -42,8 +42,8 @@ func TestVulnScanRescan_FrameDecidedOnlyBySetAsideRunIsNotServable(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := walkadapters.New(db).PutWalk(ctx, walk); err != nil {
-			t.Fatalf("seeding the local walk: %v", err)
+		if perr := walkadapters.New(db).PutWalk(ctx, walk); perr != nil {
+			t.Fatalf("seeding the local walk: %v", perr)
 		}
 
 		store := vulnsqlite.New(db)

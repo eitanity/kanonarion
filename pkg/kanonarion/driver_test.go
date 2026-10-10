@@ -111,8 +111,8 @@ func TestValidateIngest_RoundTripAndFailClosed(t *testing.T) {
 		fetchtest.FetchedAt(time.Unix(0, 0).UTC()),
 	)
 
-	if err := uc.Ingest(ctx, rec); err != nil {
-		t.Fatalf("Ingest of a valid record: %v", err)
+	if ierr := uc.Ingest(ctx, rec); ierr != nil {
+		t.Fatalf("Ingest of a valid record: %v", ierr)
 	}
 	got, found, err := uc.ReadVerified(ctx, coord, rec.PipelineVersion)
 	if err != nil || !found {

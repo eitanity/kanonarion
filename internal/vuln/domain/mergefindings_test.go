@@ -181,7 +181,6 @@ func sealedHash(t *testing.T, fs []domain.VulnerabilityFinding) string {
 // withdrawal timestamp means "live OR no advisory was read", and a finding
 // missing it counts as live. A match that read the advisory fills it.
 func TestMergeCoordinateMatches_FillsARetractionTheAnalysisMissed(t *testing.T) {
-	withdrawnAt := time.Date(2026, 4, 8, 13, 33, 56, 0, time.UTC)
 	match := coordinateMatch()
 	match.WithdrawnAt = withdrawnAt
 

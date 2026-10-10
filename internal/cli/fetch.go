@@ -227,8 +227,8 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	blobStore := localfs.New(storeRoot)
 
 	dbPath := storeRoot + "/mirror.db"
-	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-		return fmt.Errorf("creating store root: %w", err)
+	if merr := os.MkdirAll(storeRoot, 0o750); merr != nil {
+		return fmt.Errorf("creating store root: %w", merr)
 	}
 	rawStore, err := sqlite2.Open(dbPath)
 	if err != nil {

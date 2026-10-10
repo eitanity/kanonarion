@@ -214,7 +214,7 @@ func recordInWalkFrame(
 	anchor vulnFrameAnchor,
 ) (rec vuldomain.VulnerabilityRecord, found bool, aside setAsideRows, err error) {
 	candidates, err := uc.ListRecordsForModuleInWalk(ctx, coord, vulnPipelineVersion, anchor.walkID)
-	if err := aside.take(err); err != nil {
+	if err = aside.take(err); err != nil {
 		return vuldomain.VulnerabilityRecord{}, false, nil, fmt.Errorf("reading vulnerability records for %s in walk %s: %w", coord, anchor.walkID, err)
 	}
 	if len(candidates) == 0 {

@@ -25,11 +25,11 @@ func TestStoreRefusesAWriteUnderACancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	if _, err := db.ExecContext(ctx, "INSERT INTO records (status) VALUES ('ScanFailed')"); !errors.Is(err, context.Canceled) {
-		t.Errorf("ExecContext under a cancelled context: err = %v, want the cancellation", err)
+	if _, eerr := db.ExecContext(ctx, "INSERT INTO records (status) VALUES ('ScanFailed')"); !errors.Is(eerr, context.Canceled) {
+		t.Errorf("ExecContext under a cancelled context: err = %v, want the cancellation", eerr)
 	}
-	if _, err := db.BeginTx(ctx, nil); !errors.Is(err, context.Canceled) {
-		t.Errorf("BeginTx under a cancelled context: err = %v, want the cancellation", err)
+	if _, berr := db.BeginTx(ctx, nil); !errors.Is(berr, context.Canceled) {
+		t.Errorf("BeginTx under a cancelled context: err = %v, want the cancellation", berr)
 	}
 	err = sqlitestore.RetryOnBusy(ctx, "test write", func(ctx context.Context) error {
 		_, xerr := db.ExecContext(ctx, "INSERT INTO records (status) VALUES ('ScanFailed')")

@@ -335,8 +335,8 @@ func migrate(db *sql.DB, migrations []Migration) error {
 			return fmt.Errorf("reading schema_version from _store_meta: %w", err)
 		}
 		var applied int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); err != nil {
-			return fmt.Errorf("counting applied migrations: %w", err)
+		if serr := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); serr != nil {
+			return fmt.Errorf("counting applied migrations: %w", serr)
 		}
 		if recorded == strconv.Itoa(applied) {
 			return nil

@@ -417,8 +417,8 @@ func TestAnalyse_ZipWithDirectoryEntries(t *testing.T) {
 	}
 	io.WriteString(w3, "package cgtestmod\n\nfunc Root() {}\n") //nolint:errcheck,gosec
 
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
+	if cerr := zw.Close(); cerr != nil {
+		t.Fatal(cerr)
 	}
 
 	a := staticcha.New("0.1.0", "", slog.Default())

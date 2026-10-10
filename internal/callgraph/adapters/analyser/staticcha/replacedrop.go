@@ -93,8 +93,8 @@ func dropLocalReplaces(dir string) ([]domain.DroppedReplace, error) {
 		return nil, nil
 	}
 	for _, d := range dropped {
-		if err := f.DropReplace(d.Path, d.Version); err != nil {
-			return nil, fmt.Errorf("dropping replace %s in %s: %w", d, path, err)
+		if derr := f.DropReplace(d.Path, d.Version); derr != nil {
+			return nil, fmt.Errorf("dropping replace %s in %s: %w", d, path, derr)
 		}
 	}
 	f.Cleanup()

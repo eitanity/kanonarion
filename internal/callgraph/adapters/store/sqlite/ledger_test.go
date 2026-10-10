@@ -629,8 +629,8 @@ func TestLedger_LegacyRecordVerifiesUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, sealed); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, sealed); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 
 	got, found, err := s.GetCallGraphRecord(ctx, testCoord, testPipeline)
@@ -1692,8 +1692,8 @@ func TestLedger_DerivationSurvivesTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, sealed); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, sealed); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 
 	got, found, err := s.GetCallGraphRecord(ctx, sealed.Coordinate, testPipeline)

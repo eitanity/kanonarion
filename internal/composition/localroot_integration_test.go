@@ -144,15 +144,15 @@ func TestLocalWalkExtract_AnalyseLocalRoot_EndToEnd(t *testing.T) {
 	// FRESHNESS: edit the tree, re-run, and the new symbol must appear — no
 	// stale cached record for the root is ever served.
 	edited := "// Package proj is the project root.\npackage proj\n\n// Answer returns 42.\nfunc Answer() int { return 42 }\n\n// Extra is new.\nfunc Extra() string { return \"new\" }\n"
-	if err := os.WriteFile(filepath.Join(projDir, "lib.go"), []byte(edited), 0o600); err != nil {
-		t.Fatalf("editing lib.go: %v", err)
+	if werr := os.WriteFile(filepath.Join(projDir, "lib.go"), []byte(edited), 0o600); werr != nil {
+		t.Fatalf("editing lib.go: %v", werr)
 	}
-	if _, err := drv.LocalWalkExtract.Run(ctx, driver.LocalWalkExtractRequest{
+	if _, rerr := drv.LocalWalkExtract.Run(ctx, driver.LocalWalkExtractRequest{
 		Dir:              projDir,
 		Stages:           []string{"interface"},
 		AnalyseLocalRoot: true,
-	}); err != nil {
-		t.Fatalf("second Run: %v", err)
+	}); rerr != nil {
+		t.Fatalf("second Run: %v", rerr)
 	}
 	ifaceRec, found, err := queries.Interface.GetInterfaceRecord(ctx, root, ifaceapp.PipelineVersion)
 	if err != nil || !found {

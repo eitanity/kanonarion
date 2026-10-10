@@ -177,8 +177,8 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	defer releaseStore(cleanup)
 
 	// Step 1: walk
-	if _, err := fmt.Fprintf(stderr, "==> inspect: walking %s\n", arg); err != nil {
-		return fmt.Errorf("writing output: %w", err)
+	if _, werr := fmt.Fprintf(stderr, "==> inspect: walking %s\n", arg); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
 	walkResult, err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
@@ -205,8 +205,8 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	walkID := walkRec.ID
 
 	// Step 3: extract. The banner names the frame the walk was resolved in.
-	if _, err := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); err != nil {
-		return fmt.Errorf("writing output: %w", err)
+	if _, werr := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
 	}
 	ef := extractFlags{
 		goBinary:   f.goBinary,
@@ -267,9 +267,9 @@ func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr 
 		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid argument %q: %w", arg, err)
 	}
 	if version == "latest" {
-		proxy, err := proxyadapter.New(goproxy, false)
-		if err != nil {
-			return coordinate.ModuleCoordinate{}, proxyAdapterError(err)
+		proxy, proxyErr := proxyadapter.New(goproxy, false)
+		if proxyErr != nil {
+			return coordinate.ModuleCoordinate{}, proxyAdapterError(proxyErr)
 		}
 		return resolveLatest(ctx, path, proxy, stderr)
 	}

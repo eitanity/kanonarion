@@ -51,8 +51,8 @@ func TestExecute_CacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := exampleStore.PutExampleRecord(context.Background(), existing); err != nil {
-		t.Fatalf("PutExampleRecord: %v", err)
+	if perr := exampleStore.PutExampleRecord(context.Background(), existing); perr != nil {
+		t.Fatalf("PutExampleRecord: %v", perr)
 	}
 
 	uc := buildUseCase(t, factStore, nil, exampleStore)
@@ -88,8 +88,8 @@ func TestExecute_ForceBypassesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := exampleStore.PutExampleRecord(context.Background(), existing); err != nil {
-		t.Fatalf("PutExampleRecord: %v", err)
+	if perr := exampleStore.PutExampleRecord(context.Background(), existing); perr != nil {
+		t.Fatalf("PutExampleRecord: %v", perr)
 	}
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
@@ -516,11 +516,11 @@ func TestExecute_ZipDirectoryEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create file entry: %v", err)
 	}
-	if _, err := f.Write([]byte("package dir_test\nimport \"fmt\"\nfunc ExampleFoo() {\nfmt.Println(\"ok\")\n}\n")); err != nil {
-		t.Fatalf("write file: %v", err)
+	if _, werr := f.Write([]byte("package dir_test\nimport \"fmt\"\nfunc ExampleFoo() {\nfmt.Println(\"ok\")\n}\n")); werr != nil {
+		t.Fatalf("write file: %v", werr)
 	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
+	if cerr := w.Close(); cerr != nil {
+		t.Fatalf("zip close: %v", cerr)
 	}
 
 	putFactWithBlob(t, factStore, blobStore, coord, buf.Bytes())

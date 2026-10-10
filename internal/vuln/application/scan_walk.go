@@ -436,8 +436,8 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// one module's failure. The pool would otherwise fold it into a per-module
 	// StatusScanFailed record and let the run complete, which is the same
 	// swallow this abort exists to remove — one layer further down.
-	if err := firstSnapshotIntegrityFailure(allCoords, finalResults); err != nil {
-		return domain.WalkScanRun{}, err
+	if ferr := firstSnapshotIntegrityFailure(allCoords, finalResults); ferr != nil {
+		return domain.WalkScanRun{}, ferr
 	}
 
 	progressCount := 0
@@ -457,8 +457,8 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// 4b. Every coordinate the run reported a verdict for must have that verdict
 	// in the store. A module that produced a progress line and no record is a
 	// verdict the run claims to have made and did not keep.
-	if err := uc.verifyRecordsPersisted(ctx, walk, run, snapshot); err != nil {
-		return domain.WalkScanRun{}, err
+	if verr := uc.verifyRecordsPersisted(ctx, walk, run, snapshot); verr != nil {
+		return domain.WalkScanRun{}, verr
 	}
 
 	// 5. Status determination. The two axes are stored separately so a run that
@@ -1489,8 +1489,8 @@ func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domai
 	}
 	cleanup := func() { _ = os.RemoveAll(dbDir) }
 
-	if err := ziparchive.ExtractStream(content, dbDir); err != nil {
-		uc.logger.Warn("failed to pre-extract snapshot, each module scan will extract independently", "error", err)
+	if eerr := ziparchive.ExtractStream(content, dbDir); eerr != nil {
+		uc.logger.Warn("failed to pre-extract snapshot, each module scan will extract independently", "error", eerr)
 		cleanup()
 		return "", noop, nil
 	}

@@ -65,14 +65,14 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	s.logMem(ctx, "project_scan_start")
 	s.logger.Info("vuln-scan: project-rooted scan starting", "dir", projectDir)
 
-	if _, err := os.Stat(projectDir); err != nil {
+	if _, serr := os.Stat(projectDir); serr != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
 			UnscanReason:      domain.UnscanReasonProjectDirUnavailable,
-			UnscannableReason: "project directory not accessible: " + err.Error(),
+			UnscannableReason: "project directory not accessible: " + serr.Error(),
 		}, nil
 	}
-	if _, err := os.Stat(filepath.Join(projectDir, "go.mod")); err != nil {
+	if _, serr := os.Stat(filepath.Join(projectDir, "go.mod")); serr != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
 			UnscanReason:      domain.UnscanReasonProjectNoGoMod,

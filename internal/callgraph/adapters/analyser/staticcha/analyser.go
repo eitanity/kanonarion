@@ -142,11 +142,11 @@ func (a *Analyser) Analyse(
 	}()
 
 	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
-	if err := extractModuleZip(zipPath, modulePrefix, tempDir); err != nil {
+	if eerr := extractModuleZip(zipPath, modulePrefix, tempDir); eerr != nil {
 		// The zip is the module: bytes that will not unpack are a property of what
 		// was published, and unpacking them again tomorrow fails identically.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}, nil, inputs.Source, tempDir), nil
+			domain.FailureCauseModule, "extracting module zip: "+eerr.Error()), domain.SynthesisedGoMod{}, nil, inputs.Source, tempDir), nil
 	}
 
 	// A module published from a monorepo carries replace directives pointing at

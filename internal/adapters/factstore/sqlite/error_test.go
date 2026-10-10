@@ -20,8 +20,8 @@ func TestAuditingStore_PutError_ClosedDB(t *testing.T) {
 	}
 
 	// Close the DB so PutFetchRecord fails.
-	if err := store.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	if cerr := store.Close(); cerr != nil {
+		t.Fatalf("Close: %v", cerr)
 	}
 
 	r := sampleRecord(t, "example.com/m", "v1.0.0", "0.1.0")

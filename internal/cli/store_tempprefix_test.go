@@ -50,7 +50,7 @@ func TestStoreCleanCoversEveryTempPrefix(t *testing.T) {
 			if !ok || (sel.Sel.Name != "MkdirTemp" && sel.Sel.Name != "CreateTemp") {
 				return true
 			}
-			if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "os" {
+			if pkg, isIdent := sel.X.(*ast.Ident); !isIdent || pkg.Name != "os" {
 				return true
 			}
 			dir, ok := call.Args[0].(*ast.BasicLit)

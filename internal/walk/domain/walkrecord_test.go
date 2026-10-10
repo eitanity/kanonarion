@@ -514,8 +514,8 @@ func TestWalkRecordHasher_MultiEdge_Sorting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := hasher.VerifyContentHash(hashed); err != nil {
-		t.Fatalf("VerifyContentHash: %v", err)
+	if verr := hasher.VerifyContentHash(hashed); verr != nil {
+		t.Fatalf("VerifyContentHash: %v", verr)
 	}
 
 	rawBytes, err := hasher.Marshal(hashed)

@@ -103,8 +103,8 @@ func TestArtefactFields_SurviveTheStorageRoundTrip(t *testing.T) {
 	if got.SourceContentHash != sealed.SourceContentHash {
 		t.Errorf("SourceContentHash = %q, want %q", got.SourceContentHash, sealed.SourceContentHash)
 	}
-	if err := h.VerifyContentHash(got); err != nil {
-		t.Errorf("VerifyContentHash after a round trip: %v", err)
+	if verr := h.VerifyContentHash(got); verr != nil {
+		t.Errorf("VerifyContentHash after a round trip: %v", verr)
 	}
 
 	id, err := domain.RecordArtefactIdentity(got)

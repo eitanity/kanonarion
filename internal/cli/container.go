@@ -336,8 +336,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	stopwatch := clock.Monotonic{}
 	signer := noopsigner.New()
 	localBlobs := blobstore.New(storeRoot)
-	if n, freed, err := localBlobs.CleanOrphanedTemps(); err != nil {
-		logger.Warn("failed to clean orphaned blob temp files", "error", err)
+	if n, freed, cleanErr := localBlobs.CleanOrphanedTemps(); cleanErr != nil {
+		logger.Warn("failed to clean orphaned blob temp files", "error", cleanErr)
 	} else if n > 0 {
 		logger.Debug("cleaned orphaned blob temp files", "count", n, "bytes", freed)
 	}
@@ -409,8 +409,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// Re-address artefacts written under the old store-chosen blob handles so an
 	// existing store survives the change to identity addressing. Runs once,
 	// guarded by a marker file.
-	if err := adoptLegacyBlobs(dbHandle, localBlobs, storeRoot, logger); err != nil {
-		logger.Warn("could not re-address existing blobs by artefact identity", "error", err)
+	if aerr := adoptLegacyBlobs(dbHandle, localBlobs, storeRoot, logger); aerr != nil {
+		logger.Warn("could not re-address existing blobs by artefact identity", "error", aerr)
 	}
 
 	// ---- store adapters (all share dbHandle) ----

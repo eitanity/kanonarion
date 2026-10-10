@@ -472,8 +472,8 @@ func TestCoordinates_GenerationsDifferIsPerCoordinate(t *testing.T) {
 	for _, spec := range specs {
 		spec.source = domain2.AnalysisSourceModuleZip
 		spec.completeness = domain2.CompletenessBuiltWithBodies
-		if err := s.PutCallGraphRecord(ctx, ledgerRecord(t, spec)); err != nil {
-			t.Fatalf("PutCallGraphRecord: %v", err)
+		if perr := s.PutCallGraphRecord(ctx, ledgerRecord(t, spec)); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
 		}
 	}
 

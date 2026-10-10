@@ -39,12 +39,12 @@ func TestMigration6_PurgesTheUnverifiableGeneration(t *testing.T) {
 		{"example.com/c", "v3.0.0", "1.2.0"},
 	}
 	for _, s := range seeded {
-		if _, err := db.DB().Exec(insert, s.path, s.version, s.pipeline); err != nil {
-			t.Fatalf("seeding %s@%s at %s: %v", s.path, s.version, s.pipeline, err)
+		if _, eerr := db.DB().Exec(insert, s.path, s.version, s.pipeline); eerr != nil {
+			t.Fatalf("seeding %s@%s at %s: %v", s.path, s.version, s.pipeline, eerr)
 		}
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("closing at migration 5: %v", err)
+	if cerr := db.Close(); cerr != nil {
+		t.Fatalf("closing at migration 5: %v", cerr)
 	}
 
 	store, err := licensesqlite.Open(dsn)
@@ -52,8 +52,8 @@ func TestMigration6_PurgesTheUnverifiableGeneration(t *testing.T) {
 		t.Fatalf("migrating to head: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := store.Close(); err != nil {
-			t.Errorf("Close: %v", err)
+		if cerr := store.Close(); cerr != nil {
+			t.Errorf("Close: %v", cerr)
 		}
 	})
 

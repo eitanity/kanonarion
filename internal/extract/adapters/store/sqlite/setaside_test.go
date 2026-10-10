@@ -67,8 +67,8 @@ func TestGetExtractionRun_DriftIsNothingServableTamperIsIntegrity(t *testing.T) 
 
 	drifted, good, altered := sealedRun(t, "run-drift"), sealedRun(t, "run-good"), sealedRun(t, "run-altered")
 	for _, r := range []domain.ExtractionRun{drifted, good, altered} {
-		if err := s.PutExtractionRun(ctx, r); err != nil {
-			t.Fatalf("PutExtractionRun: %v", err)
+		if perr := s.PutExtractionRun(ctx, r); perr != nil {
+			t.Fatalf("PutExtractionRun: %v", perr)
 		}
 	}
 	seal := installWidenedRun(t, s, drifted, nil)
@@ -88,11 +88,11 @@ func TestGetExtractionRun_DriftIsNothingServableTamperIsIntegrity(t *testing.T) 
 	if len(reported) != 1 || reported[0].ContentHash != seal {
 		t.Errorf("reported = %+v, want the run named once", reported)
 	}
-	if _, err := s.GetExtractionRun(ctx, good.ID); err != nil {
-		t.Errorf("readable run = %v", err)
+	if _, gerr := s.GetExtractionRun(ctx, good.ID); gerr != nil {
+		t.Errorf("readable run = %v", gerr)
 	}
-	if _, err := s.GetExtractionRun(ctx, altered.ID); !errors.Is(err, ports.ErrExtractionRunIntegrity) {
-		t.Errorf("altered run = %v, want ErrExtractionRunIntegrity", err)
+	if _, gerr := s.GetExtractionRun(ctx, altered.ID); !errors.Is(gerr, ports.ErrExtractionRunIntegrity) {
+		t.Errorf("altered run = %v, want ErrExtractionRunIntegrity", gerr)
 	}
 	// The listing reads columns and never verifies, so every row stays listed.
 	sums, err := s.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})

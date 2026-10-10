@@ -112,15 +112,15 @@ func TestListWalkScanRuns_SetsDriftedRunAsideAndKeepsTheRest(t *testing.T) {
 	good := storeRun(t, store, "vscan-walk-1-good", "walk-1")
 	bad := storeRun(t, store, "vscan-walk-1-bad", "walk-1")
 	drifted := driftBlob(t, bad)
-	if _, err := db.DB().ExecContext(ctx,
-		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, drifted, bad.ID); err != nil {
-		t.Fatalf("installing drifted row: %v", err)
+	if _, eerr := db.DB().ExecContext(ctx,
+		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, drifted, bad.ID); eerr != nil {
+		t.Fatalf("installing drifted row: %v", eerr)
 	}
 	var head struct {
 		ContentHash string `json:"content_hash"`
 	}
-	if err := json.Unmarshal(drifted, &head); err != nil {
-		t.Fatal(err)
+	if uerr := json.Unmarshal(drifted, &head); uerr != nil {
+		t.Fatal(uerr)
 	}
 
 	for _, tc := range []struct {
@@ -131,20 +131,20 @@ func TestListWalkScanRuns_SetsDriftedRunAsideAndKeepsTheRest(t *testing.T) {
 		{"ListWalkScanRuns", func() ([]domain.WalkScanRun, error) { return store.ListWalkScanRuns(ctx, "walk-1") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runs, err := tc.list()
+			runs, lerr := tc.list()
 
 			if len(runs) != 1 || runs[0].ID != good.ID {
 				t.Fatalf("runs = %v, want only the verifiable run %s", ids(runs), good.ID)
 			}
 			var aside *recordseal.SetAside
-			if !errors.As(err, &aside) || len(aside.Rows) != 1 {
-				t.Fatalf("error = %v, want one *recordseal.SetAside row", err)
+			if !errors.As(lerr, &aside) || len(aside.Rows) != 1 {
+				t.Fatalf("error = %v, want one *recordseal.SetAside row", lerr)
 			}
 			row := aside.Rows[0]
 			if row.ID != bad.ID || row.Kind != ports.SetAsideKindRun || row.ContentHash != head.ContentHash {
 				t.Errorf("set aside = %+v, want run %s named by %s", row, bad.ID, head.ContentHash)
 			}
-			if errors.Is(err, ports.ErrVulnIntegrity) {
+			if errors.Is(lerr, ports.ErrVulnIntegrity) {
 				t.Error("a drifted run was reported as an integrity failure")
 			}
 		})
@@ -153,9 +153,9 @@ func TestListWalkScanRuns_SetsDriftedRunAsideAndKeepsTheRest(t *testing.T) {
 	// Tamper control: one altered run makes the listing an integrity failure,
 	// the drifted run included so a survey still lists them all.
 	altered := storeRun(t, store, "vscan-walk-1-altered", "walk-1")
-	if _, err := db.DB().ExecContext(ctx,
-		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, tamperBlob(t, altered), altered.ID); err != nil {
-		t.Fatalf("installing altered row: %v", err)
+	if _, eerr := db.DB().ExecContext(ctx,
+		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, tamperBlob(t, altered), altered.ID); eerr != nil {
+		t.Fatalf("installing altered row: %v", eerr)
 	}
 	runs, err := store.ListWalkScanRuns(ctx, "walk-1")
 	var unreadable *ports.UnreadableRows
@@ -211,10 +211,10 @@ func TestListWalkScanRuns_UnparseableRowIsStillReported(t *testing.T) {
 
 	good := storeRun(t, store, "vscan-walk-1-good", "walk-1")
 	bad := storeRun(t, store, "vscan-walk-1-bad", "walk-1")
-	if _, err := db.DB().ExecContext(ctx,
+	if _, eerr := db.DB().ExecContext(ctx,
 		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`,
-		[]byte("not json at all"), bad.ID); err != nil {
-		t.Fatalf("installing unparseable row: %v", err)
+		[]byte("not json at all"), bad.ID); eerr != nil {
+		t.Fatalf("installing unparseable row: %v", eerr)
 	}
 
 	runs, err := store.ListAllWalkScanRuns(ctx)
@@ -248,10 +248,10 @@ func TestGetWalkScanRun_DriftIsNothingServableAndTamperIsIntegrity(t *testing.T)
 	store := sqlite.New(db)
 
 	bad := storeRun(t, store, "vscan-walk-1-bad", "walk-1")
-	if _, err := db.DB().ExecContext(ctx,
+	if _, eerr := db.DB().ExecContext(ctx,
 		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`,
-		driftBlob(t, bad), bad.ID); err != nil {
-		t.Fatalf("installing drifted row: %v", err)
+		driftBlob(t, bad), bad.ID); eerr != nil {
+		t.Fatalf("installing drifted row: %v", eerr)
 	}
 
 	_, found, err := store.GetWalkScanRun(ctx, bad.ID)
@@ -267,9 +267,9 @@ func TestGetWalkScanRun_DriftIsNothingServableAndTamperIsIntegrity(t *testing.T)
 	}
 
 	altered := storeRun(t, store, "vscan-walk-1-altered", "walk-1")
-	if _, err := db.DB().ExecContext(ctx,
-		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, tamperBlob(t, altered), altered.ID); err != nil {
-		t.Fatalf("installing altered row: %v", err)
+	if _, eerr := db.DB().ExecContext(ctx,
+		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`, tamperBlob(t, altered), altered.ID); eerr != nil {
+		t.Fatalf("installing altered row: %v", eerr)
 	}
 	_, _, err = store.GetWalkScanRun(ctx, altered.ID)
 	var unreadable *ports.UnreadableRows

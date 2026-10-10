@@ -164,8 +164,8 @@ func TestExecute_CacheHitEmitsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licenseStore.PutLicenseRecord(context.Background(), existing); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licenseStore.PutLicenseRecord(context.Background(), existing); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	sink := &recordingAuditSink{}

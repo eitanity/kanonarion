@@ -401,10 +401,10 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 		return "", 0, noop, fmt.Errorf("preparing the advisory database: %w",
 			ports.UnavailableSnapshotAbort(snapshot, "no scratch directory could be created to unpack the snapshot into", err))
 	}
-	if err := s.extractZip(ctx, snapshotContent, extractedDir); err != nil {
+	if eerr := s.extractZip(ctx, snapshotContent, extractedDir); eerr != nil {
 		_ = os.RemoveAll(extractedDir)
 		return "", 0, noop, fmt.Errorf("preparing the advisory database: %w",
-			ports.UnavailableSnapshotAbort(snapshot, "the snapshot archive would not extract", err))
+			ports.UnavailableSnapshotAbort(snapshot, "the snapshot archive would not extract", eerr))
 	}
 	count, err := vulndbdir.CountAdvisories(extractedDir)
 	if err != nil {

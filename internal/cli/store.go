@@ -792,7 +792,7 @@ func runStoreInfo(storeRoot string, jsonOut bool, stdout, _ io.Writer) error {
 	}
 	dbPath := filepath.Join(absStore, "mirror.db")
 
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	if _, serr := os.Stat(dbPath); os.IsNotExist(serr) {
 		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
 	}
 

@@ -144,7 +144,7 @@ func runVulnShow(
 		// reachability, over the same store, served the consumer's route to the
 		// vulnerable symbol. Same read as reachability uses, so the two agree.
 		recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
-		if err := aside.take(err); err != nil {
+		if err = aside.take(err); err != nil {
 			return vulnShowReadRefusal(coord, err)
 		}
 		// More than one consumer frame and no flag naming one: the question has
@@ -186,7 +186,7 @@ func runVulnShow(
 		// the same generation — which is how a walk-pinned read used to answer
 		// from a different walk without saying so.
 		candidates, err := uc.ListRecordsForModuleInWalk(ctx, coord, vulnPipelineVersion, anchor.walkID)
-		if err := aside.take(err); err != nil {
+		if err = aside.take(err); err != nil {
 			return vulnShowReadRefusal(coord, err)
 		}
 		r, isoAside, has, ok, serr := selectAnchoredRecord(candidates, coord, anchor, "kanonarion vuln-show "+coord.String())

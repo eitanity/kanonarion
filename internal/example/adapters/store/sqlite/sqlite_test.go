@@ -345,8 +345,8 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	if err := s1.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	if cerr := s1.Close(); cerr != nil {
+		t.Fatalf("Close: %v", cerr)
 	}
 	s2, err := examplesqlite.Open(":memory:")
 	if err != nil {

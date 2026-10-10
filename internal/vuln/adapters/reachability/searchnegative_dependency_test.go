@@ -195,7 +195,7 @@ func TestSearchNegative_DependencyJoinKeepsOnlyTheLinkedPackages(t *testing.T) {
 	}
 
 	linked := dependencyLoader(projectGraph("parse", "wasmexport", "Parse", append([]string{depUnlinked}, linkedClosure...)))
-	if _, got, reason := searchDependency(t, linked, advisoryPackages, advisorySymbols); got != domain.SoundnessDisputed {
+	if _, got, reason = searchDependency(t, linked, advisoryPackages, advisorySymbols); got != domain.SoundnessDisputed {
 		t.Errorf("the same route with its package linked -> %s (%s), want %s", got, reason, domain.SoundnessDisputed)
 	}
 

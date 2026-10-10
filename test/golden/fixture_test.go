@@ -157,17 +157,17 @@ func fixtureArtefact(t testing.TB, coord coordinate.ModuleCoordinate, salt strin
 	if err != nil {
 		t.Fatalf("fixture zip entry: %v", err)
 	}
-	if _, err := f.Write([]byte("zip content for " + coord.String() + " " + salt)); err != nil {
-		t.Fatalf("fixture zip write: %v", err)
+	if _, werr := f.Write([]byte("zip content for " + coord.String() + " " + salt)); werr != nil {
+		t.Fatalf("fixture zip write: %v", werr)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("fixture zip close: %v", err)
+	if cerr := zw.Close(); cerr != nil {
+		t.Fatalf("fixture zip close: %v", cerr)
 	}
 	content := buf.Bytes()
 
 	tmp := filepath.Join(t.TempDir(), "fixture.zip")
-	if err := os.WriteFile(tmp, content, 0o600); err != nil {
-		t.Fatalf("fixture zip file: %v", err)
+	if werr := os.WriteFile(tmp, content, 0o600); werr != nil {
+		t.Fatalf("fixture zip file: %v", werr)
 	}
 	raw, err := dirhash.HashZip(tmp, dirhash.Hash1)
 	if err != nil {

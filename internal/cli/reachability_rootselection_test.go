@@ -41,8 +41,8 @@ func TestReachabilityStatesTheRootingItUsed(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	var keyed map[string]any
-	if err := json.Unmarshal(b, &keyed); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+	if uerr := json.Unmarshal(b, &keyed); uerr != nil {
+		t.Fatalf("Unmarshal: %v", uerr)
 	}
 	if keyed["root_selection"] != caveat {
 		t.Errorf("root_selection = %v, want the caveat", keyed["root_selection"])

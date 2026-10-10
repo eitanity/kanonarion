@@ -83,8 +83,8 @@ func TestExcludedRecord_HashRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := h.VerifyContentHash(r); err != nil {
-		t.Fatalf("VerifyContentHash: %v", err)
+	if verr := h.VerifyContentHash(r); verr != nil {
+		t.Fatalf("VerifyContentHash: %v", verr)
 	}
 	blob, err := h.Marshal(r)
 	if err != nil {

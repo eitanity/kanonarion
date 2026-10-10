@@ -40,8 +40,8 @@ func TestOpen_SetAsideReachesTheLibraryCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if err := cleanup(); err != nil {
-		t.Fatal(err)
+	if cerr := cleanup(); cerr != nil {
+		t.Fatal(cerr)
 	}
 	const walkID = "01HZTEST0000000000000LIB01"
 	seal := seedDriftedWalk(t, filepath.Join(root, "mirror.db"), walkID)

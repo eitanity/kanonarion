@@ -25,8 +25,8 @@ import (
 // the tables have a shape this binary was not built for.
 func seedStoreWithUnknownMigration(t *testing.T, unknownModule string, unknownVersion int) string {
 	t.Helper()
-	storeRoot := t.TempDir()
-	dbPath := filepath.Join(storeRoot, "mirror.db")
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "mirror.db")
 
 	handle, err := sqlitestore.Open(dbPath, allMigrations(), sqlitestore.IntentCreate)
 	if err != nil {
@@ -42,7 +42,7 @@ func seedStoreWithUnknownMigration(t *testing.T, unknownModule string, unknownVe
 	if err := handle.Close(); err != nil {
 		t.Fatalf("closing seeded store: %v", err)
 	}
-	return storeRoot
+	return root
 }
 
 func quietLogger() *slog.Logger {
@@ -54,9 +54,9 @@ func quietLogger() *slog.Logger {
 // build, and those failures were logged per statement while the command ran to
 // completion and printed a summary over nothing.
 func TestStoreSchemaGate_RefusesAnOlderBinaryAgainstANewerStore(t *testing.T) {
-	storeRoot := seedStoreWithUnknownMigration(t, "vuln", 9999)
+	root := seedStoreWithUnknownMigration(t, "vuln", 9999)
 
-	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, domain.DefaultConfig(), quietLogger())
+	ctr, cleanup, err := NewContainer(root, "", "", false, domain.DefaultConfig(), quietLogger())
 	if cleanup != nil {
 		t.Error("a refused container must hand back no cleanup function: there is nothing for the caller to close")
 		_ = cleanup() //nolint:errcheck // the failure is reported above; this only releases it
@@ -105,14 +105,14 @@ func TestStoreSchemaGate_RefusesAnOlderBinaryAgainstANewerStore(t *testing.T) {
 // Two stores would let both assertions hold while the gate was in fact too broad
 // or too narrow — this pairing is what pins the boundary between them.
 func TestStoreSchemaGate_StoreInfoStillReadsANewerStore(t *testing.T) {
-	storeRoot := seedStoreWithUnknownMigration(t, "vuln", 9999)
+	root := seedStoreWithUnknownMigration(t, "vuln", 9999)
 
-	if _, _, err := NewContainer(storeRoot, "", "", false, domain.DefaultConfig(), quietLogger()); err == nil {
+	if _, _, err := NewContainer(root, "", "", false, domain.DefaultConfig(), quietLogger()); err == nil {
 		t.Fatal("fixture is not a refused store, so this proves nothing about the read path surviving the gate")
 	}
 
 	var buf bytes.Buffer
-	if err := runStoreInfo(storeRoot, true, &buf, os.Stderr); err != nil {
+	if err := runStoreInfo(root, true, &buf, os.Stderr); err != nil {
 		t.Fatalf("store info must still read a store the operating path refuses; an operator who cannot inspect it cannot act on the refusal: %v", err)
 	}
 
@@ -142,15 +142,15 @@ func TestStoreSchemaGate_DoesNotRefuseAStoreThisBinaryKnows(t *testing.T) {
 			name: "a store already at this binary's schema",
 			seed: func(t *testing.T) string {
 				t.Helper()
-				storeRoot := t.TempDir()
-				handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), allMigrations(), sqlitestore.IntentCreate)
+				root := t.TempDir()
+				handle, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), allMigrations(), sqlitestore.IntentCreate)
 				if err != nil {
 					t.Fatalf("seeding store: %v", err)
 				}
 				if err := handle.Close(); err != nil {
 					t.Fatalf("closing seeded store: %v", err)
 				}
-				return storeRoot
+				return root
 			},
 		},
 		{
@@ -161,31 +161,31 @@ func TestStoreSchemaGate_DoesNotRefuseAStoreThisBinaryKnows(t *testing.T) {
 			name: "a store behind this binary's schema",
 			seed: func(t *testing.T) string {
 				t.Helper()
-				storeRoot := t.TempDir()
-				handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), nil, sqlitestore.IntentCreate)
+				root := t.TempDir()
+				handle, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), nil, sqlitestore.IntentCreate)
 				if err != nil {
 					t.Fatalf("seeding store: %v", err)
 				}
 				if err := handle.Close(); err != nil {
 					t.Fatalf("closing seeded store: %v", err)
 				}
-				return storeRoot
+				return root
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			storeRoot := tc.seed(t)
-			_, cleanup, err := NewContainer(storeRoot, "", "", false, domain.DefaultConfig(), quietLogger())
+			root := tc.seed(t)
+			_, cleanup, err := NewContainer(root, "", "", false, domain.DefaultConfig(), quietLogger())
 			if err != nil {
 				t.Fatalf("the gate refused a store this binary knows every migration of: %v", err)
 			}
-			if err := cleanup(); err != nil {
-				t.Fatalf("cleanup: %v", err)
+			if cerr := cleanup(); cerr != nil {
+				t.Fatalf("cleanup: %v", cerr)
 			}
 
 			// And it really was brought up to date, so "did not refuse" is not being
 			// confused with "did not migrate either".
-			handle, err := sqlitestore.Open(filepath.Join(storeRoot, "mirror.db"), nil, sqlitestore.IntentCreate)
+			handle, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), nil, sqlitestore.IntentCreate)
 			if err != nil {
 				t.Fatalf("reopening store: %v", err)
 			}

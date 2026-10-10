@@ -671,8 +671,8 @@ func TestMigration3_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 	want[legacy.String()] = noID.ContentHash
 	wantKids[noID.ContentHash] = 1
 
-	if err := pre.Close(); err != nil {
-		t.Fatalf("closing at migration 2: %v", err)
+	if cerr := pre.Close(); cerr != nil {
+		t.Fatalf("closing at migration 2: %v", cerr)
 	}
 
 	store, err := examplesqlite.Open(dsn)
@@ -680,14 +680,14 @@ func TestMigration3_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 		t.Fatalf("migrating to head: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := store.Close(); err != nil {
-			t.Errorf("Close: %v", err)
+		if cerr := store.Close(); cerr != nil {
+			t.Errorf("Close: %v", cerr)
 		}
 	})
 
 	var total int
-	if err := store.InternalDB().DB().QueryRow(`SELECT count(*) FROM example_records`).Scan(&total); err != nil {
-		t.Fatalf("counting rows: %v", err)
+	if serr := store.InternalDB().DB().QueryRow(`SELECT count(*) FROM example_records`).Scan(&total); serr != nil {
+		t.Fatalf("counting rows: %v", serr)
 	}
 	if total != len(coords) {
 		t.Errorf("ledger holds %d rows after the conversion, want %d — rows were purged", total, len(coords))
@@ -974,8 +974,8 @@ func TestLedger_ListRestrictedToOneGeneration(t *testing.T) {
 		ledgerRecord(t, b, domain2.ExampleStatusFound, []string{"ExampleGamma"}, 0,
 			time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC), artefact),
 	} {
-		if err := s.PutExampleRecord(ctx, r); err != nil {
-			t.Fatalf("PutExampleRecord: %v", err)
+		if perr := s.PutExampleRecord(ctx, r); perr != nil {
+			t.Fatalf("PutExampleRecord: %v", perr)
 		}
 	}
 

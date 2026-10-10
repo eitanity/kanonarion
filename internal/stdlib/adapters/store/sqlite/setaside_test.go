@@ -87,8 +87,8 @@ func TestListFactsFor_DriftedMeasurementSetAside(t *testing.T) {
 		!errors.Is(reported[0].Reason, recordseal.ErrGenerationDrift) {
 		t.Errorf("reported = %+v, want the measurement named by %s", reported, seal)
 	}
-	if composed, ok, err := store.Get(ctx, "go1.26.4"); err != nil || !ok || composed.LicenseSPDX != "BSD-3-Clause" {
-		t.Errorf("Get = %+v, %v, %v; want the readable measurement served", composed, ok, err)
+	if composed, ok, gerr := store.Get(ctx, "go1.26.4"); gerr != nil || !ok || composed.LicenseSPDX != "BSD-3-Clause" {
+		t.Errorf("Get = %+v, %v, %v; want the readable measurement served", composed, ok, gerr)
 	}
 
 	respellAcquiredAt(t, db, older)

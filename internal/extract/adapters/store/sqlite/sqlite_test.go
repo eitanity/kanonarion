@@ -57,14 +57,14 @@ func TestStore(t *testing.T) {
 	}
 
 	t.Run("Put and Get", func(t *testing.T) {
-		err := store.PutExtractionRun(ctx, run)
-		if err != nil {
-			t.Fatalf("PutExtractionRun failed: %v", err)
+		perr := store.PutExtractionRun(ctx, run)
+		if perr != nil {
+			t.Fatalf("PutExtractionRun failed: %v", perr)
 		}
 
-		got, err := store.GetExtractionRun(ctx, run.ID)
-		if err != nil {
-			t.Fatalf("GetExtractionRun failed: %v", err)
+		got, perr := store.GetExtractionRun(ctx, run.ID)
+		if perr != nil {
+			t.Fatalf("GetExtractionRun failed: %v", perr)
 		}
 
 		if got.ID != run.ID {
@@ -79,9 +79,9 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("Get Not Found", func(t *testing.T) {
-		_, err := store.GetExtractionRun(ctx, "non-existent")
-		if !errors.Is(err, ports.ErrExtractionRunNotFound) {
-			t.Errorf("error = %v, want %v", err, ports.ErrExtractionRunNotFound)
+		_, gerr := store.GetExtractionRun(ctx, "non-existent")
+		if !errors.Is(gerr, ports.ErrExtractionRunNotFound) {
+			t.Errorf("error = %v, want %v", gerr, ports.ErrExtractionRunNotFound)
 		}
 	})
 
@@ -99,9 +99,9 @@ func TestStore(t *testing.T) {
 			t.Fatalf("PutExtractionRun: %v", perr)
 		}
 
-		summaries, err := store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})
-		if err != nil {
-			t.Fatalf("ListExtractionRuns failed: %v", err)
+		summaries, lerr := store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})
+		if lerr != nil {
+			t.Fatalf("ListExtractionRuns failed: %v", lerr)
 		}
 		if len(summaries) != 2 {
 			t.Errorf("got %d summaries, want 2", len(summaries))

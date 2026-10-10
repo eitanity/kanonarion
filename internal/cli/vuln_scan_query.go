@@ -690,7 +690,7 @@ func scanRunPinnedRecord(
 	// does: the run's record is then one this build cannot serve, and that is
 	// reported as the read failure it is rather than as absence.
 	var aside setAsideRows
-	if err := aside.take(err); err != nil {
+	if err = aside.take(err); err != nil {
 		return vuldomain.VulnerabilityRecord{}, false, fmt.Errorf(
 			"reading the record %s pinned for %s: %w", contentHash, coord, err)
 	}
@@ -920,7 +920,7 @@ func runScanDiff(
 	// and says so: in the document under --json, on stderr otherwise.
 	var aside setAsideRows
 	diff, err := ucDiff.Diff(ctx, runIDA, runIDB)
-	if err := aside.take(err); err != nil {
+	if err = aside.take(err); err != nil {
 		return fmt.Errorf("computing scan diff: %w", err)
 	}
 	// A diff is a claim about two runs of one walk, so the walk it names carries

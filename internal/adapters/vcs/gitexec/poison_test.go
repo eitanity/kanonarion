@@ -333,8 +333,8 @@ func TestResolveTag_EnclosingRepoConfigDoesNotRewriteURL(t *testing.T) {
 	var connections atomic.Int64
 	go func() {
 		for {
-			conn, err := ln.Accept()
-			if err != nil {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
 				return
 			}
 			connections.Add(1)

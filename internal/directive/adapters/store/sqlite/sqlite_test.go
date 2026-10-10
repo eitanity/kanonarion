@@ -106,8 +106,8 @@ func TestStore_PutAndGetRoundTrip(t *testing.T) {
 	}
 
 	// Re-put same ID is an upsert, not an error or duplicate.
-	if err := store.PutDirectiveRecord(ctx, rec); err != nil {
-		t.Fatalf("PutDirectiveRecord (upsert): %v", err)
+	if perr := store.PutDirectiveRecord(ctx, rec); perr != nil {
+		t.Fatalf("PutDirectiveRecord (upsert): %v", perr)
 	}
 	scans, err := store.ListScans(ctx, "example.com/proj", 0, 0)
 	if err != nil {

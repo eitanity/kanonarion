@@ -721,8 +721,8 @@ func TestGenerate_DocumentTimestampIsTheCallersCreationTime(t *testing.T) {
 			} `json:"properties"`
 		} `json:"metadata"`
 	}
-	if err := json.Unmarshal(rec.Content, &bom); err != nil {
-		t.Fatalf("unmarshal bom: %v", err)
+	if uerr := json.Unmarshal(rec.Content, &bom); uerr != nil {
+		t.Fatalf("unmarshal bom: %v", uerr)
 	}
 	if bom.Metadata.Timestamp != "2026-08-01T12:00:00Z" {
 		t.Errorf("metadata.timestamp = %q, want the supplied creation time", bom.Metadata.Timestamp)

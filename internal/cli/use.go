@@ -616,8 +616,8 @@ func copyToModCache(
 	}
 	defer func() { _ = root.Close() }()
 
-	if err := root.MkdirAll(relDir, 0o750); err != nil {
-		return useLanding{}, fmt.Errorf("creating dir %s: %w", baseDir, err)
+	if merr := root.MkdirAll(relDir, 0o750); merr != nil {
+		return useLanding{}, fmt.Errorf("creating dir %s: %w", baseDir, merr)
 	}
 
 	// 1. Copy ZIP

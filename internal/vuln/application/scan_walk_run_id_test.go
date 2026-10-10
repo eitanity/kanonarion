@@ -49,8 +49,8 @@ func TestScanWalk_TwoScansInOneSecondAreTwoCompleteRuns(t *testing.T) {
 	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(m1), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))))
 
 	snapshot := vulntest.MustNewAt("test", "v1", now.Add(-time.Hour))
-	if err := vulnStore.PutDatabaseSnapshot(ctx, snapshot, strings.NewReader("cached")); err != nil {
-		t.Fatalf("PutDatabaseSnapshot: %v", err)
+	if perr := vulnStore.PutDatabaseSnapshot(ctx, snapshot, strings.NewReader("cached")); perr != nil {
+		t.Fatalf("PutDatabaseSnapshot: %v", perr)
 	}
 	scanner := &fakeScanner{}
 	moduleUC := application.NewScanModuleUseCase(

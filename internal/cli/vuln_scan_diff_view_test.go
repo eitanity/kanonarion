@@ -288,8 +288,8 @@ func TestScanDiffViewRenamesKeysAndChangesNoValue(t *testing.T) {
 	}
 
 	var oldDoc any
-	if err := json.Unmarshal(oldRaw, &oldDoc); err != nil {
-		t.Fatal(err)
+	if uerr := json.Unmarshal(oldRaw, &oldDoc); uerr != nil {
+		t.Fatal(uerr)
 	}
 	renamed := scanDiffRenameKeys(oldDoc, rename)
 

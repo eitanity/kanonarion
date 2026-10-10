@@ -271,11 +271,11 @@ func fixtureArtefact(coord coordinate.ModuleCoordinate) ([]byte, fetchdomain.Mod
 	if err != nil {
 		return fail("creating zip entry", err)
 	}
-	if _, err := f.Write([]byte("zip content for " + coord.String())); err != nil {
-		return fail("writing zip entry", err)
+	if _, werr := f.Write([]byte("zip content for " + coord.String())); werr != nil {
+		return fail("writing zip entry", werr)
 	}
-	if err := zw.Close(); err != nil {
-		return fail("closing zip", err)
+	if cerr := zw.Close(); cerr != nil {
+		return fail("closing zip", cerr)
 	}
 	content := buf.Bytes()
 
@@ -284,11 +284,11 @@ func fixtureArtefact(coord coordinate.ModuleCoordinate) ([]byte, fetchdomain.Mod
 		return fail("creating temp zip", err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(content); err != nil {
-		return fail("writing temp zip", err)
+	if _, werr := tmp.Write(content); werr != nil {
+		return fail("writing temp zip", werr)
 	}
-	if err := tmp.Close(); err != nil {
-		return fail("closing temp zip", err)
+	if cerr := tmp.Close(); cerr != nil {
+		return fail("closing temp zip", cerr)
 	}
 	raw, err := dirhash.HashZip(tmp.Name(), dirhash.Hash1)
 	if err != nil {
@@ -318,8 +318,8 @@ func seedFixtureFetchRecord(
 	if err != nil {
 		return fetchports.BlobIdentity{}, err
 	}
-	if err := blobStore.Put(context.Background(), identity, bytes.NewReader(content)); err != nil {
-		return fetchports.BlobIdentity{}, fmt.Errorf("storing fixture artefact for %s: %w", coord, err)
+	if perr := blobStore.Put(context.Background(), identity, bytes.NewReader(content)); perr != nil {
+		return fetchports.BlobIdentity{}, fmt.Errorf("storing fixture artefact for %s: %w", coord, perr)
 	}
 	sealed, err := fetchdomain.Seal(fetchdomain.FetchedModule{
 		Coordinate:         coord,
@@ -1064,11 +1064,11 @@ func nativeFixtureArtefact(
 		return fail("creating temp zip", err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(content); err != nil {
-		return fail("writing temp zip", err)
+	if _, werr := tmp.Write(content); werr != nil {
+		return fail("writing temp zip", werr)
 	}
-	if err := tmp.Close(); err != nil {
-		return fail("closing temp zip", err)
+	if cerr := tmp.Close(); cerr != nil {
+		return fail("closing temp zip", cerr)
 	}
 	raw, err := dirhash.HashZip(tmp.Name(), dirhash.Hash1)
 	if err != nil {

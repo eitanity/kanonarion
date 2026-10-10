@@ -94,11 +94,11 @@ func TestVerifier_HashDirAsModuleZip_ExcludesNestedModule(t *testing.T) {
 
 	// Hash without the nested module should be identical — proving v2/ was excluded.
 	dirNoNested := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dirNoNested, "go.mod"), []byte("module example.com/m\n\ngo 1.21\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if werr := os.WriteFile(filepath.Join(dirNoNested, "go.mod"), []byte("module example.com/m\n\ngo 1.21\n"), 0o600); werr != nil {
+		t.Fatalf("WriteFile: %v", werr)
 	}
-	if err := os.WriteFile(filepath.Join(dirNoNested, "doc.go"), []byte("package m\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if werr := os.WriteFile(filepath.Join(dirNoNested, "doc.go"), []byte("package m\n"), 0o600); werr != nil {
+		t.Fatalf("WriteFile: %v", werr)
 	}
 	withoutNested, err := v.HashDirAsModuleZip(dirNoNested, coord)
 	if err != nil {

@@ -415,13 +415,13 @@ func TestResolveGoModPath_DefaultFound(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
+	if derr := os.Chdir(dir); derr != nil {
+		t.Fatal(derr)
 	}
 	defer mustChdir(t, orig)
 
-	if err := os.WriteFile("go.mod", []byte("module example.com/m\n\ngo 1.21\n"), 0o600); err != nil {
-		t.Fatal(err)
+	if werr := os.WriteFile("go.mod", []byte("module example.com/m\n\ngo 1.21\n"), 0o600); werr != nil {
+		t.Fatal(werr)
 	}
 
 	got, err := resolveGoModPath("")
@@ -439,8 +439,8 @@ func TestResolveGoModPath_DefaultMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
+	if derr := os.Chdir(dir); derr != nil {
+		t.Fatal(derr)
 	}
 	defer mustChdir(t, orig)
 

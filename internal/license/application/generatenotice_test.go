@@ -293,8 +293,8 @@ func TestGenerateNotice_EmbeddedComponentTexts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licences.PutLicenseRecord(context.Background(), rec); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licences.PutLicenseRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
@@ -433,8 +433,8 @@ func TestGenerateNotice_ExcludesUnbuiltPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licences.PutLicenseRecord(context.Background(), rec); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licences.PutLicenseRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
@@ -517,8 +517,8 @@ func TestGenerateNotice_UnclassifiedRootFileIsRecordedNotReproduced(t *testing.T
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licences.PutLicenseRecord(context.Background(), rec); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licences.PutLicenseRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)

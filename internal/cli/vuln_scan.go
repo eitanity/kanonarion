@@ -573,8 +573,8 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 	// under --json, callers pipe stdout straight into jq and a preamble line
 	// breaks parsing.
 	// Before any fetch: an unusable policy must stop the run here.
-	if err := applyScanVCSHosts(ctx, ctr.ScanWalk, policyPath, stderr); err != nil {
-		return vulnScanRunFacts{}, err
+	if aerr := applyScanVCSHosts(ctx, ctr.ScanWalk, policyPath, stderr); aerr != nil {
+		return vulnScanRunFacts{}, aerr
 	}
 
 	// The narration stream, which --no-progress silences. Only the per-module
@@ -804,7 +804,7 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 	// stated on stderr beside it; an altered row still refuses.
 	var aside setAsideRows
 	recs, err := ctr.QueryVuln.ListRecordsForRun(ctx, run.ID)
-	if err := aside.take(err); err != nil {
+	if err = aside.take(err); err != nil {
 		return vulnScanRunFacts{}, fmt.Errorf("reading the reused scan run's records: %w", err)
 	}
 	aside.write(stderr)

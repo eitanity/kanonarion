@@ -120,8 +120,8 @@ func (uc *FetchModuleUseCase) persistRecord(ctx context.Context, log *slog.Logge
 		}
 	}
 
-	if err := uc.facts.PutFetchRecord(ctx, sealed); err != nil {
-		return domain2.CompositeRecord{}, fmt.Errorf("appending fact record: %w", err)
+	if perr := uc.facts.PutFetchRecord(ctx, sealed); perr != nil {
+		return domain2.CompositeRecord{}, fmt.Errorf("appending fact record: %w", perr)
 	}
 	log.InfoContext(ctx, "record_appended",
 		slog.String("verification_status", record.VerificationStatus),

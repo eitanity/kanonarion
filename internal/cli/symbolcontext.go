@@ -164,9 +164,9 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	}
 
 	if f.module != "" {
-		coord, err := parseCoordinate(f.module)
-		if err != nil {
-			return fmt.Errorf("invalid --module %q: %w", f.module, err)
+		coord, perr := parseCoordinate(f.module)
+		if perr != nil {
+			return fmt.Errorf("invalid --module %q: %w", f.module, perr)
 		}
 		// Distinguish "module not in store" from "symbol not found": an
 		// empty result is ambiguous unless we know the module was indexed.

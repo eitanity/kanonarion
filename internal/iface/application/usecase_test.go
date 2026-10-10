@@ -52,8 +52,8 @@ func TestExecute_CacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ifaceStore.PutInterfaceRecord(context.Background(), existing); err != nil {
-		t.Fatal(err)
+	if perr := ifaceStore.PutInterfaceRecord(context.Background(), existing); perr != nil {
+		t.Fatal(perr)
 	}
 
 	uc := buildUseCase(t, factStore, nil, ifaceStore, nil)

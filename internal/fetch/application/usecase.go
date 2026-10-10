@@ -335,13 +335,13 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		return FetchResult{}, err
 	}
 	if revalidated == nil {
-		if err := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); err != nil {
-			return FetchResult{}, fmt.Errorf("storing zip blob: %w", err)
+		if perr := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); perr != nil {
+			return FetchResult{}, fmt.Errorf("storing zip blob: %w", perr)
 		}
 		log.InfoContext(ctx, "blob_stored", slog.String("identity", zipIdentity.String()))
 
-		if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
-			return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
+		if perr := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); perr != nil {
+			return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", perr)
 		}
 		log.InfoContext(ctx, "go_mod_blob_stored", slog.String("identity", goModIdentity.String()))
 	}
@@ -351,8 +351,8 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 
 	// Sign-on-process call site 1: fetch-receive. Sign the received blob over
 	// its canonical content digest, after verification.
-	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(zipData)); err != nil {
-		return FetchResult{}, err
+	if serr := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(zipData)); serr != nil {
+		return FetchResult{}, serr
 	}
 
 	// Step 6: construct FetchedModule + FactRecord.
@@ -474,8 +474,8 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	if err != nil {
 		return FetchResult{}, fmt.Errorf("addressing go.mod blob: %w", err)
 	}
-	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
-		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
+	if perr := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); perr != nil {
+		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", perr)
 	}
 	log.InfoContext(ctx, "go_mod_blob_stored", slog.String("identity", goModIdentity.String()))
 
@@ -484,8 +484,8 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 
 	// Sign the received go.mod over its canonical content digest, after
 	// verification. There is no zip to sign; the go.mod is the artefact received.
-	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(goModData)); err != nil {
-		return FetchResult{}, err
+	if serr := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(goModData)); serr != nil {
+		return FetchResult{}, serr
 	}
 
 	// Step 5: construct the go.mod-only FactRecord. ModuleHash, Digests, git
@@ -1223,23 +1223,23 @@ func (uc *FetchModuleUseCase) crossVerify(
 		return domain2.UnverifiedNoVCS, fmt.Sprintf("creating temp dir: %v", err)
 	}
 	defer func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
 			log.ErrorContext(ctx, "removing cross-verify temp dir",
 				slog.String("tmpdir", tmpDir),
-				slog.String("error", err.Error()),
+				slog.String("error", rmErr.Error()),
 			)
 		}
 	}()
 
-	if err := uc.vcs.CheckoutToDir(ctx, repoURL, commit, tmpDir); err != nil {
-		if errors.Is(err, ports.ErrVCSToolMissing) {
-			return domain2.UnverifiedVCSToolMissing, fmt.Sprintf("checkout: %v", err)
+	if checkoutErr := uc.vcs.CheckoutToDir(ctx, repoURL, commit, tmpDir); checkoutErr != nil {
+		if errors.Is(checkoutErr, ports.ErrVCSToolMissing) {
+			return domain2.UnverifiedVCSToolMissing, fmt.Sprintf("checkout: %v", checkoutErr)
 		}
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("checkout: %v", err)
+		return domain2.UnverifiedNoVCS, fmt.Sprintf("checkout: %v", checkoutErr)
 	}
 
-	if err := os.RemoveAll(filepath.Join(tmpDir, ".git")); err != nil {
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("removing.git from checkout: %v", err)
+	if rmErr := os.RemoveAll(filepath.Join(tmpDir, ".git")); rmErr != nil {
+		return domain2.UnverifiedNoVCS, fmt.Sprintf("removing.git from checkout: %v", rmErr)
 	}
 
 	// For modules that follow the major-version-subdirectory convention

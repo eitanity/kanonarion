@@ -33,8 +33,8 @@ func TestStore_PutGetExists(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	defer func() {
-		if err := rc.Close(); err != nil {
-			t.Errorf("rc.Close: %v", err)
+		if cerr := rc.Close(); cerr != nil {
+			t.Errorf("rc.Close: %v", cerr)
 		}
 	}()
 	got, err := io.ReadAll(rc)
