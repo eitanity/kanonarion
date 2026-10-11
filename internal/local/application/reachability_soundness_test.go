@@ -27,7 +27,7 @@ func TestMeasuredAbsenceStatesItsOwnRung(t *testing.T) {
 		ReachableSoundness:       "inferred",
 		ReachableSoundnessReason: "govulncheck said nothing",
 	}
-	got := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{}, nil)
+	got := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{}, nil, 0)
 
 	if got.Verdict != domain.SymbolProbeAbsent {
 		t.Fatalf("verdict = %q, want the measured negative under test", got.Verdict)
@@ -51,14 +51,27 @@ func TestMeasuredAbsenceNamesIncompleteCoverage(t *testing.T) {
 	f := ports.VulnFinding{ID: "GO-2025-0001", AffectedSymbols: []string{"Handshake"}}
 
 	partial := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{},
-		[]ports.ProbedBinary{{ImportPath: "example.com/app/cmd/a"}, {ImportPath: "example.com/app/cmd/b", BuildError: "boom"}})
+		[]ports.ProbedBinary{{ImportPath: "example.com/app/cmd/a"}, {ImportPath: "example.com/app/cmd/b", BuildError: "boom"}}, 0)
 	if partial.SoundnessReason != domain.ProbeAbsentPartialReason {
 		t.Errorf("a probe that lost a main reported %q, want the partial-coverage reason", partial.SoundnessReason)
 	}
 
-	library := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindLibrary, map[string]struct{}{}, nil)
+	library := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindLibrary, map[string]struct{}{}, nil, 0)
 	if library.SoundnessReason != domain.ProbeAbsentLibraryReason {
 		t.Errorf("a library probe reported %q, want the harness reason", library.SoundnessReason)
+	}
+
+	// A harness that left exported declarations out says so on every absence:
+	// a route only through them is not in the binary.
+	omitting := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindLibrary, map[string]struct{}{}, nil, 3)
+	if !strings.HasPrefix(omitting.SoundnessReason, domain.ProbeAbsentLibraryReason) ||
+		!strings.Contains(omitting.SoundnessReason, "3 exported declaration(s)") {
+		t.Errorf("a library probe with 3 omissions reported %q, want the harness reason naming them", omitting.SoundnessReason)
+	}
+	// A binary probe has no harness, so a count never reaches its reason.
+	binary := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindBinary, map[string]struct{}{}, nil, 3)
+	if binary.SoundnessReason != domain.ProbeAbsentReason {
+		t.Errorf("a binary probe reported %q, want the plain reason", binary.SoundnessReason)
 	}
 }
 
@@ -73,7 +86,7 @@ func TestCarriedNegativeCarriesTheStoredRung(t *testing.T) {
 		ReachableSoundness:       "inferred",
 		ReachableSoundnessReason: "govulncheck analysed this build from source and reported no route",
 	}
-	got := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindSkipped, nil, nil)
+	got := probeOneFinding(f, "golang.org/x/crypto", domain.ProbeKindSkipped, nil, nil, 0)
 
 	if got.Verdict != domain.SymbolProbeUnreachable {
 		t.Fatalf("verdict = %q, want the carried negative under test", got.Verdict)
@@ -92,7 +105,7 @@ func TestPositiveAndUndeterminedStateNoRung(t *testing.T) {
 	present := probeOneFinding(
 		ports.VulnFinding{ID: "GO-2025-0003", AffectedSymbols: []string{"Dial"}},
 		"golang.org/x/crypto", domain.ProbeKindBinary,
-		map[string]struct{}{"golang.org/x/crypto/ssh.Dial": {}}, nil)
+		map[string]struct{}{"golang.org/x/crypto/ssh.Dial": {}}, nil, 0)
 	if present.Verdict != domain.SymbolProbePresent {
 		t.Fatalf("verdict = %q, want the positive under test", present.Verdict)
 	}
@@ -102,7 +115,7 @@ func TestPositiveAndUndeterminedStateNoRung(t *testing.T) {
 
 	unknown := probeOneFinding(
 		ports.VulnFinding{ID: "GO-2025-0004", AdvisoryNamesNoSymbols: true},
-		"golang.org/x/crypto", domain.ProbeKindSkipped, nil, nil)
+		"golang.org/x/crypto", domain.ProbeKindSkipped, nil, nil, 0)
 	if unknown.Verdict != domain.SymbolProbeUnknown {
 		t.Fatalf("verdict = %q, want the undetermined one under test", unknown.Verdict)
 	}

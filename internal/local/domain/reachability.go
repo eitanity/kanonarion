@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -128,6 +129,28 @@ func SortProbedBinaries(bins []ProbedBinary) {
 	sort.Slice(bins, func(i, j int) bool { return ProbedBinaryLess(bins[i], bins[j]) })
 }
 
+// HarnessOmission is one exported declaration of a library workspace that the
+// probe harness does not reference, and why. A route only through it is not in
+// the harness binary, so an absence there says nothing about it.
+type HarnessOmission struct {
+	// Symbol names the declaration: "pkg.F", "pkg.T.M" or "pkg.(*T).M".
+	Symbol string
+	Reason string
+}
+
+// HarnessOmissionLess is the canonical ordering for HarnessOmission slices.
+func HarnessOmissionLess(a, b HarnessOmission) bool {
+	if a.Symbol != b.Symbol {
+		return a.Symbol < b.Symbol
+	}
+	return a.Reason < b.Reason
+}
+
+// SortHarnessOmissions sorts omissions in place by HarnessOmissionLess.
+func SortHarnessOmissions(omissions []HarnessOmission) {
+	sort.Slice(omissions, func(i, j int) bool { return HarnessOmissionLess(omissions[i], omissions[j]) })
+}
+
 // ProbeCoverage states what a local probe's answer was drawn from and what it
 // left out, so an incomplete answer is visibly incomplete.
 //
@@ -160,6 +183,9 @@ type ProbeCoverage struct {
 	// workspace, which declares no main and is probed through a synthetic
 	// harness instead.
 	Binaries []ProbedBinary
+	// HarnessOmitted names every exported declaration of a library workspace
+	// the probe harness left out. Empty for a binary probe.
+	HarnessOmitted []HarnessOmission
 }
 
 // SymbolProbeVerdict is the result of checking whether a CVE-affected symbol
@@ -245,6 +271,16 @@ const (
 		"library workspace; the workspace declares no main package, so this is an absence from a harness over its " +
 		"exported API rather than from a binary the project ships, and no call graph was built"
 )
+
+// LibraryAbsentReason is ProbeAbsentLibraryReason, stating how many exported
+// declarations the harness left out when there are any.
+func LibraryAbsentReason(omitted int) string {
+	if omitted == 0 {
+		return ProbeAbsentLibraryReason
+	}
+	return ProbeAbsentLibraryReason + fmt.Sprintf("; %d exported declaration(s) of this workspace are not in the harness "+
+		"(each is named in the coverage), so a route only through them is not in the binary", omitted)
+}
 
 // VerdictSource identifies which signal produced a SymbolProbeFinding.Verdict.
 type VerdictSource string

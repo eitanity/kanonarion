@@ -168,6 +168,9 @@ type SymbolProbeResult struct {
 	// failed, sorted by import path. Empty for a library probe, which has no
 	// main package to attribute a symbol to.
 	Binaries []ProbedBinary
+	// HarnessOmitted names the exported declarations a library probe's harness
+	// left out, with the reason. Empty for a binary probe.
+	HarnessOmitted []domain.HarnessOmission
 }
 
 // SymbolTableProber builds a probe binary from a local workspace with inlining

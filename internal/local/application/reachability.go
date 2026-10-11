@@ -132,6 +132,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	var (
 		binarySymbols map[string]struct{}
 		binaries      []ports.ProbedBinary
+		omitted       int
 		probeKind     = domain.ProbeKindSkipped
 		notice        string
 	)
@@ -144,6 +145,8 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		binaries = probe.Binaries
 		probeKind = probe.Kind
 		coverage.Binaries = coverageBinaries(binaries)
+		coverage.HarnessOmitted = probe.HarnessOmitted
+		omitted = len(probe.HarnessOmitted)
 	} else {
 		notice = "no matched finding carried affected symbols; skipped the probe-binary build " +
 			"and fell back to stored govulncheck reachability where available"
@@ -156,7 +159,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			Version: coord.Version(),
 		}
 		for _, f := range cveFindings {
-			finding := probeOneFinding(f, coord.Path(), probeKind, binarySymbols, binaries)
+			finding := probeOneFinding(f, coord.Path(), probeKind, binarySymbols, binaries, omitted)
 			modResult.Findings = append(modResult.Findings, finding)
 		}
 		modResults = append(modResults, modResult)
@@ -238,7 +241,7 @@ func coverageBinaries(binaries []ports.ProbedBinary) []domain.ProbedBinary {
 // verdict: a vulnerable symbol shipping in any one of a project's binaries
 // ships in the product. binaries carries the same tables per main package and
 // settles the attribution — which artefact to look in.
-func probeOneFinding(f ports.VulnFinding, modPath, probeKind string, binarySymbols map[string]struct{}, binaries []ports.ProbedBinary) domain.SymbolProbeFinding {
+func probeOneFinding(f ports.VulnFinding, modPath, probeKind string, binarySymbols map[string]struct{}, binaries []ports.ProbedBinary, omitted int) domain.SymbolProbeFinding {
 	result := domain.SymbolProbeFinding{
 		CVEID:   f.ID,
 		Aliases: f.Aliases,
@@ -293,7 +296,7 @@ func probeOneFinding(f ports.VulnFinding, modPath, probeKind string, binarySymbo
 		// A negative this probe measured itself, so it states the rung its own
 		// instrument earns rather than the stored scan's.
 		result.Soundness = domain.ProbeSoundnessUnconfirmed
-		result.SoundnessReason = absentReason(probeKind, binaries)
+		result.SoundnessReason = absentReason(probeKind, binaries, omitted)
 	}
 	return result
 }
@@ -305,10 +308,11 @@ func probeOneFinding(f ports.VulnFinding, modPath, probeKind string, binarySymbo
 // declares an absence from the artefacts the project ships; one that lost a main
 // to a build failure declares an absence from the ones that built; a library
 // workspace declares an absence from a harness that ships nowhere. Collapsing
-// them into one sentence would let the weakest read as the strongest.
-func absentReason(probeKind string, binaries []ports.ProbedBinary) string {
+// them into one sentence would let the weakest read as the strongest. A library
+// absence also states how many exported declarations the harness left out.
+func absentReason(probeKind string, binaries []ports.ProbedBinary, omitted int) string {
 	if probeKind == domain.ProbeKindLibrary {
-		return domain.ProbeAbsentLibraryReason
+		return domain.LibraryAbsentReason(omitted)
 	}
 	for _, b := range binaries {
 		if b.BuildError != "" {

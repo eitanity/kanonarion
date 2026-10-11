@@ -851,6 +851,36 @@ either: it appears with a `build_error`, so a reader can see which artefact the
 answer does not rest on. A workspace with no main is probed through the
 synthetic harness instead and names no binaries.
 
+### What the library harness left out
+
+A workspace with no main is probed through a synthetic harness that references
+every exported function, and every exported method of its exported types. A
+generic declaration is referenced with type arguments. For each type parameter,
+the first of these that satisfies the constraint is used:
+
+1. the constraint's core type;
+2. each type in the constraint's type set, in the order written (`~T` gives `T`),
+   so `~float32 | ~float64` gives `float32`;
+3. `int`, `string`, `struct{}`.
+
+A declaration the harness cannot reference is left out and named in
+`coverage.harness_omitted`, with its reason. The probe still runs. For example,
+no candidate satisfies a constraint that requires a method:
+
+```json
+"harness_omitted": [
+  {
+    "symbol": "example.com/lib.F",
+    "reason": "no type argument satisfies T interface{M()} (tried int, string, struct{})"
+  }
+]
+```
+
+The text output lists the same entries under `harness omitted`. A vulnerable
+symbol reached only through an omitted declaration is not in the harness binary,
+so every `absent` finding's `soundness_reason` states how many declarations were
+left out. The field is absent when nothing was left out, and on a binary probe.
+
 `coverage.uncovered_remedy` names the route to a wider answer. There is no
 refresh flag and none is needed: `version_id` is a content digest recomputed from
 the working tree every run, so the probe never serves a cached snapshot. What
@@ -915,6 +945,9 @@ JSON shape:
         "import_path": "github.com/example/app/cmd/tool",
         "build_error": "building probe binary: exit status 1\n..."
       }
+    ],
+    "harness_omitted": [
+      { "symbol": "example.com/lib.F", "reason": "<why the library harness left it out>" }
     ]
   },
   "modules": [

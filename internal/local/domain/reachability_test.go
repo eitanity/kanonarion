@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/local/domain"
@@ -94,4 +95,35 @@ func TestSortProbedBinaries(t *testing.T) {
 	}
 	// Must not panic on empty input.
 	domain.SortProbedBinaries(nil)
+}
+
+func TestSortHarnessOmissions_SortsBySymbolThenReason(t *testing.T) {
+	got := []domain.HarnessOmission{
+		{Symbol: "example.com/b.F", Reason: "r"},
+		{Symbol: "example.com/a.F", Reason: "z"},
+		{Symbol: "example.com/a.F", Reason: "a"},
+	}
+	domain.SortHarnessOmissions(got)
+	want := []domain.HarnessOmission{
+		{Symbol: "example.com/a.F", Reason: "a"},
+		{Symbol: "example.com/a.F", Reason: "z"},
+		{Symbol: "example.com/b.F", Reason: "r"},
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sorted = %v, want %v", got, want)
+		}
+	}
+}
+
+// A library absence names the count of omitted declarations, and only when
+// there are some: with none, the reason is the plain library one.
+func TestLibraryAbsentReason_NamesOmissionsOnlyWhenThereAreSome(t *testing.T) {
+	if got := domain.LibraryAbsentReason(0); got != domain.ProbeAbsentLibraryReason {
+		t.Errorf("LibraryAbsentReason(0) = %q, want the plain library reason", got)
+	}
+	got := domain.LibraryAbsentReason(2)
+	if !strings.HasPrefix(got, domain.ProbeAbsentLibraryReason) || !strings.Contains(got, "2 exported declaration(s)") {
+		t.Errorf("LibraryAbsentReason(2) = %q, want the library reason naming 2 declarations", got)
+	}
 }

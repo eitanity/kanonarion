@@ -7,7 +7,10 @@
 // ships more than one artefact, and a symbol linked into any of them is in the
 // product. For library targets, a synthetic main package is generated inside the
 // workspace under a _kanonarion_probe directory (excluded from./...) that
-// takes references to all exported functions, preventing dead-code elimination.
+// takes references to all exported functions and methods, preventing dead-code
+// elimination. Generic declarations are instantiated, the harness is
+// type-checked before it is built, and any reference that fails is left out
+// and named.
 package builder
 
 import (
@@ -17,9 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"go/version"
 	"io"
 	"os"
 	"os/exec"
@@ -206,22 +207,28 @@ func (p *Prober) probeLibrary(ctx context.Context, tc *goenv.Toolchains, root, o
 	harnessDir := filepath.Join(root, probeHarnessDir)
 	defer func() { _ = os.RemoveAll(harnessDir) }()
 
-	if err := buildLibraryProbe(ctx, tc, root, harnessDir, outBin, p.goBin()); err != nil {
+	omitted, err := buildLibraryProbe(ctx, tc, root, harnessDir, outBin, p.goBin())
+	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("building library probe: %w", err)
 	}
 	symbols, err := readSymbolTable(ctx, tc, root, outBin, p.goBin())
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("reading symbol table: %w", err)
 	}
-	return ports.SymbolProbeResult{BinarySymbols: symbols, Kind: localdomain.ProbeKindLibrary}, nil
+	return ports.SymbolProbeResult{BinarySymbols: symbols, Kind: localdomain.ProbeKindLibrary, HarnessOmitted: omitted}, nil
 }
 
 // goListPackage mirrors the fields we need from `go list -json`.
 type goListPackage struct {
 	ImportPath string
 	Name       string
-	Dir        string
-	GoFiles    []string
+	Export     string        // the export data file, under -export
+	DepOnly    bool          // a dependency of the patterns, under -deps
+	Module     *goListModule // the module providing the package
+}
+
+type goListModule struct {
+	Path string
 }
 
 // findMainPackages runs go list -json./... and returns the import paths of
@@ -258,48 +265,66 @@ func buildBinary(ctx context.Context, tc *goenv.Toolchains, root, mainPkg, outBi
 }
 
 // buildLibraryProbe generates a synthetic harness inside harnessDir and
-// builds it into outBin with inlining disabled.
-func buildLibraryProbe(ctx context.Context, tc *goenv.Toolchains, root, harnessDir, outBin, goBin string) error {
+// builds it into outBin with inlining disabled. It returns the exported
+// declarations the harness had to leave out.
+func buildLibraryProbe(ctx context.Context, tc *goenv.Toolchains, root, harnessDir, outBin, goBin string) ([]localdomain.HarnessOmission, error) {
 	if err := os.MkdirAll(harnessDir, 0o700); err != nil {
-		return fmt.Errorf("creating harness dir: %w", err)
+		return nil, fmt.Errorf("creating harness dir: %w", err)
 	}
 
-	// Enumerate all workspace packages.
-	pkgs, err := listWorkspacePackages(ctx, tc, root, goBin)
+	pkgs, err := listWorkspaceExports(ctx, tc, root, goBin)
 	if err != nil {
-		return fmt.Errorf("listing workspace packages: %w", err)
+		return nil, fmt.Errorf("compiling workspace packages: %w", err)
 	}
 
-	// Parse exported functions from.go source files in each package. A file this
-	// binary's parser refuses under a newer go directive would drop its exports
-	// from the harness, and their symbols from the answer, without a word.
-	var limit gotoolchain.AnalyserLimit
-	limited := false
-	if goMod, rerr := os.ReadFile(filepath.Join(root, "go.mod")); rerr == nil { // #nosec G304 -- the workspace root the caller named
-		limit, limited = gotoolchain.LimitForDirective(gotoolchain.GoDirective(goMod))
-	}
-	exports, err := enumerateExportedFuncs(pkgs, limit, limited)
+	goMod, err := os.ReadFile(filepath.Join(root, "go.mod")) // #nosec G304 -- the workspace root the caller named
 	if err != nil {
-		return fmt.Errorf("enumerating exported functions: %w", err)
+		goMod = nil // an unreadable go.mod claims no limit, as before
+	}
+	code, omitted, err := libraryHarness(pkgs, goMod)
+	if err != nil {
+		return nil, err
 	}
 
-	// Write synthetic harness.
-	code := generateHarness(pkgs, exports)
 	mainPath := filepath.Join(harnessDir, "main.go")
-	if err := os.WriteFile(mainPath, []byte(code), 0o600); err != nil {
-		return fmt.Errorf("writing harness: %w", err)
+	if err := os.WriteFile(mainPath, []byte(code), 0o600); err != nil { // #nosec G703 -- the workspace root the caller named, plus a fixed directory and file name
+		return nil, fmt.Errorf("writing harness: %w", err)
 	}
 
-	// Build the harness.
 	if _, detail, err := runChild(ctx, tc, root, goBin, combinedCapture,
 		"build", "-gcflags=all=-l", "-o", outBin, "./"+probeHarnessDir); err != nil {
-		return fmt.Errorf("building harness: %w\n%s", err, detail)
+		return nil, fmt.Errorf("building harness: %w\n%s", err, detail)
 	}
-	return nil
+	return omitted, nil
 }
 
-func listWorkspacePackages(ctx context.Context, tc *goenv.Toolchains, root, goBin string) ([]goListPackage, error) {
-	out, detail, err := runChild(ctx, tc, root, goBin, stdoutCapture, "list", "-json", "./...")
+// libraryHarness generates the harness under the module's go directive. Under a
+// directive newer than this binary's Go, export data or a harness this binary's
+// go/types cannot read is the analyser limit, not a defect.
+func libraryHarness(pkgs []goListPackage, goMod []byte) (string, []localdomain.HarnessOmission, error) {
+	directive := gotoolchain.GoDirective(goMod)
+	limit, limited := gotoolchain.LimitForDirective(directive)
+	goVersion := "go" + directive
+	if !version.IsValid(goVersion) {
+		goVersion = ""
+	}
+	code, omitted, err := harnessSource(pkgs, goVersion)
+	if err != nil && limited {
+		return "", nil, &gotoolchain.AnalyserLimitError{Limit: limit}
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("generating harness: %w", err)
+	}
+	return code, omitted, nil
+}
+
+// listWorkspaceExports lists the workspace packages and their dependencies with
+// export data. The flags match the harness build, so that build reuses this
+// compilation. A workspace that does not compile fails here, with the compiler's
+// own report, as it failed at the harness build before.
+func listWorkspaceExports(ctx context.Context, tc *goenv.Toolchains, root, goBin string) ([]goListPackage, error) {
+	out, detail, err := runChild(ctx, tc, root, goBin, stdoutCapture,
+		"list", "-export", "-deps", "-json", "-gcflags=all=-l", "./...")
 	if err != nil {
 		return nil, fmt.Errorf("go list: %w\n%s", err, detail)
 	}
@@ -315,130 +340,6 @@ func listWorkspacePackages(ctx context.Context, tc *goenv.Toolchains, root, goBi
 		pkgs = append(pkgs, pkg)
 	}
 	return pkgs, nil
-}
-
-// exportedFunc records one exported function or method reference for the harness.
-type exportedFunc struct {
-	receiver string // empty for top-level funcs; "*Type" or "Type" for methods
-	name     string
-}
-
-// enumerateExportedFuncs parses the.go files in each package and collects
-// exported function and method declarations. Under limited, a file the parser
-// refuses is the analyser limit rather than a file to skip: the harness build
-// would compile it, so only this binary's parser could not read it.
-func enumerateExportedFuncs(pkgs []goListPackage, limit gotoolchain.AnalyserLimit, limited bool) (map[string][]exportedFunc, error) {
-	// map: package import path → exported funcs
-	result := make(map[string][]exportedFunc)
-	fset := token.NewFileSet()
-
-	for _, pkg := range pkgs {
-		for _, goFile := range pkg.GoFiles {
-			if strings.HasSuffix(goFile, "_test.go") {
-				continue
-			}
-			fullPath := filepath.Join(pkg.Dir, goFile)
-			f, err := parser.ParseFile(fset, fullPath, nil, 0)
-			if err != nil && limited {
-				return nil, &gotoolchain.AnalyserLimitError{Limit: limit}
-			}
-			if err != nil {
-				continue // the harness build reports a file that does not compile
-			}
-			for _, decl := range f.Decls {
-				fd, ok := decl.(*ast.FuncDecl)
-				if !ok || !ast.IsExported(fd.Name.Name) {
-					continue
-				}
-				ef := exportedFunc{name: fd.Name.Name}
-				if fd.Recv != nil && len(fd.Recv.List) > 0 {
-					ef.receiver = receiverTypeName(fd.Recv.List[0].Type)
-					if ef.receiver == "" || !ast.IsExported(strings.TrimPrefix(ef.receiver, "*")) {
-						continue // skip methods on unexported types
-					}
-				}
-				result[pkg.ImportPath] = append(result[pkg.ImportPath], ef)
-			}
-		}
-	}
-	return result, nil
-}
-
-func receiverTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.StarExpr:
-		if id, ok := t.X.(*ast.Ident); ok {
-			return "*" + id.Name
-		}
-	case *ast.Ident:
-		return t.Name
-	case *ast.IndexExpr: // generic with one type param
-		if id, ok := t.X.(*ast.Ident); ok {
-			return id.Name // skip instantiation
-		}
-	case *ast.IndexListExpr: // generic with multiple type params
-		if id, ok := t.X.(*ast.Ident); ok {
-			return id.Name
-		}
-	}
-	return ""
-}
-
-// generateHarness produces Go source code for the synthetic probe harness.
-// It imports every workspace package and assigns exported function/method
-// expressions to interface{} variables, preventing dead-code elimination.
-func generateHarness(pkgs []goListPackage, exports map[string][]exportedFunc) string {
-	// Assign deterministic aliases to avoid name collisions.
-	type pkgEntry struct {
-		importPath string
-		alias      string
-	}
-
-	// Sort for determinism.
-	sorted := make([]goListPackage, len(pkgs))
-	copy(sorted, pkgs)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ImportPath < sorted[j].ImportPath })
-
-	entries := make([]pkgEntry, 0, len(sorted))
-	aliasMap := make(map[string]string)
-	for i, pkg := range sorted {
-		alias := fmt.Sprintf("p%d", i)
-		aliasMap[pkg.ImportPath] = alias
-		entries = append(entries, pkgEntry{importPath: pkg.ImportPath, alias: alias})
-	}
-
-	var sb strings.Builder
-	sb.WriteString("package main\n\nimport (\n")
-	for _, e := range entries {
-		if _, hasExports := exports[e.importPath]; !hasExports {
-			continue
-		}
-		fmt.Fprintf(&sb, "\t%s %q\n", e.alias, e.importPath)
-	}
-	sb.WriteString(")\n\nvar _sinks []interface{}\n\nfunc init() {\n")
-
-	for _, e := range entries {
-		funcs, ok := exports[e.importPath]
-		if !ok {
-			continue
-		}
-		for _, ef := range funcs {
-			var ref string
-			switch {
-			case ef.receiver == "":
-				ref = fmt.Sprintf("%s.%s", e.alias, ef.name)
-			case strings.HasPrefix(ef.receiver, "*"):
-				// Method expression for a pointer receiver is
-				// (*pkg.Type).Method, not (pkg.*Type).Method.
-				ref = fmt.Sprintf("(*%s.%s).%s", e.alias, strings.TrimPrefix(ef.receiver, "*"), ef.name)
-			default:
-				ref = fmt.Sprintf("(%s.%s).%s", e.alias, ef.receiver, ef.name)
-			}
-			fmt.Fprintf(&sb, "\t_sinks = append(_sinks, %s)\n", ref)
-		}
-	}
-	sb.WriteString("}\n\nfunc main() { _ = _sinks }\n")
-	return sb.String()
 }
 
 // readSymbolTable runs go tool nm on binPath and returns the set of symbol names.

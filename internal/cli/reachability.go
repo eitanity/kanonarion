@@ -112,6 +112,13 @@ type reachabilityProbedBinary struct {
 	BuildError string `json:"build_error,omitempty"`
 }
 
+// reachabilityHarnessOmission is one exported declaration of a library
+// workspace the probe harness does not reference, and why.
+type reachabilityHarnessOmission struct {
+	Symbol string `json:"symbol"`
+	Reason string `json:"reason"`
+}
+
 // reachabilityCoverage states what the local probe's answer was drawn from and
 // what it left out.
 //
@@ -146,6 +153,10 @@ type reachabilityCoverage struct {
 	// workspace and for a probe that was skipped, neither of which built a
 	// main package.
 	ProbedBinaries []reachabilityProbedBinary `json:"probed_binaries,omitempty"`
+	// HarnessOmitted names every exported declaration of a library workspace
+	// the harness left out. An absence says nothing about a route only through
+	// one of them. Absent when nothing was left out.
+	HarnessOmitted []reachabilityHarnessOmission `json:"harness_omitted,omitempty"`
 }
 
 type reachabilityOutput struct {
@@ -1489,9 +1500,9 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 }
 
 // printLocalCoverage states what the probe covered: the build's modules, the
-// binaries probed, and the modules the answer does not speak about.
+// binaries probed, the modules the answer does not speak about, and the exported
+// declarations a library harness left out.
 func printLocalCoverage(w *errWriter, c reachabilityCoverage) {
-
 	w.printf("\ncoverage: %d build module(s), %d queried, %d covered, %d with findings\n",
 		c.BuildModules, c.QueriedModules, c.CoveredModules, c.ModulesWithFindings)
 	for _, b := range c.ProbedBinaries {
@@ -1509,6 +1520,12 @@ func printLocalCoverage(w *errWriter, c reachabilityCoverage) {
 	}
 	if c.UncoveredRemedy != "" {
 		w.printf("  to widen the answer: %s\n", c.UncoveredRemedy)
+	}
+	if len(c.HarnessOmitted) > 0 {
+		w.printf("  harness omitted (%d) — exported declarations not in the library harness:\n", len(c.HarnessOmitted))
+		for _, o := range c.HarnessOmitted {
+			w.printf("    %s — %s\n", o.Symbol, o.Reason)
+		}
 	}
 }
 
@@ -1619,6 +1636,9 @@ func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
 		out.ProbedBinaries = append(out.ProbedBinaries, reachabilityProbedBinary{
 			ImportPath: b.ImportPath, BuildError: b.BuildError,
 		})
+	}
+	for _, o := range c.HarnessOmitted {
+		out.HarnessOmitted = append(out.HarnessOmitted, reachabilityHarnessOmission{Symbol: o.Symbol, Reason: o.Reason})
 	}
 	return out
 }

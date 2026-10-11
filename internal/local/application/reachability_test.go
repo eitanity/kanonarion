@@ -244,6 +244,35 @@ func TestLocalReachability_SymbolAbsent(t *testing.T) {
 	}
 }
 
+// A library harness that left exported declarations out carries them into the
+// coverage, and every absence states how many there were.
+func TestLocalReachability_HarnessOmissionsReachCoverageAndAbsence(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	omitted := []domain.HarnessOmission{{Symbol: "example.com/app.F", Reason: "no type argument satisfies T"}}
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0002", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind: "library", BinarySymbols: map[string]struct{}{}, HarnessOmitted: omitted,
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.HarnessOmitted) != 1 || result.Coverage.HarnessOmitted[0] != omitted[0] {
+		t.Errorf("Coverage.HarnessOmitted = %v, want %v", result.Coverage.HarnessOmitted, omitted)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.SoundnessReason != domain.LibraryAbsentReason(1) {
+		t.Errorf("SoundnessReason = %q, want the library reason naming 1 omission", f.SoundnessReason)
+	}
+}
+
 func TestLocalReachability_NoAffectedSymbols_UnknownVerdict(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	uc := makeUC(
