@@ -320,22 +320,7 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 		if ancestrySearchBound > 0 && hops > ancestrySearchBound {
 			break
 		}
-		next := make(map[string]pathState, len(frontier))
-		for id, st := range frontier {
-			for _, p := range g.parents[id] {
-				if seen[p.from] {
-					continue
-				}
-				cand := pathState{
-					weakest:   callgraphdomain.WeakestConfidence(st.weakest, p.confidence),
-					reference: st.reference || p.reference,
-				}
-				if prev, ok := next[p.from]; ok && !strongerPath(cand, prev) {
-					continue
-				}
-				next[p.from] = cand
-			}
-		}
+		next := g.nextAncestryLevel(frontier, seen)
 		// This level is now complete, so any entry point in it is a nearest one.
 		var bestID string
 		var best pathState
@@ -364,6 +349,28 @@ func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
 		frontier = next
 	}
 	return out
+}
+
+// nextAncestryLevel is the unseen parents of the frontier, each with the
+// strongest path that reaches it.
+func (g *graph) nextAncestryLevel(frontier map[string]pathState, seen map[string]bool) map[string]pathState {
+	next := make(map[string]pathState, len(frontier))
+	for id, st := range frontier {
+		for _, p := range g.parents[id] {
+			if seen[p.from] {
+				continue
+			}
+			cand := pathState{
+				weakest:   callgraphdomain.WeakestConfidence(st.weakest, p.confidence),
+				reference: st.reference || p.reference,
+			}
+			if prev, ok := next[p.from]; ok && !strongerPath(cand, prev) {
+				continue
+			}
+			next[p.from] = cand
+		}
+	}
+	return next
 }
 
 // pathState is what an upward search carries about the path it took to reach a

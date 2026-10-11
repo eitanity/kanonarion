@@ -710,6 +710,22 @@ func TestMigration3_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 		}
 	}
 
+	assertSatelliteRekeyed(t, store, wantKids)
+
+	// And the rekeyed children resolve through the read path.
+	refs, err := store.FindBySymbolInModule(context.Background(), identified, "Beta", ledgerPipeline)
+	if err != nil {
+		t.Fatalf("FindBySymbolInModule after the rekey: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Errorf("FindBySymbolInModule returned %d refs after the rekey, want 1", len(refs))
+	}
+}
+
+// assertSatelliteRekeyed checks every index row resolves to its parent, with
+// none orphaned or duplicated.
+func assertSatelliteRekeyed(t *testing.T, store *examplesqlite.Store, wantKids map[string]int) {
+	t.Helper()
 	// The satellite: every child rekeyed onto its parent, none orphaned, none
 	// duplicated.
 	gotKids := indexRowsByParent(t, store)
@@ -723,15 +739,6 @@ func TestMigration3_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 	}
 	if n := countIndexRows(t, store); n != 3 {
 		t.Errorf("example_index holds %d rows after the rekey, want 3 — children were lost or duplicated", n)
-	}
-
-	// And the rekeyed children resolve through the read path.
-	refs, err := store.FindBySymbolInModule(context.Background(), identified, "Beta", ledgerPipeline)
-	if err != nil {
-		t.Fatalf("FindBySymbolInModule after the rekey: %v", err)
-	}
-	if len(refs) != 1 {
-		t.Errorf("FindBySymbolInModule returned %d refs after the rekey, want 1", len(refs))
 	}
 }
 

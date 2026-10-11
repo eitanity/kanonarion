@@ -210,17 +210,9 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		return moduleVersionRequired("fetch", path)
 	}
 
-	var coord coordinate.ModuleCoordinate
-	if version == "latest" {
-		coord, err = resolveLatest(ctx, path, proxyAdapter, stderr)
-		if err != nil {
-			return err
-		}
-	} else {
-		coord, err = coordinate.NewModuleCoordinate(path, version)
-		if err != nil {
-			return fmt.Errorf("invalid coordinate %q: %w", arg, err)
-		}
+	coord, err := fetchCoordinate(ctx, arg, path, version, proxyAdapter, stderr)
+	if err != nil {
+		return err
 	}
 
 	vcsClient := gitexec.New()
@@ -271,6 +263,37 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	// the fetch itself and the result is informative for both humans and agents.
 	stale := fetchStalenessFor(ctx, newProxyLatestResolver(proxyAdapter, logger, nil), coord, version, stderr)
 
+	if err := writeFetchResult(stdout, coord, version, result, stale); err != nil {
+		return err
+	}
+
+	if f.strict && result.Record.VerificationStatus != string(domain.Verified) {
+		return fmt.Errorf("verification failed: %s", result.Record.VerificationStatus)
+	}
+	return nil
+}
+
+// fetchCoordinate is the coordinate to fetch, resolving @latest through the
+// proxy.
+func fetchCoordinate(ctx context.Context, arg, path, version string, proxyAdapter latestResolver, stderr io.Writer) (coordinate.ModuleCoordinate, error) {
+	var err error
+	var coord coordinate.ModuleCoordinate
+	if version == "latest" {
+		coord, err = resolveLatest(ctx, path, proxyAdapter, stderr)
+		if err != nil {
+			return coordinate.ModuleCoordinate{}, err
+		}
+	} else {
+		coord, err = coordinate.NewModuleCoordinate(path, version)
+		if err != nil {
+			return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid coordinate %q: %w", arg, err)
+		}
+	}
+	return coord, nil
+}
+
+// writeFetchResult reports the fetched record, as JSON or as a status line.
+func writeFetchResult(stdout io.Writer, coord coordinate.ModuleCoordinate, version string, result application.FetchResult, stale stalenessInfo) error {
 	if jsonOut {
 		type fetchOutput struct {
 			Record    any           `json:"record"`
@@ -304,10 +327,6 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 				return fmt.Errorf("writing output: %w", err)
 			}
 		}
-	}
-
-	if f.strict && result.Record.VerificationStatus != string(domain.Verified) {
-		return fmt.Errorf("verification failed: %s", result.Record.VerificationStatus)
 	}
 	return nil
 }

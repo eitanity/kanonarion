@@ -262,6 +262,17 @@ func (uc *ExtractNativeUseCase) measure(
 		return nil, nil, nil, fmt.Errorf("artefact for %s holds no entry under %q", coord, modulePrefix)
 	}
 
+	if err := addNativeSources(ctx, archive, names, modulePrefix, cgoDirs, detector); err != nil {
+		return nil, nil, nil, err
+	}
+
+	components, sources, linked := detector.Result()
+	return components, sources, linked, nil
+}
+
+// addNativeSources hands the detector each native source file in a directory
+// that holds cgo code.
+func addNativeSources(ctx context.Context, archive *ziparchive.Archive, names []string, modulePrefix string, cgoDirs map[string]bool, detector *domain.Detector) error {
 	for _, name := range names {
 		if !strings.HasPrefix(name, modulePrefix) {
 			continue
@@ -271,20 +282,18 @@ func (uc *ExtractNativeUseCase) measure(
 			continue
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, nil, nil, fmt.Errorf("native measurement cancelled: %w", ctxErr)
+			return fmt.Errorf("native measurement cancelled: %w", ctxErr)
 		}
 		content, ok, rerr := archive.ReadFile(name)
 		if rerr != nil {
-			return nil, nil, nil, fmt.Errorf("reading %s: %w", rel, rerr)
+			return fmt.Errorf("reading %s: %w", rel, rerr)
 		}
 		if !ok {
 			continue
 		}
 		detector.Add(rel, content)
 	}
-
-	components, sources, linked := detector.Result()
-	return components, sources, linked, nil
+	return nil
 }
 
 // log returns a usable logger so a use case constructed without one still runs.

@@ -1,6 +1,7 @@
 package application_test
 
 import (
+	"context"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -100,6 +101,13 @@ func TestScanWalk_TwoScansInOneSecondAreTwoCompleteRuns(t *testing.T) {
 		t.Fatalf("store holds %d runs of w1, want 2", len(runs))
 	}
 
+	assertRunsStoredWhole(ctx, t, vulnStore, db, m1, first, second)
+}
+
+// assertRunsStoredWhole checks each run is stored under its own seal with a
+// membership index naming its own record.
+func assertRunsStoredWhole(ctx context.Context, t *testing.T, vulnStore *vulnsqlite.Store, db sqlitestore.DB, m1 coordinate.ModuleCoordinate, first, second domain.WalkScanRun) {
+	t.Helper()
 	hashes := make(map[string]string, 2)
 	for _, want := range []domain.WalkScanRun{first, second} {
 		got, found, err := vulnStore.GetWalkScanRun(ctx, want.ID)

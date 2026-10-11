@@ -289,7 +289,13 @@ func TestRunScanShow_TextSplitAgreesWithItsOwnJSON(t *testing.T) {
 		t.Fatalf("--json tallies %d/%d/%d, want 1/0/2 for this fixture", reachable, notReachable, undecided)
 	}
 
-	out := text.String()
+	assertTextReachabilitySplit(t, text.String())
+}
+
+// assertTextReachabilitySplit checks the text split states the same tallies
+// and breaks the undecided bucket down by rung.
+func assertTextReachabilitySplit(t *testing.T, out string) {
+	t.Helper()
 	for _, want := range []string{"Reachability of 3 finding(s):", "reachable         1", "not reachable     0", "undecided         2"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the text split does not agree with --json: missing %q in:\n%s", want, out)

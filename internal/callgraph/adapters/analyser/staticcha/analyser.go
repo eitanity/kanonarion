@@ -649,14 +649,7 @@ func (a *Analyser) analyseDirOnce(
 	metaErrs := metaLoadErrors(pkgsMeta)
 
 	if len(pkgsMeta) == 0 {
-		// The loader ran and found nothing to analyse: a fact about what the module
-		// ships — unless the loader also said why, in which case that is the finding
-		// and the count is a symptom of it.
-		detail := "no packages found for " + platformFrame() +
-			" (the module ships no Go source, or build constraints exclude every file it does ship)"
-		if len(metaErrs) > 0 {
-			detail += "; the loader reported: " + joinFirst(metaErrs, 3)
-		}
+		detail := noPackagesDetail(metaErrs)
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
 			classifyLoad(detail), detail), nil
 	}
@@ -707,34 +700,7 @@ func (a *Analyser) analyseDirOnce(
 	a.logMem(ctx, "all_packages_processed")
 
 	if build.Registered() == 0 {
-		// Named target packages, and not one of them type-checked. Whatever the
-		// syntax load said comes first; the metadata load's own errors are the
-		// fallback, and only with neither is there nothing to report but the count.
-		detail := fmt.Sprintf("none of the %d package(s) under %s type-checked", len(targetPkgPaths), target.Path())
-		switch {
-		case len(allLoadErrs) > 0:
-			detail += ": " + joinFirst(allLoadErrs, 3)
-		case len(metaErrs) > 0:
-			detail += "; the loader reported: " + joinFirst(metaErrs, 3)
-		}
-		// Metadata resolved and not one package type-checked from it. The toolchain
-		// demonstrably ran — it produced the metadata — so this is the module,
-		// unless the load could not reach a dependency the local cache does not
-		// hold, which is this host and not these bytes.
-		cause := domain.FailureCauseModule
-		if isOfflineCacheMiss(detail) {
-			cause = domain.FailureCauseEnvironment
-		}
-		// The loader's own account of a module it could not obtain, read off the
-		// dependency it failed on. It leads, because everything else here is its
-		// symptom, and it moves the cause: a build this host could not assemble is
-		// not a statement about the module's sources.
-		if unobtainable := describeUnobtainableModules(tempDir, build.UnobtainableImports); unobtainable != "" {
-			detail = unobtainable + "; " + detail
-			cause = domain.FailureCauseEnvironment
-		}
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessMetadataOnly,
-			cause, detail), nil
+		return a.noPackageTypeCheckedRecord(coord, target, tempDir, targetPkgPaths, allLoadErrs, metaErrs, build), nil
 	}
 
 	if ctx.Err() != nil {
@@ -827,7 +793,19 @@ func (a *Analyser) analyseDirOnce(
 		overallStatus = domain.CallGraphStatusPartial
 	}
 
-	rec = domain.CallGraphRecord{
+	rec = a.newCallGraphRecord(coord, build, nodes, edges, ifaces, impls, overallStatus, allLoadErrs, failedPkgs)
+	rec = stateGraphIncompleteness(rec, overallStatus, mode, tempDir, metaErrs, allLoadErrs, failedPkgs, build, mem)
+	// The last thing the analysis says. What follows is the caller sealing and
+	// storing the record, which on a large graph is the longest stretch after this
+	// point; a reader watching a run should see where it got to before it goes
+	// quiet.
+	a.step(coord, fmt.Sprintf("graph assembled (%d nodes, %d edges); storing", len(nodes), len(edges)))
+	return rec, nil
+}
+
+// newCallGraphRecord assembles the record over a walked graph.
+func (a *Analyser) newCallGraphRecord(coord coordinate.ModuleCoordinate, build ssaBuildResult, nodes []domain.CallNode, edges []domain.CallEdge, ifaces []domain.InterfaceType, impls []domain.InterfaceImplementation, overallStatus domain.CallGraphStatus, allLoadErrs, failedPkgs []string) domain.CallGraphRecord {
+	return domain.CallGraphRecord{
 		SchemaVersion: domain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
 		Coordinate:    coord,
@@ -854,6 +832,58 @@ func (a *Analyser) analyseDirOnce(
 		EdgeCount:       len(edges),
 		PipelineVersion: a.pipelineVersion,
 	}
+}
+
+// noPackagesDetail is the failure detail for a metadata load that found no
+// packages, carrying the loader's own errors when it gave any.
+func noPackagesDetail(metaErrs []string) string {
+	// The loader ran and found nothing to analyse: a fact about what the module
+	// ships — unless the loader also said why, in which case that is the finding
+	// and the count is a symptom of it.
+	detail := "no packages found for " + platformFrame() +
+		" (the module ships no Go source, or build constraints exclude every file it does ship)"
+	if len(metaErrs) > 0 {
+		detail += "; the loader reported: " + joinFirst(metaErrs, 3)
+	}
+	return detail
+}
+
+// noPackageTypeCheckedRecord is the failure record for a load whose target
+// packages resolved but none of which type-checked.
+func (a *Analyser) noPackageTypeCheckedRecord(coord, target coordinate.ModuleCoordinate, tempDir string, targetPkgPaths, allLoadErrs, metaErrs []string, build ssaBuildResult) domain.CallGraphRecord {
+	// Named target packages, and not one of them type-checked. Whatever the
+	// syntax load said comes first; the metadata load's own errors are the
+	// fallback, and only with neither is there nothing to report but the count.
+	detail := fmt.Sprintf("none of the %d package(s) under %s type-checked", len(targetPkgPaths), target.Path())
+	switch {
+	case len(allLoadErrs) > 0:
+		detail += ": " + joinFirst(allLoadErrs, 3)
+	case len(metaErrs) > 0:
+		detail += "; the loader reported: " + joinFirst(metaErrs, 3)
+	}
+	// Metadata resolved and not one package type-checked from it. The toolchain
+	// demonstrably ran — it produced the metadata — so this is the module,
+	// unless the load could not reach a dependency the local cache does not
+	// hold, which is this host and not these bytes.
+	cause := domain.FailureCauseModule
+	if isOfflineCacheMiss(detail) {
+		cause = domain.FailureCauseEnvironment
+	}
+	// The loader's own account of a module it could not obtain, read off the
+	// dependency it failed on. It leads, because everything else here is its
+	// symptom, and it moves the cause: a build this host could not assemble is
+	// not a statement about the module's sources.
+	if unobtainable := describeUnobtainableModules(tempDir, build.UnobtainableImports); unobtainable != "" {
+		detail = unobtainable + "; " + detail
+		cause = domain.FailureCauseEnvironment
+	}
+	return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessMetadataOnly,
+		cause, detail)
+}
+
+// stateGraphIncompleteness stamps what an assembled graph's incompleteness is a
+// statement about, and the package sets it was built over.
+func stateGraphIncompleteness(rec domain.CallGraphRecord, overallStatus domain.CallGraphStatus, mode analysisMode, tempDir string, metaErrs, allLoadErrs, failedPkgs []string, build ssaBuildResult, mem moduleMembership) domain.CallGraphRecord {
 	// A walk cut short by cancellation is the run ending, not the module being
 	// unanalysable, and the record it leaves must not be served as though the
 	// module had been measured. Every other status reaching here carries a graph,
@@ -894,12 +924,7 @@ func (a *Analyser) analyseDirOnce(
 	// is what stops BUILT_WITH_BODIES being claimed uniformly over code belonging
 	// to modules the record does not name.
 	rec.ForeignModulesBuilt = build.ForeignModulesBuilt
-	// The last thing the analysis says. What follows is the caller sealing and
-	// storing the record, which on a large graph is the longest stretch after this
-	// point; a reader watching a run should see where it got to before it goes
-	// quiet.
-	a.step(coord, fmt.Sprintf("graph assembled (%d nodes, %d edges); storing", len(nodes), len(edges)))
-	return rec, nil
+	return rec
 }
 
 // classifyIncompleteGraph says what a Partial graph's incompleteness is a

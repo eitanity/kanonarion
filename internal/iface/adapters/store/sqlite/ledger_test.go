@@ -745,6 +745,22 @@ func TestMigration4_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 		}
 	}
 
+	assertSymbolsRekeyed(t, store, wantKids)
+
+	// And the rekeyed symbols resolve through the read path.
+	refs, err := store.FindSymbol(context.Background(), "Close", ledgerPipeline, coordinate.ModuleSet{})
+	if err != nil {
+		t.Fatalf("FindSymbol after the rekey: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Errorf("FindSymbol returned %d refs after the rekey, want 1", len(refs))
+	}
+}
+
+// assertSymbolsRekeyed checks every symbol row resolves to its parent, with
+// none orphaned or duplicated.
+func assertSymbolsRekeyed(t *testing.T, store *ifacesqlite.Store, wantKids map[string]int) {
+	t.Helper()
 	gotKids := symbolRowsByParent(t, store)
 	if len(gotKids) != len(wantKids) {
 		t.Errorf("symbol rows resolve to %d parents, want %d", len(gotKids), len(wantKids))
@@ -756,15 +772,6 @@ func TestMigration4_CarriesRowsInAndRekeysTheSatellite(t *testing.T) {
 	}
 	if n := countSymbolRows(t, store); n != 3 {
 		t.Errorf("interface_symbols holds %d rows after the rekey, want 3 — symbols were lost or duplicated", n)
-	}
-
-	// And the rekeyed symbols resolve through the read path.
-	refs, err := store.FindSymbol(context.Background(), "Close", ledgerPipeline, coordinate.ModuleSet{})
-	if err != nil {
-		t.Fatalf("FindSymbol after the rekey: %v", err)
-	}
-	if len(refs) != 1 {
-		t.Errorf("FindSymbol returned %d refs after the rekey, want 1", len(refs))
 	}
 }
 

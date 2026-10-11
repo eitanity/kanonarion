@@ -164,34 +164,10 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	}
 
 	if f.module != "" {
-		coord, perr := parseCoordinate(f.module)
-		if perr != nil {
-			return fmt.Errorf("invalid --module %q: %w", f.module, perr)
+		var done bool
+		if refs, done, err = narrowRefsToModule(ctx, ctr, f, refs, jsonOut, stdout, stderr); err != nil || done {
+			return err
 		}
-		// Distinguish "module not in store" from "symbol not found": an
-		// empty result is ambiguous unless we know the module was indexed.
-		if _, found, gerr := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion); gerr == nil && !found {
-			// "Never extracted" and "extracted under superseded logic" both
-			// arrive here as an absent record, and only one of them is a
-			// coordinate to check.
-			line := fmt.Sprintf("no interface record for %s in the store; run 'kanonarion interface %s' first", f.module, f.module)
-			if pipelines, superseded := supersededInterfaceRecord(ctx, ctr.QueryInterface, coord); superseded {
-				line = supersededInterfaceLine(coord, pipelines)
-			}
-			_, _ = fmt.Fprintf(stderr, "%s\n", line)
-			if jsonOut {
-				_, _ = fmt.Fprintln(stdout, "[]")
-				return nil
-			}
-			return nil
-		}
-		var filtered []ifaceports.SymbolRef
-		for _, ref := range refs {
-			if ref.ModulePath == coord.Path() && ref.ModuleVersion == coord.Version() {
-				filtered = append(filtered, ref)
-			}
-		}
-		refs = filtered
 	}
 
 	// Drop symbols in non-importable packages (internal/, testdata/): they
@@ -199,18 +175,7 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	refs = filterImportableRefs(refs)
 
 	if len(refs) == 0 {
-		// An empty lookup over a store whose every record is superseded says
-		// nothing about the symbol: the index is keyed on the pipeline version,
-		// so there was nothing here to read.
-		if line, superseded := supersededInterfaceStoreLine(storedInterfaceSummaries(ctx, ctr.QueryInterface)); superseded {
-			_, _ = fmt.Fprintf(stderr, "%s\n", line)
-		}
-		if jsonOut {
-			_, _ = fmt.Fprintln(stdout, "[]")
-			return conflictErr
-		}
-		_, _ = fmt.Fprintf(stdout, "no exports found for symbol %q\n", symbolName)
-		return conflictErr
+		return writeNoSymbolContext(ctx, ctr, symbolName, conflictErr, jsonOut, stdout, stderr)
 	}
 
 	entries, carried, err := buildSymbolContextEntries(ctx, ctr, refs, ifaceapp.PipelineVersion)
@@ -230,6 +195,56 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	if perr := printSymbolContext(entries, stdout); perr != nil {
 		return perr
 	}
+	return conflictErr
+}
+
+// narrowRefsToModule keeps the refs of the module --module names; done reports
+// that the module holds no interface record and the answer was given.
+func narrowRefsToModule(ctx context.Context, ctr *Container, f symbolContextFlags, refs []ifaceports.SymbolRef, jsonOut bool, stdout, stderr io.Writer) ([]ifaceports.SymbolRef, bool, error) {
+	coord, perr := parseCoordinate(f.module)
+	if perr != nil {
+		return nil, false, fmt.Errorf("invalid --module %q: %w", f.module, perr)
+	}
+	// Distinguish "module not in store" from "symbol not found": an
+	// empty result is ambiguous unless we know the module was indexed.
+	if _, found, gerr := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion); gerr == nil && !found {
+		// "Never extracted" and "extracted under superseded logic" both
+		// arrive here as an absent record, and only one of them is a
+		// coordinate to check.
+		line := fmt.Sprintf("no interface record for %s in the store; run 'kanonarion interface %s' first", f.module, f.module)
+		if pipelines, superseded := supersededInterfaceRecord(ctx, ctr.QueryInterface, coord); superseded {
+			line = supersededInterfaceLine(coord, pipelines)
+		}
+		_, _ = fmt.Fprintf(stderr, "%s\n", line)
+		if jsonOut {
+			_, _ = fmt.Fprintln(stdout, "[]")
+			return nil, true, nil
+		}
+		return nil, true, nil
+	}
+	var filtered []ifaceports.SymbolRef
+	for _, ref := range refs {
+		if ref.ModulePath == coord.Path() && ref.ModuleVersion == coord.Version() {
+			filtered = append(filtered, ref)
+		}
+	}
+	return filtered, false, nil
+}
+
+// writeNoSymbolContext answers a lookup that found no export, saying when a
+// superseded store is why.
+func writeNoSymbolContext(ctx context.Context, ctr *Container, symbolName string, conflictErr error, jsonOut bool, stdout, stderr io.Writer) error {
+	// An empty lookup over a store whose every record is superseded says
+	// nothing about the symbol: the index is keyed on the pipeline version,
+	// so there was nothing here to read.
+	if line, superseded := supersededInterfaceStoreLine(storedInterfaceSummaries(ctx, ctr.QueryInterface)); superseded {
+		_, _ = fmt.Fprintf(stderr, "%s\n", line)
+	}
+	if jsonOut {
+		_, _ = fmt.Fprintln(stdout, "[]")
+		return conflictErr
+	}
+	_, _ = fmt.Fprintf(stdout, "no exports found for symbol %q\n", symbolName)
 	return conflictErr
 }
 
@@ -364,45 +379,63 @@ func symbolDoc(rec ifacedomain.InterfaceRecord, ref ifaceports.SymbolRef) string
 		if pkg.ImportPath != ref.PackagePath {
 			continue
 		}
-		switch ref.SymbolKind {
-		case "func":
-			for _, f := range pkg.Funcs {
-				if f.Name == ref.SymbolName {
-					return f.Doc
-				}
-			}
-		case "type":
-			for _, t := range pkg.Types {
-				if t.Name == ref.SymbolName {
-					return t.Doc
-				}
-			}
-		case "method":
-			for _, t := range pkg.Types {
-				if t.Name != ref.ParentType {
-					continue
-				}
-				for _, m := range t.Methods {
-					if m.Name == ref.SymbolName {
-						return m.Doc
-					}
-				}
-			}
-		case "const":
-			for _, c := range pkg.Consts {
-				if c.Name == ref.SymbolName {
-					return c.Doc
-				}
-			}
-		case "var":
-			for _, v := range pkg.Vars {
-				if v.Name == ref.SymbolName {
-					return v.Doc
-				}
-			}
+		if doc, ok := symbolDocInPackage(pkg, ref); ok {
+			return doc
 		}
 	}
 	return ""
+}
+
+// symbolDocInPackage is the doc comment of the symbol ref names in pkg; ok is
+// false when pkg does not declare it.
+func symbolDocInPackage(pkg ifacedomain.PackageInterface, ref ifaceports.SymbolRef) (string, bool) {
+	switch ref.SymbolKind {
+	case "func":
+		for _, f := range pkg.Funcs {
+			if f.Name == ref.SymbolName {
+				return f.Doc, true
+			}
+		}
+	case "type":
+		for _, t := range pkg.Types {
+			if t.Name == ref.SymbolName {
+				return t.Doc, true
+			}
+		}
+	case "method":
+		if doc, ok := methodDoc(pkg, ref); ok {
+			return doc, true
+		}
+	case "const":
+		for _, c := range pkg.Consts {
+			if c.Name == ref.SymbolName {
+				return c.Doc, true
+			}
+		}
+	case "var":
+		for _, v := range pkg.Vars {
+			if v.Name == ref.SymbolName {
+				return v.Doc, true
+			}
+		}
+	}
+	return "", false
+}
+
+// methodDoc is the doc comment of the method ref names in pkg; ok is false
+// when no type of pkg declares it.
+func methodDoc(pkg ifacedomain.PackageInterface, ref ifaceports.SymbolRef) (string, bool) {
+	for _, t := range pkg.Types {
+		if t.Name != ref.ParentType {
+			continue
+		}
+		for _, m := range t.Methods {
+			if m.Name == ref.SymbolName {
+				return m.Doc, true
+			}
+		}
+	}
+	return "", false
 }
 
 // printSymbolContext renders entries as human-readable text, then appends an
@@ -428,17 +461,8 @@ func printSymbolContext(entries []symbolContextEntry, stdout io.Writer) error {
 			}
 		}
 		if len(e.Examples) > 0 {
-			if _, err := fmt.Fprintln(stdout, "\n  Examples:"); err != nil {
-				return fmt.Errorf("writing examples header: %w", err)
-			}
-			for _, ex := range e.Examples {
-				validates := ""
-				if ex.Validates {
-					validates = " (validates)"
-				}
-				if _, err := fmt.Fprintf(stdout, "    %s%s\n", ex.Name, validates); err != nil {
-					return fmt.Errorf("writing example: %w", err)
-				}
+			if err := printSymbolExamples(stdout, e.Examples); err != nil {
+				return err
 			}
 		}
 	}
@@ -451,6 +475,24 @@ func printSymbolContext(entries []symbolContextEntry, stdout io.Writer) error {
 		byteCount := len(raw)
 		if _, err := fmt.Fprintf(stdout, "\n~%d tokens (%d bytes)\n", byteCount/4, byteCount); err != nil {
 			return fmt.Errorf("writing token count: %w", err)
+		}
+	}
+	return nil
+}
+
+// printSymbolExamples lists the symbol's examples, marking those that
+// validate.
+func printSymbolExamples(stdout io.Writer, examples []symbolContextExample) error {
+	if _, err := fmt.Fprintln(stdout, "\n  Examples:"); err != nil {
+		return fmt.Errorf("writing examples header: %w", err)
+	}
+	for _, ex := range examples {
+		validates := ""
+		if ex.Validates {
+			validates = " (validates)"
+		}
+		if _, err := fmt.Fprintf(stdout, "    %s%s\n", ex.Name, validates); err != nil {
+			return fmt.Errorf("writing example: %w", err)
 		}
 	}
 	return nil

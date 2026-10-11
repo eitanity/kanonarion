@@ -133,19 +133,48 @@ func (uc *ExtractStdlibCallGraphUseCase) Execute(ctx context.Context, req Extrac
 		}
 	}
 
-	src, err := uc.toolchains.LocateToolchain(ctx, goVersion)
-	if err != nil {
-		return ExtractResult{}, fmt.Errorf("locating the toolchain that supplies %s: %w", req.Coordinate, err)
-	}
-
-	custody, hasCustody, err := uc.readCustody(ctx, goVersion)
+	record, err := uc.measureStdlib(ctx, req, goVersion)
 	if err != nil {
 		return ExtractResult{}, err
 	}
 
+	if res, reused, rerr := uc.reuseStdlibGeneration(ctx, log, req, record, existing, found); rerr != nil || reused {
+		return res, rerr
+	}
+
+	if err := uc.store.PutCallGraphRecord(ctx, record); err != nil {
+		return ExtractResult{}, fmt.Errorf("persisting callgraph record: %w", err)
+	}
+	log.InfoContext(ctx, "callgraph_stdlib_record_persisted",
+		slog.String("overall_status", record.OverallStatus.String()),
+		slog.String("toolchain", string(record.Toolchain)),
+		slog.String("analysis_root", record.AnalysisRoot),
+		slog.Int("node_count", record.NodeCount),
+		slog.Int("edge_count", record.EdgeCount),
+		slog.String("content_hash", record.ContentHash),
+	)
+	if err := emitCallGraphExtracted(uc.audit, record); err != nil {
+		return ExtractResult{}, err
+	}
+	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// measureStdlib analyses the toolchain's standard library and returns the
+// stamped, hashed record.
+func (uc *ExtractStdlibCallGraphUseCase) measureStdlib(ctx context.Context, req ExtractRequest, goVersion string) (domain2.CallGraphRecord, error) {
+	src, err := uc.toolchains.LocateToolchain(ctx, goVersion)
+	if err != nil {
+		return domain2.CallGraphRecord{}, fmt.Errorf("locating the toolchain that supplies %s: %w", req.Coordinate, err)
+	}
+
+	custody, hasCustody, err := uc.readCustody(ctx, goVersion)
+	if err != nil {
+		return domain2.CallGraphRecord{}, err
+	}
+
 	record, err := uc.analyser.AnalyseStdlib(ctx, src, req.Coordinate)
 	if err != nil {
-		return ExtractResult{}, fmt.Errorf("running the standard-library call graph analyser: %w", err)
+		return domain2.CallGraphRecord{}, fmt.Errorf("running the standard-library call graph analyser: %w", err)
 	}
 
 	record.DerivedBy = domain2.DerivationFor(domain2.ReuseGateLedger, req.Force)
@@ -172,43 +201,33 @@ func (uc *ExtractStdlibCallGraphUseCase) Execute(ctx context.Context, req Extrac
 
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {
-		return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
+		return domain2.CallGraphRecord{}, fmt.Errorf("computing content hash: %w", err)
 	}
+	return record, nil
+}
 
+// reuseStdlibGeneration answers with a held generation when the new
+// measurement states the same thing; reused reports that it did.
+func (uc *ExtractStdlibCallGraphUseCase) reuseStdlibGeneration(ctx context.Context, log *slog.Logger, req ExtractRequest, record, existing domain2.CallGraphRecord, found bool) (ExtractResult, bool, error) {
 	if found {
 		same, serr := domain2.SameMeasurement(record, existing)
 		if serr != nil {
-			return ExtractResult{}, fmt.Errorf("comparing with the stored generation for %s: %w", req.Coordinate, serr)
+			return ExtractResult{}, false, fmt.Errorf("comparing with the stored generation for %s: %w", req.Coordinate, serr)
 		}
 		if same {
 			log.InfoContext(ctx, "callgraph_stdlib_remeasured_equal",
 				slog.String("content_hash", existing.ContentHash))
-			return ExtractResult{Record: existing, Reused: true}, nil
+			return ExtractResult{Record: existing, Reused: true}, true, nil
 		}
 	}
 	if !found && !req.Force {
 		if held, ok := uc.identicalGeneration(ctx, log, record); ok {
 			log.InfoContext(ctx, "callgraph_stdlib_remeasured_equal",
 				slog.String("content_hash", held.ContentHash))
-			return ExtractResult{Record: held, Reused: true}, nil
+			return ExtractResult{Record: held, Reused: true}, true, nil
 		}
 	}
-
-	if err := uc.store.PutCallGraphRecord(ctx, record); err != nil {
-		return ExtractResult{}, fmt.Errorf("persisting callgraph record: %w", err)
-	}
-	log.InfoContext(ctx, "callgraph_stdlib_record_persisted",
-		slog.String("overall_status", record.OverallStatus.String()),
-		slog.String("toolchain", string(record.Toolchain)),
-		slog.String("analysis_root", record.AnalysisRoot),
-		slog.Int("node_count", record.NodeCount),
-		slog.Int("edge_count", record.EdgeCount),
-		slog.String("content_hash", record.ContentHash),
-	)
-	if err := emitCallGraphExtracted(uc.audit, record); err != nil {
-		return ExtractResult{}, err
-	}
-	return ExtractResult{Record: record, FromCache: false}, nil
+	return ExtractResult{}, false, nil
 }
 
 // unanchoredStdlibIdentity names the bytes a graph was built from where no

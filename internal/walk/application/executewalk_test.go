@@ -75,31 +75,7 @@ func effectiveDepth(rec domain.WalkRecord) domain.WalkDepth {
 func (f *fakeWalkStore) ListWalks(_ context.Context, filter walkports.WalkFilter) ([]walkports.WalkSummary, error) {
 	var matched []domain.WalkRecord
 	for _, rec := range f.walks {
-		if filter.Target != nil && (rec.Target.Path() != filter.Target.Path() || rec.Target.Version() != filter.Target.Version()) {
-			continue
-		}
-		if filter.Since != nil && rec.StartedAt.Before(*filter.Since) {
-			continue
-		}
-		if filter.Until != nil && rec.StartedAt.After(*filter.Until) {
-			continue
-		}
-		if filter.OverallStatus != nil && rec.OverallStatus != *filter.OverallStatus {
-			continue
-		}
-		if filter.Scope != nil && effectiveScope(rec) != *filter.Scope {
-			continue
-		}
-		if filter.Depth != nil && effectiveDepth(rec) != *filter.Depth {
-			continue
-		}
-		if filter.IdentityHash != nil && rec.IdentityHash != *filter.IdentityHash {
-			continue
-		}
-		// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
-		// with the empty string selecting the unrecorded frame rather than any.
-		if filter.BuildEnv != nil &&
-			(rec.Graph.BuildEnv.GOOS != filter.BuildEnv.GOOS || rec.Graph.BuildEnv.GOARCH != filter.BuildEnv.GOARCH) {
+		if !walkMatchesFilter(rec, filter) {
 			continue
 		}
 		matched = append(matched, rec)
@@ -148,6 +124,45 @@ func (f *fakeWalkStore) ListWalks(_ context.Context, filter walkports.WalkFilter
 		summaries = summaries[:filter.Limit]
 	}
 	return summaries, nil
+}
+
+// walkMatchesFilter reports whether rec passes filter's target, time-window
+// and status conditions, and its shape conditions.
+func walkMatchesFilter(rec domain.WalkRecord, filter walkports.WalkFilter) bool {
+	if filter.Target != nil && (rec.Target.Path() != filter.Target.Path() || rec.Target.Version() != filter.Target.Version()) {
+		return false
+	}
+	if filter.Since != nil && rec.StartedAt.Before(*filter.Since) {
+		return false
+	}
+	if filter.Until != nil && rec.StartedAt.After(*filter.Until) {
+		return false
+	}
+	if filter.OverallStatus != nil && rec.OverallStatus != *filter.OverallStatus {
+		return false
+	}
+	return walkMatchesShape(rec, filter)
+}
+
+// walkMatchesShape reports whether rec passes filter's scope, depth, identity
+// and build-environment conditions.
+func walkMatchesShape(rec domain.WalkRecord, filter walkports.WalkFilter) bool {
+	if filter.Scope != nil && effectiveScope(rec) != *filter.Scope {
+		return false
+	}
+	if filter.Depth != nil && effectiveDepth(rec) != *filter.Depth {
+		return false
+	}
+	if filter.IdentityHash != nil && rec.IdentityHash != *filter.IdentityHash {
+		return false
+	}
+	// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
+	// with the empty string selecting the unrecorded frame rather than any.
+	if filter.BuildEnv != nil &&
+		(rec.Graph.BuildEnv.GOOS != filter.BuildEnv.GOOS || rec.Graph.BuildEnv.GOARCH != filter.BuildEnv.GOARCH) {
+		return false
+	}
+	return true
 }
 
 var _ walkports.WalkStore = (*fakeWalkStore)(nil)

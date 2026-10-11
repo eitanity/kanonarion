@@ -305,47 +305,54 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 		// printed entry point first, and says so when its hops carry no versions,
 		// because an unversioned route cannot be checked against another build.
 		if f.Reachable != nil && len(f.Reachable.Routes) > 0 {
-			route := f.Reachable.Routes[0]
-			caveat := ""
-			if !route.IsVersioned() {
-				caveat = " (hops carry no module version)"
-			}
-			_, _ = fmt.Fprintf(stdout, "      route:    entry point first%s\n", caveat)
-			// How control reached each hop, printed under it. A route renders a
-			// direct call and an interface dispatch identically without it, and the
-			// second is the one where the module that supplied the implementation
-			// need not be on the route at all.
-			annotated := routeStatesHopDispatch(route)
-			if !annotated {
-				_, _ = fmt.Fprintln(stdout, "        (no hop says how control reached it: this route was stored before the "+
-					"dispatch annotation was recorded, so no hop here is a direct call unless a re-scan says so)")
-			}
-			for _, hop := range route {
-				_, _ = fmt.Fprintf(stdout, "        %s\n", hop)
-				if annotated {
-					_, _ = fmt.Fprintf(stdout, "          reached by: %s\n", hopDispatchLine(hop.Dispatch))
-				}
-			}
-			// The evidence behind the tag on the heading, printed where the route it
-			// describes is. Naming the root kind is a fact about what starts the
-			// route; it is not a claim that anything is exploitable, and the reason
-			// is what keeps the reader on the first reading.
-			if root.IsRecorded() {
-				_, _ = fmt.Fprintf(stdout, "      root:     %s\n", root)
-				if root.NodeID != "" {
-					_, _ = fmt.Fprintf(stdout, "        node:   %s\n", root.NodeID)
-				}
-				if root.Remedy != "" {
-					_, _ = fmt.Fprintf(stdout, "        next:   %s\n", root.Remedy)
-				}
-			}
-			if extra := len(f.Reachable.Routes) - 1; extra > 0 {
-				_, _ = fmt.Fprintf(stdout, "        (%d further route(s) recorded)\n", extra)
-			}
+			printFindingRoute(stdout, f, root)
 		}
 		if f.ReachabilityNote != "" {
 			_, _ = fmt.Fprintf(stdout, "      reachability: %s\n", f.ReachabilityNote)
 		}
+	}
+}
+
+// printFindingRoute prints the first route entry point first, how control
+// reached each hop, the kind of root it starts at, and how many more routes
+// there are.
+func printFindingRoute(stdout io.Writer, f vuldomain.VulnerabilityFinding, root vuldomain.RouteRoot) {
+	route := f.Reachable.Routes[0]
+	caveat := ""
+	if !route.IsVersioned() {
+		caveat = " (hops carry no module version)"
+	}
+	_, _ = fmt.Fprintf(stdout, "      route:    entry point first%s\n", caveat)
+	// How control reached each hop, printed under it. A route renders a
+	// direct call and an interface dispatch identically without it, and the
+	// second is the one where the module that supplied the implementation
+	// need not be on the route at all.
+	annotated := routeStatesHopDispatch(route)
+	if !annotated {
+		_, _ = fmt.Fprintln(stdout, "        (no hop says how control reached it: this route was stored before the "+
+			"dispatch annotation was recorded, so no hop here is a direct call unless a re-scan says so)")
+	}
+	for _, hop := range route {
+		_, _ = fmt.Fprintf(stdout, "        %s\n", hop)
+		if annotated {
+			_, _ = fmt.Fprintf(stdout, "          reached by: %s\n", hopDispatchLine(hop.Dispatch))
+		}
+	}
+	// The evidence behind the tag on the heading, printed where the route it
+	// describes is. Naming the root kind is a fact about what starts the
+	// route; it is not a claim that anything is exploitable, and the reason
+	// is what keeps the reader on the first reading.
+	if root.IsRecorded() {
+		_, _ = fmt.Fprintf(stdout, "      root:     %s\n", root)
+		if root.NodeID != "" {
+			_, _ = fmt.Fprintf(stdout, "        node:   %s\n", root.NodeID)
+		}
+		if root.Remedy != "" {
+			_, _ = fmt.Fprintf(stdout, "        next:   %s\n", root.Remedy)
+		}
+	}
+	if extra := len(f.Reachable.Routes) - 1; extra > 0 {
+		_, _ = fmt.Fprintf(stdout, "        (%d further route(s) recorded)\n", extra)
 	}
 }
 

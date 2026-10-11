@@ -98,6 +98,13 @@ func TestAuditLicenceResolution_MultipleIsUnresolved(t *testing.T) {
 		t.Errorf("disjunction obligations = %v, want none", arms.Obligations)
 	}
 
+	assertNonElectableResolutions(t)
+}
+
+// assertNonElectableResolutions checks a conjunction offers obligations, not
+// arms, a determined licence resolves, and a read error resolves nothing.
+func assertNonElectableResolutions(t *testing.T) {
+	t.Helper()
 	// A Multiple whose expression is conjunctive offers no election: it is
 	// handed over as obligations, which bind together, and never as arms the
 	// consumer may choose between.
@@ -106,7 +113,7 @@ func TestAuditLicenceResolution_MultipleIsUnresolved(t *testing.T) {
 		Expression:    "MIT AND BSD-3-Clause",
 		OverallStatus: licdomain.LicenseStatusMultiple,
 	}
-	_, _, _, _, arms = auditLicenceResolution(conj, true, nil, "(not run)", "(not run)")
+	_, _, _, _, arms := auditLicenceResolution(conj, true, nil, "(not run)", "(not run)")
 	if arms.Electable != nil {
 		t.Errorf("conjunction electable arms = %v, want none", arms.Electable)
 	}
@@ -116,13 +123,13 @@ func TestAuditLicenceResolution_MultipleIsUnresolved(t *testing.T) {
 
 	// A determined single licence still resolves.
 	det := licdomain.LicenseRecord{PrimarySPDX: "MIT", OverallStatus: licdomain.LicenseStatusDetected}
-	_, _, resolved, _, arms = auditLicenceResolution(det, true, nil, "(not run)", "(not run)")
+	_, _, resolved, _, arms := auditLicenceResolution(det, true, nil, "(not run)", "(not run)")
 	if resolved != "MIT" || arms.Electable != nil || arms.Obligations != nil {
 		t.Errorf("Detected record resolvedSPDX = %q arms %+v, want MIT/none", resolved, arms)
 	}
 
 	// A read error keeps the placeholders and resolves nothing.
-	_, status, resolved, _, _ = auditLicenceResolution(licdomain.LicenseRecord{}, false, errors.New("boom"), "(not run)", "(not run)")
+	_, status, resolved, _, _ := auditLicenceResolution(licdomain.LicenseRecord{}, false, errors.New("boom"), "(not run)", "(not run)")
 	if resolved != "" || status != "(not run)" {
 		t.Errorf("errored lookup = resolved %q status %q, want empty/(not run)", resolved, status)
 	}

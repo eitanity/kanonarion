@@ -9,6 +9,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -59,18 +60,7 @@ func TestFetchRecords_DriftedMeasurementSetAside(t *testing.T) {
 
 	seal := respell(t, s, newer)
 
-	listed, err := s.ListFetchRecords(ctx, coord, "0.4.0")
-	if err != nil || len(listed) != 1 || listed[0].ContentHash != older.ContentHash {
-		t.Fatalf("ListFetchRecords = %d rows, %v; want only the readable measurement", len(listed), err)
-	}
-	got, ok, err := s.GetFetchRecord(ctx, coord, "0.4.0")
-	if err != nil || !ok || got.ContentHash != older.ContentHash {
-		t.Errorf("GetFetchRecord = %s, %v, %v; want the readable measurement", got.ContentHash, ok, err)
-	}
-	got, ok, err = s.ComposeFetchRecord(ctx, coord)
-	if err != nil || !ok || got.ContentHash != older.ContentHash {
-		t.Errorf("ComposeFetchRecord = %s, %v, %v; want the readable measurement", got.ContentHash, ok, err)
-	}
+	assertServesOnly(ctx, t, s, coord, older)
 	if len(reported) == 0 {
 		t.Fatal("nothing reported")
 	}
@@ -90,6 +80,24 @@ func TestFetchRecords_DriftedMeasurementSetAside(t *testing.T) {
 		if !errors.As(err, &none) || len(none.Aside.Rows) != 2 || strings.Contains(err.Error(), "mismatch") {
 			t.Errorf("every measurement set aside: %s = %v, want *recordseal.NothingServable naming both", name, err)
 		}
+	}
+}
+
+// assertServesOnly checks that every fetch read serves older, the one
+// measurement this build can reproduce.
+func assertServesOnly(ctx context.Context, t *testing.T, s *sqlite.Store, coord coordinate.ModuleCoordinate, older domain2.FactRecord) {
+	t.Helper()
+	listed, err := s.ListFetchRecords(ctx, coord, "0.4.0")
+	if err != nil || len(listed) != 1 || listed[0].ContentHash != older.ContentHash {
+		t.Fatalf("ListFetchRecords = %d rows, %v; want only the readable measurement", len(listed), err)
+	}
+	got, ok, err := s.GetFetchRecord(ctx, coord, "0.4.0")
+	if err != nil || !ok || got.ContentHash != older.ContentHash {
+		t.Errorf("GetFetchRecord = %s, %v, %v; want the readable measurement", got.ContentHash, ok, err)
+	}
+	got, ok, err = s.ComposeFetchRecord(ctx, coord)
+	if err != nil || !ok || got.ContentHash != older.ContentHash {
+		t.Errorf("ComposeFetchRecord = %s, %v, %v; want the readable measurement", got.ContentHash, ok, err)
 	}
 }
 

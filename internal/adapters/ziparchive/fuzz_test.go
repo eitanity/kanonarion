@@ -136,26 +136,33 @@ func FuzzArchive(f *testing.F) {
 			_, _ = ziparchive.HashModuleZip(data) //nolint:errcheck // a malformed archive is refused; only a panic fails
 		}
 
-		// ExtractStream must be zip-slip safe: every file it creates stays
-		// under dest. It either errors out on an escaping entry or extracts
-		// safely — never writes outside dest.
-		dest := t.TempDir()
-		if err := ziparchive.ExtractStream(bytes.NewReader(data), dest); err == nil {
-			cleanDest := filepath.Clean(dest)
-			walkErr := filepath.WalkDir(dest, func(p string, _ fs.DirEntry, werr error) error {
-				if werr != nil {
-					return werr
-				}
-				if !strings.HasPrefix(filepath.Clean(p), cleanDest) {
-					t.Fatalf("ExtractStream wrote outside dest: %q not under %q", p, cleanDest)
-				}
-				return nil
-			})
-			if walkErr != nil {
-				t.Fatalf("walking the extracted tree: %v", walkErr)
-			}
-		}
+		checkExtractStreamContained(t, data)
 	})
+}
+
+// checkExtractStreamContained extracts data and fails if any file landed
+// outside the destination.
+func checkExtractStreamContained(t *testing.T, data []byte) {
+	t.Helper()
+	// ExtractStream must be zip-slip safe: every file it creates stays
+	// under dest. It either errors out on an escaping entry or extracts
+	// safely — never writes outside dest.
+	dest := t.TempDir()
+	if err := ziparchive.ExtractStream(bytes.NewReader(data), dest); err == nil {
+		cleanDest := filepath.Clean(dest)
+		walkErr := filepath.WalkDir(dest, func(p string, _ fs.DirEntry, werr error) error {
+			if werr != nil {
+				return werr
+			}
+			if !strings.HasPrefix(filepath.Clean(p), cleanDest) {
+				t.Fatalf("ExtractStream wrote outside dest: %q not under %q", p, cleanDest)
+			}
+			return nil
+		})
+		if walkErr != nil {
+			t.Fatalf("walking the extracted tree: %v", walkErr)
+		}
+	}
 }
 
 // uncompressedTotal sums the declared uncompressed sizes without decompressing,

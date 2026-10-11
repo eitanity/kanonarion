@@ -79,25 +79,7 @@ func TestEveryHashedTypeHasADeterminismGuard(t *testing.T) {
 			owner = owner[:i]
 		}
 		for _, file := range pkg.Syntax {
-			isTest := strings.HasSuffix(pkg.Fset.Position(file.Pos()).Filename, "_test.go")
-			for _, decl := range file.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok {
-					continue
-				}
-				if isTest {
-					if strings.HasSuffix(fn.Name.Name, determinismGuardSuffix) || fn.Name.Name == hashGuardName {
-						guards[owner+" "+fn.Name.Name] = true
-					}
-					continue
-				}
-				if name, ok := sealedTypeName(fn); ok {
-					required[owner+" Test"+name+determinismGuardSuffix] = owner + "." + name
-				}
-				if hashesACollection(fn) {
-					required[owner+" "+hashGuardName] = owner + ".Hash"
-				}
-			}
+			collectGuardsAndSealedTypes(pkg, file, owner, required, guards)
 		}
 	}
 
@@ -130,6 +112,30 @@ func TestEveryHashedTypeHasADeterminismGuard(t *testing.T) {
 	sort.Strings(keys)
 	for _, k := range keys {
 		t.Logf("%s guarded by %s", required[k], k)
+	}
+}
+
+// collectGuardsAndSealedTypes records the determinism guards a test file
+// declares, or the guards a source file's sealed types and hashes require.
+func collectGuardsAndSealedTypes(pkg *packages.Package, file *ast.File, owner string, required map[string]string, guards map[string]bool) {
+	isTest := strings.HasSuffix(pkg.Fset.Position(file.Pos()).Filename, "_test.go")
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if isTest {
+			if strings.HasSuffix(fn.Name.Name, determinismGuardSuffix) || fn.Name.Name == hashGuardName {
+				guards[owner+" "+fn.Name.Name] = true
+			}
+			continue
+		}
+		if name, ok := sealedTypeName(fn); ok {
+			required[owner+" Test"+name+determinismGuardSuffix] = owner + "." + name
+		}
+		if hashesACollection(fn) {
+			required[owner+" "+hashGuardName] = owner + ".Hash"
+		}
 	}
 }
 

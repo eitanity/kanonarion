@@ -157,6 +157,19 @@ func printLicenseDiff(diff domain.LicenseDiff, stdout io.Writer) error {
 		}
 	}
 
+	if err := printLicenseDiffFiles(diff, stdout); err != nil {
+		return err
+	}
+
+	if err := printLicenseDiffCopyright(diff, stdout); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// printLicenseDiffFiles lists the licence files added and removed.
+func printLicenseDiffFiles(diff domain.LicenseDiff, stdout io.Writer) error {
 	if len(diff.FilesAdded) > 0 {
 		if _, err := fmt.Fprintf(stdout, "\nFiles added (%d):\n", len(diff.FilesAdded)); err != nil {
 			return fmt.Errorf("writing files added header: %w", err)
@@ -178,7 +191,11 @@ func printLicenseDiff(diff domain.LicenseDiff, stdout io.Writer) error {
 			}
 		}
 	}
+	return nil
+}
 
+// printLicenseDiffCopyright lists the copyright statements added and removed.
+func printLicenseDiffCopyright(diff domain.LicenseDiff, stdout io.Writer) error {
 	if len(diff.CopyrightAdded) > 0 {
 		if _, err := fmt.Fprintf(stdout, "\nCopyright added (%d):\n", len(diff.CopyrightAdded)); err != nil {
 			return fmt.Errorf("writing copyright added header: %w", err)
@@ -200,7 +217,6 @@ func printLicenseDiff(diff domain.LicenseDiff, stdout io.Writer) error {
 			}
 		}
 	}
-
 	return nil
 }
 

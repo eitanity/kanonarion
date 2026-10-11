@@ -466,6 +466,13 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 		t.Fatalf("signing the bundle root: %v", serr)
 	}
 
+	assertAirgapRoundTrip(ctx, t, rec)
+}
+
+// assertAirgapRoundTrip ingests the record into a fresh consumer store, reads
+// it back verified, and checks a tampered copy is refused.
+func assertAirgapRoundTrip(ctx context.Context, t *testing.T, rec kanonarion.CompositeRecord) {
+	t.Helper()
 	consumer, cleanupC, err := kanonarion.OpenDriver(t.TempDir())
 	if err != nil {
 		t.Fatalf("OpenDriver (consumer): %v", err)

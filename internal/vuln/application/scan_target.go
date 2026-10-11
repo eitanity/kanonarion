@@ -71,28 +71,11 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	// target's published zip extracted into a scratch directory; there is no
 	// working tree, so there is no vendor/ tree that could be the surface.
 
-	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, target)
-	if interrupt.Cancelled(ctx, err) {
-		return false, fmt.Errorf("reading the fetch record of %s: %w", target, err)
-	}
+	zipIdentity, ok, err := uc.targetZip(ctx, target)
 	if err != nil {
-		uc.logger.Warn("target-rooted scan: could not read the target's fetch record, falling back to isolated scans",
-			"target", target, "error", err)
-		return false, nil
+		return false, err
 	}
-	if !ok || fact.IsGoModOnly() {
-		// A shallow walk holds no zip for the target, so there is nothing to root
-		// the analysis at. A go.mod-only record likewise carries no source. Either
-		// way the isolated path is the honest answer here.
-		uc.logger.Info("target-rooted scan: target module has no source in the blob store, falling back to isolated scans",
-			"target", target)
-		return false, nil
-	}
-
-	zipIdentity, hasZip, err := fetchports.ZipIdentity(fact)
-	if err != nil || !hasZip {
-		uc.logger.Info("target-rooted scan: the target's fact record names no module zip, falling back to isolated scans",
-			"target", target)
+	if !ok {
 		return false, nil
 	}
 	blob, err := uc.moduleScanner.blobs.Get(ctx, zipIdentity)
@@ -142,6 +125,46 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		return false, nil
 	}
 
+	if err := uc.recordTargetRootedAnswers(ctx, root, target, allCoords, result, params, snapshot, out); err != nil {
+		return false, err
+	}
+	uc.logger.Info("target-rooted scan derived answers for the walk", "target", target, "modules", len(allCoords))
+	return true, nil
+}
+
+// targetZip names the target's module zip; ok is false when there is none to
+// root the analysis at, and the isolated path answers instead.
+func (uc *ScanWalkUseCase) targetZip(ctx context.Context, target coordinate.ModuleCoordinate) (fetchports.BlobIdentity, bool, error) {
+	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, target)
+	if interrupt.Cancelled(ctx, err) {
+		return fetchports.BlobIdentity{}, false, fmt.Errorf("reading the fetch record of %s: %w", target, err)
+	}
+	if err != nil {
+		uc.logger.Warn("target-rooted scan: could not read the target's fetch record, falling back to isolated scans",
+			"target", target, "error", err)
+		return fetchports.BlobIdentity{}, false, nil
+	}
+	if !ok || fact.IsGoModOnly() {
+		// A shallow walk holds no zip for the target, so there is nothing to root
+		// the analysis at. A go.mod-only record likewise carries no source. Either
+		// way the isolated path is the honest answer here.
+		uc.logger.Info("target-rooted scan: target module has no source in the blob store, falling back to isolated scans",
+			"target", target)
+		return fetchports.BlobIdentity{}, false, nil
+	}
+
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(fact)
+	if err != nil || !hasZip {
+		uc.logger.Info("target-rooted scan: the target's fact record names no module zip, falling back to isolated scans",
+			"target", target)
+		return fetchports.BlobIdentity{}, false, nil //nolint:nilerr // an underivable zip address falls back to isolated scans, as logged
+	}
+	return zipIdentity, true, nil
+}
+
+// recordTargetRootedAnswers persists one record per module of the walk from
+// the target-rooted analysis, its coordinate matches merged in.
+func (uc *ScanWalkUseCase) recordTargetRootedAnswers(ctx context.Context, root, target coordinate.ModuleCoordinate, allCoords []coordinate.ModuleCoordinate, result domain.ProjectScanResult, params ScanWalkParams, snapshot *domain.DatabaseSnapshot, out map[coordinate.ModuleCoordinate]moduleResult) error {
 	for _, coord := range allCoords {
 		findings := copyFindings(projectFindingsFor(result.FindingsByModule, coord))
 
@@ -159,7 +182,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		// matches carry no reachability rather than a fabricated not-reachable.
 		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target, *snapshot)
 		if interrupt.Cancelled(ctx, err) {
-			return false, fmt.Errorf("matching advisories for %s: %w", coord, err)
+			return fmt.Errorf("matching advisories for %s: %w", coord, err)
 		}
 		if err != nil {
 			// A coordinate whose advisory set could not be read has not been
@@ -168,7 +191,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 			uc.logger.Error("target-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
 			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), failurecause.Unrecorded, domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot)
 			if perr != nil {
-				return false, perr
+				return perr
 			}
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
@@ -181,12 +204,11 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		)
 		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", failurecause.Unrecorded, domain.AnalysisSurfaceFetched, result.Toolchain, params, snapshot)
 		if perr != nil {
-			return false, perr
+			return perr
 		}
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
-	uc.logger.Info("target-rooted scan derived answers for the walk", "target", target, "modules", len(allCoords))
-	return true, nil
+	return nil
 }
 
 // recordTargetFrameGap persists the run's own statement that it could not root

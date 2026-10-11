@@ -68,32 +68,7 @@ func TestNoBareAggregateOverAWidenedStamp(t *testing.T) {
 			return fmt.Errorf("parsing %s: %w", path, perr)
 		}
 		files++
-		ast.Inspect(file, func(n ast.Node) bool {
-			lit, ok := n.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				return true
-			}
-			value, uerr := strconv.Unquote(lit.Value)
-			if uerr != nil {
-				return true
-			}
-			literals++
-			for col := range widenedStampColumns {
-				if mentionsColumn(value, col) {
-					seen[col] = true
-				}
-			}
-			for _, defect := range bareStampAggregates(value) {
-				pos := fset.Position(lit.Pos())
-				t.Errorf("%s:%d aggregates a widened timestamp as text (%s, %s) — the column holds a "+
-					"whole second and a fixed-width fraction, and \"…53.9Z\" sorts BEFORE \"…53Z\", so "+
-					"MAX returns the earlier instant and MIN the later one. Wrap the column in "+
-					"sqlitestore.SortableStamp",
-					strings.TrimPrefix(filepath.ToSlash(path), "../"), pos.Line,
-					defect.expr, widenedStampColumns[defect.column])
-			}
-			return true
-		})
+		literals += checkStampAggregates(t, fset, file, path, seen)
 		return nil
 	})
 	if err != nil {
@@ -115,6 +90,40 @@ func TestNoBareAggregateOverAWidenedStamp(t *testing.T) {
 		t.Errorf("widenedStampColumns names %q (%s), which no SQL in the tree mentions any more — remove the entry",
 			col, widenedStampColumns[col])
 	}
+}
+
+// checkStampAggregates reports each string literal in file that aggregates a
+// widened timestamp as text, returning how many string literals it read.
+func checkStampAggregates(t *testing.T, fset *token.FileSet, file *ast.File, path string, seen map[string]bool) int {
+	t.Helper()
+	literals := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		value, uerr := strconv.Unquote(lit.Value)
+		if uerr != nil {
+			return true
+		}
+		literals++
+		for col := range widenedStampColumns {
+			if mentionsColumn(value, col) {
+				seen[col] = true
+			}
+		}
+		for _, defect := range bareStampAggregates(value) {
+			pos := fset.Position(lit.Pos())
+			t.Errorf("%s:%d aggregates a widened timestamp as text (%s, %s) — the column holds a "+
+				"whole second and a fixed-width fraction, and \"…53.9Z\" sorts BEFORE \"…53Z\", so "+
+				"MAX returns the earlier instant and MIN the later one. Wrap the column in "+
+				"sqlitestore.SortableStamp",
+				strings.TrimPrefix(filepath.ToSlash(path), "../"), pos.Line,
+				defect.expr, widenedStampColumns[defect.column])
+		}
+		return true
+	})
+	return literals
 }
 
 // TestStampAggregateGuardCatchesAPlantedAggregate is the control: without it the

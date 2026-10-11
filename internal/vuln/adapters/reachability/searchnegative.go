@@ -671,15 +671,7 @@ func joinProjections(consumer, subject ports.CallGraphProjection, linked []strin
 	for _, pkg := range linked {
 		inClosure[pkg] = true
 	}
-	pkgOf := make(map[string]string, len(subject.Nodes))
-	for _, n := range subject.Nodes {
-		pkgOf[n.ID] = n.Package
-		if n.IsTest && !keepUnlinked {
-			// A dependency's test code is not compiled into the build that
-			// depends on it, so it is outside the closure like an unlinked package.
-			pkgOf[n.ID] = testOnly
-		}
-	}
+	pkgOf := subjectPackages(subject, keepUnlinked)
 	owned := make(map[string]bool, len(consumer.Nodes))
 	for _, n := range consumer.Nodes {
 		if !n.IsExternal {
@@ -718,14 +710,7 @@ func joinProjections(consumer, subject ports.CallGraphProjection, linked []strin
 		edges = append(edges, e)
 	}
 
-	var reflect []ports.CallGraphReflectSite
-	reflect = append(reflect, consumer.ReflectiveDispatch...)
-	for _, site := range subject.ReflectiveDispatch {
-		if !inBuild(inClosure, pkgOf, site.CallerID) {
-			continue
-		}
-		reflect = append(reflect, site)
-	}
+	reflect := joinReflectSites(consumer, subject, inClosure, pkgOf)
 
 	return ports.CallGraphProjection{
 		Nodes: nodes,
@@ -740,6 +725,35 @@ func joinProjections(consumer, subject ports.CallGraphProjection, linked []strin
 		StdlibPackages:     consumer.StdlibPackages,
 		DependencyPackages: consumer.DependencyPackages,
 	}
+}
+
+// subjectPackages maps each subject node to its package, or to testOnly for
+// test code the dependent build does not compile.
+func subjectPackages(subject ports.CallGraphProjection, keepUnlinked bool) map[string]string {
+	pkgOf := make(map[string]string, len(subject.Nodes))
+	for _, n := range subject.Nodes {
+		pkgOf[n.ID] = n.Package
+		if n.IsTest && !keepUnlinked {
+			// A dependency's test code is not compiled into the build that
+			// depends on it, so it is outside the closure like an unlinked package.
+			pkgOf[n.ID] = testOnly
+		}
+	}
+	return pkgOf
+}
+
+// joinReflectSites is the consumer's reflective dispatch sites and the
+// subject's that sit in a package this build links.
+func joinReflectSites(consumer, subject ports.CallGraphProjection, inClosure map[string]bool, pkgOf map[string]string) []ports.CallGraphReflectSite {
+	var reflect []ports.CallGraphReflectSite
+	reflect = append(reflect, consumer.ReflectiveDispatch...)
+	for _, site := range subject.ReflectiveDispatch {
+		if !inBuild(inClosure, pkgOf, site.CallerID) {
+			continue
+		}
+		reflect = append(reflect, site)
+	}
+	return reflect
 }
 
 // unjoinedCalls lists, sorted, every external node outside the standard

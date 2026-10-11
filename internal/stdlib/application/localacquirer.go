@@ -88,29 +88,8 @@ func (a *LocalAcquirer) Acquire(ctx context.Context, goVersionRaw string, opts O
 	}
 
 	if !opts.Force {
-		facts, ok, err := a.store.Get(ctx, version)
-		if errors.As(err, new(*recordseal.NothingServable)) {
-			// Every held measurement was set aside and the store named each; this
-			// build measures one it can serve.
-			a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_set_aside", slog.String("go_version", version))
-			ok, err = false, nil
-		}
-		if err != nil {
-			return domain.Facts{}, fmt.Errorf("reading stdlib fact cache for %s: %w", version, err)
-		}
-		switch {
-		case ok && domain.ServesAsCacheHit(facts):
-			// Including facts a prior online run established: composition serves the
-			// most definite anchor, so a mixed pipeline never downgrades a stronger one.
-			// That property used to depend on this cache check returning whatever was
-			// stored; it now holds because of what composition serves, which is the
-			// stronger place for it.
-			a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_hit", slog.String("go_version", version))
-			return facts, nil
-		case ok:
-			a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_ineligible",
-				slog.String("go_version", version),
-				slog.String("verification", string(facts.VerificationStatus)))
+		if facts, hit, err := a.cachedFacts(ctx, version); err != nil || hit {
+			return facts, err
 		}
 	}
 
@@ -179,6 +158,36 @@ func (a *LocalAcquirer) Acquire(ctx context.Context, goVersionRaw string, opts O
 	}
 
 	return facts, nil
+}
+
+// cachedFacts serves the held measurement when it may answer as a cache hit;
+// hit reports that it did.
+func (a *LocalAcquirer) cachedFacts(ctx context.Context, version string) (domain.Facts, bool, error) {
+	facts, ok, err := a.store.Get(ctx, version)
+	if errors.As(err, new(*recordseal.NothingServable)) {
+		// Every held measurement was set aside and the store named each; this
+		// build measures one it can serve.
+		a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_set_aside", slog.String("go_version", version))
+		ok, err = false, nil
+	}
+	if err != nil {
+		return domain.Facts{}, false, fmt.Errorf("reading stdlib fact cache for %s: %w", version, err)
+	}
+	switch {
+	case ok && domain.ServesAsCacheHit(facts):
+		// Including facts a prior online run established: composition serves the
+		// most definite anchor, so a mixed pipeline never downgrades a stronger one.
+		// That property used to depend on this cache check returning whatever was
+		// stored; it now holds because of what composition serves, which is the
+		// stronger place for it.
+		a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_hit", slog.String("go_version", version))
+		return facts, true, nil
+	case ok:
+		a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_ineligible",
+			slog.String("go_version", version),
+			slog.String("verification", string(facts.VerificationStatus)))
+	}
+	return domain.Facts{}, false, nil
 }
 
 // identifyLicense reads and classifies $GOROOT/LICENSE. It returns the SPDX

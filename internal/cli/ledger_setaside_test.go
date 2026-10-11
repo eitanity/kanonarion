@@ -552,12 +552,19 @@ func TestContext_LicenceAndExampleSectionsNameWhatTheySetAside(t *testing.T) {
 		t.Errorf("stderr repeats what the document carries:\n%s", stderr)
 	}
 
-	stdout, stderr, err = runAside("context", asideMixed.String(), "--store-root", root)
+	assertContextTextNamesSetAside(t, root, doc.License.SetAside[0].ContentHash)
+}
+
+// assertContextTextNamesSetAside checks the text form names the set-aside
+// generations in its sections and not again on stderr.
+func assertContextTextNamesSetAside(t *testing.T, root, licenceHash string) {
+	t.Helper()
+	stdout, stderr, err := runAside("context", asideMixed.String(), "--store-root", root)
 	if err != nil {
 		t.Fatalf("context = %v\n%s", err, stderr)
 	}
 	for _, want := range []string{
-		"Set aside:       " + asideMixed.String() + " content_hash " + doc.License.SetAside[0].ContentHash,
+		"Set aside:       " + asideMixed.String() + " content_hash " + licenceHash,
 		"Examples:        (no record this build can serve — ",
 	} {
 		if !strings.Contains(stdout, want) {

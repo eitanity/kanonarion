@@ -106,64 +106,16 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	// scan; source mode does the full SSA + call-graph analysis.
 	var build func(childEnv []string) *exec.Cmd
 	if scanMode == domain.ScanModeBinary {
-		pkg := findFirstGoPackage(scanDir)
-		s.logger.Info("vuln-scan: binary mode — building test binary", "dir", scanDir, "pkg", pkg)
-		tmpBin := filepath.Join(tmpDir, "vuln-test.bin")
-		// Built with cgo off. This is the one scan child that would hand an
-		// untrusted module's C source, headers and include paths to the system C
-		// compiler, and binary mode reads a symbol table, so nothing about the
-		// answer needs it. A module that will not build without cgo takes the
-		// buildErr branch below to source mode, which still answers.
-		out, buildErr := runGoChild(ctx, toolchains, withCgoDisabled(env), scanDir, "test", "-c", "-o", tmpBin, pkg)
-		if serr := stoppedScan(ctx, buildErr); serr != nil {
-			return domain.VulnerabilityRecord{}, serr
-		}
-		_, statErr := os.Stat(tmpBin)
-		switch {
-		case buildErr != nil:
-			s.logger.Warn("vuln-scan: binary build failed, falling back to source mode",
-				"error", buildErr, "output", string(out))
-			scanMode = domain.ScanModeSource
-		case statErr != nil:
-			// go test -c exits 0 without creating a binary when there are no test files.
-			s.logger.Warn("vuln-scan: test binary not created (no test files?), falling back to source mode",
-				"pkg", pkg, "output", string(out))
-			scanMode = domain.ScanModeSource
-		default:
-			s.logger.Info("vuln-scan: test binary built, running govulncheck -mode=binary", "binary", tmpBin)
-			build = func(childEnv []string) *exec.Cmd {
-				cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
-				cmd.Env = childEnv
-				return cmd
-			}
-			s.logMem(ctx, "binary_built")
+		var berr error
+		build, scanMode, berr = s.binaryModeBuild(ctx, toolchains, env, scanDir, tmpDir, tool, dbArg, scanMode)
+		if berr != nil {
+			return domain.VulnerabilityRecord{}, berr
 		}
 	}
 	if scanMode != domain.ScanModeBinary {
-		// Source mode: download deps then run govulncheck source analysis.
-		s.logger.Info("vuln-scan: downloading dependencies", "dir", scanDir)
-		out, dlErr := runGoChild(ctx, toolchains, env, scanDir, "mod", "download")
-		if serr := stoppedScan(ctx, dlErr); serr != nil {
+		var serr error
+		if build, serr = s.sourceModeBuild(ctx, toolchains, env, scanDir, tool, dbArg); serr != nil {
 			return domain.VulnerabilityRecord{}, serr
-		}
-		if dlErr != nil {
-			// Source mode continues regardless: a download failure often just means
-			// the module's isolated build needs a version outside the project's
-			// pinned cache — an expected out-of-toolchain outcome the application
-			// classifies from the returned error. Severity for that error is owned
-			// by the application layer, so this precursor stays at debug (the full
-			// output is available at --log-level debug) rather than a misleading warn.
-			s.logger.Debug("vuln-scan: go mod download failed", "error", dlErr, "output", string(out))
-		} else {
-			s.logger.Debug("vuln-scan: go mod download succeeded", "output", string(out))
-		}
-		s.logMem(ctx, "deps_downloaded")
-		s.logger.Info("vuln-scan: running govulncheck source mode", "dir", scanDir, "db", dbArg)
-		build = func(childEnv []string) *exec.Cmd {
-			cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
-			cmd.Dir = scanDir
-			cmd.Env = childEnv
-			return cmd
 		}
 	}
 
@@ -185,30 +137,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 	toolchainVersion = ranToolchain(ctx, toolchains, env, scanDir, toolchainVersion)
 	s.logMem(ctx, "output_parsed")
 	if run.waitErr != nil {
-		waitErr, stderrStr := run.waitErr, run.detail
-		// This error is handed back to the application to classify: an
-		// out-of-toolchain module reads as an expected metadata-only outcome
-		// (logged at info by reason), a genuine crash as a warn — both from the
-		// application layer that owns severity. Logging it at warn here would dump
-		// govulncheck's stderr for every expected out-of-toolchain module,
-		// contradicting that classification. The stderr stays available at debug.
-		if serr := stoppedScan(ctx, waitErr); serr != nil {
-			return domain.VulnerabilityRecord{}, serr
-		}
-		s.logger.Debug("vuln-scan: govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
-		f := classifyScanFailure(waitErr, stderrStr, tool)
-		return domain.VulnerabilityRecord{
-			Coordinate:        coord,
-			Findings:          nil,
-			OverallStatus:     f.status,
-			UnscanReason:      f.unscanReason,
-			ErrorDetail:       f.errorDetail,
-			UnscannableReason: f.unscannableReason,
-			FailureCause:      f.cause,
-			DatabaseSnapshot:  snapshot,
-			ScannedAt:         time.Now(),
-			PipelineVersion:   s.pipelineVersion,
-		}, nil
+		return s.failedScanRecord(ctx, run, tool, coord, snapshot)
 	}
 	if run.parseErr != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), run.parseErr)
@@ -234,6 +163,105 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (rec domain.V
 		ScannedAt:        time.Now(),
 		PipelineVersion:  s.pipelineVersion,
 	}, nil
+}
+
+// sourceModeBuild downloads the module's dependencies and returns the command
+// that runs govulncheck's source analysis over it.
+func (s *Scanner) sourceModeBuild(ctx context.Context, toolchains *goenv.Toolchains, env []string, scanDir string, tool resolvedTool, dbArg string) (func(childEnv []string) *exec.Cmd, error) {
+	// Source mode: download deps then run govulncheck source analysis.
+	s.logger.Info("vuln-scan: downloading dependencies", "dir", scanDir)
+	out, dlErr := runGoChild(ctx, toolchains, env, scanDir, "mod", "download")
+	if serr := stoppedScan(ctx, dlErr); serr != nil {
+		return nil, serr
+	}
+	if dlErr != nil {
+		// Source mode continues regardless: a download failure often just means
+		// the module's isolated build needs a version outside the project's
+		// pinned cache — an expected out-of-toolchain outcome the application
+		// classifies from the returned error. Severity for that error is owned
+		// by the application layer, so this precursor stays at debug (the full
+		// output is available at --log-level debug) rather than a misleading warn.
+		s.logger.Debug("vuln-scan: go mod download failed", "error", dlErr, "output", string(out))
+	} else {
+		s.logger.Debug("vuln-scan: go mod download succeeded", "output", string(out))
+	}
+	s.logMem(ctx, "deps_downloaded")
+	s.logger.Info("vuln-scan: running govulncheck source mode", "dir", scanDir, "db", dbArg)
+	return func(childEnv []string) *exec.Cmd {
+		cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+		cmd.Dir = scanDir
+		cmd.Env = childEnv
+		return cmd
+	}, nil
+}
+
+// failedScanRecord is the record of a govulncheck run that exited with an
+// error, classified from what it said.
+func (s *Scanner) failedScanRecord(ctx context.Context, run scanChildResult, tool resolvedTool, coord coordinate.ModuleCoordinate, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, error) {
+	waitErr, stderrStr := run.waitErr, run.detail
+	// This error is handed back to the application to classify: an
+	// out-of-toolchain module reads as an expected metadata-only outcome
+	// (logged at info by reason), a genuine crash as a warn — both from the
+	// application layer that owns severity. Logging it at warn here would dump
+	// govulncheck's stderr for every expected out-of-toolchain module,
+	// contradicting that classification. The stderr stays available at debug.
+	if serr := stoppedScan(ctx, waitErr); serr != nil {
+		return domain.VulnerabilityRecord{}, serr
+	}
+	s.logger.Debug("vuln-scan: govulncheck exited with error", "error", waitErr, "stderr", stderrStr)
+	f := classifyScanFailure(waitErr, stderrStr, tool)
+	return domain.VulnerabilityRecord{
+		Coordinate:        coord,
+		Findings:          nil,
+		OverallStatus:     f.status,
+		UnscanReason:      f.unscanReason,
+		ErrorDetail:       f.errorDetail,
+		UnscannableReason: f.unscannableReason,
+		FailureCause:      f.cause,
+		DatabaseSnapshot:  snapshot,
+		ScannedAt:         time.Now(),
+		PipelineVersion:   s.pipelineVersion,
+	}, nil
+}
+
+// binaryModeBuild builds a test binary for a symbol-table scan and returns the
+// command that scans it. It returns source mode instead when no binary could
+// be built.
+func (s *Scanner) binaryModeBuild(ctx context.Context, toolchains *goenv.Toolchains, env []string, scanDir, tmpDir string, tool resolvedTool, dbArg string, scanMode domain.ScanMode) (func(childEnv []string) *exec.Cmd, domain.ScanMode, error) {
+	var build func(childEnv []string) *exec.Cmd
+	pkg := findFirstGoPackage(scanDir)
+	s.logger.Info("vuln-scan: binary mode — building test binary", "dir", scanDir, "pkg", pkg)
+	tmpBin := filepath.Join(tmpDir, "vuln-test.bin")
+	// Built with cgo off. This is the one scan child that would hand an
+	// untrusted module's C source, headers and include paths to the system C
+	// compiler, and binary mode reads a symbol table, so nothing about the
+	// answer needs it. A module that will not build without cgo takes the
+	// buildErr branch below to source mode, which still answers.
+	out, buildErr := runGoChild(ctx, toolchains, withCgoDisabled(env), scanDir, "test", "-c", "-o", tmpBin, pkg)
+	if serr := stoppedScan(ctx, buildErr); serr != nil {
+		return nil, scanMode, serr
+	}
+	_, statErr := os.Stat(tmpBin)
+	switch {
+	case buildErr != nil:
+		s.logger.Warn("vuln-scan: binary build failed, falling back to source mode",
+			"error", buildErr, "output", string(out))
+		scanMode = domain.ScanModeSource
+	case statErr != nil:
+		// go test -c exits 0 without creating a binary when there are no test files.
+		s.logger.Warn("vuln-scan: test binary not created (no test files?), falling back to source mode",
+			"pkg", pkg, "output", string(out))
+		scanMode = domain.ScanModeSource
+	default:
+		s.logger.Info("vuln-scan: test binary built, running govulncheck -mode=binary", "binary", tmpBin)
+		build = func(childEnv []string) *exec.Cmd {
+			cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
+			cmd.Env = childEnv
+			return cmd
+		}
+		s.logMem(ctx, "binary_built")
+	}
+	return build, scanMode, nil
 }
 
 // prepareFault is a condition that leaves a module unanalysable before

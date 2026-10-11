@@ -257,30 +257,39 @@ func printRecordText(r domain.InterfaceRecord, idx promotionIndex, stdout io.Wri
 			unreadSuffix(r.AnalyserLimit, r.Coordinate.Path(), pkg.ImportPath)); err != nil {
 			return fmt.Errorf("writing package header: %w", err)
 		}
-		for _, t := range pkg.Types {
-			if err := printTypeText(t, pkg.ImportPath, idx, stdout); err != nil {
-				return err
-			}
+		if err := printPackageDeclarations(pkg, idx, stdout); err != nil {
+			return err
 		}
-		for _, f := range pkg.Funcs {
-			if _, err := fmt.Fprintf(stdout, "  %s\n", f.Signature); err != nil {
-				return fmt.Errorf("writing func: %w", err)
-			}
+	}
+	return nil
+}
+
+// printPackageDeclarations prints a package's types, funcs, consts and vars,
+// then the files that would not parse.
+func printPackageDeclarations(pkg domain.PackageInterface, idx promotionIndex, stdout io.Writer) error {
+	for _, t := range pkg.Types {
+		if err := printTypeText(t, pkg.ImportPath, idx, stdout); err != nil {
+			return err
 		}
-		for _, c := range pkg.Consts {
-			if _, err := fmt.Fprintf(stdout, "  const %s\n", valueText(c)); err != nil {
-				return fmt.Errorf("writing const: %w", err)
-			}
+	}
+	for _, f := range pkg.Funcs {
+		if _, err := fmt.Fprintf(stdout, "  %s\n", f.Signature); err != nil {
+			return fmt.Errorf("writing func: %w", err)
 		}
-		for _, v := range pkg.Vars {
-			if _, err := fmt.Fprintf(stdout, "  var %s\n", valueText(v)); err != nil {
-				return fmt.Errorf("writing var: %w", err)
-			}
+	}
+	for _, c := range pkg.Consts {
+		if _, err := fmt.Fprintf(stdout, "  const %s\n", valueText(c)); err != nil {
+			return fmt.Errorf("writing const: %w", err)
 		}
-		for _, pf := range pkg.ParseFailures {
-			if _, err := fmt.Fprintf(stdout, "  [parse failure] %s: %s\n", pf.File, pf.Error); err != nil {
-				return fmt.Errorf("writing parse failure: %w", err)
-			}
+	}
+	for _, v := range pkg.Vars {
+		if _, err := fmt.Fprintf(stdout, "  var %s\n", valueText(v)); err != nil {
+			return fmt.Errorf("writing var: %w", err)
+		}
+	}
+	for _, pf := range pkg.ParseFailures {
+		if _, err := fmt.Fprintf(stdout, "  [parse failure] %s: %s\n", pf.File, pf.Error); err != nil {
+			return fmt.Errorf("writing parse failure: %w", err)
 		}
 	}
 	return nil

@@ -611,6 +611,37 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	             goos, goarch, go_version
 	      FROM walks`
 	}
+	conditions, args := walkFilterConditions(f)
+
+	for i, c := range conditions {
+		if i == 0 && !f.LatestOnly {
+			q += " WHERE " + c
+		} else {
+			q += " AND " + c
+		}
+	}
+	// id breaks the tie. started_at is a second-resolution timestamp and two
+	// walks can share it; without a tiebreak the row order within a second is
+	// whatever the query plan produced, and a page boundary falling inside one
+	// can repeat a row or drop it.
+	q += " ORDER BY julianday(started_at) DESC, id DESC"
+	if f.Limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, f.Limit)
+		if f.Offset > 0 {
+			q += " OFFSET ?"
+			args = append(args, f.Offset)
+		}
+	} else if f.Offset > 0 {
+		q += " LIMIT -1 OFFSET ?"
+		args = append(args, f.Offset)
+	}
+	return q, args
+}
+
+// walkFilterConditions is the WHERE conditions f asks for, with their
+// arguments, in a fixed order.
+func walkFilterConditions(f walkports.WalkFilter) ([]string, []any) {
 	var conditions []string
 	var args []any
 
@@ -666,31 +697,7 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 		conditions = append(conditions, "depth = ?")
 		args = append(args, d)
 	}
-
-	for i, c := range conditions {
-		if i == 0 && !f.LatestOnly {
-			q += " WHERE " + c
-		} else {
-			q += " AND " + c
-		}
-	}
-	// id breaks the tie. started_at is a second-resolution timestamp and two
-	// walks can share it; without a tiebreak the row order within a second is
-	// whatever the query plan produced, and a page boundary falling inside one
-	// can repeat a row or drop it.
-	q += " ORDER BY julianday(started_at) DESC, id DESC"
-	if f.Limit > 0 {
-		q += " LIMIT ?"
-		args = append(args, f.Limit)
-		if f.Offset > 0 {
-			q += " OFFSET ?"
-			args = append(args, f.Offset)
-		}
-	} else if f.Offset > 0 {
-		q += " LIMIT -1 OFFSET ?"
-		args = append(args, f.Offset)
-	}
-	return q, args
+	return conditions, args
 }
 
 // Ensure Store implements ports.WalkStore at compile time.

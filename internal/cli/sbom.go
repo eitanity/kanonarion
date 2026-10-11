@@ -250,20 +250,9 @@ func sbomGenerateWith(
 		}
 	}
 
-	var err error
-	var allowList []coordinate.ModuleCoordinate
-	if f.packagePattern != "" {
-		var aerr error
-		allowList, aerr = buildPackageAllowList(ctx, f.packagePattern)
-		if aerr != nil {
-			return aerr
-		}
-		if walkID == "" {
-			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, f.force, f.stdlibFromGoMod, f.noProgress, f.policyPath, stderr)
-			if err != nil {
-				return err
-			}
-		}
+	allowList, walkID, err := sbomPackageScope(ctx, ctr, walkID, f, stderr)
+	if err != nil {
+		return err
 	}
 
 	req := application.SBOMRequest{
@@ -346,6 +335,27 @@ func sbomGenerateWith(
 		}
 	}
 	return nil
+}
+
+// sbomPackageScope is the import closure --package names, and the walk it is
+// read from, built when none was named.
+func sbomPackageScope(ctx context.Context, ctr *Container, walkID string, f sbomFlags, stderr io.Writer) ([]coordinate.ModuleCoordinate, string, error) {
+	var err error
+	var allowList []coordinate.ModuleCoordinate
+	if f.packagePattern != "" {
+		var aerr error
+		allowList, aerr = buildPackageAllowList(ctx, f.packagePattern)
+		if aerr != nil {
+			return nil, walkID, aerr
+		}
+		if walkID == "" {
+			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, f.force, f.stdlibFromGoMod, f.noProgress, f.policyPath, stderr)
+			if err != nil {
+				return nil, walkID, err
+			}
+		}
+	}
+	return allowList, walkID, nil
 }
 
 // parseGeneratedAt reads the --generated-at flag. An empty value is not an

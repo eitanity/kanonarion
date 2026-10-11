@@ -86,59 +86,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("List with filters", func(t *testing.T) {
-		// Add another run
-		run2 := run
-		run2.ID = "run-2"
-		run2.WalkID = "walk-2"
-		run2.OverallStatus = domain.ExtractionRunPartial
-		run2, serr := hasher.SetContentHash(run2)
-		if serr != nil {
-			t.Fatalf("SetContentHash: %v", serr)
-		}
-		if perr := store.PutExtractionRun(ctx, run2); perr != nil {
-			t.Fatalf("PutExtractionRun: %v", perr)
-		}
-
-		summaries, lerr := store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})
-		if lerr != nil {
-			t.Fatalf("ListExtractionRuns failed: %v", lerr)
-		}
-		if len(summaries) != 2 {
-			t.Errorf("got %d summaries, want 2", len(summaries))
-		}
-
-		// Filter by WalkID
-		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{WalkID: "walk-2"})
-		if len(summaries) != 1 || summaries[0].ID != "run-2" {
-			t.Errorf("WalkID filter failed: got %v", summaries)
-		}
-
-		// Filter by Status
-		partial := domain.ExtractionRunPartial
-		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{OverallStatus: &partial})
-		if len(summaries) != 1 || summaries[0].ID != "run-2" {
-			t.Errorf("Status filter failed: got %v", summaries)
-		}
-
-		// Filter by Since/Until
-		since := run.StartedAt.Add(-time.Hour)
-		until := run.StartedAt.Add(time.Hour)
-		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{Since: &since, Until: &until})
-		if len(summaries) < 1 {
-			t.Errorf("Since/Until filter failed: got %d", len(summaries))
-		}
-
-		// Limit and Offset
-		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{Limit: 1, Offset: 1})
-		if len(summaries) != 1 {
-			t.Errorf("Limit/Offset filter failed: got %d", len(summaries))
-		}
-
-		// Filter by ID
-		summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{IDs: []string{"run-2"}})
-		if len(summaries) != 1 || summaries[0].ID != "run-2" {
-			t.Errorf("IDs filter failed: got %v", summaries)
-		}
+		testListWithFilters(ctx, t, store, hasher, run)
 	})
 
 	t.Run("Integrity failure", func(t *testing.T) {
@@ -172,6 +120,63 @@ func TestStore(t *testing.T) {
 			t.Error("ListExtractionRuns listed a run whose started_at does not parse")
 		}
 	})
+}
+
+// testListWithFilters lists runs by status, walk and time window.
+func testListWithFilters(ctx context.Context, t *testing.T, store *Store, hasher domain.ExtractionRunHasher, run domain.ExtractionRun) {
+	// Add another run
+	run2 := run
+	run2.ID = "run-2"
+	run2.WalkID = "walk-2"
+	run2.OverallStatus = domain.ExtractionRunPartial
+	run2, serr := hasher.SetContentHash(run2)
+	if serr != nil {
+		t.Fatalf("SetContentHash: %v", serr)
+	}
+	if perr := store.PutExtractionRun(ctx, run2); perr != nil {
+		t.Fatalf("PutExtractionRun: %v", perr)
+	}
+
+	summaries, lerr := store.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})
+	if lerr != nil {
+		t.Fatalf("ListExtractionRuns failed: %v", lerr)
+	}
+	if len(summaries) != 2 {
+		t.Errorf("got %d summaries, want 2", len(summaries))
+	}
+
+	// Filter by WalkID
+	summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{WalkID: "walk-2"})
+	if len(summaries) != 1 || summaries[0].ID != "run-2" {
+		t.Errorf("WalkID filter failed: got %v", summaries)
+	}
+
+	// Filter by Status
+	partial := domain.ExtractionRunPartial
+	summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{OverallStatus: &partial})
+	if len(summaries) != 1 || summaries[0].ID != "run-2" {
+		t.Errorf("Status filter failed: got %v", summaries)
+	}
+
+	// Filter by Since/Until
+	since := run.StartedAt.Add(-time.Hour)
+	until := run.StartedAt.Add(time.Hour)
+	summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{Since: &since, Until: &until})
+	if len(summaries) < 1 {
+		t.Errorf("Since/Until filter failed: got %d", len(summaries))
+	}
+
+	// Limit and Offset
+	summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{Limit: 1, Offset: 1})
+	if len(summaries) != 1 {
+		t.Errorf("Limit/Offset filter failed: got %d", len(summaries))
+	}
+
+	// Filter by ID
+	summaries = mustList(ctx, t, store, ports.ExtractionRunFilter{IDs: []string{"run-2"}})
+	if len(summaries) != 1 || summaries[0].ID != "run-2" {
+		t.Errorf("IDs filter failed: got %v", summaries)
+	}
 }
 
 // mustList lists extraction runs, failing the test if the read fails.

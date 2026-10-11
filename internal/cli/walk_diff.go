@@ -79,6 +79,18 @@ func runWalkDiff(ctx context.Context, idA, idB string, uc DiffWalksUseCase, walk
 			return fmt.Errorf("writing output: %w", pErr)
 		}
 	}
+	if err := printWalkDiffChanges(stdout, diff); err != nil {
+		return err
+	}
+	if walkDiffIsEmpty(diff) {
+		return writeWalkDiffEmpty(stdout, idA, idB, diff)
+	}
+	return nil
+}
+
+// printWalkDiffChanges lists the modules added and removed, the version
+// changes and the status changes.
+func printWalkDiffChanges(stdout io.Writer, diff application.WalkDiff) error {
 	for _, c := range diff.Added {
 		if _, pErr := fmt.Fprintf(stdout, "+ %s\n", c.String()); pErr != nil {
 			return fmt.Errorf("writing output: %w", pErr)
@@ -98,9 +110,6 @@ func runWalkDiff(ctx context.Context, idA, idB string, uc DiffWalksUseCase, walk
 		if _, pErr := fmt.Fprintf(stdout, "! %s: %s -> %s\n", sc.Coordinate.String(), sc.StatusA.String(), sc.StatusB.String()); pErr != nil {
 			return fmt.Errorf("writing output: %w", pErr)
 		}
-	}
-	if walkDiffIsEmpty(diff) {
-		return writeWalkDiffEmpty(stdout, idA, idB, diff)
 	}
 	return nil
 }

@@ -119,17 +119,8 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	// A side selector that cannot apply is refused by name rather than accepted
 	// and ignored: the reader asked for a specific pair, and a read that quietly
 	// answered a different question is the defect these flags exist to fix.
-	if !f.diff {
-		switch {
-		case f.diffFrom != "":
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"--diff-from names one side of a comparison and applies only with --diff — run:\n  kanonarion callgraph-show %s --diff --diff-from %s",
-				coord, f.diffFrom)}
-		case f.diffTo != "":
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"--diff-to names one side of a comparison and applies only with --diff — run:\n  kanonarion callgraph-show %s --diff --diff-to %s",
-				coord, f.diffTo)}
-		}
+	if rerr := refuseStrayDiffSide(coord, f); rerr != nil {
+		return rerr
 	}
 	if f.history {
 		return runCallGraphHistory(ctx, coord, uc, stdout)
@@ -154,20 +145,7 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		return fmt.Errorf("getting callgraph record: %w", err)
 	}
 	if !found {
-		if req.Toolchain.Recorded() {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-				"no callgraph record for %s built by %s — the ledger may hold one built by another toolchain; try --history",
-				coord, req.Toolchain)}
-		}
-		if source != domain.AnalysisSourceUnrecorded {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-				"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
-				source, coord)}
-		}
-		// Nothing is served: composition answers not-found only where the reading
-		// leg decoded no generation at all, since neither source nor toolchain is
-		// restricted on this path.
-		return missingCallGraphRefusal(ctx, coord, uc)
+		return callGraphShowMiss(ctx, coord, req, source, uc)
 	}
 	// Asked before --node narrows the record: the disagreement is between whole
 	// generations of this coordinate, and a filtered view of the served one says
@@ -185,30 +163,7 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	}
 
 	if jsonOut {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		j := toCallGraphJSON(r)
-		j.NodeFilter = filter.toJSON()
-		// The caps travel into the document, as --node already did five lines
-		// above. They are applied to the ARRAYS: node_count and edge_count go on
-		// saying what the record holds, which is the number the cap is read
-		// against.
-		if f.limitNodesSet {
-			kept, capped := applyArrayCap(*j.Nodes, limitNodes, "nodes", "--limit-nodes 0")
-			j.Nodes, j.NodeCap = &kept, capped
-		}
-		if f.limitEdgesSet {
-			kept, capped := applyArrayCap(*j.Edges, limitEdges, "edges", "--limit-edges 0")
-			j.Edges, j.EdgeCap = &kept, capped
-		}
-		if disagrees {
-			j.AnalyserDisagreement = toAnalyserDisagreementJSON(disagreement)
-		}
-		j.SetAside = storeSetAside.take().json()
-		if err := enc.Encode(j); err != nil {
-			return fmt.Errorf("encoding JSON: %w", err)
-		}
-		return nil
+		return writeCallGraphShowJSON(stdout, r, f, limitNodes, limitEdges, filter, disagreement, disagrees)
 	}
 
 	if err := printCallGraphRecord(r, limitNodes, limitEdges, stdout); err != nil {
@@ -220,6 +175,71 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		}
 	}
 	return writeNodeFilterNotice(stdout, coord, f.source, filter)
+}
+
+// refuseStrayDiffSide refuses a --diff-from or --diff-to given without --diff.
+func refuseStrayDiffSide(coord coordinate.ModuleCoordinate, f callGraphShowFlags) error {
+	if !f.diff {
+		switch {
+		case f.diffFrom != "":
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--diff-from names one side of a comparison and applies only with --diff — run:\n  kanonarion callgraph-show %s --diff --diff-from %s",
+				coord, f.diffFrom)}
+		case f.diffTo != "":
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"--diff-to names one side of a comparison and applies only with --diff — run:\n  kanonarion callgraph-show %s --diff --diff-to %s",
+				coord, f.diffTo)}
+		}
+	}
+	return nil
+}
+
+// callGraphShowMiss is the refusal for a read that found no record, naming
+// the toolchain or source it was restricted to.
+func callGraphShowMiss(ctx context.Context, coord coordinate.ModuleCoordinate, req domain.ComposeRequest, source domain.AnalysisSource, uc QueryCallGraphUseCase) error {
+	if req.Toolchain.Recorded() {
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no callgraph record for %s built by %s — the ledger may hold one built by another toolchain; try --history",
+			coord, req.Toolchain)}
+	}
+	if source != domain.AnalysisSourceUnrecorded {
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
+			source, coord)}
+	}
+	// Nothing is served: composition answers not-found only where the reading
+	// leg decoded no generation at all, since neither source nor toolchain is
+	// restricted on this path.
+	return missingCallGraphRefusal(ctx, coord, uc)
+}
+
+// writeCallGraphShowJSON writes the served record as JSON, its arrays capped
+// as the flags ask.
+func writeCallGraphShowJSON(stdout io.Writer, r domain.CallGraphRecord, f callGraphShowFlags, limitNodes, limitEdges int, filter nodeFilterOutcome, disagreement domain.AnalyserDisagreement, disagrees bool) error {
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	j := toCallGraphJSON(r)
+	j.NodeFilter = filter.toJSON()
+	// The caps travel into the document, as --node already did five lines
+	// above. They are applied to the ARRAYS: node_count and edge_count go on
+	// saying what the record holds, which is the number the cap is read
+	// against.
+	if f.limitNodesSet {
+		kept, capped := applyArrayCap(*j.Nodes, limitNodes, "nodes", "--limit-nodes 0")
+		j.Nodes, j.NodeCap = &kept, capped
+	}
+	if f.limitEdgesSet {
+		kept, capped := applyArrayCap(*j.Edges, limitEdges, "edges", "--limit-edges 0")
+		j.Edges, j.EdgeCap = &kept, capped
+	}
+	if disagrees {
+		j.AnalyserDisagreement = toAnalyserDisagreementJSON(disagreement)
+	}
+	j.SetAside = storeSetAside.take().json()
+	if err := enc.Encode(j); err != nil {
+		return fmt.Errorf("encoding JSON: %w", err)
+	}
+	return nil
 }
 
 // analyserDisagreement reports whether the generations the ledger holds for a
@@ -296,18 +316,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		// The history view is where an operator lands after a bump, so it must
 		// distinguish a coordinate the store has never held from one whose every
 		// generation this build has stopped serving.
-		note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
-		if nerr != nil {
-			return nerr
-		}
-		line := fmt.Sprintf("no callgraph records for %s at pipeline %s", coord, cgapp.PipelineVersion)
-		if note != "" {
-			line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisInstruction(coord, "")
-		}
-		if _, werr := fmt.Fprintln(stdout, line); werr != nil {
-			return fmt.Errorf("writing output: %w", werr)
-		}
-		return nil
+		return writeNoCallGraphHistory(ctx, coord, uc, recs, stdout)
 	}
 
 	// A conflict is reported, not hidden: the history view is precisely where an
@@ -360,6 +369,23 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			note, domain.ReanalysisInstruction(coord, "")); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
+	}
+	return nil
+}
+
+// writeNoCallGraphHistory says the coordinate has no generation this build
+// serves, and whether the ledger holds ones it has stopped serving.
+func writeNoCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, recs []domain.CallGraphRecord, stdout io.Writer) error {
+	note, nerr := supersededGenerationsNote(ctx, coord, uc, recs)
+	if nerr != nil {
+		return nerr
+	}
+	line := fmt.Sprintf("no callgraph records for %s at pipeline %s", coord, cgapp.PipelineVersion)
+	if note != "" {
+		line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisInstruction(coord, "")
+	}
+	if _, werr := fmt.Fprintln(stdout, line); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
 	}
 	return nil
 }
@@ -1310,6 +1336,42 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 			return fmt.Errorf("writing failure detail: %w", err)
 		}
 	}
+	if err := writeRecordQualifiers(stdout, r); err != nil {
+		return err
+	}
+	if len(r.Interfaces) > 0 {
+		if _, err := fmt.Fprintf(stdout, "  interfaces: %d declared, %d implementations recorded (query with 'kanonarion implementers')\n",
+			len(r.Interfaces), len(r.Implementations)); err != nil {
+			return fmt.Errorf("writing interface summary: %w", err)
+		}
+	}
+
+	if _, err := fmt.Fprintf(stdout, "Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported\n"); err != nil {
+		return fmt.Errorf("writing legend: %w", err)
+	}
+
+	if err := writeCallGraphNodes(stdout, r, limitNodes); err != nil {
+		return err
+	}
+
+	edges := r.Edges
+	if limitEdges > 0 && len(edges) > limitEdges {
+		edges = edges[:limitEdges]
+	}
+	if _, err := fmt.Fprintf(stdout, "\nEdges (%d total, showing %d):\n", r.EdgeCount, len(edges)); err != nil {
+		return fmt.Errorf("writing edges header: %w", err)
+	}
+	for _, e := range edges {
+		if _, err := fmt.Fprintf(stdout, "  %s → %s  [%s]\n", e.FromID, e.ToID, string(e.Confidence)); err != nil {
+			return fmt.Errorf("writing edge: %w", err)
+		}
+	}
+	return nil
+}
+
+// writeRecordQualifiers writes the lines that qualify what the record covers:
+// failed packages, exclusions, fidelity, analyser, scopes and membership.
+func writeRecordQualifiers(stdout io.Writer, r domain.CallGraphRecord) error {
 	if err := writeFailedPackages(stdout, r); err != nil {
 		return err
 	}
@@ -1335,17 +1397,12 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 	if err := writeModuleMembershipLine(stdout, r); err != nil {
 		return err
 	}
-	if len(r.Interfaces) > 0 {
-		if _, err := fmt.Fprintf(stdout, "  interfaces: %d declared, %d implementations recorded (query with 'kanonarion implementers')\n",
-			len(r.Interfaces), len(r.Implementations)); err != nil {
-			return fmt.Errorf("writing interface summary: %w", err)
-		}
-	}
+	return nil
+}
 
-	if _, err := fmt.Fprintf(stdout, "Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported\n"); err != nil {
-		return fmt.Errorf("writing legend: %w", err)
-	}
-
+// writeCallGraphNodes writes the record's nodes, up to limitNodes, each with
+// its tags.
+func writeCallGraphNodes(stdout io.Writer, r domain.CallGraphRecord, limitNodes int) error {
 	nodes := r.Nodes
 	if limitNodes > 0 && len(nodes) > limitNodes {
 		nodes = nodes[:limitNodes]
@@ -1368,19 +1425,6 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		}
 		if _, err := fmt.Fprintf(stdout, "  %s%s%s%s\n", n.ID, ext, api, test); err != nil {
 			return fmt.Errorf("writing node: %w", err)
-		}
-	}
-
-	edges := r.Edges
-	if limitEdges > 0 && len(edges) > limitEdges {
-		edges = edges[:limitEdges]
-	}
-	if _, err := fmt.Fprintf(stdout, "\nEdges (%d total, showing %d):\n", r.EdgeCount, len(edges)); err != nil {
-		return fmt.Errorf("writing edges header: %w", err)
-	}
-	for _, e := range edges {
-		if _, err := fmt.Fprintf(stdout, "  %s → %s  [%s]\n", e.FromID, e.ToID, string(e.Confidence)); err != nil {
-			return fmt.Errorf("writing edge: %w", err)
 		}
 	}
 	return nil

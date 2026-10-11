@@ -297,10 +297,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// exists, which is why a mistyped --store-root now reaches the caller as a
 	// refusal instead of as an empty store with a truthful-sounding answer.
 	intent := storeOpenIntent()
-	if intent == sqlitestore.IntentCreate {
-		if err := os.MkdirAll(storeRoot, 0o750); err != nil {
-			return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
-		}
+	if err := ensureStoreRoot(storeRoot, intent); err != nil {
+		return nil, nil, err
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
@@ -336,65 +334,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	stopwatch := clock.Monotonic{}
 	signer := noopsigner.New()
 	localBlobs := blobstore.New(storeRoot)
-	if n, freed, cleanErr := localBlobs.CleanOrphanedTemps(); cleanErr != nil {
-		logger.Warn("failed to clean orphaned blob temp files", "error", cleanErr)
-	} else if n > 0 {
-		logger.Debug("cleaned orphaned blob temp files", "count", n, "bytes", freed)
-	}
+	cleanOrphanedBlobTemps(localBlobs, logger)
 	vcs := fetchvcs.New()
 
-	// Adapter selection. In the default path the network proxy, the network
-	// checksum-database client, and the content-addressed blob store are wired.
-	// In --from-modcache mode three adapters are swapped for module-cache-backed
-	// equivalents: bytes are read from $GOMODCACHE, verification is against the
-	// local go.sum, and the fetch pipeline records coordinate-derived handles
-	// instead of writing blobs.
-	var (
-		blobs        fetchports.BlobStore = localBlobs
-		sumdb        fetchports.SumDBClient
-		proxyAdapter fetchports.ModuleProxy
-	)
-	if modcacheMode {
-		blobs = mcblobstore.New(modcacheDir, localBlobs)
-		proxyAdapter = mcproxy.New(modcacheDir, goBinary, filepath.Dir(goSumPath), logger)
-		gsClient, gerr := gosumfile.New(goSumPath)
-		if gerr != nil {
-			_ = dbHandle.Close()
-			return nil, nil, fmt.Errorf("loading go.sum for modcache mode: %w", gerr)
-		}
-		sumdb = gsClient
-	} else {
-		// A transient checksum-database failure (429/5xx, connection reset,
-		// truncated transfer) is retried with bounded backoff before it can
-		// downgrade a module's verification status. Only a failed lookup is retried;
-		// a policy answer (GOSUMDB=off, GOPRIVATE, no hash line) returns on the first
-		// attempt. In --from-modcache mode the go.sum adapter above reads a local
-		// file with no network to flake, so it is left undecorated.
-		sumdb = sumdbretry.New(fetchsumdb.New(filepath.Join(storeRoot, "sumdb")), logger)
-		dp, perr := fetchproxy.New(goproxy, false)
-		switch {
-		case fetchproxy.IsRefusal(perr):
-			// The environment declares no module fetching (GOPROXY=off), or a
-			// fetch route this adapter has not got (direct). The container is
-			// still built: every command that only reads the store must keep
-			// working inside an air gap, and most of them wire this adapter
-			// without ever fetching through it. What is withdrawn is the
-			// fetching, and the refusal arrives at the attempt — before any
-			// network I/O — rather than being quietly re-pointed at the
-			// default proxy, which is what breached the gap.
-			//
-			// The refusal carries this command's own offline remedy from here
-			// on: it is what every later fetch attempt will print, and the
-			// adapter that raised it cannot know which command is running.
-			perr = withOfflineRemedy(perr)
-			logger.Warn("module fetching refused by the environment; reads continue, fetches will fail", "reason", perr)
-			proxyAdapter = fetchproxy.Refusing(perr)
-		case perr != nil:
-			_ = dbHandle.Close()
-			return nil, nil, fmt.Errorf("creating proxy adapter: %w", perr)
-		default:
-			proxyAdapter = dp
-		}
+	blobs, sumdb, proxyAdapter, err := selectFetchAdapters(storeRoot, goproxy, goBinary, localBlobs, dbHandle, logger)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// ---- factstore (auditing) ----
@@ -455,13 +400,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// hard, while an absent entry falls through to network sumdb verification.
 	// In --from-modcache mode go.sum is already the sole anchor (via sumdb), so
 	// this is skipped.
-	if !modcacheMode && projectGoSumPath != "" {
-		gsClient, gerr := gosumfile.New(projectGoSumPath)
-		if gerr != nil {
-			_ = dbHandle.Close()
-			return nil, nil, fmt.Errorf("loading project go.sum for verification: %w", gerr)
-		}
-		fetchUC = fetchUC.WithProjectGoSum(gsClient)
+	fetchUC, err = withProjectGoSumAnchor(fetchUC, dbHandle)
+	if err != nil {
+		return nil, nil, err
 	}
 	queryFetchUC := fetchapp.NewQueryFetchUseCase(factStore)
 
@@ -531,15 +472,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// already. Reading the host's own made that a property of what unrelated go
 	// commands had left on the machine; the cache is built here instead, from the
 	// bytes the store holds, fetching what it is missing.
-	if modcacheMode {
-		// --from-modcache: the operator's cache is already populated, and the walk
-		// scan takes it as it stands for the same reason.
-		cgAnalyser = cgAnalyser.WithRealModcache(modcacheDir)
-	} else {
-		cgAnalyser = cgAnalyser.WithModuleCache(
-			cgmodulecache.New(factStore, blobs, logger).
-				WithFetcher(vulnfetch.NewFetchModuleAdapter(fetchUC)))
-	}
+	cgAnalyser = withAnalysisModuleCache(cgAnalyser, factStore, blobs, fetchUC, logger)
 	cgExtractUC := cgapp.NewExtractCallGraphUseCase(cgapp.Config{
 		Facts: factStore, Blobs: blobs, Store: cgStore,
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
@@ -872,6 +805,116 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 
 	return ctr, cleanup, nil
+}
+
+// ensureStoreRoot creates the store root for a command that writes records.
+func ensureStoreRoot(storeRoot string, intent sqlitestore.Intent) error {
+	if intent == sqlitestore.IntentCreate {
+		if err := os.MkdirAll(storeRoot, 0o750); err != nil {
+			return fmt.Errorf("creating store root %s: %w", storeRoot, err)
+		}
+	}
+	return nil
+}
+
+// selectFetchAdapters wires the blob store, checksum client and module proxy
+// for the network path, or their module-cache equivalents under
+// --from-modcache.
+func selectFetchAdapters(storeRoot, goproxy, goBinary string, localBlobs *blobstore.Store, dbHandle sqlitestore.DB, logger *slog.Logger) (fetchports.BlobStore, fetchports.SumDBClient, fetchports.ModuleProxy, error) {
+	// Adapter selection. In the default path the network proxy, the network
+	// checksum-database client, and the content-addressed blob store are wired.
+	// In --from-modcache mode three adapters are swapped for module-cache-backed
+	// equivalents: bytes are read from $GOMODCACHE, verification is against the
+	// local go.sum, and the fetch pipeline records coordinate-derived handles
+	// instead of writing blobs.
+	var (
+		blobs        fetchports.BlobStore = localBlobs
+		sumdb        fetchports.SumDBClient
+		proxyAdapter fetchports.ModuleProxy
+	)
+	if modcacheMode {
+		blobs = mcblobstore.New(modcacheDir, localBlobs)
+		proxyAdapter = mcproxy.New(modcacheDir, goBinary, filepath.Dir(goSumPath), logger)
+		gsClient, gerr := gosumfile.New(goSumPath)
+		if gerr != nil {
+			_ = dbHandle.Close()
+			return nil, nil, nil, fmt.Errorf("loading go.sum for modcache mode: %w", gerr)
+		}
+		sumdb = gsClient
+	} else {
+		// A transient checksum-database failure (429/5xx, connection reset,
+		// truncated transfer) is retried with bounded backoff before it can
+		// downgrade a module's verification status. Only a failed lookup is retried;
+		// a policy answer (GOSUMDB=off, GOPRIVATE, no hash line) returns on the first
+		// attempt. In --from-modcache mode the go.sum adapter above reads a local
+		// file with no network to flake, so it is left undecorated.
+		sumdb = sumdbretry.New(fetchsumdb.New(filepath.Join(storeRoot, "sumdb")), logger)
+		dp, perr := fetchproxy.New(goproxy, false)
+		switch {
+		case fetchproxy.IsRefusal(perr):
+			// The environment declares no module fetching (GOPROXY=off), or a
+			// fetch route this adapter has not got (direct). The container is
+			// still built: every command that only reads the store must keep
+			// working inside an air gap, and most of them wire this adapter
+			// without ever fetching through it. What is withdrawn is the
+			// fetching, and the refusal arrives at the attempt — before any
+			// network I/O — rather than being quietly re-pointed at the
+			// default proxy, which is what breached the gap.
+			//
+			// The refusal carries this command's own offline remedy from here
+			// on: it is what every later fetch attempt will print, and the
+			// adapter that raised it cannot know which command is running.
+			perr = withOfflineRemedy(perr)
+			logger.Warn("module fetching refused by the environment; reads continue, fetches will fail", "reason", perr)
+			proxyAdapter = fetchproxy.Refusing(perr)
+		case perr != nil:
+			_ = dbHandle.Close()
+			return nil, nil, nil, fmt.Errorf("creating proxy adapter: %w", perr)
+		default:
+			proxyAdapter = dp
+		}
+	}
+	return blobs, sumdb, proxyAdapter, nil
+}
+
+// cleanOrphanedBlobTemps removes temp files a killed write left in the blob
+// store, logging rather than failing.
+func cleanOrphanedBlobTemps(localBlobs *blobstore.Store, logger *slog.Logger) {
+	if n, freed, cleanErr := localBlobs.CleanOrphanedTemps(); cleanErr != nil {
+		logger.Warn("failed to clean orphaned blob temp files", "error", cleanErr)
+	} else if n > 0 {
+		logger.Debug("cleaned orphaned blob temp files", "count", n, "bytes", freed)
+	}
+}
+
+// withProjectGoSumAnchor layers the walk root's go.sum on the network path as
+// an extra offline integrity anchor, when there is one.
+func withProjectGoSumAnchor(fetchUC *fetchapp.FetchModuleUseCase, dbHandle sqlitestore.DB) (*fetchapp.FetchModuleUseCase, error) {
+	if !modcacheMode && projectGoSumPath != "" {
+		gsClient, gerr := gosumfile.New(projectGoSumPath)
+		if gerr != nil {
+			_ = dbHandle.Close()
+			return nil, fmt.Errorf("loading project go.sum for verification: %w", gerr)
+		}
+		fetchUC = fetchUC.WithProjectGoSum(gsClient)
+	}
+	return fetchUC, nil
+}
+
+// withAnalysisModuleCache gives the analyser the module cache its isolated
+// loads read: the operator's own under --from-modcache, else one built from
+// the store.
+func withAnalysisModuleCache(cgAnalyser *cganalyser.Analyser, factStore fetchports.FactStore, blobs fetchports.BlobStore, fetchUC *fetchapp.FetchModuleUseCase, logger *slog.Logger) *cganalyser.Analyser {
+	if modcacheMode {
+		// --from-modcache: the operator's cache is already populated, and the walk
+		// scan takes it as it stands for the same reason.
+		cgAnalyser = cgAnalyser.WithRealModcache(modcacheDir)
+	} else {
+		cgAnalyser = cgAnalyser.WithModuleCache(
+			cgmodulecache.New(factStore, blobs, logger).
+				WithFetcher(vulnfetch.NewFetchModuleAdapter(fetchUC)))
+	}
+	return cgAnalyser
 }
 
 // callerWorktree resolves the working tree the process is standing in: the

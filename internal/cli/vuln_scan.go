@@ -545,13 +545,8 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 			defer func() { _ = os.RemoveAll(binDir) }()
 		}
 
-		currentPath := os.Getenv("PATH")
-		newPath := goDir + string(os.PathListSeparator) + currentPath
-		if err := os.Setenv("PATH", newPath); err != nil {
-			return vulnScanRunFacts{}, fmt.Errorf("setting PATH: %w", err)
-		}
-		if err := os.Unsetenv("GOROOT"); err != nil {
-			return vulnScanRunFacts{}, fmt.Errorf("unsetting GOROOT: %w", err)
+		if err := useGoDir(goDir); err != nil {
+			return vulnScanRunFacts{}, err
 		}
 	}
 
@@ -587,14 +582,8 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 	// --fresh refreshes the advisory database and nothing else. It happens before
 	// the reuse question below, which is asked against whatever database the
 	// refresh settled on.
-	if fresh {
-		refresh, rerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
-		if _, werr := fmt.Fprintf(stderr, "%s\n", advisoryRefreshLine(refresh, rerr)); werr != nil {
-			return vulnScanRunFacts{}, fmt.Errorf("writing output: %w", werr)
-		}
-		if rerr != nil {
-			return vulnScanRunFacts{}, fmt.Errorf("refreshing the advisory database: %w", rerr)
-		}
+	if rerr := refreshScanSnapshot(ctx, ctr, walkID, fresh, stderr); rerr != nil {
+		return vulnScanRunFacts{}, rerr
 	}
 
 	// A scan of the same walk against the same advisory snapshot has already
@@ -611,12 +600,8 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 	// resolved, and that judgement belongs to the use case that owns the reuse
 	// decision — this call site only has to ask about the tree it would have
 	// scanned.
-	if !force {
-		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, projectDir); rerr != nil {
-			return vulnScanRunFacts{}, fmt.Errorf("checking for a reusable scan run: %w", rerr)
-		} else if ok {
-			return serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr)
-		}
+	if facts, served, rerr := serveReusableScanRun(ctx, ctr, walkID, projectDir, force, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr); rerr != nil || served {
+		return facts, rerr
 	}
 
 	_, _ = fmt.Fprintf(progressOut, "Scanning walk %s...\n", walkID)
@@ -667,6 +652,50 @@ func runVulnScanReporting(ctx context.Context, walkID string, force, fresh, enab
 	return vulnScanRunFacts{RunID: run.ID, Snapshot: vulnScanSnapshotOf(run.Snapshot), Reused: false,
 			Toolchain: toolchain, Reachability: reach},
 		vulnScanCoverageExit(run)
+}
+
+// useGoDir puts goDir first on PATH and clears GOROOT, so every child the scan
+// starts runs the named go binary.
+func useGoDir(goDir string) error {
+	currentPath := os.Getenv("PATH")
+	newPath := goDir + string(os.PathListSeparator) + currentPath
+	if err := os.Setenv("PATH", newPath); err != nil {
+		return fmt.Errorf("setting PATH: %w", err)
+	}
+	if err := os.Unsetenv("GOROOT"); err != nil {
+		return fmt.Errorf("unsetting GOROOT: %w", err)
+	}
+	return nil
+}
+
+// refreshScanSnapshot refreshes the advisory database when --fresh asks, and
+// says what the refresh settled on.
+func refreshScanSnapshot(ctx context.Context, ctr *Container, walkID string, fresh bool, stderr io.Writer) error {
+	if fresh {
+		refresh, rerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
+		if _, werr := fmt.Fprintf(stderr, "%s\n", advisoryRefreshLine(refresh, rerr)); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+		if rerr != nil {
+			return fmt.Errorf("refreshing the advisory database: %w", rerr)
+		}
+	}
+	return nil
+}
+
+// serveReusableScanRun serves the stored run that already answers the walk
+// against the current snapshot, unless --force insists on measuring; served
+// reports that one did.
+func serveReusableScanRun(ctx context.Context, ctr *Container, walkID, projectDir string, force, jsonOut, narrateRun, wantRunFacts bool, surface string, stdout, stderr io.Writer) (vulnScanRunFacts, bool, error) {
+	if !force {
+		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, projectDir); rerr != nil {
+			return vulnScanRunFacts{}, false, fmt.Errorf("checking for a reusable scan run: %w", rerr)
+		} else if ok {
+			facts, serr := serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, wantRunFacts, surface, stdout, stderr)
+			return facts, true, serr
+		}
+	}
+	return vulnScanRunFacts{}, false, nil
 }
 
 // advisoryRefreshLine renders what a --fresh refresh established, in one line.

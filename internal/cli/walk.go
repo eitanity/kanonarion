@@ -326,38 +326,9 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	// The complete scope keeps the whole build list (nil = no restriction); the
 	// code and tool scopes restrict it to their toolchain-resolved module set,
 	// the same set every other go.mod command uses for that scope.
-	var scopeModules []string
-	res := newScopeResolution(scope, false)
-	if scope != scopeComplete {
-		var mods []scopeModule
-		mods, res, err = resolveScopeModules(ctx, gomodPath, scope, false)
-		if err != nil {
-			return application.ExecuteWalkResult{}, fmt.Errorf("resolving %s scope: %w", scope, err)
-		}
-		// The require paths: the graph filter keys scope membership on them and
-		// retains a replaced node through its OriginalCoordinate, so naming the
-		// replacement here would be naming a path the build list does not hold.
-		scopeModules = coordsToPaths(requiredCoords(mods))
-	}
-	// The test axis this walk was resolved over, stated on the same channel as
-	// the build-vendoring and coverage disclosures and for the same reason: the
-	// record on stdout is the content-hashed artefact and a fact about the run is
-	// not part of what the seal covers. The axis is not narrowable here — the
-	// record has no field to name it — so no flag is offered in the line.
-	//
-	// It is gated on the same nil reader those two are: a nil reader is a caller
-	// using the walk as a means (audit, inspect, the vuln-scan re-walk), and each
-	// of those states the scope of its own answer.
-	if records != nil {
-		var nerr error
-		if scope == scopeComplete {
-			nerr = writeDepScopeAxisNotice(stderr, res)
-		} else {
-			nerr = writeDepScopeNotice(stderr, res, len(scopeModules), false)
-		}
-		if nerr != nil {
-			return application.ExecuteWalkResult{}, nerr
-		}
+	scopeModules, err := projectScopeModules(ctx, gomodPath, scope, records, stderr)
+	if err != nil {
+		return application.ExecuteWalkResult{}, err
 	}
 
 	result, err := uc.Execute(ctx, application.WalkRequest{
@@ -395,45 +366,8 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	// means rather than presenting it as the answer — audit, inspect and sbom —
 	// and each of those states the disclosure itself, about its own answer.
 	// Without the gate a single audit says it twice.
-	if records != nil {
-		if verr := writeBuildVendoring(stderr, detectBuildVendoringForGoMod(gomodPath)); verr != nil {
-			return result, verr
-		}
-	}
-	// The aggregate is stated on stderr and, under --json, in the document: the
-	// record's own bytes stay the content-hashed artefact, and the coverage is a
-	// key beside them rather than inside them.
-	coverage, cerr := walkCoverageReport(ctx, rec, records, stderr)
-	if cerr != nil {
-		return result, cerr
-	}
-	if jsonOut {
-		if encErr := writeWalkRecordWithCoverageJSON(stdout, rec, coverage); encErr != nil {
-			return result, fmt.Errorf("encoding JSON: %w", encErr)
-		}
-	} else {
-		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
-			rec.ID, rec.OverallStatus.String(), string(rec.Depth),
-			len(rec.Graph.Nodes),
-			domain.CountNodeFailures(rec),
-		); pErr != nil {
-			return result, fmt.Errorf("writing output: %w", pErr)
-		}
-	}
-
-	// Stated on the walk line's own channel: an operator reading "N nodes, 0
-	// failed" has nothing else that distinguishes a resolved build list from the
-	// require directives that stood in for one. Under --json stdout is the
-	// record's bytes, which carry the gap themselves, so the prose goes beside
-	// them. Gated on the same nil reader the other disclosures are.
-	if records != nil {
-		channel := stdout
-		if jsonOut {
-			channel = stderr
-		}
-		if bErr := writeBuildListUnavailable(channel, rec.Graph); bErr != nil {
-			return result, bErr
-		}
+	if err := reportProjectWalk(ctx, rec, records, gomodPath, stdout, stderr); err != nil {
+		return result, err
 	}
 
 	// A root ingest that did not happen is stated outright. The walk is
@@ -452,6 +386,94 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	return result, walkExit(rec.OverallStatus, allowPartial,
 		"walk failed: project go.mod could not be resolved",
 		walkPartialMessage(rec, rootIngestErr))
+}
+
+// projectScopeModules is the module set a code or tool scope restricts the
+// walk to, nil for the complete scope, stated on stderr for a presenting
+// caller.
+func projectScopeModules(ctx context.Context, gomodPath string, scope depScope, records fetchRecordReader, stderr io.Writer) ([]string, error) {
+	var err error
+	var scopeModules []string
+	res := newScopeResolution(scope, false)
+	if scope != scopeComplete {
+		var mods []scopeModule
+		mods, res, err = resolveScopeModules(ctx, gomodPath, scope, false)
+		if err != nil {
+			return nil, fmt.Errorf("resolving %s scope: %w", scope, err)
+		}
+		// The require paths: the graph filter keys scope membership on them and
+		// retains a replaced node through its OriginalCoordinate, so naming the
+		// replacement here would be naming a path the build list does not hold.
+		scopeModules = coordsToPaths(requiredCoords(mods))
+	}
+	// The test axis this walk was resolved over, stated on the same channel as
+	// the build-vendoring and coverage disclosures and for the same reason: the
+	// record on stdout is the content-hashed artefact and a fact about the run is
+	// not part of what the seal covers. The axis is not narrowable here — the
+	// record has no field to name it — so no flag is offered in the line.
+	//
+	// It is gated on the same nil reader those two are: a nil reader is a caller
+	// using the walk as a means (audit, inspect, the vuln-scan re-walk), and each
+	// of those states the scope of its own answer.
+	if records != nil {
+		var nerr error
+		if scope == scopeComplete {
+			nerr = writeDepScopeAxisNotice(stderr, res)
+		} else {
+			nerr = writeDepScopeNotice(stderr, res, len(scopeModules), false)
+		}
+		if nerr != nil {
+			return nil, nerr
+		}
+	}
+	return scopeModules, nil
+}
+
+// reportProjectWalk writes the walk record, or its summary line, with the
+// disclosures a presenting caller owes: vendoring, coverage and a missing
+// build list.
+func reportProjectWalk(ctx context.Context, rec domain.WalkRecord, records fetchRecordReader, gomodPath string, stdout, stderr io.Writer) error {
+	if records != nil {
+		if verr := writeBuildVendoring(stderr, detectBuildVendoringForGoMod(gomodPath)); verr != nil {
+			return verr
+		}
+	}
+	// The aggregate is stated on stderr and, under --json, in the document: the
+	// record's own bytes stay the content-hashed artefact, and the coverage is a
+	// key beside them rather than inside them.
+	coverage, cerr := walkCoverageReport(ctx, rec, records, stderr)
+	if cerr != nil {
+		return cerr
+	}
+	if jsonOut {
+		if encErr := writeWalkRecordWithCoverageJSON(stdout, rec, coverage); encErr != nil {
+			return fmt.Errorf("encoding JSON: %w", encErr)
+		}
+	} else {
+		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
+			rec.ID, rec.OverallStatus.String(), string(rec.Depth),
+			len(rec.Graph.Nodes),
+			domain.CountNodeFailures(rec),
+		); pErr != nil {
+			return fmt.Errorf("writing output: %w", pErr)
+		}
+	}
+
+	// Stated on the walk line's own channel: an operator reading "N nodes, 0
+	// failed" has nothing else that distinguishes a resolved build list from the
+	// require directives that stood in for one. Under --json stdout is the
+	// record's bytes, which carry the gap themselves, so the prose goes beside
+	// them. Gated on the same nil reader the other disclosures are.
+	if records != nil {
+		channel := stdout
+		if jsonOut {
+			channel = stderr
+		}
+		if bErr := writeBuildListUnavailable(channel, rec.Graph); bErr != nil {
+			return bErr
+		}
+	}
+	return nil
 }
 
 // walkPartialMessage says what this walk is partial FOR. A walk can be

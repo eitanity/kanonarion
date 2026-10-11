@@ -373,20 +373,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		if !found || rec.OverallStatus != domain.CallGraphStatusPartial {
 			continue
 		}
-		out.isPartial = true
-		for _, p := range rec.FailedPackages {
-			failedSet[p] = true
-		}
-		if _, lim := gotoolchain.ReadAnalyserLimit(rec.FailureDetail); lim && out.limitDetail == "" {
-			out.limitDetail = rec.FailureDetail
-		}
-		if fp, hit := symbolFailedPackage(symbolID, rec.FailedPackages); hit && out.failedPkg == "" {
-			out.failedPkg = fp
-			out.coord = coord
-			out.cause = rec.FailureCause
-			out.detail = rec.FailureDetail
-			out.analysisRoot = rec.AnalysisRoot
-		}
+		notePartialRecord(&out, failedSet, rec, coord, symbolID)
 	}
 	if len(failedSet) > 0 {
 		out.failedPkgs = make([]string, 0, len(failedSet))
@@ -396,6 +383,25 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		sort.Strings(out.failedPkgs)
 	}
 	return out, nil
+}
+
+// notePartialRecord records what a Partial record says about the root: its
+// failed packages, an analyser limit, and the package the symbol is in.
+func notePartialRecord(out *partialRoot, failedSet map[string]bool, rec domain.CallGraphRecord, coord coordinate.ModuleCoordinate, symbolID string) {
+	out.isPartial = true
+	for _, p := range rec.FailedPackages {
+		failedSet[p] = true
+	}
+	if _, lim := gotoolchain.ReadAnalyserLimit(rec.FailureDetail); lim && out.limitDetail == "" {
+		out.limitDetail = rec.FailureDetail
+	}
+	if fp, hit := symbolFailedPackage(symbolID, rec.FailedPackages); hit && out.failedPkg == "" {
+		out.failedPkg = fp
+		out.coord = coord
+		out.cause = rec.FailureCause
+		out.detail = rec.FailureDetail
+		out.analysisRoot = rec.AnalysisRoot
+	}
 }
 
 // rootCompletenessCaveat returns a phase-appropriate caveat when the module
@@ -516,27 +522,7 @@ func negativeCallAnswer(ctx context.Context, symbolID string, scanDispatch bool,
 		if !found {
 			continue
 		}
-		in.Edges = append(in.Edges, rec.Edges...)
-		for i := range rec.Nodes {
-			n := rec.Nodes[i]
-			in.NodesByID[n.ID] = n
-			if n.ID == symbolID {
-				in.QueriedNode = n
-				in.Found = true
-				in.ModuleLevel = rec.Completeness
-			}
-		}
-		if belowFull == domain.CompletenessUnknown &&
-			rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
-			belowFull = rec.Completeness
-		}
-		if !rec.TestScope.IsMeasured() && in.TestScope.IsMeasured() {
-			in.TestScope = rec.TestScope
-			in.TestScopeDetail = rec.TestScopeDetail
-		}
-		if !rec.ReferenceScope.IsMeasured() {
-			in.ReferenceScope = rec.ReferenceScope
-		}
+		mergeNegativeInputs(&in, &belowFull, rec, symbolID)
 	}
 	// When the symbol is not itself a node (e.g. its package was built type-only
 	// so it produced no SSA node), fall back to the least-complete level seen so a
@@ -552,6 +538,32 @@ func negativeCallAnswer(ctx context.Context, symbolID string, scanDispatch bool,
 	}
 
 	return domain.ClassifyNegativeAnswer(in), nil
+}
+
+// mergeNegativeInputs folds one record into the inputs of a negative answer:
+// its edges and nodes, and the weakest completeness and scopes seen.
+func mergeNegativeInputs(in *domain.NegativeAnswerInputs, belowFull *domain.CompletenessLevel, rec domain.CallGraphRecord, symbolID string) {
+	in.Edges = append(in.Edges, rec.Edges...)
+	for i := range rec.Nodes {
+		n := rec.Nodes[i]
+		in.NodesByID[n.ID] = n
+		if n.ID == symbolID {
+			in.QueriedNode = n
+			in.Found = true
+			in.ModuleLevel = rec.Completeness
+		}
+	}
+	if *belowFull == domain.CompletenessUnknown &&
+		rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
+		*belowFull = rec.Completeness
+	}
+	if !rec.TestScope.IsMeasured() && in.TestScope.IsMeasured() {
+		in.TestScope = rec.TestScope
+		in.TestScopeDetail = rec.TestScopeDetail
+	}
+	if !rec.ReferenceScope.IsMeasured() {
+		in.ReferenceScope = rec.ReferenceScope
+	}
 }
 
 // writeCallAnswer prints, in text mode, the three-valued verdict for an empty

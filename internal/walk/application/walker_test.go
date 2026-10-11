@@ -1233,6 +1233,16 @@ func TestWalker_ProjectMode_RootsAtLocalMainModule(t *testing.T) {
 	}
 	// The project walk injects the synthetic standard-library node, recorded as a
 	// succeeded node with no fetch record (it is toolchain-provided, never fetched).
+	assertStdlibNodeUnfetched(t, outcome)
+	if len(outcome.Graph.Nodes) != 3 {
+		t.Errorf("node count = %d, want 3 (main module + dep + stdlib)", len(outcome.Graph.Nodes))
+	}
+}
+
+// assertStdlibNodeUnfetched checks the graph holds a succeeded stdlib node
+// carrying no fetch record.
+func assertStdlibNodeUnfetched(t *testing.T, outcome domain.WalkOutcome) {
+	t.Helper()
 	var stdCoord domain.GraphNode
 	foundStd := false
 	for _, n := range outcome.Graph.Nodes {
@@ -1249,9 +1259,6 @@ func TestWalker_ProjectMode_RootsAtLocalMainModule(t *testing.T) {
 	}
 	if sr.FetchRecord != nil {
 		t.Errorf("stdlib node carries a fetch record, want none (toolchain-provided)")
-	}
-	if len(outcome.Graph.Nodes) != 3 {
-		t.Errorf("node count = %d, want 3 (main module + dep + stdlib)", len(outcome.Graph.Nodes))
 	}
 }
 

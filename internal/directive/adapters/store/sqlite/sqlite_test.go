@@ -151,6 +151,22 @@ func TestStore_ListScansOrderAndLimit(t *testing.T) {
 		t.Errorf("limit=2 returned %d rows", len(limited))
 	}
 
+	assertScanPaging(ctx, t, store, all)
+
+	// GetDirectiveRecord (latest) consistent with ListScans[0].
+	latest, found, err := store.GetDirectiveRecord(ctx, "example.com/proj")
+	if err != nil || !found {
+		t.Fatalf("GetDirectiveRecord: found=%t err=%v", found, err)
+	}
+	if latest.ID != "01C" {
+		t.Errorf("GetDirectiveRecord latest = %s, want 01C", latest.ID)
+	}
+}
+
+// assertScanPaging checks a limit+offset page, and an offset with no limit,
+// name the rows the unpaged listing holds there.
+func assertScanPaging(ctx context.Context, t *testing.T, store *directivesqlite.Store, all []domain.Record) {
+	t.Helper()
 	// Paging. The offset is the caller's way past the limit, so the page it
 	// names must be the same rows the unpaged listing holds there — and an
 	// offset with no limit ("everything from row N") has to be answerable at
@@ -168,15 +184,6 @@ func TestStore_ListScansOrderAndLimit(t *testing.T) {
 	}
 	if len(rest) != 2 || rest[0].ID != all[1].ID {
 		t.Errorf("offset=1 with no limit returned %d rows starting %v, want 2 starting %s", len(rest), rest, all[1].ID)
-	}
-
-	// GetDirectiveRecord (latest) consistent with ListScans[0].
-	latest, found, err := store.GetDirectiveRecord(ctx, "example.com/proj")
-	if err != nil || !found {
-		t.Fatalf("GetDirectiveRecord: found=%t err=%v", found, err)
-	}
-	if latest.ID != "01C" {
-		t.Errorf("GetDirectiveRecord latest = %s, want 01C", latest.ID)
 	}
 }
 

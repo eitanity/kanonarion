@@ -311,25 +311,7 @@ func assertAuditTableAligns(t *testing.T, scoped bool) {
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
 
-	var want []int
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimLeft(line, " "), "newer major:") {
-			continue
-		}
-		got := columnStarts(line)
-		if want == nil {
-			want = got
-			continue
-		}
-		if len(got) != len(want) {
-			t.Fatalf("row has %d columns, the first row has %d:\n%s", len(got), len(want), out.String())
-		}
-		for i := range got {
-			if got[i] != want[i] {
-				t.Fatalf("column %d starts at %d on this row and %d on the first:\n%s", i, got[i], want[i], out.String())
-			}
-		}
-	}
+	want := alignedColumnStarts(t, lines, out.String())
 
 	// Nothing is truncated to fit: the two-fact value is still reported whole.
 	if !strings.Contains(out.String(), "newer major: modernc.org/libc/v2@v2.1.30") {
@@ -350,6 +332,32 @@ func assertAuditTableAligns(t *testing.T, scoped bool) {
 			t.Errorf("row carries trailing padding: %q", line)
 		}
 	}
+}
+
+// alignedColumnStarts checks every row's columns start where the first row's
+// do, and returns those starts.
+func alignedColumnStarts(t *testing.T, lines []string, rendered string) []int {
+	t.Helper()
+	var want []int
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimLeft(line, " "), "newer major:") {
+			continue
+		}
+		got := columnStarts(line)
+		if want == nil {
+			want = got
+			continue
+		}
+		if len(got) != len(want) {
+			t.Fatalf("row has %d columns, the first row has %d:\n%s", len(got), len(want), rendered)
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("column %d starts at %d on this row and %d on the first:\n%s", i, got[i], want[i], rendered)
+			}
+		}
+	}
+	return want
 }
 
 // TestAuditStaleness_JSONAndTextAgreeOnTheAgeFigure

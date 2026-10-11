@@ -116,14 +116,7 @@ func runInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		// The history is read at the serving pipeline version, so a coordinate
 		// whose generations are all superseded has an empty history and a full
 		// ledger. Saying "no records" would deny records that are still here.
-		line := fmt.Sprintf("no interface records for %s", coord)
-		if pipelines, superseded := supersededInterfaceRecord(ctx, uc, coord); superseded {
-			line = supersededInterfaceLine(coord, pipelines)
-		}
-		if _, werr := fmt.Fprintf(stdout, "%s\n", line); werr != nil {
-			return fmt.Errorf("writing output: %w", werr)
-		}
-		return nil
+		return writeNoInterfaceHistory(ctx, coord, uc, stdout)
 	}
 
 	// A conflict is reported, not hidden: the history view is precisely where an
@@ -165,6 +158,19 @@ func runInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 	}
 	if _, werr := fmt.Fprintln(stdout,
 		"\n* served by the composed read (a complete extraction outranks a Partial one, then most recent)"); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
+	return nil
+}
+
+// writeNoInterfaceHistory says the coordinate has no generation at the serving
+// pipeline, naming the superseded ones the ledger still holds.
+func writeNoInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryInterfaceUseCase, stdout io.Writer) error {
+	line := fmt.Sprintf("no interface records for %s", coord)
+	if pipelines, superseded := supersededInterfaceRecord(ctx, uc, coord); superseded {
+		line = supersededInterfaceLine(coord, pipelines)
+	}
+	if _, werr := fmt.Fprintf(stdout, "%s\n", line); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
 	}
 	return nil
@@ -400,40 +406,8 @@ func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScope
 	// symbol-find takes a bare name with no module to
 	// classify, so the absence test is whether any interface record exists.
 	if len(refs) == 0 {
-		recs, lerr := ctr.QueryInterface.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
-		if lerr != nil {
-			return fmt.Errorf("listing analysed modules: %w", lerr)
-		}
-		if len(recs) == 0 {
-			return fmt.Errorf(
-				"symbol %q cannot be resolved: the interface store is empty, nothing "+
-					"has been analysed. Analyse a module first, e.g.:\n"+
-					"  kanonarion interface <module>@<version>\n"+
-					"  kanonarion local .   # for this project's own symbols",
-				symbolName)
-		}
-		// A store full of records this build refuses to serve is not a store
-		// that answers "no such export". The index is keyed on the pipeline
-		// version, so the lookup read nothing at all.
-		if line, superseded := supersededInterfaceStoreLine(recs); superseded {
-			return fmt.Errorf("symbol %q cannot be resolved: %s", symbolName, line)
-		}
-		// Under a scope, "no exports" is also reachable because every module that
-		// exports the symbol sits outside the named build. That is a statement
-		// about the build, not about the symbol, and the two must not print the
-		// same line — so say which one it is before the empty list is rendered.
-		if sc.modules.IsRestricted() {
-			unscoped, uerr := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, coordinate.ModuleSet{})
-			if uerr != nil && !errors.Is(uerr, ports.ErrInterfaceConflict) {
-				return fmt.Errorf("finding symbol %q across all versions: %w", symbolName, uerr)
-			}
-			if len(unscoped) > 0 {
-				if _, werr := fmt.Fprintf(stderr,
-					"notice: %d export(s) of %q exist in the store, all outside %s\n",
-					len(unscoped), symbolName, sc.source); werr != nil {
-					return fmt.Errorf("writing scope notice: %w", werr)
-				}
-			}
+		if err := explainNoSymbolExports(ctx, ctr, symbolName, sc, stderr); err != nil {
+			return err
 		}
 	}
 
@@ -459,6 +433,47 @@ func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScope
 		return perr
 	}
 	return conflictErr
+}
+
+// explainNoSymbolExports refuses an empty answer the store cannot stand
+// behind, and says when every export sits outside the named build.
+func explainNoSymbolExports(ctx context.Context, ctr *Container, symbolName string, sc buildScope, stderr io.Writer) error {
+	recs, lerr := ctr.QueryInterface.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
+	if lerr != nil {
+		return fmt.Errorf("listing analysed modules: %w", lerr)
+	}
+	if len(recs) == 0 {
+		return fmt.Errorf(
+			"symbol %q cannot be resolved: the interface store is empty, nothing "+
+				"has been analysed. Analyse a module first, e.g.:\n"+
+				"  kanonarion interface <module>@<version>\n"+
+				"  kanonarion local .   # for this project's own symbols",
+			symbolName)
+	}
+	// A store full of records this build refuses to serve is not a store
+	// that answers "no such export". The index is keyed on the pipeline
+	// version, so the lookup read nothing at all.
+	if line, superseded := supersededInterfaceStoreLine(recs); superseded {
+		return fmt.Errorf("symbol %q cannot be resolved: %s", symbolName, line)
+	}
+	// Under a scope, "no exports" is also reachable because every module that
+	// exports the symbol sits outside the named build. That is a statement
+	// about the build, not about the symbol, and the two must not print the
+	// same line — so say which one it is before the empty list is rendered.
+	if sc.modules.IsRestricted() {
+		unscoped, uerr := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, coordinate.ModuleSet{})
+		if uerr != nil && !errors.Is(uerr, ports.ErrInterfaceConflict) {
+			return fmt.Errorf("finding symbol %q across all versions: %w", symbolName, uerr)
+		}
+		if len(unscoped) > 0 {
+			if _, werr := fmt.Fprintf(stderr,
+				"notice: %d export(s) of %q exist in the store, all outside %s\n",
+				len(unscoped), symbolName, sc.source); werr != nil {
+				return fmt.Errorf("writing scope notice: %w", werr)
+			}
+		}
+	}
+	return nil
 }
 
 func printSymbolRefs(symbolName string, refs []ports.SymbolRef, stdout io.Writer) error {

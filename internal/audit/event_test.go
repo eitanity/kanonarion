@@ -96,33 +96,7 @@ func TestKnownEventTypes_CoversEveryDeclaredConstant(t *testing.T) {
 		if file.Name.Name != "audit" {
 			continue
 		}
-		for _, decl := range file.Decls {
-			gen, isGen := decl.(*ast.GenDecl)
-			if !isGen || gen.Tok != token.CONST {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				vs, isVS := spec.(*ast.ValueSpec)
-				if !isVS {
-					continue
-				}
-				id, isIdent := vs.Type.(*ast.Ident)
-				if !isIdent || id.Name != "EventType" || len(vs.Values) != len(vs.Names) {
-					continue
-				}
-				for i, name := range vs.Names {
-					lit, isLit := vs.Values[i].(*ast.BasicLit)
-					if !isLit || lit.Kind != token.STRING {
-						continue
-					}
-					value, uerr := strconv.Unquote(lit.Value)
-					if uerr != nil {
-						t.Fatalf("unquoting %s: %v", name.Name, uerr)
-					}
-					declared[name.Name] = value
-				}
-			}
-		}
+		collectEventTypeConstants(t, file, declared)
 	}
 	if len(declared) == 0 {
 		t.Fatal("found no EventType constants in the package source; the reader is broken, not the vocabulary")
@@ -139,6 +113,39 @@ func TestKnownEventTypes_CoversEveryDeclaredConstant(t *testing.T) {
 	}
 	if len(enumerated) != len(declared) {
 		t.Errorf("KnownEventTypes() returned %d type(s), the package declares %d", len(enumerated), len(declared))
+	}
+}
+
+// collectEventTypeConstants adds each string EventType constant file declares
+// to declared, keyed by name.
+func collectEventTypeConstants(t *testing.T, file *ast.File, declared map[string]string) {
+	t.Helper()
+	for _, decl := range file.Decls {
+		gen, isGen := decl.(*ast.GenDecl)
+		if !isGen || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, isVS := spec.(*ast.ValueSpec)
+			if !isVS {
+				continue
+			}
+			id, isIdent := vs.Type.(*ast.Ident)
+			if !isIdent || id.Name != "EventType" || len(vs.Values) != len(vs.Names) {
+				continue
+			}
+			for i, name := range vs.Names {
+				lit, isLit := vs.Values[i].(*ast.BasicLit)
+				if !isLit || lit.Kind != token.STRING {
+					continue
+				}
+				value, uerr := strconv.Unquote(lit.Value)
+				if uerr != nil {
+					t.Fatalf("unquoting %s: %v", name.Name, uerr)
+				}
+				declared[name.Name] = value
+			}
+		}
 	}
 }
 

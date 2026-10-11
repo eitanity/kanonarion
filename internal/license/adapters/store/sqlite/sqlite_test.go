@@ -151,16 +151,7 @@ func TestListLicenseRecords(t *testing.T) {
 	})
 
 	t.Run("filter_by_spdx", func(t *testing.T) {
-		sums, err := s.ListLicenseRecords(context.Background(), ports.LicenseFilter{SPDX: "MIT"})
-		if err != nil {
-			t.Fatalf("ListLicenseRecords: %v", err)
-		}
-		if len(sums) != 1 {
-			t.Errorf("expected 1 summary for MIT, got %d", len(sums))
-		}
-		if len(sums) > 0 && sums[0].PrimarySPDX != "MIT" {
-			t.Errorf("unexpected SPDX: %q", sums[0].PrimarySPDX)
-		}
+		testListFilterBySPDX(t, s)
 	})
 
 	t.Run("filter_by_status", func(t *testing.T) {
@@ -193,6 +184,20 @@ func TestListLicenseRecords(t *testing.T) {
 			t.Errorf("expected 2 summaries with Offset=1, got %d", len(sums))
 		}
 	})
+}
+
+// testListFilterBySPDX lists only the records with the given primary SPDX.
+func testListFilterBySPDX(t *testing.T, s *licensesqlite.Store) {
+	sums, err := s.ListLicenseRecords(context.Background(), ports.LicenseFilter{SPDX: "MIT"})
+	if err != nil {
+		t.Fatalf("ListLicenseRecords: %v", err)
+	}
+	if len(sums) != 1 {
+		t.Errorf("expected 1 summary for MIT, got %d", len(sums))
+	}
+	if len(sums) > 0 && sums[0].PrimarySPDX != "MIT" {
+		t.Errorf("unexpected SPDX: %q", sums[0].PrimarySPDX)
+	}
 }
 
 func TestGetLicenseRecord_IntegrityError(t *testing.T) {

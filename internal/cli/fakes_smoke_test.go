@@ -235,16 +235,7 @@ func TestFakeQueryCallGraph_AllMethods(t *testing.T) {
 		t.Fatalf("FindCallees: %v %v", callees, err)
 	}
 
-	req := cgapp.TraversalRequest{SymbolID: "sym", PipelineVersion: "0.1.0", MaxDepth: 5}
-	res, err := f.TraverseCallers(context.Background(), req)
-	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
-		t.Fatalf("TraverseCallers: %+v %v", res, err)
-	}
-
-	res, err = f.TraverseCallees(context.Background(), req)
-	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
-		t.Fatalf("TraverseCallees: %+v %v", res, err)
-	}
+	assertEmptyTraversals(t, f)
 
 	f.Err = errTest
 	_, _, err = f.GetCallGraphRecord(context.Background(), c, "0.1.0")
@@ -254,6 +245,22 @@ func TestFakeQueryCallGraph_AllMethods(t *testing.T) {
 	_, err = f.ListCallGraphRecords(context.Background(), cgports.CallGraphFilter{})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// assertEmptyTraversals checks both traversals of an empty fake answer with
+// nothing.
+func assertEmptyTraversals(t *testing.T, f *testfakes.FakeQueryCallGraph) {
+	t.Helper()
+	req := cgapp.TraversalRequest{SymbolID: "sym", PipelineVersion: "0.1.0", MaxDepth: 5}
+	res, err := f.TraverseCallers(context.Background(), req)
+	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
+		t.Fatalf("TraverseCallers: %+v %v", res, err)
+	}
+
+	res, err = f.TraverseCallees(context.Background(), req)
+	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
+		t.Fatalf("TraverseCallees: %+v %v", res, err)
 	}
 }
 
@@ -365,6 +372,14 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 		t.Fatalf("empty ListRecordsForModule: %v %v", list2, err)
 	}
 
+	assertFakeVulnErrors(t, f, c)
+}
+
+// assertFakeVulnErrors checks every read of the fake returns the error it was
+// armed with.
+func assertFakeVulnErrors(t *testing.T, f *testfakes.FakeQueryVuln, c coordinate.ModuleCoordinate) {
+	t.Helper()
+	var err error
 	f.Err = errTest
 	_, _, err = f.GetRecord(context.Background(), c, "0.1.0", vulndomain.DatabaseSnapshot{})
 	if err == nil {
@@ -422,6 +437,15 @@ func TestFakeQueryScanRuns_AllMethods(t *testing.T) {
 		t.Fatalf("ListAllRuns: %v %v", all, err)
 	}
 
+	assertFakeHoldsNoSnapshot(t, f)
+
+	assertFakeScanRunsErrors(t, f)
+}
+
+// assertFakeHoldsNoSnapshot checks an empty fake lists no snapshot and has no
+// latest one.
+func assertFakeHoldsNoSnapshot(t *testing.T, f *testfakes.FakeQueryScanRuns) {
+	t.Helper()
 	snaps, err := f.ListSnapshots(context.Background())
 	if err != nil || snaps != nil {
 		t.Fatalf("ListSnapshots: %v %v", snaps, err)
@@ -431,7 +455,13 @@ func TestFakeQueryScanRuns_AllMethods(t *testing.T) {
 	if err != nil || found3 {
 		t.Fatalf("GetLatestSnapshot (empty): %v %v", found3, err)
 	}
+}
 
+// assertFakeScanRunsErrors checks every read of the fake returns the error it
+// was armed with.
+func assertFakeScanRunsErrors(t *testing.T, f *testfakes.FakeQueryScanRuns) {
+	t.Helper()
+	var err error
 	f.GetErr = errTest
 	_, _, err = f.GetRun(context.Background(), "SR1")
 	if err == nil {

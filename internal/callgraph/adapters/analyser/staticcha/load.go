@@ -148,43 +148,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// _test.go files), and the external test package. The synthetic test-binary
 	// main is skipped — it is generated code, and its package main would
 	// otherwise make every library look like an application to the rooting rule.
-	var built []*ssa.Package
-	for _, p := range loaded {
-		if isSyntheticTestMain(p) {
-			continue
-		}
-		for _, e := range p.Errors {
-			res.LoadErrs = append(res.LoadErrs, e.Error())
-		}
-		if len(p.Errors) > 0 {
-			markFailed(p.PkgPath)
-		}
-		if p.Types == nil {
-			markFailed(p.PkgPath)
-			continue
-		}
-		if res.Prog.Package(p.Types) != nil {
-			// Already registered from syntax: the pattern list named this
-			// package twice.
-			continue
-		}
-		testPkg := isTestPackage(p)
-		// A test variant is registered but not importable: production code never
-		// imports it, and leaving the importable slot to the production package
-		// keeps ImportedPackage answering with the package consumers see.
-		ssaPkg, cerr := createSSAPackageSafe(res.Prog, p, !testPkg)
-		if cerr != nil {
-			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA package creation panic for %s: %v", p.PkgPath, cerr))
-			markFailed(p.PkgPath)
-			continue
-		}
-		built = append(built, ssaPkg)
-		if testPkg {
-			res.TestPkgs[ssaPkg] = true
-		} else {
-			res.TargetPkgs = append(res.TargetPkgs, ssaPkg)
-		}
-	}
+	built := registerTargetPackages(&res, loaded, markFailed)
 
 	// Every import the loader could not resolve because the module providing it is
 	// not on this host and the analysis is not permitted to fetch one. It is read
@@ -229,6 +193,73 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// that difference is only knowable here: downstream, a program with registered
 	// packages and no built bodies is indistinguishable from one built from
 	// metadata. Recording it is what gives CompletenessTypeOnly a producer.
+	builtPaths := a.buildSSAPackages(coord, built, &res, markFailed)
+	// Which modules other than this one had their packages built here. The target
+	// set was selected by path prefix and Go module paths nest, so this is
+	// routinely non-empty; it is taken from the packages that actually BUILT,
+	// because the claim being recorded is about bodies and not about selection.
+	res.ForeignModulesBuilt = res.Membership.foreignModules(builtPaths)
+	// The ASTs and type info are held only until the packages that need them are
+	// built; ssa keeps its own references while building and drops them after.
+	for _, p := range loaded {
+		p.Syntax = nil
+		p.TypesInfo = nil
+	}
+	runtime.GC()
+	a.logMem(ctx, "ssa_built")
+	a.step(coord, fmt.Sprintf("SSA built (%d packages with bodies)", res.BodiesBuilt))
+
+	recordFailedPackages(&res, failedSet)
+
+	return res, nil
+}
+
+// registerTargetPackages registers every loaded target package from syntax,
+// returning the packages created for it.
+func registerTargetPackages(res *ssaBuildResult, loaded []*packages.Package, markFailed func(string)) []*ssa.Package {
+	var built []*ssa.Package
+	for _, p := range loaded {
+		if isSyntheticTestMain(p) {
+			continue
+		}
+		for _, e := range p.Errors {
+			res.LoadErrs = append(res.LoadErrs, e.Error())
+		}
+		if len(p.Errors) > 0 {
+			markFailed(p.PkgPath)
+		}
+		if p.Types == nil {
+			markFailed(p.PkgPath)
+			continue
+		}
+		if res.Prog.Package(p.Types) != nil {
+			// Already registered from syntax: the pattern list named this
+			// package twice.
+			continue
+		}
+		testPkg := isTestPackage(p)
+		// A test variant is registered but not importable: production code never
+		// imports it, and leaving the importable slot to the production package
+		// keeps ImportedPackage answering with the package consumers see.
+		ssaPkg, cerr := createSSAPackageSafe(res.Prog, p, !testPkg)
+		if cerr != nil {
+			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA package creation panic for %s: %v", p.PkgPath, cerr))
+			markFailed(p.PkgPath)
+			continue
+		}
+		built = append(built, ssaPkg)
+		if testPkg {
+			res.TestPkgs[ssaPkg] = true
+		} else {
+			res.TargetPkgs = append(res.TargetPkgs, ssaPkg)
+		}
+	}
+	return built
+}
+
+// buildSSAPackages builds each registered target package's bodies, returning
+// the paths of those that built.
+func (a *Analyser) buildSSAPackages(coord coordinate.ModuleCoordinate, built []*ssa.Package, res *ssaBuildResult, markFailed func(string)) []string {
 	var builtPaths []string
 	for i, ssaPkg := range built {
 		// Progress inside the phase, not only at its end: SSA construction over a
@@ -251,21 +282,11 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			builtPaths = append(builtPaths, ssaPkg.Pkg.Path())
 		}
 	}
-	// Which modules other than this one had their packages built here. The target
-	// set was selected by path prefix and Go module paths nest, so this is
-	// routinely non-empty; it is taken from the packages that actually BUILT,
-	// because the claim being recorded is about bodies and not about selection.
-	res.ForeignModulesBuilt = res.Membership.foreignModules(builtPaths)
-	// The ASTs and type info are held only until the packages that need them are
-	// built; ssa keeps its own references while building and drops them after.
-	for _, p := range loaded {
-		p.Syntax = nil
-		p.TypesInfo = nil
-	}
-	runtime.GC()
-	a.logMem(ctx, "ssa_built")
-	a.step(coord, fmt.Sprintf("SSA built (%d packages with bodies)", res.BodiesBuilt))
+	return builtPaths
+}
 
+// recordFailedPackages states the failed target packages on res, sorted.
+func recordFailedPackages(res *ssaBuildResult, failedSet map[string]bool) {
 	if len(failedSet) > 0 {
 		res.FailedPkgs = make([]string, 0, len(failedSet))
 		for p := range failedSet {
@@ -273,8 +294,6 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		}
 		sort.Strings(res.FailedPkgs)
 	}
-
-	return res, nil
 }
 
 // ssaBuildProgressStride is how often the build loop reports. Sized so a

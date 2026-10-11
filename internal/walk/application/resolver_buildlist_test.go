@@ -111,6 +111,17 @@ func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 	}
 
 	// Module replacement → ResolutionReplace at the replacement coordinate.
+	assertReplacementNodes(t, g, byPath)
+
+	if len(g.Nodes) != 5 {
+		t.Errorf("node count = %d, want 5 (project + mod + sys + fork + local)", len(g.Nodes))
+	}
+}
+
+// assertReplacementNodes checks the module replace maps to its fork and the
+// filesystem replace to a local node.
+func assertReplacementNodes(t *testing.T, g domain3.Graph, byPath map[string]domain3.GraphNode) {
+	t.Helper()
 	fork, ok := byPath["example.com/fork"]
 	if !ok {
 		t.Fatalf("replacement node example.com/fork missing; nodes: %v", byPath)
@@ -138,10 +149,6 @@ func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 	}
 	if !g.HasLocalReplace {
 		t.Errorf("graph HasLocalReplace should be true with a filesystem replacement")
-	}
-
-	if len(g.Nodes) != 5 {
-		t.Errorf("node count = %d, want 5 (project + mod + sys + fork + local)", len(g.Nodes))
 	}
 }
 

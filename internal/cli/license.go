@@ -447,14 +447,7 @@ func printLicenseRecursive(
 		return nil
 	}
 
-	primaryLic := "Unknown"
-	if primaryRec, found, err := queryUC.GetLicenseRecord(ctx, target, licapp.PipelineVersion); err == nil && found {
-		if covered := domain.ReadCoverage(primaryRec); covered.PrimarySPDX != "" {
-			primaryLic = covered.PrimarySPDX
-		} else {
-			primaryLic = "None"
-		}
-	}
+	primaryLic := primaryLicenceOf(ctx, queryUC, target)
 
 	// Which walk answered, and in which frame. A closure listed here is the
 	// closure of one platform's build — GOOS gates which files, and so which
@@ -470,21 +463,46 @@ func printLicenseRecursive(
 	}
 
 	if f.all {
-		if _, err := fmt.Fprintf(stdout, "\nDependency Licenses:\n"); err != nil {
-			return fmt.Errorf("writing header: %w", err)
-		}
-		for _, d := range depResults {
-			status := d.PrimarySPDX
-			if d.Err != nil {
-				status = fmt.Sprintf("Error: %v", d.Err)
-			}
-			if _, err := fmt.Fprintf(stdout, "  %-50s: %s\n", d.Coordinate, status); err != nil {
-				return fmt.Errorf("writing dep: %w", err)
-			}
-		}
-		return nil
+		return printAllDependencyLicences(stdout, depResults)
 	}
 
+	return printDependencyLicenceSummary(stdout, depResults, primaryLic)
+}
+
+// primaryLicenceOf is the licence covering the target's own code, None when
+// its record identifies none, Unknown when it has no readable record.
+func primaryLicenceOf(ctx context.Context, queryUC QueryLicenseUseCase, target coordinate.ModuleCoordinate) string {
+	primaryLic := "Unknown"
+	if primaryRec, found, err := queryUC.GetLicenseRecord(ctx, target, licapp.PipelineVersion); err == nil && found {
+		if covered := domain.ReadCoverage(primaryRec); covered.PrimarySPDX != "" {
+			primaryLic = covered.PrimarySPDX
+		} else {
+			primaryLic = "None"
+		}
+	}
+	return primaryLic
+}
+
+// printAllDependencyLicences lists every dependency with its licence.
+func printAllDependencyLicences(stdout io.Writer, depResults []licapp.DepLicenseResult) error {
+	if _, err := fmt.Fprintf(stdout, "\nDependency Licenses:\n"); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
+	for _, d := range depResults {
+		status := d.PrimarySPDX
+		if d.Err != nil {
+			status = fmt.Sprintf("Error: %v", d.Err)
+		}
+		if _, err := fmt.Fprintf(stdout, "  %-50s: %s\n", d.Coordinate, status); err != nil {
+			return fmt.Errorf("writing dep: %w", err)
+		}
+	}
+	return nil
+}
+
+// printDependencyLicenceSummary counts the closure's licences, or says they
+// are all the module's own.
+func printDependencyLicenceSummary(stdout io.Writer, depResults []licapp.DepLicenseResult, primaryLic string) error {
 	// Summarize.
 	licenseCounts := make(map[string]int)
 	for _, d := range depResults {
@@ -563,33 +581,8 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 			return fmt.Errorf("writing failure detail: %w", err)
 		}
 	}
-	// An expression carrying an operator makes a legal claim — a choice under
-	// OR, a set of obligations under AND — so the reader is shown what settled
-	// it, and any grant that was read as somebody else's rather than this
-	// module's, which is the one fact the expression deliberately omits.
-	if coverage.Basis != "" {
-		if _, err := fmt.Fprintf(stdout, "  basis: %s\n", coverage.Basis); err != nil {
-			return fmt.Errorf("writing expression basis: %w", err)
-		}
-	}
-	if len(r.BundledSPDXs) > 0 {
-		if _, err := fmt.Fprintf(stdout,
-			"  bundled in the licence file, not a licence of this module: %s\n",
-			strings.Join(r.BundledSPDXs, ", "),
-		); err != nil {
-			return fmt.Errorf("writing bundled grants: %w", err)
-		}
-	}
-	for _, f := range r.LicenseFiles {
-		vendored := ""
-		if f.IsVendored {
-			vendored = " [vendored]"
-		}
-		if _, err := fmt.Fprintf(stdout, "  %s: %s (%.0f%%)%s — %s\n",
-			f.Path, f.SPDX, f.Confidence*100, vendored, coverage.ByPath[f.Path].Covers(),
-		); err != nil {
-			return fmt.Errorf("writing file entry: %w", err)
-		}
+	if err := printLicenceFileLines(stdout, r, coverage); err != nil {
+		return err
 	}
 	if err := printPackageLicensesSection(r, stdout); err != nil {
 		return err
@@ -619,6 +612,40 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 		return printBindingObligationsSection(coverage.Expression, reading.Set, reading.Arms, stdout)
 	}
 	return printObligationsSection(coverage.PrimarySPDX, stdout)
+}
+
+// printLicenceFileLines prints what settled the expression, the grants read as
+// bundled, and each licence file with what it covers.
+func printLicenceFileLines(stdout io.Writer, r domain.LicenseRecord, coverage domain.CoverageReading) error {
+	// An expression carrying an operator makes a legal claim — a choice under
+	// OR, a set of obligations under AND — so the reader is shown what settled
+	// it, and any grant that was read as somebody else's rather than this
+	// module's, which is the one fact the expression deliberately omits.
+	if coverage.Basis != "" {
+		if _, err := fmt.Fprintf(stdout, "  basis: %s\n", coverage.Basis); err != nil {
+			return fmt.Errorf("writing expression basis: %w", err)
+		}
+	}
+	if len(r.BundledSPDXs) > 0 {
+		if _, err := fmt.Fprintf(stdout,
+			"  bundled in the licence file, not a licence of this module: %s\n",
+			strings.Join(r.BundledSPDXs, ", "),
+		); err != nil {
+			return fmt.Errorf("writing bundled grants: %w", err)
+		}
+	}
+	for _, f := range r.LicenseFiles {
+		vendored := ""
+		if f.IsVendored {
+			vendored = " [vendored]"
+		}
+		if _, err := fmt.Fprintf(stdout, "  %s: %s (%.0f%%)%s — %s\n",
+			f.Path, f.SPDX, f.Confidence*100, vendored, coverage.ByPath[f.Path].Covers(),
+		); err != nil {
+			return fmt.Errorf("writing file entry: %w", err)
+		}
+	}
+	return nil
 }
 
 // obligationsReadingMaximal qualifies an obligations set merged across
@@ -1249,21 +1276,9 @@ func runLicenseList(
 	}
 
 	if f.copyright != "" {
-		var matched []ports.LicenseSummary
-		for _, s := range sums {
-			coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
-			if cErr != nil {
-				return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
-			}
-			rec, found, rerr := uc.GetLicenseRecord(ctx, coord, s.PipelineVersion)
-			if rerr != nil || !found {
-				continue
-			}
-			if domain.MatchesCopyrightHolder(rec.LicenseFiles, f.copyright) {
-				matched = append(matched, s)
-			}
+		if sums, err = filterByCopyrightHolder(ctx, uc, sums, f.copyright); err != nil {
+			return err
 		}
-		sums = matched
 	}
 	if f.postFiltered(scope) {
 		sums = skipList(sums, f.offset)
@@ -1272,17 +1287,9 @@ func runLicenseList(
 	sums, truncated := truncateList(sums, f.limit)
 	trunc := listTruncation{limit: f.limit, subject: gen.subject, truncated: truncated, offset: f.offset}
 
-	entries := make([]licenseListEntry, 0, len(sums))
-	var conflicts []error
-	for _, s := range sums {
-		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
-		if cErr != nil {
-			return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
-		}
-		entries = append(entries, toLicenseListEntry(s, coord, overrides, gen))
-		if s.Conflict != nil {
-			conflicts = append(conflicts, s.Conflict)
-		}
+	entries, conflicts, err := licenseListEntries(sums, overrides, gen)
+	if err != nil {
+		return err
 	}
 
 	var zero *listZeroScope
@@ -1309,6 +1316,44 @@ func runLicenseList(
 	// Every module is listed first, then the command fails. A licence in dispute
 	// must not be reported as a clean run.
 	return licenseListConflictErr(conflicts)
+}
+
+// filterByCopyrightHolder keeps the summaries whose records name holder in a
+// copyright statement.
+func filterByCopyrightHolder(ctx context.Context, uc QueryLicenseUseCase, sums []ports.LicenseSummary, holder string) ([]ports.LicenseSummary, error) {
+	var matched []ports.LicenseSummary
+	for _, s := range sums {
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return nil, fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
+		rec, found, rerr := uc.GetLicenseRecord(ctx, coord, s.PipelineVersion)
+		if rerr != nil || !found {
+			continue
+		}
+		if domain.MatchesCopyrightHolder(rec.LicenseFiles, holder) {
+			matched = append(matched, s)
+		}
+	}
+	return matched, nil
+}
+
+// licenseListEntries is one listing row per summary, and the conflicts the
+// rows carry.
+func licenseListEntries(sums []ports.LicenseSummary, overrides domain.LicenseOverrideSet, gen listGeneration) ([]licenseListEntry, []error, error) {
+	entries := make([]licenseListEntry, 0, len(sums))
+	var conflicts []error
+	for _, s := range sums {
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return nil, nil, fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
+		entries = append(entries, toLicenseListEntry(s, coord, overrides, gen))
+		if s.Conflict != nil {
+			conflicts = append(conflicts, s.Conflict)
+		}
+	}
+	return entries, conflicts, nil
 }
 
 // printLicenseListText renders the page in the reader's terms: the scope it was

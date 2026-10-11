@@ -14,6 +14,7 @@ import (
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 )
 
 type latestFlags struct {
@@ -421,32 +422,38 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 	}
 
 	if len(args) == 0 {
-		gomodPath, err := resolveGoModPath(f.gomodPath)
-		if err != nil {
-			return err
-		}
-		scope, serr := scopeFromFlags(f.tool, f.project)
-		if serr != nil {
-			return serr
-		}
-		if f.excludeTests && scope == scopeComplete {
-			return refuseTestScopeOnCompleteScope("latest --gomod")
-		}
-		// The go.mod path is the one place the latest question is asked about a
-		// SET, and the go command answers a set in one call. The offline lookup
-		// keeps the ledger it already had: `go list -m -u` under a declared air
-		// gap reports every module as having no update, which is not an answer,
-		// so the batch refuses there rather than manufacturing one.
-		return runLatestGomod(ctx, gomodPath, scope, f.excludeTests, func(coords []string) stalenessLookup {
-			if offline {
-				return lookup
-			}
-			return newGomodStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr), nil),
-				ledger, activeConfig.Staleness.TTL, f.fresh, gomodPath, f.goproxy, pinnedModulesOf(coords))
-		}, stdout, stderr)
+		return runLatestFromGoMod(ctx, f, offline, lookup, proxy, ledger, stdout, stderr)
 	}
 
 	return runLatestModules(ctx, args, lookup, stdout, stderr)
+}
+
+// runLatestFromGoMod answers the latest question for every module of the
+// go.mod's scope, in one go command call.
+func runLatestFromGoMod(ctx context.Context, f latestFlags, offline bool, lookup stalenessLookup, proxy *proxyadapter.Proxy, ledger staleports.Ledger, stdout, stderr io.Writer) error {
+	gomodPath, err := resolveGoModPath(f.gomodPath)
+	if err != nil {
+		return err
+	}
+	scope, serr := scopeFromFlags(f.tool, f.project)
+	if serr != nil {
+		return serr
+	}
+	if f.excludeTests && scope == scopeComplete {
+		return refuseTestScopeOnCompleteScope("latest --gomod")
+	}
+	// The go.mod path is the one place the latest question is asked about a
+	// SET, and the go command answers a set in one call. The offline lookup
+	// keeps the ledger it already had: `go list -m -u` under a declared air
+	// gap reports every module as having no update, which is not an answer,
+	// so the batch refuses there rather than manufacturing one.
+	return runLatestGomod(ctx, gomodPath, scope, f.excludeTests, func(coords []string) stalenessLookup {
+		if offline {
+			return lookup
+		}
+		return newGomodStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr), nil),
+			ledger, activeConfig.Staleness.TTL, f.fresh, gomodPath, f.goproxy, pinnedModulesOf(coords))
+	}, stdout, stderr)
 }
 
 // runLatestModules resolves one or more module coordinates from positional
@@ -794,32 +801,7 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		if len(coord) < colWidth {
 			coord = fmt.Sprintf("%-*s", colWidth, coord)
 		}
-		var status string
-		switch {
-		case r.Latest == latestErrorSentinel:
-			status = "(error resolving latest)"
-		case r.IsLatest == nil:
-			// Any other unmeasured row states the absence in the cell rather than
-			// falling through to one of the answers below.
-			status = stalenessUnmeasuredLabel(r.StalenessUnmeasured)
-		case *r.IsLatest:
-			status = "current"
-		case r.PinAheadOfLatest != nil && *r.PinAheadOfLatest:
-			// No target and no age: there is nothing at this path to move to,
-			// and the age of a release the pin is already past is not a
-			// distance behind.
-			status = fmt.Sprintf("ahead of latest tag: %s", r.Latest)
-		case r.LatestReleaseAgeDays == nil:
-			// The proxy named a newer version and no date for it. The target is
-			// still worth stating; an age is not invented for it, and it used to
-			// be — a missing date reached this line as 0 and printed
-			// "released today" about a release nothing is known about.
-			status = fmt.Sprintf("latest: %s", r.Latest)
-		case *r.LatestReleaseAgeDays == 0:
-			status = fmt.Sprintf("latest: %s (released today)", r.Latest)
-		default:
-			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, *r.LatestReleaseAgeDays)
-		}
+		status := latestStatusCell(r)
 		// The replace clause comes FIRST, before the verdict: it says which module
 		// the row is about and where a bump would have to be made, and a reader who
 		// has already read "latest: v9.18.5" has already decided it applies to the
@@ -846,6 +828,37 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		}
 	}
 	return nil
+}
+
+// latestStatusCell is the verdict a row states about its pin.
+func latestStatusCell(r latestResult) string {
+	var status string
+	switch {
+	case r.Latest == latestErrorSentinel:
+		status = "(error resolving latest)"
+	case r.IsLatest == nil:
+		// Any other unmeasured row states the absence in the cell rather than
+		// falling through to one of the answers below.
+		status = stalenessUnmeasuredLabel(r.StalenessUnmeasured)
+	case *r.IsLatest:
+		status = "current"
+	case r.PinAheadOfLatest != nil && *r.PinAheadOfLatest:
+		// No target and no age: there is nothing at this path to move to,
+		// and the age of a release the pin is already past is not a
+		// distance behind.
+		status = fmt.Sprintf("ahead of latest tag: %s", r.Latest)
+	case r.LatestReleaseAgeDays == nil:
+		// The proxy named a newer version and no date for it. The target is
+		// still worth stating; an age is not invented for it, and it used to
+		// be — a missing date reached this line as 0 and printed
+		// "released today" about a release nothing is known about.
+		status = fmt.Sprintf("latest: %s", r.Latest)
+	case *r.LatestReleaseAgeDays == 0:
+		status = fmt.Sprintf("latest: %s (released today)", r.Latest)
+	default:
+		status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, *r.LatestReleaseAgeDays)
+	}
+	return status
 }
 
 // oldestLookup returns the earliest lookup time across the table.

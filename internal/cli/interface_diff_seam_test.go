@@ -438,27 +438,7 @@ func TestInterfaceDiffWith_UsedBy_JSONCarriesTheJoinAndTheGate(t *testing.T) {
 	err := interfaceDiffWith(context.Background(), ctr, a, b, interfaceDiffFlags{usedBy: gomod}, &out)
 	requireExit(t, err, ExitPolicy)
 
-	var decoded struct {
-		UsedBy *struct {
-			WalkID         string `json:"walk_id"`
-			Consumer       string `json:"consumer"`
-			ScopeSize      int    `json:"scope_size"`
-			CallGraphFound bool   `json:"call_graph_found"`
-			ReachedCount   int    `json:"reached_count"`
-			Coverage       string `json:"coverage"`
-			Symbols        []struct {
-				Name    string `json:"name"`
-				Class   string `json:"class"`
-				NodeID  string `json:"node_id"`
-				Sites   int    `json:"sites"`
-				Callers []struct {
-					ID   string `json:"id"`
-					File string `json:"file"`
-					Line int    `json:"line"`
-				} `json:"callers"`
-			} `json:"symbols"`
-		} `json:"used_by"`
-	}
+	var decoded usedByJSONDoc
 	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 		t.Fatalf("decoding JSON: %v\n%s", err, out.String())
 	}
@@ -472,6 +452,36 @@ func TestInterfaceDiffWith_UsedBy_JSONCarriesTheJoinAndTheGate(t *testing.T) {
 	if decoded.UsedBy.Coverage != usedByCoverageNote {
 		t.Error("the JSON join carries no coverage statement")
 	}
+	assertUsedBySymbol(t, decoded)
+}
+
+// usedByJSONDoc is the used_by part of an interface-diff document.
+type usedByJSONDoc struct {
+	UsedBy *struct {
+		WalkID         string `json:"walk_id"`
+		Consumer       string `json:"consumer"`
+		ScopeSize      int    `json:"scope_size"`
+		CallGraphFound bool   `json:"call_graph_found"`
+		ReachedCount   int    `json:"reached_count"`
+		Coverage       string `json:"coverage"`
+		Symbols        []struct {
+			Name    string `json:"name"`
+			Class   string `json:"class"`
+			NodeID  string `json:"node_id"`
+			Sites   int    `json:"sites"`
+			Callers []struct {
+				ID   string `json:"id"`
+				File string `json:"file"`
+				Line int    `json:"line"`
+			} `json:"callers"`
+		} `json:"symbols"`
+	} `json:"used_by"`
+}
+
+// assertUsedBySymbol checks the one breaking symbol carries its class, node,
+// reach and callers.
+func assertUsedBySymbol(t *testing.T, decoded usedByJSONDoc) {
+	t.Helper()
 	if len(decoded.UsedBy.Symbols) != 1 {
 		t.Fatalf("symbols = %+v", decoded.UsedBy.Symbols)
 	}

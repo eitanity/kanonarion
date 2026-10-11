@@ -56,39 +56,9 @@ func adoptLegacyBlobs(db sqlitestore.DB, blobs *blobstore.Store, storeRoot strin
 		if err := rows.Scan(&moduleHash, &goModHash, &contentLocation, &goModLocation); err != nil {
 			return fmt.Errorf("scanning fetch record to re-address blobs: %w", err)
 		}
-		for _, artefact := range []struct {
-			kind   fetchports.BlobKind
-			hash   string
-			legacy string
-		}{
-			{fetchports.BlobKindZip, moduleHash, contentLocation},
-			{fetchports.BlobKindGoMod, goModHash, goModLocation},
-		} {
-			h, perr := fetchdomain.ParseModuleHash(artefact.hash)
-			if perr != nil || h.IsZero() || artefact.legacy == "" {
-				continue
-			}
-			identity, ierr := fetchports.NewBlobIdentity(artefact.kind, h)
-			if ierr != nil {
-				logger.Warn("blob_readdress_failed",
-					slog.String("legacy_handle", artefact.legacy),
-					slog.String("error", ierr.Error()),
-				)
-				skipped++
-				continue
-			}
-			ok, aerr := blobs.AdoptLegacyBlob(identity, artefact.legacy)
-			switch {
-			case aerr != nil:
-				logger.Warn("blob_readdress_failed",
-					slog.String("legacy_handle", artefact.legacy),
-					slog.String("error", aerr.Error()),
-				)
-				skipped++
-			case ok:
-				adopted++
-			}
-		}
+		rowAdopted, rowSkipped := adoptRowBlobs(blobs, logger, moduleHash, goModHash, contentLocation, goModLocation)
+		adopted += rowAdopted
+		skipped += rowSkipped
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterating fetch records to re-address blobs: %w", err)
@@ -104,4 +74,44 @@ func adoptLegacyBlobs(db sqlitestore.DB, blobs *blobstore.Store, storeRoot strin
 		return fmt.Errorf("recording blob re-addressing marker: %w", err)
 	}
 	return nil
+}
+
+// adoptRowBlobs re-addresses one fetch record's zip and go.mod blobs by
+// artefact identity, returning how many it adopted and how many it skipped.
+func adoptRowBlobs(blobs *blobstore.Store, logger *slog.Logger, moduleHash, goModHash, contentLocation, goModLocation string) (int, int) {
+	var adopted, skipped int
+	for _, artefact := range []struct {
+		kind   fetchports.BlobKind
+		hash   string
+		legacy string
+	}{
+		{fetchports.BlobKindZip, moduleHash, contentLocation},
+		{fetchports.BlobKindGoMod, goModHash, goModLocation},
+	} {
+		h, perr := fetchdomain.ParseModuleHash(artefact.hash)
+		if perr != nil || h.IsZero() || artefact.legacy == "" {
+			continue
+		}
+		identity, ierr := fetchports.NewBlobIdentity(artefact.kind, h)
+		if ierr != nil {
+			logger.Warn("blob_readdress_failed",
+				slog.String("legacy_handle", artefact.legacy),
+				slog.String("error", ierr.Error()),
+			)
+			skipped++
+			continue
+		}
+		ok, aerr := blobs.AdoptLegacyBlob(identity, artefact.legacy)
+		switch {
+		case aerr != nil:
+			logger.Warn("blob_readdress_failed",
+				slog.String("legacy_handle", artefact.legacy),
+				slog.String("error", aerr.Error()),
+			)
+			skipped++
+		case ok:
+			adopted++
+		}
+	}
+	return adopted, skipped
 }

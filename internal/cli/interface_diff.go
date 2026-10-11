@@ -444,6 +444,25 @@ func printInterfaceDiff(diff ifacedomain.InterfaceDiff, used *usedByResult, stdo
 		return err
 	}
 
+	if err := printInterfaceDiffSections(diff, used, stdout); err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprintf(stdout, "\n%s\n", interfaceDiffCoverageNote); err != nil {
+		return fmt.Errorf("writing coverage note: %w", err)
+	}
+	// A +incompatible side is a version the module system resolves under
+	// pre-modules rules, so the two coordinates being compared are not two points
+	// on one module's version line in the way the rest of this output implies.
+	return writePreModulesCaveatForSet(stdout, []coordinate.ModuleCoordinate{
+		diff.RecordA.Coordinate, diff.RecordB.Coordinate,
+	})
+}
+
+// printInterfaceDiffSections prints the diff's sections in order: packages,
+// removed, changed, added, spelling, renamed paths, registries, exclusions and
+// the consumer's use.
+func printInterfaceDiffSections(diff ifacedomain.InterfaceDiff, used *usedByResult, stdout io.Writer) error {
 	if err := printPackageDelta(diff, stdout); err != nil {
 		return err
 	}
@@ -472,16 +491,7 @@ func printInterfaceDiff(diff ifacedomain.InterfaceDiff, used *usedByResult, stdo
 	if err := printUsedBySection(used, stdout); err != nil {
 		return err
 	}
-
-	if _, err := fmt.Fprintf(stdout, "\n%s\n", interfaceDiffCoverageNote); err != nil {
-		return fmt.Errorf("writing coverage note: %w", err)
-	}
-	// A +incompatible side is a version the module system resolves under
-	// pre-modules rules, so the two coordinates being compared are not two points
-	// on one module's version line in the way the rest of this output implies.
-	return writePreModulesCaveatForSet(stdout, []coordinate.ModuleCoordinate{
-		diff.RecordA.Coordinate, diff.RecordB.Coordinate,
-	})
+	return nil
 }
 
 // printCrossMajorStatement says what a cross-major pair costs a consumer, which
@@ -722,42 +732,51 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 		}
 	}
 	for _, s := range used.Symbols {
-		class := "changed"
-		if s.Removed {
-			class = "removed"
-		}
-		switch {
-		case !s.Measurable:
-			if _, err := fmt.Fprintf(stdout, "  ? %s [%s] — unmeasured: no call-graph node for this kind\n",
-				s.Symbol.String(), class); err != nil {
-				return fmt.Errorf("writing used-by row: %w", err)
-			}
-		case s.Sites == 0:
-			if _, err := fmt.Fprintf(stdout, "  · %s [%s] — no call edge recorded from %s\n",
-				s.Symbol.String(), class, used.Consumer.Path()); err != nil {
-				return fmt.Errorf("writing used-by row: %w", err)
-			}
-		default:
-			if _, err := fmt.Fprintf(stdout, "  ! %s [%s] — %s\n",
-				s.Symbol.String(), class, countOf(s.Sites, "call sites")); err != nil {
-				return fmt.Errorf("writing used-by row: %w", err)
-			}
-			for _, c := range s.Callers {
-				loc := c.File
-				if c.Line > 0 {
-					loc = fmt.Sprintf("%s:%d", c.File, c.Line)
-				}
-				if loc == "" {
-					loc = "(position not recorded)"
-				}
-				if _, err := fmt.Fprintf(stdout, "      %s  %s\n", c.ID, loc); err != nil {
-					return fmt.Errorf("writing used-by caller: %w", err)
-				}
-			}
+		if err := printUsedByRow(stdout, s, used); err != nil {
+			return err
 		}
 	}
 	if _, err := fmt.Fprintf(stdout, "  %s\n", usedByCoverageNote); err != nil {
 		return fmt.Errorf("writing used-by coverage note: %w", err)
+	}
+	return nil
+}
+
+// printUsedByRow prints one breaking declaration with what the consumer's
+// call graph says about its reach, and the callers when there are any.
+func printUsedByRow(stdout io.Writer, s usedSymbol, used *usedByResult) error {
+	class := "changed"
+	if s.Removed {
+		class = "removed"
+	}
+	switch {
+	case !s.Measurable:
+		if _, err := fmt.Fprintf(stdout, "  ? %s [%s] — unmeasured: no call-graph node for this kind\n",
+			s.Symbol.String(), class); err != nil {
+			return fmt.Errorf("writing used-by row: %w", err)
+		}
+	case s.Sites == 0:
+		if _, err := fmt.Fprintf(stdout, "  · %s [%s] — no call edge recorded from %s\n",
+			s.Symbol.String(), class, used.Consumer.Path()); err != nil {
+			return fmt.Errorf("writing used-by row: %w", err)
+		}
+	default:
+		if _, err := fmt.Fprintf(stdout, "  ! %s [%s] — %s\n",
+			s.Symbol.String(), class, countOf(s.Sites, "call sites")); err != nil {
+			return fmt.Errorf("writing used-by row: %w", err)
+		}
+		for _, c := range s.Callers {
+			loc := c.File
+			if c.Line > 0 {
+				loc = fmt.Sprintf("%s:%d", c.File, c.Line)
+			}
+			if loc == "" {
+				loc = "(position not recorded)"
+			}
+			if _, err := fmt.Fprintf(stdout, "      %s  %s\n", c.ID, loc); err != nil {
+				return fmt.Errorf("writing used-by caller: %w", err)
+			}
+		}
 	}
 	return nil
 }

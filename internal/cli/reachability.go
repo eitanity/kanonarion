@@ -440,33 +440,10 @@ func runVulnReachabilityQuery(
 			return frameRecordAbsence(coord, anchor, candidates)
 		}
 	} else {
-		recs, lerr := uc.ListRecordsForModule(ctx, coord, localVulnPipelineVersion)
-		if lerr = setAside.take(lerr); lerr != nil {
-			return fmt.Errorf("getting vulnerability record: %w", lerr)
-		}
-		// Two consumers' builds, one coordinate, no flag naming which: the store
-		// holds two true answers and this question distinguishes neither.
-		if frames := consumerFrames(recs, coord); len(frames) > 1 {
-			return ambiguousFrameRefusal(
-				fmt.Sprintf("kanonarion reachability %s --vuln %s", coord, vulnID), coord, frames)
-		}
-		var cerr error
-		rec, aside, hasAside, found, cerr = selectConsumerRecord(recs, coord)
-		if cerr != nil {
-			return fmt.Errorf("getting vulnerability record: %w", cerr)
-		}
-		if !found && len(setAside) > 0 {
-			return setAside.noServable(coord, remedyScanModule(coord).String())
-		}
-		if !found {
-			// "The module has not been vuln-scanned" is the strongest of this
-			// command's absences, and the read above cannot see past its own
-			// pipeline version — so it said that about coordinates the store had
-			// scanned sixteen times. Asked here rather than in the classifier,
-			// which is pure and holds no store.
-			if serr := supersededVulnRefusal(ctx, uc, walks, coord); serr != nil {
-				return serr
-			}
+		var uerr error
+		rec, aside, hasAside, found, uerr = selectUnanchoredRecord(ctx, uc, walks, coord, vulnID, &setAside)
+		if uerr != nil {
+			return uerr
 		}
 	}
 
@@ -490,6 +467,40 @@ func runVulnReachabilityQuery(
 	writeFrameAnchorNotice(stdout, anchor, anchored)
 	printVulnReachability(stdout, res)
 	return nil
+}
+
+// selectUnanchoredRecord picks the record answering a question no walk
+// anchors: refused when two consumers' frames both hold one.
+func selectUnanchoredRecord(ctx context.Context, uc QueryVulnUseCase, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate, vulnID string, setAside *setAsideRows) (rec, aside vuldomain.VulnerabilityRecord, hasAside, found bool, _ error) {
+	recs, lerr := uc.ListRecordsForModule(ctx, coord, localVulnPipelineVersion)
+	if lerr = setAside.take(lerr); lerr != nil {
+		return rec, aside, hasAside, found, fmt.Errorf("getting vulnerability record: %w", lerr)
+	}
+	// Two consumers' builds, one coordinate, no flag naming which: the store
+	// holds two true answers and this question distinguishes neither.
+	if frames := consumerFrames(recs, coord); len(frames) > 1 {
+		return rec, aside, hasAside, found, ambiguousFrameRefusal(
+			fmt.Sprintf("kanonarion reachability %s --vuln %s", coord, vulnID), coord, frames)
+	}
+	var cerr error
+	rec, aside, hasAside, found, cerr = selectConsumerRecord(recs, coord)
+	if cerr != nil {
+		return rec, aside, hasAside, found, fmt.Errorf("getting vulnerability record: %w", cerr)
+	}
+	if !found && len(*setAside) > 0 {
+		return rec, aside, hasAside, found, setAside.noServable(coord, remedyScanModule(coord).String())
+	}
+	if !found {
+		// "The module has not been vuln-scanned" is the strongest of this
+		// command's absences, and the read above cannot see past its own
+		// pipeline version — so it said that about coordinates the store had
+		// scanned sixteen times. Asked here rather than in the classifier,
+		// which is pure and holds no store.
+		if serr := supersededVulnRefusal(ctx, uc, walks, coord); serr != nil {
+			return rec, aside, hasAside, found, serr
+		}
+	}
+	return rec, aside, hasAside, found, nil
 }
 
 // selectConsumerRecord picks the record that answers a consumer's reachability
@@ -1442,25 +1453,7 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 	if r.Notice != "" {
 		w.printf("  notice:    %s\n", r.Notice)
 	}
-	c := r.Coverage
-	w.printf("\ncoverage: %d build module(s), %d queried, %d covered, %d with findings\n",
-		c.BuildModules, c.QueriedModules, c.CoveredModules, c.ModulesWithFindings)
-	for _, b := range c.ProbedBinaries {
-		if b.BuildError != "" {
-			w.printf("  binary not probed: %s — %s\n", b.ImportPath, b.BuildError)
-			continue
-		}
-		w.printf("  binary probed:     %s\n", b.ImportPath)
-	}
-	if len(c.UncoveredModules) > 0 {
-		w.printf("  uncovered (%d) — this answer does not speak about them:\n", len(c.UncoveredModules))
-		for _, u := range c.UncoveredModules {
-			w.printf("    %s@%s — %s\n", u.Path, u.Version, u.Reason)
-		}
-	}
-	if c.UncoveredRemedy != "" {
-		w.printf("  to widen the answer: %s\n", c.UncoveredRemedy)
-	}
+	printLocalCoverage(w, r.Coverage)
 	if len(r.Modules) == 0 {
 		w.printf("\nno affected modules in the analysed build\n")
 		return w.err
@@ -1493,6 +1486,30 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 		}
 	}
 	return w.err
+}
+
+// printLocalCoverage states what the probe covered: the build's modules, the
+// binaries probed, and the modules the answer does not speak about.
+func printLocalCoverage(w *errWriter, c reachabilityCoverage) {
+
+	w.printf("\ncoverage: %d build module(s), %d queried, %d covered, %d with findings\n",
+		c.BuildModules, c.QueriedModules, c.CoveredModules, c.ModulesWithFindings)
+	for _, b := range c.ProbedBinaries {
+		if b.BuildError != "" {
+			w.printf("  binary not probed: %s — %s\n", b.ImportPath, b.BuildError)
+			continue
+		}
+		w.printf("  binary probed:     %s\n", b.ImportPath)
+	}
+	if len(c.UncoveredModules) > 0 {
+		w.printf("  uncovered (%d) — this answer does not speak about them:\n", len(c.UncoveredModules))
+		for _, u := range c.UncoveredModules {
+			w.printf("    %s@%s — %s\n", u.Path, u.Version, u.Reason)
+		}
+	}
+	if c.UncoveredRemedy != "" {
+		w.printf("  to widen the answer: %s\n", c.UncoveredRemedy)
+	}
 }
 
 // verdictSourceLabel names the instrument behind a local verdict, and says so

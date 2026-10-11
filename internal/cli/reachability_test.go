@@ -65,6 +65,13 @@ func TestReachabilityResultToOutput(t *testing.T) {
 		t.Fatalf("findings len = %d, want 1", len(m.Findings))
 	}
 	f := m.Findings[0]
+	assertProbeFindingCarried(t, f)
+}
+
+// assertProbeFindingCarried checks the finding keeps its identity, aliases,
+// state, source and matched symbols.
+func assertProbeFindingCarried(t *testing.T, f reachabilityFinding) {
+	t.Helper()
 	if f.CVEID != "CVE-2024-0001" {
 		t.Errorf("CVEID = %q", f.CVEID)
 	}

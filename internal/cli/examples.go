@@ -615,41 +615,7 @@ func runExamplesList(ctx context.Context, limit, offset int, allGenerations bool
 	sums, truncated := truncateList(sums, limit)
 	trunc := listTruncation{limit: limit, subject: gen.subject, truncated: truncated, offset: offset}
 	if jsonOut {
-		out := make([]examplesListEntry, 0, len(sums))
-		var jsonConflicts []error
-		for _, s := range sums {
-			if s.Conflict != nil {
-				jsonConflicts = append(jsonConflicts, s.Conflict)
-				out = append(out, examplesListEntry{
-					Module: s.ModulePath, Version: s.ModuleVersion,
-					Status: "Conflict", Conflict: s.Conflict.Error(),
-					PipelineVersion: s.PipelineVersion, Superseded: gen.superseded(s.PipelineVersion),
-				})
-				continue
-			}
-			out = append(out, examplesListEntry{
-				Module:          s.ModulePath,
-				Version:         s.ModuleVersion,
-				Status:          s.OverallStatus.String(),
-				PipelineVersion: s.PipelineVersion,
-				Superseded:      gen.superseded(s.PipelineVersion),
-				ExampleCount:    s.ExampleCount,
-			})
-		}
-		var zero *listZeroScope
-		if len(out) == 0 {
-			scope, serr := examplesListZeroScope(ctx, offset, gen, uc)
-			if serr != nil {
-				return serr
-			}
-			zero = &scope
-		}
-		if derr := writeListDocumentWith(stdout, out, trunc, zero, listDocumentFacts{
-			generation: gen.statement(),
-		}); derr != nil {
-			return derr
-		}
-		return examplesListConflictErr(jsonConflicts)
+		return writeExamplesListJSON(ctx, sums, gen, trunc, offset, uc, stdout)
 	}
 	if len(sums) == 0 {
 		scope, serr := examplesListZeroScope(ctx, offset, gen, uc)
@@ -692,6 +658,46 @@ func runExamplesList(ctx context.Context, limit, offset int, allGenerations bool
 	// Every module is listed first, then the command fails. A module in dispute
 	// must not be reported as a clean run.
 	return examplesListConflictErr(conflicts)
+}
+
+// writeExamplesListJSON writes the listing as one JSON document, a conflict
+// reported on its row and in the exit status.
+func writeExamplesListJSON(ctx context.Context, sums []ports.ExampleSummary, gen listGeneration, trunc listTruncation, offset int, uc QueryExamplesUseCase, stdout io.Writer) error {
+	out := make([]examplesListEntry, 0, len(sums))
+	var jsonConflicts []error
+	for _, s := range sums {
+		if s.Conflict != nil {
+			jsonConflicts = append(jsonConflicts, s.Conflict)
+			out = append(out, examplesListEntry{
+				Module: s.ModulePath, Version: s.ModuleVersion,
+				Status: "Conflict", Conflict: s.Conflict.Error(),
+				PipelineVersion: s.PipelineVersion, Superseded: gen.superseded(s.PipelineVersion),
+			})
+			continue
+		}
+		out = append(out, examplesListEntry{
+			Module:          s.ModulePath,
+			Version:         s.ModuleVersion,
+			Status:          s.OverallStatus.String(),
+			PipelineVersion: s.PipelineVersion,
+			Superseded:      gen.superseded(s.PipelineVersion),
+			ExampleCount:    s.ExampleCount,
+		})
+	}
+	var zero *listZeroScope
+	if len(out) == 0 {
+		scope, serr := examplesListZeroScope(ctx, offset, gen, uc)
+		if serr != nil {
+			return serr
+		}
+		zero = &scope
+	}
+	if derr := writeListDocumentWith(stdout, out, trunc, zero, listDocumentFacts{
+		generation: gen.statement(),
+	}); derr != nil {
+		return derr
+	}
+	return examplesListConflictErr(jsonConflicts)
 }
 
 // examplesListConflictErr fails the run when the listed rows held a disputed

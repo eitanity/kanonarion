@@ -415,39 +415,45 @@ func spliceTopLevelContentHash(raw []byte, value string) ([]byte, string, error)
 			continue
 		}
 
-		// The value is a JSON string. Its opening quote is the next such byte
-		// after the key, past the colon; InputOffset after reading it is the byte
-		// following its closing quote.
-		start := bytes.IndexByte(raw[afterKey:], '"')
-		if start < 0 {
-			return nil, "", errors.New("top-level content_hash has no string value")
-		}
-		start += int(afterKey)
-		valTok, verr := dec.Token()
-		if verr != nil {
-			return nil, "", fmt.Errorf("reading content_hash value: %w", verr)
-		}
-		old, ok := valTok.(string)
-		if !ok {
-			return nil, "", fmt.Errorf("top-level content_hash is %T, want a string", valTok)
-		}
-		end := int(dec.InputOffset())
-
-		encoded, merr := json.Marshal(value)
-		if merr != nil {
-			return nil, "", fmt.Errorf("encoding replacement content_hash: %w", merr)
-		}
-
-		// Capacity is a growth hint only: len(raw) covers the common case where
-		// the replacement hash is no longer than the original, and one append
-		// growth covers the rest. Summing the two lengths here trips static
-		// overflow analysis for no measurable gain.
-		out := make([]byte, 0, len(raw))
-		out = append(out, raw[:start]...)
-		out = append(out, encoded...)
-		out = append(out, raw[end:]...)
-		return out, old, nil
+		return replaceContentHashValue(dec, raw, afterKey, value)
 	}
+}
+
+// replaceContentHashValue splices value over the content_hash string the
+// decoder is positioned at, returning the new bytes and the old hash.
+func replaceContentHashValue(dec *json.Decoder, raw []byte, afterKey int64, value string) ([]byte, string, error) {
+	// The value is a JSON string. Its opening quote is the next such byte
+	// after the key, past the colon; InputOffset after reading it is the byte
+	// following its closing quote.
+	start := bytes.IndexByte(raw[afterKey:], '"')
+	if start < 0 {
+		return nil, "", errors.New("top-level content_hash has no string value")
+	}
+	start += int(afterKey)
+	valTok, verr := dec.Token()
+	if verr != nil {
+		return nil, "", fmt.Errorf("reading content_hash value: %w", verr)
+	}
+	old, ok := valTok.(string)
+	if !ok {
+		return nil, "", fmt.Errorf("top-level content_hash is %T, want a string", valTok)
+	}
+	end := int(dec.InputOffset())
+
+	encoded, merr := json.Marshal(value)
+	if merr != nil {
+		return nil, "", fmt.Errorf("encoding replacement content_hash: %w", merr)
+	}
+
+	// Capacity is a growth hint only: len(raw) covers the common case where
+	// the replacement hash is no longer than the original, and one append
+	// growth covers the rest. Summing the two lengths here trips static
+	// overflow analysis for no measurable gain.
+	out := make([]byte, 0, len(raw))
+	out = append(out, raw[:start]...)
+	out = append(out, encoded...)
+	out = append(out, raw[end:]...)
+	return out, old, nil
 }
 
 // skipValue consumes one complete JSON value, including a nested object or

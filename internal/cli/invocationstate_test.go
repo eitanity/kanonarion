@@ -297,42 +297,13 @@ func TestResetInvocationState_CoversEveryInvocationVariable(t *testing.T) {
 			t.Fatalf("parsing %s: %v", path, perr)
 		}
 		files = append(files, file)
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.VAR {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok {
-					continue
-				}
-				for _, name := range vs.Names {
-					pkgVars[name.Name] = true
-				}
-			}
-		}
+		collectPackageVars(file, pkgVars)
 	}
 	if len(files) == 0 {
 		t.Fatal("no package sources parsed: the roster would be empty and this test would pass vacuously")
 	}
 
-	written, reset := map[string]bool{}, map[string]bool{}
-	for _, file := range files {
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			target := written
-			if fn.Name.Name == "resetInvocationState" {
-				target = reset
-			}
-			for name := range assignedPackageVars(fn, pkgVars) {
-				target[name] = true
-			}
-		}
-	}
+	written, reset := writtenAndResetVars(files, pkgVars)
 	if len(reset) == 0 {
 		t.Fatal("resetInvocationState was not found, or assigns nothing: the comparison below would pass vacuously")
 	}
@@ -364,6 +335,48 @@ func TestResetInvocationState_CoversEveryInvocationVariable(t *testing.T) {
 		}
 	}
 	t.Logf("package-level invocation variables: %v; exempt: %v", names, resetExemptions)
+}
+
+// collectPackageVars adds every package-level variable file declares to
+// pkgVars.
+func collectPackageVars(file *ast.File, pkgVars map[string]bool) {
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for _, name := range vs.Names {
+				pkgVars[name.Name] = true
+			}
+		}
+	}
+}
+
+// writtenAndResetVars is the package-level variables a function assigns, and
+// those resetInvocationState assigns.
+func writtenAndResetVars(files []*ast.File, pkgVars map[string]bool) (map[string]bool, map[string]bool) {
+	written, reset := map[string]bool{}, map[string]bool{}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			target := written
+			if fn.Name.Name == "resetInvocationState" {
+				target = reset
+			}
+			for name := range assignedPackageVars(fn, pkgVars) {
+				target[name] = true
+			}
+		}
+	}
+	return written, reset
 }
 
 // assignedPackageVars returns the package-scope variables fn writes: assigned
@@ -408,16 +421,7 @@ func assignedPackageVars(fn *ast.FuncDecl, pkgVars map[string]bool) map[string]b
 // with.
 func locallyDeclared(fn *ast.FuncDecl) map[string]bool {
 	out := map[string]bool{}
-	fields := func(fl *ast.FieldList) {
-		if fl == nil {
-			return
-		}
-		for _, f := range fl.List {
-			for _, name := range f.Names {
-				out[name.Name] = true
-			}
-		}
-	}
+	fields := func(fl *ast.FieldList) { addFieldNames(out, fl) }
 	fields(fn.Recv)
 	if fn.Type != nil {
 		fields(fn.Type.Params)
@@ -435,16 +439,7 @@ func locallyDeclared(fn *ast.FuncDecl) map[string]bool {
 				}
 			}
 		case *ast.GenDecl:
-			if x.Tok != token.VAR && x.Tok != token.CONST {
-				return true
-			}
-			for _, spec := range x.Specs {
-				if vs, ok := spec.(*ast.ValueSpec); ok {
-					for _, name := range vs.Names {
-						out[name.Name] = true
-					}
-				}
-			}
+			addDeclaredNames(out, x)
 		case *ast.RangeStmt:
 			for _, e := range []ast.Expr{x.Key, x.Value} {
 				if id, ok := e.(*ast.Ident); ok {
@@ -460,4 +455,30 @@ func locallyDeclared(fn *ast.FuncDecl) map[string]bool {
 		return true
 	})
 	return out
+}
+
+// addFieldNames adds every name a field list declares to out.
+func addFieldNames(out map[string]bool, fl *ast.FieldList) {
+	if fl == nil {
+		return
+	}
+	for _, f := range fl.List {
+		for _, name := range f.Names {
+			out[name.Name] = true
+		}
+	}
+}
+
+// addDeclaredNames adds every name a var or const declaration declares to out.
+func addDeclaredNames(out map[string]bool, x *ast.GenDecl) {
+	if x.Tok != token.VAR && x.Tok != token.CONST {
+		return
+	}
+	for _, spec := range x.Specs {
+		if vs, ok := spec.(*ast.ValueSpec); ok {
+			for _, name := range vs.Names {
+				out[name.Name] = true
+			}
+		}
+	}
 }

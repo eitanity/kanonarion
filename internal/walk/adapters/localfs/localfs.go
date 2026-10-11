@@ -73,51 +73,14 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("reading go.mod from %q: %w", absPath, err)
 	}
 
-	// modzip insists on a canonical semver, which the synthetic local version
-	// is not. Zip the project root under a placeholder version, then rewrite
-	// the entry prefix back to the local coordinate so every zip consumer can
-	// keep deriving the prefix from the coordinate.
-	zipVersion := coord.Version()
-	if coord.IsLocal() {
-		placeholder, perr := localZipPlaceholderVersion(coord.Path())
-		if perr != nil {
-			return walkports.LocalModuleFetchResult{}, fmt.Errorf("choosing a zip version for %s: %w", coord, perr)
-		}
-		zipVersion = placeholder
-	}
-	mv := module.Version{Path: coord.Path(), Version: zipVersion}
-	var zipBuf bytes.Buffer
-	if zerr := modzip.CreateFromDir(&zipBuf, mv, absPath); zerr != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("creating zip from %q: %w", absPath, zerr)
-	}
-	zipData := zipBuf.Bytes()
-	if coord.IsLocal() {
-		rewritten, rerr := rewriteZipPrefix(zipData,
-			coord.Path()+"@"+zipVersion+"/",
-			coord.Path()+"@"+coord.Version()+"/",
-		)
-		if rerr != nil {
-			return walkports.LocalModuleFetchResult{}, fmt.Errorf("rewriting zip prefix for %s: %w", coord, rerr)
-		}
-		zipData = rewritten
+	zipData, err := localModuleZip(coord, absPath)
+	if err != nil {
+		return walkports.LocalModuleFetchResult{}, err
 	}
 
-	zipHashStr, err := ziparchive.HashModuleZip(zipData)
+	zipHash, goModHash, err := localModuleHashes(coord, zipData, goModData)
 	if err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("hashing local zip for %s: %w", coord, err)
-	}
-	zipHash, err := fetchdomain.ParseModuleHash(zipHashStr)
-	if err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("parsing zip hash for %s: %w", coord, err)
-	}
-
-	goModHashStr, err := hashGoMod(goModData)
-	if err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("hashing go.mod for %s: %w", coord, err)
-	}
-	goModHash, err := fetchdomain.ParseModuleHash(goModHashStr)
-	if err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("parsing go.mod hash for %s: %w", coord, err)
+		return walkports.LocalModuleFetchResult{}, err
 	}
 
 	zipIdentity, err := fetchports.NewBlobIdentity(fetchports.BlobKindZip, zipHash)
@@ -165,6 +128,61 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("composing local measurement of %s: %w", coord, err)
 	}
 	return walkports.LocalModuleFetchResult{Record: composed, FromCache: false}, nil
+}
+
+// localModuleZip zips the tree at absPath as the module zip of coord.
+func localModuleZip(coord coordinate.ModuleCoordinate, absPath string) ([]byte, error) {
+	// modzip insists on a canonical semver, which the synthetic local version
+	// is not. Zip the project root under a placeholder version, then rewrite
+	// the entry prefix back to the local coordinate so every zip consumer can
+	// keep deriving the prefix from the coordinate.
+	zipVersion := coord.Version()
+	if coord.IsLocal() {
+		placeholder, perr := localZipPlaceholderVersion(coord.Path())
+		if perr != nil {
+			return nil, fmt.Errorf("choosing a zip version for %s: %w", coord, perr)
+		}
+		zipVersion = placeholder
+	}
+	mv := module.Version{Path: coord.Path(), Version: zipVersion}
+	var zipBuf bytes.Buffer
+	if zerr := modzip.CreateFromDir(&zipBuf, mv, absPath); zerr != nil {
+		return nil, fmt.Errorf("creating zip from %q: %w", absPath, zerr)
+	}
+	zipData := zipBuf.Bytes()
+	if coord.IsLocal() {
+		rewritten, rerr := rewriteZipPrefix(zipData,
+			coord.Path()+"@"+zipVersion+"/",
+			coord.Path()+"@"+coord.Version()+"/",
+		)
+		if rerr != nil {
+			return nil, fmt.Errorf("rewriting zip prefix for %s: %w", coord, rerr)
+		}
+		zipData = rewritten
+	}
+	return zipData, nil
+}
+
+// localModuleHashes hashes the zipped tree and its go.mod.
+func localModuleHashes(coord coordinate.ModuleCoordinate, zipData, goModData []byte) (fetchdomain.ModuleHash, fetchdomain.ModuleHash, error) {
+	zipHashStr, err := ziparchive.HashModuleZip(zipData)
+	if err != nil {
+		return fetchdomain.ModuleHash{}, fetchdomain.ModuleHash{}, fmt.Errorf("hashing local zip for %s: %w", coord, err)
+	}
+	zipHash, err := fetchdomain.ParseModuleHash(zipHashStr)
+	if err != nil {
+		return fetchdomain.ModuleHash{}, fetchdomain.ModuleHash{}, fmt.Errorf("parsing zip hash for %s: %w", coord, err)
+	}
+
+	goModHashStr, err := hashGoMod(goModData)
+	if err != nil {
+		return fetchdomain.ModuleHash{}, fetchdomain.ModuleHash{}, fmt.Errorf("hashing go.mod for %s: %w", coord, err)
+	}
+	goModHash, err := fetchdomain.ParseModuleHash(goModHashStr)
+	if err != nil {
+		return fetchdomain.ModuleHash{}, fetchdomain.ModuleHash{}, fmt.Errorf("parsing go.mod hash for %s: %w", coord, err)
+	}
+	return zipHash, goModHash, nil
 }
 
 // localZipPlaceholderVersion returns the canonical semver under which the

@@ -314,6 +314,13 @@ func TestStoreCleanJSON_StatesWhatWentAndWhatStayed(t *testing.T) {
 	if mustAs[float64](t, temps["removed"]) != 1 || mustAs[float64](t, temps["bytes_reclaimed"]) != tempBytes {
 		t.Errorf("temp_entries = %v, want one entry of %d bytes", temps, tempBytes)
 	}
+	assertTempSweepScope(t, temps, tmp, owned, foreign)
+}
+
+// assertTempSweepScope checks the temp sweep names where it looked, what it
+// kept and removed, and left the neighbour alone.
+func assertTempSweepScope(t *testing.T, temps map[string]any, tmp, owned, foreign string) {
+	t.Helper()
 	if temps["dir"] != tmp {
 		t.Errorf("temp_entries.dir = %v, want %s", temps["dir"], tmp)
 	}

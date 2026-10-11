@@ -372,32 +372,46 @@ func TestGenerationListings_DocumentStatesTheGenerationInEveryState(t *testing.T
 				if doc.Subject != s.subject {
 					t.Errorf("%s: subject %q, want the bare plural %q", st.name, doc.Subject, s.subject)
 				}
-				if (doc.ZeroResult != nil) != st.zero {
-					t.Errorf("%s: zero_result present = %v, want %v", st.name, doc.ZeroResult != nil, st.zero)
-				}
-				if st.pagedPast && (doc.ZeroResult == nil || !doc.ZeroResult.PagedPast) {
-					t.Errorf("%s: the zero statement does not name the paging: %+v", st.name, doc.ZeroResult)
-				}
-				if st.pagedPast && doc.ZeroResult != nil && doc.ZeroResult.RecordsConsidered != 2 {
-					t.Errorf("%s: records_considered = %d, want the 2 at the served generation",
-						st.name, doc.ZeroResult.RecordsConsidered)
-				}
-				g := doc.Generation
-				if g == nil {
-					t.Errorf("%s: the document carries no generation", st.name)
-					continue
-				}
-				if g.Served != s.served || g.AllGenerations != st.all {
-					t.Errorf("%s: generation = %+v, want served %s all_generations %v", st.name, *g, s.served, st.all)
-				}
-				switch {
-				case st.all && g.Remedy != nil:
-					t.Errorf("%s: remedy %q under --all-generations, want it omitted", st.name, *g.Remedy)
-				case !st.all && (g.Remedy == nil || *g.Remedy != "--all-generations"):
-					t.Errorf("%s: remedy = %v, want --all-generations", st.name, g.Remedy)
-				}
+				checkDocZeroResult(t, st.name, doc, st.zero, st.pagedPast)
+				checkDocGeneration(t, st.name, doc, s.served, st.all)
 			}
 		})
+	}
+}
+
+// checkDocZeroResult checks a zero statement is present exactly when the page
+// is empty, and names the paging that emptied it.
+func checkDocZeroResult(t *testing.T, name string, doc generationDoc, zero, pagedPast bool) {
+	t.Helper()
+	if (doc.ZeroResult != nil) != zero {
+		t.Errorf("%s: zero_result present = %v, want %v", name, doc.ZeroResult != nil, zero)
+	}
+	if pagedPast && (doc.ZeroResult == nil || !doc.ZeroResult.PagedPast) {
+		t.Errorf("%s: the zero statement does not name the paging: %+v", name, doc.ZeroResult)
+	}
+	if pagedPast && doc.ZeroResult != nil && doc.ZeroResult.RecordsConsidered != 2 {
+		t.Errorf("%s: records_considered = %d, want the 2 at the served generation",
+			name, doc.ZeroResult.RecordsConsidered)
+	}
+}
+
+// checkDocGeneration checks the document states the generation it lists and
+// offers --all-generations only when it was not given.
+func checkDocGeneration(t *testing.T, name string, doc generationDoc, served string, all bool) {
+	t.Helper()
+	g := doc.Generation
+	if g == nil {
+		t.Errorf("%s: the document carries no generation", name)
+		return
+	}
+	if g.Served != served || g.AllGenerations != all {
+		t.Errorf("%s: generation = %+v, want served %s all_generations %v", name, *g, served, all)
+	}
+	switch {
+	case all && g.Remedy != nil:
+		t.Errorf("%s: remedy %q under --all-generations, want it omitted", name, *g.Remedy)
+	case !all && (g.Remedy == nil || *g.Remedy != "--all-generations"):
+		t.Errorf("%s: remedy = %v, want --all-generations", name, g.Remedy)
 	}
 }
 

@@ -290,22 +290,7 @@ func readInvocation(t *testing.T, line string) (trimmed, cmdName string, positio
 	// The two are separate because a bare English word is only prose once the
 	// command has the arguments it declares: "config set preferences.json true"
 	// ends in one.
-	type slot struct {
-		text  string
-		field int
-		prose bool
-	}
-	var slots []slot
-	for i := 0; i < len(rest); i++ {
-		tok := rest[i]
-		if strings.HasPrefix(tok, "-") && tok != "-" {
-			if !strings.Contains(tok, "=") && flagTakesValue(root, cmd, tok) && i+1 < len(rest) {
-				i++
-			}
-			continue
-		}
-		slots = append(slots, slot{text: tok, field: head + i, prose: isProseWord(tok)})
-	}
+	slots := placeInvocationTokens(root, cmd, rest, head)
 	cut := len(slots)
 	for i, sl := range slots {
 		if !sl.prose {
@@ -328,6 +313,31 @@ func readInvocation(t *testing.T, line string) (trimmed, cmdName string, positio
 		positionals = append(positionals, sl.text)
 	}
 	return joinInvocation(fields[:end]), name, positionals, true
+}
+
+// slot is one positional token of an invocation: its text, its field index in
+// the whole line, and whether it reads as prose.
+type slot struct {
+	text  string
+	field int
+	prose bool
+}
+
+// placeInvocationTokens is the positional tokens of rest, the flags and their
+// values skipped.
+func placeInvocationTokens(root, cmd *cobra.Command, rest []string, head int) []slot {
+	var slots []slot
+	for i := 0; i < len(rest); i++ {
+		tok := rest[i]
+		if strings.HasPrefix(tok, "-") && tok != "-" {
+			if !strings.Contains(tok, "=") && flagTakesValue(root, cmd, tok) && i+1 < len(rest) {
+				i++
+			}
+			continue
+		}
+		slots = append(slots, slot{text: tok, field: head + i, prose: isProseWord(tok)})
+	}
+	return slots
 }
 
 // joinInvocation puts a split line back together with the quoting a shell needs,
@@ -569,18 +579,30 @@ func invocationEndingAt(text string, opener byte) string {
 		case '\n', ')', '|', '—':
 			return strings.TrimSpace(text[:i])
 		case ',', ';':
-			if i+1 >= len(text) || text[i+1] == ' ' || text[i+1] == '\n' {
+			if separatorEndsLine(text, i) {
 				return strings.TrimSpace(text[:i])
 			}
 		case '.':
 			// A full stop closes the line; a lone "." is the argument that names
 			// the working directory, so a dot after a space is kept.
-			if i > 0 && text[i-1] != ' ' && (i+1 >= len(text) || text[i+1] == ' ' || text[i+1] == '\n') {
+			if fullStopEndsLine(text, i) {
 				return strings.TrimSpace(text[:i])
 			}
 		}
 	}
 	return strings.TrimSpace(text)
+}
+
+// separatorEndsLine reports whether the comma or semicolon at text[i] ends the
+// invocation: it is last, or followed by a space or a newline.
+func separatorEndsLine(text string, i int) bool {
+	return i+1 >= len(text) || text[i+1] == ' ' || text[i+1] == '\n'
+}
+
+// fullStopEndsLine reports whether the dot at text[i] is a full stop rather
+// than a lone "." argument.
+func fullStopEndsLine(text string, i int) bool {
+	return i > 0 && text[i-1] != ' ' && (i+1 >= len(text) || text[i+1] == ' ' || text[i+1] == '\n')
 }
 
 // allPrintedMessages renders every string-valued expression in the shipped
@@ -823,8 +845,7 @@ func standInForName(name string) string {
 		return standInPath
 	case name == "version" || name == "moduleVersion" || strings.HasSuffix(name, "ModuleVersion"):
 		return standInVersion
-	case name == "coord" || name == "coordinate" || name == "mod" || name == "module" ||
-		strings.HasSuffix(name, "Coord") || strings.HasSuffix(name, "Coordinate"):
+	case namesCoordinate(name):
 		// The codebase carries a coordinate as text under these names — "coord :=
 		// c.ModulePath + \"@\" + c.ModuleVersion". Reading them is the guard's one
 		// concession to spelling, and it only ever narrows: a slot it cannot place
@@ -832,6 +853,13 @@ func standInForName(name string) string {
 		return standInCoordinate
 	}
 	return standInOpaque
+}
+
+// namesCoordinate reports whether name is one the codebase carries a
+// coordinate as text under.
+func namesCoordinate(name string) bool {
+	return name == "coord" || name == "coordinate" || name == "mod" || name == "module" ||
+		strings.HasSuffix(name, "Coord") || strings.HasSuffix(name, "Coordinate")
 }
 
 func isCoordinateType(p *packages.Package, e ast.Expr) bool {

@@ -290,6 +290,12 @@ func (b *frameBuild) unjoinedWhy(joined ports.CallGraphProjection, calls []strin
 			commands = append(commands, line)
 		}
 	}
+	return unjoinedReasons(commands, local, empty, faulty, unknown)
+}
+
+// unjoinedReasons states, in one sentence per cause, why each call stayed
+// unjoined.
+func unjoinedReasons(commands, local, empty, faulty, unknown []string) string {
 	var parts []string
 	if len(commands) > 0 {
 		sort.Strings(commands)

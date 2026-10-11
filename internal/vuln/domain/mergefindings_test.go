@@ -321,12 +321,19 @@ func TestMergeCoordinateMatches_AddedMatchNamingNoSymbolsCarriesNoConfidentNegat
 		t.Errorf("derivation = %+v, want the caller's: withdrawing the claim must not erase what produced it", got.Reachable.DerivedBy)
 	}
 
+	assertNamedMatchKeepsConfidence(t)
+}
+
+// assertNamedMatchKeepsConfidence is the control: an added match whose
+// advisory names symbols keeps its confident negative and its symbols.
+func assertNamedMatchKeepsConfidence(t *testing.T) {
+	t.Helper()
 	// The control: an added match whose advisory DOES name symbols keeps the
 	// confident negative. A fix that demoted every added match would pass the
 	// assertions above and fail here.
 	named := coordinateMatch()
 	named.ID = "GO-2026-6354"
-	merged, _ = domain.MergeCoordinateMatches(
+	merged, _ := domain.MergeCoordinateMatches(
 		nil,
 		[]domain.VulnerabilityFinding{named},
 		func(f *domain.VulnerabilityFinding) {

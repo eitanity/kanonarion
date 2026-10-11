@@ -124,64 +124,23 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 		)
 	}()
 
-	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
+	factRecord, artefact, err := uc.requireArtefact(ctx, req)
 	if err != nil {
 		return ExtractResult{}, err
-	}
-
-	// Which bytes this extraction is about, resolved before any work is done so a
-	// fetch record that names no artefact fails here rather than after a full
-	// parse. This stage always holds a fetch record, so a record it cannot name
-	// an artefact for is a fault in the measurement, not a legacy row.
-	artefact, err := domain2.ArtefactIdentityOf(factRecord)
-	if err != nil {
-		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
-	}
-	if artefact.IsZero() {
-		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain2.ErrZeroIdentity)
 	}
 
 	// A local coordinate (the project-walk root) is never served from cache:
 	// the working tree mutates between runs, so its records are recomputed
 	// fresh every time.
 	if !req.Force && !req.Coordinate.IsLocal() {
-		existing, found, cerr := uc.store.GetInterfaceRecord(ctx, req.Coordinate, uc.pipelineVersion)
-		// A composition refusal says no single stored generation answers this
-		// coordinate. Refusing to SERVE that is right; refusing to MEASURE a new
-		// answer is not, so it is a cache miss here. Extraction appends, and the
-		// ladder decides which generation answers afterwards.
-		switch {
-		case errors.Is(cerr, ports.ErrInterfaceConflict):
-			log.InfoContext(ctx, "interface_cache_conflict_remeasuring",
-				slog.String("conflict", cerr.Error()),
-			)
-		case cerr != nil && !errors.Is(cerr, ports.ErrInterfaceIntegrity):
-			return ExtractResult{}, fmt.Errorf("checking interface store: %w", cerr)
-		}
-		switch {
-		case found && !domain3.RecordIsCacheable(existing):
-			// It may hold files a binary too old for the source could not read;
-			// this one measures them rather than serve that record back.
-			log.InfoContext(ctx, "interface_cache_not_servable_remeasuring",
-				slog.String("toolchain", existing.Toolchain.String()))
-		case found:
-			log.InfoContext(ctx, "interface_cache_hit")
-			return ExtractResult{Record: existing, FromCache: true}, nil
+		if res, hit, cerr := uc.cachedRecord(ctx, log, req); cerr != nil || hit {
+			return res, cerr
 		}
 	}
 
-	// The zip is addressed by what it is, not by where some earlier measurement
-	// put it, so any store holding the artefact answers.
-	zipIdentity, hasZip, err := fetchports.ZipIdentity(factRecord)
+	zipReader, err := uc.openZip(ctx, req, factRecord)
 	if err != nil {
-		return ExtractResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
-	}
-	if !hasZip {
-		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain2.NotFetchedRemedy(req.Coordinate))
-	}
-	zipReader, err := uc.blobs.Get(ctx, zipIdentity)
-	if err != nil {
-		return ExtractResult{}, fmt.Errorf("opening blob %s: %w", factRecord.ContentLocation, err)
+		return ExtractResult{}, err
 	}
 	defer func() {
 		if cerr := zipReader.Close(); cerr != nil && retErr == nil {
@@ -189,32 +148,9 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 		}
 	}()
 
-	zipData, err := io.ReadAll(zipReader)
+	record, err := uc.measureInterface(ctx, log, req, zipReader)
 	if err != nil {
-		return ExtractResult{}, fmt.Errorf("reading blob: %w", err)
-	}
-	log.InfoContext(ctx, "blob_read", slog.Int("zip_bytes", len(zipData)))
-
-	record, extractErr := uc.extractFromZip(ctx, log, req.Coordinate, zipData)
-	if interrupt.Cancelled(ctx, extractErr) {
-		// Stopped by the run's cancellation: no failed-extraction record is made of it.
-		return ExtractResult{}, fmt.Errorf("extracting the interface of %s: %w", req.Coordinate, extractErr)
-	}
-	if extractErr != nil {
-		record = domain3.InterfaceRecord{
-			SchemaVersion:   domain3.InterfaceSchemaVersion,
-			Ecosystem:       domain2.EcosystemGo,
-			Coordinate:      req.Coordinate,
-			OverallStatus:   domain3.InterfaceStatusExtractionFailed,
-			FailureDetail:   extractErr.Error(),
-			BuildFrame:      uc.extractor.BuildFrame(),
-			Toolchain:       uc.extractor.Toolchain(),
-			ExtractedAt:     uc.clock.Now().UTC(),
-			PipelineVersion: uc.pipelineVersion,
-		}
-		log.InfoContext(ctx, "interface_extraction_failed", slog.String("error", extractErr.Error()))
-	} else {
-		record.PipelineVersion = uc.pipelineVersion
+		return ExtractResult{}, err
 	}
 
 	// Stamped on both branches: a failed extraction is still a claim about a
@@ -263,6 +199,108 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// requireArtefact reads the fetch record for req's coordinate and the artefact
+// it names, refusing one that names none.
+func (uc *ExtractInterfaceUseCase) requireArtefact(ctx context.Context, req ExtractRequest) (domain2.FactRecord, domain2.ArtefactIdentity, error) {
+	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
+	if err != nil {
+		return domain2.FactRecord{}, domain2.ArtefactIdentity{}, err
+	}
+
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// parse. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row.
+	artefact, err := domain2.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return domain2.FactRecord{}, domain2.ArtefactIdentity{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return domain2.FactRecord{}, domain2.ArtefactIdentity{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain2.ErrZeroIdentity)
+	}
+	return factRecord, artefact, nil
+}
+
+// cachedRecord serves the stored generation when one is eligible to answer;
+// hit reports that it did.
+func (uc *ExtractInterfaceUseCase) cachedRecord(ctx context.Context, log *slog.Logger, req ExtractRequest) (ExtractResult, bool, error) {
+	existing, found, cerr := uc.store.GetInterfaceRecord(ctx, req.Coordinate, uc.pipelineVersion)
+	// A composition refusal says no single stored generation answers this
+	// coordinate. Refusing to SERVE that is right; refusing to MEASURE a new
+	// answer is not, so it is a cache miss here. Extraction appends, and the
+	// ladder decides which generation answers afterwards.
+	switch {
+	case errors.Is(cerr, ports.ErrInterfaceConflict):
+		log.InfoContext(ctx, "interface_cache_conflict_remeasuring",
+			slog.String("conflict", cerr.Error()),
+		)
+	case cerr != nil && !errors.Is(cerr, ports.ErrInterfaceIntegrity):
+		return ExtractResult{}, false, fmt.Errorf("checking interface store: %w", cerr)
+	}
+	switch {
+	case found && !domain3.RecordIsCacheable(existing):
+		// It may hold files a binary too old for the source could not read;
+		// this one measures them rather than serve that record back.
+		log.InfoContext(ctx, "interface_cache_not_servable_remeasuring",
+			slog.String("toolchain", existing.Toolchain.String()))
+	case found:
+		log.InfoContext(ctx, "interface_cache_hit")
+		return ExtractResult{Record: existing, FromCache: true}, true, nil
+	}
+	return ExtractResult{}, false, nil
+}
+
+// openZip opens the module zip the fetch record names. The caller closes it.
+func (uc *ExtractInterfaceUseCase) openZip(ctx context.Context, req ExtractRequest, factRecord domain2.FactRecord) (io.ReadCloser, error) {
+	// The zip is addressed by what it is, not by where some earlier measurement
+	// put it, so any store holding the artefact answers.
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(factRecord)
+	if err != nil {
+		return nil, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
+	}
+	if !hasZip {
+		return nil, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain2.NotFetchedRemedy(req.Coordinate))
+	}
+	zipReader, err := uc.blobs.Get(ctx, zipIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("opening blob %s: %w", factRecord.ContentLocation, err)
+	}
+	return zipReader, nil
+}
+
+// measureInterface reads the module zip and extracts its interface. A failed
+// extraction is a record of the failure, not an error.
+func (uc *ExtractInterfaceUseCase) measureInterface(ctx context.Context, log *slog.Logger, req ExtractRequest, zipReader io.Reader) (domain3.InterfaceRecord, error) {
+	zipData, err := io.ReadAll(zipReader)
+	if err != nil {
+		return domain3.InterfaceRecord{}, fmt.Errorf("reading blob: %w", err)
+	}
+	log.InfoContext(ctx, "blob_read", slog.Int("zip_bytes", len(zipData)))
+
+	record, extractErr := uc.extractFromZip(ctx, log, req.Coordinate, zipData)
+	if interrupt.Cancelled(ctx, extractErr) {
+		// Stopped by the run's cancellation: no failed-extraction record is made of it.
+		return domain3.InterfaceRecord{}, fmt.Errorf("extracting the interface of %s: %w", req.Coordinate, extractErr)
+	}
+	if extractErr != nil {
+		record = domain3.InterfaceRecord{
+			SchemaVersion:   domain3.InterfaceSchemaVersion,
+			Ecosystem:       domain2.EcosystemGo,
+			Coordinate:      req.Coordinate,
+			OverallStatus:   domain3.InterfaceStatusExtractionFailed,
+			FailureDetail:   extractErr.Error(),
+			BuildFrame:      uc.extractor.BuildFrame(),
+			Toolchain:       uc.extractor.Toolchain(),
+			ExtractedAt:     uc.clock.Now().UTC(),
+			PipelineVersion: uc.pipelineVersion,
+		}
+		log.InfoContext(ctx, "interface_extraction_failed", slog.String("error", extractErr.Error()))
+	} else {
+		record.PipelineVersion = uc.pipelineVersion
+	}
+	return record, nil
 }
 
 // identicalGeneration asks the ledger whether it already holds the measurement

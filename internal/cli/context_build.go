@@ -9,12 +9,14 @@ import (
 
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	exsqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
+	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	licsqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -256,34 +258,10 @@ func buildLicense(
 	// but sub-threshold fragment (highest-coverage root-level match) so the
 	// consumer sees "licence present, low-confidence X" rather than blank.
 	if covered.PrimarySPDX == "" {
-		for _, f := range rec.LicenseFiles {
-			if f.IsVendored || f.LowConfidenceSPDX == "" {
-				continue
-			}
-			if l.LowConfidenceCoverage == nil || f.LowConfidenceCoverage > *l.LowConfidenceCoverage {
-				coverage := f.LowConfidenceCoverage
-				l.LowConfidenceSPDX = f.LowConfidenceSPDX
-				l.LowConfidenceCoverage = &coverage
-			}
-		}
+		noteLowConfidenceFragment(&l, rec)
 	}
 	if rec.CopyrightStatus == licdomain.CopyrightStatusFound {
-		var stmts []contextCopyrightStatement
-		seen := make(map[string]struct{})
-		for _, f := range rec.LicenseFiles {
-			for _, s := range f.CopyrightStatements {
-				if _, dup := seen[s.Verbatim]; dup {
-					continue
-				}
-				seen[s.Verbatim] = struct{}{}
-				stmts = append(stmts, contextCopyrightStatement{
-					Verbatim: s.Verbatim,
-					Holders:  s.Holders,
-					Years:    s.Years,
-					Source:   s.Source,
-				})
-			}
-		}
+		stmts := contextCopyrightStatements(rec)
 		l.CopyrightStatements = stmts
 	}
 	// A conjunctive expression names several licences, and PrimarySPDX is a
@@ -305,6 +283,43 @@ func buildLicense(
 		}
 	}
 	return l
+}
+
+// noteLowConfidenceFragment records the highest-coverage sub-threshold match
+// among the non-vendored licence files.
+func noteLowConfidenceFragment(l *contextLicense, rec licdomain.LicenseRecord) {
+	for _, f := range rec.LicenseFiles {
+		if f.IsVendored || f.LowConfidenceSPDX == "" {
+			continue
+		}
+		if l.LowConfidenceCoverage == nil || f.LowConfidenceCoverage > *l.LowConfidenceCoverage {
+			coverage := f.LowConfidenceCoverage
+			l.LowConfidenceSPDX = f.LowConfidenceSPDX
+			l.LowConfidenceCoverage = &coverage
+		}
+	}
+}
+
+// contextCopyrightStatements is every distinct copyright statement the
+// record's licence files carry, in file order.
+func contextCopyrightStatements(rec licdomain.LicenseRecord) []contextCopyrightStatement {
+	var stmts []contextCopyrightStatement
+	seen := make(map[string]struct{})
+	for _, f := range rec.LicenseFiles {
+		for _, s := range f.CopyrightStatements {
+			if _, dup := seen[s.Verbatim]; dup {
+				continue
+			}
+			seen[s.Verbatim] = struct{}{}
+			stmts = append(stmts, contextCopyrightStatement{
+				Verbatim: s.Verbatim,
+				Holders:  s.Holders,
+				Years:    s.Years,
+				Source:   s.Source,
+			})
+		}
+	}
+	return stmts
 }
 
 // contextObligationsOf projects an obligation set onto the context document.
@@ -406,45 +421,52 @@ func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 		if pkgFilter != "" && pkg.ImportPath != pkgFilter {
 			continue
 		}
-		cp := contextPackage{ImportPath: pkg.ImportPath}
-		for _, t := range pkg.Types {
-			sig := t.Signature
-			if compact {
-				sig = stripDocComment(sig)
-			}
-			cp.Types = append(cp.Types, sig)
-			for _, m := range t.Methods {
-				msig := m.Signature
-				if compact {
-					msig = stripDocComment(msig)
-				}
-				cp.Methods = append(cp.Methods, msig)
-			}
-		}
-		for _, fn := range pkg.Funcs {
-			sig := fn.Signature
-			if compact {
-				sig = stripDocComment(sig)
-			}
-			cp.Funcs = append(cp.Funcs, sig)
-		}
-		for _, c := range pkg.Consts {
-			name := c.Name
-			if c.Type != "" {
-				name = name + " " + c.Type
-			}
-			cp.Consts = append(cp.Consts, name)
-		}
-		for _, v := range pkg.Vars {
-			name := v.Name
-			if v.Type != "" {
-				name = name + " " + v.Type
-			}
-			cp.Vars = append(cp.Vars, name)
-		}
+		cp := contextPackageOf(pkg, compact)
 		out.Packages = append(out.Packages, cp)
 	}
 	return out
+}
+
+// contextPackageOf lists one package's exported declarations, doc comments
+// stripped when compact.
+func contextPackageOf(pkg ifacedomain.PackageInterface, compact bool) contextPackage {
+	cp := contextPackage{ImportPath: pkg.ImportPath}
+	for _, t := range pkg.Types {
+		sig := t.Signature
+		if compact {
+			sig = stripDocComment(sig)
+		}
+		cp.Types = append(cp.Types, sig)
+		for _, m := range t.Methods {
+			msig := m.Signature
+			if compact {
+				msig = stripDocComment(msig)
+			}
+			cp.Methods = append(cp.Methods, msig)
+		}
+	}
+	for _, fn := range pkg.Funcs {
+		sig := fn.Signature
+		if compact {
+			sig = stripDocComment(sig)
+		}
+		cp.Funcs = append(cp.Funcs, sig)
+	}
+	for _, c := range pkg.Consts {
+		name := c.Name
+		if c.Type != "" {
+			name = name + " " + c.Type
+		}
+		cp.Consts = append(cp.Consts, name)
+	}
+	for _, v := range pkg.Vars {
+		name := v.Name
+		if v.Type != "" {
+			name = name + " " + v.Type
+		}
+		cp.Vars = append(cp.Vars, name)
+	}
+	return cp
 }
 
 func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) contextCallGraph {
@@ -464,22 +486,7 @@ func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 		Error:       rec.FailureDetail,
 	}
 	if pkgFilter != "" {
-		pkgNodeIDs := make(map[string]struct{}, len(rec.Nodes))
-		filteredNodes := 0
-		for _, n := range rec.Nodes {
-			if n.Package == pkgFilter {
-				pkgNodeIDs[n.ID] = struct{}{}
-				filteredNodes++
-			}
-		}
-		filteredEdges := 0
-		for _, e := range rec.Edges {
-			if _, ok := pkgNodeIDs[e.FromID]; ok {
-				filteredEdges++
-			}
-		}
-		out.NodeCount = filteredNodes
-		out.EdgeCount = filteredEdges
+		out.NodeCount, out.EdgeCount = packageGraphCounts(rec, pkgFilter)
 	}
 	byPkg := make(map[string]int)
 	for _, n := range rec.Nodes {
@@ -500,6 +507,26 @@ func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 		out.EntryPointsByPackage = byPkg
 	}
 	return out
+}
+
+// packageGraphCounts is the number of nodes in pkgFilter and of edges leaving
+// them.
+func packageGraphCounts(rec cgdomain.CallGraphRecord, pkgFilter string) (int, int) {
+	pkgNodeIDs := make(map[string]struct{}, len(rec.Nodes))
+	filteredNodes := 0
+	for _, n := range rec.Nodes {
+		if n.Package == pkgFilter {
+			pkgNodeIDs[n.ID] = struct{}{}
+			filteredNodes++
+		}
+	}
+	filteredEdges := 0
+	for _, e := range rec.Edges {
+		if _, ok := pkgNodeIDs[e.FromID]; ok {
+			filteredEdges++
+		}
+	}
+	return filteredNodes, filteredEdges
 }
 
 const compactExampleBodyLimit = 500

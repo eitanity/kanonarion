@@ -81,28 +81,7 @@ func TestEveryDispatchPathAccountsForItsCommandsFlags(t *testing.T) {
 		if perr != nil {
 			t.Fatalf("parsing %s: %v", path, perr)
 		}
-		for _, decl := range file.Decls {
-			switch d := decl.(type) {
-			case *ast.FuncDecl:
-				if d.Recv != nil || d.Body == nil {
-					continue
-				}
-				funcs[d.Name.Name] = d
-				if strings.HasPrefix(d.Name.Name, "new") && strings.HasSuffix(d.Name.Name, "Cmd") {
-					constructors = append(constructors, d)
-				}
-			case *ast.GenDecl:
-				for _, spec := range d.Specs {
-					ts, ok := spec.(*ast.TypeSpec)
-					if !ok {
-						continue
-					}
-					if _, ok := ts.Type.(*ast.StructType); ok {
-						structTypes[ts.Name.Name] = true
-					}
-				}
-			}
-		}
+		constructors = append(constructors, collectCommandDecls(file, funcs, structTypes)...)
 	}
 	if !sawSource {
 		t.Fatal("only test files matched: the guard would pass vacuously")
@@ -132,30 +111,66 @@ func TestEveryDispatchPathAccountsForItsCommandsFlags(t *testing.T) {
 			if d.param == "" {
 				continue // reached with a local only; the locals rule above covers it
 			}
-			read := resolveFields(fieldsReadTransitively(d.fn, d.param, flagType, funcs, map[string]bool{}), resolvedInto)
-			viaArgs := fieldsReachingCall(d.call, flagVar, carried)
-			var missing []string
-			for _, field := range registered {
-				if read[field] || viaArgs[field] {
-					continue
-				}
-				missing = append(missing, field)
-			}
-			if len(missing) == 0 {
-				continue
-			}
-			sort.Strings(missing)
-			pos := fset.Position(d.fn.Pos())
-			t.Errorf("%s registers %s but %s (%s:%d) never reads %s: the flag parses, "+
-				"the command exits 0, and the output is unchanged. Honour the flag on "+
-				"this path, or refuse the combination with a message naming the path.",
-				ctor.Name.Name, strings.Join(missing, ", "), d.fn.Name.Name,
-				filepath.Base(pos.Filename), pos.Line, plural(missing))
+			checkTargetReadsFlags(t, fset, ctor, d, registered, flagVar, flagType, funcs, carried, resolvedInto)
 		}
 	}
 	if checked == 0 {
 		t.Fatal("no command with a flag struct was checked: the guard would pass vacuously")
 	}
+}
+
+// collectCommandDecls records the file's top-level functions and struct types,
+// and returns its command constructors.
+func collectCommandDecls(file *ast.File, funcs map[string]*ast.FuncDecl, structTypes map[string]bool) []*ast.FuncDecl {
+	var constructors []*ast.FuncDecl
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Recv != nil || d.Body == nil {
+				continue
+			}
+			funcs[d.Name.Name] = d
+			if strings.HasPrefix(d.Name.Name, "new") && strings.HasSuffix(d.Name.Name, "Cmd") {
+				constructors = append(constructors, d)
+			}
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				if _, ok := ts.Type.(*ast.StructType); ok {
+					structTypes[ts.Name.Name] = true
+				}
+			}
+		}
+	}
+	return constructors
+}
+
+// checkTargetReadsFlags reports each registered flag the dispatch target
+// neither reads nor receives through its call.
+func checkTargetReadsFlags(t *testing.T, fset *token.FileSet, ctor *ast.FuncDecl, d dispatchTarget, registered []string, flagVar, flagType string, funcs map[string]*ast.FuncDecl, carried, resolvedInto map[string]map[string]bool) {
+	t.Helper()
+	read := resolveFields(fieldsReadTransitively(d.fn, d.param, flagType, funcs, map[string]bool{}), resolvedInto)
+	viaArgs := fieldsReachingCall(d.call, flagVar, carried)
+	var missing []string
+	for _, field := range registered {
+		if read[field] || viaArgs[field] {
+			continue
+		}
+		missing = append(missing, field)
+	}
+	if len(missing) == 0 {
+		return
+	}
+	sort.Strings(missing)
+	pos := fset.Position(d.fn.Pos())
+	t.Errorf("%s registers %s but %s (%s:%d) never reads %s: the flag parses, "+
+		"the command exits 0, and the output is unchanged. Honour the flag on "+
+		"this path, or refuse the combination with a message naming the path.",
+		ctor.Name.Name, strings.Join(missing, ", "), d.fn.Name.Name,
+		filepath.Base(pos.Filename), pos.Line, plural(missing))
 }
 
 func plural(missing []string) string {
@@ -315,12 +330,7 @@ func localsReadOutsideDispatch(ctor *ast.FuncDecl, locals []string, targets []di
 	for _, l := range locals {
 		isLocal[l] = true
 	}
-	skip := map[ast.Node]bool{}
-	for _, d := range targets {
-		for _, arg := range d.call.Args {
-			skip[arg] = true
-		}
-	}
+	skip := dispatchCallArgs(targets)
 	out := map[string]bool{}
 	ast.Inspect(ctor.Body, func(n ast.Node) bool {
 		if n == nil || skip[n] {
@@ -351,6 +361,18 @@ func localsReadOutsideDispatch(ctor *ast.FuncDecl, locals []string, targets []di
 		return true
 	})
 	return out
+}
+
+// dispatchCallArgs is the set of argument expressions passed to the dispatch
+// targets, which a read outside dispatch skips.
+func dispatchCallArgs(targets []dispatchTarget) map[ast.Node]bool {
+	skip := map[ast.Node]bool{}
+	for _, d := range targets {
+		for _, arg := range d.call.Args {
+			skip[arg] = true
+		}
+	}
+	return skip
 }
 
 // isDispatchTarget reports whether fn is one of a command's run functions, as
@@ -558,10 +580,6 @@ func flagValueFlow(ctor *ast.FuncDecl, flagVar string, seed map[string]map[strin
 	}
 	resolvedInto = map[string]map[string]bool{}
 
-	type assignment struct {
-		lhs []ast.Expr
-		rhs []ast.Expr
-	}
 	var assigns []assignment
 	ast.Inspect(ctor.Body, func(n ast.Node) bool {
 		switch d := n.(type) {
@@ -585,52 +603,8 @@ func flagValueFlow(ctor *ast.FuncDecl, flagVar string, seed map[string]map[strin
 		grew := false
 		for _, a := range assigns {
 			for i, lhs := range a.lhs {
-				var src ast.Expr
-				if len(a.lhs) == len(a.rhs) {
-					src = a.rhs[i]
-				}
-				fields := map[string]bool{}
-				if src != nil {
-					fields = fieldsReaching(src, flagVar, carried)
-				} else {
-					for _, r := range a.rhs {
-						for f := range fieldsReaching(r, flagVar, carried) {
-							fields[f] = true
-						}
-					}
-				}
-				if len(fields) == 0 {
-					continue
-				}
-				switch target := lhs.(type) {
-				case *ast.Ident:
-					if target.Name == "_" || target.Name == flagVar {
-						continue
-					}
-					if carried[target.Name] == nil {
-						carried[target.Name] = map[string]bool{}
-					}
-					for f := range fields {
-						if !carried[target.Name][f] {
-							carried[target.Name][f] = true
-							grew = true
-						}
-					}
-				case *ast.SelectorExpr:
-					field, ok := selectorField(target, flagVar)
-					if !ok {
-						continue
-					}
-					if resolvedInto[field] == nil {
-						resolvedInto[field] = map[string]bool{}
-					}
-					for f := range fields {
-						if f == field || resolvedInto[field][f] {
-							continue
-						}
-						resolvedInto[field][f] = true
-						grew = true
-					}
+				if propagateFlagFields(lhs, assignedFields(a, i, flagVar, carried), flagVar, carried, resolvedInto) {
+					grew = true
 				}
 			}
 		}
@@ -639,6 +613,73 @@ func flagValueFlow(ctor *ast.FuncDecl, flagVar string, seed map[string]map[strin
 		}
 	}
 	return carried, resolvedInto
+}
+
+// assignment is one assignment or initialised declaration, its left-hand
+// sides beside its right-hand sides.
+type assignment struct {
+	lhs []ast.Expr
+	rhs []ast.Expr
+}
+
+// assignedFields is the set of flag fields the value assigned to the i-th
+// left-hand side carries.
+func assignedFields(a assignment, i int, flagVar string, carried map[string]map[string]bool) map[string]bool {
+	var src ast.Expr
+	if len(a.lhs) == len(a.rhs) {
+		src = a.rhs[i]
+	}
+	fields := map[string]bool{}
+	if src != nil {
+		fields = fieldsReaching(src, flagVar, carried)
+	} else {
+		for _, r := range a.rhs {
+			for f := range fieldsReaching(r, flagVar, carried) {
+				fields[f] = true
+			}
+		}
+	}
+	return fields
+}
+
+// propagateFlagFields records that lhs now carries fields, as a local or as a
+// flag field resolved into; it reports whether anything new was learned.
+func propagateFlagFields(lhs ast.Expr, fields map[string]bool, flagVar string, carried, resolvedInto map[string]map[string]bool) bool {
+	grew := false
+	if len(fields) == 0 {
+		return grew
+	}
+	switch target := lhs.(type) {
+	case *ast.Ident:
+		if target.Name == "_" || target.Name == flagVar {
+			return grew
+		}
+		if carried[target.Name] == nil {
+			carried[target.Name] = map[string]bool{}
+		}
+		for f := range fields {
+			if !carried[target.Name][f] {
+				carried[target.Name][f] = true
+				grew = true
+			}
+		}
+	case *ast.SelectorExpr:
+		field, ok := selectorField(target, flagVar)
+		if !ok {
+			return grew
+		}
+		if resolvedInto[field] == nil {
+			resolvedInto[field] = map[string]bool{}
+		}
+		for f := range fields {
+			if f == field || resolvedInto[field][f] {
+				continue
+			}
+			resolvedInto[field][f] = true
+			grew = true
+		}
+	}
+	return grew
 }
 
 // fieldsReaching returns the flag-struct fields whose values reach expr, either

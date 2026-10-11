@@ -82,6 +82,13 @@ func TestAuditRunFactsStateAReusedRun(t *testing.T) {
 		t.Errorf("the walk field and the derivation sentence name different records:\nfield: %+v\nsaid:  %s", run.Walk, said)
 	}
 
+	assertReusedScanFacts(t, run, d, said, fields)
+}
+
+// assertReusedScanFacts checks the scan and reachability fields name the reused
+// run the derivation sentence names.
+func assertReusedScanFacts(t *testing.T, run auditRunJSON, d auditDerivation, said string, fields map[string]json.RawMessage) {
+	t.Helper()
 	if !run.Scan.Answered || run.Scan.RunID != d.scanRun.ID || !run.Scan.Reused {
 		t.Errorf("scan = %+v, want the reused run %s", run.Scan, d.scanRun.ID)
 	}

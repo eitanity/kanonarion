@@ -93,14 +93,8 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	// the same modcache-aware blob store that fetched it, or blob resolution
 	// fails. Resolved on the path that consumes it, so the flag is answered for
 	// where the work happens rather than in the constructor.
-	if f.fromModcache != "" {
-		gomodPath, gerr := resolveGoModPath("")
-		if gerr != nil {
-			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
-		}
-		if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
-			return merr
-		}
+	if err := resolveCallGraphModcache(ctx, f); err != nil {
+		return err
 	}
 
 	logger := buildLogger(logLevel, stderr)
@@ -122,21 +116,9 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	}
 	defer releaseStore(cleanup)
 
-	var run callGraphRunJSON
-	var inputs cgdomain.AnalysisInputs
-	// The standard library resolves no build list and has none to be pinned
-	// against: it vendors every dependency it has, and the toolchain the
-	// coordinate names decides the rest. A --from-walk naming the frame that
-	// recorded the coordinate is therefore accepted and used for nothing, which
-	// is the honest outcome rather than a refusal of a flag that costs nothing.
-	if !coord.IsStdlib() {
-		inputs, err = analysisInputsForWalk(ctx, ctr.QueryWalks, f.fromWalk)
-		if err != nil {
-			return err
-		}
-		if f.fromWalk == "" {
-			inputs, run.BuildListRefusal = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
-		}
+	inputs, run, err := callGraphInputs(ctx, ctr, coord, f, stderr)
+	if err != nil {
+		return err
 	}
 
 	extract := ctr.ExtractCallGraph.Execute
@@ -165,6 +147,44 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		}
 	}
 	return callGraphExtractionExit(result.Record)
+}
+
+// resolveCallGraphModcache resolves --from-modcache against the project's
+// go.mod, so the extractor reads the store that fetched the module.
+func resolveCallGraphModcache(ctx context.Context, f cgFlags) error {
+	if f.fromModcache != "" {
+		gomodPath, gerr := resolveGoModPath("")
+		if gerr != nil {
+			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
+		}
+		if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
+			return merr
+		}
+	}
+	return nil
+}
+
+// callGraphInputs is the build list the analysis is pinned to: the walk
+// --from-walk names, or one discovered from the store.
+func callGraphInputs(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, f cgFlags, stderr io.Writer) (cgdomain.AnalysisInputs, callGraphRunJSON, error) {
+	var err error
+	var run callGraphRunJSON
+	var inputs cgdomain.AnalysisInputs
+	// The standard library resolves no build list and has none to be pinned
+	// against: it vendors every dependency it has, and the toolchain the
+	// coordinate names decides the rest. A --from-walk naming the frame that
+	// recorded the coordinate is therefore accepted and used for nothing, which
+	// is the honest outcome rather than a refusal of a flag that costs nothing.
+	if !coord.IsStdlib() {
+		inputs, err = analysisInputsForWalk(ctx, ctr.QueryWalks, f.fromWalk)
+		if err != nil {
+			return inputs, run, err
+		}
+		if f.fromWalk == "" {
+			inputs, run.BuildListRefusal = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
+		}
+	}
+	return inputs, run, nil
 }
 
 // callGraphExtractionExit maps an extraction outcome onto the process exit code.

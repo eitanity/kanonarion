@@ -233,23 +233,9 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		)
 	}()
 
-	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
+	factRecord, artefact, err := uc.requireArtefact(ctx, req)
 	if err != nil {
 		return ExtractResult{}, err
-	}
-
-	// Which bytes this extraction is about, resolved before any work is done so a
-	// fetch record that names no artefact fails here rather than after a full
-	// analysis. This stage always holds a fetch record, so a record it cannot name
-	// an artefact for is a fault in the measurement, not a legacy row. The
-	// working-tree stage in local.go has no fetch record at all and leaves both
-	// fields empty; see ExtractLocalCallGraphUseCase.Execute.
-	artefact, err := domain.ArtefactIdentityOf(factRecord)
-	if err != nil {
-		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
-	}
-	if artefact.IsZero() {
-		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain.ErrZeroIdentity)
 	}
 
 	// A local coordinate (the project-walk root) is never served from cache:
@@ -259,61 +245,14 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	var existing domain2.CallGraphRecord
 	var found bool
 	if !req.Force && !req.Coordinate.IsLocal() {
-		var cerr error
-		existing, found, cerr = uc.store.GetCallGraphRecord(ctx, req.Coordinate, uc.pipelineVersion)
-		if errors.Is(cerr, ports.ErrCallGraphConflict) {
-			// The question this lookup is asking is narrower than the one it just
-			// asked. It does not need to know which generation answers the
-			// coordinate for every reader; it needs to know whether one was
-			// measured under the toolchain this run analyses under. A generation
-			// built by a Go this run is not using is not a reason to re-measure,
-			// and treating it as one re-analyses the same module every run for ever.
-			existing, found, cerr = uc.resolvedForThisToolchain(ctx, log, req.Coordinate, cerr)
+		var hit bool
+		var lerr error
+		existing, found, hit, lerr = uc.lookupCachedRecord(ctx, log, req)
+		if lerr != nil {
+			return ExtractResult{}, lerr
 		}
-		// A composition refusal that even the toolchain could not resolve says no
-		// single stored generation answers this coordinate. Refusing to SERVE that
-		// is right; refusing to MEASURE a new answer is not, so it is a cache miss
-		// here. Extraction appends, and the ladder decides which generation answers
-		// afterwards.
-		switch event, key := cacheMissEvent(cerr); {
-		case event != "":
-			log.InfoContext(ctx, event, slog.String(key, cerr.Error()))
-		case cerr != nil && !errors.Is(cerr, ports.ErrCallGraphIntegrity):
-			return ExtractResult{}, fmt.Errorf("checking callgraph store: %w", cerr)
-		}
-		// Presence is not eligibility. A record whose failure was the analysis
-		// environment failing — no usable toolchain, a cancelled run — measured
-		// nothing about this module, and serving it back makes one bad run
-		// permanent: every later run reports the same error and only --force ever
-		// clears it. The record stays in the ledger as evidence; it just does not
-		// answer this question. The rule lives in the domain so the vuln stage's
-		// on-demand spawner applies the same one.
-		// A cached record answers a question that was asked with the inputs it had.
-		// One produced before any build list existed, that never built the module
-		// with bodies, is the pre-feature generation of a module whose require
-		// directives could not be pinned — and serving it back is what would make
-		// that failure permanent. Re-analysis APPENDS; the ladder in composition
-		// decides which generation answers afterwards, so nothing is overwritten.
-		superseded := domain2.PinnedAnalysisSupersedes(existing, req.Inputs)
-		if found && domain2.RecordIsCacheable(existing) && !superseded {
-			log.InfoContext(ctx, "callgraph_cache_hit")
+		if hit {
 			return ExtractResult{Record: existing, FromCache: true}, nil
-		}
-		if found && superseded {
-			log.InfoContext(ctx, "callgraph_cache_superseded_by_build_list",
-				slog.String("completeness", string(existing.Completeness)),
-				slog.String("failure_cause", existing.FailureCause.String()),
-				slog.String("recorded_build_list_source", existing.BuildListSource),
-				slog.String("requested_build_list_source", req.Inputs.Source),
-				slog.String("content_hash", existing.ContentHash),
-			)
-		}
-		if found {
-			log.InfoContext(ctx, "callgraph_cache_ineligible",
-				slog.String("overall_status", existing.OverallStatus.String()),
-				slog.String("failure_cause", existing.FailureCause.String()),
-				slog.String("content_hash", existing.ContentHash),
-			)
 		}
 	}
 
@@ -324,18 +263,9 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		return uc.recordExclusion(ctx, log, req, artefact.String(), factRecord.ContentHash)
 	}
 
-	// The zip is addressed by what it is, not by where some earlier measurement
-	// put it, so any store holding the artefact answers.
-	zipIdentity, hasZip, err := fetchports.ZipIdentity(factRecord)
+	zipPath, cleanup, err := uc.resolveZipPath(ctx, req, factRecord)
 	if err != nil {
-		return ExtractResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
-	}
-	if !hasZip {
-		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain.NotFetchedRemedy(req.Coordinate))
-	}
-	zipPath, cleanup, err := blobZipPath(ctx, uc.blobs, zipIdentity)
-	if err != nil {
-		return ExtractResult{}, fmt.Errorf("resolving blob path for %s: %w", factRecord.ContentLocation, err)
+		return ExtractResult{}, err
 	}
 	defer cleanup()
 
@@ -376,36 +306,8 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	// answer it; re-testing the result against the stricter rule the cache-hit
 	// path uses would have the two disagree, and the stricter one would win by
 	// being second — which is what left a walk-then-extract appending anyway.
-	if !found && !req.Force {
-		if held, ok := uc.identicalGeneration(ctx, log, record); ok {
-			log.InfoContext(ctx, "callgraph_remeasured_equal",
-				slog.String("overall_status", record.OverallStatus.String()),
-				slog.String("failure_cause", record.FailureCause.String()),
-				slog.String("content_hash", held.ContentHash),
-			)
-			return ExtractResult{Record: held, Reused: true}, nil
-		}
-	}
-
-	// The analysis ran because the stored record was not eligible to answer — an
-	// environment failure never is — and it came back saying exactly what the
-	// stored one says. There is no new fact to append. Appending anyway is how a
-	// coordinate that keeps failing grows a generation per run for ever, and it
-	// is not free: each generation is a full blob plus its edge rows, and every
-	// composed read of the coordinate carries them.
-	if found {
-		same, serr := domain2.SameMeasurement(record, existing)
-		if serr != nil {
-			return ExtractResult{}, fmt.Errorf("comparing with the stored generation for %s: %w", req.Coordinate, serr)
-		}
-		if same {
-			log.InfoContext(ctx, "callgraph_remeasured_equal",
-				slog.String("overall_status", record.OverallStatus.String()),
-				slog.String("failure_cause", record.FailureCause.String()),
-				slog.String("content_hash", existing.ContentHash),
-			)
-			return ExtractResult{Record: existing, Reused: true}, nil
-		}
+	if res, reused, rerr := uc.reuseGeneration(ctx, log, req, record, existing, found); rerr != nil || reused {
+		return res, rerr
 	}
 
 	if err := uc.store.PutCallGraphRecord(ctx, record); err != nil {
@@ -426,6 +328,148 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// resolveZipPath locates the module zip the fetch record names. The caller
+// owns the returned cleanup.
+func (uc *ExtractCallGraphUseCase) resolveZipPath(ctx context.Context, req ExtractRequest, factRecord domain.FactRecord) (string, func(), error) {
+	// The zip is addressed by what it is, not by where some earlier measurement
+	// put it, so any store holding the artefact answers.
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(factRecord)
+	if err != nil {
+		return "", nil, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
+	}
+	if !hasZip {
+		return "", nil, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain.NotFetchedRemedy(req.Coordinate))
+	}
+	zipPath, cleanup, err := blobZipPath(ctx, uc.blobs, zipIdentity)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolving blob path for %s: %w", factRecord.ContentLocation, err)
+	}
+	return zipPath, cleanup, nil
+}
+
+// requireArtefact reads the fetch record for req's coordinate and the artefact
+// it names, refusing one that names none.
+func (uc *ExtractCallGraphUseCase) requireArtefact(ctx context.Context, req ExtractRequest) (domain.FactRecord, domain.ArtefactIdentity, error) {
+	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
+	if err != nil {
+		return domain.FactRecord{}, domain.ArtefactIdentity{}, err
+	}
+
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// analysis. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row. The
+	// working-tree stage in local.go has no fetch record at all and leaves both
+	// fields empty; see ExtractLocalCallGraphUseCase.Execute.
+	artefact, err := domain.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return domain.FactRecord{}, domain.ArtefactIdentity{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return domain.FactRecord{}, domain.ArtefactIdentity{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain.ErrZeroIdentity)
+	}
+	return factRecord, artefact, nil
+}
+
+// lookupCachedRecord reads the stored generation for req's coordinate; hit
+// reports that it is eligible to answer without re-analysis.
+func (uc *ExtractCallGraphUseCase) lookupCachedRecord(ctx context.Context, log *slog.Logger, req ExtractRequest) (existing domain2.CallGraphRecord, found, hit bool, _ error) {
+	var cerr error
+	existing, found, cerr = uc.store.GetCallGraphRecord(ctx, req.Coordinate, uc.pipelineVersion)
+	if errors.Is(cerr, ports.ErrCallGraphConflict) {
+		// The question this lookup is asking is narrower than the one it just
+		// asked. It does not need to know which generation answers the
+		// coordinate for every reader; it needs to know whether one was
+		// measured under the toolchain this run analyses under. A generation
+		// built by a Go this run is not using is not a reason to re-measure,
+		// and treating it as one re-analyses the same module every run for ever.
+		existing, found, cerr = uc.resolvedForThisToolchain(ctx, log, req.Coordinate, cerr)
+	}
+	// A composition refusal that even the toolchain could not resolve says no
+	// single stored generation answers this coordinate. Refusing to SERVE that
+	// is right; refusing to MEASURE a new answer is not, so it is a cache miss
+	// here. Extraction appends, and the ladder decides which generation answers
+	// afterwards.
+	switch event, key := cacheMissEvent(cerr); {
+	case event != "":
+		log.InfoContext(ctx, event, slog.String(key, cerr.Error()))
+	case cerr != nil && !errors.Is(cerr, ports.ErrCallGraphIntegrity):
+		return existing, found, false, fmt.Errorf("checking callgraph store: %w", cerr)
+	}
+	// Presence is not eligibility. A record whose failure was the analysis
+	// environment failing — no usable toolchain, a cancelled run — measured
+	// nothing about this module, and serving it back makes one bad run
+	// permanent: every later run reports the same error and only --force ever
+	// clears it. The record stays in the ledger as evidence; it just does not
+	// answer this question. The rule lives in the domain so the vuln stage's
+	// on-demand spawner applies the same one.
+	// A cached record answers a question that was asked with the inputs it had.
+	// One produced before any build list existed, that never built the module
+	// with bodies, is the pre-feature generation of a module whose require
+	// directives could not be pinned — and serving it back is what would make
+	// that failure permanent. Re-analysis APPENDS; the ladder in composition
+	// decides which generation answers afterwards, so nothing is overwritten.
+	superseded := domain2.PinnedAnalysisSupersedes(existing, req.Inputs)
+	if found && domain2.RecordIsCacheable(existing) && !superseded {
+		log.InfoContext(ctx, "callgraph_cache_hit")
+		return existing, found, true, nil
+	}
+	if found && superseded {
+		log.InfoContext(ctx, "callgraph_cache_superseded_by_build_list",
+			slog.String("completeness", string(existing.Completeness)),
+			slog.String("failure_cause", existing.FailureCause.String()),
+			slog.String("recorded_build_list_source", existing.BuildListSource),
+			slog.String("requested_build_list_source", req.Inputs.Source),
+			slog.String("content_hash", existing.ContentHash),
+		)
+	}
+	if found {
+		log.InfoContext(ctx, "callgraph_cache_ineligible",
+			slog.String("overall_status", existing.OverallStatus.String()),
+			slog.String("failure_cause", existing.FailureCause.String()),
+			slog.String("content_hash", existing.ContentHash),
+		)
+	}
+	return existing, found, false, nil
+}
+
+// reuseGeneration answers with a held generation when the new measurement
+// states the same thing; reused reports that it did.
+func (uc *ExtractCallGraphUseCase) reuseGeneration(ctx context.Context, log *slog.Logger, req ExtractRequest, record, existing domain2.CallGraphRecord, found bool) (ExtractResult, bool, error) {
+	if !found && !req.Force {
+		if held, ok := uc.identicalGeneration(ctx, log, record); ok {
+			log.InfoContext(ctx, "callgraph_remeasured_equal",
+				slog.String("overall_status", record.OverallStatus.String()),
+				slog.String("failure_cause", record.FailureCause.String()),
+				slog.String("content_hash", held.ContentHash),
+			)
+			return ExtractResult{Record: held, Reused: true}, true, nil
+		}
+	}
+
+	// The analysis ran because the stored record was not eligible to answer — an
+	// environment failure never is — and it came back saying exactly what the
+	// stored one says. There is no new fact to append. Appending anyway is how a
+	// coordinate that keeps failing grows a generation per run for ever, and it
+	// is not free: each generation is a full blob plus its edge rows, and every
+	// composed read of the coordinate carries them.
+	if found {
+		same, serr := domain2.SameMeasurement(record, existing)
+		if serr != nil {
+			return ExtractResult{}, false, fmt.Errorf("comparing with the stored generation for %s: %w", req.Coordinate, serr)
+		}
+		if same {
+			log.InfoContext(ctx, "callgraph_remeasured_equal",
+				slog.String("overall_status", record.OverallStatus.String()),
+				slog.String("failure_cause", record.FailureCause.String()),
+				slog.String("content_hash", existing.ContentHash),
+			)
+			return ExtractResult{Record: existing, Reused: true}, true, nil
+		}
+	}
+	return ExtractResult{}, false, nil
 }
 
 // recordExclusion persists the decision that a listed module was not analysed,

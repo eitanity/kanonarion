@@ -27,21 +27,8 @@ import (
 // the stream but not --json's effect on the rest of its invocation asks for it
 // the same way here. Asking for both is asking for the stream.
 func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout, stderr io.Writer) error {
-	if err := refuseInapplicableFlags("context --gomod",
-		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
+	if err := refuseContextGoModFlags(ctx, f, scope); err != nil {
 		return err
-	}
-	// The platform this read selects its anchoring walk for, settled before the
-	// store is opened. This is the only context form that chooses a walk, so it
-	// is the only one a declaration can act on.
-	if terr := resolveReadTarget(ctx, f.target, "context --gomod", true, f.gomodPath); terr != nil {
-		return terr
-	}
-	// The complete scope has no test partition to narrow, so the flag is refused
-	// against it rather than parsed and dropped: accepting it would emit
-	// byte-identical output and report the narrowing as honoured.
-	if f.excludeTests && scope == scopeComplete {
-		return refuseTestScopeOnCompleteScope("context --gomod")
 	}
 	// --json frames the documents as the modules array of one envelope, so the
 	// whole answer parses as a single document and the run's own facts have
@@ -106,25 +93,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// the build it pinned to — so without this line the pin is invisible, and an
 	// invisible pin to a walk taken before the last go.mod edit reads as a
 	// statement about the tree in front of the reader.
-	var basis basisWalk
-	var rooting *contextRooting
-	choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath, scope)
-	switch {
-	case werr != nil:
-		rooting = contextRootingUnanchored(werr.Error(), f.gomodPath)
-		_, _ = fmt.Fprintf(stderr, "notice: no walk anchors these vulnerability statuses: %v\n", werr)
-	default:
-		vulnBatch.anchorTo(ctx, choice.summary.ID)
-		// The same walk the verdicts are read in answers the dependency section,
-		// so every document in the stream reports one build.
-		basis = resolveBasisWalk(ctx, ctr.QueryWalks, choice.summary.ID)
-		// The same statement as fields: which walk, chosen rather than named, out
-		// of how many, against which manifest and under which toolchain.
-		rooting = contextRootingForChoice(choice, f.gomodPath)
-		_, _ = fmt.Fprintf(stderr, "notice: vulnerability statuses read in walk %q (%s, frame %s)%s\n",
-			choice.summary.ID, walkScopeLabel(choice.summary.Scope), choice.summary.BuildFrame(),
-			choice.basisNotes())
-	}
+	basis, rooting := anchorContextBatch(ctx, ctr, vulnBatch, f, scope, stderr)
 
 	compact := f.compact && !f.full
 
@@ -150,41 +119,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		// names hold a record under. Reported against the require entry, the same
 		// sections answered "not fetched", "not run" and "this walk does not hold
 		// it" for a module the build had fetched, licensed and scanned.
-		coord := mod.answering()
-		coordStr := coord.String()
-
-		vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
-		var cmdWalkID string
-		if vulns.Status == sectionStatusNotRun {
-			// The id only fills in a suggested `vuln-scan <walk-id>` command line,
-			// exactly as in the single-coordinate path; no answer is read from this
-			// walk, so no selection rule applies to it. See the same lookup in
-			// runContext for why.
-			if walks, werr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1}); werr == nil && len(walks) > 0 {
-				cmdWalkID = walks[0].ID
-			}
-		}
-
-		out := contextOutput{
-			Module: contextModuleInfo{
-				Path:    coord.Path(),
-				Version: coord.Version(),
-				// The require entry the build was routed away from, carried beside
-				// the module rather than in place of it.
-				Replace: replaceOf(mod),
-			},
-			DependencyScope: scopeField,
-			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
-			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
-			Provenance:      buildProvenance(coord),
-			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
-			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
-			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
-			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
-			Vulnerabilities: vulns,
-			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
-		}
+		coordStr, out := contextGoModDocument(ctx, ctr, mod, scopeField, vulnBatch, basis, compact, f)
 
 		if eerr := emitContextDocument(coordStr, out, f.sizeOnly, array, stream, compact, &arr, &report, stdout); eerr != nil {
 			if errors.Is(eerr, errContextOutputWrite) {
@@ -195,6 +130,100 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		}
 	}
 
+	return finishContextGoMod(&arr, &report, array, f, errs, stdout, stderr)
+}
+
+// refuseContextGoModFlags refuses the flags context --gomod cannot honour,
+// and settles the platform the read selects its walk for.
+func refuseContextGoModFlags(ctx context.Context, f contextFlags, scope depScope) error {
+	if err := refuseInapplicableFlags("context --gomod",
+		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
+		return err
+	}
+	// The platform this read selects its anchoring walk for, settled before the
+	// store is opened. This is the only context form that chooses a walk, so it
+	// is the only one a declaration can act on.
+	if terr := resolveReadTarget(ctx, f.target, "context --gomod", true, f.gomodPath); terr != nil {
+		return terr
+	}
+	// The complete scope has no test partition to narrow, so the flag is refused
+	// against it rather than parsed and dropped: accepting it would emit
+	// byte-identical output and report the narrowing as honoured.
+	if f.excludeTests && scope == scopeComplete {
+		return refuseTestScopeOnCompleteScope("context --gomod")
+	}
+	return nil
+}
+
+// anchorContextBatch anchors the batch's vulnerability statuses to the latest
+// project walk of the scope, stating the anchor, or its absence, on stderr.
+func anchorContextBatch(ctx context.Context, ctr *Container, vulnBatch *vulnBatchCtx, f contextFlags, scope depScope, stderr io.Writer) (basisWalk, *contextRooting) {
+	var basis basisWalk
+	var rooting *contextRooting
+	choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath, scope)
+	switch {
+	case werr != nil:
+		rooting = contextRootingUnanchored(werr.Error(), f.gomodPath)
+		_, _ = fmt.Fprintf(stderr, "notice: no walk anchors these vulnerability statuses: %v\n", werr)
+	default:
+		vulnBatch.anchorTo(ctx, choice.summary.ID)
+		// The same walk the verdicts are read in answers the dependency section,
+		// so every document in the stream reports one build.
+		basis = resolveBasisWalk(ctx, ctr.QueryWalks, choice.summary.ID)
+		// The same statement as fields: which walk, chosen rather than named, out
+		// of how many, against which manifest and under which toolchain.
+		rooting = contextRootingForChoice(choice, f.gomodPath)
+		_, _ = fmt.Fprintf(stderr, "notice: vulnerability statuses read in walk %q (%s, frame %s)%s\n",
+			choice.summary.ID, walkScopeLabel(choice.summary.Scope), choice.summary.BuildFrame(),
+			choice.basisNotes())
+	}
+	return basis, rooting
+}
+
+// contextGoModDocument assembles the context document of one module of the
+// scope, reported against the coordinate the build compiles.
+func contextGoModDocument(ctx context.Context, ctr *Container, mod scopeModule, scopeField *scopeJSON, vulnBatch *vulnBatchCtx, basis basisWalk, compact bool, f contextFlags) (string, contextOutput) {
+	coord := mod.answering()
+	coordStr := coord.String()
+
+	vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
+	var cmdWalkID string
+	if vulns.Status == sectionStatusNotRun {
+		// The id only fills in a suggested `vuln-scan <walk-id>` command line,
+		// exactly as in the single-coordinate path; no answer is read from this
+		// walk, so no selection rule applies to it. See the same lookup in
+		// runContext for why.
+		if walks, werr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1}); werr == nil && len(walks) > 0 {
+			cmdWalkID = walks[0].ID
+		}
+	}
+
+	out := contextOutput{
+		Module: contextModuleInfo{
+			Path:    coord.Path(),
+			Version: coord.Version(),
+			// The require entry the build was routed away from, carried beside
+			// the module rather than in place of it.
+			Replace: replaceOf(mod),
+		},
+		DependencyScope: scopeField,
+		Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+		Provenance:      buildProvenance(coord),
+		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
+		License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
+		Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
+		CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+		Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
+		Vulnerabilities: vulns,
+		Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
+	}
+	return coordStr, out
+}
+
+// finishContextGoMod closes the envelope, reports the modules that failed,
+// and writes the size report --size-only asked for.
+func finishContextGoMod(arr *jsonEnvelopeWriter, report *contextSizeReport, array bool, f contextFlags, errs []error, stdout, stderr io.Writer) error {
 	// The envelope is closed before the failures are reported, so a run that lost
 	// modules still leaves a parseable document behind holding the ones it got.
 	// --size-only wrote no element and answers with its own report below, so

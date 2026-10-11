@@ -150,6 +150,14 @@ func TestListWalkScanRuns_SetsDriftedRunAsideAndKeepsTheRest(t *testing.T) {
 		})
 	}
 
+	assertTamperedRunUnreadable(t, db, store, good)
+}
+
+// assertTamperedRunUnreadable alters one more run and checks the listing is
+// an integrity failure naming both unreadable rows.
+func assertTamperedRunUnreadable(t *testing.T, db sqlitestore.DB, store *sqlite.Store, good domain.WalkScanRun) {
+	t.Helper()
+	ctx := t.Context()
 	// Tamper control: one altered run makes the listing an integrity failure,
 	// the drifted run included so a survey still lists them all.
 	altered := storeRun(t, store, "vscan-walk-1-altered", "walk-1")

@@ -779,6 +779,13 @@ func TestRunLicenseList_WithoutRecordIsPartitionedByWhyTheRecordIsAbsent(t *test
 
 	// The text path groups by statement, so the bulk extraction is printed once,
 	// with the count it fills — not the count of modules holding no record.
+	assertWithoutRecordText(t, scope, uc, bulk)
+}
+
+// assertWithoutRecordText checks the text path groups the absent records by
+// statement, offering the bulk extraction once.
+func assertWithoutRecordText(t *testing.T, scope *licenceListScope, uc *testfakes.FakeQueryLicense, bulk string) {
+	t.Helper()
 	text := licenseListText(t, licenseListFlags{limit: 50}, scope, uc)
 	if !strings.Contains(text, "2 module(s): extraction has not produced a licence record for it") {
 		t.Errorf("the bulk extraction does not name the 2 modules it fills:\n%s", text)

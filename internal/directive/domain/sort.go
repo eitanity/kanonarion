@@ -21,23 +21,8 @@ import (
 // both the rendered list and Hash. Every field the type carries is keyed here,
 // so two distinct directives always have a defined order.
 func DirectiveLess(a, b Directive) bool {
-	if a.Source != b.Source {
-		return a.Source < b.Source
-	}
-	if a.Line != b.Line {
-		return a.Line < b.Line
-	}
-	if a.Kind != b.Kind {
-		return a.Kind < b.Kind
-	}
-	if a.OldPath != b.OldPath {
-		return a.OldPath < b.OldPath
-	}
-	if c := versionorder.CompareModuleVersions(a.OldVersion, b.OldVersion); c != 0 {
-		return c < 0
-	}
-	if a.OldVersion != b.OldVersion {
-		return a.OldVersion < b.OldVersion
+	if less, decided := directiveLessByPlaceAndOld(a, b); decided {
+		return less
 	}
 	if a.NewPath != b.NewPath {
 		return a.NewPath < b.NewPath
@@ -92,4 +77,28 @@ func Hash(ds []Directive) string {
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// directiveLessByPlaceAndOld orders a and b by where the directive is written
+// and what it rewrites; decided is false when those keys are all equal.
+func directiveLessByPlaceAndOld(a, b Directive) (less, decided bool) {
+	if a.Source != b.Source {
+		return a.Source < b.Source, true
+	}
+	if a.Line != b.Line {
+		return a.Line < b.Line, true
+	}
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind, true
+	}
+	if a.OldPath != b.OldPath {
+		return a.OldPath < b.OldPath, true
+	}
+	if c := versionorder.CompareModuleVersions(a.OldVersion, b.OldVersion); c != 0 {
+		return c < 0, true
+	}
+	if a.OldVersion != b.OldVersion {
+		return a.OldVersion < b.OldVersion, true
+	}
+	return false, false
 }

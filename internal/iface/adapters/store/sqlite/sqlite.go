@@ -293,52 +293,8 @@ INSERT OR IGNORE INTO interface_symbols (
 		}
 		defer func() { _ = stmtSym.Close() }()
 
-		for _, pkg := range r.Packages {
-			for _, t := range pkg.Types {
-				if _, err := stmtSym.ExecContext(ctx,
-					r.ContentHash,
-					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-					pkg.ImportPath, "type", t.Name, "", t.Signature,
-				); err != nil {
-					return fmt.Errorf("inserting type symbol %s: %w", t.Name, err)
-				}
-				for _, m := range t.Methods {
-					if _, err := stmtSym.ExecContext(ctx,
-						r.ContentHash,
-						r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-						pkg.ImportPath, "method", m.Name, t.Name, m.Signature,
-					); err != nil {
-						return fmt.Errorf("inserting method symbol %s.%s: %w", t.Name, m.Name, err)
-					}
-				}
-			}
-			for _, f := range pkg.Funcs {
-				if _, err := stmtSym.ExecContext(ctx,
-					r.ContentHash,
-					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-					pkg.ImportPath, "func", f.Name, "", f.Signature,
-				); err != nil {
-					return fmt.Errorf("inserting func symbol %s: %w", f.Name, err)
-				}
-			}
-			for _, c := range pkg.Consts {
-				if _, err := stmtSym.ExecContext(ctx,
-					r.ContentHash,
-					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-					pkg.ImportPath, "const", c.Name, "", c.Type,
-				); err != nil {
-					return fmt.Errorf("inserting const symbol %s: %w", c.Name, err)
-				}
-			}
-			for _, v := range pkg.Vars {
-				if _, err := stmtSym.ExecContext(ctx,
-					r.ContentHash,
-					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
-					pkg.ImportPath, "var", v.Name, "", v.Type,
-				); err != nil {
-					return fmt.Errorf("inserting var symbol %s: %w", v.Name, err)
-				}
-			}
+		if err := insertInterfaceSymbols(ctx, stmtSym, r); err != nil {
+			return err
 		}
 
 		if err := tx.Commit(); err != nil {
@@ -349,6 +305,59 @@ INSERT OR IGNORE INTO interface_symbols (
 		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	_, _ = s.db.DB().ExecContext(ctx, `PRAGMA optimize`) //nolint:errcheck
+	return nil
+}
+
+// insertInterfaceSymbols writes one symbol row per type, method, func, const
+// and var the record holds.
+func insertInterfaceSymbols(ctx context.Context, stmtSym *sql.Stmt, r domain2.InterfaceRecord) error {
+	for _, pkg := range r.Packages {
+		for _, t := range pkg.Types {
+			if _, err := stmtSym.ExecContext(ctx,
+				r.ContentHash,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+				pkg.ImportPath, "type", t.Name, "", t.Signature,
+			); err != nil {
+				return fmt.Errorf("inserting type symbol %s: %w", t.Name, err)
+			}
+			for _, m := range t.Methods {
+				if _, err := stmtSym.ExecContext(ctx,
+					r.ContentHash,
+					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+					pkg.ImportPath, "method", m.Name, t.Name, m.Signature,
+				); err != nil {
+					return fmt.Errorf("inserting method symbol %s.%s: %w", t.Name, m.Name, err)
+				}
+			}
+		}
+		for _, f := range pkg.Funcs {
+			if _, err := stmtSym.ExecContext(ctx,
+				r.ContentHash,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+				pkg.ImportPath, "func", f.Name, "", f.Signature,
+			); err != nil {
+				return fmt.Errorf("inserting func symbol %s: %w", f.Name, err)
+			}
+		}
+		for _, c := range pkg.Consts {
+			if _, err := stmtSym.ExecContext(ctx,
+				r.ContentHash,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+				pkg.ImportPath, "const", c.Name, "", c.Type,
+			); err != nil {
+				return fmt.Errorf("inserting const symbol %s: %w", c.Name, err)
+			}
+		}
+		for _, v := range pkg.Vars {
+			if _, err := stmtSym.ExecContext(ctx,
+				r.ContentHash,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
+				pkg.ImportPath, "var", v.Name, "", v.Type,
+			); err != nil {
+				return fmt.Errorf("inserting var symbol %s: %w", v.Name, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -628,18 +637,7 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 	             CASE WHEN overall_status = ? THEN serialised END
 	      FROM interface_records`
 	args := []any{int(domain2.InterfaceStatusPartial)}
-	var where []string
-	if filter.Coordinate != nil {
-		where = append(where, "module_path = ? AND module_version = ?")
-		args = append(args, filter.Coordinate.Path(), filter.Coordinate.Version())
-	}
-	if filter.PipelineVersion != "" {
-		where = append(where, "pipeline_version = ?")
-		args = append(args, filter.PipelineVersion)
-	}
-	if len(where) > 0 {
-		q += ` WHERE ` + strings.Join(where, " AND ")
-	}
+	q, args = appendInterfaceFilter(q, args, filter)
 	q += ` ORDER BY extracted_at DESC, rowid DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)
@@ -694,13 +692,9 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 			// The overwhelming majority: one generation, so the columns already
 			// describe the served record and no blob is decoded to learn it —
 			// except a Partial one, the only status an analyser limit comes with.
-			sum := first[k]
-			if blob, ok := partialBlobs[sum.ContentHash]; ok {
-				rec, derr := decodeRecord(blob, sum.ContentHash)
-				if derr != nil {
-					return nil, derr
-				}
-				sum.AnalyserLimit = rec.AnalyserLimit
+			sum, derr := withAnalyserLimit(first[k], partialBlobs)
+			if derr != nil {
+				return nil, derr
 			}
 			out = append(out, sum)
 			continue
@@ -740,6 +734,36 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 	}
 
 	return page(out, filter.Limit, filter.Offset), nil
+}
+
+// appendInterfaceFilter appends the WHERE clause filter asks for to q and its
+// arguments to args.
+func appendInterfaceFilter(q string, args []any, filter ports.InterfaceFilter) (string, []any) {
+	var where []string
+	if filter.Coordinate != nil {
+		where = append(where, "module_path = ? AND module_version = ?")
+		args = append(args, filter.Coordinate.Path(), filter.Coordinate.Version())
+	}
+	if filter.PipelineVersion != "" {
+		where = append(where, "pipeline_version = ?")
+		args = append(args, filter.PipelineVersion)
+	}
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, " AND ")
+	}
+	return q, args
+}
+
+// withAnalyserLimit reads a Partial summary's analyser limit from its blob.
+func withAnalyserLimit(sum ports.InterfaceSummary, partialBlobs map[string][]byte) (ports.InterfaceSummary, error) {
+	if blob, ok := partialBlobs[sum.ContentHash]; ok {
+		rec, derr := decodeRecord(blob, sum.ContentHash)
+		if derr != nil {
+			return ports.InterfaceSummary{}, derr
+		}
+		sum.AnalyserLimit = rec.AnalyserLimit
+	}
+	return sum, nil
 }
 
 // page applies the caller's limit and offset to the collapsed list.

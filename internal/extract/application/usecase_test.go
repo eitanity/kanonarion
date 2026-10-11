@@ -224,6 +224,15 @@ func TestExtractUseCase_Execute(t *testing.T) {
 		}
 	})
 
+	runExecuteFailureSubtests(ctx, t, uc, walks, extractor, coord1, walkID)
+
+	runExecuteEdgeSubtests(ctx, t, uc, walks, extractor, walkID)
+}
+
+// runExecuteFailureSubtests covers a failed stage, the refusals, a failed
+// persist and a cancelled context.
+func runExecuteFailureSubtests(ctx context.Context, t *testing.T, uc *ExtractUseCase, walks *mockWalkStore, extractor *mockExtractor, coord1 coordinate.ModuleCoordinate, walkID string) {
+	t.Helper()
 	t.Run("Partial failure", func(t *testing.T) {
 		extractor.calls = nil
 		req := ExtractRequest{
@@ -296,7 +305,12 @@ func TestExtractUseCase_Execute(t *testing.T) {
 			t.Errorf("OverallStatus = %v, want %v", run.OverallStatus, domain.ExtractionRunCancelled)
 		}
 	})
+}
 
+// runExecuteEdgeSubtests covers empty stages, an extractor error, and a
+// cancellation during the stages.
+func runExecuteEdgeSubtests(ctx context.Context, t *testing.T, uc *ExtractUseCase, walks *mockWalkStore, extractor *mockExtractor, walkID string) {
+	t.Helper()
 	t.Run("Empty stages", func(t *testing.T) {
 		req := ExtractRequest{WalkID: walkID, Stages: []string{}}
 		_, err := uc.Execute(ctx, req)

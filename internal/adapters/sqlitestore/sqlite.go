@@ -275,6 +275,41 @@ func migrate(db *sql.DB, migrations []Migration) error {
 		return fmt.Errorf("creating _store_meta table: %w", err)
 	}
 
+	if err := applyPendingMigrations(db, migrations); err != nil {
+		return err
+	}
+
+	// Written only when it would change. Every process writes this row on every
+	// open, and the store has one writer: thirty-two call-graph children opening
+	// at once turned a no-op restatement of a value nobody had changed into
+	// thirty-seven refused opens. A read costs nothing under WAL, and the write
+	// that remains is the one a real migration owes.
+	if err := retryOnBusyOpen("recording the schema version", func() error {
+		var recorded string
+		err := db.QueryRow(`SELECT value FROM _store_meta WHERE key = 'schema_version'`).Scan(&recorded)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading schema_version from _store_meta: %w", err)
+		}
+		var applied int
+		if serr := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); serr != nil {
+			return fmt.Errorf("counting applied migrations: %w", serr)
+		}
+		if recorded == strconv.Itoa(applied) {
+			return nil
+		}
+		_, err = db.Exec(`INSERT OR REPLACE INTO _store_meta (key, value) VALUES ('schema_version', ?)`,
+			strconv.Itoa(applied))
+		return err //nolint:wrapcheck // the retry classifies the driver's own error; the caller below names the step
+	}); err != nil {
+		return fmt.Errorf("updating schema_version in _store_meta: %w", err)
+	}
+
+	return nil
+}
+
+// applyPendingMigrations applies, in order, each migration not yet recorded in
+// schema_migrations, one transaction each.
+func applyPendingMigrations(db *sql.DB, migrations []Migration) error {
 	for _, m := range migrations {
 		var exists bool
 		err := db.QueryRow(`SELECT 1 FROM schema_migrations WHERE module = ? AND version = ?`, m.Module, m.Version).Scan(&exists)
@@ -322,31 +357,5 @@ func migrate(db *sql.DB, migrations []Migration) error {
 			return err
 		}
 	}
-
-	// Written only when it would change. Every process writes this row on every
-	// open, and the store has one writer: thirty-two call-graph children opening
-	// at once turned a no-op restatement of a value nobody had changed into
-	// thirty-seven refused opens. A read costs nothing under WAL, and the write
-	// that remains is the one a real migration owes.
-	if err := retryOnBusyOpen("recording the schema version", func() error {
-		var recorded string
-		err := db.QueryRow(`SELECT value FROM _store_meta WHERE key = 'schema_version'`).Scan(&recorded)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("reading schema_version from _store_meta: %w", err)
-		}
-		var applied int
-		if serr := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); serr != nil {
-			return fmt.Errorf("counting applied migrations: %w", serr)
-		}
-		if recorded == strconv.Itoa(applied) {
-			return nil
-		}
-		_, err = db.Exec(`INSERT OR REPLACE INTO _store_meta (key, value) VALUES ('schema_version', ?)`,
-			strconv.Itoa(applied))
-		return err //nolint:wrapcheck // the retry classifies the driver's own error; the caller below names the step
-	}); err != nil {
-		return fmt.Errorf("updating schema_version in _store_meta: %w", err)
-	}
-
 	return nil
 }

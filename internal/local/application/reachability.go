@@ -96,23 +96,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	if err != nil {
 		return domain.LocalReachabilityResult{}, fmt.Errorf("loading vuln findings: %w", err)
 	}
-	for _, coord := range coords {
-		if _, ok := set.Scanned[coord]; ok {
-			continue
-		}
-		reason := domain.UncoveredNoStoredRecord
-		switch {
-		case setContains(set.OtherFrameOnly, coord):
-			reason = domain.UncoveredOtherFrameOnly
-		case setContains(set.SupersededOnly, coord):
-			reason = domain.UncoveredSupersededPipeline
-		case setContains(set.SetAsideOnly, coord):
-			reason = domain.UncoveredSetAside
-		}
-		uncovered = append(uncovered, domain.UncoveredModule{
-			Path: coord.Path(), Version: coord.Version(), Reason: reason,
-		})
-	}
+	uncovered = appendUnservedCoordinates(uncovered, coords, set)
 	domain.SortUncovered(uncovered)
 	coverage := domain.ProbeCoverage{
 		TakenAt:      takenAt,
@@ -143,18 +127,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	// The symbol table probe is only meaningful when at least one matched
 	// finding carries AffectedSymbols. A full probe-binary build (~8s) that
 	// can yield nothing but "unknown" is wasted work, so elide it.
-	anySymbols := false
-	for _, cveFindings := range findings {
-		for _, f := range cveFindings {
-			if len(f.AffectedSymbols) > 0 {
-				anySymbols = true
-				break
-			}
-		}
-		if anySymbols {
-			break
-		}
-	}
+	anySymbols := anyAffectedSymbols(findings)
 
 	var (
 		binarySymbols map[string]struct{}
@@ -201,6 +174,46 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		SeedSetAside:    set.SetAside,
 		Notice:          notice,
 	}, nil
+}
+
+// appendUnservedCoordinates records each queried coordinate the store held no
+// servable scan for, with the reason it did not.
+func appendUnservedCoordinates(uncovered []domain.UncoveredModule, coords []coordinate.ModuleCoordinate, set ports.FindingSet) []domain.UncoveredModule {
+	for _, coord := range coords {
+		if _, ok := set.Scanned[coord]; ok {
+			continue
+		}
+		reason := domain.UncoveredNoStoredRecord
+		switch {
+		case setContains(set.OtherFrameOnly, coord):
+			reason = domain.UncoveredOtherFrameOnly
+		case setContains(set.SupersededOnly, coord):
+			reason = domain.UncoveredSupersededPipeline
+		case setContains(set.SetAsideOnly, coord):
+			reason = domain.UncoveredSetAside
+		}
+		uncovered = append(uncovered, domain.UncoveredModule{
+			Path: coord.Path(), Version: coord.Version(), Reason: reason,
+		})
+	}
+	return uncovered
+}
+
+// anyAffectedSymbols reports whether any finding names an affected symbol.
+func anyAffectedSymbols(findings map[coordinate.ModuleCoordinate][]ports.VulnFinding) bool {
+	anySymbols := false
+	for _, cveFindings := range findings {
+		for _, f := range cveFindings {
+			if len(f.AffectedSymbols) > 0 {
+				anySymbols = true
+				break
+			}
+		}
+		if anySymbols {
+			break
+		}
+	}
+	return anySymbols
 }
 
 // coverageBinaries projects the prober's per-binary result onto the coverage

@@ -82,38 +82,7 @@ func TestExtractionRunHasher(t *testing.T) {
 	})
 
 	t.Run("Marshal and Unmarshal Canonical", func(t *testing.T) {
-		runWithHash, err := hasher.SetContentHash(run)
-		if err != nil {
-			t.Fatalf("SetContentHash: %v", err)
-		}
-		data, err := json.Marshal(runWithHash)
-		if err != nil {
-			t.Fatalf("json.Marshal(run) error = %v", err)
-		}
-
-		var unmarshaled ExtractionRun
-		err = json.Unmarshal(data, &unmarshaled)
-		if err != nil {
-			t.Fatalf("json.Unmarshal(run) error = %v", err)
-		}
-
-		// Verify key fields match
-		if unmarshaled.ID != run.ID {
-			t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, run.ID)
-		}
-		if !unmarshaled.StartedAt.Equal(run.StartedAt) {
-			t.Errorf("StartedAt mismatch: got %v, want %v", unmarshaled.StartedAt, run.StartedAt)
-		}
-		if len(unmarshaled.PerModuleResults) != len(run.PerModuleResults) {
-			t.Errorf("PerModuleResults length mismatch: got %d, want %d", len(unmarshaled.PerModuleResults), len(run.PerModuleResults))
-		}
-
-		// Check canonical order of keys in JSON (implicitly tested by hasher consistency)
-		// We can also verify that we can marshal again and get same hash
-		err = hasher.VerifyContentHash(unmarshaled)
-		if err != nil {
-			t.Errorf("VerifyContentHash failed after unmarshal: %v", err)
-		}
+		testCanonicalRoundTrip(t, hasher, run)
 	})
 
 	t.Run("Hashing error on invalid status", func(t *testing.T) {
@@ -170,6 +139,43 @@ func TestExtractionRunHasher(t *testing.T) {
 			t.Errorf("expected ErrUnsupportedEcosystem, got %v", err)
 		}
 	})
+}
+
+// testCanonicalRoundTrip checks a hashed run survives the canonical JSON
+// round trip.
+func testCanonicalRoundTrip(t *testing.T, hasher ExtractionRunHasher, run ExtractionRun) {
+	runWithHash, err := hasher.SetContentHash(run)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	data, err := json.Marshal(runWithHash)
+	if err != nil {
+		t.Fatalf("json.Marshal(run) error = %v", err)
+	}
+
+	var unmarshaled ExtractionRun
+	err = json.Unmarshal(data, &unmarshaled)
+	if err != nil {
+		t.Fatalf("json.Unmarshal(run) error = %v", err)
+	}
+
+	// Verify key fields match
+	if unmarshaled.ID != run.ID {
+		t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, run.ID)
+	}
+	if !unmarshaled.StartedAt.Equal(run.StartedAt) {
+		t.Errorf("StartedAt mismatch: got %v, want %v", unmarshaled.StartedAt, run.StartedAt)
+	}
+	if len(unmarshaled.PerModuleResults) != len(run.PerModuleResults) {
+		t.Errorf("PerModuleResults length mismatch: got %d, want %d", len(unmarshaled.PerModuleResults), len(run.PerModuleResults))
+	}
+
+	// Check canonical order of keys in JSON (implicitly tested by hasher consistency)
+	// We can also verify that we can marshal again and get same hash
+	err = hasher.VerifyContentHash(unmarshaled)
+	if err != nil {
+		t.Errorf("VerifyContentHash failed after unmarshal: %v", err)
+	}
 }
 
 func TestMarshalCanonicalRun_MarshalFailure(t *testing.T) {

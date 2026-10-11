@@ -618,71 +618,22 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 		}
 	}
 
-	nodes := make([]GraphNode, len(c.Graph.Nodes))
-	for i, n := range c.Graph.Nodes {
-		coord, nerr := coordinate.NewModuleCoordinate(n.Coordinate.Path, n.Coordinate.Version)
-		if nerr != nil {
-			return WalkRecord{}, fmt.Errorf("parsing node %d coordinate: %w", i, nerr)
-		}
-		nodes[i] = GraphNode{
-			Coordinate:       coord,
-			DirectDependency: n.DirectDependency,
-			ResolutionSource: ResolutionSource(n.ResolutionSource),
-			ErrorDetail:      n.ErrorDetail,
-			Retracted:        n.Retracted,
-			LocalPath:        n.LocalPath,
-			Digests: fetchdomain.ArtifactDigests{
-				SHA256: n.ZipSHA256,
-				SHA384: n.ZipSHA384,
-				SHA512: n.ZipSHA512,
-			},
-			Stdlib: fromCanonicalStdlibFacts(n.Stdlib),
-		}
-		if n.OriginalCoordinate != nil {
-			oc, oerr := coordinate.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)
-			if oerr != nil {
-				return WalkRecord{}, fmt.Errorf("parsing node %d original coordinate: %w", i, oerr)
-			}
-			nodes[i].OriginalCoordinate = oc
-		}
+	nodes, err := nodesFromCanonical(c)
+	if err != nil {
+		return WalkRecord{}, err
 	}
 
-	edges := make([]GraphEdge, len(c.Graph.Edges))
-	for i, e := range c.Graph.Edges {
-		from, ferr := coordinate.NewModuleCoordinate(e.From.Path, e.From.Version)
-		if ferr != nil {
-			return WalkRecord{}, fmt.Errorf("parsing edge %d from coordinate: %w", i, ferr)
-		}
-		to, terr := coordinate.NewModuleCoordinate(e.To.Path, e.To.Version)
-		if terr != nil {
-			return WalkRecord{}, fmt.Errorf("parsing edge %d to coordinate: %w", i, terr)
-		}
-		edges[i] = GraphEdge{From: from, To: to, ConstraintVersion: e.ConstraintVersion}
+	edges, err := edgesFromCanonical(c)
+	if err != nil {
+		return WalkRecord{}, err
 	}
 
-	perNode := make(map[coordinate.ModuleCoordinate]NodeResult, len(c.PerNodeResults))
-	for _, entry := range c.PerNodeResults {
-		coord, cerr := coordinate.NewModuleCoordinate(entry.Coordinate.Path, entry.Coordinate.Version)
-		if cerr != nil {
-			return WalkRecord{}, fmt.Errorf("parsing per_node_results coordinate: %w", cerr)
-		}
-		nr, nerr := unmarshalNodeResult(coord, entry)
-		if nerr != nil {
-			return WalkRecord{}, fmt.Errorf("parsing node result for %s: %w", coord, nerr)
-		}
-		perNode[coord] = nr
+	perNode, err := perNodeFromCanonical(c)
+	if err != nil {
+		return WalkRecord{}, err
 	}
 
-	stageDepths := make(map[string]StageDepth, len(c.StageDepths))
-	for k, v := range c.StageDepths {
-		stageDepths[k] = StageDepth{
-			MaxDepth:        v.MaxDepth,
-			FollowReplace:   v.FollowReplace,
-			FollowTest:      v.FollowTest,
-			FollowIndirect:  v.FollowIndirect,
-			AllowedVCSHosts: fromCanonicalVCSHosts(v.AllowedVCSHosts),
-		}
-	}
+	stageDepths := stageDepthsFromCanonical(c)
 
 	scope := WalkScope(c.Scope)
 	if scope == "" {
@@ -725,6 +676,88 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 		Operator:        c.Operator,
 		ContentHash:     c.ContentHash,
 	}, nil
+}
+
+// nodesFromCanonical reads back the graph's nodes.
+func nodesFromCanonical(c canonicalWalkRecord) ([]GraphNode, error) {
+	nodes := make([]GraphNode, len(c.Graph.Nodes))
+	for i, n := range c.Graph.Nodes {
+		coord, nerr := coordinate.NewModuleCoordinate(n.Coordinate.Path, n.Coordinate.Version)
+		if nerr != nil {
+			return nil, fmt.Errorf("parsing node %d coordinate: %w", i, nerr)
+		}
+		nodes[i] = GraphNode{
+			Coordinate:       coord,
+			DirectDependency: n.DirectDependency,
+			ResolutionSource: ResolutionSource(n.ResolutionSource),
+			ErrorDetail:      n.ErrorDetail,
+			Retracted:        n.Retracted,
+			LocalPath:        n.LocalPath,
+			Digests: fetchdomain.ArtifactDigests{
+				SHA256: n.ZipSHA256,
+				SHA384: n.ZipSHA384,
+				SHA512: n.ZipSHA512,
+			},
+			Stdlib: fromCanonicalStdlibFacts(n.Stdlib),
+		}
+		if n.OriginalCoordinate != nil {
+			oc, oerr := coordinate.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)
+			if oerr != nil {
+				return nil, fmt.Errorf("parsing node %d original coordinate: %w", i, oerr)
+			}
+			nodes[i].OriginalCoordinate = oc
+		}
+	}
+	return nodes, nil
+}
+
+// edgesFromCanonical reads back the graph's edges.
+func edgesFromCanonical(c canonicalWalkRecord) ([]GraphEdge, error) {
+	edges := make([]GraphEdge, len(c.Graph.Edges))
+	for i, e := range c.Graph.Edges {
+		from, ferr := coordinate.NewModuleCoordinate(e.From.Path, e.From.Version)
+		if ferr != nil {
+			return nil, fmt.Errorf("parsing edge %d from coordinate: %w", i, ferr)
+		}
+		to, terr := coordinate.NewModuleCoordinate(e.To.Path, e.To.Version)
+		if terr != nil {
+			return nil, fmt.Errorf("parsing edge %d to coordinate: %w", i, terr)
+		}
+		edges[i] = GraphEdge{From: from, To: to, ConstraintVersion: e.ConstraintVersion}
+	}
+	return edges, nil
+}
+
+// perNodeFromCanonical reads back each node's result, keyed by coordinate.
+func perNodeFromCanonical(c canonicalWalkRecord) (map[coordinate.ModuleCoordinate]NodeResult, error) {
+	perNode := make(map[coordinate.ModuleCoordinate]NodeResult, len(c.PerNodeResults))
+	for _, entry := range c.PerNodeResults {
+		coord, cerr := coordinate.NewModuleCoordinate(entry.Coordinate.Path, entry.Coordinate.Version)
+		if cerr != nil {
+			return nil, fmt.Errorf("parsing per_node_results coordinate: %w", cerr)
+		}
+		nr, nerr := unmarshalNodeResult(coord, entry)
+		if nerr != nil {
+			return nil, fmt.Errorf("parsing node result for %s: %w", coord, nerr)
+		}
+		perNode[coord] = nr
+	}
+	return perNode, nil
+}
+
+// stageDepthsFromCanonical reads back the stage depths the walk ran at.
+func stageDepthsFromCanonical(c canonicalWalkRecord) map[string]StageDepth {
+	stageDepths := make(map[string]StageDepth, len(c.StageDepths))
+	for k, v := range c.StageDepths {
+		stageDepths[k] = StageDepth{
+			MaxDepth:        v.MaxDepth,
+			FollowReplace:   v.FollowReplace,
+			FollowTest:      v.FollowTest,
+			FollowIndirect:  v.FollowIndirect,
+			AllowedVCSHosts: fromCanonicalVCSHosts(v.AllowedVCSHosts),
+		}
+	}
+	return stageDepths
 }
 
 func unmarshalNodeResult(coord coordinate.ModuleCoordinate, entry canonicalNodeEntry) (NodeResult, error) {

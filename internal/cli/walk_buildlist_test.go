@@ -71,37 +71,11 @@ func TestRunWalkProject_BuildListUnavailableIsStatedAndExitsPartial(t *testing.T
 	}
 
 	t.Run("states the gap on stdout", func(t *testing.T) {
-		out, _, err := run(t, buildListToolchainReason, true)
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-		if !strings.Contains(out, "build list unavailable") {
-			t.Errorf("stdout does not say the build list was unavailable:\n%s", out)
-		}
-		if !strings.Contains(out, "go.mod require directives, not the modules that compile") {
-			t.Errorf("stdout does not say which module set the walk covers:\n%s", out)
-		}
-		if !strings.Contains(out, "missing go.sum entry for go.mod file") ||
-			!strings.Contains(out, "go mod download github.com/google/uuid") {
-			t.Errorf("stdout does not carry the toolchain's own reason and remedy:\n%s", out)
-		}
+		testBuildListGapOnStdout(t, run)
 	})
 
 	t.Run("exits partial and says why", func(t *testing.T) {
-		_, _, rerr := run(t, buildListToolchainReason, false)
-		var ee *exitError
-		if !errors.As(rerr, &ee) {
-			t.Fatalf("error = %v, want an exitError", rerr)
-		}
-		if ee.code != ExitPartial {
-			t.Errorf("exit code = %d, want %d (partial)", ee.code, ExitPartial)
-		}
-		if !strings.Contains(ee.msg, "build list was unavailable") {
-			t.Errorf("exit message = %q, want it to name the build list", ee.msg)
-		}
-		if strings.Contains(ee.msg, "could not be fetched") {
-			t.Errorf("exit message = %q blames the dependencies; every one of them was fetched", ee.msg)
-		}
+		testBuildListExitsPartial(t, run)
 	})
 
 	t.Run("--allow-partial still lifts the code", func(t *testing.T) {
@@ -147,6 +121,44 @@ func TestRunWalkProject_BuildListUnavailableIsStatedAndExitsPartial(t *testing.T
 			t.Errorf("stdout does not report the clean walk:\n%s", out)
 		}
 	})
+}
+
+// testBuildListGapOnStdout checks stdout states the missing build list, the
+// module set the walk covers instead, and the toolchain's reason.
+func testBuildListGapOnStdout(t *testing.T, run func(*testing.T, string, bool) (string, string, error)) {
+	out, _, err := run(t, buildListToolchainReason, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out, "build list unavailable") {
+		t.Errorf("stdout does not say the build list was unavailable:\n%s", out)
+	}
+	if !strings.Contains(out, "go.mod require directives, not the modules that compile") {
+		t.Errorf("stdout does not say which module set the walk covers:\n%s", out)
+	}
+	if !strings.Contains(out, "missing go.sum entry for go.mod file") ||
+		!strings.Contains(out, "go mod download github.com/google/uuid") {
+		t.Errorf("stdout does not carry the toolchain's own reason and remedy:\n%s", out)
+	}
+}
+
+// testBuildListExitsPartial checks a walk with no build list exits partial
+// and names the build list, not the dependencies.
+func testBuildListExitsPartial(t *testing.T, run func(*testing.T, string, bool) (string, string, error)) {
+	_, _, rerr := run(t, buildListToolchainReason, false)
+	var ee *exitError
+	if !errors.As(rerr, &ee) {
+		t.Fatalf("error = %v, want an exitError", rerr)
+	}
+	if ee.code != ExitPartial {
+		t.Errorf("exit code = %d, want %d (partial)", ee.code, ExitPartial)
+	}
+	if !strings.Contains(ee.msg, "build list was unavailable") {
+		t.Errorf("exit message = %q, want it to name the build list", ee.msg)
+	}
+	if strings.Contains(ee.msg, "could not be fetched") {
+		t.Errorf("exit message = %q blames the dependencies; every one of them was fetched", ee.msg)
+	}
 }
 
 // A run that produced the record is not the only reader of it. The degradation

@@ -133,6 +133,13 @@ func TestExecute_PayloadWitnessesTheWriteWithoutRestatingTheRecord(t *testing.T)
 			t.Errorf("payload carries %q: the record holds the claims, the event witnesses the write", forbidden)
 		}
 	}
+	assertPayloadRestatesNoClaim(t, payload)
+}
+
+// assertPayloadRestatesNoClaim checks no payload value names a component or
+// a file.
+func assertPayloadRestatesNoClaim(t *testing.T, payload map[string]any) {
+	t.Helper()
 	// And no value anywhere in the payload names a component or a file.
 	for k, v := range payload {
 		if s, ok := v.(string); ok {

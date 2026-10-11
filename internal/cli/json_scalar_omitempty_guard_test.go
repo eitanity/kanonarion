@@ -128,32 +128,7 @@ func TestJSON_NoScalarOmitemptyInCLI(t *testing.T) {
 				return true
 			}
 			structs++
-			for _, field := range st.Fields.List {
-				if field.Tag == nil {
-					continue
-				}
-				tag := reflect.StructTag(strings.Trim(field.Tag.Value, "`")).Get("json")
-				if !hasOmitempty(tag) {
-					continue
-				}
-				kind, isScalar := scalarTypeName(field.Type)
-				if !isScalar {
-					continue
-				}
-				scanned++
-				for _, ident := range field.Names {
-					key := filepath.Base(name) + ":" + ident.Name
-					if _, ok := exempt[key]; ok {
-						continue
-					}
-					pos := fset.Position(ident.Pos())
-					t.Errorf("%s:%d: %s is %s with `omitempty` (%q); zero and false are measurements for these types, "+
-						"so the tag erases an answer and makes it indistinguishable from a build that does not derive it. "+
-						"Drop omitempty, or — if the row can genuinely carry no answer and no sibling field says so — make it "+
-						"a pointer emitted always. If an erased zero really is correct here, add it to scalarZeroExemptions with the reason.",
-						filepath.Base(pos.Filename), pos.Line, ident.Name, kind, tag)
-				}
-			}
+			scanned += checkScalarOmitempty(t, fset, name, st, exempt)
 			return true
 		})
 	}
@@ -163,6 +138,40 @@ func TestJSON_NoScalarOmitemptyInCLI(t *testing.T) {
 	}
 	t.Logf("scanned %d files, %d struct declarations, %d scalar fields carrying omitempty (%d exempted)",
 		files, structs, scanned, len(scalarZeroExemptions))
+}
+
+// checkScalarOmitempty reports each scalar field of st tagged omitempty and
+// not exempt, returning how many such fields it scanned.
+func checkScalarOmitempty(t *testing.T, fset *token.FileSet, name string, st *ast.StructType, exempt map[string]scalarZeroExemption) int {
+	t.Helper()
+	scanned := 0
+	for _, field := range st.Fields.List {
+		if field.Tag == nil {
+			continue
+		}
+		tag := reflect.StructTag(strings.Trim(field.Tag.Value, "`")).Get("json")
+		if !hasOmitempty(tag) {
+			continue
+		}
+		kind, isScalar := scalarTypeName(field.Type)
+		if !isScalar {
+			continue
+		}
+		scanned++
+		for _, ident := range field.Names {
+			key := filepath.Base(name) + ":" + ident.Name
+			if _, ok := exempt[key]; ok {
+				continue
+			}
+			pos := fset.Position(ident.Pos())
+			t.Errorf("%s:%d: %s is %s with `omitempty` (%q); zero and false are measurements for these types, "+
+				"so the tag erases an answer and makes it indistinguishable from a build that does not derive it. "+
+				"Drop omitempty, or — if the row can genuinely carry no answer and no sibling field says so — make it "+
+				"a pointer emitted always. If an erased zero really is correct here, add it to scalarZeroExemptions with the reason.",
+				filepath.Base(pos.Filename), pos.Line, ident.Name, kind, tag)
+		}
+	}
+	return scanned
 }
 
 // hasOmitempty reports whether a json struct tag carries the omitempty option,

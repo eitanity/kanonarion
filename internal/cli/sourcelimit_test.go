@@ -85,48 +85,54 @@ func limitStore(t *testing.T) string {
 func TestExtractingCommands_AnalyserLimitExitsConfig(t *testing.T) {
 	for _, cmd := range []string{"interface", "examples"} {
 		t.Run(cmd, func(t *testing.T) {
-			root := limitStore(t)
-			restore := gotoolchain.SetAnalysingGo("go1.26.6")
-			stdout, stderr, err := runAside(cmd, limitProbe.String(), "--store-root", root)
-			restore()
-			var ee *exitError
-			if !errors.As(err, &ee) || ee.code != ExitConfig {
-				t.Fatalf("%s: err %v, want exit %d\n%s%s", cmd, err, ExitConfig, stdout, stderr)
-			}
-			if !strings.Contains(err.Error(), "this kanonarion cannot read this code: it was built with go1.26.6 and the code requires go1.27.2") {
-				t.Errorf("refusal lacks the statement: %v", err)
-			}
-			for _, want := range []string{"not analysed:", "Use a kanonarion built with go1.27.2 or newer"} {
-				if !strings.Contains(stdout, want) {
-					t.Errorf("stdout lacks %q:\n%s", want, stdout)
-				}
-			}
-			if strings.Contains(stdout, "[parse failure]") || strings.Contains(stdout, "parse failures in") {
-				t.Errorf("the unread files were reported as the module's parse failures:\n%s", stdout)
-			}
-
-			// Run again under --json: the refusal still exits 20, and the record
-			// carries the field.
-			restore = gotoolchain.SetAnalysingGo("go1.26.6")
-			stdout, _, err = runAside(cmd, limitProbe.String(), "--json", "--store-root", root)
-			restore()
-			if !errors.As(err, &ee) || ee.code != ExitConfig {
-				t.Fatalf("%s --json: err %v, want exit %d", cmd, err, ExitConfig)
-			}
-			if !strings.Contains(stdout, `"analyser_limit"`) && !strings.Contains(stdout, `"AnalyserLimit"`) {
-				t.Errorf("%s --json does not carry the limit:\n%s", cmd, stdout)
-			}
-
-			// A binary the directive does not outrank re-measures: the files fail
-			// to parse for it too, and that failure is the module's.
-			stdout, stderr, err = runAside(cmd, limitProbe.String(), "--store-root", root)
-			if err != nil {
-				t.Fatalf("%s by an unbound binary: %v\n%s", cmd, err, stderr)
-			}
-			if strings.Contains(stdout, "(cached)") || strings.Contains(stdout, "not analysed") {
-				t.Errorf("the limit record was served to a binary it does not bind:\n%s", stdout)
-			}
+			testAnalyserLimitExitsConfig(t, cmd)
 		})
+	}
+}
+
+// testAnalyserLimitExitsConfig checks cmd refuses code newer than its analyser
+// at exit 20, as text and as JSON, and that an unbound binary re-measures.
+func testAnalyserLimitExitsConfig(t *testing.T, cmd string) {
+	root := limitStore(t)
+	restore := gotoolchain.SetAnalysingGo("go1.26.6")
+	stdout, stderr, err := runAside(cmd, limitProbe.String(), "--store-root", root)
+	restore()
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != ExitConfig {
+		t.Fatalf("%s: err %v, want exit %d\n%s%s", cmd, err, ExitConfig, stdout, stderr)
+	}
+	if !strings.Contains(err.Error(), "this kanonarion cannot read this code: it was built with go1.26.6 and the code requires go1.27.2") {
+		t.Errorf("refusal lacks the statement: %v", err)
+	}
+	for _, want := range []string{"not analysed:", "Use a kanonarion built with go1.27.2 or newer"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "[parse failure]") || strings.Contains(stdout, "parse failures in") {
+		t.Errorf("the unread files were reported as the module's parse failures:\n%s", stdout)
+	}
+
+	// Run again under --json: the refusal still exits 20, and the record
+	// carries the field.
+	restore = gotoolchain.SetAnalysingGo("go1.26.6")
+	stdout, _, err = runAside(cmd, limitProbe.String(), "--json", "--store-root", root)
+	restore()
+	if !errors.As(err, &ee) || ee.code != ExitConfig {
+		t.Fatalf("%s --json: err %v, want exit %d", cmd, err, ExitConfig)
+	}
+	if !strings.Contains(stdout, `"analyser_limit"`) && !strings.Contains(stdout, `"AnalyserLimit"`) {
+		t.Errorf("%s --json does not carry the limit:\n%s", cmd, stdout)
+	}
+
+	// A binary the directive does not outrank re-measures: the files fail
+	// to parse for it too, and that failure is the module's.
+	stdout, stderr, err = runAside(cmd, limitProbe.String(), "--store-root", root)
+	if err != nil {
+		t.Fatalf("%s by an unbound binary: %v\n%s", cmd, err, stderr)
+	}
+	if strings.Contains(stdout, "(cached)") || strings.Contains(stdout, "not analysed") {
+		t.Errorf("the limit record was served to a binary it does not bind:\n%s", stdout)
 	}
 }
 

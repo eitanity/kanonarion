@@ -257,6 +257,36 @@ func ClassifyNegativeAnswer(in NegativeAnswerInputs) Answer {
 		sinks = append(sinks, leafSinks(in.QueriedNode)...)
 	}
 
+	sinks = unmeasuredScopeSinks(in, sinks)
+
+	// The queried symbol is a test entry point. The harness that runs it is
+	// synthesised by the go command and is not in the graph, so no edge into it
+	// can exist and its absence proves nothing.
+	if in.Found && IsTestHarnessEntry(in.QueriedNode) {
+		sinks = append(sinks, SoundnessSink{
+			Kind:   SinkTestHarnessEntry,
+			Site:   in.QueriedNode.ID,
+			Detail: "the go test harness invokes it through a synthesised main package that is not part of the analysed graph",
+		})
+	}
+
+	// An over-approximated or unresolved interface invoke site dispatches on the
+	// queried method's name: CHA may have failed to bind it to the queried
+	// method, so no caller edge does not prove no caller.
+	if in.ScanDispatch {
+		sinks = append(sinks, interfaceDispatchSinks(in.MethodName, in.Edges, in.NodesByID)...)
+	}
+
+	sinks = dedupeSinks(sinks)
+	if len(sinks) == 0 {
+		return Answer{Outcome: AnswerResolvedAbsent}
+	}
+	return Answer{Outcome: AnswerUnresolved, Sinks: sinks}
+}
+
+// unmeasuredScopeSinks appends a sink for each axis the analysis never
+// measured: test declarations and function-value references.
+func unmeasuredScopeSinks(in NegativeAnswerInputs, sinks []SoundnessSink) []SoundnessSink {
 	// The module's test declarations were never analysed, so a test-only caller
 	// could not have produced an edge. That is an unmeasured axis, not a
 	// measured absence.
@@ -289,30 +319,7 @@ func ClassifyNegativeAnswer(in NegativeAnswerInputs) Answer {
 			Detail: "function-value references were not extracted for this module, so a registered-but-uncalled symbol has no edge to find",
 		})
 	}
-
-	// The queried symbol is a test entry point. The harness that runs it is
-	// synthesised by the go command and is not in the graph, so no edge into it
-	// can exist and its absence proves nothing.
-	if in.Found && IsTestHarnessEntry(in.QueriedNode) {
-		sinks = append(sinks, SoundnessSink{
-			Kind:   SinkTestHarnessEntry,
-			Site:   in.QueriedNode.ID,
-			Detail: "the go test harness invokes it through a synthesised main package that is not part of the analysed graph",
-		})
-	}
-
-	// An over-approximated or unresolved interface invoke site dispatches on the
-	// queried method's name: CHA may have failed to bind it to the queried
-	// method, so no caller edge does not prove no caller.
-	if in.ScanDispatch {
-		sinks = append(sinks, interfaceDispatchSinks(in.MethodName, in.Edges, in.NodesByID)...)
-	}
-
-	sinks = dedupeSinks(sinks)
-	if len(sinks) == 0 {
-		return Answer{Outcome: AnswerResolvedAbsent}
-	}
-	return Answer{Outcome: AnswerUnresolved, Sinks: sinks}
+	return sinks
 }
 
 // leafSinks returns the documented leaf sinks a node carries in its body.

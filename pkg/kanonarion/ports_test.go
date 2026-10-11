@@ -168,25 +168,32 @@ func parseFacadeAliases(t *testing.T) []facadeAlias {
 			}
 			imports[alias] = path
 		}
-		for _, decl := range file.Decls {
-			gd, ok := decl.(*ast.GenDecl)
-			if !ok || gd.Tok != token.TYPE {
+		aliases = append(aliases, typeAliasesIn(file, imports)...)
+	}
+	return aliases
+}
+
+// typeAliasesIn lists the exported type aliases file declares.
+func typeAliasesIn(file *ast.File, imports map[string]string) []facadeAlias {
+	var aliases []facadeAlias
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok || !ts.Assign.IsValid() || !ts.Name.IsExported() {
 				continue
 			}
-			for _, spec := range gd.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || !ts.Assign.IsValid() || !ts.Name.IsExported() {
-					continue
+			a := facadeAlias{name: ts.Name.Name, imports: imports}
+			if sel, ok := ts.Type.(*ast.SelectorExpr); ok {
+				if x, ok := sel.X.(*ast.Ident); ok {
+					a.pkg = x.Name
 				}
-				a := facadeAlias{name: ts.Name.Name, imports: imports}
-				if sel, ok := ts.Type.(*ast.SelectorExpr); ok {
-					if x, ok := sel.X.(*ast.Ident); ok {
-						a.pkg = x.Name
-					}
-					a.sel = sel.Sel.Name
-				}
-				aliases = append(aliases, a)
+				a.sel = sel.Sel.Name
 			}
+			aliases = append(aliases, a)
 		}
 	}
 	return aliases

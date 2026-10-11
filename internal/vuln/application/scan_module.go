@@ -658,80 +658,16 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	}
 
 	// 3. Dependency Check (T2: Structural Dependency)
-	fact, ok, err := uc.getFetchRecord(ctx, params.Coordinate)
-	if err != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("getting fetch record: %w", err)
-	}
-	// A go.mod-only record holds no zip; using it as source would silently
-	// degrade this scan to metadata-only. It must not satisfy the source path —
-	// treat it like an absent record so the fallback is explicit rather than a
-	// scan that quietly analysed nothing. The full path re-fetches the zip (see
-	// prefetchMissing) before a node is scanned, so this is a defensive guard.
-	// Which bytes this scan is about. A module held only as a go.mod still names
-	// an artefact — its go.mod — and a module never fetched at all names none, so
-	// the metadata-only records below carry an identity in the first case and an
-	// honestly empty one in the second. No !ok guard is needed: an absent record
-	// is the zero FactRecord, whose hashes are absent rather than malformed, so
-	// derivedFromFact reads it as the zero derivedFrom without error.
-	derived, derr := derivedFromFact(fact)
-	if derr != nil {
-		return domain.VulnerabilityRecord{}, derr
-	}
-
-	if !ok || fact.IsGoModOnly() {
-		// Module not in the blob store (e.g. a node from a shallow walk), or held
-		// only as a go.mod (module-graph resolution). Fall back to OSV metadata:
-		// check module coordinates against the vuln DB without govulncheck. Records
-		// marked metadata-only have no AffectedSymbols and nil Reachable, signalling
-		// that call-graph analysis was not performed. A coordinate with no matching
-		// advisory is a real answer here, so the empty status is Clean.
-		// The reason code travels with the note. Recording the prose alone left
-		// these records — the two the scan writes on every run — in the roll-up's
-		// unknown-producer bucket, which then printed their reason directly under a
-		// heading that said no reason was recorded.
-		note, reason := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
-		return uc.scanMetadataOnly(ctx, params, snapshot, derived, note, reason, "", domain.StatusClean)
+	fact, derived, metaRec, metaOnly, err := uc.resolveSource(ctx, params, snapshot)
+	if metaOnly || err != nil {
+		return metaRec, err
 	}
 
 	// 3.5 Metadata-based Filtering (Optimization)
 	// Check if this module or any of its dependencies have known vulnerabilities.
 	if !params.Force {
-		isVulnerable, checkErr := uc.checkVulnerabilities(ctx, params.Coordinate, params.WalkID, snapshot)
-		switch {
-		case checkErr == nil && !isVulnerable:
-			uc.logger.Info("metadata check: no known vulnerabilities in module or dependencies, skipping heavy scan", "coordinate", params.Coordinate)
-			now := uc.clock.Now()
-			record := domain.VulnerabilityRecord{
-				Ecosystem:        fetchdomain.EcosystemGo,
-				Coordinate:       params.Coordinate,
-				WalkID:           params.WalkID,
-				Findings:         nil,
-				OverallStatus:    domain.StatusClean,
-				DatabaseSnapshot: snapshot,
-				ScannedAt:        now,
-				FirstScannedAt:   now,
-				PipelineVersion:  uc.pipelineVersion,
-				// Reached by scanning this module alone; see the stamp below.
-				Rooting: domain.RootingIsolated,
-				// This use case resolves from the artefacts kanonarion fetched; it
-				// never roots an analysis at a project's vendored tree.
-				AnalysisSurface: domain.AnalysisSurfaceFetched,
-			}
-			derived.stamp(&record)
-			sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(record)
-			if herr != nil {
-				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", herr)
-			}
-			if perr := putRecord(ctx, uc.vulnStore, sealed, uc.setAside, uc.logger); perr != nil {
-				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", perr)
-			}
-			return sealed, nil
-		case interrupt.Cancelled(ctx, checkErr):
-			return domain.VulnerabilityRecord{}, fmt.Errorf("metadata check: %w", checkErr)
-		case checkErr != nil:
-			uc.logger.Warn("metadata check failed, proceeding with full scan", "error", checkErr)
-		case isVulnerable:
-			uc.logger.Info("metadata check: potential vulnerabilities found, proceeding with heavy scan", "coordinate", params.Coordinate)
+		if rec, handled, merr := uc.metadataPrefilter(ctx, params, snapshot, derived); handled || merr != nil {
+			return rec, merr
 		}
 	}
 
@@ -744,6 +680,91 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	defer func() { _ = blob.Close() }()
 
 	// 5. Execution (T3: Deterministic Scan)
+	record, err := uc.runIsolatedScan(ctx, params, snapshot, derived, blob)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
+	}
+
+	// 5b/5c. Coverage recovery: route a scan that could not analyse the source to
+	// metadata-only matching rather than leaving it a bare failure or a confident
+	// "no findings".
+	if rec, handled, ferr := uc.routeCoverageFallback(ctx, params, snapshot, derived, record); handled || ferr != nil {
+		return rec, ferr
+	}
+
+	// 5d. Coordinate-based detection, run unconditionally rather than as a
+	// fallback from failure.
+	//
+	// A module scanned in isolation is govulncheck's MAIN module, and a main
+	// module has no version — `go list -m` in the extracted directory prints the
+	// path alone, while the same module seen as a dependency prints its version.
+	// OSV matching is version-range based, so the source analysis is structurally
+	// incapable of reporting an advisory about the very module it was asked to
+	// scan. Without this step a module that builds and scans successfully reports
+	// Clean whether or not it is vulnerable, and its advisory set is consulted
+	// only when the scan FAILS — so improving scan success silently removes
+	// detection.
+	//
+	// Matching by coordinate every time makes the source analysis contribute
+	// reachability to the findings rather than decide whether they are looked for
+	// at all. A Clean verdict then means "advisories were matched and none
+	// applied", never "no advisories could have been matched". This runs before
+	// reachability so a coordinate-matched finding is still eligible for the
+	// call-graph analysis below.
+	if aerr := uc.attributeCoordinateFindings(ctx, &record, params.Coordinate); aerr != nil {
+		return domain.VulnerabilityRecord{}, aerr
+	}
+
+	// 6. Reachability Analysis (T4: Conditional Static Analysis)
+	uc.stampReachability(ctx, params, &record)
+
+	// The analysers below this layer produce the reachability answers and cannot
+	// know the frame the record is being written in; this is where the two meet.
+	domain.StampReachabilityRooting(&record)
+
+	// How control reached each hop, read from the call graph of the module each
+	// call site is in. It runs here, before the seal, because a route is inside
+	// the record's content hash: annotating at read time would either mutate a
+	// sealed record or produce two renderings of one stored route that disagree.
+	annotateRouteDispatch(ctx, uc.routeAnnotator, uc.logger, &record)
+
+	return uc.sealAndPut(ctx, record)
+}
+
+// sealAndPut seals the record's identity and persists it.
+func (uc *ScanModuleUseCase) sealAndPut(ctx context.Context, record domain.VulnerabilityRecord) (domain.VulnerabilityRecord, error) {
+	// 7. Deterministic Identity (T5: Hash-based Identity)
+	record, err := domain.VulnerabilityRecordHasher{}.SetContentHash(record)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing vulnerability record: %w", err)
+	}
+
+	// 8. Durability (T6: Aggregate Persistence)
+	if err := putRecord(ctx, uc.vulnStore, record, uc.setAside, uc.logger); err != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("persisting vulnerability record: %w", err)
+	}
+
+	return record, nil
+}
+
+// stampReachability runs the call-graph reachability analysis over the
+// record's findings when it is enabled and possible, and stamps the fidelity
+// it ran at.
+func (uc *ScanModuleUseCase) stampReachability(ctx context.Context, params ScanModuleParams, record *domain.VulnerabilityRecord) {
+	if params.EnableReachability && uc.reachability != nil && uc.callGraphLoader != nil && len(record.Findings) > 0 {
+		completeness, algorithm := uc.applyReachability(ctx, params, record.Findings)
+		// Stamp the fidelity that backed these reachability verdicts so a later
+		// scan-run diff can assert completeness parity before reporting a finding
+		// resolved or a reachability flip as unaffected.
+		record.CallGraphCompleteness = completeness
+		record.CallGraphAlgorithm = algorithm
+	}
+}
+
+// runIsolatedScan scans the module's source as its own main module and stamps
+// the record's identity. A failed scan is a record of the failure; only the
+// run's cancellation is an error.
+func (uc *ScanModuleUseCase) runIsolatedScan(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, derived derivedFrom, blob io.Reader) (domain.VulnerabilityRecord, error) {
 	record, err := uc.scanner.Scan(ctx, ports.ScanRequest{
 		Coordinate:   params.Coordinate,
 		ModuleSource: blob,
@@ -797,68 +818,93 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// that failed still failed on a specific artefact.
 	derived.stamp(&record)
 
-	// 5b/5c. Coverage recovery: route a scan that could not analyse the source to
-	// metadata-only matching rather than leaving it a bare failure or a confident
-	// "no findings".
-	if rec, handled, ferr := uc.routeCoverageFallback(ctx, params, snapshot, derived, record); handled || ferr != nil {
-		return rec, ferr
-	}
-
-	// 5d. Coordinate-based detection, run unconditionally rather than as a
-	// fallback from failure.
-	//
-	// A module scanned in isolation is govulncheck's MAIN module, and a main
-	// module has no version — `go list -m` in the extracted directory prints the
-	// path alone, while the same module seen as a dependency prints its version.
-	// OSV matching is version-range based, so the source analysis is structurally
-	// incapable of reporting an advisory about the very module it was asked to
-	// scan. Without this step a module that builds and scans successfully reports
-	// Clean whether or not it is vulnerable, and its advisory set is consulted
-	// only when the scan FAILS — so improving scan success silently removes
-	// detection.
-	//
-	// Matching by coordinate every time makes the source analysis contribute
-	// reachability to the findings rather than decide whether they are looked for
-	// at all. A Clean verdict then means "advisories were matched and none
-	// applied", never "no advisories could have been matched". This runs before
-	// reachability so a coordinate-matched finding is still eligible for the
-	// call-graph analysis below.
-	if aerr := uc.attributeCoordinateFindings(ctx, &record, params.Coordinate); aerr != nil {
-		return domain.VulnerabilityRecord{}, aerr
-	}
-
-	// 6. Reachability Analysis (T4: Conditional Static Analysis)
-	if params.EnableReachability && uc.reachability != nil && uc.callGraphLoader != nil && len(record.Findings) > 0 {
-		completeness, algorithm := uc.applyReachability(ctx, params, record.Findings)
-		// Stamp the fidelity that backed these reachability verdicts so a later
-		// scan-run diff can assert completeness parity before reporting a finding
-		// resolved or a reachability flip as unaffected.
-		record.CallGraphCompleteness = completeness
-		record.CallGraphAlgorithm = algorithm
-	}
-
-	// The analysers below this layer produce the reachability answers and cannot
-	// know the frame the record is being written in; this is where the two meet.
-	domain.StampReachabilityRooting(&record)
-
-	// How control reached each hop, read from the call graph of the module each
-	// call site is in. It runs here, before the seal, because a route is inside
-	// the record's content hash: annotating at read time would either mutate a
-	// sealed record or produce two renderings of one stored route that disagree.
-	annotateRouteDispatch(ctx, uc.routeAnnotator, uc.logger, &record)
-
-	// 7. Deterministic Identity (T5: Hash-based Identity)
-	record, err = domain.VulnerabilityRecordHasher{}.SetContentHash(record)
-	if err != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing vulnerability record: %w", err)
-	}
-
-	// 8. Durability (T6: Aggregate Persistence)
-	if err := putRecord(ctx, uc.vulnStore, record, uc.setAside, uc.logger); err != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("persisting vulnerability record: %w", err)
-	}
-
 	return record, nil
+}
+
+// metadataPrefilter skips the heavy scan when the metadata check finds no
+// known vulnerability in the module or its dependencies, recording it Clean;
+// handled reports that it did.
+func (uc *ScanModuleUseCase) metadataPrefilter(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, derived derivedFrom) (domain.VulnerabilityRecord, bool, error) {
+	isVulnerable, checkErr := uc.checkVulnerabilities(ctx, params.Coordinate, params.WalkID, snapshot)
+	switch {
+	case checkErr == nil && !isVulnerable:
+		uc.logger.Info("metadata check: no known vulnerabilities in module or dependencies, skipping heavy scan", "coordinate", params.Coordinate)
+		now := uc.clock.Now()
+		record := domain.VulnerabilityRecord{
+			Ecosystem:        fetchdomain.EcosystemGo,
+			Coordinate:       params.Coordinate,
+			WalkID:           params.WalkID,
+			Findings:         nil,
+			OverallStatus:    domain.StatusClean,
+			DatabaseSnapshot: snapshot,
+			ScannedAt:        now,
+			FirstScannedAt:   now,
+			PipelineVersion:  uc.pipelineVersion,
+			// Reached by scanning this module alone; see the stamp below.
+			Rooting: domain.RootingIsolated,
+			// This use case resolves from the artefacts kanonarion fetched; it
+			// never roots an analysis at a project's vendored tree.
+			AnalysisSurface: domain.AnalysisSurfaceFetched,
+		}
+		derived.stamp(&record)
+		sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(record)
+		if herr != nil {
+			return domain.VulnerabilityRecord{}, false, fmt.Errorf("hashing clean record: %w", herr)
+		}
+		if perr := putRecord(ctx, uc.vulnStore, sealed, uc.setAside, uc.logger); perr != nil {
+			return domain.VulnerabilityRecord{}, false, fmt.Errorf("persisting clean record: %w", perr)
+		}
+		return sealed, true, nil
+	case interrupt.Cancelled(ctx, checkErr):
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("metadata check: %w", checkErr)
+	case checkErr != nil:
+		uc.logger.Warn("metadata check failed, proceeding with full scan", "error", checkErr)
+	case isVulnerable:
+		uc.logger.Info("metadata check: potential vulnerabilities found, proceeding with heavy scan", "coordinate", params.Coordinate)
+	}
+	return domain.VulnerabilityRecord{}, false, nil
+}
+
+// resolveSource reads the fetch record the scan reads its source from and the
+// artefact it names. A module with no zip is scanned from metadata alone and
+// handled reports that it was.
+func (uc *ScanModuleUseCase) resolveSource(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot) (fetchdomain.FactRecord, derivedFrom, domain.VulnerabilityRecord, bool, error) {
+	fact, ok, err := uc.getFetchRecord(ctx, params.Coordinate)
+	if err != nil {
+		return fetchdomain.FactRecord{}, derivedFrom{}, domain.VulnerabilityRecord{}, false, fmt.Errorf("getting fetch record: %w", err)
+	}
+	// A go.mod-only record holds no zip; using it as source would silently
+	// degrade this scan to metadata-only. It must not satisfy the source path —
+	// treat it like an absent record so the fallback is explicit rather than a
+	// scan that quietly analysed nothing. The full path re-fetches the zip (see
+	// prefetchMissing) before a node is scanned, so this is a defensive guard.
+	// Which bytes this scan is about. A module held only as a go.mod still names
+	// an artefact — its go.mod — and a module never fetched at all names none, so
+	// the metadata-only records below carry an identity in the first case and an
+	// honestly empty one in the second. No !ok guard is needed: an absent record
+	// is the zero FactRecord, whose hashes are absent rather than malformed, so
+	// derivedFromFact reads it as the zero derivedFrom without error.
+	derived, derr := derivedFromFact(fact)
+	if derr != nil {
+		return fetchdomain.FactRecord{}, derivedFrom{}, domain.VulnerabilityRecord{}, false, derr
+	}
+
+	if !ok || fact.IsGoModOnly() {
+		// Module not in the blob store (e.g. a node from a shallow walk), or held
+		// only as a go.mod (module-graph resolution). Fall back to OSV metadata:
+		// check module coordinates against the vuln DB without govulncheck. Records
+		// marked metadata-only have no AffectedSymbols and nil Reachable, signalling
+		// that call-graph analysis was not performed. A coordinate with no matching
+		// advisory is a real answer here, so the empty status is Clean.
+		// The reason code travels with the note. Recording the prose alone left
+		// these records — the two the scan writes on every run — in the roll-up's
+		// unknown-producer bucket, which then printed their reason directly under a
+		// heading that said no reason was recorded.
+		note, reason := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
+		rec, merr := uc.scanMetadataOnly(ctx, params, snapshot, derived, note, reason, "", domain.StatusClean)
+		return fact, derived, rec, true, merr
+	}
+	return fact, derived, domain.VulnerabilityRecord{}, false, nil
 }
 
 // tryReuseCachedRecord serves a memoized record for this coordinate/snapshot
@@ -1426,13 +1472,7 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 		return ""
 	}
 
-	hasSymbols := false
-	for _, f := range findings {
-		if len(f.AffectedSymbols) > 0 {
-			hasSymbols = true
-			break
-		}
-	}
+	hasSymbols := anyFindingNamesSymbols(findings)
 	if !hasSymbols {
 		return ""
 	}
@@ -1484,6 +1524,18 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 	}
 	uc.logger.Info("callgraph subprocess succeeded", "coordinate", params.Coordinate)
 	return ""
+}
+
+// anyFindingNamesSymbols reports whether any finding names an affected symbol.
+func anyFindingNamesSymbols(findings []domain.VulnerabilityFinding) bool {
+	hasSymbols := false
+	for _, f := range findings {
+		if len(f.AffectedSymbols) > 0 {
+			hasSymbols = true
+			break
+		}
+	}
+	return hasSymbols
 }
 
 // buildCallGraphSpawnNote formats the ReachabilityNote for a failed callgraph

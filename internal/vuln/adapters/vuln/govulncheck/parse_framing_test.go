@@ -162,6 +162,13 @@ func TestParseResultsByModule_KeepsTheVersionedRoute(t *testing.T) {
 		t.Errorf("fidelity = %q, want %q", r.DerivedBy.Fidelity, domain.ScanModeSource)
 	}
 
+	assertVersionedRoute(t, r)
+}
+
+// assertVersionedRoute checks the one route runs from the project's main to
+// the versioned vulnerable function.
+func assertVersionedRoute(t *testing.T, r *domain.ReachabilityResult) {
+	t.Helper()
 	if len(r.Routes) != 1 {
 		t.Fatalf("got %d routes, want 1", len(r.Routes))
 	}

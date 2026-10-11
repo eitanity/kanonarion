@@ -275,27 +275,8 @@ func printNativeTable(stdout io.Writer, s nativeSection) error {
 	}
 
 	if len(s.Components) > 0 {
-		if _, err := fmt.Fprintln(stdout, "\nComponents"); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-		tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
-		if _, err := fmt.Fprintln(tw, "COMPONENT\tVERSION\tCONFIDENCE\tEVIDENCE"); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-		for _, c := range s.Components {
-			for i, e := range c.Evidence {
-				name, version, confidence := c.Name, c.Version, c.Confidence
-				if i > 0 {
-					name, version, confidence = "", "", ""
-				}
-				if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s: %s\n",
-					name, version, confidence, e.File, e.Declaration); err != nil {
-					return fmt.Errorf("writing output: %w", err)
-				}
-			}
-		}
-		if err := tw.Flush(); err != nil {
-			return fmt.Errorf("flushing output: %w", err)
+		if err := printNativeComponents(stdout, s); err != nil {
+			return err
 		}
 	}
 
@@ -315,4 +296,31 @@ func printNativeTable(stdout io.Writer, s nativeSection) error {
 		return fmt.Errorf("flushing output: %w", err)
 	}
 	return printNativeLinkedLibraries(stdout, s)
+}
+
+// printNativeComponents tabulates each identified component with its evidence.
+func printNativeComponents(stdout io.Writer, s nativeSection) error {
+	if _, err := fmt.Fprintln(stdout, "\nComponents"); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "COMPONENT\tVERSION\tCONFIDENCE\tEVIDENCE"); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	for _, c := range s.Components {
+		for i, e := range c.Evidence {
+			name, version, confidence := c.Name, c.Version, c.Confidence
+			if i > 0 {
+				name, version, confidence = "", "", ""
+			}
+			if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s: %s\n",
+				name, version, confidence, e.File, e.Declaration); err != nil {
+				return fmt.Errorf("writing output: %w", err)
+			}
+		}
+	}
+	if err := tw.Flush(); err != nil {
+		return fmt.Errorf("flushing output: %w", err)
+	}
+	return nil
 }

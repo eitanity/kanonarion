@@ -284,74 +284,15 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	t.Run("exit 0 reads record and marks succeeded", func(t *testing.T) {
-		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{
-			found: true,
-			out: cgports.CallGraphOutcome{
-				ContentHash:   "hash-cg",
-				OverallStatus: cgdomain.CallGraphStatusExtracted,
-			},
-		}
-		adapter := newCallgraphAdapter(exec, reader)
-		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
-		if err != nil {
-			t.Fatalf("Extract failed: %v", err)
-		}
-		if res.Status != domain.StageSucceeded {
-			t.Errorf("Status = %v, want Succeeded", res.Status)
-		}
-		if res.RecordID != "hash-cg" {
-			t.Errorf("RecordID = %s, want hash-cg", res.RecordID)
-		}
-		if len(exec.calls) != 1 {
-			t.Fatalf("expected 1 subprocess call, got %d", len(exec.calls))
-		}
-		if exec.calls[0][0] != "callgraph" || exec.calls[0][1] != coord.String() {
-			t.Errorf("subprocess args = %v, want [callgraph %s]", exec.calls[0], coord.String())
-		}
+		testExitZeroReadsRecord(ctx, t, coord)
 	})
 
 	t.Run("force flag is forwarded to subprocess", func(t *testing.T) {
-		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
-		adapter := newCallgraphAdapter(exec, reader)
-		_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
-		if err != nil {
-			t.Fatalf("Extract failed: %v", err)
-		}
-		args := exec.calls[0]
-		var hasForce bool
-		for _, a := range args {
-			if a == "--force" {
-				hasForce = true
-			}
-		}
-		if !hasForce {
-			t.Errorf("--force not forwarded to subprocess; args = %v", args)
-		}
+		testForceForwarded(ctx, t, coord)
 	})
 
 	t.Run("extra args are forwarded ahead of --force", func(t *testing.T) {
-		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
-		adapter := NewAdapterExtractor(nil, nil, exec, reader, "0.1.0", []string{"--store-root=/tmp/store", "--from-modcache=/tmp/modcache"}, nil)
-		_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
-		if err != nil {
-			t.Fatalf("Extract failed: %v", err)
-		}
-		// --narrate-progress leads the extra args: the child must report its phases
-		// to the process bounding it whatever the store's own preferences say.
-		want := []string{"callgraph", coord.String(), "--narrate-progress", "--store-root=/tmp/store", "--from-modcache=/tmp/modcache", "--force"}
-		got := exec.calls[0]
-		if len(got) != len(want) {
-			t.Fatalf("subprocess args = %v, want %v", got, want)
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Errorf("subprocess args = %v, want %v", got, want)
-				break
-			}
-		}
+		testExtraArgsForwarded(ctx, t, coord)
 	})
 
 	t.Run("non-zero exit captures stderr and marks StageFailed", func(t *testing.T) {
@@ -433,6 +374,81 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		}
 	})
 
+}
+
+// testExitZeroReadsRecord checks a clean exit reads the stored record.
+func testExitZeroReadsRecord(ctx context.Context, t *testing.T, coord coordinate.ModuleCoordinate) {
+	exec := &fakeSubprocessExecutor{}
+	reader := &fakeCallGraphReader{
+		found: true,
+		out: cgports.CallGraphOutcome{
+			ContentHash:   "hash-cg",
+			OverallStatus: cgdomain.CallGraphStatusExtracted,
+		},
+	}
+	adapter := newCallgraphAdapter(exec, reader)
+	res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
+	if err != nil {
+		t.Fatalf("Extract failed: %v", err)
+	}
+	if res.Status != domain.StageSucceeded {
+		t.Errorf("Status = %v, want Succeeded", res.Status)
+	}
+	if res.RecordID != "hash-cg" {
+		t.Errorf("RecordID = %s, want hash-cg", res.RecordID)
+	}
+	if len(exec.calls) != 1 {
+		t.Fatalf("expected 1 subprocess call, got %d", len(exec.calls))
+	}
+	if exec.calls[0][0] != "callgraph" || exec.calls[0][1] != coord.String() {
+		t.Errorf("subprocess args = %v, want [callgraph %s]", exec.calls[0], coord.String())
+	}
+}
+
+// testForceForwarded checks --force reaches the subprocess.
+func testForceForwarded(ctx context.Context, t *testing.T, coord coordinate.ModuleCoordinate) {
+	exec := &fakeSubprocessExecutor{}
+	reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+	adapter := newCallgraphAdapter(exec, reader)
+	_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
+	if err != nil {
+		t.Fatalf("Extract failed: %v", err)
+	}
+	args := exec.calls[0]
+	var hasForce bool
+	for _, a := range args {
+		if a == "--force" {
+			hasForce = true
+		}
+	}
+	if !hasForce {
+		t.Errorf("--force not forwarded to subprocess; args = %v", args)
+	}
+}
+
+// testExtraArgsForwarded checks the adapter's extra arguments reach the
+// subprocess ahead of --force.
+func testExtraArgsForwarded(ctx context.Context, t *testing.T, coord coordinate.ModuleCoordinate) {
+	exec := &fakeSubprocessExecutor{}
+	reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+	adapter := NewAdapterExtractor(nil, nil, exec, reader, "0.1.0", []string{"--store-root=/tmp/store", "--from-modcache=/tmp/modcache"}, nil)
+	_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
+	if err != nil {
+		t.Fatalf("Extract failed: %v", err)
+	}
+	// --narrate-progress leads the extra args: the child must report its phases
+	// to the process bounding it whatever the store's own preferences say.
+	want := []string{"callgraph", coord.String(), "--narrate-progress", "--store-root=/tmp/store", "--from-modcache=/tmp/modcache", "--force"}
+	got := exec.calls[0]
+	if len(got) != len(want) {
+		t.Fatalf("subprocess args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("subprocess args = %v, want %v", got, want)
+			break
+		}
+	}
 }
 
 // TestAdapterExtractor_CallGraph_ReadsWhatWasJustWritten pins the question the
@@ -669,30 +685,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 	})
 
 	t.Run("callgraph failed record without detail uses status fallback", func(t *testing.T) {
-		exec := &fakeSubprocessExecutor{}
-		reader := &fakeCallGraphReader{
-			found: true,
-			out: cgports.CallGraphOutcome{
-				OverallStatus: cgdomain.CallGraphStatusLoadFailed,
-				// FailureDetail intentionally empty
-			},
-		}
-		adapter := newCallgraphAdapter(exec, reader)
-		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
-		if err != nil {
-			t.Fatalf("Extract: %v", err)
-		}
-		if res.Status != domain.StageFailed {
-			t.Fatalf("Status = %v, want Failed", res.Status)
-		}
-		if res.Error == "" {
-			t.Fatal("Error empty even on missing detail; expected status-only fallback")
-		}
-		for _, want := range []string{"callgraph", "LoadFailed"} {
-			if !contains(res.Error, want) {
-				t.Errorf("Error = %q, missing substring %q", res.Error, want)
-			}
-		}
+		testCallgraphFailureFallsBackToStatus(ctx, t, coord)
 	})
 
 	t.Run("interface failed with detail propagates detail", func(t *testing.T) {
@@ -740,47 +733,82 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 	})
 
 	t.Run("succeeded stages do not pollute Error", func(t *testing.T) {
-		t.Run("license", func(t *testing.T) {
-			lic := &mockLicenseUseCase{res: licapp.ExtractResult{Record: licdomain.LicenseRecord{OverallStatus: licdomain.LicenseStatusDetected}}}
-			res, err := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil).Extract(ctx, coord, "license", false, "")
-			if err != nil {
-				t.Fatalf("NewAdapterExtractor: %v", err)
-			}
-			if res.Error != "" {
-				t.Errorf("succeeded license Error = %q, want empty", res.Error)
-			}
-		})
-		t.Run("interface", func(t *testing.T) {
-			iface := &mockInterfaceUseCase{res: ifaceapp.ExtractResult{Record: ifacedomain.InterfaceRecord{OverallStatus: ifacedomain.InterfaceStatusExtracted}}}
-			res, err := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil).Extract(ctx, coord, "interface", false, "")
-			if err != nil {
-				t.Fatalf("NewAdapterExtractor: %v", err)
-			}
-			if res.Error != "" {
-				t.Errorf("succeeded interface Error = %q, want empty", res.Error)
-			}
-		})
-		t.Run("callgraph", func(t *testing.T) {
-			exec := &fakeSubprocessExecutor{}
-			reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
-			res, err := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false, "")
-			if err != nil {
-				t.Fatalf("newCallgraphAdapter: %v", err)
-			}
-			if res.Error != "" {
-				t.Errorf("succeeded callgraph Error = %q, want empty", res.Error)
-			}
-		})
-		t.Run("example", func(t *testing.T) {
-			ex := &mockExampleUseCase{res: exapp.ExtractResult{Record: exdomain.ExampleRecord{OverallStatus: exdomain.ExampleStatusFound}}}
-			res, err := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex).Extract(ctx, coord, "example", false, "")
-			if err != nil {
-				t.Fatalf("NewAdapterExtractor: %v", err)
-			}
-			if res.Error != "" {
-				t.Errorf("succeeded example Error = %q, want empty", res.Error)
-			}
-		})
+		testSucceededStagesLeaveErrorEmpty(ctx, t, coord)
+	})
+}
+
+// testCallgraphFailureFallsBackToStatus checks a failed call-graph record with
+// no detail is described by its status.
+func testCallgraphFailureFallsBackToStatus(ctx context.Context, t *testing.T, coord coordinate.ModuleCoordinate) {
+	exec := &fakeSubprocessExecutor{}
+	reader := &fakeCallGraphReader{
+		found: true,
+		out: cgports.CallGraphOutcome{
+			OverallStatus: cgdomain.CallGraphStatusLoadFailed,
+			// FailureDetail intentionally empty
+		},
+	}
+	adapter := newCallgraphAdapter(exec, reader)
+	res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if res.Status != domain.StageFailed {
+		t.Fatalf("Status = %v, want Failed", res.Status)
+	}
+	if res.Error == "" {
+		t.Fatal("Error empty even on missing detail; expected status-only fallback")
+	}
+	for _, want := range []string{"callgraph", "LoadFailed"} {
+		if !contains(res.Error, want) {
+			t.Errorf("Error = %q, missing substring %q", res.Error, want)
+		}
+	}
+}
+
+// testSucceededStagesLeaveErrorEmpty checks a succeeded stage of each kind
+// reports no error.
+func testSucceededStagesLeaveErrorEmpty(ctx context.Context, t *testing.T, coord coordinate.ModuleCoordinate) {
+	t.Run("license", func(t *testing.T) {
+		lic := &mockLicenseUseCase{res: licapp.ExtractResult{Record: licdomain.LicenseRecord{OverallStatus: licdomain.LicenseStatusDetected}}}
+		res, err := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil).Extract(ctx, coord, "license", false, "")
+		if err != nil {
+			t.Fatalf("NewAdapterExtractor: %v", err)
+		}
+		if res.Error != "" {
+			t.Errorf("succeeded license Error = %q, want empty", res.Error)
+		}
+	})
+	t.Run("interface", func(t *testing.T) {
+		iface := &mockInterfaceUseCase{res: ifaceapp.ExtractResult{Record: ifacedomain.InterfaceRecord{OverallStatus: ifacedomain.InterfaceStatusExtracted}}}
+		res, err := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil).Extract(ctx, coord, "interface", false, "")
+		if err != nil {
+			t.Fatalf("NewAdapterExtractor: %v", err)
+		}
+		if res.Error != "" {
+			t.Errorf("succeeded interface Error = %q, want empty", res.Error)
+		}
+	})
+	t.Run("callgraph", func(t *testing.T) {
+		exec := &fakeSubprocessExecutor{}
+		reader := &fakeCallGraphReader{found: true, out: cgports.CallGraphOutcome{OverallStatus: cgdomain.CallGraphStatusExtracted}}
+		res, err := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false, "")
+		if err != nil {
+			t.Fatalf("newCallgraphAdapter: %v", err)
+		}
+		if res.Error != "" {
+			t.Errorf("succeeded callgraph Error = %q, want empty", res.Error)
+		}
+	})
+	t.Run("example", func(t *testing.T) {
+		ex := &mockExampleUseCase{res: exapp.ExtractResult{Record: exdomain.ExampleRecord{OverallStatus: exdomain.ExampleStatusFound}}}
+		res, err := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex).Extract(ctx, coord, "example", false, "")
+		if err != nil {
+			t.Fatalf("NewAdapterExtractor: %v", err)
+		}
+		if res.Error != "" {
+			t.Errorf("succeeded example Error = %q, want empty", res.Error)
+		}
 	})
 }
 

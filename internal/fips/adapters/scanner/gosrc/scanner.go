@@ -109,6 +109,22 @@ func (s *Scanner) ScanProject(ctx context.Context, goModPath string) (domain.Par
 	}
 	index := vendordomain.NewVendoredModuleIndex(vendoredPaths)
 
+	findings, err := scanSourceTree(root, modPath, index)
+	if err != nil {
+		return domain.ParseResult{}, err
+	}
+
+	return domain.ParseResult{
+		ProjectModulePath: modPath,
+		ToolchainRaw:      toolchain,
+		GoVersion:         goVersion,
+		FIPS140:           fips140,
+		Findings:          findings,
+	}, nil
+}
+
+// scanSourceTree scans every Go source file under root for FIPS findings.
+func scanSourceTree(root, modPath string, index vendordomain.VendoredModuleIndex) ([]domain.Finding, error) {
 	var findings []domain.Finding
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -138,16 +154,9 @@ func (s *Scanner) ScanProject(ctx context.Context, goModPath string) (domain.Par
 		return nil
 	})
 	if walkErr != nil {
-		return domain.ParseResult{}, fmt.Errorf("walking source tree %q: %w", root, walkErr)
+		return nil, fmt.Errorf("walking source tree %q: %w", root, walkErr)
 	}
-
-	return domain.ParseResult{
-		ProjectModulePath: modPath,
-		ToolchainRaw:      toolchain,
-		GoVersion:         goVersion,
-		FIPS140:           fips140,
-		Findings:          findings,
-	}, nil
+	return findings, nil
 }
 
 // readBuildInfoGoVersion parses the first `GoVersion: …` line out of a

@@ -2010,7 +2010,6 @@ ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.row
 	}
 	defer func() { _ = rows.Close() }()
 
-	type moduleKey struct{ path, version string }
 	var order []moduleKey
 	// Set-aside generations are kept per module and reported only where they
 	// bore on the answer: a module served its pinned record did not need them.
@@ -2055,6 +2054,23 @@ ORDER BY vr.module_path, vr.module_version, julianday(vr.scanned_at) ASC, vr.row
 		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
 	}
 
+	return runRecords(walkScanRunID, order, pinned, candidates, aside, pinnedAside)
+}
+
+// moduleKey names one module of a scan run's membership.
+type moduleKey struct{ path, version string }
+
+// runRecords is one record per module of the run, in order: the generation the
+// run pinned, or else its candidates composed. Set-aside generations are
+// reported only for modules whose answer they bore on.
+func runRecords(
+	walkScanRunID string,
+	order []moduleKey,
+	pinned map[moduleKey]domain.VulnerabilityRecord,
+	candidates map[moduleKey][]domain.VulnerabilityRecord,
+	aside map[moduleKey][]ports.UnreadableRow,
+	pinnedAside map[moduleKey]bool,
+) ([]domain.VulnerabilityRecord, error) {
 	records := make([]domain.VulnerabilityRecord, 0, len(order))
 	var setAside []ports.UnreadableRow
 	for _, k := range order {

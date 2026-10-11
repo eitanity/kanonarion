@@ -93,49 +93,8 @@ func (uc *ExecuteWalkUseCase) Execute(ctx context.Context, req WalkRequest) (Exe
 	if depth == "" {
 		depth = domain.WalkDepthFull
 	}
-
-	// Project walks root at the local main module at the synthetic "local"
-	// version, which — unlike a published semver — does not pin content: the
-	// working tree's go.mod can change between runs. Skip the succeeded-cache
-	// short-circuit so a project walk always re-resolves the current go.mod.
-	// (The fetch-level cache still makes unchanged dependencies cheap.)
-	summaries, err := uc.store.ListWalks(ctx, walkports.WalkFilter{Target: &req.Target, Scope: &scope, Limit: 1})
-	if !req.ProjectMode && err == nil && len(summaries) > 0 {
-		s := summaries[0]
-		// A shallow cached walk must not satisfy a full walk request.
-		cacheUsable := s.OverallStatus == domain.WalkSucceeded &&
-			(depth == domain.WalkDepthShallow || s.Depth != domain.WalkDepthShallow)
-		if !req.Force && cacheUsable {
-			fullRec, gerr := uc.store.GetWalk(ctx, s.ID)
-			// A stored walk resolved by superseded graph logic must not be served.
-			// The pipeline version is what makes a corrected resolver take effect on
-			// its own, rather than every caller having to know to pass --force;
-			// serving a stale graph presents a known-incomplete dependency set as
-			// authoritative. The version is read from the graph, not the walk record:
-			// the record's own pipeline version is left unset by the current
-			// composition, while the graph's always reflects the resolver that
-			// produced it.
-			current := uc.walker.graphPipelineVersion()
-			switch {
-			case gerr != nil:
-				// Fall through and re-walk if GetWalk fails for some reason.
-			case fullRec.Graph.PipelineVersion != current:
-				uc.logger.InfoContext(ctx, "walk_cache_stale",
-					slog.String("walk_id", s.ID),
-					slog.String("target", req.Target.String()),
-					slog.String("stored_pipeline_version", fullRec.Graph.PipelineVersion),
-					slog.String("current_pipeline_version", current),
-					slog.String("reason", "graph pipeline version superseded; re-resolving"),
-				)
-			default:
-				uc.logger.InfoContext(ctx, "walk_skipped",
-					slog.String("walk_id", s.ID),
-					slog.String("target", req.Target.String()),
-					slog.String("reason", "cached successful walk exists"),
-				)
-				return ExecuteWalkResult{Record: fullRec, Reused: true}, nil
-			}
-		}
+	if res, hit := uc.cachedWalk(ctx, req, scope, depth); hit {
+		return res, nil
 	}
 
 	id, resuming, err := uc.resolveWalkID(ctx, req.Target, scope)
@@ -224,6 +183,56 @@ func (uc *ExecuteWalkUseCase) Execute(ctx context.Context, req WalkRequest) (Exe
 	}
 
 	return ExecuteWalkResult{Record: rec}, nil
+}
+
+// cachedWalk serves the latest succeeded walk of the target when it is deep
+// enough and current; hit reports that it did.
+func (uc *ExecuteWalkUseCase) cachedWalk(ctx context.Context, req WalkRequest, scope domain.WalkScope, depth domain.WalkDepth) (ExecuteWalkResult, bool) {
+
+	// Project walks root at the local main module at the synthetic "local"
+	// version, which — unlike a published semver — does not pin content: the
+	// working tree's go.mod can change between runs. Skip the succeeded-cache
+	// short-circuit so a project walk always re-resolves the current go.mod.
+	// (The fetch-level cache still makes unchanged dependencies cheap.)
+	summaries, err := uc.store.ListWalks(ctx, walkports.WalkFilter{Target: &req.Target, Scope: &scope, Limit: 1})
+	if !req.ProjectMode && err == nil && len(summaries) > 0 {
+		s := summaries[0]
+		// A shallow cached walk must not satisfy a full walk request.
+		cacheUsable := s.OverallStatus == domain.WalkSucceeded &&
+			(depth == domain.WalkDepthShallow || s.Depth != domain.WalkDepthShallow)
+		if !req.Force && cacheUsable {
+			fullRec, gerr := uc.store.GetWalk(ctx, s.ID)
+			// A stored walk resolved by superseded graph logic must not be served.
+			// The pipeline version is what makes a corrected resolver take effect on
+			// its own, rather than every caller having to know to pass --force;
+			// serving a stale graph presents a known-incomplete dependency set as
+			// authoritative. The version is read from the graph, not the walk record:
+			// the record's own pipeline version is left unset by the current
+			// composition, while the graph's always reflects the resolver that
+			// produced it.
+			current := uc.walker.graphPipelineVersion()
+			switch {
+			case gerr != nil:
+				// Fall through and re-walk if GetWalk fails for some reason.
+			case fullRec.Graph.PipelineVersion != current:
+				uc.logger.InfoContext(ctx, "walk_cache_stale",
+					slog.String("walk_id", s.ID),
+					slog.String("target", req.Target.String()),
+					slog.String("stored_pipeline_version", fullRec.Graph.PipelineVersion),
+					slog.String("current_pipeline_version", current),
+					slog.String("reason", "graph pipeline version superseded; re-resolving"),
+				)
+			default:
+				uc.logger.InfoContext(ctx, "walk_skipped",
+					slog.String("walk_id", s.ID),
+					slog.String("target", req.Target.String()),
+					slog.String("reason", "cached successful walk exists"),
+				)
+				return ExecuteWalkResult{Record: fullRec, Reused: true}, true
+			}
+		}
+	}
+	return ExecuteWalkResult{}, false
 }
 
 // emitWalkCompleted appends one walk_completed event for a successful walk. A

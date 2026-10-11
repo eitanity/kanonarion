@@ -633,6 +633,12 @@ func Root() {
 		t.Error("UsesUnsafe does not touch the plugin package; UsesPlugin should be false")
 	}
 
+	assertSafeCarriesNoBodyFacts(t, bySymbol)
+}
+
+// assertSafeCarriesNoBodyFacts checks the plain function carries no body fact.
+func assertSafeCarriesNoBodyFacts(t *testing.T, bySymbol map[string]domain.CallNode) {
+	t.Helper()
 	if safe, ok := bySymbol["Safe"]; ok {
 		if safe.UsesUnsafePointer || safe.IsAssemblyOrLinkname || safe.UsesPlugin {
 			t.Errorf("Safe should carry no body facts, got %+v", safe)

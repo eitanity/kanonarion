@@ -341,6 +341,13 @@ func TestMigration2_MovesASameMajorAnswerOutOfTheNewerMajorColumns(t *testing.T)
 		}
 	}
 
+	assertNewerMajorAnswersKept(ctx, t, s)
+}
+
+// assertNewerMajorAnswersKept checks a genuine newer-major answer stays in
+// the newer-major columns.
+func assertNewerMajorAnswersKept(ctx context.Context, t *testing.T, s *stalesqlite.Store) {
+	t.Helper()
 	kept := []struct{ path, wantNMPath string }{
 		{"github.com/Masterminds/sprig", "github.com/Masterminds/sprig/v3"},
 		{"github.com/go-chi/chi", "github.com/go-chi/chi/v5"},

@@ -410,28 +410,7 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 	importPath := packageImportPath(coord.Path(), dir)
 
 	if len(parsed) == 0 {
-		if len(failures) > 0 || len(refused) > 0 {
-			// Return a partial package with just the failures recorded; the
-			// refused files are on the record's analyser limit.
-			return domain.PackageInterface{
-				ImportPath:    importPath,
-				ParseFailures: failures,
-			}, refused, nil
-		}
-		if sawGoSource {
-			// The directory holds Go source, all of it for other platforms. That
-			// is a fact about this build, not a missing measurement, so the
-			// package is kept and marked rather than dropped: a reader comparing
-			// two records can then tell a package that was removed from the
-			// module from one that this build does not contain.
-			return domain.PackageInterface{
-				ImportPath: importPath,
-				Name:       path.Base(importPath),
-				IsInternal: isInternalPath(importPath),
-				OutOfFrame: true,
-			}, nil, nil
-		}
-		return domain.PackageInterface{}, nil, fmt.Errorf("no parseable Go files in %s", dir)
+		return unparsedPackage(dir, importPath, failures, refused, sawGoSource)
 	}
 
 	// A directory that declares one identifier twice is not a package Go would
@@ -442,6 +421,39 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 		return domain.PackageInterface{}, refused, fmt.Errorf("%w in %s: %s", errDuplicateDecl, importPath, strings.Join(dups, "; "))
 	}
 
+	return docPackageInterface(fset, parsed, importPath, failures, generatedFiles, refused)
+}
+
+// unparsedPackage is the answer for a directory none of whose files parsed:
+// the failures, an out-of-frame package, or an error.
+func unparsedPackage(dir, importPath string, failures []domain.ParseFailure, refused []string, sawGoSource bool) (domain.PackageInterface, []string, error) {
+	if len(failures) > 0 || len(refused) > 0 {
+		// Return a partial package with just the failures recorded; the
+		// refused files are on the record's analyser limit.
+		return domain.PackageInterface{
+			ImportPath:    importPath,
+			ParseFailures: failures,
+		}, refused, nil
+	}
+	if sawGoSource {
+		// The directory holds Go source, all of it for other platforms. That
+		// is a fact about this build, not a missing measurement, so the
+		// package is kept and marked rather than dropped: a reader comparing
+		// two records can then tell a package that was removed from the
+		// module from one that this build does not contain.
+		return domain.PackageInterface{
+			ImportPath: importPath,
+			Name:       path.Base(importPath),
+			IsInternal: isInternalPath(importPath),
+			OutOfFrame: true,
+		}, nil, nil
+	}
+	return domain.PackageInterface{}, nil, fmt.Errorf("no parseable Go files in %s", dir)
+}
+
+// docPackageInterface builds the package's exported API from its parsed files
+// through go/doc.
+func docPackageInterface(fset *token.FileSet, parsed []*ast.File, importPath string, failures []domain.ParseFailure, generatedFiles map[string]bool, refused []string) (domain.PackageInterface, []string, error) {
 	// Use go/doc to build a structured view of the package's exported API.
 	// Pass the full import path so go/doc resolves cross-package references correctly.
 	dpkg, err := doc.NewFromFiles(fset, parsed, importPath, doc.PreserveAST)

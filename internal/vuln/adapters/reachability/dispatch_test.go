@@ -131,7 +131,31 @@ func TestAnnotateRecord_AnnotatesWhatItCanAndSaysWhyForTheRest(t *testing.T) {
 		t.Errorf("the reason is %q, which does not name the module whose graph is missing", reason)
 	}
 	// The interface dispatch, read off the edge.
-	iface := route[2].Dispatch
+	assertInterfaceDispatch(t, route[2].Dispatch)
+	// The standard-library hop: the call site is in the dependency, whose graph IS
+	// held and records no such edge.
+	if got := route[3].Dispatch.Kind; got != domain.DispatchNotAnnotated {
+		t.Errorf("the stdlib hop is annotated %q, want not-annotated", got)
+	}
+	if reason := route[3].Dispatch.Reason; !strings.Contains(reason, "records no edge from it to") {
+		t.Errorf("the reason is %q, which does not distinguish a missing edge from a missing graph", reason)
+	}
+
+	if tally.Hops != 4 {
+		t.Errorf("the tally counts %d hops, want 4", tally.Hops)
+	}
+	if got := tally.Annotated(); got != 1 {
+		t.Errorf("the tally reports %d annotated hops, want 1", got)
+	}
+	if tally.ByKind[domain.DispatchNotAnnotated] != 2 {
+		t.Errorf("the tally reports %d unannotated hops, want 2: %v", tally.ByKind[domain.DispatchNotAnnotated], tally.ByKind)
+	}
+}
+
+// assertInterfaceDispatch checks the interface hop names the edge's
+// confidence, the interface, its implementers, the call site and the graph.
+func assertInterfaceDispatch(t *testing.T, iface domain.HopDispatch) {
+	t.Helper()
 	if iface.Kind != domain.DispatchInterface {
 		t.Fatalf("the interface hop is annotated %q, want interface", iface.Kind)
 	}
@@ -155,24 +179,6 @@ func TestAnnotateRecord_AnnotatesWhatItCanAndSaysWhyForTheRest(t *testing.T) {
 	}
 	if iface.GraphCompleteness != "BUILT_WITH_BODIES" {
 		t.Errorf("the graph's completeness is %q", iface.GraphCompleteness)
-	}
-	// The standard-library hop: the call site is in the dependency, whose graph IS
-	// held and records no such edge.
-	if got := route[3].Dispatch.Kind; got != domain.DispatchNotAnnotated {
-		t.Errorf("the stdlib hop is annotated %q, want not-annotated", got)
-	}
-	if reason := route[3].Dispatch.Reason; !strings.Contains(reason, "records no edge from it to") {
-		t.Errorf("the reason is %q, which does not distinguish a missing edge from a missing graph", reason)
-	}
-
-	if tally.Hops != 4 {
-		t.Errorf("the tally counts %d hops, want 4", tally.Hops)
-	}
-	if got := tally.Annotated(); got != 1 {
-		t.Errorf("the tally reports %d annotated hops, want 1", got)
-	}
-	if tally.ByKind[domain.DispatchNotAnnotated] != 2 {
-		t.Errorf("the tally reports %d unannotated hops, want 2: %v", tally.ByKind[domain.DispatchNotAnnotated], tally.ByKind)
 	}
 }
 

@@ -155,22 +155,9 @@ type ledgerResult struct {
 }
 
 func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writer) error {
-	since, err := parseLedgerTime("--since", f.since)
+	since, until, err := parseLedgerWindow(f)
 	if err != nil {
 		return err
-	}
-	until, err := parseLedgerTime("--until", f.until)
-	if err != nil {
-		return err
-	}
-	if !since.IsZero() && !until.IsZero() && until.Before(since) {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("--until %s is before --since %s", f.until, f.since)}
-	}
-	if f.limit < 0 {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("--limit must not be negative, got %d", f.limit)}
-	}
-	if f.offset < 0 {
-		return &exitError{code: ExitConfig, msg: fmt.Sprintf("--offset must not be negative, got %d", f.offset)}
 	}
 
 	mod, err := parseLedgerModule(f.module)
@@ -251,6 +238,29 @@ func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writ
 		return nil
 	}
 	return writeLedgerText(stdout, result)
+}
+
+// parseLedgerWindow reads --since and --until, refusing a reversed window and
+// a negative --limit or --offset.
+func parseLedgerWindow(f storeLedgerFlags) (time.Time, time.Time, error) {
+	since, err := parseLedgerTime("--since", f.since)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	until, err := parseLedgerTime("--until", f.until)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if !since.IsZero() && !until.IsZero() && until.Before(since) {
+		return time.Time{}, time.Time{}, &exitError{code: ExitConfig, msg: fmt.Sprintf("--until %s is before --since %s", f.until, f.since)}
+	}
+	if f.limit < 0 {
+		return time.Time{}, time.Time{}, &exitError{code: ExitConfig, msg: fmt.Sprintf("--limit must not be negative, got %d", f.limit)}
+	}
+	if f.offset < 0 {
+		return time.Time{}, time.Time{}, &exitError{code: ExitConfig, msg: fmt.Sprintf("--offset must not be negative, got %d", f.offset)}
+	}
+	return since, until, nil
 }
 
 // ledgerEntryMatches applies the query. An empty filter never restricts.
@@ -429,21 +439,7 @@ func ledgerZeroReasons(led factsqlite.Ledger, mod ledgerModuleFilter, eventType 
 
 	// Per-filter counts over the whole log: how many events each filter would
 	// have matched had it been the only one.
-	var windowAlone, moduleAlone, pathAlone, typeAlone int
-	for _, e := range led.Entries {
-		if ledgerEntryMatches(e, since, until, ledgerModuleFilter{}, "") {
-			windowAlone++
-		}
-		if ledgerEntryNamesModule(e, mod) {
-			moduleAlone++
-		}
-		if ledgerEntryNamesModule(e, ledgerModuleFilter{path: mod.path}) {
-			pathAlone++
-		}
-		if string(e.Type) == eventType {
-			typeAlone++
-		}
-	}
+	windowAlone, moduleAlone, pathAlone, typeAlone := ledgerFilterCounts(led, mod, eventType, since, until)
 
 	var reasons []string
 	if windowed && windowAlone == 0 {
@@ -475,6 +471,27 @@ func ledgerZeroReasons(led factsqlite.Ledger, mod ledgerModuleFilter, eventType 
 		reasons = append(reasons, "each filter matches events on its own; no single event satisfies all of them together")
 	}
 	return reasons
+}
+
+// ledgerFilterCounts is how many events each filter matches on its own: the
+// window, the module, the module's path, and the event type.
+func ledgerFilterCounts(led factsqlite.Ledger, mod ledgerModuleFilter, eventType string, since, until time.Time) (int, int, int, int) {
+	var windowAlone, moduleAlone, pathAlone, typeAlone int
+	for _, e := range led.Entries {
+		if ledgerEntryMatches(e, since, until, ledgerModuleFilter{}, "") {
+			windowAlone++
+		}
+		if ledgerEntryNamesModule(e, mod) {
+			moduleAlone++
+		}
+		if ledgerEntryNamesModule(e, ledgerModuleFilter{path: mod.path}) {
+			pathAlone++
+		}
+		if string(e.Type) == eventType {
+			typeAlone++
+		}
+	}
+	return windowAlone, moduleAlone, pathAlone, typeAlone
 }
 
 // ledgerWindowOutsideCoverage states a window that cannot hold an event because
@@ -527,6 +544,47 @@ func formatLedgerTime(t time.Time) string {
 // second, the caveats last. Coverage leads because it is the frame every line
 // below it has to be read in.
 func writeLedgerText(w io.Writer, r ledgerResult) error {
+	if err := writeLedgerHeader(w, r); err != nil {
+		return err
+	}
+
+	for _, e := range r.Events {
+		if _, err := fmt.Fprintf(w, "%s  %s  %s  [line %d]\n", e.Timestamp, e.EventType, renderLedgerFields(e.Fields), e.Line); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	}
+	if len(r.Events) > 0 {
+		if _, err := fmt.Fprintln(w); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	}
+
+	if err := writeLedgerMatched(w, r); err != nil {
+		return err
+	}
+	if len(r.ZeroReasons) > 0 {
+		if _, err := fmt.Fprintf(w, "why this reading is empty:\n"); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+		for _, s := range r.ZeroReasons {
+			if _, err := fmt.Fprintf(w, "  - %s\n", s); err != nil {
+				return fmt.Errorf("writing output: %w", err)
+			}
+		}
+	}
+	if r.UnreadableInWindow > 0 {
+		if _, err := fmt.Fprintf(w,
+			"caveat: %d unreadable line(s) fall inside the window queried; the matched count is a lower bound for it\n",
+			r.UnreadableInWindow); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	}
+	return writeLedgerCaveats(w, r)
+}
+
+// writeLedgerHeader names the ledger, the span it covers, and its unreadable
+// lines.
+func writeLedgerHeader(w io.Writer, r ledgerResult) error {
 	if _, err := fmt.Fprintf(w, "ledger: %s\n", r.LedgerPath); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
@@ -550,18 +608,12 @@ func writeLedgerText(w io.Writer, r ledgerResult) error {
 	if _, err := fmt.Fprintln(w); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
+	return nil
+}
 
-	for _, e := range r.Events {
-		if _, err := fmt.Fprintf(w, "%s  %s  %s  [line %d]\n", e.Timestamp, e.EventType, renderLedgerFields(e.Fields), e.Line); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-	}
-	if len(r.Events) > 0 {
-		if _, err := fmt.Fprintln(w); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-	}
-
+// writeLedgerMatched states how many events matched and, when the listing was
+// paged, which part of them was listed.
+func writeLedgerMatched(w io.Writer, r ledgerResult) error {
 	if _, err := fmt.Fprintf(w, "matched: %d event(s)", r.Matched); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
@@ -582,24 +634,7 @@ func writeLedgerText(w io.Writer, r ledgerResult) error {
 	if _, err := fmt.Fprintln(w); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
-	if len(r.ZeroReasons) > 0 {
-		if _, err := fmt.Fprintf(w, "why this reading is empty:\n"); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-		for _, s := range r.ZeroReasons {
-			if _, err := fmt.Fprintf(w, "  - %s\n", s); err != nil {
-				return fmt.Errorf("writing output: %w", err)
-			}
-		}
-	}
-	if r.UnreadableInWindow > 0 {
-		if _, err := fmt.Fprintf(w,
-			"caveat: %d unreadable line(s) fall inside the window queried; the matched count is a lower bound for it\n",
-			r.UnreadableInWindow); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-	}
-	return writeLedgerCaveats(w, r)
+	return nil
 }
 
 // writeLedgerCaveats prints the two standing statements every reading owes: what

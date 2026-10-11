@@ -307,6 +307,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'code', '', '', ?, 'linux', 'amd64', ?)
 
 	// And the back-filled row is reachable by a toolchain-filtered lookup, which
 	// is the whole point of back-filling rather than defaulting to empty.
+	assertToolchainLookupFinds(ctx, t, store, rec)
+}
+
+// assertToolchainLookupFinds checks a toolchain-filtered listing reaches the
+// back-filled walk.
+func assertToolchainLookupFinds(ctx context.Context, t *testing.T, store *walksqlite.Store, rec domain.WalkRecord) {
+	t.Helper()
 	asked := "go1.26.5"
 	got, err := store.ListWalks(ctx, walkports.WalkFilter{Toolchain: &asked})
 	if err != nil {

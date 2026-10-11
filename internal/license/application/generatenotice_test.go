@@ -540,6 +540,13 @@ func TestGenerateNotice_UnclassifiedRootFileIsRecordedNotReproduced(t *testing.T
 		t.Fatalf("LicenseTexts paths = %v, want 4", byPath)
 	}
 
+	assertRootFilesClassified(t, byPath)
+}
+
+// assertRootFilesClassified checks the licence is reproduced, the unidentified
+// files recorded but not printed, and the notice carried whole.
+func assertRootFilesClassified(t *testing.T, byPath map[string]domain.NoticeLicenseFile) {
+	t.Helper()
 	if lf := byPath["LICENSE"]; lf.Classification != domain.ClassificationLicence ||
 		lf.SPDX != "MIT" || lf.Content != "MIT License text" {
 		t.Errorf("LICENSE = %+v, want classified MIT with verbatim text", lf)

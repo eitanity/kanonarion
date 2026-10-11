@@ -35,22 +35,7 @@ func resolveDependentsRoot(
 ) (walkContainment, walkdomain.WalkRecord, error) {
 	switch {
 	case f.walkID != "":
-		if err := refuseInapplicableFlags("dependents --walk-id", dependentsRootFlags(f)); err != nil {
-			return walkContainment{}, walkdomain.WalkRecord{}, err
-		}
-		rec, err := getDependentsWalk(ctx, walks, f.walkID, stderr)
-		if err != nil {
-			return walkContainment{}, walkdomain.WalkRecord{}, err
-		}
-		if !graphHoldsTarget(rec.Graph, coord) {
-			// The same check the --gomod path makes, for the same reason. Without
-			// it a pinned question about a version the walk does not hold answered
-			// "no modules depend on it" at exit 0: an absence asserted over a
-			// population that was never enumerated, because nothing was searched.
-			return walkContainment{}, walkdomain.WalkRecord{},
-				walkLacksModule(ctx, walks, rec, coord, f.walkID)
-		}
-		return pinnedContainment(rec), rec, nil
+		return pinnedDependentsRoot(ctx, walks, coord, f, stderr)
 
 	case f.anyBuild:
 		if err := refuseInapplicableFlags("dependents --any-build", dependentsScopeFlags(f)); err != nil {
@@ -107,6 +92,27 @@ func resolveDependentsRoot(
 			buildLacksModule(ctx, walks, rec, coord, containment.build, gomodPath)
 	}
 	return containment, rec, nil
+}
+
+// pinnedDependentsRoot is the root a --walk-id names, refused when that walk
+// does not hold the module.
+func pinnedDependentsRoot(ctx context.Context, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate, f dependentsFlags, stderr io.Writer) (walkContainment, walkdomain.WalkRecord, error) {
+	if err := refuseInapplicableFlags("dependents --walk-id", dependentsRootFlags(f)); err != nil {
+		return walkContainment{}, walkdomain.WalkRecord{}, err
+	}
+	rec, err := getDependentsWalk(ctx, walks, f.walkID, stderr)
+	if err != nil {
+		return walkContainment{}, walkdomain.WalkRecord{}, err
+	}
+	if !graphHoldsTarget(rec.Graph, coord) {
+		// The same check the --gomod path makes, for the same reason. Without
+		// it a pinned question about a version the walk does not hold answered
+		// "no modules depend on it" at exit 0: an absence asserted over a
+		// population that was never enumerated, because nothing was searched.
+		return walkContainment{}, walkdomain.WalkRecord{},
+			walkLacksModule(ctx, walks, rec, coord, f.walkID)
+	}
+	return pinnedContainment(rec), rec, nil
 }
 
 // getDependentsWalk loads a walk record, translating the two failures a caller

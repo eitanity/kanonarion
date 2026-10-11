@@ -888,46 +888,8 @@ func (s *Store) Close() error {
 // stored separately in callgraph_edges so that GetCallGraphRecord can
 // reconstruct the record without a second full parse of a large blob.
 func (s *Store) PutCallGraphRecord(ctx context.Context, r domain2.CallGraphRecord) error {
-	// A record whose coordinate is the zero value would key a row on the empty
-	// path at the empty version, which every later read treats as a genuine
-	// measurement of a module that does not exist.
-	if r.Coordinate.IsZero() {
-		return coordinate.ErrZeroCoordinate
-	}
-	// A record produced by analysing a fetched artefact must name which artefact,
-	// because composition reads the identity to decide which records describe the
-	// same bytes: a zero identity does not merely record nothing, it groups
-	// together every record that also recorded nothing.
-	//
-	// A worktree record is exempt, and that exemption is the point rather than a
-	// loophole. Nothing was fetched, so there is no artefact identity to name —
-	// inapplicable, not missing — and WorktreeDigest is what identifies it
-	// instead. The refusal is therefore written against what the record says it
-	// analysed, not against the field being empty.
-	//
-	// The read leg deliberately does NOT refuse either. Records written before the
-	// field existed carry an empty identity legitimately, and refusing on read
-	// would make every one of them unreadable. They are read, never rewritten, so
-	// the write-leg refusal costs them nothing.
-	if r.AnalysisSource != domain2.AnalysisSourceWorktree && r.ArtefactIdentity == "" {
-		return fmt.Errorf("call graph record for %s names no artefact: %w", r.Coordinate, fetchdomain.ErrZeroIdentity)
-	}
-	if r.AnalysisSource == domain2.AnalysisSourceWorktree && r.WorktreeDigest == "" {
-		return fmt.Errorf("worktree call graph record for %s identifies no tree: %w",
-			r.Coordinate, ports.ErrUnidentifiedWorktree)
-	}
-	// And it must say WHERE that tree was, for the same reason and on the same
-	// leg. The digest tells two trees apart; the root is what lets a reader
-	// standing in one of them be answered from it. A record that states neither is
-	// not merely less useful — it is served to a caller whose tree it may have
-	// nothing to do with, silently, which is the defect the field exists to close.
-	//
-	// The read leg deliberately does NOT refuse. Records written before the field
-	// existed carry an empty root legitimately; they are read, never rewritten, and
-	// the routing read names them as unlocated rather than dropping them.
-	if r.AnalysisSource == domain2.AnalysisSourceWorktree && r.AnalysisRoot == "" {
-		return fmt.Errorf("worktree call graph record for %s states no analysis root: %w",
-			r.Coordinate, ports.ErrUnlocatedWorktree)
+	if err := refuseUnidentifiedRecord(r); err != nil {
+		return err
 	}
 	var h domain2.CallGraphRecordHasher
 	if err := h.VerifyContentHash(r); err != nil {
@@ -1037,6 +999,53 @@ INSERT OR IGNORE INTO callgraph_edges (
 		return err //nolint:wrapcheck // RetryOnBusy already names the write and wraps the driver's error; wrapping again would say it twice
 	}
 	_, _ = s.db.DB().ExecContext(ctx, `PRAGMA optimize`) //nolint:errcheck
+	return nil
+}
+
+// refuseUnidentifiedRecord refuses a record that names no coordinate, no
+// artefact, or, for a worktree, no tree or root.
+func refuseUnidentifiedRecord(r domain2.CallGraphRecord) error {
+	// A record whose coordinate is the zero value would key a row on the empty
+	// path at the empty version, which every later read treats as a genuine
+	// measurement of a module that does not exist.
+	if r.Coordinate.IsZero() {
+		return coordinate.ErrZeroCoordinate
+	}
+	// A record produced by analysing a fetched artefact must name which artefact,
+	// because composition reads the identity to decide which records describe the
+	// same bytes: a zero identity does not merely record nothing, it groups
+	// together every record that also recorded nothing.
+	//
+	// A worktree record is exempt, and that exemption is the point rather than a
+	// loophole. Nothing was fetched, so there is no artefact identity to name —
+	// inapplicable, not missing — and WorktreeDigest is what identifies it
+	// instead. The refusal is therefore written against what the record says it
+	// analysed, not against the field being empty.
+	//
+	// The read leg deliberately does NOT refuse either. Records written before the
+	// field existed carry an empty identity legitimately, and refusing on read
+	// would make every one of them unreadable. They are read, never rewritten, so
+	// the write-leg refusal costs them nothing.
+	if r.AnalysisSource != domain2.AnalysisSourceWorktree && r.ArtefactIdentity == "" {
+		return fmt.Errorf("call graph record for %s names no artefact: %w", r.Coordinate, fetchdomain.ErrZeroIdentity)
+	}
+	if r.AnalysisSource == domain2.AnalysisSourceWorktree && r.WorktreeDigest == "" {
+		return fmt.Errorf("worktree call graph record for %s identifies no tree: %w",
+			r.Coordinate, ports.ErrUnidentifiedWorktree)
+	}
+	// And it must say WHERE that tree was, for the same reason and on the same
+	// leg. The digest tells two trees apart; the root is what lets a reader
+	// standing in one of them be answered from it. A record that states neither is
+	// not merely less useful — it is served to a caller whose tree it may have
+	// nothing to do with, silently, which is the defect the field exists to close.
+	//
+	// The read leg deliberately does NOT refuse. Records written before the field
+	// existed carry an empty root legitimately; they are read, never rewritten, and
+	// the routing read names them as unlocated rather than dropping them.
+	if r.AnalysisSource == domain2.AnalysisSourceWorktree && r.AnalysisRoot == "" {
+		return fmt.Errorf("worktree call graph record for %s states no analysis root: %w",
+			r.Coordinate, ports.ErrUnlocatedWorktree)
+	}
 	return nil
 }
 
@@ -1163,27 +1172,9 @@ func (s *Store) latestWorktreeGeneration(ctx context.Context, coord coordinate.M
 	if !coord.IsLocal() || req.Source == domain2.AnalysisSourceModuleZip {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	const qSources = `SELECT DISTINCT analysis_source FROM callgraph_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
-	rows, err := s.db.DB().QueryContext(ctx, qSources, coord.Path(), coord.Version(), pipelineVersion)
+	sources, err := s.analysisSources(ctx, coord, pipelineVersion)
 	if err != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("querying analysis sources for %s: %w", coord, err)
-	}
-	var sources []string
-	for rows.Next() {
-		var src string
-		if serr := rows.Scan(&src); serr != nil {
-			_ = rows.Close() //nolint:errcheck // returning the scan error
-			return domain2.CallGraphRecord{}, false, fmt.Errorf("scanning analysis source: %w", serr)
-		}
-		sources = append(sources, src)
-	}
-	if cerr := rows.Err(); cerr != nil {
-		_ = rows.Close() //nolint:errcheck // returning the iteration error
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("iterating analysis sources: %w", cerr)
-	}
-	if cerr := rows.Close(); cerr != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("closing analysis source rows: %w", cerr)
+		return domain2.CallGraphRecord{}, false, err
 	}
 	if len(sources) == 0 {
 		return domain2.CallGraphRecord{}, false, nil
@@ -1228,6 +1219,34 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	return rec, true, nil
+}
+
+// analysisSources lists the analysis sources recorded for coord at
+// pipelineVersion.
+func (s *Store) analysisSources(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]string, error) {
+	const qSources = `SELECT DISTINCT analysis_source FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
+	rows, err := s.db.DB().QueryContext(ctx, qSources, coord.Path(), coord.Version(), pipelineVersion)
+	if err != nil {
+		return nil, fmt.Errorf("querying analysis sources for %s: %w", coord, err)
+	}
+	var sources []string
+	for rows.Next() {
+		var src string
+		if serr := rows.Scan(&src); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return nil, fmt.Errorf("scanning analysis source: %w", serr)
+		}
+		sources = append(sources, src)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return nil, fmt.Errorf("iterating analysis sources: %w", cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return nil, fmt.Errorf("closing analysis source rows: %w", cerr)
+	}
+	return sources, nil
 }
 
 // callerTreeIsAnalysed reports whether the ledger holds a worktree generation
@@ -1463,35 +1482,9 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	if err != nil {
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("querying worktree generation of %s at %s: %w", coord, root, err)
 	}
-	var best generationRow
-	found := false
-	for rows.Next() {
-		candidate := generationRow{root: root, scanDigest: scanDigest}
-		var overallStatus int
-		var completeness, failureCause, extractedAt string
-		var rowID int64
-		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness,
-			&failureCause, &extractedAt, &candidate.analyser, &rowID); serr != nil {
-			_ = rows.Close() //nolint:errcheck // returning the scan error
-			return domain2.CallGraphRecord{}, false, fmt.Errorf("scanning generation of %s: %w", coord, serr)
-		}
-		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt, rowID)
-		if perr != nil {
-			_ = rows.Close() //nolint:errcheck // returning the parse error
-			return domain2.CallGraphRecord{}, false, perr
-		}
-		rank.ContentHash = candidate.hash
-		candidate.rank = rank
-		if !found || candidate.rank.ServesBefore(best.rank) {
-			best, found = candidate, true
-		}
-	}
-	if cerr := rows.Err(); cerr != nil {
-		_ = rows.Close() //nolint:errcheck // returning the iteration error
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("iterating generations of %s: %w", coord, cerr)
-	}
-	if cerr := rows.Close(); cerr != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("closing generation rows: %w", cerr)
+	best, found, err := bestWorktreeGeneration(rows, coord, root, scanDigest)
+	if err != nil {
+		return domain2.CallGraphRecord{}, false, err
 	}
 	if !found {
 		return domain2.CallGraphRecord{}, false, nil
@@ -1510,6 +1503,42 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	return rec, true, nil
+}
+
+// bestWorktreeGeneration ranks the generations rows holds and returns the one
+// that serves first, closing rows.
+func bestWorktreeGeneration(rows *sql.Rows, coord coordinate.ModuleCoordinate, root, scanDigest string) (generationRow, bool, error) {
+	var best generationRow
+	found := false
+	for rows.Next() {
+		candidate := generationRow{root: root, scanDigest: scanDigest}
+		var overallStatus int
+		var completeness, failureCause, extractedAt string
+		var rowID int64
+		if serr := rows.Scan(&candidate.blob, &candidate.hash, &overallStatus, &completeness,
+			&failureCause, &extractedAt, &candidate.analyser, &rowID); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return generationRow{}, false, fmt.Errorf("scanning generation of %s: %w", coord, serr)
+		}
+		rank, perr := rankOfColumns(overallStatus, completeness, failureCause, extractedAt, rowID)
+		if perr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the parse error
+			return generationRow{}, false, perr
+		}
+		rank.ContentHash = candidate.hash
+		candidate.rank = rank
+		if !found || candidate.rank.ServesBefore(best.rank) {
+			best, found = candidate, true
+		}
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return generationRow{}, false, fmt.Errorf("iterating generations of %s: %w", coord, cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return generationRow{}, false, fmt.Errorf("closing generation rows: %w", cerr)
+	}
+	return best, found, nil
 }
 
 // IdenticalGeneration returns the generation the ledger already holds that
@@ -2051,25 +2080,7 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 	             node_count, edge_count,
 	             extracted_at, content_hash
 	      FROM callgraph_records`
-	var args []any
-	var where []string
-
-	if filter.ModulePath != "" {
-		where = append(where, "module_path = ?")
-		args = append(args, filter.ModulePath)
-	}
-	if filter.PipelineVersion != "" {
-		where = append(where, "pipeline_version = ?")
-		args = append(args, filter.PipelineVersion)
-	}
-	if filter.AnalysisSource != domain2.AnalysisSourceUnrecorded {
-		where = append(where, "analysis_source = ?")
-		args = append(args, string(filter.AnalysisSource))
-	}
-
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
-	}
+	q, args := appendCallGraphFilter(q, filter)
 	q += " ORDER BY julianday(extracted_at) DESC, rowid DESC"
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)
@@ -2196,23 +2207,7 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 	             algorithm, analysis_source, node_count, edge_count, extracted_at, content_hash,
 	             analyser
 	      FROM callgraph_records`
-	var args []any
-	var where []string
-	if filter.ModulePath != "" {
-		where = append(where, "module_path = ?")
-		args = append(args, filter.ModulePath)
-	}
-	if filter.PipelineVersion != "" {
-		where = append(where, "pipeline_version = ?")
-		args = append(args, filter.PipelineVersion)
-	}
-	if filter.AnalysisSource != domain2.AnalysisSourceUnrecorded {
-		where = append(where, "analysis_source = ?")
-		args = append(args, string(filter.AnalysisSource))
-	}
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
-	}
+	q, args := appendCallGraphFilter(q, filter)
 	// The same order ListCallGraphRecords uses, so a caller that swaps one listing
 	// for the other sees the coordinates in the same sequence.
 	q += " ORDER BY julianday(extracted_at) DESC, rowid DESC"
@@ -2292,6 +2287,29 @@ func (s *Store) ListCallGraphCoordinates(ctx context.Context, filter ports.CallG
 	}
 
 	return pageCoordinates(out, filter.Limit, filter.Offset), nil
+}
+
+// appendCallGraphFilter appends the WHERE clause filter asks for to q,
+// returning the query and its arguments.
+func appendCallGraphFilter(q string, filter ports.CallGraphFilter) (string, []any) {
+	var args []any
+	var where []string
+	if filter.ModulePath != "" {
+		where = append(where, "module_path = ?")
+		args = append(args, filter.ModulePath)
+	}
+	if filter.PipelineVersion != "" {
+		where = append(where, "pipeline_version = ?")
+		args = append(args, filter.PipelineVersion)
+	}
+	if filter.AnalysisSource != domain2.AnalysisSourceUnrecorded {
+		where = append(where, "analysis_source = ?")
+		args = append(args, string(filter.AnalysisSource))
+	}
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	return q, args
 }
 
 // pageCoordinates applies the caller's limit and offset to the collapsed list,

@@ -184,6 +184,14 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 		}
 	}
 
+	mods := importedModules(imported, production, modVersions)
+
+	return mods, nil
+}
+
+// importedModules lists each imported module with its imported packages and
+// the subset only test files reach.
+func importedModules(imported, production map[string]map[string]struct{}, modVersions map[string]string) []domain.ImportedModule {
 	mods := make([]domain.ImportedModule, 0, len(imported))
 	for modPath, pkgSet := range imported {
 		pkgs := make([]string, 0, len(pkgSet))
@@ -207,8 +215,7 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 			TestOnlyPackages: testOnly,
 		})
 	}
-
-	return mods, nil
+	return mods
 }
 
 // BuildModules runs `go list -json -deps ./...` and projects it onto every

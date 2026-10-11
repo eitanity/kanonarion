@@ -689,30 +689,7 @@ func TestRunLevelFactParity(t *testing.T) {
 				if isLogLine(stmt) {
 					continue
 				}
-				body := statementBody(stmt)
-				if isAdviceStatement(body, name, binary, treePaths) {
-					continue
-				}
-				if _, dup := seen[body]; dup {
-					continue
-				}
-				seen[body] = struct{}{}
-				res.statements++
-				ids := identifiersIn(body)
-				gap := parityGap{
-					command: label, channel: ch.name, shape: shape, statement: body,
-					verbatim: containsSentence(strs, body), structured: isStructuredStatement(body),
-					fieldable: len(ids) > 0,
-				}
-				words := statementWords(body)
-				for _, id := range ids {
-					if !carriesIdentifier(scalars, id, words) {
-						gap.missingIDs = append(gap.missingIDs, id)
-					}
-				}
-				if !gap.carried() {
-					res.gaps = append(res.gaps, gap)
-				}
+				recordParityStatement(&res, seen, stmt, label, name, binary, ch.name, shape, treePaths, strs, scalars)
 			}
 		}
 		return res
@@ -728,26 +705,8 @@ func TestRunLevelFactParity(t *testing.T) {
 	}
 
 	for _, name := range names {
-		tc := jsonStdoutCases[name]
-		if tc.skip != "" {
-			skipped = append(skipped, name+" — "+tc.skip)
-			continue
-		}
-		if tc.setup != nil {
-			tc.setup(t, fx)
-		}
-		extra := tc.args
-		if tc.argsFn != nil {
-			extra = tc.argsFn(t, fx)
-		}
-		record(measure(t, name, name, extra))
-
-		// The same command against a manifest whose scope resolves a module.
-		// An empty scope answers and stops before the walk it would have
-		// selected, so the statements a go.mod read owes are only reachable
-		// here.
-		if repointed, ok := repointGoMod(extra, fx.populatedGoMod()); ok && offline[name] {
-			record(measure(t, name+" (populated --gomod)", name, repointed))
+		if skip := measureParityCase(t, fx, name, offline, measure, record); skip != "" {
+			skipped = append(skipped, skip)
 		}
 	}
 
@@ -756,6 +715,17 @@ func TestRunLevelFactParity(t *testing.T) {
 	// so it is measured here in the same terms as every other --gomod command.
 	record(measure(t, "context (populated --gomod)", "context", []string{"--gomod", fx.populatedGoMod()}))
 
+	measureMultiRecordCases(t, fx, measure, record)
+
+	matches, unlisted := drainParityLedger(results)
+	t.Log(parityReport(results, silent, skipped, matches, unlisted))
+	reportParityLedger(t, matches, unlisted)
+}
+
+// measureMultiRecordCases measures each command that answers over several
+// records, in name order.
+func measureMultiRecordCases(t *testing.T, fx jsonStdoutFixture, measure func(*testing.T, string, string, []string) parityResult, record func(parityResult)) {
+	t.Helper()
 	multi := make([]string, 0, len(jsonStdoutMultiCases))
 	for name := range jsonStdoutMultiCases {
 		multi = append(multi, name)
@@ -772,10 +742,62 @@ func TestRunLevelFactParity(t *testing.T) {
 		}
 		record(measure(t, name+" (several records)", name, extra))
 	}
+}
 
-	matches, unlisted := drainParityLedger(results)
-	t.Log(parityReport(results, silent, skipped, matches, unlisted))
-	reportParityLedger(t, matches, unlisted)
+// recordParityStatement counts one statement a run made, once, and records a
+// gap when the document does not carry it.
+func recordParityStatement(res *parityResult, seen map[string]struct{}, stmt, label, name, binary, channel, shape string, treePaths, strs, scalars []string) {
+	body := statementBody(stmt)
+	if isAdviceStatement(body, name, binary, treePaths) {
+		return
+	}
+	if _, dup := seen[body]; dup {
+		return
+	}
+	seen[body] = struct{}{}
+	res.statements++
+	ids := identifiersIn(body)
+	gap := parityGap{
+		command: label, channel: channel, shape: shape, statement: body,
+		verbatim: containsSentence(strs, body), structured: isStructuredStatement(body),
+		fieldable: len(ids) > 0,
+	}
+	words := statementWords(body)
+	for _, id := range ids {
+		if !carriesIdentifier(scalars, id, words) {
+			gap.missingIDs = append(gap.missingIDs, id)
+		}
+	}
+	if !gap.carried() {
+		res.gaps = append(res.gaps, gap)
+	}
+}
+
+// measureParityCase measures one command's text and JSON runs, and again
+// against a populated go.mod where its scope would otherwise be empty;
+// skipped names a case that is not run.
+func measureParityCase(t *testing.T, fx jsonStdoutFixture, name string, offline map[string]bool, measure func(*testing.T, string, string, []string) parityResult, record func(parityResult)) string {
+	tc := jsonStdoutCases[name]
+	if tc.skip != "" {
+		return name + " — " + tc.skip
+	}
+	if tc.setup != nil {
+		tc.setup(t, fx)
+	}
+	extra := tc.args
+	if tc.argsFn != nil {
+		extra = tc.argsFn(t, fx)
+	}
+	record(measure(t, name, name, extra))
+
+	// The same command against a manifest whose scope resolves a module.
+	// An empty scope answers and stops before the walk it would have
+	// selected, so the statements a go.mod read owes are only reachable
+	// here.
+	if repointed, ok := repointGoMod(extra, fx.populatedGoMod()); ok && offline[name] {
+		record(measure(t, name+" (populated --gomod)", name, repointed))
+	}
+	return ""
 }
 
 // drainParityLedger pairs the measured gaps with the ledger entries: matches[i]

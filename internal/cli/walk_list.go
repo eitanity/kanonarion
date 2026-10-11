@@ -69,40 +69,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, walkID string, limit, offset int, latest, latestSuccess bool, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
 	if walkID != "" {
-		rec, rerr := uc.GetWalk(ctx, walkID)
-		if rerr != nil {
-			if isWalkNotFound(rerr) {
-				scope, serr := walkIDZeroScope(ctx, walkID, uc)
-				return walkSelectorMiss(scope, serr, stderr)
-			}
-			return fmt.Errorf("loading walk %s: %w", walkID, rerr)
-		}
-		summary := walkports.WalkSummary{
-			ID:            rec.ID,
-			Target:        rec.Target,
-			Scope:         rec.Scope,
-			Depth:         rec.Depth,
-			StartedAt:     rec.StartedAt,
-			CompletedAt:   rec.CompletedAt,
-			OverallStatus: rec.OverallStatus,
-			NodeCount:     len(rec.Graph.Nodes),
-			FailureCount:  domain.CountNodeFailures(rec),
-		}
-		if jsonOut {
-			enc := json.NewEncoder(stdout)
-			enc.SetIndent("", "  ")
-			if encErr := enc.Encode(summary); encErr != nil {
-				return fmt.Errorf("encoding JSON: %w", encErr)
-			}
-			return nil
-		}
-		if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
-			summary.ID, summary.Target.String(), ledgerStamp(summary.StartedAt),
-			summary.OverallStatus.String(), string(summary.Scope), string(summary.Depth), summary.NodeCount, summary.FailureCount,
-		); pErr != nil {
-			return fmt.Errorf("writing output: %w", pErr)
-		}
-		return nil
+		return showOneWalk(ctx, walkID, uc, stdout, stderr)
 	}
 	// One row more than will be printed, so the extra row's presence answers
 	// whether the limit bit. --latest-success is not a listing — it selects a
@@ -122,26 +89,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 	}
 
 	if latestSuccess {
-		if len(summaries) == 0 {
-			scope, serr := latestSuccessZeroScope(ctx, uc)
-			return walkSelectorMiss(scope, serr, stderr)
-		}
-		s := summaries[0]
-		if jsonOut {
-			enc := json.NewEncoder(stdout)
-			enc.SetIndent("", "  ")
-			if encErr := enc.Encode(s); encErr != nil {
-				return fmt.Errorf("encoding JSON: %w", encErr)
-			}
-			return nil
-		}
-		if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
-			s.ID, s.Target.String(), ledgerStamp(s.StartedAt),
-			s.OverallStatus.String(), string(s.Scope), string(s.Depth), s.NodeCount, s.FailureCount,
-		); pErr != nil {
-			return fmt.Errorf("writing output: %w", pErr)
-		}
-		return nil
+		return showLatestSuccess(ctx, summaries, uc, stdout, stderr)
 	}
 
 	summaries, truncated := truncateList(summaries, limit)
@@ -175,6 +123,69 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 		}
 	}
 	return writeListTruncationNotice(stdout, trunc)
+}
+
+// showOneWalk prints the summary of the walk --walk-id names.
+func showOneWalk(ctx context.Context, walkID string, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
+	rec, rerr := uc.GetWalk(ctx, walkID)
+	if rerr != nil {
+		if isWalkNotFound(rerr) {
+			scope, serr := walkIDZeroScope(ctx, walkID, uc)
+			return walkSelectorMiss(scope, serr, stderr)
+		}
+		return fmt.Errorf("loading walk %s: %w", walkID, rerr)
+	}
+	summary := walkports.WalkSummary{
+		ID:            rec.ID,
+		Target:        rec.Target,
+		Scope:         rec.Scope,
+		Depth:         rec.Depth,
+		StartedAt:     rec.StartedAt,
+		CompletedAt:   rec.CompletedAt,
+		OverallStatus: rec.OverallStatus,
+		NodeCount:     len(rec.Graph.Nodes),
+		FailureCount:  domain.CountNodeFailures(rec),
+	}
+	if jsonOut {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(summary); encErr != nil {
+			return fmt.Errorf("encoding JSON: %w", encErr)
+		}
+		return nil
+	}
+	if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
+		summary.ID, summary.Target.String(), ledgerStamp(summary.StartedAt),
+		summary.OverallStatus.String(), string(summary.Scope), string(summary.Depth), summary.NodeCount, summary.FailureCount,
+	); pErr != nil {
+		return fmt.Errorf("writing output: %w", pErr)
+	}
+	return nil
+}
+
+// showLatestSuccess prints the newest succeeded walk, refusing when there is
+// none.
+func showLatestSuccess(ctx context.Context, summaries []walkports.WalkSummary, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
+	if len(summaries) == 0 {
+		scope, serr := latestSuccessZeroScope(ctx, uc)
+		return walkSelectorMiss(scope, serr, stderr)
+	}
+	s := summaries[0]
+	if jsonOut {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(s); encErr != nil {
+			return fmt.Errorf("encoding JSON: %w", encErr)
+		}
+		return nil
+	}
+	if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
+		s.ID, s.Target.String(), ledgerStamp(s.StartedAt),
+		s.OverallStatus.String(), string(s.Scope), string(s.Depth), s.NodeCount, s.FailureCount,
+	); pErr != nil {
+		return fmt.Errorf("writing output: %w", pErr)
+	}
+	return nil
 }
 
 // walkSelectorMiss answers a single-record selector that matched nothing.
@@ -342,31 +353,7 @@ func walkListZeroScope(ctx context.Context, applied walkports.WalkFilter, offset
 		produce:    "kanonarion walk <module>@<version>",
 		listAll:    "kanonarion walk-list",
 	}
-	var names, values, fields, kinds []string
-	if applied.Target != nil {
-		names = append(names, "target")
-		values = append(values, applied.Target.String())
-		fields = append(fields, "target coordinate")
-		kinds = append(kinds, matchExact)
-	}
-	if applied.Since != nil {
-		names = append(names, "start time")
-		values = append(values, applied.Since.UTC().Format(time.RFC3339))
-		fields = append(fields, "start time")
-		kinds = append(kinds, matchLowerBound)
-	}
-	if applied.OverallStatus != nil {
-		names = append(names, "overall status")
-		values = append(values, applied.OverallStatus.String())
-		fields = append(fields, "overall status")
-		kinds = append(kinds, matchExact)
-	}
-	if applied.Scope != nil {
-		names = append(names, "walk scope")
-		values = append(values, string(*applied.Scope))
-		fields = append(fields, "walk scope")
-		kinds = append(kinds, matchExact)
-	}
+	names, values, fields, kinds := describeWalkFilter(applied)
 	if len(names) > 0 {
 		scope.filterName = strings.Join(names, " and ")
 		scope.filterValue = strings.Join(values, " / ")
@@ -395,6 +382,36 @@ func walkListZeroScope(ctx context.Context, applied walkports.WalkFilter, offset
 		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
 	}
 	return scope, nil
+}
+
+// describeWalkFilter names each condition the filter applied, its value, the
+// field it compares and how.
+func describeWalkFilter(applied walkports.WalkFilter) (names, values, fields, kinds []string) {
+	if applied.Target != nil {
+		names = append(names, "target")
+		values = append(values, applied.Target.String())
+		fields = append(fields, "target coordinate")
+		kinds = append(kinds, matchExact)
+	}
+	if applied.Since != nil {
+		names = append(names, "start time")
+		values = append(values, applied.Since.UTC().Format(time.RFC3339))
+		fields = append(fields, "start time")
+		kinds = append(kinds, matchLowerBound)
+	}
+	if applied.OverallStatus != nil {
+		names = append(names, "overall status")
+		values = append(values, applied.OverallStatus.String())
+		fields = append(fields, "overall status")
+		kinds = append(kinds, matchExact)
+	}
+	if applied.Scope != nil {
+		names = append(names, "walk scope")
+		values = append(values, string(*applied.Scope))
+		fields = append(fields, "walk scope")
+		kinds = append(kinds, matchExact)
+	}
+	return names, values, fields, kinds
 }
 
 func parseWalkStatus(s string) (domain.WalkStatus, error) {
