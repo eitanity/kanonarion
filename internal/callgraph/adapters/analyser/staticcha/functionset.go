@@ -1,6 +1,7 @@
 package staticcha
 
 import (
+	"fmt"
 	"go/types"
 	"sort"
 
@@ -59,7 +60,7 @@ func runtimeTypeClosure(prog *ssa.Program) []types.Type {
 	var visit func(T types.Type, skip bool)
 	visit = func(T types.Type, skip bool) {
 		u := types.Unalias(T)
-		st, _ := seen.At(u).(*visitState)
+		st := visitStateOf(&seen, u)
 		if st == nil {
 			st = &visitState{}
 			seen.Set(u, st)
@@ -81,8 +82,8 @@ func runtimeTypeClosure(prog *ssa.Program) []types.Type {
 		// types are reachable by reflection from the method, the tuples holding
 		// them are not.
 		mset := msets.MethodSet(u)
-		for i := range mset.Len() {
-			sig, ok := mset.At(i).Type().(*types.Signature)
+		for sel := range mset.Methods() {
+			sig, ok := sel.Type().(*types.Signature)
 			if !ok || sig.TypeParams() != nil {
 				continue
 			}
@@ -90,54 +91,61 @@ func runtimeTypeClosure(prog *ssa.Program) []types.Type {
 			visit(sig.Results(), true)
 		}
 
-		switch t := u.(type) {
-		case *types.Basic, *types.Interface, *types.TypeParam, *types.Union:
-			// No elements to reach: a basic type has none, an interface's methods
-			// are handled by the method-set recursion above, and a parameterised
-			// type has no runtime type of its own.
-		case *types.Pointer:
-			visit(t.Elem(), false)
-		case *types.Slice:
-			visit(t.Elem(), false)
-		case *types.Array:
-			visit(t.Elem(), false)
-		case *types.Chan:
-			visit(t.Elem(), false)
-		case *types.Map:
-			visit(t.Key(), false)
-			visit(t.Elem(), false)
-		case *types.Signature:
-			visit(t.Params(), true)
-			visit(t.Results(), true)
-		case *types.Struct:
-			for i := range t.NumFields() {
-				visit(t.Field(i).Type(), false)
-			}
-		case *types.Tuple:
-			for i := range t.Len() {
-				visit(t.At(i).Type(), false)
-			}
-		case *types.Named:
-			if t.TypeParams() != nil {
-				// A generic type has no runtime type; its instantiations do, and they
-				// arrive here on their own.
-				return
-			}
-			// A pointer to a named type is reachable from the named type by
-			// reflection and carries its own method set. This is the derivation the
-			// alias collision loses.
-			visit(types.NewPointer(t), false)
-			// The unnamed type underlying a named one is passed through: reflection
-			// reaches the fields of an embedded type but not the anonymous struct
-			// itself, so its method set is not wanted.
-			visit(t.Underlying(), true)
-		}
+		visitElements(u, visit)
 	}
 
 	for _, T := range prog.RuntimeTypes() {
 		visit(T, false)
 	}
 	return out
+}
+
+// visitElements hands visit each type reflection reaches from u's elements:
+// the element, key, field and tuple types, and a named type's pointer and
+// underlying type.
+func visitElements(u types.Type, visit func(T types.Type, skip bool)) {
+	switch t := u.(type) {
+	case *types.Basic, *types.Interface, *types.TypeParam, *types.Union:
+		// No elements to reach: a basic type has none, an interface's methods
+		// are handled by the method-set recursion above, and a parameterised
+		// type has no runtime type of its own.
+	case *types.Pointer:
+		visit(t.Elem(), false)
+	case *types.Slice:
+		visit(t.Elem(), false)
+	case *types.Array:
+		visit(t.Elem(), false)
+	case *types.Chan:
+		visit(t.Elem(), false)
+	case *types.Map:
+		visit(t.Key(), false)
+		visit(t.Elem(), false)
+	case *types.Signature:
+		visit(t.Params(), true)
+		visit(t.Results(), true)
+	case *types.Struct:
+		for field := range t.Fields() {
+			visit(field.Type(), false)
+		}
+	case *types.Tuple:
+		for v := range t.Variables() {
+			visit(v.Type(), false)
+		}
+	case *types.Named:
+		if t.TypeParams() != nil {
+			// A generic type has no runtime type; its instantiations do, and they
+			// arrive here on their own.
+			return
+		}
+		// A pointer to a named type is reachable from the named type by
+		// reflection and carries its own method set. This is the derivation the
+		// alias collision loses.
+		visit(types.NewPointer(t), false)
+		// The unnamed type underlying a named one is passed through: reflection
+		// reaches the fields of an embedded type but not the anonymous struct
+		// itself, so its method set is not wanted.
+		visit(t.Underlying(), true)
+	}
 }
 
 // closedFunctionSet returns the functions of prog an analysis may see: every
@@ -151,32 +159,20 @@ func runtimeTypeClosure(prog *ssa.Program) []types.Type {
 func closedFunctionSet(prog *ssa.Program) map[*ssa.Function]bool {
 	seen := make(map[*ssa.Function]bool)
 
-	var function func(fn *ssa.Function)
-	function = func(fn *ssa.Function) {
-		if fn == nil || seen[fn] {
-			return
-		}
-		seen[fn] = true
-		var buf [10]*ssa.Value // avoid alloc in the common case
-		for _, b := range fn.Blocks {
-			for _, instr := range b.Instrs {
-				for _, op := range instr.Operands(buf[:0]) {
-					if callee, ok := (*op).(*ssa.Function); ok {
-						function(callee)
-					}
-				}
-			}
-		}
-	}
+	function := func(fn *ssa.Function) { closeOverCallees(seen, fn) }
 
 	methodsOf := func(T types.Type) {
 		if types.IsInterface(T) {
 			return
 		}
 		mset := prog.MethodSets.MethodSet(T)
-		for i := range mset.Len() {
-			sel := mset.At(i)
-			if sel.Obj().(*types.Func).Signature().TypeParams() != nil {
+		for sel := range mset.Methods() {
+			// A method set holds methods only, and go/types gives each a *types.Func.
+			fn, ok := sel.Obj().(*types.Func)
+			if !ok {
+				panic(fmt.Sprintf("staticcha: method set of %s holds %T, not *types.Func", T, sel.Obj()))
+			}
+			if fn.Signature().TypeParams() != nil {
 				continue // a generic method has no single function
 			}
 			function(prog.MethodValue(sel))
@@ -220,6 +216,25 @@ func closedFunctionSet(prog *ssa.Program) map[*ssa.Function]bool {
 	return seen
 }
 
+// closeOverCallees adds fn to seen, and every function its body names as an
+// operand, transitively.
+func closeOverCallees(seen map[*ssa.Function]bool, fn *ssa.Function) {
+	if fn == nil || seen[fn] {
+		return
+	}
+	seen[fn] = true
+	var buf [10]*ssa.Value // avoid alloc in the common case
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			for _, op := range instr.Operands(buf[:0]) {
+				if callee, ok := (*op).(*ssa.Function); ok {
+					closeOverCallees(seen, callee)
+				}
+			}
+		}
+	}
+}
+
 // pkgBuiltFromSyntax reports whether pkg was built from source rather than
 // registered from type information alone. A package built from syntax has at
 // least one function with a body; a type-only package has none.
@@ -255,4 +270,19 @@ func orderedFunctions(funcs map[*ssa.Function]bool) []*ssa.Function {
 		return ap.Offset < bp.Offset
 	})
 	return out
+}
+
+// visitStateOf reads the closure's visit index. runtimeTypeClosure writes it
+// with *visitState only, so nil is a type not met yet and any other type is a
+// bug here.
+func visitStateOf(seen *typeutil.Map, u types.Type) *visitState {
+	v := seen.At(u)
+	if v == nil {
+		return nil
+	}
+	st, ok := v.(*visitState)
+	if !ok {
+		panic(fmt.Sprintf("staticcha: type closure holds %T, not *visitState", v))
+	}
+	return st
 }

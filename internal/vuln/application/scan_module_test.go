@@ -208,7 +208,7 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	snap := vulntest.MustNewAt("test", "v1", now)
-	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")))
 
 	// Only C is vulnerable — A and B are clean.
 	db := &fakeDatabase{
@@ -445,8 +445,8 @@ func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T
 				fetchtest.Content("zip content"),
 				fetchtest.GoMod("gomod"),
 			)
-			_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
-			_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+			mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod)))
+			mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")))
 			if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 				t,
 				fetchtest.Coordinate(coord),
@@ -503,8 +503,8 @@ func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing
 		fetchtest.Content("zip content"),
 		fetchtest.GoMod("gomod"),
 	)
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod)))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
@@ -560,8 +560,8 @@ func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testin
 		fetchtest.Content("zip content"),
 		fetchtest.GoMod("gomod"),
 	)
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod)))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
@@ -623,8 +623,8 @@ func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
 		fetchtest.Content("zip content"),
 		fetchtest.GoMod("gomod"),
 	)
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod)))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
@@ -682,8 +682,8 @@ func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.
 		fetchtest.Content("zip content"),
 		fetchtest.GoMod("gomod"),
 	)
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod)))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
@@ -748,8 +748,8 @@ func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 		fetchtest.Content("zip content"),
 		fetchtest.GoMod("gomod"),
 	)
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod)))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
@@ -766,8 +766,8 @@ func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 		fetchtest.Content("zip content"),
 		fetchtest.GoMod("site-gomod"),
 	)
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, siteRec), strings.NewReader(siteGoMod))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, siteRec), strings.NewReader("zip content"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, siteRec), strings.NewReader(siteGoMod)))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, siteRec), strings.NewReader("zip content")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(site),
@@ -828,8 +828,8 @@ func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
 		fetchtest.Content("zip content"),
 		fetchtest.GoMod("gomod"),
 	)
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod)))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),

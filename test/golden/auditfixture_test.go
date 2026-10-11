@@ -205,7 +205,7 @@ func auditVulnDB(t *testing.T) []byte {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	add := func(name, body string) {
-		w, err := zw.Create(name)
+		w, err := fixtureZipEntry(zw, name)
 		if err != nil {
 			t.Fatalf("creating %s in the advisory database: %v", name, err)
 		}
@@ -270,7 +270,7 @@ func publishFixtureModule(t *testing.T, proxy, path, version, license, source st
 		{filepath.Base(path) + ".go", source},
 	}
 	for _, e := range entries {
-		w, err := zw.Create(prefix + e.name)
+		w, err := fixtureZipEntry(zw, prefix+e.name)
 		if err != nil {
 			t.Fatalf("creating %s in the %s zip: %v", e.name, path, err)
 		}
@@ -368,7 +368,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // framework can delete it. Failures are ignored: this is cleanup, and a
 // permission that cannot be restored is reported by the removal that follows.
 func makeWritable(root string) {
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error { //nolint:errcheck // the callback returns only nil
 		if err != nil {
 			return nil //nolint:nilerr // a path that cannot be read cannot be repaired either.
 		}
@@ -376,7 +376,7 @@ func makeWritable(root string) {
 		if d.IsDir() {
 			mode = 0o700
 		}
-		_ = os.Chmod(path, mode) // #nosec G122 -- the tree is a module cache this test created in its own temp dir.
+		_ = os.Chmod(path, mode) /* #nosec G122 -- the tree is a module cache this test created in its own temp dir. */ //nolint:errcheck // see above
 		return nil
 	})
 }

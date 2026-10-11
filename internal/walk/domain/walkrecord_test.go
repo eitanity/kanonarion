@@ -242,9 +242,12 @@ func TestWalkRecord_EcosystemPresentAfterRoundTrip(t *testing.T) {
 
 func TestWalkRecord_RejectsForeignEcosystem(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
-	rec, _ := hasher.SetContentHash(
+	rec, err := hasher.SetContentHash(
 		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), ""),
 	)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	rec.Ecosystem = "npm"
 	data, err := hasher.Marshal(rec)
 	if err != nil {
@@ -511,8 +514,8 @@ func TestWalkRecordHasher_MultiEdge_Sorting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := hasher.VerifyContentHash(hashed); err != nil {
-		t.Fatalf("VerifyContentHash: %v", err)
+	if verr := hasher.VerifyContentHash(hashed); verr != nil {
+		t.Fatalf("VerifyContentHash: %v", verr)
 	}
 
 	rawBytes, err := hasher.Marshal(hashed)

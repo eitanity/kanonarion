@@ -82,8 +82,8 @@ func TestPut_PopulatesIdentityAddressedSpace(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	id := identity(ports.BlobKindZip, "mod-zip")
-	if err := store.Put(ctx, id, f); err != nil {
-		t.Fatalf("Put: %v", err)
+	if perr := store.Put(ctx, id, f); perr != nil {
+		t.Fatalf("Put: %v", perr)
 	}
 
 	exists, err := store.Exists(ctx, id)
@@ -125,17 +125,17 @@ func TestPut_HardLinksSoTheEvidenceSurvivesCacheCleaning(t *testing.T) {
 		t.Fatalf("OpenZip: %v", err)
 	}
 	id := identity(ports.BlobKindZip, "durable")
-	if err := store.Put(ctx, id, f); err != nil {
+	if perr := store.Put(ctx, id, f); perr != nil {
 		_ = f.Close()
-		t.Fatalf("Put: %v", err)
+		t.Fatalf("Put: %v", perr)
 	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	if cerr := f.Close(); cerr != nil {
+		t.Fatalf("Close: %v", cerr)
 	}
 
 	// Simulate `go clean -modcache`: the toolchain removes its own name.
-	if err := os.Remove(cachePath); err != nil {
-		t.Fatalf("removing cache entry: %v", err)
+	if rmErr := os.Remove(cachePath); rmErr != nil {
+		t.Fatalf("removing cache entry: %v", rmErr)
 	}
 
 	rc, err := store.Get(ctx, id)
@@ -191,9 +191,9 @@ func TestGetPath_ReturnsAMaterialisedPath(t *testing.T) {
 		t.Fatalf("OpenGoMod: %v", err)
 	}
 	id := identity(ports.BlobKindGoMod, "mod-gomod")
-	if err := store.Put(ctx, id, f); err != nil {
+	if perr := store.Put(ctx, id, f); perr != nil {
 		_ = f.Close()
-		t.Fatalf("Put: %v", err)
+		t.Fatalf("Put: %v", perr)
 	}
 	_ = f.Close()
 

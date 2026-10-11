@@ -397,8 +397,8 @@ func seedJSONDocArtefactRecords(t *testing.T, ctx context.Context, db sqlitestor
 		if err != nil {
 			t.Fatalf("sealing the licence record for %s: %v", coord, err)
 		}
-		if err := licStore.PutLicenseRecord(ctx, lic); err != nil {
-			t.Fatalf("seeding the licence record for %s: %v", coord, err)
+		if perr := licStore.PutLicenseRecord(ctx, lic); perr != nil {
+			t.Fatalf("seeding the licence record for %s: %v", coord, perr)
 		}
 
 		iface := ifacedomain.InterfaceRecord{
@@ -425,8 +425,8 @@ func seedJSONDocArtefactRecords(t *testing.T, ctx context.Context, db sqlitestor
 		if err != nil {
 			t.Fatalf("sealing the interface record for %s: %v", coord, err)
 		}
-		if err := ifaceStore.PutInterfaceRecord(ctx, iface); err != nil {
-			t.Fatalf("seeding the interface record for %s: %v", coord, err)
+		if perr := ifaceStore.PutInterfaceRecord(ctx, iface); perr != nil {
+			t.Fatalf("seeding the interface record for %s: %v", coord, perr)
 		}
 
 		// One call, one interface and one implementation of it: the edge queries,
@@ -467,8 +467,8 @@ func seedJSONDocArtefactRecords(t *testing.T, ctx context.Context, db sqlitestor
 		if err != nil {
 			t.Fatalf("sealing the call graph record for %s: %v", coord, err)
 		}
-		if err := cgStore.PutCallGraphRecord(ctx, cg); err != nil {
-			t.Fatalf("seeding the call graph record for %s: %v", coord, err)
+		if perr := cgStore.PutCallGraphRecord(ctx, cg); perr != nil {
+			t.Fatalf("seeding the call graph record for %s: %v", coord, perr)
 		}
 
 		example := exdomain.ExampleRecord{
@@ -603,8 +603,8 @@ func seedJSONDocVulnerabilities(t *testing.T, ctx context.Context, db sqlitestor
 	if err != nil {
 		t.Fatalf("sealing the vulnerability record: %v", err)
 	}
-	if err := store.PutVulnerabilityRecord(ctx, record); err != nil {
-		t.Fatalf("seeding the vulnerability record: %v", err)
+	if perr := store.PutVulnerabilityRecord(ctx, record); perr != nil {
+		t.Fatalf("seeding the vulnerability record: %v", perr)
 	}
 
 	run := vulndomain.WalkScanRun{

@@ -151,16 +151,7 @@ func TestListLicenseRecords(t *testing.T) {
 	})
 
 	t.Run("filter_by_spdx", func(t *testing.T) {
-		sums, err := s.ListLicenseRecords(context.Background(), ports.LicenseFilter{SPDX: "MIT"})
-		if err != nil {
-			t.Fatalf("ListLicenseRecords: %v", err)
-		}
-		if len(sums) != 1 {
-			t.Errorf("expected 1 summary for MIT, got %d", len(sums))
-		}
-		if len(sums) > 0 && sums[0].PrimarySPDX != "MIT" {
-			t.Errorf("unexpected SPDX: %q", sums[0].PrimarySPDX)
-		}
+		testListFilterBySPDX(t, s)
 	})
 
 	t.Run("filter_by_status", func(t *testing.T) {
@@ -195,6 +186,20 @@ func TestListLicenseRecords(t *testing.T) {
 	})
 }
 
+// testListFilterBySPDX lists only the records with the given primary SPDX.
+func testListFilterBySPDX(t *testing.T, s *licensesqlite.Store) {
+	sums, err := s.ListLicenseRecords(context.Background(), ports.LicenseFilter{SPDX: "MIT"})
+	if err != nil {
+		t.Fatalf("ListLicenseRecords: %v", err)
+	}
+	if len(sums) != 1 {
+		t.Errorf("expected 1 summary for MIT, got %d", len(sums))
+	}
+	if len(sums) > 0 && sums[0].PrimarySPDX != "MIT" {
+		t.Errorf("unexpected SPDX: %q", sums[0].PrimarySPDX)
+	}
+}
+
 func TestGetLicenseRecord_IntegrityError(t *testing.T) {
 	s := openTestStore(t)
 	coord := mustCoord(t, "example.com/mod", "v1.0.0")
@@ -207,7 +212,10 @@ func TestGetLicenseRecord_IntegrityError(t *testing.T) {
 	db := s.InternalDB().DB()
 	r.ContentHash = "sha256:invalid"
 	var h domain2.LicenseRecordHasher
-	blob, _ := h.Marshal(r)
+	blob, merr := h.Marshal(r)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if _, err := db.Exec("UPDATE licence_records SET serialised = ?", blob); err != nil {
 		t.Fatalf("failed to tamper with db: %v", err)
 	}
@@ -254,8 +262,8 @@ func TestPutAndGet_WithCopyrightStatements(t *testing.T) {
 		t.Fatalf("SetContentHash: %v", err)
 	}
 
-	if err := s.PutLicenseRecord(context.Background(), r); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := s.PutLicenseRecord(context.Background(), r); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	got, found, err := s.GetLicenseRecord(context.Background(), coord, "0.2.0")
@@ -298,8 +306,8 @@ func TestPutAndGet_NoneFound(t *testing.T) {
 		t.Fatalf("SetContentHash: %v", err)
 	}
 
-	if err := s.PutLicenseRecord(context.Background(), r); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := s.PutLicenseRecord(context.Background(), r); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	got, found, err := s.GetLicenseRecord(context.Background(), coord, "0.1.0")
@@ -322,8 +330,8 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	if err := s1.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	if cerr := s1.Close(); cerr != nil {
+		t.Fatalf("Close: %v", cerr)
 	}
 	// A second Open on the same DSN should not fail even though migrations
 	// already ran. For:memory: each Open creates a fresh DB, so we just

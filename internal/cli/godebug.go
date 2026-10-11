@@ -117,7 +117,7 @@ func runGoDebug(ctx context.Context, gomodFlag string, stdout, stderr io.Writer)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	rec, err := ctr.ExtractGoDebug.Extract(ctx, gomodPath, activeConfig.GoDebugPolicy)
 	if err != nil {

@@ -89,8 +89,8 @@ func TestAuditEntryNamesTheAcquisitionMode(t *testing.T) {
 	}()
 
 	r := sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0", fetchtest.AcquisitionMode(domain2.AcquisitionModcache))
-	if err := store.PutFetchRecord(context.Background(), mustSeal(t, r)); err != nil {
-		t.Fatalf("PutFetchRecord: %v", err)
+	if perr := store.PutFetchRecord(context.Background(), mustSeal(t, r)); perr != nil {
+		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 
 	f, err := os.Open(auditPath) //nolint:gosec // test-owned temp path
@@ -135,8 +135,8 @@ func TestAuditEntryOmitsAnUnrecordedMode(t *testing.T) {
 		}
 	}()
 
-	if err := store.PutFetchRecord(context.Background(), mustSeal(t, sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0"))); err != nil {
-		t.Fatalf("PutFetchRecord: %v", err)
+	if perr := store.PutFetchRecord(context.Background(), mustSeal(t, sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0"))); perr != nil {
+		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 
 	data, err := os.ReadFile(auditPath) //nolint:gosec // test-owned temp path

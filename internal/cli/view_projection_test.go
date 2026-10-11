@@ -100,12 +100,9 @@ func TestCLIViewsAreTotalProjections(t *testing.T) {
 			seen := map[reflect.Type]bool{}
 			var walk func(reflect.Type, string)
 			walk = func(rt reflect.Type, at string) {
-				for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice ||
-					rt.Kind() == reflect.Array || rt.Kind() == reflect.Map {
-					if selfEncoding(rt) {
-						return
-					}
-					rt = rt.Elem()
+				var stop bool
+				if rt, stop = derefContainers(rt, selfEncoding); stop {
+					return
 				}
 				// A named integer type in a domain package is a Go enum, and an
 				// enum without a marshaller travels as its ordinal — a number the
@@ -128,21 +125,41 @@ func TestCLIViewsAreTotalProjections(t *testing.T) {
 						at, path.Base(path.Dir(rt.PkgPath())), rt.Name())
 					return
 				}
-				for i := 0; i < rt.NumField(); i++ {
-					f := rt.Field(i)
-					if !f.IsExported() {
-						continue
-					}
-					if f.Anonymous {
-						t.Errorf("%s embeds %s: an embedded type publishes ITS field names", at, f.Type)
-					}
-					if f.Tag.Get("json") == "" {
-						t.Errorf("%s.%s has no json tag, so its wire name is a Go identifier", at, f.Name)
-					}
-					walk(f.Type, at+"."+f.Name)
-				}
+				checkViewFields(t, rt, at, walk)
 			}
 			walk(view.root, view.name)
 		})
+	}
+}
+
+// derefContainers strips pointer, slice, array and map types down to their
+// element; stop is true when one of them encodes itself.
+func derefContainers(rt reflect.Type, selfEncoding func(reflect.Type) bool) (reflect.Type, bool) {
+	for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice ||
+		rt.Kind() == reflect.Array || rt.Kind() == reflect.Map {
+		if selfEncoding(rt) {
+			return rt, true
+		}
+		rt = rt.Elem()
+	}
+	return rt, false
+}
+
+// checkViewFields reports each exported field of rt that is embedded or has
+// no json tag, and walks on into its type.
+func checkViewFields(t *testing.T, rt reflect.Type, at string, walk func(reflect.Type, string)) {
+	t.Helper()
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		if f.Anonymous {
+			t.Errorf("%s embeds %s: an embedded type publishes ITS field names", at, f.Type)
+		}
+		if f.Tag.Get("json") == "" {
+			t.Errorf("%s.%s has no json tag, so its wire name is a Go identifier", at, f.Name)
+		}
+		walk(f.Type, at+"."+f.Name)
 	}
 }

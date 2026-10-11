@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
@@ -237,7 +238,7 @@ func TestPrintSymbolRefs_NoSignature(t *testing.T) {
 }
 
 func TestPrintRecordText_Full(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/iface", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/iface", "v1.0.0")
 	r := ifacedomain.InterfaceRecord{
 		Coordinate: coord,
 		Packages: []ifacedomain.PackageInterface{

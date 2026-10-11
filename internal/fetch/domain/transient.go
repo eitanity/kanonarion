@@ -118,7 +118,7 @@ func IsTransientFetchError(err error) bool {
 	// timeout unwraps to context.DeadlineExceeded, so the guard would otherwise
 	// reject it as the caller having stopped caring, which is the one thing it
 	// is not.
-	if _, ok := errors.AsType[*ProxyRequestTimeoutError](err); ok {
+	if errors.As(err, new(*ProxyRequestTimeoutError)) {
 		return true
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -127,7 +127,7 @@ func IsTransientFetchError(err error) bool {
 	if pse, ok := errors.AsType[*ProxyStatusError](err); ok {
 		return isTransientStatus(pse.StatusCode)
 	}
-	if _, ok := errors.AsType[*ProxyEmptyResponseError](err); ok {
+	if errors.As(err, new(*ProxyEmptyResponseError)) {
 		return true
 	}
 	msg := strings.ToLower(err.Error())

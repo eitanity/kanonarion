@@ -18,7 +18,7 @@ func TestExtractUseCase_stdlibNodeSkippedNotFailed(t *testing.T) {
 	ctx := t.Context()
 	root := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
 	std := coordinatetest.MustNew(walkdomain.StdlibModulePath, "v1.26.4")
-	dep, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	dep := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walkID := "walk-stdlib"
 
 	walk := walkdomain.WalkRecord{

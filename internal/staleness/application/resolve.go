@@ -119,17 +119,9 @@ func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Ans
 	// too old to serve still holds facts a live resolution cannot re-establish,
 	// and discarding it before the write is how a query came to destroy them. The
 	// extra cost is one keyed read of a local table on --fresh runs only.
-	var stored domain.Record
-	var haveFresh bool
-	if r.ledger != nil {
-		rec, found, err := r.ledger.GetStaleness(ctx, path)
-		if err != nil {
-			return Answer{}, fmt.Errorf("reading staleness ledger for %s: %w", path, err)
-		}
-		if found {
-			stored = rec
-			haveFresh = !r.fresh && rec.FreshAt(now, r.ttl)
-		}
+	stored, haveFresh, err := r.readLedger(ctx, path, now)
+	if err != nil {
+		return Answer{}, err
 	}
 
 	out := domain.Record{ModulePath: path}
@@ -192,6 +184,24 @@ func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Ans
 		}
 	}
 	return Answer{Record: out}, probeErr
+}
+
+// readLedger reads the recorded row for path; haveFresh reports that it may
+// answer this run.
+func (r *Resolver) readLedger(ctx context.Context, path string, now time.Time) (domain.Record, bool, error) {
+	var stored domain.Record
+	var haveFresh bool
+	if r.ledger != nil {
+		rec, found, err := r.ledger.GetStaleness(ctx, path)
+		if err != nil {
+			return domain.Record{}, false, fmt.Errorf("reading staleness ledger for %s: %w", path, err)
+		}
+		if found {
+			stored = rec
+			haveFresh = !r.fresh && rec.FreshAt(now, r.ttl)
+		}
+	}
+	return stored, haveFresh, nil
 }
 
 // applyTagPosition restores the pin-ahead answer the batched source cannot give.

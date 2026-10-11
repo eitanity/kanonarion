@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -63,7 +63,7 @@ func TestMigrateConfidence(t *testing.T) {
 // marshalled, not by a step a caller has to remember.
 func TestCanonicalOrderOfNodesAndEdges(t *testing.T) {
 	var h domain.CallGraphRecordHasher
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := domain.CallGraphRecord{
 		SchemaVersion: domain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
@@ -105,7 +105,7 @@ func TestCanonicalOrderOfNodesAndEdges(t *testing.T) {
 }
 
 func makeTestRecord() domain.CallGraphRecord {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	return domain.CallGraphRecord{
 		SchemaVersion: domain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,

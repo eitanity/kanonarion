@@ -11,6 +11,7 @@ import (
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/spf13/cobra"
 )
 
@@ -77,9 +78,9 @@ different budget: see 'kanonarion extract --help'.`,
 	cmd.Flags().StringVar(&f.fromWalk, "from-walk", "",
 		"pin a pre-modules module's require directives to the versions this walk resolved")
 	cmd.Flags().BoolVar(&localShim, "local", false, "")
-	_ = cmd.Flags().MarkHidden("local")
+	hideFlag(cmd, "local")
 	cmd.Flags().BoolVar(&f.narrate, "narrate-progress", false, "")
-	_ = cmd.Flags().MarkHidden("narrate-progress")
+	hideFlag(cmd, "narrate-progress")
 	registerNoProgressFlag(cmd, &f.noProgress)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 
@@ -92,14 +93,8 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	// the same modcache-aware blob store that fetched it, or blob resolution
 	// fails. Resolved on the path that consumes it, so the flag is answered for
 	// where the work happens rather than in the constructor.
-	if f.fromModcache != "" {
-		gomodPath, gerr := resolveGoModPath("")
-		if gerr != nil {
-			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
-		}
-		if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
-			return merr
-		}
+	if err := resolveCallGraphModcache(ctx, f); err != nil {
+		return err
 	}
 
 	logger := buildLogger(logLevel, stderr)
@@ -119,23 +114,11 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
-	var run callGraphRunJSON
-	var inputs cgdomain.AnalysisInputs
-	// The standard library resolves no build list and has none to be pinned
-	// against: it vendors every dependency it has, and the toolchain the
-	// coordinate names decides the rest. A --from-walk naming the frame that
-	// recorded the coordinate is therefore accepted and used for nothing, which
-	// is the honest outcome rather than a refusal of a flag that costs nothing.
-	if !coord.IsStdlib() {
-		inputs, err = analysisInputsForWalk(ctx, ctr.QueryWalks, f.fromWalk)
-		if err != nil {
-			return err
-		}
-		if f.fromWalk == "" {
-			inputs, run.BuildListRefusal = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
-		}
+	inputs, run, err := callGraphInputs(ctx, ctr, coord, f, stderr)
+	if err != nil {
+		return err
 	}
 
 	extract := ctr.ExtractCallGraph.Execute
@@ -166,6 +149,44 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	return callGraphExtractionExit(result.Record)
 }
 
+// resolveCallGraphModcache resolves --from-modcache against the project's
+// go.mod, so the extractor reads the store that fetched the module.
+func resolveCallGraphModcache(ctx context.Context, f cgFlags) error {
+	if f.fromModcache != "" {
+		gomodPath, gerr := resolveGoModPath("")
+		if gerr != nil {
+			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
+		}
+		if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
+			return merr
+		}
+	}
+	return nil
+}
+
+// callGraphInputs is the build list the analysis is pinned to: the walk
+// --from-walk names, or one discovered from the store.
+func callGraphInputs(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, f cgFlags, stderr io.Writer) (cgdomain.AnalysisInputs, callGraphRunJSON, error) {
+	var err error
+	var run callGraphRunJSON
+	var inputs cgdomain.AnalysisInputs
+	// The standard library resolves no build list and has none to be pinned
+	// against: it vendors every dependency it has, and the toolchain the
+	// coordinate names decides the rest. A --from-walk naming the frame that
+	// recorded the coordinate is therefore accepted and used for nothing, which
+	// is the honest outcome rather than a refusal of a flag that costs nothing.
+	if !coord.IsStdlib() {
+		inputs, err = analysisInputsForWalk(ctx, ctr.QueryWalks, f.fromWalk)
+		if err != nil {
+			return inputs, run, err
+		}
+		if f.fromWalk == "" {
+			inputs, run.BuildListRefusal = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
+		}
+	}
+	return inputs, run, nil
+}
+
 // callGraphExtractionExit maps an extraction outcome onto the process exit code.
 //
 // Three outcomes, three codes: a complete graph, one scoped by its
@@ -176,6 +197,11 @@ func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
 	msg := fmt.Sprintf("%s: %s", r.Coordinate, r.OverallStatus.String())
 	if r.FailureDetail != "" {
 		msg += " — " + r.FailureDetail
+	}
+	// 20, not 1 or 2: the remedy is another build of this binary, which no
+	// invocation of this one can run, so the invocation is what has to change.
+	if l, ok := cgdomain.AnalyserLimitOf(r.FailureDetail); ok && r.OverallStatus != cgdomain.CallGraphStatusCancelled {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %s — %s", r.Coordinate, r.OverallStatus, l.Statement())}
 	}
 	switch r.OverallStatus {
 	// ExcludedByConfig shares Extracted's 0 by decision, not by omission: the
@@ -264,7 +290,10 @@ func printCallGraphSummary(
 // their module cache. The record has already classified it, so the remedy is
 // printed from the classification rather than re-derived by the reader.
 func writeIncompletenessRemedy(stdout io.Writer, r cgdomain.CallGraphRecord, dir string) error {
-	if !cgdomain.RecordIsIncomplete(r) {
+	// A failure the analyser limit caused is owed its remedy too: no graph is
+	// still not a fault in the source.
+	_, limited := gotoolchain.ReadAnalyserLimit(r.FailureDetail)
+	if !cgdomain.RecordIsIncomplete(r) && (!limited || !cgdomain.RecordIsFailure(r)) {
 		return nil
 	}
 	if _, err := fmt.Fprintln(stdout, cgdomain.IncompleteGraphRemedy(r.Coordinate, r.FailureCause, r.FailureDetail, dir)); err != nil {

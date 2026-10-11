@@ -25,9 +25,9 @@ func seedFactNode(t testing.TB, ctx context.Context, facts *fakeFacts, blobs *fa
 		fetchtest.GoMod("gomod-" + coord.Path() + "-" + coord.Version()),
 	}
 	rec := fetchtest.Record(t, opts...)
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path()+"-"+coord.Version()))
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path()+"-"+coord.Version())))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod)))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...)))
 }
 
 // supersededGraph builds a walk whose edge names a superseded intermediate
@@ -64,7 +64,7 @@ func TestScan_PopulatesSupersededGoMod_WhenPrePruningPresent(t *testing.T) {
 	rec, superseded := supersededGraph(walkID)
 
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, rec)
+	mustSucceed(t, walkStore.PutWalk(ctx, rec))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -99,7 +99,7 @@ func TestScan_SkipsSupersededGoMod_WhenFullyPruned(t *testing.T) {
 	rec, superseded := supersededGraph(walkID)
 
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, rec)
+	mustSucceed(t, walkStore.PutWalk(ctx, rec))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // toolchainLocator finds the installed Go toolchain whose standard library a
@@ -185,4 +189,30 @@ func (w walkProjectDirs) WalkProjectDir(ctx context.Context, walkID string) (str
 		return "", false, nil
 	}
 	return rec.ProjectDir, true, nil
+}
+
+// WalkModules returns the modules the walk selected, the standard library and
+// the walk's own target excluded. It reads the same record WalkProjectDir does.
+func (w walkProjectDirs) WalkModules(ctx context.Context, walkID string) ([]vulnports.BuildModule, bool, error) {
+	if w.walks == nil || walkID == "" {
+		return nil, false, nil
+	}
+	rec, err := w.walks.GetWalk(ctx, walkID)
+	if errors.Is(err, walkports.ErrWalkNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("reading walk %s for its build list: %w", walkID, err)
+	}
+	var out []vulnports.BuildModule
+	for _, n := range rec.Graph.Nodes {
+		if n.ResolutionSource == walkdomain.ResolutionStdlib || n.Coordinate.IsLocal() || n.Coordinate.IsZero() {
+			continue
+		}
+		out = append(out, vulnports.BuildModule{
+			Coordinate:   n.Coordinate,
+			LocalReplace: n.ResolutionSource == walkdomain.ResolutionLocalReplace,
+		})
+	}
+	return out, true, nil
 }

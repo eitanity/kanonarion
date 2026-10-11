@@ -81,6 +81,29 @@ func TestAnalyseStdlib_LiveToolchain(t *testing.T) {
 	// Membership: a std package belongs to the coordinate, and the vendored
 	// trees the toolchain links in belong to it too — they carry advisories of
 	// their own and "./..." would have missed them.
+	owned := assertStdlibMembership(t, rec, coord)
+
+	// The join depends on the node ID of a standard-library symbol being the same
+	// here as it is where a consumer's graph records it as an external leaf.
+	want := "net/http.(*Client).Do"
+	found := false
+	for _, n := range rec.Nodes {
+		if n.ID == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("the graph holds no node with id %q, so a consumer's external leaf would never join to it", want)
+	}
+
+	t.Logf("stdlib %s: %d nodes, %d edges, %d packages", src.Version, len(rec.Nodes), len(rec.Edges), len(owned))
+}
+
+// assertStdlibMembership checks every owned node is attributed to the stdlib
+// coordinate, and returns the packages they cover.
+func assertStdlibMembership(t *testing.T, rec domain.CallGraphRecord, coord coordinate.ModuleCoordinate) map[string]bool {
+	t.Helper()
 	owned := map[string]bool{}
 	for _, n := range rec.Nodes {
 		if n.IsExternal {
@@ -103,20 +126,5 @@ func TestAnalyseStdlib_LiveToolchain(t *testing.T) {
 			t.Errorf("the graph holds no node of %s", pkg)
 		}
 	}
-
-	// The join depends on the node ID of a standard-library symbol being the same
-	// here as it is where a consumer's graph records it as an external leaf.
-	want := "net/http.(*Client).Do"
-	found := false
-	for _, n := range rec.Nodes {
-		if n.ID == want {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("the graph holds no node with id %q, so a consumer's external leaf would never join to it", want)
-	}
-
-	t.Logf("stdlib %s: %d nodes, %d edges, %d packages", src.Version, len(rec.Nodes), len(rec.Edges), len(owned))
+	return owned
 }

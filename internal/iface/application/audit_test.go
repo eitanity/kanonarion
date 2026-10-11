@@ -100,8 +100,8 @@ func TestExecute_AppendsInterfaceExtractedEvent(t *testing.T) {
 	if ev.Type != audit.EventInterfaceExtracted {
 		t.Errorf("event type = %q, want %q", ev.Type, audit.EventInterfaceExtracted)
 	}
-	if err := ev.Validate(); err != nil {
-		t.Errorf("event does not validate: %v", err)
+	if verr := ev.Validate(); verr != nil {
+		t.Errorf("event does not validate: %v", verr)
 	}
 	// The payload must identify the write without carrying the API.
 	want := map[string]any{
@@ -168,8 +168,8 @@ func TestExecute_AuditSinkFailureIsReported(t *testing.T) {
 	}
 	// The record is persisted before the event: the write happened, and the
 	// failure is about recording it, not about performing it.
-	if _, ok, _ := store.GetInterfaceRecord(context.Background(), coord, application.PipelineVersion); !ok {
-		t.Error("record not persisted; the append failure must not undo the write")
+	if _, ok, rerr := store.GetInterfaceRecord(context.Background(), coord, application.PipelineVersion); rerr != nil || !ok {
+		t.Errorf("record not persisted; the append failure must not undo the write (read error: %v)", rerr)
 	}
 }
 
@@ -183,8 +183,8 @@ func TestExecute_NoSinkAppendsNothing(t *testing.T) {
 	if _, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord}); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if _, ok, _ := store.GetInterfaceRecord(context.Background(), coord, application.PipelineVersion); !ok {
-		t.Error("record not persisted without an audit sink")
+	if _, ok, rerr := store.GetInterfaceRecord(context.Background(), coord, application.PipelineVersion); rerr != nil || !ok {
+		t.Errorf("record not persisted without an audit sink (read error: %v)", rerr)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestExecute_FailedExtractionAppendsWithReason(t *testing.T) {
 	if got := events[0].Payload["overall_status"]; got != res.Record.OverallStatus.String() {
 		t.Errorf("payload overall_status = %v, want %q", got, res.Record.OverallStatus.String())
 	}
-	if got, _ := events[0].Payload["failure_detail"].(string); got == "" {
+	if got, ok := events[0].Payload["failure_detail"].(string); !ok || got == "" {
 		t.Error("payload states no failure_detail for a failed extraction")
 	}
 }

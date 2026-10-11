@@ -88,7 +88,13 @@ func (d rawConfigDoc) ruleIsSet(scope, field string) bool {
 		if !ok {
 			continue
 		}
-		if s, _ := m["scope"].(string); s != scope {
+		// A rule without a scope key decodes with the empty scope, so it is
+		// matched as "" here too: both readings must name the same rule.
+		s, isString := m["scope"].(string)
+		if !isString {
+			s = ""
+		}
+		if s != scope {
 			continue
 		}
 		_, present := m[field]

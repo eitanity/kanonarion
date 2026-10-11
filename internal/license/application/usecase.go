@@ -175,65 +175,23 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 	}()
 
 	// Step 1: verify the module has been fetched.
-	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
+	factRecord, artefact, err := uc.requireArtefact(ctx, req)
 	if err != nil {
 		return ExtractResult{}, err
-	}
-
-	// Which bytes this extraction is about, resolved before any work is done so a
-	// fetch record that names no artefact fails here rather than after a full
-	// parse. This stage always holds a fetch record, so a record it cannot name
-	// an artefact for is a fault in the measurement, not a legacy row.
-	artefact, err := domain.ArtefactIdentityOf(factRecord)
-	if err != nil {
-		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
-	}
-	if artefact.IsZero() {
-		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain.ErrZeroIdentity)
 	}
 
 	// Step 2: check for an existing extraction record. A local coordinate
 	// (the project-walk root) is never served from cache: the working tree
 	// mutates between runs, so its records are recomputed fresh every time.
 	if !req.Force && !req.Coordinate.IsLocal() {
-		existing, found, cerr := uc.licenses.GetLicenseRecord(ctx, req.Coordinate, uc.pipelineVersion)
-		// A composition refusal says no single stored generation answers this
-		// coordinate. Refusing to SERVE that is right; refusing to MEASURE a new
-		// answer is not, so it is a cache miss here. Extraction appends, and the
-		// ladder decides which generation answers afterwards.
-		switch {
-		case errors.Is(cerr, ports.ErrLicenceConflict):
-			log.InfoContext(ctx, "licence_cache_conflict_remeasuring",
-				slog.String("conflict", cerr.Error()),
-			)
-		case errors.As(cerr, new(*recordseal.NothingServable)):
-			// Every held generation was set aside, and the store named each; this
-			// build measures one it can serve.
-			log.InfoContext(ctx, "licence_cache_set_aside_remeasuring",
-				slog.String("reason", cerr.Error()),
-			)
-		case cerr != nil && !errors.Is(cerr, ports.ErrLicenceIntegrity):
-			return ExtractResult{}, fmt.Errorf("checking license store: %w", cerr)
-		}
-		if found {
-			log.InfoContext(ctx, "licence_cache_hit")
-			return ExtractResult{Record: existing, FromCache: true}, nil
+		if res, hit, cerr := uc.cachedRecord(ctx, log, req); cerr != nil || hit {
+			return res, cerr
 		}
 	}
 
-	// Step 3: open the module zip.
-	// The zip is addressed by what it is, not by where some earlier measurement
-	// put it, so any store holding the artefact answers.
-	zipIdentity, hasZip, err := fetchports.ZipIdentity(factRecord)
+	zipReader, err := uc.openZip(ctx, req, factRecord)
 	if err != nil {
-		return ExtractResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
-	}
-	if !hasZip {
-		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain.NotFetchedRemedy(req.Coordinate))
-	}
-	zipReader, err := uc.blobs.Get(ctx, zipIdentity)
-	if err != nil {
-		return ExtractResult{}, fmt.Errorf("opening blob %s: %w", factRecord.ContentLocation, err)
+		return ExtractResult{}, err
 	}
 	defer func() {
 		if cerr := zipReader.Close(); cerr != nil && retErr == nil {
@@ -241,39 +199,9 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 		}
 	}()
 
-	zipData, err := io.ReadAll(zipReader)
+	record, err := uc.measureLicence(ctx, log, req, zipReader)
 	if err != nil {
-		return ExtractResult{}, fmt.Errorf("reading blob: %w", err)
-	}
-	log.InfoContext(ctx, "blob_read", slog.Int("zip_bytes", len(zipData)))
-
-	// Steps 4–7: extract license files, run detection, derive status.
-	record, extractErr := uc.extractFromZip(ctx, log, req.Coordinate, zipData, req.PerFile)
-	if interrupt.Cancelled(ctx, extractErr) {
-		// Stopped by the run's cancellation: no failed-extraction record is made of it.
-		return ExtractResult{}, fmt.Errorf("extracting the licence of %s: %w", req.Coordinate, extractErr)
-	}
-	if extractErr != nil {
-		record = domain2.LicenseRecord{
-			SchemaVersion:   domain2.LicenseSchemaVersion,
-			Ecosystem:       domain.EcosystemGo,
-			Coordinate:      req.Coordinate,
-			OverallStatus:   domain2.LicenseStatusExtractionFailed,
-			CopyrightStatus: domain2.CopyrightStatusExtractionFailed,
-			FailureDetail:   extractErr.Error(),
-			ExtractedAt:     uc.clock.Now().UTC(),
-			PipelineVersion: uc.pipelineVersion,
-		}
-		log.InfoContext(ctx, "license_extraction_failed", slog.String("error", extractErr.Error()))
-	}
-
-	// Step 7.5: a local coordinate is the project-walk root, so the extracted
-	// facts are the project's own outbound declaration (the licence it grants,
-	// the copyright it asserts), not an inbound dependency obligation. Mark
-	// the role so consumers (license-compat, sbom, notice) treat the record
-	// as the target rather than a constraint to satisfy.
-	if req.Coordinate.IsLocal() {
-		record.Role = domain2.LicenseRoleRootDeclaration
+		return ExtractResult{}, err
 	}
 
 	// Stamped on every branch: a failed extraction is still a claim about a
@@ -323,6 +251,116 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// requireArtefact reads the fetch record for req's coordinate and the artefact
+// it names, refusing one that names none.
+func (uc *ExtractLicenseUseCase) requireArtefact(ctx context.Context, req ExtractRequest) (domain.FactRecord, domain.ArtefactIdentity, error) {
+	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
+	if err != nil {
+		return domain.FactRecord{}, domain.ArtefactIdentity{}, err
+	}
+
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// parse. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row.
+	artefact, err := domain.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return domain.FactRecord{}, domain.ArtefactIdentity{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return domain.FactRecord{}, domain.ArtefactIdentity{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain.ErrZeroIdentity)
+	}
+	return factRecord, artefact, nil
+}
+
+// cachedRecord serves the stored generation when there is one; hit reports
+// that it did.
+func (uc *ExtractLicenseUseCase) cachedRecord(ctx context.Context, log *slog.Logger, req ExtractRequest) (ExtractResult, bool, error) {
+	existing, found, cerr := uc.licenses.GetLicenseRecord(ctx, req.Coordinate, uc.pipelineVersion)
+	// A composition refusal says no single stored generation answers this
+	// coordinate. Refusing to SERVE that is right; refusing to MEASURE a new
+	// answer is not, so it is a cache miss here. Extraction appends, and the
+	// ladder decides which generation answers afterwards.
+	switch {
+	case errors.Is(cerr, ports.ErrLicenceConflict):
+		log.InfoContext(ctx, "licence_cache_conflict_remeasuring",
+			slog.String("conflict", cerr.Error()),
+		)
+	case errors.As(cerr, new(*recordseal.NothingServable)):
+		// Every held generation was set aside, and the store named each; this
+		// build measures one it can serve.
+		log.InfoContext(ctx, "licence_cache_set_aside_remeasuring",
+			slog.String("reason", cerr.Error()),
+		)
+	case cerr != nil && !errors.Is(cerr, ports.ErrLicenceIntegrity):
+		return ExtractResult{}, false, fmt.Errorf("checking license store: %w", cerr)
+	}
+	if found {
+		log.InfoContext(ctx, "licence_cache_hit")
+		return ExtractResult{Record: existing, FromCache: true}, true, nil
+	}
+	return ExtractResult{}, false, nil
+}
+
+// openZip opens the module zip the fetch record names. The caller closes it.
+func (uc *ExtractLicenseUseCase) openZip(ctx context.Context, req ExtractRequest, factRecord domain.FactRecord) (io.ReadCloser, error) {
+	// Step 3: open the module zip.
+	// The zip is addressed by what it is, not by where some earlier measurement
+	// put it, so any store holding the artefact answers.
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(factRecord)
+	if err != nil {
+		return nil, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
+	}
+	if !hasZip {
+		return nil, fmt.Errorf("%w: %s carries no module zip: %s", ports.ErrModuleNotFetched, req.Coordinate, domain.NotFetchedRemedy(req.Coordinate))
+	}
+	zipReader, err := uc.blobs.Get(ctx, zipIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("opening blob %s: %w", factRecord.ContentLocation, err)
+	}
+	return zipReader, nil
+}
+
+// measureLicence reads the module zip and extracts its licence. A failed
+// extraction is a record of the failure, not an error.
+func (uc *ExtractLicenseUseCase) measureLicence(ctx context.Context, log *slog.Logger, req ExtractRequest, zipReader io.Reader) (domain2.LicenseRecord, error) {
+	zipData, err := io.ReadAll(zipReader)
+	if err != nil {
+		return domain2.LicenseRecord{}, fmt.Errorf("reading blob: %w", err)
+	}
+	log.InfoContext(ctx, "blob_read", slog.Int("zip_bytes", len(zipData)))
+
+	// Steps 4–7: extract license files, run detection, derive status.
+	record, extractErr := uc.extractFromZip(ctx, log, req.Coordinate, zipData, req.PerFile)
+	if interrupt.Cancelled(ctx, extractErr) {
+		// Stopped by the run's cancellation: no failed-extraction record is made of it.
+		return domain2.LicenseRecord{}, fmt.Errorf("extracting the licence of %s: %w", req.Coordinate, extractErr)
+	}
+	if extractErr != nil {
+		record = domain2.LicenseRecord{
+			SchemaVersion:   domain2.LicenseSchemaVersion,
+			Ecosystem:       domain.EcosystemGo,
+			Coordinate:      req.Coordinate,
+			OverallStatus:   domain2.LicenseStatusExtractionFailed,
+			CopyrightStatus: domain2.CopyrightStatusExtractionFailed,
+			FailureDetail:   extractErr.Error(),
+			ExtractedAt:     uc.clock.Now().UTC(),
+			PipelineVersion: uc.pipelineVersion,
+		}
+		log.InfoContext(ctx, "license_extraction_failed", slog.String("error", extractErr.Error()))
+	}
+
+	// Step 7.5: a local coordinate is the project-walk root, so the extracted
+	// facts are the project's own outbound declaration (the licence it grants,
+	// the copyright it asserts), not an inbound dependency obligation. Mark
+	// the role so consumers (license-compat, sbom, notice) treat the record
+	// as the target rather than a constraint to satisfy.
+	if req.Coordinate.IsLocal() {
+		record.Role = domain2.LicenseRoleRootDeclaration
+	}
+	return record, nil
 }
 
 // identicalGeneration asks the ledger whether it already holds the measurement
@@ -429,45 +467,9 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 	}
 
 	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
-	var entries []domain2.LicenseFileEntry
-	var texts map[string]string
-
-	for _, name := range archive.Names() {
-		if !strings.HasPrefix(name, modulePrefix) {
-			continue
-		}
-		relPath := strings.TrimPrefix(name, modulePrefix)
-		if !isLicenceFilename(relPath) {
-			continue
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return domain2.LicenseRecord{}, fmt.Errorf("license extraction cancelled: %w", ctxErr)
-		}
-
-		entry, content, entryErr := uc.processFile(ctx, archive, name, relPath)
-		if entryErr != nil {
-			log.InfoContext(ctx, "licence_file_skipped",
-				slog.String("path", relPath),
-				slog.String("error", entryErr.Error()),
-			)
-			entries = append(entries, domain2.LicenseFileEntry{
-				Path:       relPath,
-				IsVendored: isVendored(relPath),
-			})
-			continue
-		}
-		entries = append(entries, entry)
-		// Keep the verbatim text of root-level licence files. A compound file
-		// says in its own prose how the grants it carries relate to each
-		// other, and that prose is the only thing that does; without it the
-		// expression would be inferred from a confidence delta, which measures
-		// something else entirely.
-		if !entry.IsVendored && isRootLevel(relPath) {
-			if texts == nil {
-				texts = make(map[string]string, 4)
-			}
-			texts[relPath] = string(content)
-		}
+	entries, texts, err := uc.collectLicenceFiles(ctx, log, archive, modulePrefix)
+	if err != nil {
+		return domain2.LicenseRecord{}, err
 	}
 
 	// Pass 2: if no license files were found and per-file mode is enabled,
@@ -552,6 +554,52 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 		domain2.SetLicenseCoverage(&rec)
 	}
 	return rec, nil
+}
+
+// collectLicenceFiles reads each licence file under modulePrefix, keeping the
+// verbatim text of the root-level ones.
+func (uc *ExtractLicenseUseCase) collectLicenceFiles(ctx context.Context, log *slog.Logger, archive *ziparchive.Archive, modulePrefix string) ([]domain2.LicenseFileEntry, map[string]string, error) {
+	var entries []domain2.LicenseFileEntry
+	var texts map[string]string
+
+	for _, name := range archive.Names() {
+		if !strings.HasPrefix(name, modulePrefix) {
+			continue
+		}
+		relPath := strings.TrimPrefix(name, modulePrefix)
+		if !isLicenceFilename(relPath) {
+			continue
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, fmt.Errorf("license extraction cancelled: %w", ctxErr)
+		}
+
+		entry, content, entryErr := uc.processFile(ctx, archive, name, relPath)
+		if entryErr != nil {
+			log.InfoContext(ctx, "licence_file_skipped",
+				slog.String("path", relPath),
+				slog.String("error", entryErr.Error()),
+			)
+			entries = append(entries, domain2.LicenseFileEntry{
+				Path:       relPath,
+				IsVendored: isVendored(relPath),
+			})
+			continue
+		}
+		entries = append(entries, entry)
+		// Keep the verbatim text of root-level licence files. A compound file
+		// says in its own prose how the grants it carries relate to each
+		// other, and that prose is the only thing that does; without it the
+		// expression would be inferred from a confidence delta, which measures
+		// something else entirely.
+		if !entry.IsVendored && isRootLevel(relPath) {
+			if texts == nil {
+				texts = make(map[string]string, 4)
+			}
+			texts[relPath] = string(content)
+		}
+	}
+	return entries, texts, nil
 }
 
 // processFile reads one zip entry, hashes its content, and runs the detector.
@@ -662,21 +710,7 @@ func deriveStatus(entries []domain2.LicenseFileEntry) (primarySPDX string, prima
 	}
 
 	if len(roots) == 1 {
-		if len(primary.AltMatches) > 0 {
-			delta := primary.Confidence - primary.AltMatches[0].Confidence
-			// Compound file: multiple full license texts present at essentially
-			// equal coverage (e.g. yaml.v3 "MIT and Apache", klauspost/compress
-			// BSD-3-Clause + Apache-2.0). The verbatim text already satisfies
-			// all license obligations, so surface as Multiple rather than Ambiguous.
-			if delta <= compoundConfDelta {
-				return primary.SPDX, primary.Confidence, domain2.LicenseStatusMultiple
-			}
-			// Ambiguous: one genuine candidate with a close competitor.
-			if delta <= ambiguousConfDelta {
-				return primary.SPDX, primary.Confidence, domain2.LicenceStatusAmbiguous
-			}
-		}
-		return primary.SPDX, primary.Confidence, domain2.LicenseStatusDetected
+		return singleRootStatus(primary)
 	}
 
 	// Multiple root-level files: if all identified licences are the same
@@ -684,6 +718,26 @@ func deriveStatus(entries []domain2.LicenseFileEntry) (primarySPDX string, prima
 	for _, r := range roots[1:] {
 		if r.SPDX != "" && r.SPDX != primary.SPDX {
 			return primary.SPDX, primary.Confidence, domain2.LicenseStatusMultiple
+		}
+	}
+	return primary.SPDX, primary.Confidence, domain2.LicenseStatusDetected
+}
+
+// singleRootStatus is the status of a module with one root licence file,
+// read from how close its nearest competing match is.
+func singleRootStatus(primary domain2.LicenseFileEntry) (string, float64, domain2.LicenseStatus) {
+	if len(primary.AltMatches) > 0 {
+		delta := primary.Confidence - primary.AltMatches[0].Confidence
+		// Compound file: multiple full license texts present at essentially
+		// equal coverage (e.g. yaml.v3 "MIT and Apache", klauspost/compress
+		// BSD-3-Clause + Apache-2.0). The verbatim text already satisfies
+		// all license obligations, so surface as Multiple rather than Ambiguous.
+		if delta <= compoundConfDelta {
+			return primary.SPDX, primary.Confidence, domain2.LicenseStatusMultiple
+		}
+		// Ambiguous: one genuine candidate with a close competitor.
+		if delta <= ambiguousConfDelta {
+			return primary.SPDX, primary.Confidence, domain2.LicenceStatusAmbiguous
 		}
 	}
 	return primary.SPDX, primary.Confidence, domain2.LicenseStatusDetected

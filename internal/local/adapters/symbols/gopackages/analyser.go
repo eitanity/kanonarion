@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -54,35 +55,18 @@ func (a *Analyser) AnalyseSymbols(ctx context.Context, root string) ([]domain.Im
 	if err != nil {
 		return nil, fmt.Errorf("loading packages: %w", err)
 	}
+	// Fatal only when this binary could not read the source: every reference
+	// it would report then rests on a type check that never happened.
+	if l, ok := analyserLimit(pkgs); ok {
+		return nil, &gotoolchain.AnalyserLimitError{Limit: l}
+	}
 	// Non-fatal: emit partial results on type-check errors. One line per
 	// distinct problem, rather than packages.PrintErrors' three lines for one
 	// — see reportLoadErrors.
 	reportLoadErrors(os.Stderr, root, pkgs)
 
 	// Index external packages: importPath → (modulePath, moduleVersion).
-	type modRef struct{ path, version string }
-	extPkgToMod := make(map[string]modRef)
-	visited := make(map[string]bool)
-	var indexPkg func(p *packages.Package)
-	indexPkg = func(p *packages.Package) {
-		// Keyed on ID, not PkgPath: a tested package and its in-package test
-		// variant share a PkgPath, so keying on that visits whichever comes
-		// first and never walks the other's imports — losing exactly the
-		// dependencies only the _test.go files reach.
-		if visited[p.ID] {
-			return
-		}
-		visited[p.ID] = true
-		if p.Module != nil && !p.Module.Main {
-			extPkgToMod[p.PkgPath] = modRef{path: p.Module.Path, version: p.Module.Version}
-		}
-		for _, imp := range p.Imports {
-			indexPkg(imp)
-		}
-	}
-	for _, p := range pkgs {
-		indexPkg(p)
-	}
+	extPkgToMod := indexExternalPackages(pkgs)
 
 	// Per-module accumulators. Each holds every reference and, separately,
 	// those a production file makes; the difference is the test-only set.
@@ -151,6 +135,37 @@ func (a *Analyser) AnalyseSymbols(ctx context.Context, root string) ([]domain.Im
 		})
 	}
 	return result, nil
+}
+
+// modRef names the module an external package belongs to.
+type modRef struct{ path, version string }
+
+// indexExternalPackages maps each external package reachable from pkgs, test
+// variants included, to the module it belongs to.
+func indexExternalPackages(pkgs []*packages.Package) map[string]modRef {
+	extPkgToMod := make(map[string]modRef)
+	visited := make(map[string]bool)
+	var indexPkg func(p *packages.Package)
+	indexPkg = func(p *packages.Package) {
+		// Keyed on ID, not PkgPath: a tested package and its in-package test
+		// variant share a PkgPath, so keying on that visits whichever comes
+		// first and never walks the other's imports — losing exactly the
+		// dependencies only the _test.go files reach.
+		if visited[p.ID] {
+			return
+		}
+		visited[p.ID] = true
+		if p.Module != nil && !p.Module.Main {
+			extPkgToMod[p.PkgPath] = modRef{path: p.Module.Path, version: p.Module.Version}
+		}
+		for _, imp := range p.Imports {
+			indexPkg(imp)
+		}
+	}
+	for _, p := range pkgs {
+		indexPkg(p)
+	}
+	return extPkgToMod
 }
 
 // isTestFile reports whether the identifier sits in a _test.go file — the

@@ -76,7 +76,7 @@ marks them superseded.`,
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runVulnShow(cmd.Context(), args[0], walkID, gomod, target, cmd.Flags().Changed("gomod"), jsonOut, history,
 				ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, ctr.QueryNative, stdout, stderr)
 		},
@@ -133,73 +133,12 @@ func runVulnShow(
 	var aside setAsideRows
 	defer func() { retErr = aside.annotate(retErr) }()
 	if !anchored {
-		// Every generation is read rather than the store's composed "latest",
-		// because "show me this module's record" is a question a consumer asks
-		// about a module they depend on, and the frame-blind ladder answers it in
-		// whichever frame happens to rank first. The rung that decides is
-		// call-graph completeness, and an isolated scan wins it by construction:
-		// it built the module alone, so it records BUILT_WITH_BODIES, while a
-		// consumer-rooted govulncheck analysis records no completeness at all.
-		// vuln-show therefore headlined an isolated "not reachable" while
-		// reachability, over the same store, served the consumer's route to the
-		// vulnerable symbol. Same read as reachability uses, so the two agree.
-		recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
-		if err := aside.take(err); err != nil {
-			return vulnShowReadRefusal(coord, err)
-		}
-		// More than one consumer frame and no flag naming one: the question has
-		// several true answers and no way to tell which was asked.
-		if frames := consumerFrames(recs, coord); len(frames) > 1 {
-			return ambiguousFrameRefusal("kanonarion vuln-show "+coord.String(), coord, frames)
-		}
-		r, isoAside, has, ok := selectConsumerRecord(recs, coord)
-		if !ok && len(aside) > 0 {
-			return aside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan <walk-id>")
-		}
-		if !ok {
-			// The read above keys on the pipeline version, so an empty result may
-			// be a coordinate this build has superseded rather than one nobody has
-			// scanned. Asked before the miss is reported, because the two absences
-			// carry opposite instructions.
-			if err := supersededVulnRefusal(ctx, uc, walks, coord); err != nil {
-				return err
-			}
-			// No walk was named, so there is no "newer than what you passed" to
-			// compute — but a succeeded walk of this module may already exist,
-			// and naming it turns the placeholder <walk-id> into a command the
-			// operator can run. The primary line keeps its placeholder shape.
-			msg := fmt.Sprintf("no vulnerability record for %s — run: kanonarion vuln-scan <walk-id>", coord)
-			if note := latestSucceededWalkNote(ctx, walks, coord, time.Time{}); note != "" {
-				msg += "\n" + note
-			}
-			return &exitError{code: ExitNotFound, msg: msg}
-		}
-		rec, isolated, hasIsolated = r, isoAside, has
+		rec, isolated, hasIsolated, err = selectShowRecord(ctx, uc, walks, coord, &aside)
 	} else {
-		// The candidates leave the store unranked and the frame decides here. The
-		// walk's membership index keys on (coordinate, pipeline, snapshot) and
-		// carries no frame, so the candidate set for a project walk also contains
-		// the isolated scans and every other project's target-rooted records of
-		// the same generation — which is how a walk-pinned read used to answer
-		// from a different walk without saying so.
-		candidates, err := uc.ListRecordsForModuleInWalk(ctx, coord, vulnPipelineVersion, anchor.walkID)
-		if err := aside.take(err); err != nil {
-			return vulnShowReadRefusal(coord, err)
-		}
-		r, isoAside, has, ok, serr := selectAnchoredRecord(candidates, coord, anchor, "kanonarion vuln-show "+coord.String())
-		if serr != nil {
-			return serr
-		}
-		if !ok && len(aside) > 0 {
-			return aside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan "+anchor.walkID)
-		}
-		if len(candidates) == 0 {
-			return explainWalkRecordAbsence(ctx, runs, walks, coord, anchor.walkID)
-		}
-		if !ok {
-			return frameRecordAbsence(coord, anchor, candidates)
-		}
-		rec, isolated, hasIsolated = r, isoAside, has
+		rec, isolated, hasIsolated, err = selectAnchoredShowRecord(ctx, uc, runs, walks, coord, anchor, &aside)
+	}
+	if err != nil {
+		return err
 	}
 
 	// The native statement is derived from the module's own stored measurement,
@@ -243,6 +182,85 @@ func runVulnShow(
 	printVulnRecord(stdout, rec, newRouteRootFunc(ctx, graphs, rec), cov)
 	printDeclinedIsolatedFrame(stdout, isolated, hasIsolated)
 	return nil
+}
+
+// selectShowRecord picks the record vuln-show serves when no walk anchors the
+// question: the consumer frame's, refused when several consumers hold one.
+func selectShowRecord(ctx context.Context, uc QueryVulnUseCase, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate, aside *setAsideRows) (rec, isolated vuldomain.VulnerabilityRecord, hasIsolated bool, _ error) {
+	// Every generation is read rather than the store's composed "latest",
+	// because "show me this module's record" is a question a consumer asks
+	// about a module they depend on, and the frame-blind ladder answers it in
+	// whichever frame happens to rank first. The rung that decides is
+	// call-graph completeness, and an isolated scan wins it by construction:
+	// it built the module alone, so it records BUILT_WITH_BODIES, while a
+	// consumer-rooted govulncheck analysis records no completeness at all.
+	// vuln-show therefore headlined an isolated "not reachable" while
+	// reachability, over the same store, served the consumer's route to the
+	// vulnerable symbol. Same read as reachability uses, so the two agree.
+	recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
+	if err = aside.take(err); err != nil {
+		return rec, isolated, hasIsolated, vulnShowReadRefusal(coord, err)
+	}
+	// More than one consumer frame and no flag naming one: the question has
+	// several true answers and no way to tell which was asked.
+	if frames := consumerFrames(recs, coord); len(frames) > 1 {
+		return rec, isolated, hasIsolated, ambiguousFrameRefusal("kanonarion vuln-show "+coord.String(), coord, frames)
+	}
+	r, isoAside, has, ok, cerr := selectConsumerRecord(recs, coord)
+	if cerr != nil {
+		return rec, isolated, hasIsolated, vulnShowReadRefusal(coord, cerr)
+	}
+	if !ok && len(*aside) > 0 {
+		return rec, isolated, hasIsolated, aside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan <walk-id>")
+	}
+	if !ok {
+		// The read above keys on the pipeline version, so an empty result may
+		// be a coordinate this build has superseded rather than one nobody has
+		// scanned. Asked before the miss is reported, because the two absences
+		// carry opposite instructions.
+		if err := supersededVulnRefusal(ctx, uc, walks, coord); err != nil {
+			return rec, isolated, hasIsolated, err
+		}
+		// No walk was named, so there is no "newer than what you passed" to
+		// compute — but a succeeded walk of this module may already exist,
+		// and naming it turns the placeholder <walk-id> into a command the
+		// operator can run. The primary line keeps its placeholder shape.
+		msg := fmt.Sprintf("no vulnerability record for %s — run: kanonarion vuln-scan <walk-id>", coord)
+		if note := latestSucceededWalkNote(ctx, walks, coord, time.Time{}); note != "" {
+			msg += "\n" + note
+		}
+		return rec, isolated, hasIsolated, &exitError{code: ExitNotFound, msg: msg}
+	}
+	return r, isoAside, has, nil
+}
+
+// selectAnchoredShowRecord picks the record vuln-show serves in the anchored
+// walk's own frame, refused when that walk holds none.
+func selectAnchoredShowRecord(ctx context.Context, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate, anchor vulnFrameAnchor, aside *setAsideRows) (rec, isolated vuldomain.VulnerabilityRecord, hasIsolated bool, _ error) {
+	// The candidates leave the store unranked and the frame decides here. The
+	// walk's membership index keys on (coordinate, pipeline, snapshot) and
+	// carries no frame, so the candidate set for a project walk also contains
+	// the isolated scans and every other project's target-rooted records of
+	// the same generation — which is how a walk-pinned read used to answer
+	// from a different walk without saying so.
+	candidates, err := uc.ListRecordsForModuleInWalk(ctx, coord, vulnPipelineVersion, anchor.walkID)
+	if err = aside.take(err); err != nil {
+		return rec, isolated, hasIsolated, vulnShowReadRefusal(coord, err)
+	}
+	r, isoAside, has, ok, serr := selectAnchoredRecord(candidates, coord, anchor, "kanonarion vuln-show "+coord.String())
+	if serr != nil {
+		return rec, isolated, hasIsolated, serr
+	}
+	if !ok && len(*aside) > 0 {
+		return rec, isolated, hasIsolated, aside.noServable(coord, "re-scan with this build to write one it can: kanonarion vuln-scan "+anchor.walkID)
+	}
+	if len(candidates) == 0 {
+		return rec, isolated, hasIsolated, explainWalkRecordAbsence(ctx, runs, walks, coord, anchor.walkID)
+	}
+	if !ok {
+		return rec, isolated, hasIsolated, frameRecordAbsence(coord, anchor, candidates)
+	}
+	return r, isoAside, has, nil
 }
 
 // vulnShowReadRefusal is how this command reports a failed record read.
@@ -676,7 +694,7 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
 		},
 	}

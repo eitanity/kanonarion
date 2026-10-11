@@ -96,7 +96,7 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX, walkID string, stdou
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return licenseCompatWith(ctx, ctr, coord, targetSPDX, walkID, stdout, stderr)
 }
@@ -119,26 +119,9 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	// gates which files, and so which modules, a build selects. So the walk is
 	// either the one the caller pinned, or one picked here by a stated rule — and
 	// the verdict names it either way.
-	var choice walkChoice
-	var selection selectionJSON
-	if walkID != "" {
-		rec, err := resolvePinnedWalk(ctx, ctr.QueryWalks, walkID, target)
-		if err != nil {
-			return err
-		}
-		choice, selection = pinnedWalkChoice(rec), pinnedSelection()
-	} else {
-		summaries, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &target})
-		if err != nil {
-			return fmt.Errorf("listing walks: %w", err)
-		}
-		if len(summaries) == 0 {
-			// The answer travels on the error, once: main prints it, and no
-			// fmt.Fprintf here puts a second copy on the data channel.
-			return walkTargetMiss(ctx, ctr.QueryWalks, target, stderr)
-		}
-		choice = chooseWalk(ctx, ctr.QueryWalks, summaries, "")
-		selection = choice.selection()
+	choice, selection, err := chooseCompatWalk(ctx, ctr, target, walkID, stderr)
+	if err != nil {
+		return err
 	}
 	walkID = choice.summary.ID
 	walkFrame := choice.summary.Frame()
@@ -209,6 +192,33 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	}
 
 	return compatExitCode(report)
+}
+
+// chooseCompatWalk is the walk the verdict is measured in: the one pinned, or
+// one chosen by the stated rule.
+func chooseCompatWalk(ctx context.Context, ctr *Container, target coordinate.ModuleCoordinate, walkID string, stderr io.Writer) (walkChoice, selectionJSON, error) {
+	var choice walkChoice
+	var selection selectionJSON
+	if walkID != "" {
+		rec, err := resolvePinnedWalk(ctx, ctr.QueryWalks, walkID, target)
+		if err != nil {
+			return walkChoice{}, selectionJSON{}, err
+		}
+		choice, selection = pinnedWalkChoice(rec), pinnedSelection()
+	} else {
+		summaries, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &target})
+		if err != nil {
+			return walkChoice{}, selectionJSON{}, fmt.Errorf("listing walks: %w", err)
+		}
+		if len(summaries) == 0 {
+			// The answer travels on the error, once: main prints it, and no
+			// fmt.Fprintf here puts a second copy on the data channel.
+			return walkChoice{}, selectionJSON{}, walkTargetMiss(ctx, ctr.QueryWalks, target, stderr)
+		}
+		choice = chooseWalk(ctx, ctr.QueryWalks, summaries, "")
+		selection = choice.selection()
+	}
+	return choice, selection, nil
 }
 
 func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID string, walkFrame walkdomain.WalkFrame, selection selectionJSON, caveat *preModulesCaveatJSON, stdout io.Writer) error {
@@ -459,42 +469,48 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 	}
 
 	if len(unknown) > 0 {
-		_, _ = fmt.Fprintf(stdout, "\nRequires review — unmodelled license pair (%d):\n", len(unknown))
-		unmeasured, unclassifiable := 0, 0
-		for _, c := range unknown {
-			depSPDX := c.DepSPDX
-			switch {
-			case depSPDX != "":
-			case c.Measurement == domain.MeasurementUnclassifiable:
-				depSPDX = "(licence unclassifiable)"
-				unclassifiable++
-			default:
-				depSPDX = "(no licence record)"
-				unmeasured++
-			}
-			_, _ = fmt.Fprintf(stdout, "  %-55s %s\n",
-				c.ModulePath+"@"+c.ModuleVersion, depSPDX)
-			writeCompatOrigin(stdout, c)
-		}
-		// The two states have two different next actions, so each gets its own
-		// statement and neither is printed for the other's modules. Each is
-		// stated ONCE, here, rather than on every row it applies to: a real
-		// closure holds nine of these in a row (corteza), and the same sentence
-		// repeated nine times is what a reader skips. The row says which state
-		// it is; this says what to do about it.
-		if unmeasured > 0 {
-			_, _ = fmt.Fprintf(stdout, "\nTip: %d dep(s) have no licence record. Run 'kanonarion extract <walk-id>' to\n", unmeasured)
-			_, _ = fmt.Fprintf(stdout, "     populate them, then re-run license-compat.\n")
-		}
-		if unclassifiable > 0 {
-			_, _ = fmt.Fprintf(stdout, "\nNote: %d dep(s) have a licence record whose files determined no identifier.\n", unclassifiable)
-			_, _ = fmt.Fprintf(stdout, "      Extraction has already run for these and cannot settle them: record a\n")
-			_, _ = fmt.Fprintf(stdout, "      human determination as a license_overrides entry, or carry them as\n")
-			_, _ = fmt.Fprintf(stdout, "      accepted open items.\n")
-		}
+		printUnmodelledPairs(stdout, unknown)
 	}
 
 	printCompatCoverage(report, stdout)
+}
+
+// printUnmodelledPairs lists the conflicts no rule models, each with the state
+// it is in, and once each what to do about the two states.
+func printUnmodelledPairs(stdout io.Writer, unknown []domain.CompatibilityConflict) {
+	_, _ = fmt.Fprintf(stdout, "\nRequires review — unmodelled license pair (%d):\n", len(unknown))
+	unmeasured, unclassifiable := 0, 0
+	for _, c := range unknown {
+		depSPDX := c.DepSPDX
+		switch {
+		case depSPDX != "":
+		case c.Measurement == domain.MeasurementUnclassifiable:
+			depSPDX = "(licence unclassifiable)"
+			unclassifiable++
+		default:
+			depSPDX = "(no licence record)"
+			unmeasured++
+		}
+		_, _ = fmt.Fprintf(stdout, "  %-55s %s\n",
+			c.ModulePath+"@"+c.ModuleVersion, depSPDX)
+		writeCompatOrigin(stdout, c)
+	}
+	// The two states have two different next actions, so each gets its own
+	// statement and neither is printed for the other's modules. Each is
+	// stated ONCE, here, rather than on every row it applies to: a real
+	// closure holds nine of these in a row (corteza), and the same sentence
+	// repeated nine times is what a reader skips. The row says which state
+	// it is; this says what to do about it.
+	if unmeasured > 0 {
+		_, _ = fmt.Fprintf(stdout, "\nTip: %d dep(s) have no licence record. Run 'kanonarion extract <walk-id>' to\n", unmeasured)
+		_, _ = fmt.Fprintf(stdout, "     populate them, then re-run license-compat.\n")
+	}
+	if unclassifiable > 0 {
+		_, _ = fmt.Fprintf(stdout, "\nNote: %d dep(s) have a licence record whose files determined no identifier.\n", unclassifiable)
+		_, _ = fmt.Fprintf(stdout, "      Extraction has already run for these and cannot settle them: record a\n")
+		_, _ = fmt.Fprintf(stdout, "      human determination as a license_overrides entry, or carry them as\n")
+		_, _ = fmt.Fprintf(stdout, "      accepted open items.\n")
+	}
 }
 
 // compatExitCode returns an exitError for non-clean reports. ExitPartial (1)

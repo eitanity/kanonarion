@@ -65,14 +65,14 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	s.logMem(ctx, "project_scan_start")
 	s.logger.Info("vuln-scan: project-rooted scan starting", "dir", projectDir)
 
-	if _, err := os.Stat(projectDir); err != nil {
+	if _, serr := os.Stat(projectDir); serr != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
 			UnscanReason:      domain.UnscanReasonProjectDirUnavailable,
-			UnscannableReason: "project directory not accessible: " + err.Error(),
+			UnscannableReason: "project directory not accessible: " + serr.Error(),
 		}, nil
 	}
-	if _, err := os.Stat(filepath.Join(projectDir, "go.mod")); err != nil {
+	if _, serr := os.Stat(filepath.Join(projectDir, "go.mod")); serr != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
 			UnscanReason:      domain.UnscanReasonProjectNoGoMod,
@@ -130,7 +130,8 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	// is settled: a scan that died mid-stream must be classified as the failure it
 	// is, not as the truncated parse it also produced. The channel receive is the
 	// synchronisation edge that publishes the goroutine's write to this goroutine.
-	_, _ = io.Copy(io.Discard, pr)
+	// The writer only ever closes cleanly, so the drain ends at EOF.
+	_, _ = io.Copy(io.Discard, pr) //nolint:errcheck // how the child ended is waitErr
 	_ = pr.Close()
 	waitErr := <-waitErrCh
 

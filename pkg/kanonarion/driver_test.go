@@ -95,7 +95,11 @@ func TestValidateIngest_RoundTripAndFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	ctx := context.Background()
 	uc := d.ValidateIngest
@@ -107,8 +111,8 @@ func TestValidateIngest_RoundTripAndFailClosed(t *testing.T) {
 		fetchtest.FetchedAt(time.Unix(0, 0).UTC()),
 	)
 
-	if err := uc.Ingest(ctx, rec); err != nil {
-		t.Fatalf("Ingest of a valid record: %v", err)
+	if ierr := uc.Ingest(ctx, rec); ierr != nil {
+		t.Fatalf("Ingest of a valid record: %v", ierr)
 	}
 	got, found, err := uc.ReadVerified(ctx, coord, rec.PipelineVersion)
 	if err != nil || !found {
@@ -135,13 +139,21 @@ func TestOpenDriver_TwoOpensShareNoState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver A: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanupA() })
+	t.Cleanup(func() {
+		if cerr := cleanupA(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	db, cleanupB, err := kanonarion.OpenDriver(t.TempDir())
 	if err != nil {
 		t.Fatalf("OpenDriver B: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanupB() })
+	t.Cleanup(func() {
+		if cerr := cleanupB(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	if da == db {
 		t.Error("two OpenDriver calls returned the same Driver pointer; the surface is not per-store")

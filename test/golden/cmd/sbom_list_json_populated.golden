@@ -10,7 +10,7 @@ exit 0
     "format": "cyclonedx-1.6",
     "pipeline_version": "0.10.0",
     "generated_at": "2026-02-03T11:30:00Z",
-    "content_hash": "6351d56adc31e34a7061318b869b3858f44dbb2cebdeac98c070f9cfc58f7e7a",
+    "content_hash": "7ac366bf64e4301d63d80d288b1782f965b4478a61f5f35bc48042c7ce66b7d0",
     "operator": "",
     "licenses_incomplete": false
   },
@@ -21,7 +21,7 @@ exit 0
     "format": "cyclonedx-1.6",
     "pipeline_version": "0.10.0",
     "generated_at": "2026-02-03T11:30:00Z",
-    "content_hash": "03f5a152b738f1a820b4ade37605064bd2499c7f990a725458461a070b80ba9f",
+    "content_hash": "872454c57592f6a4c8970127fe46f560d6bc2b31aedf1999fdb9201cf388e602",
     "operator": "",
     "licenses_incomplete": false
   }

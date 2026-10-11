@@ -45,26 +45,7 @@ func TestPrepareDBArg_EveryUnreachableSnapshotRefuses(t *testing.T) {
 	}
 
 	t.Run("integrity failure is fatal", func(t *testing.T) {
-		arg, _, cleanup, err := newScanner(fmt.Errorf("reading blob: %w", ports.ErrSnapshotIntegrity)).
-			prepareDBArg(context.Background(), snapshot, "")
-		if cleanup != nil {
-			cleanup()
-		}
-		if err == nil {
-			t.Fatal("a corrupt snapshot must fail the scan, not silently answer from a different database")
-		}
-		if !errors.Is(err, ports.ErrSnapshotIntegrity) {
-			t.Errorf("the sentinel must survive wrapping so the run can route on it, got: %v", err)
-		}
-		if arg == liveDB {
-			t.Error("the live database must never be offered after an integrity failure — that is the swallow being removed")
-		}
-		if arg != "" {
-			t.Errorf("no database argument may be returned after an abort, got %q", arg)
-		}
-		if !strings.Contains(err.Error(), "--fresh") {
-			t.Errorf("the operator must be pointed at the remedy, got: %v", err)
-		}
+		testIntegrityFailureFatal(t, newScanner, snapshot, liveDB)
 	})
 
 	// The two failures that used to keep the fallback. Each produced a scan run
@@ -125,26 +106,7 @@ func TestPrepareDBArg_EveryUnreachableSnapshotRefuses(t *testing.T) {
 	// Trusting it is how a scan could read one generation while its record named
 	// another, so it states its own generation or it is not used.
 	t.Run("a pre-extracted directory of another generation is refused", func(t *testing.T) {
-		s := &Scanner{
-			logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-			vulnStore: &snapshotFaultStore{err: errors.New("must not be consulted")},
-		}
-		arg, _, cleanup, err := s.prepareDBArg(context.Background(), snapshot, preExtractedDirAt(t, "2026-01-01T00:00:00Z"))
-		if cleanup != nil {
-			cleanup()
-		}
-		if err == nil {
-			t.Fatal("a directory holding a different generation must not be handed to the analyser")
-		}
-		if !errors.Is(err, ports.ErrSnapshotUnavailable) {
-			t.Errorf("the availability sentinel must survive wrapping, got: %v", err)
-		}
-		if !strings.Contains(err.Error(), "2026-01-01T00:00:00Z") {
-			t.Errorf("the refusal must name the generation the directory actually holds, got: %v", err)
-		}
-		if arg != "" {
-			t.Errorf("no database argument may be returned after a refusal, got %q", arg)
-		}
+		testOtherGenerationDirRefused(t, snapshot)
 	})
 
 	// A directory that will not say which generation it is cannot be checked, and
@@ -162,4 +124,54 @@ func TestPrepareDBArg_EveryUnreachableSnapshotRefuses(t *testing.T) {
 			t.Errorf("a directory with no index/db.json must be refused, got: %v", err)
 		}
 	})
+}
+
+// testIntegrityFailureFatal checks a corrupt snapshot fails the scan and
+// never falls back to the live database.
+func testIntegrityFailureFatal(t *testing.T, newScanner func(error) *Scanner, snapshot domain.DatabaseSnapshot, liveDB string) {
+	arg, _, cleanup, err := newScanner(fmt.Errorf("reading blob: %w", ports.ErrSnapshotIntegrity)).
+		prepareDBArg(context.Background(), snapshot, "")
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatal("a corrupt snapshot must fail the scan, not silently answer from a different database")
+	}
+	if !errors.Is(err, ports.ErrSnapshotIntegrity) {
+		t.Errorf("the sentinel must survive wrapping so the run can route on it, got: %v", err)
+	}
+	if arg == liveDB {
+		t.Error("the live database must never be offered after an integrity failure — that is the swallow being removed")
+	}
+	if arg != "" {
+		t.Errorf("no database argument may be returned after an abort, got %q", arg)
+	}
+	if !strings.Contains(err.Error(), "--fresh") {
+		t.Errorf("the operator must be pointed at the remedy, got: %v", err)
+	}
+}
+
+// testOtherGenerationDirRefused checks a pre-extracted directory holding
+// another generation is refused, naming the one it holds.
+func testOtherGenerationDirRefused(t *testing.T, snapshot domain.DatabaseSnapshot) {
+	s := &Scanner{
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		vulnStore: &snapshotFaultStore{err: errors.New("must not be consulted")},
+	}
+	arg, _, cleanup, err := s.prepareDBArg(context.Background(), snapshot, preExtractedDirAt(t, "2026-01-01T00:00:00Z"))
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatal("a directory holding a different generation must not be handed to the analyser")
+	}
+	if !errors.Is(err, ports.ErrSnapshotUnavailable) {
+		t.Errorf("the availability sentinel must survive wrapping, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "2026-01-01T00:00:00Z") {
+		t.Errorf("the refusal must name the generation the directory actually holds, got: %v", err)
+	}
+	if arg != "" {
+		t.Errorf("no database argument may be returned after a refusal, got %q", arg)
+	}
 }

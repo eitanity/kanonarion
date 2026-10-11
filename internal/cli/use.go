@@ -19,6 +19,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -616,8 +617,8 @@ func copyToModCache(
 	}
 	defer func() { _ = root.Close() }()
 
-	if err := root.MkdirAll(relDir, 0o750); err != nil {
-		return useLanding{}, fmt.Errorf("creating dir %s: %w", baseDir, err)
+	if merr := root.MkdirAll(relDir, 0o750); merr != nil {
+		return useLanding{}, fmt.Errorf("creating dir %s: %w", baseDir, merr)
 	}
 
 	// 1. Copy ZIP
@@ -650,35 +651,54 @@ func copyToModCache(
 	}
 
 	// 2. Copy MOD
+	if err := copyAndVerifyGoMod(ctx, blobs, root, record, coord, relDir, logger); err != nil {
+		return useLanding{}, err
+	}
+
+	if err := writeDerivedModCacheFiles(root, record, coord, relDir); err != nil {
+		return useLanding{}, err
+	}
+
+	return landing, nil
+}
+
+// copyAndVerifyGoMod copies the go.mod into the module cache and checks it
+// hashes to the recorded value.
+func copyAndVerifyGoMod(ctx context.Context, blobs ports.BlobStore, root *os.Root, record fetchdomain.CompositeRecord, coord coordinate.ModuleCoordinate, relDir string, logger *slog.Logger) error {
 	goModIdentity, hasGoMod, err := ports.GoModIdentity(record.FactRecord)
 	if err != nil {
-		return useLanding{}, fmt.Errorf("deriving go.mod address for %s: %w", coord, err)
+		return fmt.Errorf("deriving go.mod address for %s: %w", coord, err)
 	}
 	if hasGoMod {
 		relModPath := filepath.Join(relDir, coord.Version()+".mod")
 		if _, err := copyBlob(ctx, blobs, goModIdentity, root, relModPath); err != nil {
-			return useLanding{}, fmt.Errorf("copying mod: %w", err)
+			return fmt.Errorf("copying mod: %w", err)
 		}
 
 		// 2b. Verify MOD hash
 		modBytes, err := root.ReadFile(relModPath)
 		if err != nil {
-			return useLanding{}, fmt.Errorf("reading copied mod: %w", err)
+			return fmt.Errorf("reading copied mod: %w", err)
 		}
 		computedModHash, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(modBytes)), nil
 		})
 		if err != nil {
-			return useLanding{}, fmt.Errorf("hashing mod: %w", err)
+			return fmt.Errorf("hashing mod: %w", err)
 		}
 		if record.GoModHash != computedModHash {
-			return useLanding{}, fmt.Errorf("checksum mismatch for %s go.mod: recorded %s, computed %s", coord, record.GoModHash, computedModHash)
+			return fmt.Errorf("checksum mismatch for %s go.mod: recorded %s, computed %s", coord, record.GoModHash, computedModHash)
 		}
 	} else {
 		// Fallback for older records if any (unlikely to work without the mod file)
 		logger.WarnContext(ctx, "missing_go_mod_location", slog.String("module", coord.String()))
 	}
+	return nil
+}
 
+// writeDerivedModCacheFiles writes the .info, .ziphash and .lock files beside
+// the zip, each only when absent.
+func writeDerivedModCacheFiles(root *os.Root, record fetchdomain.CompositeRecord, coord coordinate.ModuleCoordinate, relDir string) error {
 	// 3. Create INFO
 	info := struct {
 		Version string
@@ -698,10 +718,13 @@ func copyToModCache(
 	info.Origin.Hash = record.GitCommitHash
 	info.Origin.Ref = record.GitRef
 
-	infoData, _ := json.Marshal(info)
+	infoData, encErr := json.Marshal(info)
+	if encErr != nil {
+		return fmt.Errorf("encoding info for %s: %w", coord, encErr)
+	}
 	if _, err := root.Stat(filepath.Join(relDir, coord.Version()+".info")); err != nil {
 		if err := root.WriteFile(filepath.Join(relDir, coord.Version()+".info"), infoData, 0o600); err != nil {
-			return useLanding{}, fmt.Errorf("writing info: %w", err)
+			return fmt.Errorf("writing info: %w", err)
 		}
 	}
 
@@ -709,18 +732,17 @@ func copyToModCache(
 	zipHashData := fmt.Sprintf("%s %s\n", coord.Path(), record.ModuleHash)
 	if _, err := root.Stat(filepath.Join(relDir, coord.Version()+".ziphash")); err != nil {
 		if err := root.WriteFile(filepath.Join(relDir, coord.Version()+".ziphash"), []byte(zipHashData), 0o600); err != nil {
-			return useLanding{}, fmt.Errorf("writing ziphash: %w", err)
+			return fmt.Errorf("writing ziphash: %w", err)
 		}
 	}
 
 	// 5. Create LOCK (empty)
 	if _, err := root.Stat(filepath.Join(relDir, coord.Version()+".lock")); err != nil {
 		if err := root.WriteFile(filepath.Join(relDir, coord.Version()+".lock"), nil, 0o600); err != nil {
-			return useLanding{}, fmt.Errorf("writing lock: %w", err)
+			return fmt.Errorf("writing lock: %w", err)
 		}
 	}
-
-	return landing, nil
+	return nil
 }
 
 // copyBlob writes the blob at identity into the cache, reporting whether the

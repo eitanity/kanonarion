@@ -192,7 +192,7 @@ func TestMigration_BackfillsRecordStatusAxes(t *testing.T) {
 		t.Fatalf("opening db at version 10: %v", err)
 	}
 
-	if _, err := db.DB().ExecContext(ctx, `
+	if _, eerr := db.DB().ExecContext(ctx, `
 INSERT INTO vulnerability_records (
     module_path, module_version, pipeline_version, snapshot_source,
     snapshot_version, walk_id, overall_status, finding_count,
@@ -202,11 +202,11 @@ INSERT INTO vulnerability_records (
  ('example.com/b', 'v1.0.0', 'v14', 'govulndb', 'v1', 'w', 'Clean',       0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'h2', '{}'),
  ('example.com/c', 'v1.0.0', 'v14', 'govulndb', 'v1', 'w', 'Unscannable', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'h3', '{}'),
  ('example.com/d', 'v1.0.0', 'v14', 'govulndb', 'v1', 'w', 'ScanFailed',  0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'h4', '{}');
-`); err != nil {
-		t.Fatalf("seeding pre-split records: %v", err)
+`); eerr != nil {
+		t.Fatalf("seeding pre-split records: %v", eerr)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("closing db: %v", err)
+	if cerr := db.Close(); cerr != nil {
+		t.Fatalf("closing db: %v", cerr)
 	}
 
 	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)
@@ -257,13 +257,13 @@ func TestMigration_LeavesPreHashSnapshotsUnsealed(t *testing.T) {
 	}
 
 	const body = "advisory database bytes"
-	if _, err := db.DB().ExecContext(ctx, `
+	if _, eerr := db.DB().ExecContext(ctx, `
 INSERT INTO vulnerability_snapshots (source, version, retrieved_at, content_hash, content)
-VALUES ('govulndb', 'v2024-01-01', '2024-01-01T00:00:00Z', '', ?)`, []byte(body)); err != nil {
-		t.Fatalf("seeding unsealed snapshot: %v", err)
+VALUES ('govulndb', 'v2024-01-01', '2024-01-01T00:00:00Z', '', ?)`, []byte(body)); eerr != nil {
+		t.Fatalf("seeding unsealed snapshot: %v", eerr)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("closing db: %v", err)
+	if cerr := db.Close(); cerr != nil {
+		t.Fatalf("closing db: %v", cerr)
 	}
 
 	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)
@@ -273,9 +273,9 @@ VALUES ('govulndb', 'v2024-01-01', '2024-01-01T00:00:00Z', '', ?)`, []byte(body)
 	t.Cleanup(func() { _ = migrated.Close() })
 
 	var stored string
-	if err := migrated.DB().QueryRowContext(ctx,
-		`SELECT content_hash FROM vulnerability_snapshots WHERE source = 'govulndb'`).Scan(&stored); err != nil {
-		t.Fatalf("reading back snapshot hash: %v", err)
+	if serr := migrated.DB().QueryRowContext(ctx,
+		`SELECT content_hash FROM vulnerability_snapshots WHERE source = 'govulndb'`).Scan(&stored); serr != nil {
+		t.Fatalf("reading back snapshot hash: %v", serr)
 	}
 	if stored != "" {
 		t.Fatalf("pre-hash snapshot content hash = %q, want it left empty — "+
@@ -321,16 +321,16 @@ func TestMigration_UnsealsSnapshotsTheWithdrawnMigrationSealed(t *testing.T) {
 
 	// Reproduce the post-migration-10 state: a legacy snapshot retrieved before
 	// the migration ran and sealed by it, plus one fetched afterwards.
-	if _, err := db.DB().ExecContext(ctx, `
+	if _, eerr := db.DB().ExecContext(ctx, `
 INSERT INTO vulnerability_snapshots (source, version, retrieved_at, content_hash, content) VALUES
  ('govulndb', 'legacy', '2024-01-01T00:00:00Z', ?, ?),
  ('govulndb', 'fresh',  ?,                      ?, ?)`,
 		domain.HashSnapshotContent([]byte("legacy")), []byte("legacy"),
-		"2099-01-01T00:00:00Z", domain.HashSnapshotContent([]byte("fresh")), []byte("fresh")); err != nil {
-		t.Fatalf("seeding sealed snapshots: %v", err)
+		"2099-01-01T00:00:00Z", domain.HashSnapshotContent([]byte("fresh")), []byte("fresh")); eerr != nil {
+		t.Fatalf("seeding sealed snapshots: %v", eerr)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("closing db: %v", err)
+	if cerr := db.Close(); cerr != nil {
+		t.Fatalf("closing db: %v", cerr)
 	}
 
 	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)
@@ -403,7 +403,7 @@ func TestMigration13_CorrectsCoverageBackFilledFromTheCollapsedWord(t *testing.T
 		blob := fmt.Sprintf(
 			`{"ecosystem":"go","overall_status":%q,"unscan_reason":%q,"unscannable_reason":%q,"error_detail":%q}`,
 			r.overall, r.unscanReason, r.unscannableReason, r.errorDetail)
-		if _, err := db.DB().Exec(`
+		if _, eerr := db.DB().Exec(`
 INSERT INTO vulnerability_records
   (module_path, module_version, pipeline_version, snapshot_source, snapshot_version,
    overall_status, coverage_status, findings_status, finding_count, scanned_at, first_scanned_at, content_hash, serialised)
@@ -413,12 +413,12 @@ VALUES ('github.com/foo/bar', ?, 'v14', 'govulndb', 'v2024-01-01', ?, ?, ?, 0,
 			// Exactly what migration 11's CASE produced for this word.
 			map[string]string{"Clean": "Analysed", "Affected": "Analysed", "Unscannable": "Unscannable"}[r.overall],
 			map[string]string{"Clean": "Clean", "Affected": "Affected", "Unscannable": "Clean"}[r.overall],
-			r.version, blob); err != nil {
-			t.Fatalf("seeding legacy row %s: %v", r.version, err)
+			r.version, blob); eerr != nil {
+			t.Fatalf("seeding legacy row %s: %v", r.version, eerr)
 		}
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("closing: %v", err)
+	if cerr := db.Close(); cerr != nil {
+		t.Fatalf("closing: %v", cerr)
 	}
 
 	// Re-open with the full set, which applies 13 to the rows above.

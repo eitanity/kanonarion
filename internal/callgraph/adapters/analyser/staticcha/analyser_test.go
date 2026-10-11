@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -36,7 +37,7 @@ func makeZip(t testing.TB, coord coordinate.ModuleCoordinate, files map[string]s
 	return buf.Bytes()
 }
 
-var testCoord, _ = coordinate.NewModuleCoordinate("example.com/cgtestmod", "v1.0.0")
+var testCoord = coordinatetest.MustNew("example.com/cgtestmod", "v1.0.0")
 
 // testModule is a minimal Go module with no external dependencies.
 var testModuleFiles = map[string]string{
@@ -416,8 +417,8 @@ func TestAnalyse_ZipWithDirectoryEntries(t *testing.T) {
 	}
 	io.WriteString(w3, "package cgtestmod\n\nfunc Root() {}\n") //nolint:errcheck,gosec
 
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
+	if cerr := zw.Close(); cerr != nil {
+		t.Fatal(cerr)
 	}
 
 	a := staticcha.New("0.1.0", "", slog.Default())
@@ -632,6 +633,12 @@ func Root() {
 		t.Error("UsesUnsafe does not touch the plugin package; UsesPlugin should be false")
 	}
 
+	assertSafeCarriesNoBodyFacts(t, bySymbol)
+}
+
+// assertSafeCarriesNoBodyFacts checks the plain function carries no body fact.
+func assertSafeCarriesNoBodyFacts(t *testing.T, bySymbol map[string]domain.CallNode) {
+	t.Helper()
 	if safe, ok := bySymbol["Safe"]; ok {
 		if safe.UsesUnsafePointer || safe.IsAssemblyOrLinkname || safe.UsesPlugin {
 			t.Errorf("Safe should carry no body facts, got %+v", safe)

@@ -204,7 +204,11 @@ func TestLoadConfig_ReadError(t *testing.T) {
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chmod(path, 0o600) }()
+	defer func() {
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Errorf("restoring %s: %v", path, err)
+		}
+	}()
 
 	store := yaml.New(path)
 	_, err := store.LoadConfig(context.Background())

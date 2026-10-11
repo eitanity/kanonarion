@@ -113,7 +113,11 @@ func TestOpen_QueriesAreCallableAgainstEmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	// A read-shaped result type is constructed via its exported fields, not a
 	// constructor (constructors are not part of the contract, §4).
@@ -175,13 +179,21 @@ func TestOpen_TwoOpensShareNoState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open A: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanupA() })
+	t.Cleanup(func() {
+		if cerr := cleanupA(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	qb, cleanupB, err := kanonarion.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("Open B: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanupB() })
+	t.Cleanup(func() {
+		if cerr := cleanupB(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	if qa == qb {
 		t.Error("two Open calls returned the same Queries pointer; the surface is not per-store")

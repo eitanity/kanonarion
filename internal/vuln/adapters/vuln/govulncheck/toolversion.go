@@ -5,10 +5,10 @@ import (
 	"debug/buildinfo"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // builtWithGo reads the Go release a Go binary was compiled by, out of the build
@@ -34,26 +34,13 @@ func builtWithGo(_ context.Context, bin string) string {
 	return strings.TrimSpace(info.GoVersion)
 }
 
-// tooNewForScanner matches the go/types refusal govulncheck reports when the
-// source it is type-checking asks for a newer language version than the release
-// that compiled it. Both halves are required so a module quoting the phrase in
-// its own prose cannot match, on the same terms goenv.IsToolchainTooOld states.
-var tooNewForScanner = regexp.MustCompile(
-	`package requires newer Go version (go[0-9][^ )]*) \(application built with (go[0-9][^ )]*)\)`)
-
 // scannerTooOld reads the two versions out of a govulncheck package-load
 // failure: the one the project requires and the one the tool was built with.
-//
-// The highest requirement wins, for the reason goenv's own reader gives: one
-// load can refuse for several packages at once, and a tool satisfying the
-// largest requirement satisfies all of them.
+// The reader is shared with kanonarion's own analysers, which meet the same
+// go/types refusal for the same reason.
 func scannerTooOld(detail string) (required, built string, ok bool) {
-	for _, m := range tooNewForScanner.FindAllStringSubmatch(detail, -1) {
-		if required == "" || goenv.HigherGoVersion(m[1], required) {
-			required, built, ok = m[1], m[2], true
-		}
-	}
-	return required, built, ok
+	l, ok := gotoolchain.ReadNewerSourceRefusal(detail)
+	return l.Required, l.Built, ok
 }
 
 // scannerTooOldRefusal is what an operator is shown instead of nine lines of

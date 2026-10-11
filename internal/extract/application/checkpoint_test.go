@@ -113,7 +113,7 @@ func TestExtract_LeavesARunBeforeItReachesTheFirstModule(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = uc.Execute(t.Context(), ExtractRequest{WalkID: "walk-1", Stages: []string{"license"}})
+		_, _ = uc.Execute(t.Context(), ExtractRequest{WalkID: "walk-1", Stages: []string{"license"}}) //nolint:errcheck // the assertions read the checkpoints it writes
 	}()
 
 	<-ex.entered // the first module is inside the extractor, so nothing has completed
@@ -153,7 +153,7 @@ func TestExtract_CheckpointNamesWhatItHasCompleted(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = uc.Execute(t.Context(), ExtractRequest{WalkID: "walk-1", Stages: []string{"license"}})
+		_, _ = uc.Execute(t.Context(), ExtractRequest{WalkID: "walk-1", Stages: []string{"license"}}) //nolint:errcheck // the assertions read the checkpoints it writes
 	}()
 
 	// Let exactly one module through, then hold the second inside the extractor.

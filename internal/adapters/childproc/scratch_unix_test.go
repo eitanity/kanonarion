@@ -20,7 +20,11 @@ func TestRunBounded_KilledChildLeavesNoTempDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
 	// A failing run leaves a read-only tree that TempDir's own removal cannot.
-	t.Cleanup(func() { _ = modcache.Remove(tmp) })
+	t.Cleanup(func() {
+		if err := modcache.Remove(tmp); err != nil {
+			t.Errorf("removing %s: %v", tmp, err)
+		}
+	})
 	report := filepath.Join(t.TempDir(), "report")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,7 +66,7 @@ func TestRunBounded_KilledChildLeavesNoTempDir(t *testing.T) {
 			t.Errorf("%s survived its killed child (stat: %v)", p, err)
 		}
 	}
-	if entries, _ := os.ReadDir(tmp); len(entries) != 0 {
-		t.Errorf("the temp dir holds %d entries after the child was killed; want none", len(entries))
+	if entries, err := os.ReadDir(tmp); err != nil || len(entries) != 0 {
+		t.Errorf("the temp dir holds %d entries after the child was killed (read error: %v); want none", len(entries), err)
 	}
 }

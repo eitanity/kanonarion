@@ -148,7 +148,7 @@ The rungs, most to least sound:
 
 | `soundness` | What was searched |
 |---|---|
-| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, an `http.Handler`. The only rung a clean negative may rest on. |
+| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
 | `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
@@ -165,10 +165,11 @@ Two consequences worth knowing before you read a negative:
   `unconfirmed`. Where the store holds a call graph for the coordinate, that
   silence is put through kanonarion's own search when you read the finding, and
   when `vuln-scan` prints it, which is what can raise it to `confirmed` or
-  `disputed` with no re-scan. A search over a dependency's own graph can
-  confirm a negative in any frame, but contradicts
-  one only in the frame it was measured in; a path found in another frame is
-  reported in the reason and does not change the rung. Which roots that search
+  `disputed` with no re-scan. A negative measured in your build is searched
+  over your build's graph joined to the dependency's (see below). Where your
+  build has no graph, the dependency's own graph is searched instead: that can
+  confirm a negative, but a path found in it is reported in the reason and does
+  not change the rung. Which roots that search
   starts from is what decides whether it can confirm at all — see below.
 - **A reachable answer states no soundness.** A route is its own evidence, so the
   text prints no rung for a positive. The JSON still carries the `soundness` key,
@@ -181,10 +182,30 @@ Two consequences worth knowing before you read a negative:
 An absence is only as good as the set of starting points it was searched from, so
 the rung names it. The confirming search starts at what the analysis can name as a
 way INTO the module — its public API, its package initialisers, a command's
-`main`, an `http.Handler` — because those are the only ways a consumer's build
-enters it. The `main` the go command synthesises to run a test binary is not one
-of them, and neither is a dependency's `_test.go` file, which your build does not
-compile.
+`main`, a function with an export directive, an `http.Handler` — because those
+are the only ways a consumer's build enters it. The `main` the go command
+synthesises to run a test binary is not one of them, and neither is a
+dependency's `_test.go` file, which your build does not compile.
+
+An export directive in a package-level function's doc comment makes that
+function an entry point, because something outside Go calls it:
+
+| Directive | Who calls it | The `reason` reads |
+|---|---|---|
+| `//go:wasmexport <name>` | the WebAssembly host | a function exported to the WebAssembly host (`//go:wasmexport <name>`) — the host invokes it |
+| `//export <name>`, and TinyGo's `//go:export <name>` | C code, assembly or a vector table | a function exported to C (`//export <name>`) — C code, assembly or a vector table invokes it |
+| `//go:interrupt` (TinyGo) | the hardware | an interrupt handler (`//go:interrupt`) — the hardware invokes it |
+
+govulncheck roots only at `main` and `init`, so a vulnerable symbol reached only
+through an export reads as not reachable there. Where the confirming search runs
+over a graph holding the export — your build's graph joined to the dependency's
+or the standard library's, or a module's own record — it finds the route, and
+the rung reads `disputed` with the route starting at the export. The join needs
+your project's own graph. Without it, a dependency's advisory is searched over
+that dependency's own graph, which holds none of your exports, so its rung does
+not change, and the answer names the `kanonarion local <dir>` that adds it. The directive is recorded only when the build that
+was analysed includes the file, and only on a package-level function; a method
+carrying one records nothing.
 
 That is a narrower set than the one a *positive* is found from. Reachability roots
 an application at every function it ships, deliberately, because an application is
@@ -292,7 +313,8 @@ the coordinate, or the graph names none of the advisory's symbols — which is n
 | `whole_graph_path_found` | Whether a path was found with the module's whole graph rooted. A different claim; it never decides the rung and is never dropped. |
 | `in_recorded_frame` | Whether the graph searched is a graph of the build this record was measured in. A clean search confirms in any frame; a found path contradicts only in this one. |
 | `routes` | Every route the search found, from either rooting, each naming its own root. |
-| `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two for a standard-library answer, which is a join — see below. |
+| `graphs_searched` | The stored call graphs the traversal ran over, each named with its coordinate, fidelity and size. One entry for an ordinary module; two or three for a negative measured in your build, which is a join — see below. The middle entry, where present, counts the further dependency graphs joined and names the first three. |
+| `not_joined` | Why the join could not settle a negative measured in your build: your build has no graph (the command that analyses it is named), or your entry points reach calls the join cannot follow (the calls are named, with why each was not joined and the `callgraph` command where one would join it). Absent where the join ran and followed every call. |
 | `reflective_dispatch` | What the search could not follow: `site_count`, `reachable_site_count`, and a `sites` list. Always present, zero included. See below. |
 
 The same fact is on `callgraph-show` as `artifact_kind`, in text on the fidelity
@@ -349,6 +371,61 @@ imprecise:
 
 A path found in a joined graph IS in the frame the record was measured in, so it
 can contradict the recorded negative and the rung reads `disputed`.
+
+**Your dependencies' graphs are joined too.** Every dependency of your build
+whose call graph the store holds (`kanonarion callgraph <mod>@<version>`) is
+joined as well, kept to the packages your build links and without its test
+code, so a route through a dependency (your code calls `example.com/wrap`, which
+calls `mime/multipart`) is followed. The modules come from the walk the record
+was scanned in. A dependency graph built below `BUILT_WITH_BODIES` lowers the
+rung only when your entry points reach into it. `graphs_searched` counts the
+dependency graphs joined.
+
+**A call the join cannot follow keeps the recorded rung.** Where your entry
+points reach a call into a module the join does not hold and no path is found,
+the rung stays where govulncheck's answer puts it (`inferred` for a source
+scan), and `not_joined` names the calls and why each was not joined:
+
+- the store holds no call graph for the module: the answer names the
+  `kanonarion callgraph <mod>@<version>` that extracts it;
+- the module is replaced by a local directory, which no stored graph is taken
+  of;
+- the module's stored graph holds no node for the call, or could not be read;
+- your build's graph does not record which packages of other modules it links:
+  re-analyse it with `kanonarion local <dir> --force`;
+- no walk lists the modules your build selected.
+
+A confirmed standard-library negative therefore means every call your entry
+points reached was followed through a graph built with function bodies.
+
+### A dependency's negative is searched the same way
+
+An advisory against a dependency, measured in your build, is searched over your
+build's graph joined to the dependency's own graph (`kanonarion callgraph
+<mod>@<version>`), rooted at your build's entry points. A dependency's own graph
+is rooted at its own exported API, and the advisory's symbol is usually part of
+that API, so on its own it can neither dispute nor confirm the record.
+
+- **Only the dependency's packages your build links are kept.** Your build's call
+  graph records them, and the count is stated in `graphs_searched`. An advisory
+  whose symbols are all in packages your build does not link is not searched,
+  and the reason says so.
+- **A graph that does not record that closure is not joined.** Re-analyse it with
+  `kanonarion local <dir> --force`; the refusal names the command.
+- **With no graph of your build in the store**, the dependency's own graph is
+  searched as before, and the answer names `kanonarion local <dir>` in
+  `not_joined` and in the reason.
+- **The other dependencies' graphs are joined as well**, as for a
+  standard-library negative, so a route through another module (your code calls
+  `example.com/wrap`, which calls the dependency) is followed when the store
+  holds `example.com/wrap`'s graph. Where your entry points reach a call the
+  join cannot follow and no path is found, the dependency's own graph is
+  searched instead, and `not_joined` names the calls and the command that would
+  join each.
+
+With the join, a path from one of your entry points reads `disputed`. No path
+over graphs built with bodies, with every reached call followed, reads
+`confirmed`.
 
 ### Every surface that publishes an answer carries the rung
 
@@ -516,7 +593,7 @@ over — the test axis, the exported-API flag, and the edges into the node.
 
 | Kind | Means |
 |---|---|
-| `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, or a function a dependency calls back into. The `reason` says which. |
+| `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, a function exported to the WebAssembly host or to C, an interrupt handler, or a function a dependency calls back into. The `reason` says which. |
 | `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
 | `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
 | `test` | The root is a test-scope declaration. This is printed **on the same line as the answer**, so a test-only reach is never read as a production one. |

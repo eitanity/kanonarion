@@ -341,6 +341,13 @@ func TestMigration2_MovesASameMajorAnswerOutOfTheNewerMajorColumns(t *testing.T)
 		}
 	}
 
+	assertNewerMajorAnswersKept(ctx, t, s)
+}
+
+// assertNewerMajorAnswersKept checks a genuine newer-major answer stays in
+// the newer-major columns.
+func assertNewerMajorAnswersKept(ctx context.Context, t *testing.T, s *stalesqlite.Store) {
+	t.Helper()
 	kept := []struct{ path, wantNMPath string }{
 		{"github.com/Masterminds/sprig", "github.com/Masterminds/sprig/v3"},
 		{"github.com/go-chi/chi", "github.com/go-chi/chi/v5"},
@@ -426,13 +433,13 @@ func TestMigration3_ExistingRowsAreUncheckedNotUndeprecated(t *testing.T) {
 			t.Errorf("Close: %v", cerr)
 		}
 	})
-	if _, err := db.DB().ExecContext(ctx,
+	if _, eerr := db.DB().ExecContext(ctx,
 		`INSERT INTO staleness_records (module_path, latest_version, looked_up_at) VALUES (?, ?, ?)`,
-		"example.com/legacy", "v1.0.0", "2026-08-17T09:00:00Z"); err != nil {
-		t.Fatalf("seeding the pre-migration row: %v", err)
+		"example.com/legacy", "v1.0.0", "2026-08-17T09:00:00Z"); eerr != nil {
+		t.Fatalf("seeding the pre-migration row: %v", eerr)
 	}
-	if err := sqlitestore.Apply(db, all); err != nil {
-		t.Fatalf("applying migration 3: %v", err)
+	if aerr := sqlitestore.Apply(db, all); aerr != nil {
+		t.Fatalf("applying migration 3: %v", aerr)
 	}
 
 	got, found, err := stalesqlite.New(db).GetStaleness(ctx, "example.com/legacy")

@@ -137,6 +137,27 @@ func TestScanWalk_ProjectDirUpgradedAwayFromTheWalk_RecordsNoReachability(t *tes
 		t.Errorf("isolated scans = %d, want 0: the degradation is coordinate-only, not a re-derivation in another frame", f.scanner.scanCalls)
 	}
 
+	assertDivergedRecord(t, f, dir)
+	if run.OverallStatus == domain.WalkStatusAllClean {
+		t.Error("a run that established no reachability reported AllClean")
+	}
+	// The same coverage word the missing-directory degradation reports: the run
+	// happened, and part of what it was asked for was not established.
+	if run.CoverageStatus != domain.CoveragePartial {
+		t.Errorf("run coverage = %s, want Partial", run.CoverageStatus)
+	}
+	if run.FindingsStatus != domain.FindingsAffected {
+		t.Errorf("run findings = %s, want Affected: the coordinate answer is still a finding", run.FindingsStatus)
+	}
+	if !strings.Contains(f.logs.String(), "no longer requires the module versions this walk resolved") {
+		t.Error("the run did not state the divergence in its log")
+	}
+}
+
+// assertDivergedRecord checks the record keeps the coordinate match, carries no
+// reachability, and names both version sets on itself.
+func assertDivergedRecord(t *testing.T, f projectScanFixture, dir string) {
+	t.Helper()
 	rec := recordFor(t, f, f.depA)
 	if len(rec.Findings) != 1 || rec.Findings[0].ID != "GO-2025-3553" {
 		t.Fatalf("depA findings = %+v, want the coordinate match against the version the walk pinned", rec.Findings)
@@ -159,19 +180,5 @@ func TestScanWalk_ProjectDirUpgradedAwayFromTheWalk_RecordsNoReachability(t *tes
 		if !strings.Contains(rec.UnscannableReason, want) {
 			t.Errorf("divergence statement %q does not name %q", rec.UnscannableReason, want)
 		}
-	}
-	if run.OverallStatus == domain.WalkStatusAllClean {
-		t.Error("a run that established no reachability reported AllClean")
-	}
-	// The same coverage word the missing-directory degradation reports: the run
-	// happened, and part of what it was asked for was not established.
-	if run.CoverageStatus != domain.CoveragePartial {
-		t.Errorf("run coverage = %s, want Partial", run.CoverageStatus)
-	}
-	if run.FindingsStatus != domain.FindingsAffected {
-		t.Errorf("run findings = %s, want Affected: the coordinate answer is still a finding", run.FindingsStatus)
-	}
-	if !strings.Contains(f.logs.String(), "no longer requires the module versions this walk resolved") {
-		t.Error("the run did not state the divergence in its log")
 	}
 }

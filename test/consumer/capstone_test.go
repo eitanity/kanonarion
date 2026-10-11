@@ -158,8 +158,8 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBlobIdentity: %v", err)
 	}
-	if err := bs.Put(ctx, handle, strings.NewReader("module-zip-bytes")); err != nil {
-		t.Fatalf("Put: %v", err)
+	if perr := bs.Put(ctx, handle, strings.NewReader("module-zip-bytes")); perr != nil {
+		t.Fatalf("Put: %v", perr)
 	}
 	present, err := bs.Exists(ctx, handle)
 	if err != nil || !present {
@@ -169,7 +169,10 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	got, _ := io.ReadAll(rc)
+	got, rerr := io.ReadAll(rc)
+	if rerr != nil {
+		t.Fatalf("ReadAll: %v", rerr)
+	}
 	_ = rc.Close()
 	if string(got) != "module-zip-bytes" {
 		t.Errorf("Get returned %q, want the stored bytes", got)
@@ -294,7 +297,11 @@ func TestConsumer_LocalWalkExtractAndDeltaBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	dir := writeLocalModule(t)
 	res, err := driver.LocalWalkExtract.Run(ctx, kanonarion.LocalWalkExtractRequest{Dir: dir})
@@ -363,7 +370,11 @@ func TestConsumer_ValidateIngestFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	// A forged record — well-formed shape, but a content hash the consumer cannot
 	// legitimately produce — is refused fail-closed, surfacing ErrVerificationFailed.
@@ -373,8 +384,8 @@ func TestConsumer_ValidateIngestFailClosed(t *testing.T) {
 		PipelineVersion: "0.0.0",
 		ContentHash:     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 	}
-	if err := driver.ValidateIngest.Ingest(ctx, forged); !errors.Is(err, kanonarion.ErrVerificationFailed) {
-		t.Fatalf("Ingest of a forged record: got %v, want ErrVerificationFailed", err)
+	if ierr := driver.ValidateIngest.Ingest(ctx, forged); !errors.Is(ierr, kanonarion.ErrVerificationFailed) {
+		t.Fatalf("Ingest of a forged record: got %v, want ErrVerificationFailed", ierr)
 	}
 
 	// An absent coordinate reads back as a clean unknown: not found, no error.
@@ -407,7 +418,11 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDriver: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	if producer.FetchServe == nil {
 		t.Fatal("OpenDriver left the verified fetch/serve driver unwired")
@@ -447,18 +462,29 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bundle MerkleRoot: %v", err)
 	}
-	if _, err := (fakeKeyedSigner{}).Sign(ctx, root); err != nil {
-		t.Fatalf("signing the bundle root: %v", err)
+	if _, serr := (fakeKeyedSigner{}).Sign(ctx, root); serr != nil {
+		t.Fatalf("signing the bundle root: %v", serr)
 	}
 
+	assertAirgapRoundTrip(ctx, t, rec)
+}
+
+// assertAirgapRoundTrip ingests the record into a fresh consumer store, reads
+// it back verified, and checks a tampered copy is refused.
+func assertAirgapRoundTrip(ctx context.Context, t *testing.T, rec kanonarion.CompositeRecord) {
+	t.Helper()
 	consumer, cleanupC, err := kanonarion.OpenDriver(t.TempDir())
 	if err != nil {
 		t.Fatalf("OpenDriver (consumer): %v", err)
 	}
-	t.Cleanup(func() { _ = cleanupC() })
+	t.Cleanup(func() {
+		if cerr := cleanupC(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
-	if err := consumer.ValidateIngest.Ingest(ctx, rec.FactRecord); err != nil {
-		t.Fatalf("Ingest of a valid fetched record: %v", err)
+	if ierr := consumer.ValidateIngest.Ingest(ctx, rec.FactRecord); ierr != nil {
+		t.Fatalf("Ingest of a valid fetched record: %v", ierr)
 	}
 	got, found, err := consumer.ValidateIngest.ReadVerified(ctx, rec.Coordinate(), rec.PipelineVersion)
 	if err != nil || !found {

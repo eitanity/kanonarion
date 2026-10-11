@@ -364,7 +364,10 @@ func TestSetAsideJSON_StatesKindAndIdentityKey(t *testing.T) {
 			t.Errorf("row %d states both id and coordinate: %v", i, got[i])
 		}
 	}
-	empty, _ := json.Marshal(setAsideRows{{}}.json())
+	empty, merr := json.Marshal(setAsideRows{{}}.json())
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if !strings.Contains(string(empty), `"kind":""`) {
 		t.Errorf("an unnamed kind is omitted: %s", empty)
 	}

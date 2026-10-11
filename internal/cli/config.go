@@ -272,15 +272,41 @@ func configKeyPath(key string) ([]string, bool) {
 }
 
 func configGetValue(cfg domain.Config, key string) (string, error) {
-	switch {
-	case key == "version":
+	switch key {
+	case "version":
 		return cfg.Version, nil
-	case key == "preferences.json":
+	case "preferences.json":
 		return strconv.FormatBool(cfg.Preferences.JSON), nil
-	case key == "preferences.log_level":
+	case "preferences.log_level":
 		return cfg.Preferences.LogLevel, nil
-	case key == "preferences.progress":
+	case "preferences.progress":
 		return strconv.FormatBool(cfg.Preferences.Progress), nil
+	case "callgraph.exclude":
+		return marshalConfigYAML(cfg.Callgraph.Exclude)
+	case "callgraph.toolchain":
+		// Rendered through the same helper `config show` uses, so the two never
+		// disagree about what "no preference" looks like.
+		return callgraphToolchainDisplay(cfg.Callgraph.Toolchain), nil
+	case "staleness.ttl":
+		return cfg.Staleness.TTL.String(), nil
+	case "staleness.probe_concurrency":
+		return strconv.Itoa(cfg.Staleness.ProbeConcurrency), nil
+	case "fetch_policy.allowed_vcs_hosts":
+		if cfg.FetchPolicy.AllowedVCSHosts == nil {
+			// Absent is a distinct answer from empty, and printing "[]" would
+			// report the enforcing posture for a config that has not chosen it.
+			return "(unset: the built-in VCS host set applies, advisory — off-list hosts are reported, not refused)", nil
+		}
+		return marshalConfigYAML(cfg.FetchPolicy.AllowedVCSHosts)
+	default:
+		return configGetPolicyValue(cfg, key)
+	}
+}
+
+// configGetPolicyValue renders the licence policy, override and copyright
+// declaration keys; any other key is unknown.
+func configGetPolicyValue(cfg domain.Config, key string) (string, error) {
+	switch {
 	case key == "license_policy.categories":
 		return marshalConfigYAML(cfg.LicensePolicy.Categories)
 	case strings.HasPrefix(key, "license_policy.categories."):
@@ -317,23 +343,6 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 			return "", &exitError{code: ExitConfig, msg: fmt.Sprintf("no copyright declaration for %q", module)}
 		}
 		return marshalConfigYAML(d)
-	case key == "callgraph.exclude":
-		return marshalConfigYAML(cfg.Callgraph.Exclude)
-	case key == "callgraph.toolchain":
-		// Rendered through the same helper `config show` uses, so the two never
-		// disagree about what "no preference" looks like.
-		return callgraphToolchainDisplay(cfg.Callgraph.Toolchain), nil
-	case key == "staleness.ttl":
-		return cfg.Staleness.TTL.String(), nil
-	case key == "staleness.probe_concurrency":
-		return strconv.Itoa(cfg.Staleness.ProbeConcurrency), nil
-	case key == "fetch_policy.allowed_vcs_hosts":
-		if cfg.FetchPolicy.AllowedVCSHosts == nil {
-			// Absent is a distinct answer from empty, and printing "[]" would
-			// report the enforcing posture for a config that has not chosen it.
-			return "(unset: the built-in VCS host set applies, advisory — off-list hosts are reported, not refused)", nil
-		}
-		return marshalConfigYAML(cfg.FetchPolicy.AllowedVCSHosts)
 	default:
 		return "", &exitError{code: ExitConfig, msg: fmt.Sprintf("unknown config key %q", key)}
 	}
@@ -441,8 +450,8 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	}
 
 	configPath := filepath.Join(root, "config.yaml")
-	if err := config.EnsureConfig(configPath); err != nil {
-		return fmt.Errorf("ensuring config file: %w", err)
+	if eerr := config.EnsureConfig(configPath); eerr != nil {
+		return fmt.Errorf("ensuring config file: %w", eerr)
 	}
 
 	data, err := os.ReadFile(configPath) // #nosec G304 -- operator-supplied store-root path
@@ -451,8 +460,8 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	}
 
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("parsing config YAML: %w", err)
+	if uerr := yaml.Unmarshal(data, &doc); uerr != nil {
+		return fmt.Errorf("parsing config YAML: %w", uerr)
 	}
 
 	valueNode, err := parseConfigValue(key, value)
@@ -466,31 +475,31 @@ func runConfigSet(root, key, value string, asJSON bool, stdout io.Writer) error 
 	// configuration was rejected.
 	prevValue, prevSource := previousConfigValue(&doc, yamlPath, key)
 
-	if err := refuseProvenanceLoss(&doc, yamlPath, key); err != nil {
-		return err
+	if perr := refuseProvenanceLoss(&doc, yamlPath, key); perr != nil {
+		return perr
 	}
 
-	if err := setYAMLNode(&doc, yamlPath, valueNode); err != nil {
-		return err
+	if serr := setYAMLNode(&doc, yamlPath, valueNode); serr != nil {
+		return serr
 	}
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
+	if eerr := enc.Encode(&doc); eerr != nil {
+		return fmt.Errorf("marshaling config: %w", eerr)
 	}
-	if err := enc.Close(); err != nil {
-		return fmt.Errorf("finalising config: %w", err)
+	if cerr := enc.Close(); cerr != nil {
+		return fmt.Errorf("finalising config: %w", cerr)
 	}
-	if err := os.WriteFile(configPath, buf.Bytes(), 0o600); err != nil { // #nosec G304 G703 -- operator-supplied path
-		return fmt.Errorf("writing config %s: %w", configPath, err)
+	if werr := os.WriteFile(configPath, buf.Bytes(), 0o600); werr != nil { // #nosec G304 G703 -- operator-supplied path
+		return fmt.Errorf("writing config %s: %w", configPath, werr)
 	}
 
 	if asJSON {
-		written, err := marshalConfigYAML(valueNode)
-		if err != nil {
-			return err
+		written, merr := marshalConfigYAML(valueNode)
+		if merr != nil {
+			return merr
 		}
 		return encodeJSON(stdout, configSetResult{
 			Key:            key,
@@ -624,24 +633,13 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 	}
 	node := doc.Content[0]
 
+	if err := validatePreferenceNode(key, value, node); err != nil {
+		return nil, err
+	}
+	if err := validateStalenessNode(key, value, node); err != nil {
+		return nil, err
+	}
 	switch {
-	case key == "preferences.json":
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.json requires a boolean (true/false), got %q", value)}
-		}
-	case key == "preferences.progress":
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.progress requires a boolean (true/false), got %q", value)}
-		}
-	case key == "preferences.log_level":
-		if node.Kind != yaml.ScalarNode {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level requires a string, got %q", value)}
-		}
-		switch node.Value {
-		case "debug", "info", "warn", "error":
-		default:
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level must be one of: debug, info, warn, error; got %q", value)}
-		}
 	case strings.HasPrefix(key, "license_policy.categories."),
 		key == "callgraph.exclude":
 		if node.Kind != yaml.SequenceNode {
@@ -650,26 +648,6 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 	case key == "callgraph.toolchain":
 		if err := validateToolchainPreference(key, value, node); err != nil {
 			return nil, err
-		}
-	case key == "staleness.ttl":
-		if node.Kind != yaml.ScalarNode {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl requires a duration string (e.g. 1h, 30m, 0), got %q", value)}
-		}
-		if _, err := time.ParseDuration(node.Value); err != nil {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl must be a duration (e.g. 1h, 30m, 0), got %q", value)}
-		}
-	case key == "staleness.probe_concurrency":
-		// Bounded, and the bound is a correctness setting rather than a speed
-		// one: past the default the proxy starts answering 200 with an empty
-		// body, which is a lost answer rather than an error. 0 is a serial probe.
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"staleness.probe_concurrency requires a whole number (0 for a serial probe), got %q", value)}
-		}
-		n, err := strconv.Atoi(node.Value)
-		if err != nil || n < 0 {
-			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf(
-				"staleness.probe_concurrency must not be negative (use 0 for a serial probe), got %q", value)}
 		}
 	case key == "fetch_policy.allowed_vcs_hosts":
 		if err := validateVCSHostAllowlist(key, value, node); err != nil {
@@ -682,6 +660,57 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 	}
 
 	return node, nil
+}
+
+// validatePreferenceNode checks the value given for a preferences key.
+func validatePreferenceNode(key, value string, node *yaml.Node) error {
+	switch key {
+	case "preferences.json":
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.json requires a boolean (true/false), got %q", value)}
+		}
+	case "preferences.progress":
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.progress requires a boolean (true/false), got %q", value)}
+		}
+	case "preferences.log_level":
+		if node.Kind != yaml.ScalarNode {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level requires a string, got %q", value)}
+		}
+		switch node.Value {
+		case "debug", "info", "warn", "error":
+		default:
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf("preferences.log_level must be one of: debug, info, warn, error; got %q", value)}
+		}
+	}
+	return nil
+}
+
+// validateStalenessNode checks the value given for a staleness key.
+func validateStalenessNode(key, value string, node *yaml.Node) error {
+	switch key {
+	case "staleness.ttl":
+		if node.Kind != yaml.ScalarNode {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl requires a duration string (e.g. 1h, 30m, 0), got %q", value)}
+		}
+		if _, err := time.ParseDuration(node.Value); err != nil {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl must be a duration (e.g. 1h, 30m, 0), got %q", value)}
+		}
+	case "staleness.probe_concurrency":
+		// Bounded, and the bound is a correctness setting rather than a speed
+		// one: past the default the proxy starts answering 200 with an empty
+		// body, which is a lost answer rather than an error. 0 is a serial probe.
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"staleness.probe_concurrency requires a whole number (0 for a serial probe), got %q", value)}
+		}
+		n, err := strconv.Atoi(node.Value)
+		if err != nil || n < 0 {
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"staleness.probe_concurrency must not be negative (use 0 for a serial probe), got %q", value)}
+		}
+	}
+	return nil
 }
 
 // setYAMLNode navigates the document to yamlPath and replaces that node with valueNode.

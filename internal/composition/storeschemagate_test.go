@@ -45,7 +45,7 @@ func TestNewDriver_RefusesAStoreWrittenByANewerBuild(t *testing.T) {
 	drv, cleanup, err := composition.NewDriver(storeRoot)
 	if cleanup != nil {
 		t.Error("a refused driver must hand back no cleanup function")
-		_ = cleanup()
+		_ = cleanup() //nolint:errcheck // the failure is reported above; this only releases it
 	}
 	if err == nil {
 		t.Fatal("NewDriver opened a store carrying migrations this build does not know; every write through it would fail while the caller saw a successful open")
@@ -98,8 +98,8 @@ func TestNewDriver_DoesNotRefuseAStoreThisBuildKnows(t *testing.T) {
 	if drv == nil {
 		t.Error("NewDriver returned no error and no driver")
 	}
-	if err := cleanup(); err != nil {
-		t.Fatalf("cleanup: %v", err)
+	if cerr := cleanup(); cerr != nil {
+		t.Fatalf("cleanup: %v", cerr)
 	}
 
 	// And it really migrated, so "did not refuse" is not being read as "did not

@@ -97,6 +97,25 @@ func TestParseResultsByModule_EveryLevelIsRead(t *testing.T) {
 	}
 
 	// --- reported without a route: kept, negative, and the fix is the analyser's ---
+	assertUnreachedButExamined(t, stdlib)
+
+	// --- the same question of a third-party module, not the standard library ---
+	text := byModule[coordinatetest.MustNew("example.com/text", "v0.39.0")]
+	if len(text) != 1 {
+		t.Fatalf("example.com/text findings = %d, want 1 — a module-level report is still a finding: %v", len(text), text)
+	}
+	if text[0].FixedIn != "v0.39.2" {
+		t.Errorf("fixed_in = %q, want v0.39.2", text[0].FixedIn)
+	}
+	if text[0].Reachable == nil || text[0].Reachable.IsReachable {
+		t.Errorf("example.com/text finding reachability = %+v, want a negative", text[0].Reachable)
+	}
+}
+
+// assertUnreachedButExamined checks the advisory reported with no symbol
+// trace is a high-confidence negative carrying the advisory's own symbols.
+func assertUnreachedButExamined(t *testing.T, stdlib []domain.VulnerabilityFinding) {
+	t.Helper()
 	unreached := findingByID(t, stdlib, "GO-2026-9102")
 	r := unreached.Reachable
 	if r == nil {
@@ -123,18 +142,6 @@ func TestParseResultsByModule_EveryLevelIsRead(t *testing.T) {
 	// produced it.
 	if want := []string{"Resolver.LookupCNAME"}; !slices.Equal(unreached.AffectedSymbols, want) {
 		t.Errorf("affected symbols = %v, want %v — the advisory's own at-risk list", unreached.AffectedSymbols, want)
-	}
-
-	// --- the same question of a third-party module, not the standard library ---
-	text := byModule[coordinatetest.MustNew("example.com/text", "v0.39.0")]
-	if len(text) != 1 {
-		t.Fatalf("example.com/text findings = %d, want 1 — a module-level report is still a finding: %v", len(text), text)
-	}
-	if text[0].FixedIn != "v0.39.2" {
-		t.Errorf("fixed_in = %q, want v0.39.2", text[0].FixedIn)
-	}
-	if text[0].Reachable == nil || text[0].Reachable.IsReachable {
-		t.Errorf("example.com/text finding reachability = %+v, want a negative", text[0].Reachable)
 	}
 }
 

@@ -58,7 +58,7 @@ func NewAuditLog(path string) (*AuditLog, error) {
 	// exemption is registered in childproc.DirectSpawns with its reason: chattr
 	// is one ioctl on a path this process just created, with no context in
 	// scope, no grandchildren and nothing to strand.
-	_ = exec.Command("chattr", "+a", path).Run() /* #nosec G204 -- chattr path is a fixed string */
+	_ = exec.Command("chattr", "+a", path).Run() /* #nosec G204 -- chattr path is a fixed string */ //nolint:errcheck // best-effort, as above
 	return &AuditLog{path: path}, nil
 }
 

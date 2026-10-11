@@ -61,7 +61,7 @@ func FuzzDecode(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Each decoder must return (zero, error) or (value, nil) — never panic.
-		_, _ = decodeDBModified(data)
+		_, _ = decodeDBModified(data) //nolint:errcheck // only a panic fails the fuzz target
 
 		idx, err := decodeModulesIndex(data)
 		if err == nil {

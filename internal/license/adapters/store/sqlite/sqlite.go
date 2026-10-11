@@ -559,7 +559,7 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 	// it matched, not over the ledger's, so the single-row shortcut below would
 	// describe a key by whichever of its generations happened to match rather
 	// than by the one composition serves.
-	rowFiltered := filter.SPDX != "" || filter.Status != nil || len(filter.CopyrightStatus) > 0
+	rowFiltered := filtersOnRecordColumn(filter)
 
 	out := make([]ports.LicenseSummary, 0, len(order))
 	for _, k := range order {
@@ -569,48 +569,65 @@ func (s *Store) ListLicenseRecords(ctx context.Context, filter ports.LicenseFilt
 			out = append(out, first[k])
 			continue
 		}
-		coord, cerr := coordinate.NewModuleCoordinate(k.path, k.version)
-		if cerr != nil {
-			return nil, fmt.Errorf("license record %s@%s names no module: %w", k.path, k.version, cerr)
+		sum, listed, lerr := s.composedSummary(ctx, k.path, k.version, k.pipeline)
+		if lerr != nil {
+			return nil, lerr
 		}
-		// A filter narrows which ROWS are listed, but composition is defined over
-		// every record describing the artefact — composing the filtered subset
-		// would serve a record chosen from a ladder missing its own top.
-		served, found, gerr := s.GetLicenseRecord(ctx, coord, k.pipeline)
-		if errors.As(gerr, new(*recordseal.NothingServable)) {
-			// Every generation was set aside and named by the read; the listing
-			// keeps its other rows.
-			continue
+		if listed {
+			out = append(out, sum)
 		}
-		if errors.Is(gerr, ports.ErrLicenceConflict) {
-			// Reported on the row, not raised as the list's error: see the comment
-			// on LicenseSummary.Conflict.
-			out = append(out, ports.LicenseSummary{
-				ModulePath:      k.path,
-				ModuleVersion:   k.version,
-				PipelineVersion: k.pipeline,
-				Conflict:        gerr,
-			})
-			continue
-		}
-		if gerr != nil {
-			return nil, gerr
-		}
-		if !found {
-			continue
-		}
-		out = append(out, ports.WithLicenceIdentity(ports.LicenseSummary{
-			ModulePath:      k.path,
-			ModuleVersion:   k.version,
-			PipelineVersion: k.pipeline,
-			OverallStatus:   served.OverallStatus,
-			CopyrightStatus: served.CopyrightStatus,
-			ExtractedAt:     served.ExtractedAt.UTC(),
-			ContentHash:     served.ContentHash,
-		}, served))
 	}
 
 	return page(keepCopyrightStatus(out, filter.CopyrightStatus), filter.Limit, filter.Offset), nil
+}
+
+// filtersOnRecordColumn reports whether filter selects on a per-record column,
+// so a key's row count is over the rows it matched rather than the ledger's.
+func filtersOnRecordColumn(filter ports.LicenseFilter) bool {
+	return filter.SPDX != "" || filter.Status != nil || len(filter.CopyrightStatus) > 0
+}
+
+// composedSummary is the listing row for one key read through composition;
+// listed is false when the key has no row to list.
+func (s *Store) composedSummary(ctx context.Context, path, version, pipeline string) (ports.LicenseSummary, bool, error) {
+	coord, cerr := coordinate.NewModuleCoordinate(path, version)
+	if cerr != nil {
+		return ports.LicenseSummary{}, false, fmt.Errorf("license record %s@%s names no module: %w", path, version, cerr)
+	}
+	// A filter narrows which ROWS are listed, but composition is defined over
+	// every record describing the artefact — composing the filtered subset
+	// would serve a record chosen from a ladder missing its own top.
+	served, found, gerr := s.GetLicenseRecord(ctx, coord, pipeline)
+	if errors.As(gerr, new(*recordseal.NothingServable)) {
+		// Every generation was set aside and named by the read; the listing
+		// keeps its other rows.
+		return ports.LicenseSummary{}, false, nil
+	}
+	if errors.Is(gerr, ports.ErrLicenceConflict) {
+		// Reported on the row, not raised as the list's error: see the comment
+		// on LicenseSummary.Conflict.
+		return ports.LicenseSummary{
+			ModulePath:      path,
+			ModuleVersion:   version,
+			PipelineVersion: pipeline,
+			Conflict:        gerr,
+		}, true, nil
+	}
+	if gerr != nil {
+		return ports.LicenseSummary{}, false, gerr
+	}
+	if !found {
+		return ports.LicenseSummary{}, false, nil
+	}
+	return ports.WithLicenceIdentity(ports.LicenseSummary{
+		ModulePath:      path,
+		ModuleVersion:   version,
+		PipelineVersion: pipeline,
+		OverallStatus:   served.OverallStatus,
+		CopyrightStatus: served.CopyrightStatus,
+		ExtractedAt:     served.ExtractedAt.UTC(),
+		ContentHash:     served.ContentHash,
+	}, served), true, nil
 }
 
 // keepCopyrightStatus drops a collapsed row whose SERVED record does not hold

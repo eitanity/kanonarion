@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -155,17 +156,24 @@ func TestParseResultsByModule_PackageLevelCallIsARouteWithNoSymbolClaim(t *testi
 		t.Errorf("reachability state = %q, want %q", state, domain.StatePackageLevelOnly)
 	}
 
+	assertSymbolLevelControl(t, byModule, symLevel)
+}
+
+// assertSymbolLevelControl checks the same advisory on the path that names a
+// symbol is reachable, High, with that symbol.
+func assertSymbolLevelControl(t *testing.T, byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, symLevel coordinate.ModuleCoordinate) {
+	t.Helper()
 	// The control: the same advisory, on the path whose entry DOES name a symbol,
 	// is untouched — reachable, High, one route, the advisory's symbol.
-	got = byModule[symLevel]
+	got := byModule[symLevel]
 	if len(got) != 1 {
 		t.Fatalf("findings for %s = %d, want 1", symLevel, len(got))
 	}
-	f = got[0]
+	f := got[0]
 	if f.AdvisoryNamesNoSymbols {
 		t.Error("an entry that names RedirectSlashes was recorded as naming no symbols")
 	}
-	r = f.Reachable
+	r := f.Reachable
 	if r == nil || !r.IsReachable {
 		t.Fatalf("the symbol-level finding is not reachable: %+v", r)
 	}

@@ -198,6 +198,7 @@ func TestGraphClaimFields_ClassifiesEveryCanonicalField(t *testing.T) {
 		"schema_version":             "which shape: the key",
 		"source_content_hash":        "which fetch supplied the bytes: provenance",
 		"stdlib_packages":            "which standard-library packages the build links: what the binary contains, not what the graph says",
+		"dependency_packages":        "which packages of other modules the build links: what the binary contains, not what the graph says",
 		"synthesised_go_mod":         "what kanonarion wrote to make the build work",
 		"test_scope":                 "whether tests were analysed, which shows up in the nodes",
 		"test_scope_detail":          "how the test scope was decided",

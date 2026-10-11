@@ -121,46 +121,7 @@ func TestGuardedEnumValuesHaveAProductionProducer(t *testing.T) {
 
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
-			strong, weak := producingUses(file)
-			ast.Inspect(file, func(n ast.Node) bool {
-				id, ok := n.(*ast.Ident)
-				if !ok {
-					return true
-				}
-				isStrong, isWeak := strong[id], weak[id]
-				if !isStrong && !isWeak {
-					return true
-				}
-				konst, ok := pkg.TypesInfo.Uses[id].(*types.Const)
-				if !ok || konst.Pkg() == nil {
-					return true
-				}
-				key := konst.Pkg().Path() + "." + konst.Name()
-				if !producerGuarded[key] {
-					return true
-				}
-				pos := pkg.Fset.Position(id.Pos())
-				// A use in the file that DECLARES the constant does not count. That
-				// file is where the ladder-publishing helpers live — CompletenessLevels,
-				// AcquisitionRoutes — and a value listed in its own ladder is exactly the
-				// dead rung this guard exists to catch: enumerated, documented, and
-				// written by nothing. Found by reading the guard's own output, which
-				// reported the ladder literal as the producer of all four levels.
-				if pkg.Fset.Position(konst.Pos()).Filename == pos.Filename {
-					return true
-				}
-				where := trimRepoPath(pos.Filename) + ":" + strconv.Itoa(pos.Line)
-				if !isStrong {
-					// Evidence that the value reaches a function, not that anything
-					// stores it. Recorded, and labelled, so a reader can see that the
-					// producer was never directly observed.
-					where += " (passed to a call — construction not directly observed)"
-				}
-				if prev, already := produced[key]; !already || (isStrong && strings.Contains(prev, "(passed to a call")) {
-					produced[key] = where
-				}
-				return true
-			})
+			recordProducingUses(pkg, file, produced)
 		}
 	}
 
@@ -189,6 +150,51 @@ func TestGuardedEnumValuesHaveAProductionProducer(t *testing.T) {
 	for _, k := range keys {
 		t.Logf("%s produced at %s", k, produced[k])
 	}
+}
+
+// recordProducingUses notes, for each guarded constant file produces, where it
+// is produced, preferring a directly observed construction.
+func recordProducingUses(pkg *packages.Package, file *ast.File, produced map[string]string) {
+	strong, weak := producingUses(file)
+	ast.Inspect(file, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		isStrong, isWeak := strong[id], weak[id]
+		if !isStrong && !isWeak {
+			return true
+		}
+		konst, ok := pkg.TypesInfo.Uses[id].(*types.Const)
+		if !ok || konst.Pkg() == nil {
+			return true
+		}
+		key := konst.Pkg().Path() + "." + konst.Name()
+		if !producerGuarded[key] {
+			return true
+		}
+		pos := pkg.Fset.Position(id.Pos())
+		// A use in the file that DECLARES the constant does not count. That
+		// file is where the ladder-publishing helpers live — CompletenessLevels,
+		// AcquisitionRoutes — and a value listed in its own ladder is exactly the
+		// dead rung this guard exists to catch: enumerated, documented, and
+		// written by nothing. Found by reading the guard's own output, which
+		// reported the ladder literal as the producer of all four levels.
+		if pkg.Fset.Position(konst.Pos()).Filename == pos.Filename {
+			return true
+		}
+		where := trimRepoPath(pos.Filename) + ":" + strconv.Itoa(pos.Line)
+		if !isStrong {
+			// Evidence that the value reaches a function, not that anything
+			// stores it. Recorded, and labelled, so a reader can see that the
+			// producer was never directly observed.
+			where += " (passed to a call — construction not directly observed)"
+		}
+		if prev, already := produced[key]; !already || (isStrong && strings.Contains(prev, "(passed to a call")) {
+			produced[key] = where
+		}
+		return true
+	})
 }
 
 // producingUses splits the identifiers that PUT an enum value somewhere into two

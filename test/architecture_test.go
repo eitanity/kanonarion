@@ -1231,20 +1231,7 @@ func TestEveryChildProcessIsHardened(t *testing.T) {
 			if pkgDir == wrapperDir {
 				return nil // the wrapper is where os/exec is called from
 			}
-			for _, decl := range f.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Body == nil || !spawnsChildDirectly(fn.Body, execName) {
-					continue
-				}
-				key := pkgDir + " " + fn.Name.Name
-				if _, registered := childproc.DirectSpawns[key]; !registered {
-					t.Errorf("%s starts a child with os/exec directly; build it with childproc.CommandContext "+
-						"so a parent that dies without warning cannot orphan it, or register the exemption in "+
-						"childproc.DirectSpawns with the reason the default cannot apply", key)
-					continue
-				}
-				seen[key] = true
-			}
+			checkDirectSpawns(t, f, pkgDir, execName, seen)
 			return nil
 		})
 		if err != nil {
@@ -1255,6 +1242,26 @@ func TestEveryChildProcessIsHardened(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("childproc.DirectSpawns exempts %q (%s), which no longer starts a child with os/exec — remove the entry", key, reason)
 		}
+	}
+}
+
+// checkDirectSpawns reports each function in f that starts a child with
+// os/exec directly and is not a registered exemption.
+func checkDirectSpawns(t *testing.T, f *ast.File, pkgDir, execName string, seen map[string]bool) {
+	t.Helper()
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil || !spawnsChildDirectly(fn.Body, execName) {
+			continue
+		}
+		key := pkgDir + " " + fn.Name.Name
+		if _, registered := childproc.DirectSpawns[key]; !registered {
+			t.Errorf("%s starts a child with os/exec directly; build it with childproc.CommandContext "+
+				"so a parent that dies without warning cannot orphan it, or register the exemption in "+
+				"childproc.DirectSpawns with the reason the default cannot apply", key)
+			continue
+		}
+		seen[key] = true
 	}
 }
 
@@ -1380,38 +1387,7 @@ func TestOrderingComparatorsAreTotal(t *testing.T) {
 			return fmt.Errorf("parse %s: %w", path, perr)
 		}
 		rp := strings.TrimPrefix(filepath.ToSlash(path), "../")
-		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			key := rp + " " + fn.Name.Name
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				lit, name, ok := orderingComparator(n)
-				if !ok {
-					return true
-				}
-				if comparatorDelegates(lit) {
-					return true
-				}
-				keys := comparatorKeys(lit)
-				if len(keys) >= 2 {
-					return true
-				}
-				if _, exempt := singleKeyComparators[key]; exempt {
-					seen[key] = true
-					return true
-				}
-				pos := fset.Position(n.Pos())
-				t.Errorf("%s:%d: the %s comparator in %s is keyed on %v — one key is not an ordering, "+
-					"because two elements that tie are left to the sort and the sort reads them off a "+
-					"directory walk or a map. Give the collection a named Less helper keyed on every "+
-					"field it puts on the wire, as internal/callgraph/domain/ordering.go does, or exempt "+
-					"it in singleKeyComparators with the reason the key cannot repeat",
-					rp, pos.Line, name, fn.Name.Name, keys)
-				return true
-			})
-		}
+		checkComparatorsTotal(t, fset, f, rp, seen)
 		return nil
 	})
 	if err != nil {
@@ -1421,6 +1397,44 @@ func TestOrderingComparatorsAreTotal(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("singleKeyComparators exempts %q (%s), which no longer holds a single-key comparator — remove the entry", key, reason)
 		}
+	}
+}
+
+// checkComparatorsTotal reports each ordering comparator in f keyed on a
+// single field, unless it delegates or is exempt.
+func checkComparatorsTotal(t *testing.T, fset *token.FileSet, f *ast.File, rp string, seen map[string]bool) {
+	t.Helper()
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		key := rp + " " + fn.Name.Name
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			lit, name, ok := orderingComparator(n)
+			if !ok {
+				return true
+			}
+			if comparatorDelegates(lit) {
+				return true
+			}
+			keys := comparatorKeys(lit)
+			if len(keys) >= 2 {
+				return true
+			}
+			if _, exempt := singleKeyComparators[key]; exempt {
+				seen[key] = true
+				return true
+			}
+			pos := fset.Position(n.Pos())
+			t.Errorf("%s:%d: the %s comparator in %s is keyed on %v — one key is not an ordering, "+
+				"because two elements that tie are left to the sort and the sort reads them off a "+
+				"directory walk or a map. Give the collection a named Less helper keyed on every "+
+				"field it puts on the wire, as internal/callgraph/domain/ordering.go does, or exempt "+
+				"it in singleKeyComparators with the reason the key cannot repeat",
+				rp, pos.Line, name, fn.Name.Name, keys)
+			return true
+		})
 	}
 }
 

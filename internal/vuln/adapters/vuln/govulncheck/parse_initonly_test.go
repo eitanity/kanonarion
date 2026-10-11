@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -82,12 +83,19 @@ func TestParseResultsByModule_InitOnlyTraceIsNotARoute(t *testing.T) {
 	}
 
 	// --- the entry naming a symbol: a genuine route, reachable ---
-	got = byModule[symLevel]
+	assertSymbolLevelRoute(t, byModule, symLevel)
+}
+
+// assertSymbolLevelRoute checks the symbol-naming path keeps its reachable
+// finding, its one route and the advisory's symbol.
+func assertSymbolLevelRoute(t *testing.T, byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, symLevel coordinate.ModuleCoordinate) {
+	t.Helper()
+	got := byModule[symLevel]
 	if len(got) != 1 {
 		t.Fatalf("findings for %s = %d, want 1", symLevel, len(got))
 	}
-	f = got[0]
-	r = f.Reachable
+	f := got[0]
+	r := f.Reachable
 	if r == nil || !r.IsReachable {
 		t.Fatalf("the symbol-level finding is not reachable: %+v", r)
 	}
@@ -149,6 +157,13 @@ func TestParseResults_InitOnlyTraceIsNotARoute(t *testing.T) {
 		t.Error("the finding does not record that the advisory names no symbols for this path")
 	}
 
+	assertSymbolPathParsed(t, s)
+}
+
+// assertSymbolPathParsed checks the path whose advisory names a symbol parses
+// to a reachable finding with that symbol.
+func assertSymbolPathParsed(t *testing.T, s *Scanner) {
+	t.Helper()
 	symFindings, err := s.parseResults(t.Context(), strings.NewReader(symbolPairFixture), "example.com/jwt/v4", domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResults for the symbol-naming path: %v", err)
@@ -156,7 +171,7 @@ func TestParseResults_InitOnlyTraceIsNotARoute(t *testing.T) {
 	if len(symFindings) != 1 {
 		t.Fatalf("findings for example.com/jwt/v4 = %d, want 1", len(symFindings))
 	}
-	f = symFindings[0]
+	f := symFindings[0]
 	if f.Reachable == nil || !f.Reachable.IsReachable {
 		t.Fatalf("the symbol-level finding is not reachable: %+v", f.Reachable)
 	}

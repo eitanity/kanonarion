@@ -176,13 +176,9 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 		return domain.ExtractionRun{}, fmt.Errorf("no extraction stages requested")
 	}
 
-	walk, err := uc.walks.GetWalk(ctx, req.WalkID)
+	walk, err := uc.walkToExtract(ctx, req)
 	if err != nil {
-		return domain.ExtractionRun{}, fmt.Errorf("getting walk %s: %w", req.WalkID, err)
-	}
-
-	if len(walk.Graph.Nodes) == 0 {
-		return domain.ExtractionRun{}, fmt.Errorf("walk %s has no modules", req.WalkID)
+		return domain.ExtractionRun{}, err
 	}
 
 	runID := ulid.Make().String()
@@ -198,19 +194,9 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 		OverallStatus:    domain.ExtractionRunSucceeded,
 	}
 
-	requestedStagesSet := make(map[string]bool)
-	for _, s := range req.Stages {
-		if !uc.stages.Has(s) {
-			return domain.ExtractionRun{}, fmt.Errorf("invalid extraction stage: %s", s)
-		}
-		requestedStagesSet[s] = true
-	}
-
-	var runStages []string
-	for _, s := range uc.stages.Stages() {
-		if requestedStagesSet[s] {
-			runStages = append(runStages, s)
-		}
+	runStages, err := uc.orderedRunStages(req)
+	if err != nil {
+		return domain.ExtractionRun{}, err
 	}
 
 	nodes := walk.Graph.Nodes
@@ -282,32 +268,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 					continue
 				}
 
-				for _, stage := range runStages {
-					if ctx.Err() != nil {
-						cancelled.Store(true)
-						break
-					}
-					lap := uc.stopwatch.Start()
-					res, extractErr := uc.extractor.Extract(ctx, j.node.Coordinate, stage, req.Force, req.WalkID)
-					duration := lap.Elapsed().Milliseconds()
-
-					stageRes := domain.StageResult{
-						Status:     res.Status,
-						RecordID:   res.RecordID,
-						Error:      res.Error,
-						Cause:      res.Cause,
-						DurationMs: duration,
-					}
-					if extractErr != nil && stageRes.Error == "" {
-						stageRes.Error = extractErr.Error()
-						stageRes.Status = domain.StageFailed
-					}
-					modRes.Stages[stage] = stageRes
-
-					if stageRes.Status == domain.StageFailed {
-						partial.Store(true)
-					}
-				}
+				uc.runModuleStages(ctx, req, j.node.Coordinate, runStages, modRes, &partial, &cancelled)
 
 				outMu.Lock()
 				outcomes[j.idx] = outcome{coord: j.node.Coordinate, result: modRes, set: true}
@@ -336,6 +297,70 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 	run.CompletedAt = uc.clock.Now().UTC()
 
 	return uc.sealAndPersist(ctx, run)
+}
+
+// walkToExtract reads the walk the request names, refusing one with no modules.
+func (uc *ExtractUseCase) walkToExtract(ctx context.Context, req ExtractRequest) (walkdomain.WalkRecord, error) {
+	walk, err := uc.walks.GetWalk(ctx, req.WalkID)
+	if err != nil {
+		return walkdomain.WalkRecord{}, fmt.Errorf("getting walk %s: %w", req.WalkID, err)
+	}
+
+	if len(walk.Graph.Nodes) == 0 {
+		return walkdomain.WalkRecord{}, fmt.Errorf("walk %s has no modules", req.WalkID)
+	}
+	return walk, nil
+}
+
+// orderedRunStages validates the requested stages and returns them in the
+// registry's order.
+func (uc *ExtractUseCase) orderedRunStages(req ExtractRequest) ([]string, error) {
+	requestedStagesSet := make(map[string]bool)
+	for _, s := range req.Stages {
+		if !uc.stages.Has(s) {
+			return nil, fmt.Errorf("invalid extraction stage: %s", s)
+		}
+		requestedStagesSet[s] = true
+	}
+
+	var runStages []string
+	for _, s := range uc.stages.Stages() {
+		if requestedStagesSet[s] {
+			runStages = append(runStages, s)
+		}
+	}
+	return runStages, nil
+}
+
+// runModuleStages runs each stage over one module, recording its result on
+// modRes; it stops at the run's cancellation.
+func (uc *ExtractUseCase) runModuleStages(ctx context.Context, req ExtractRequest, coord coordinate.ModuleCoordinate, runStages []string, modRes domain.ModuleExtractionResult, partial, cancelled *atomic.Bool) {
+	for _, stage := range runStages {
+		if ctx.Err() != nil {
+			cancelled.Store(true)
+			break
+		}
+		lap := uc.stopwatch.Start()
+		res, extractErr := uc.extractor.Extract(ctx, coord, stage, req.Force, req.WalkID)
+		duration := lap.Elapsed().Milliseconds()
+
+		stageRes := domain.StageResult{
+			Status:     res.Status,
+			RecordID:   res.RecordID,
+			Error:      res.Error,
+			Cause:      res.Cause,
+			DurationMs: duration,
+		}
+		if extractErr != nil && stageRes.Error == "" {
+			stageRes.Error = extractErr.Error()
+			stageRes.Status = domain.StageFailed
+		}
+		modRes.Stages[stage] = stageRes
+
+		if stageRes.Status == domain.StageFailed {
+			partial.Store(true)
+		}
+	}
 }
 
 // collectResults turns the workers' slots into the run's per-module map. Only

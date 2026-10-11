@@ -69,7 +69,7 @@ func TestInterruptedRunExitsCancelledWithOneStatement(t *testing.T) {
 			case werr := <-done:
 				t.Fatalf("the run ended (%v) before its fetch reached the proxy; stderr:\n%s", werr, stderr.String())
 			case <-time.After(30 * time.Second):
-				_ = cmd.Process.Kill()
+				_ = cmd.Process.Kill() //nolint:errcheck // teardown before the Fatalf below
 				<-done
 				t.Fatalf("the fetch never reached the proxy; stderr:\n%s", stderr.String())
 			}
@@ -82,18 +82,7 @@ func TestInterruptedRunExitsCancelledWithOneStatement(t *testing.T) {
 				t.Fatalf("interrupted run exited %v, want %d (Cancelled); stderr:\n%s", werr, ExitCancelled, stderr.String())
 			}
 
-			var statements []string
-			for line := range strings.SplitSeq(stderr.String(), "\n") {
-				if strings.HasPrefix(line, "interrupted") {
-					statements = append(statements, line)
-				}
-				if strings.Contains(line, "level=WARN") || strings.Contains(line, "level=ERROR") {
-					t.Errorf("an interrupted run logged a warning: %s", line)
-				}
-			}
-			if len(statements) != 1 || !strings.Contains(statements[0], tc.cause) {
-				t.Errorf("want exactly one interruption statement naming %q; got %q\nstderr:\n%s", tc.cause, statements, stderr.String())
-			}
+			assertOneInterruptionStatement(t, stderr.String(), tc.cause)
 			if !strings.Contains(stderr.String(), "\nerror: ") {
 				t.Errorf("the closing error line saying what was not done is missing; stderr:\n%s", stderr.String())
 			}
@@ -102,5 +91,23 @@ func TestInterruptedRunExitsCancelledWithOneStatement(t *testing.T) {
 				t.Errorf("an interrupted fetch wrote to stdout: %q", stdout.String())
 			}
 		})
+	}
+}
+
+// assertOneInterruptionStatement checks the run stated its interruption once,
+// naming the cause, and logged no warning.
+func assertOneInterruptionStatement(t *testing.T, stderrText, cause string) {
+	t.Helper()
+	var statements []string
+	for line := range strings.SplitSeq(stderrText, "\n") {
+		if strings.HasPrefix(line, "interrupted") {
+			statements = append(statements, line)
+		}
+		if strings.Contains(line, "level=WARN") || strings.Contains(line, "level=ERROR") {
+			t.Errorf("an interrupted run logged a warning: %s", line)
+		}
+	}
+	if len(statements) != 1 || !strings.Contains(statements[0], cause) {
+		t.Errorf("want exactly one interruption statement naming %q; got %q\nstderr:\n%s", cause, statements, stderrText)
 	}
 }

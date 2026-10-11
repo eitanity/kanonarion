@@ -82,8 +82,8 @@ func TestPutWalkScanRun_RefusesHeldIDAndLeavesFirstRunUnchanged(t *testing.T) {
 	snapshot := snap("osv", "v1")
 	a, b := coord("example.com/a", "v1.0.0"), coord("example.com/b", "v1.0.0")
 	first := scanRun(t, "vscan-walk-1-1", "walk-1", snapshot, a, b)
-	if err := store.PutWalkScanRun(ctx, first); err != nil {
-		t.Fatalf("PutWalkScanRun(first): %v", err)
+	if perr := store.PutWalkScanRun(ctx, first); perr != nil {
+		t.Fatalf("PutWalkScanRun(first): %v", perr)
 	}
 	before := readRunRows(t, db.DB(), first.ID)
 	if len(before.header) != 1 || len(before.members) != 2 {
@@ -132,8 +132,8 @@ func TestPutWalkScanRun_RetryAfterLockContentionIsNotADuplicate(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	// The store's one connection gives up on the lock in milliseconds, so the
 	// contention reaches RetryOnBusy instead of SQLite's own wait.
-	if _, err := db.DB().ExecContext(ctx, `PRAGMA busy_timeout = 50`); err != nil {
-		t.Fatalf("lowering busy_timeout: %v", err)
+	if _, eerr := db.DB().ExecContext(ctx, `PRAGMA busy_timeout = 50`); eerr != nil {
+		t.Fatalf("lowering busy_timeout: %v", eerr)
 	}
 	store := sqlite.New(db)
 
@@ -157,13 +157,13 @@ func TestPutWalkScanRun_RetryAfterLockContentionIsNotADuplicate(t *testing.T) {
 		}
 		if _, err := tx.Exec(`CREATE TABLE lock_holder (v TEXT)`); err != nil {
 			held.Done()
-			_ = tx.Rollback()
+			_ = tx.Rollback() //nolint:errcheck // releasing the lock is the point; there is no write to keep
 			t.Errorf("holder write: %v", err)
 			return
 		}
 		held.Done()
 		time.Sleep(400 * time.Millisecond)
-		_ = tx.Rollback()
+		_ = tx.Rollback() //nolint:errcheck // releasing the lock is the point; there is no write to keep
 	}()
 	held.Wait()
 

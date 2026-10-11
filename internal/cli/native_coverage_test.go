@@ -193,7 +193,10 @@ func TestNativeCoverage_ComponentsSerialiseAsAnArrayNeverNull(t *testing.T) {
 		}
 	}
 	// And the two keys a machine reads are on the wire in every state.
-	b, _ := json.Marshal(nativeCoverageOf(natSubject, natRecord(nativedomain.PresenceAbsent, nil, 0), true))
+	b, err := json.Marshal(nativeCoverageOf(natSubject, natRecord(nativedomain.PresenceAbsent, nil, 0), true))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
 	for _, key := range []string{`"state"`, `"unsearched_components"`, `"statement"`} {
 		if !strings.Contains(string(b), key) {
 			t.Errorf("%s is missing from the payload: %s", key, b)
@@ -355,7 +358,10 @@ func TestNativeRollup_NoReaderPublishesNothing(t *testing.T) {
 	if got == nil {
 		t.Fatal("a wired reader over an empty build produced nil, not an empty statement")
 	}
-	b, _ := json.Marshal(got)
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
 	if !strings.Contains(string(b), `"unsearched":[]`) || !strings.Contains(string(b), `"unidentified":[]`) {
 		t.Errorf("empty collections serialise as null: %s", b)
 	}

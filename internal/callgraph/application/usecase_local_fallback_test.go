@@ -122,7 +122,7 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 		PipelineVersion: testPipelineV,
 		ExtractedAt:     testTime,
 	}
-	stale, _ = h.SetContentHash(stale)
+	stale = mustSeal(t, h, stale)
 	if err := store.PutCallGraphRecord(context.Background(), stale); err != nil {
 		t.Fatalf("PutCallGraphRecord: %v", err)
 	}

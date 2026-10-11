@@ -99,9 +99,37 @@ func TestExecute_AppendsExamplesExtractedEvent(t *testing.T) {
 	if ev.Type != audit.EventExamplesExtracted {
 		t.Errorf("event type = %q, want %q", ev.Type, audit.EventExamplesExtracted)
 	}
-	if err := ev.Validate(); err != nil {
-		t.Errorf("event does not validate: %v", err)
+	if verr := ev.Validate(); verr != nil {
+		t.Errorf("event does not validate: %v", verr)
 	}
+	assertExamplesEventPayload(t, ev, coord, res)
+
+	// CACHE HIT: a second Execute is served from cache, which is not a write and
+	// must not append.
+	res2, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	if err != nil {
+		t.Fatalf("Execute (cached): %v", err)
+	}
+	if !res2.FromCache {
+		t.Fatal("second Execute was not served from cache; the zero below would prove nothing")
+	}
+	if got := len(sink.recorded()); got != 1 {
+		t.Errorf("appended %d events after a cache hit, want the original 1", got)
+	}
+
+	// CONTROL for that zero: forcing a re-extraction is a write, and appends again.
+	if _, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord, Force: true}); err != nil {
+		t.Fatalf("Execute (forced): %v", err)
+	}
+	if got := len(sink.recorded()); got != 2 {
+		t.Errorf("appended %d events after a forced re-extraction, want 2", got)
+	}
+}
+
+// assertExamplesEventPayload checks the event identifies the write without
+// carrying the examples.
+func assertExamplesEventPayload(t *testing.T, ev audit.Event, coord coordinate.ModuleCoordinate, res application.ExtractResult) {
+	t.Helper()
 	// The payload must identify the write without carrying the examples.
 	want := map[string]any{
 		"module":              coord.Path(),
@@ -131,27 +159,6 @@ func TestExecute_AppendsExamplesExtractedEvent(t *testing.T) {
 	if _, ok := ev.Payload["failure_detail"]; ok {
 		t.Error("payload states a failure_detail for a clean extraction")
 	}
-
-	// CACHE HIT: a second Execute is served from cache, which is not a write and
-	// must not append.
-	res2, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
-	if err != nil {
-		t.Fatalf("Execute (cached): %v", err)
-	}
-	if !res2.FromCache {
-		t.Fatal("second Execute was not served from cache; the zero below would prove nothing")
-	}
-	if got := len(sink.recorded()); got != 1 {
-		t.Errorf("appended %d events after a cache hit, want the original 1", got)
-	}
-
-	// CONTROL for that zero: forcing a re-extraction is a write, and appends again.
-	if _, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord, Force: true}); err != nil {
-		t.Fatalf("Execute (forced): %v", err)
-	}
-	if got := len(sink.recorded()); got != 2 {
-		t.Errorf("appended %d events after a forced re-extraction, want 2", got)
-	}
 }
 
 // TestExecute_AuditSinkFailureIsReported guards the posture the other stages
@@ -169,8 +176,8 @@ func TestExecute_AuditSinkFailureIsReported(t *testing.T) {
 	}
 	// The record is persisted before the event: the write happened, and the
 	// failure is about recording it, not about performing it.
-	if _, ok, _ := store.GetExampleRecord(context.Background(), coord, application.PipelineVersion); !ok {
-		t.Error("record not persisted; the append failure must not undo the write")
+	if _, ok, rerr := store.GetExampleRecord(context.Background(), coord, application.PipelineVersion); rerr != nil || !ok {
+		t.Errorf("record not persisted; the append failure must not undo the write (read error: %v)", rerr)
 	}
 }
 
@@ -184,8 +191,8 @@ func TestExecute_NoSinkAppendsNothing(t *testing.T) {
 	if _, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord}); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if _, ok, _ := store.GetExampleRecord(context.Background(), coord, application.PipelineVersion); !ok {
-		t.Error("record not persisted without an audit sink")
+	if _, ok, rerr := store.GetExampleRecord(context.Background(), coord, application.PipelineVersion); rerr != nil || !ok {
+		t.Errorf("record not persisted without an audit sink (read error: %v)", rerr)
 	}
 }
 
@@ -210,7 +217,7 @@ func TestExecute_FailedExtractionAppendsWithReason(t *testing.T) {
 	if got := events[0].Payload["overall_status"]; got != res.Record.OverallStatus.String() {
 		t.Errorf("payload overall_status = %v, want %q", got, res.Record.OverallStatus.String())
 	}
-	if got, _ := events[0].Payload["failure_detail"].(string); got == "" {
+	if got, ok := events[0].Payload["failure_detail"].(string); !ok || got == "" {
 		t.Error("payload states no failure_detail for a failed extraction")
 	}
 }

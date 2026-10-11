@@ -112,7 +112,7 @@ func buildFakeServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 	mux.HandleFunc("/vulndb.zip", func(w http.ResponseWriter, _ *http.Request) {
 		zipHits.Add(1)
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(zipBody)))
-		_, _ = w.Write(zipBody)
+		_, _ = w.Write(zipBody) //nolint:errcheck // a failed write is seen by the client under test
 	})
 
 	// index/modules.json.gz — consumed by CheckVulnerable's lazy load.
@@ -120,7 +120,7 @@ func buildFakeServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 		modules := []map[string]any{
 			{"path": "github.com/foo/bar", "vulns": []map[string]string{{"id": "GO-2024-0001"}}},
 		}
-		_, _ = w.Write(gzipJSON(t, modules))
+		_, _ = w.Write(gzipJSON(t, modules)) //nolint:errcheck // a failed write is seen by the client under test
 	})
 
 	return httptest.NewServer(mux), &zipHits
@@ -215,7 +215,10 @@ func TestGetSnapshot_DelegatesToStore(t *testing.T) {
 	}
 	defer func() { _ = rc.Close() }()
 
-	got, _ := io.ReadAll(rc)
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
 	if string(got) != "snapshot-content" {
 		t.Errorf("content: got %q, want %q", string(got), "snapshot-content")
 	}
@@ -283,7 +286,7 @@ func TestSnapshot_FailsClosedOnLayout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := tc.body
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write(body)
+				_, _ = w.Write(body) //nolint:errcheck // a failed write is seen by the client under test
 			}))
 			defer srv.Close()
 
@@ -446,7 +449,7 @@ func buildLargeZipServer(t *testing.T, sizeBytes int) *httptest.Server {
 	})
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-		_, _ = w.Write(body)
+		_, _ = w.Write(body) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 }
 
@@ -936,7 +939,7 @@ func TestLatestVersion_ReadsTheStandaloneIndexWithoutTheBody(t *testing.T) {
 	})
 	mux.HandleFunc("/index/db.json", func(w http.ResponseWriter, _ *http.Request) {
 		indexHits++
-		_, _ = w.Write([]byte(`{"modified":"2026-07-27T20:14:16Z"}`))
+		_, _ = w.Write([]byte(`{"modified":"2026-07-27T20:14:16Z"}`)) //nolint:errcheck // a failed write is seen by the client under test
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -961,7 +964,7 @@ func TestLatestVersion_ReadsTheStandaloneIndexWithoutTheBody(t *testing.T) {
 // comparison, and "" compares equal to nothing anyone stored.
 func TestLatestVersion_RefusesAnEmptyGeneration(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`)) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 	defer srv.Close()
 
@@ -1004,7 +1007,7 @@ func TestPublishedAdvisoryIndex_ReadsTheStandaloneIndexWithoutTheBody(t *testing
 				{"id": "GO-2026-0001", "modified": "2026-01-01T00:00:00Z", "fixed": "1.2.0"},
 			}},
 		}
-		_, _ = w.Write(gzipJSON(t, modules))
+		_, _ = w.Write(gzipJSON(t, modules)) //nolint:errcheck // a failed write is seen by the client under test
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

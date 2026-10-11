@@ -564,34 +564,7 @@ func TestOnboardingExampleCoordinatesAreNotThisModulesOwnPins(t *testing.T) {
 	seen := 0
 	exempted := map[string]bool{}
 	for _, doc := range onboardingDocs {
-		for _, inv := range fencedInvocations(t, doc) {
-			for _, arg := range inv.args {
-				arg = strings.Trim(arg, "'\"")
-				if strings.HasPrefix(arg, "-") || strings.ContainsAny(arg, "<>") || !strings.Contains(arg, "@") {
-					continue
-				}
-				coord, cerr := coordinate.ParseModuleCoordinate(arg)
-				if cerr != nil || !strings.HasPrefix(coord.Version(), "v") {
-					continue
-				}
-				seen++
-				if pinned[coord.Path()] != coord.Version() {
-					continue
-				}
-				key := doc + " " + arg
-				if reason, ok := pinnedExampleByDecision[key]; ok {
-					exempted[key] = true
-					if reason == "" {
-						t.Errorf("%s:%d is exempt from the stranding rule with no reason given: state why the example has to name a pinned version", inv.doc, inv.line)
-					}
-					continue
-				}
-				t.Errorf("%s:%d uses %s as an example, which is the version this repository's own go.mod pins: "+
-					"the next bump of %s strands it, so pick a version this module does not depend on, "+
-					"or name it in pinnedExampleByDecision with the reason it has to be pinned",
-					inv.doc, inv.line, arg, coord.Path())
-			}
-		}
+		seen += checkOnboardingExamples(t, doc, pinned, exempted)
 	}
 	if seen == 0 {
 		t.Fatalf("no example coordinate was read out of %v: the guard reads nothing", onboardingDocs)
@@ -601,6 +574,42 @@ func TestOnboardingExampleCoordinatesAreNotThisModulesOwnPins(t *testing.T) {
 			t.Errorf("pinnedExampleByDecision exempts %q (%s), and no such pinned example is there any more: the exemption outlived what it exempted", key, reason)
 		}
 	}
+}
+
+// checkOnboardingExamples reports each example coordinate in doc that names a
+// version this module pins, returning how many coordinates it read.
+func checkOnboardingExamples(t *testing.T, doc string, pinned map[string]string, exempted map[string]bool) int {
+	t.Helper()
+	seen := 0
+	for _, inv := range fencedInvocations(t, doc) {
+		for _, arg := range inv.args {
+			arg = strings.Trim(arg, "'\"")
+			if strings.HasPrefix(arg, "-") || strings.ContainsAny(arg, "<>") || !strings.Contains(arg, "@") {
+				continue
+			}
+			coord, cerr := coordinate.ParseModuleCoordinate(arg)
+			if cerr != nil || !strings.HasPrefix(coord.Version(), "v") {
+				continue
+			}
+			seen++
+			if pinned[coord.Path()] != coord.Version() {
+				continue
+			}
+			key := doc + " " + arg
+			if reason, ok := pinnedExampleByDecision[key]; ok {
+				exempted[key] = true
+				if reason == "" {
+					t.Errorf("%s:%d is exempt from the stranding rule with no reason given: state why the example has to name a pinned version", inv.doc, inv.line)
+				}
+				continue
+			}
+			t.Errorf("%s:%d uses %s as an example, which is the version this repository's own go.mod pins: "+
+				"the next bump of %s strands it, so pick a version this module does not depend on, "+
+				"or name it in pinnedExampleByDecision with the reason it has to be pinned",
+				inv.doc, inv.line, arg, coord.Path())
+		}
+	}
+	return seen
 }
 
 // docFlags returns the long flag names written on one documented invocation.
@@ -859,19 +868,7 @@ func emittedJSONKeys(t *testing.T) func(key string) bool {
 	tagged := map[string]bool{}
 	var source strings.Builder
 	collect := func(dir string, keepSource bool) {
-		var paths []string
-		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return fmt.Errorf("walk %s: %w", path, err)
-			}
-			if !info.IsDir() && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
-				paths = append(paths, path)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("collecting JSON keys from %s: %v", dir, err)
-		}
+		paths := goSourcesUnder(t, dir)
 		for _, path := range paths {
 			src, rerr := os.ReadFile(path) // #nosec G304 -- path comes from walking this repository or a module it declares a dependency on
 			if rerr != nil {
@@ -899,6 +896,25 @@ func emittedJSONKeys(t *testing.T) func(key string) bool {
 	return func(key string) bool {
 		return tagged[key] || strings.Contains(text, `"`+key+`"`)
 	}
+}
+
+// goSourcesUnder lists the non-test Go source files under dir.
+func goSourcesUnder(t *testing.T, dir string) []string {
+	t.Helper()
+	var paths []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("walk %s: %w", path, err)
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("collecting JSON keys from %s: %v", dir, err)
+	}
+	return paths
 }
 
 // cycloneDXModuleDir is the unpacked source of the CycloneDX library whose

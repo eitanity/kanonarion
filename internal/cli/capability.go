@@ -75,7 +75,7 @@ It reads stored call graphs; run 'kanonarion callgraph <module>@<version>' first
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 
 			uc := capapp.NewAnalyseCapabilitiesUseCase(ctr.QueryCallGraph)
 			scope := capabilityRootScope(includeTests)

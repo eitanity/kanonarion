@@ -45,8 +45,8 @@ func TestPutGetRoundTrip(t *testing.T) {
 	}
 	ctx := context.Background()
 	want := sampleFacts()
-	if err := store.Put(ctx, want); err != nil {
-		t.Fatalf("put: %v", err)
+	if perr := store.Put(ctx, want); perr != nil {
+		t.Fatalf("put: %v", perr)
 	}
 	got, ok, err := store.Get(ctx, "go1.26.4")
 	if err != nil || !ok {

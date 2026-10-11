@@ -200,11 +200,28 @@ func TestReachabilityJSON_NegativeNamesTheReflectiveDispatchItCouldNotFollow(t *
 		if !ok {
 			t.Fatalf("a site is not an object: %v", raw)
 		}
-		callSite, _ := site["call_site"].(string)
+		callSite := optAs[string](t, site["call_site"])
 		byCallSite[callSite] = site
 	}
 	// Two calls from one function to one reflect method on two lines are two
 	// sites. Collapsing them would send a reader to one of the two places.
+	assertReflectSites(t, byCallSite)
+	// The two calls into reflect that bound perfectly must not appear anywhere.
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	for _, bounded := range []string{"reflect.TypeOf", "reflect.DeepEqual"} {
+		if strings.Contains(string(raw), bounded) {
+			t.Errorf("the answer names %s as a reflective dispatch; it has one callee and bounds perfectly:\n%s", bounded, raw)
+		}
+	}
+}
+
+// assertReflectSites checks each call site into reflect is named apart, with
+// its callee and whether an entry point reaches it.
+func assertReflectSites(t *testing.T, byCallSite map[string]map[string]any) {
+	t.Helper()
 	for _, want := range []struct {
 		callSite  string
 		callee    string
@@ -224,16 +241,6 @@ func TestReachabilityJSON_NegativeNamesTheReflectiveDispatchItCouldNotFollow(t *
 		}
 		if got := site["reachable_from_entry_point"]; got != want.reachable {
 			t.Errorf("site at %s reports reachable_from_entry_point %v, want %t", want.callSite, got, want.reachable)
-		}
-	}
-	// The two calls into reflect that bound perfectly must not appear anywhere.
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatalf("marshalling: %v", err)
-	}
-	for _, bounded := range []string{"reflect.TypeOf", "reflect.DeepEqual"} {
-		if strings.Contains(string(raw), bounded) {
-			t.Errorf("the answer names %s as a reflective dispatch; it has one callee and bounds perfectly:\n%s", bounded, raw)
 		}
 	}
 }
@@ -577,9 +584,9 @@ func TestReachabilityJSON_ReachIsDerivedByWalkingARealGraph(t *testing.T) {
 		if !ok {
 			t.Fatalf("a site is not an object: %v", raw)
 		}
-		caller, _ := site["caller"].(string)
-		callee, _ := site["callee"].(string)
-		reachable, _ := site["reachable_from_entry_point"].(bool)
+		caller := optAs[string](t, site["caller"])
+		callee := optAs[string](t, site["callee"])
+		reachable := optAs[bool](t, site["reachable_from_entry_point"])
 		reach[caller+" -> "+callee] = reachable
 	}
 	const zstd = "github.com/klauspost/compress/zstd"

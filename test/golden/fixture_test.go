@@ -39,6 +39,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -132,27 +133,41 @@ func fixtureClean(t testing.TB) coordinate.ModuleCoordinate {
 	return fixtureCoord(t, "example.com/clean", "v1.0.0")
 }
 
+// fixtureZipEntry adds one entry to a fixture zip, stored with a fixed time.
+// Deflate output changes between Go releases and the goldens record hashes of
+// these bytes, so a compressed entry would move them on a toolchain bump.
+func fixtureZipEntry(zw *zip.Writer, name string) (io.Writer, error) {
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store, Modified: fixtureZipModified})
+	if err != nil {
+		return nil, fmt.Errorf("creating fixture zip entry %s: %w", name, err)
+	}
+	return w, nil
+}
+
+// fixtureZipModified is the one Modified time every fixture zip entry carries.
+var fixtureZipModified = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // fixtureArtefact builds a deterministic module zip for coord. salt varies the
 // bytes, which is how one coordinate acquires two artefact identities.
 func fixtureArtefact(t testing.TB, coord coordinate.ModuleCoordinate, salt string) ([]byte, fetchdomain.ModuleHash, fetchports.BlobIdentity) {
 	t.Helper()
 	buf := new(bytes.Buffer)
 	zw := zip.NewWriter(buf)
-	f, err := zw.Create(coord.Path() + "@" + coord.Version() + "/README")
+	f, err := fixtureZipEntry(zw, coord.Path()+"@"+coord.Version()+"/README")
 	if err != nil {
 		t.Fatalf("fixture zip entry: %v", err)
 	}
-	if _, err := f.Write([]byte("zip content for " + coord.String() + " " + salt)); err != nil {
-		t.Fatalf("fixture zip write: %v", err)
+	if _, werr := f.Write([]byte("zip content for " + coord.String() + " " + salt)); werr != nil {
+		t.Fatalf("fixture zip write: %v", werr)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("fixture zip close: %v", err)
+	if cerr := zw.Close(); cerr != nil {
+		t.Fatalf("fixture zip close: %v", cerr)
 	}
 	content := buf.Bytes()
 
 	tmp := filepath.Join(t.TempDir(), "fixture.zip")
-	if err := os.WriteFile(tmp, content, 0o600); err != nil {
-		t.Fatalf("fixture zip file: %v", err)
+	if werr := os.WriteFile(tmp, content, 0o600); werr != nil {
+		t.Fatalf("fixture zip file: %v", werr)
 	}
 	raw, err := dirhash.HashZip(tmp, dirhash.Hash1)
 	if err != nil {

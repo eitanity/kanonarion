@@ -101,7 +101,7 @@ func TestDiffInterfaceUseCase_StoreFailureIsNotAbsence(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the store failure", err)
 	}
-	if _, ok := errors.AsType[*application.ErrInterfaceRecordNotFound](err); ok {
+	if errors.As(err, new(*application.ErrInterfaceRecordNotFound)) {
 		t.Error("a store failure was reported as a missing record")
 	}
 }

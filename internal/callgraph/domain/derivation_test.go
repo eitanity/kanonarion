@@ -104,8 +104,8 @@ func TestPreFieldRecord_StillVerifies(t *testing.T) {
 	if rec.DerivedBy.IsRecorded() {
 		t.Errorf("a pre-field record decoded a derivation: %v", rec.DerivedBy)
 	}
-	if err := h.VerifyContentHash(rec); err != nil {
-		t.Fatalf("a record sealed before the field no longer verifies: %v", err)
+	if verr := h.VerifyContentHash(rec); verr != nil {
+		t.Fatalf("a record sealed before the field no longer verifies: %v", verr)
 	}
 	round, err := h.Marshal(rec)
 	if err != nil {

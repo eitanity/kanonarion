@@ -460,21 +460,7 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 	// nonSymbolicReported for what the other levels carry and why discarding them
 	// sent the advisory round by the coordinate-match route.
 	// Find osv ID without full unmarshal
-	var osvID string
-	osvStart := bytes.Index(raw, []byte("\"osv\":"))
-	if osvStart != -1 {
-		osvStart += 6
-		// skip possible whitespace and find start of ID
-		idStart := bytes.IndexByte(raw[osvStart:], '"')
-		if idStart != -1 {
-			idStart++ // skip opening quote
-			idEnd := bytes.IndexByte(raw[osvStart+idStart:], '"')
-			if idEnd != -1 {
-				// Ensure ID is copied to avoid pinning raw buffer
-				osvID = string(append([]byte(nil), raw[osvStart+idStart:osvStart+idStart+idEnd]...))
-			}
-		}
-	}
+	osvID := osvIDOf(raw)
 
 	if osvID == "" {
 		return
@@ -534,6 +520,35 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 	// undetermined at symbol level rather than claiming the vulnerable code ran.
 	initOnly := symbolic && traceIsPackageInitOnly(trace)
 
+	recordFindingLevel(meta, routes, osvID, vuln, trace, symbolic, initOnly, intern)
+	idx = upsertFinding(findings, findingIndex, osvID, exists, idx, partial.Finding.FixedVersion, intern)
+
+	recordAffectedSymbol(findings, idx, vuln, initOnly, intern)
+}
+
+// osvIDOf reads the osv ID out of a finding message without a full unmarshal.
+func osvIDOf(raw []byte) string {
+	var osvID string
+	osvStart := bytes.Index(raw, []byte("\"osv\":"))
+	if osvStart != -1 {
+		osvStart += 6
+		// skip possible whitespace and find start of ID
+		idStart := bytes.IndexByte(raw[osvStart:], '"')
+		if idStart != -1 {
+			idStart++ // skip opening quote
+			idEnd := bytes.IndexByte(raw[osvStart+idStart:], '"')
+			if idEnd != -1 {
+				// Ensure ID is copied to avoid pinning raw buffer
+				osvID = string(append([]byte(nil), raw[osvStart+idStart:osvStart+idStart+idEnd]...))
+			}
+		}
+	}
+	return osvID
+}
+
+// recordFindingLevel notes which level the advisory was reported at, and the
+// route when it reached a symbol.
+func recordFindingLevel(meta map[string]*findingMeta, routes map[string][]domain.ReachabilityRoute, osvID string, vuln traceFrame, trace []traceFrame, symbolic, initOnly bool, intern func(string) string) {
 	m := meta[osvID]
 	if m == nil {
 		m = &findingMeta{vulnModule: intern(vuln.Module)}
@@ -552,19 +567,29 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 		// route to it.
 		routes[osvID] = append(routes[osvID], routeFromTrace(trace, intern))
 	}
+}
+
+// upsertFinding adds the advisory's finding when it is new, or fills a fixed
+// version its first message did not state; it returns the finding's index.
+func upsertFinding(findings *[]domain.VulnerabilityFinding, findingIndex map[string]int, osvID string, exists bool, idx int, fixedVersion string, intern func(string) string) int {
 	if !exists {
 		*findings = append(*findings, domain.VulnerabilityFinding{
 			ID:      osvID,
-			FixedIn: intern(partial.Finding.FixedVersion),
+			FixedIn: intern(fixedVersion),
 		})
 		idx = len(*findings) - 1
 		findingIndex[osvID] = idx
 	} else if (*findings)[idx].FixedIn == "" {
 		// Every level carries the same fixed version, so this only fills a finding
 		// whose first message stated none.
-		(*findings)[idx].FixedIn = intern(partial.Finding.FixedVersion)
+		(*findings)[idx].FixedIn = intern(fixedVersion)
 	}
+	return idx
+}
 
+// recordAffectedSymbol adds the vulnerable frame's symbol to the finding at idx
+// once.
+func recordAffectedSymbol(findings *[]domain.VulnerabilityFinding, idx int, vuln traceFrame, initOnly bool, intern func(string) string) {
 	// record the vulnerable symbol from the vulnerable frame only.
 	// Caller frames are the call path, not what the CVE affects. An OSV may
 	// affect several symbols, surfaced across separate finding messages, so
@@ -720,46 +745,9 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 	// stands — but it carries no route and no reachable claim.
 	initOnly := symbolic && traceIsPackageInitOnly(trace)
 
-	m := mf.meta[osvID]
-	if m == nil {
-		m = &findingMeta{vulnModule: intern(vuln.Module)}
-		mf.meta[osvID] = m
-	}
-	switch {
-	case !symbolic:
-		m.nonSymbolicReported = true
-	case initOnly:
-		m.packageInitOnly = true
-	default:
-		m.symbolReached = true
-	}
+	recordGroupedLevel(mf, osvID, vuln, symbolic, initOnly, intern)
 
-	idx, exists := mf.index[osvID]
-	if !exists {
-		mf.findings = append(mf.findings, domain.VulnerabilityFinding{
-			ID:      osvID,
-			FixedIn: intern(partial.Finding.FixedVersion),
-			// Opened undetermined and upgraded below by the first trace that names a
-			// real call. A finding whose every trace is package initialisation stays
-			// undetermined at symbol level: the project-rooted analysis observed that
-			// the vulnerable package is in the build, which is not a reachability
-			// answer about the code the advisory is about.
-			Reachable: &domain.ReachabilityResult{
-				IsReachable: false,
-				Confidence:  domain.ConfidenceUnknown,
-				DerivedBy: domain.ReachabilityDerivation{
-					Analyser: domain.AnalyserGovulncheck,
-					Fidelity: string(mode),
-				},
-			},
-		})
-		idx = len(mf.findings) - 1
-		mf.index[osvID] = idx
-	} else if mf.findings[idx].FixedIn == "" {
-		// Every level carries the same fixed version, so this only fills a finding
-		// whose first message stated none.
-		mf.findings[idx].FixedIn = intern(partial.Finding.FixedVersion)
-	}
+	idx := upsertGroupedFinding(mf, osvID, partial.Finding.FixedVersion, mode, intern)
 
 	if !symbolic || initOnly {
 		return
@@ -779,6 +767,62 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 	res.IsReachable = true
 	res.Routes = append(res.Routes, routeFromTrace(trace, intern))
 
+	recordGroupedSymbol(mf, idx, vuln, intern)
+}
+
+// recordGroupedLevel notes which level the advisory was reported at.
+func recordGroupedLevel(mf *moduleFindings, osvID string, vuln traceFrame, symbolic, initOnly bool, intern func(string) string) {
+	m := mf.meta[osvID]
+	if m == nil {
+		m = &findingMeta{vulnModule: intern(vuln.Module)}
+		mf.meta[osvID] = m
+	}
+	switch {
+	case !symbolic:
+		m.nonSymbolicReported = true
+	case initOnly:
+		m.packageInitOnly = true
+	default:
+		m.symbolReached = true
+	}
+}
+
+// upsertGroupedFinding opens the advisory's finding, undetermined, when it is
+// new, or fills a fixed version its first message did not state; it returns
+// the finding's index.
+func upsertGroupedFinding(mf *moduleFindings, osvID, fixedVersion string, mode domain.ScanMode, intern func(string) string) int {
+	idx, exists := mf.index[osvID]
+	if !exists {
+		mf.findings = append(mf.findings, domain.VulnerabilityFinding{
+			ID:      osvID,
+			FixedIn: intern(fixedVersion),
+			// Opened undetermined and upgraded below by the first trace that names a
+			// real call. A finding whose every trace is package initialisation stays
+			// undetermined at symbol level: the project-rooted analysis observed that
+			// the vulnerable package is in the build, which is not a reachability
+			// answer about the code the advisory is about.
+			Reachable: &domain.ReachabilityResult{
+				IsReachable: false,
+				Confidence:  domain.ConfidenceUnknown,
+				DerivedBy: domain.ReachabilityDerivation{
+					Analyser: domain.AnalyserGovulncheck,
+					Fidelity: string(mode),
+				},
+			},
+		})
+		idx = len(mf.findings) - 1
+		mf.index[osvID] = idx
+	} else if mf.findings[idx].FixedIn == "" {
+		// Every level carries the same fixed version, so this only fills a finding
+		// whose first message stated none.
+		mf.findings[idx].FixedIn = intern(fixedVersion)
+	}
+	return idx
+}
+
+// recordGroupedSymbol adds the vulnerable frame's symbol to the finding at idx
+// once.
+func recordGroupedSymbol(mf *moduleFindings, idx int, vuln traceFrame, intern func(string) string) {
 	if vuln.Function == "" {
 		return
 	}

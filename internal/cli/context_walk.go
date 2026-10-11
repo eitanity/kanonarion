@@ -51,7 +51,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	rec, err := contextWalkRecord(ctx, ctr.QueryWalks, f.walkID, stderr)
 	if err != nil {
@@ -85,40 +85,51 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 	}
 
 	if !jsonOut && !f.stream {
-		for _, node := range nodes {
-			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("context cancelled: %w", err)
-			}
-			coord := node.Coordinate
-			vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
-			var cmdWalkID string
-			if vulns.Status == sectionStatusNotRun {
-				cmdWalkID = f.walkID
-			}
-			out := contextOutput{
-				Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
-				Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
-				Provenance:      buildProvenance(coord),
-				Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
-				License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
-				Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
-				CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
-				Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
-				Vulnerabilities: vulns,
-				Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
-				Commands:        buildCommandsWithWalk(coord, cmdWalkID),
-			}
-			if err := printContextText(out, compact, stdout); err != nil {
-				return err
-			}
-			// Add a separator between modules in text output
-			if _, err := fmt.Fprintln(stdout, "\n---"); err != nil {
-				return fmt.Errorf("writing separator: %w", err)
-			}
-		}
-		return nil
+		return printContextWalkText(ctx, ctr, nodes, vulnBatch, basis, compact, f, stdout)
 	}
 
+	return writeContextWalkJSON(ctx, ctr, rec, nodes, vulnBatch, basis, compact, f, stdout)
+}
+
+// printContextWalkText prints each module's context as text, separated.
+func printContextWalkText(ctx context.Context, ctr *Container, nodes []walkdomain.GraphNode, vulnBatch *vulnBatchCtx, basis basisWalk, compact bool, f contextFlags, stdout io.Writer) error {
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context cancelled: %w", err)
+		}
+		coord := node.Coordinate
+		vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
+		var cmdWalkID string
+		if vulns.Status == sectionStatusNotRun {
+			cmdWalkID = f.walkID
+		}
+		out := contextOutput{
+			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
+			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
+			Provenance:      buildProvenance(coord),
+			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks, basis),
+			License:         buildLicense(ctx, coord, ctr.QueryLicense, ctr.StdlibCustody),
+			Interface:       buildInterface(ctx, coord, ctr.QueryInterface, compact, f.packageFilter),
+			CallGraph:       buildCallGraph(ctx, coord, ctr.QueryCallGraph, f.entryPointsFull, f.packageFilter),
+			Examples:        buildExamples(ctx, coord, ctr.QueryExamples, compact, f.packageFilter),
+			Vulnerabilities: vulns,
+			Native:          deriveNativeCoverage(ctx, ctr.QueryNative, coord),
+			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
+		}
+		if err := printContextText(out, compact, stdout); err != nil {
+			return err
+		}
+		// Add a separator between modules in text output
+		if _, err := fmt.Fprintln(stdout, "\n---"); err != nil {
+			return fmt.Errorf("writing separator: %w", err)
+		}
+	}
+	return nil
+}
+
+// writeContextWalkJSON writes the walk's module documents as one envelope, or
+// as a stream under --stream.
+func writeContextWalkJSON(ctx context.Context, ctr *Container, rec walkdomain.WalkRecord, nodes []walkdomain.GraphNode, vulnBatch *vulnBatchCtx, basis basisWalk, compact bool, f contextFlags, stdout io.Writer) error {
 	// --json frames the documents as the modules array of one envelope, so the
 	// whole answer parses as a single document; --stream keeps the
 	// newline-delimited stream of per-module documents for a caller that reads
@@ -185,19 +196,9 @@ func filterContextWalkNodes(
 	vulnBatch *vulnBatchCtx,
 ) ([]walkdomain.GraphNode, setAsideRows, error) {
 	// Build coordinate allow-set from --modules file.
-	var allowSet map[string]struct{}
-	if f.modulesFile != "" {
-		data, err := os.ReadFile(filepath.Clean(f.modulesFile))
-		if err != nil {
-			return nil, nil, fmt.Errorf("reading --modules file %q: %w", f.modulesFile, err)
-		}
-		allowSet = make(map[string]struct{})
-		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				allowSet[line] = struct{}{}
-			}
-		}
+	allowSet, err := readModulesAllowSet(f)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Pre-compute the affected module set from the most recent scan run for this
@@ -242,6 +243,26 @@ func filterContextWalkNodes(
 		out = append(out, node)
 	}
 	return out, aside, nil
+}
+
+// readModulesAllowSet reads the coordinates the --modules file names; nil
+// when no file was given.
+func readModulesAllowSet(f contextFlags) (map[string]struct{}, error) {
+	var allowSet map[string]struct{}
+	if f.modulesFile != "" {
+		data, err := os.ReadFile(filepath.Clean(f.modulesFile))
+		if err != nil {
+			return nil, fmt.Errorf("reading --modules file %q: %w", f.modulesFile, err)
+		}
+		allowSet = make(map[string]struct{})
+		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				allowSet[line] = struct{}{}
+			}
+		}
+	}
+	return allowSet, nil
 }
 
 // buildAffectedSetForWalk returns the set of module coordinates that are

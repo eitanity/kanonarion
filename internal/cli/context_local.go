@@ -95,7 +95,7 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 		ExcludeTests:  f.excludeTests,
 	})
 	if err != nil {
-		return fmt.Errorf("local workspace analysis: %w", err)
+		return localAnalysisErr("local workspace analysis", err)
 	}
 
 	deps := make([]localImportedModule, 0, len(lctx.Modules))
@@ -121,9 +121,9 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 	}
 
 	if f.reachability {
-		reach, err := runLocalReachabilityInner(ctx, abs, stderr)
-		if err != nil {
-			return fmt.Errorf("local reachability: %w", err)
+		reach, rerr := runLocalReachabilityInner(ctx, abs, stderr)
+		if rerr != nil {
+			return fmt.Errorf("local reachability: %w", rerr)
 		}
 		out.Reachability = &reach
 	}

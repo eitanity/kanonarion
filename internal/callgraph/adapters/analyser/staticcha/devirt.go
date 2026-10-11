@@ -92,25 +92,8 @@ func (a *Analyser) devirtualizeSingleImplementer(
 				if !ok {
 					continue
 				}
-				common := ci.Common()
-				if !common.IsInvoke() {
-					continue
-				}
-				ifaceT, ok := common.Value.Type().Underlying().(*types.Interface)
-				if !ok || ifaceT.NumMethods() == 0 {
-					continue
-				}
-
-				sole := soleImplementer(ifaceT, universe, soleCache, resolved)
-				if sole == nil {
-					continue
-				}
-				methodObj := implementerMethod(sole, common.Method)
-				if methodObj == nil {
-					continue
-				}
-				target := a.devirtTargetNode(prog, methodObj, mem, fset, roots)
-				if target.ID == "" {
+				target, methodObj, ok := a.resolveDevirtTarget(ci, prog, universe, soleCache, resolved, mem, fset, roots)
+				if !ok {
 					continue
 				}
 
@@ -144,19 +127,10 @@ func (a *Analyser) devirtualizeSingleImplementer(
 					slog.String("site", fmt.Sprintf("%s:%d", siteFile, siteLine)),
 				)
 
-				if _, ok := existingNodes[callerNode.ID]; !ok {
-					existingNodes[callerNode.ID] = struct{}{}
-					nodes = append(nodes, callerNode)
-					addedNodes++
-				}
-				if _, ok := existingNodes[target.ID]; !ok {
-					existingNodes[target.ID] = struct{}{}
-					nodes = append(nodes, target)
-					addedNodes++
-					if prog.FuncValue(methodObj) == nil {
-						leafNodes++
-					}
-				}
+				var added, leaf int
+				nodes, added, leaf = appendDevirtNodes(prog, existingNodes, nodes, callerNode, target, methodObj)
+				addedNodes += added
+				leafNodes += leaf
 			}
 		}
 	}
@@ -169,6 +143,70 @@ func (a *Analyser) devirtualizeSingleImplementer(
 		)
 	}
 	return nodes, edges
+}
+
+// resolveDevirtTarget names the node an interface call devirtualizes to: the
+// sole implementer's method. ok is false when the site is not an invoke, the
+// implementer is not unique, or the method has no node.
+func (a *Analyser) resolveDevirtTarget(
+	ci ssa.CallInstruction,
+	prog *ssa.Program,
+	universe []*types.Named,
+	soleCache map[*types.Interface]*types.Named,
+	resolved map[*types.Interface]struct{},
+	mem moduleMembership,
+	fset *token.FileSet,
+	roots sourceRoots,
+) (domain.CallNode, *types.Func, bool) {
+	common := ci.Common()
+	if !common.IsInvoke() {
+		return domain.CallNode{}, nil, false
+	}
+	ifaceT, ok := common.Value.Type().Underlying().(*types.Interface)
+	if !ok || ifaceT.NumMethods() == 0 {
+		return domain.CallNode{}, nil, false
+	}
+
+	sole := soleImplementer(ifaceT, universe, soleCache, resolved)
+	if sole == nil {
+		return domain.CallNode{}, nil, false
+	}
+	methodObj := implementerMethod(sole, common.Method)
+	if methodObj == nil {
+		return domain.CallNode{}, nil, false
+	}
+	target := a.devirtTargetNode(prog, methodObj, mem, fset, roots)
+	if target.ID == "" {
+		return domain.CallNode{}, nil, false
+	}
+	return target, methodObj, true
+}
+
+// appendDevirtNodes adds the caller and target of a devirtualized edge to nodes
+// when they are not there yet, returning how many it added and how many of
+// those are leaves with no built body.
+func appendDevirtNodes(
+	prog *ssa.Program,
+	existingNodes map[string]struct{},
+	nodes []domain.CallNode,
+	callerNode, target domain.CallNode,
+	methodObj *types.Func,
+) ([]domain.CallNode, int, int) {
+	var addedNodes, leafNodes int
+	if _, ok := existingNodes[callerNode.ID]; !ok {
+		existingNodes[callerNode.ID] = struct{}{}
+		nodes = append(nodes, callerNode)
+		addedNodes++
+	}
+	if _, ok := existingNodes[target.ID]; !ok {
+		existingNodes[target.ID] = struct{}{}
+		nodes = append(nodes, target)
+		addedNodes++
+		if prog.FuncValue(methodObj) == nil {
+			leafNodes++
+		}
+	}
+	return nodes, addedNodes, leafNodes
 }
 
 // concreteNamedTypes returns every package-scope concrete named type across the

@@ -136,8 +136,8 @@ func TestRoundTrip_LowConfidenceFieldsHashedAndPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if err := h.VerifyContentHash(got); err != nil {
-		t.Fatalf("VerifyContentHash after round-trip: %v", err)
+	if verr := h.VerifyContentHash(got); verr != nil {
+		t.Fatalf("VerifyContentHash after round-trip: %v", verr)
 	}
 	if got.LicenseFiles[0].LowConfidenceSPDX != "AGPL-3.0-or-later" {
 		t.Errorf("LowConfidenceSPDX not preserved: got %q", got.LicenseFiles[0].LowConfidenceSPDX)
@@ -333,7 +333,10 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 		PipelineVersion: "0.1.0",
 	}
 	var h domain2.LicenseRecordHasher
-	hashed, _ := h.SetContentHash(r)
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	blob, err := h.Marshal(hashed)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

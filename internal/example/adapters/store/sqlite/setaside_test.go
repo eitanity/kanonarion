@@ -199,6 +199,18 @@ func TestSetAside_ListingAndSymbolLookupKeepTheOtherModules(t *testing.T) {
 		t.Errorf("listed %v, want mixed (served %s) and plain only", listed, readable.ContentHash)
 	}
 
+	assertSymbolLookupKeepsOthers(ctx, t, s, gone, mixed, plain)
+
+	named := namedSet(*rows)
+	if !named[goneSeals[0]] || !named[goneSeals[1]] || !named[mixedSeal] {
+		t.Errorf("named %v, want %v and %s", named, goneSeals, mixedSeal)
+	}
+}
+
+// assertSymbolLookupKeepsOthers checks a symbol lookup answers from the
+// readable modules and serves nothing of the drifted generation.
+func assertSymbolLookupKeepsOthers(ctx context.Context, t *testing.T, s *examplesqlite.Store, gone, mixed, plain coordinate.ModuleCoordinate) {
+	t.Helper()
 	refs, ferr := s.FindBySymbol(ctx, "Alpha", ledgerPipeline, coordinate.ModuleSet{})
 	if ferr != nil {
 		t.Fatalf("FindBySymbol = %v, want the other modules' answers", ferr)
@@ -212,11 +224,6 @@ func TestSetAside_ListingAndSymbolLookupKeepTheOtherModules(t *testing.T) {
 	}
 	if beta, berr := s.FindBySymbol(ctx, "Beta", ledgerPipeline, coordinate.ModuleSet{}); berr != nil || len(beta) != 0 {
 		t.Errorf("FindBySymbol(Beta) = %+v, %v; the drifted generation's examples were served", beta, berr)
-	}
-
-	named := namedSet(*rows)
-	if !named[goneSeals[0]] || !named[goneSeals[1]] || !named[mixedSeal] {
-		t.Errorf("named %v, want %v and %s", named, goneSeals, mixedSeal)
 	}
 }
 

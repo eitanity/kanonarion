@@ -53,7 +53,10 @@ func TestMerkleRoot_Deterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MerkleRoot: %v", err)
 	}
-	b, _ := uc.MerkleRoot(set)
+	b, err := uc.MerkleRoot(set)
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
 	if a != b {
 		t.Errorf("MerkleRoot non-deterministic: %v vs %v", a, b)
 	}
@@ -66,8 +69,14 @@ func TestMerkleRoot_OrderSensitive(t *testing.T) {
 	t.Parallel()
 	uc := application.NewContentIdentityUseCase()
 	set := memberSet(uc, 3)
-	a, _ := uc.MerkleRoot(set)
-	b, _ := uc.MerkleRoot([]ports.SubjectDigest{set[2], set[1], set[0]})
+	a, err := uc.MerkleRoot(set)
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
+	b, err := uc.MerkleRoot([]ports.SubjectDigest{set[2], set[1], set[0]})
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
 	if a == b {
 		t.Error("reordering members produced the same root")
 	}
@@ -113,8 +122,14 @@ func TestVerifyInclusion_Rejects(t *testing.T) {
 	t.Parallel()
 	uc := application.NewContentIdentityUseCase()
 	set := memberSet(uc, 6)
-	root, _ := uc.MerkleRoot(set)
-	proof, _ := uc.InclusionProof(set, 2)
+	root, err := uc.MerkleRoot(set)
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
+	proof, err := uc.InclusionProof(set, 2)
+	if err != nil {
+		t.Fatalf("InclusionProof: %v", err)
+	}
 
 	t.Run("wrong member", func(t *testing.T) {
 		t.Parallel()
@@ -124,7 +139,10 @@ func TestVerifyInclusion_Rejects(t *testing.T) {
 	})
 	t.Run("wrong root", func(t *testing.T) {
 		t.Parallel()
-		other, _ := uc.MerkleRoot(memberSet(uc, 3))
+		other, err := uc.MerkleRoot(memberSet(uc, 3))
+		if err != nil {
+			t.Fatalf("MerkleRoot: %v", err)
+		}
 		if uc.VerifyInclusion(set[2], proof, other) {
 			t.Error("verified proof against an unrelated root")
 		}
@@ -161,8 +179,14 @@ func TestMalformedDigests(t *testing.T) {
 
 	// VerifyInclusion must return false (not panic) on malformed inputs.
 	set := memberSet(uc, 2)
-	root, _ := uc.MerkleRoot(set)
-	proof, _ := uc.InclusionProof(set, 0)
+	root, err := uc.MerkleRoot(set)
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
+	proof, err := uc.InclusionProof(set, 0)
+	if err != nil {
+		t.Fatalf("InclusionProof: %v", err)
+	}
 	if uc.VerifyInclusion(bad[0], proof, root) {
 		t.Error("VerifyInclusion accepted malformed member digest")
 	}

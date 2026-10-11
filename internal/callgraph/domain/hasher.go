@@ -74,6 +74,8 @@ func canonicalOrder(r CallGraphRecord) CallGraphRecord {
 	sort.Strings(r.PrefixAttributedPackages)
 	r.StdlibPackages = append([]string(nil), r.StdlibPackages...)
 	sort.Strings(r.StdlibPackages)
+	r.DependencyPackages = append([]string(nil), r.DependencyPackages...)
+	sort.Strings(r.DependencyPackages)
 	r.ForeignModulesBuilt = append([]ForeignModule(nil), r.ForeignModulesBuilt...)
 	sort.Slice(r.ForeignModulesBuilt, func(i, j int) bool {
 		return ForeignModuleLess(r.ForeignModulesBuilt[i], r.ForeignModulesBuilt[j])
@@ -134,6 +136,10 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			IsAssemblyOrLinkname: cn.IsAssemblyOrLinkname,
 			UsesPlugin:           cn.UsesPlugin,
 			IsTest:               cn.IsTest,
+			ExportDirective:      ExportDirective{Kind: ExportKind(cn.ExportDirective.Kind), Name: cn.ExportDirective.Name},
+		}
+		if err := nodes[i].ExportDirective.Validate(); err != nil {
+			return CallGraphRecord{}, fmt.Errorf("node %s: %w", cn.ID, err)
 		}
 	}
 	var ifaces []InterfaceType
@@ -202,6 +208,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		FailedPackages:           c.FailedPackages,
 		PrefixAttributedPackages: c.PrefixAttributedPackages,
 		StdlibPackages:           c.StdlibPackages,
+		DependencyPackages:       c.DependencyPackages,
 		ForeignModulesBuilt:      domainForeignModules(c.ForeignModulesBuilt),
 		ExclusionReason:          c.ExclusionReason,
 		ExclusionList:            c.ExclusionList,
@@ -345,18 +352,38 @@ type canonicalPos struct {
 }
 
 type canonicalNode struct {
-	ID                   string       `json:"id"`
-	IsAssemblyOrLinkname bool         `json:"is_assembly_or_linkname"`
-	IsExportedAPI        bool         `json:"is_exported_api"`
-	IsExternal           bool         `json:"is_external"`
-	IsTest               bool         `json:"is_test"`
-	Module               string       `json:"module"`
-	Package              string       `json:"package"`
-	Position             canonicalPos `json:"position"`
-	Receiver             string       `json:"receiver"`
-	Symbol               string       `json:"symbol"`
-	UsesPlugin           bool         `json:"uses_plugin"`
-	UsesUnsafePointer    bool         `json:"uses_unsafe_pointer"`
+	// ExportDirective is omitted when absent, so a node without one marshals to
+	// the bytes it always did.
+	ExportDirective      canonicalExportDirective `json:"export_directive,omitzero"`
+	ID                   string                   `json:"id"`
+	IsAssemblyOrLinkname bool                     `json:"is_assembly_or_linkname"`
+	IsExportedAPI        bool                     `json:"is_exported_api"`
+	IsExternal           bool                     `json:"is_external"`
+	IsTest               bool                     `json:"is_test"`
+	Module               string                   `json:"module"`
+	Package              string                   `json:"package"`
+	Position             canonicalPos             `json:"position"`
+	Receiver             string                   `json:"receiver"`
+	Symbol               string                   `json:"symbol"`
+	UsesPlugin           bool                     `json:"uses_plugin"`
+	UsesUnsafePointer    bool                     `json:"uses_unsafe_pointer"`
+}
+
+// validateExportDirectives refuses a record whose node carries a directive this
+// build would not have recorded, on the write leg as Unmarshal does on the read.
+func validateExportDirectives(nodes []CallNode) error {
+	for _, n := range nodes {
+		if err := n.ExportDirective.Validate(); err != nil {
+			return fmt.Errorf("node %s: %w", n.ID, err)
+		}
+	}
+	return nil
+}
+
+// canonicalExportDirective is the wire shape of domain.ExportDirective.
+type canonicalExportDirective struct {
+	Kind string `json:"kind"`
+	Name string `json:"name,omitzero"`
 }
 
 type canonicalInterface struct {
@@ -480,12 +507,16 @@ type canonicalRecord struct {
 	// into the standard library's graph drops every edge touching a package this
 	// list does not name, so a value edited after the fact would change what a
 	// stored answer says without breaking the record's own integrity check.
-	StdlibPackages    []string        `json:"stdlib_packages,omitzero"`
-	Nodes             []canonicalNode `json:"nodes"`
-	OverallStatus     int             `json:"overall_status"`
-	PipelineVersion   string          `json:"pipeline_version"`
-	SchemaVersion     string          `json:"schema_version"`
-	SourceContentHash string          `json:"source_content_hash,omitempty"`
+	StdlibPackages []string `json:"stdlib_packages,omitzero"`
+	// DependencyPackages is sealed and omitted when empty on the same terms as
+	// StdlibPackages: a joined read drops every node of a dependency's graph
+	// outside it.
+	DependencyPackages []string        `json:"dependency_packages,omitzero"`
+	Nodes              []canonicalNode `json:"nodes"`
+	OverallStatus      int             `json:"overall_status"`
+	PipelineVersion    string          `json:"pipeline_version"`
+	SchemaVersion      string          `json:"schema_version"`
+	SourceContentHash  string          `json:"source_content_hash,omitempty"`
 	// SynthesisedGoMod is omitted when zero so every record sealed before the
 	// field existed marshals to exactly the bytes it always did and keeps its
 	// stored content hash verifiable — the terms every additive field on this
@@ -606,6 +637,7 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 			Symbol:               n.Symbol,
 			UsesPlugin:           n.UsesPlugin,
 			UsesUnsafePointer:    n.UsesUnsafePointer,
+			ExportDirective:      canonicalExportDirective{Kind: string(n.ExportDirective.Kind), Name: n.ExportDirective.Name},
 		}
 	}
 	var cIfaces []canonicalInterface
@@ -690,6 +722,13 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 		sort.Strings(stdlibPkgs)
 	}
 
+	var dependencyPkgs []string
+	if len(r.DependencyPackages) > 0 {
+		dependencyPkgs = make([]string, len(r.DependencyPackages))
+		copy(dependencyPkgs, r.DependencyPackages)
+		sort.Strings(dependencyPkgs)
+	}
+
 	c := canonicalRecord{
 		Algorithm:        string(r.Algorithm),
 		AnalysisSource:   string(r.AnalysisSource),
@@ -716,6 +755,7 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 		Nodes:                    cNodes,
 		PrefixAttributedPackages: prefixAttributed,
 		StdlibPackages:           stdlibPkgs,
+		DependencyPackages:       dependencyPkgs,
 		ForeignModulesBuilt:      canonicalForeignModules(r.ForeignModulesBuilt),
 		OverallStatus:            int(r.OverallStatus),
 		PipelineVersion:          r.PipelineVersion,
@@ -741,6 +781,9 @@ func canonicalShell(r CallGraphRecord) canonicalRecord {
 }
 
 func marshalCanonical(r CallGraphRecord) ([]byte, error) {
+	if err := validateExportDirectives(r.Nodes); err != nil {
+		return nil, err
+	}
 	edges := canonicalEdgeOrder(r.Edges)
 	c := canonicalShell(r)
 	c.Edges = make([]canonicalEdge, len(edges))
@@ -787,6 +830,9 @@ const edgesPlaceholder = `"edges":null`
 // a failure rather than a guess — guessing which span to replace would seal a
 // record over bytes nobody chose.
 func hashCanonical(r CallGraphRecord) (string, error) {
+	if err := validateExportDirectives(r.Nodes); err != nil {
+		return "", err
+	}
 	edges := canonicalEdgeOrder(r.Edges)
 	shell, err := canonicalMarshal(canonicalShell(r))
 	if err != nil {

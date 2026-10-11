@@ -47,7 +47,7 @@ func TestEmptyResponseIsRetriedAndThenAnswered(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"Version":"v2.1.0","Time":"2026-01-02T03:04:05Z"}`)
+		_, _ = io.WriteString(w, `{"Version":"v2.1.0","Time":"2026-01-02T03:04:05Z"}`) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 
 	info, err := res.LatestInfo(context.Background(), "example.com/mod/v2")
@@ -111,7 +111,7 @@ func TestServerErrorIsRetried(t *testing.T) {
 			http.Error(w, "boom", http.StatusInternalServerError)
 			return
 		}
-		_, _ = io.WriteString(w, `{"Version":"v2.1.0"}`)
+		_, _ = io.WriteString(w, `{"Version":"v2.1.0"}`) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 
 	if _, err := res.LatestInfo(context.Background(), "example.com/mod/v2"); err != nil {

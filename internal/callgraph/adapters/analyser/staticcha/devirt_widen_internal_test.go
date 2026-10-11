@@ -54,15 +54,7 @@ func (Client) RunKanonarionProbe() {}
 func buildDepWidenProg(t *testing.T, buildDep bool) (*ssa.Program, *token.FileSet) {
 	t.Helper()
 	dir := t.TempDir()
-	for rel, content := range depWidenModule {
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
+	writeDepWidenModule(t, dir)
 
 	fset := token.NewFileSet()
 	cfg := &packages.Config{
@@ -113,6 +105,20 @@ func buildDepWidenProg(t *testing.T, buildDep bool) (*ssa.Program, *token.FileSe
 		depSSA.Build()
 	}
 	return prog, fset
+}
+
+// writeDepWidenModule writes the fixture module's files under dir.
+func writeDepWidenModule(t *testing.T, dir string) {
+	t.Helper()
+	for rel, content := range depWidenModule {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
 }
 
 func findFunc(prog *ssa.Program, id string) *ssa.Function {

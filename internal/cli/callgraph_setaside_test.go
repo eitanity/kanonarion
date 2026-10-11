@@ -34,8 +34,8 @@ func driftedCallGraphStore(t *testing.T, hours int, mutate func([]byte) []byte) 
 		t.Fatalf("opening the store: %v", err)
 	}
 	defer func() { _ = db.Close() }()
-	if err := sqlitestore.Apply(db, allMigrations()); err != nil {
-		t.Fatalf("migrating the store: %v", err)
+	if aerr := sqlitestore.Apply(db, allMigrations()); aerr != nil {
+		t.Fatalf("migrating the store: %v", aerr)
 	}
 	store := cgsqlite.New(db)
 	ctx := context.Background()

@@ -46,7 +46,7 @@ func runRescanJSON(t *testing.T, run vuldomain.WalkScanRun) (map[string]any, str
 	req := vulnapp.RescanRequest{WalkID: "01KQDBVW092ER1HNXZ60X27CMD"}
 	// The error is the coverage exit code, which a Partial run owes; the
 	// document is written before it and is what is measured here.
-	_ = rescanWith(context.Background(), fixedRescan{run: run}, req, "", true, &stdout, &stderr)
+	_ = rescanWith(context.Background(), fixedRescan{run: run}, req, "", true, &stdout, &stderr) //nolint:errcheck // the coverage exit code; see above
 	return assertSingleJSONDocument(t, "vuln-scan-rescan --json", stdout.Bytes()), stderr.String()
 }
 
@@ -121,9 +121,9 @@ func TestRescanJSON_StderrStatementsAreUnchanged(t *testing.T) {
 	req := vulnapp.RescanRequest{WalkID: "01KQDBVW092ER1HNXZ60X27CMD"}
 	var textOut, textErr, docOut, docErr bytes.Buffer
 	jsonOut = false
-	_ = rescanWith(context.Background(), fixedRescan{run: rescanFixtureRun()}, req, "", false, &textOut, &textErr)
+	_ = rescanWith(context.Background(), fixedRescan{run: rescanFixtureRun()}, req, "", false, &textOut, &textErr) //nolint:errcheck // the coverage exit code; the outputs are compared
 	jsonOut = true
-	_ = rescanWith(context.Background(), fixedRescan{run: rescanFixtureRun()}, req, "", false, &docOut, &docErr)
+	_ = rescanWith(context.Background(), fixedRescan{run: rescanFixtureRun()}, req, "", false, &docOut, &docErr) //nolint:errcheck // as above
 
 	if textErr.String() != docErr.String() {
 		t.Errorf("stderr differs between the two modes:\ntext:\n%s\njson:\n%s", textErr.String(), docErr.String())

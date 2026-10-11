@@ -293,21 +293,21 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 	snapshot := req.Snapshot
 	if snapshot == nil {
 		uc.logger.Info("rescan: fetching fresh vulnerability database snapshot")
-		s, body, err := uc.moduleScanner.database.Snapshot(ctx)
-		if err != nil {
-			return domain.WalkScanRun{}, fmt.Errorf("fetching fresh snapshot: %w", err)
+		s, body, serr := uc.moduleScanner.database.Snapshot(ctx)
+		if serr != nil {
+			return domain.WalkScanRun{}, fmt.Errorf("fetching fresh snapshot: %w", serr)
 		}
 		if body != nil {
 			defer func() { _ = body.Close() }()
-			if err := uc.vulnStore.PutDatabaseSnapshot(ctx, s, body); err != nil {
-				return domain.WalkScanRun{}, fmt.Errorf("persisting fresh snapshot: %w", err)
+			if perr := uc.vulnStore.PutDatabaseSnapshot(ctx, s, body); perr != nil {
+				return domain.WalkScanRun{}, fmt.Errorf("persisting fresh snapshot: %w", perr)
 			}
 			// Assurance log: a re-scan's whole purpose is to judge against a newer
 			// advisory set, so the moment that set arrived is the fact the re-scan
 			// rests on. Emitted after the write; a caller-supplied snapshot acquired
 			// nothing here and appends nothing.
-			if err := emitSnapshotRecorded(uc.audit, s, snapshotRouteRescan); err != nil {
-				return domain.WalkScanRun{}, err
+			if eerr := emitSnapshotRecorded(uc.audit, s, snapshotRouteRescan); eerr != nil {
+				return domain.WalkScanRun{}, eerr
 			}
 		}
 		snapshot = &s

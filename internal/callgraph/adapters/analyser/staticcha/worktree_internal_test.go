@@ -152,7 +152,11 @@ func TestWorktreeDigest_UnreadableTreeIsAnError(t *testing.T) {
 	if err := os.Chmod(secret, 0o000); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(secret, 0o600) })
+	t.Cleanup(func() {
+		if err := os.Chmod(secret, 0o600); err != nil {
+			t.Errorf("restoring %s: %v", secret, err)
+		}
+	})
 
 	if _, err := worktreeDigest(dir); err == nil {
 		t.Fatal("an unreadable source file produced a digest instead of an error")

@@ -152,6 +152,23 @@ func (f *FakeQueryWalks) ListWalks(_ context.Context, filter walkports.WalkFilte
 	defer f.mu.Unlock()
 	f.ListCalls++
 	out := f.summaries
+	out = filterSummariesByIdentity(out, filter)
+	out = filterSummariesByBuild(out, filter)
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// filterSummariesByIdentity keeps the summaries matching the filter's scope,
+// target and overall status.
+func filterSummariesByIdentity(out []walkports.WalkSummary, filter walkports.WalkFilter) []walkports.WalkSummary {
 	if filter.Scope != nil {
 		var filtered []walkports.WalkSummary
 		for _, s := range out {
@@ -179,6 +196,12 @@ func (f *FakeQueryWalks) ListWalks(_ context.Context, filter walkports.WalkFilte
 		}
 		out = filtered
 	}
+	return out
+}
+
+// filterSummariesByBuild keeps the summaries matching the filter's build
+// environment and toolchain, exactly as the adapter does.
+func filterSummariesByBuild(out []walkports.WalkSummary, filter walkports.WalkFilter) []walkports.WalkSummary {
 	if filter.BuildEnv != nil {
 		// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
 		// with the empty string selecting the unrecorded frame rather than any.
@@ -201,16 +224,7 @@ func (f *FakeQueryWalks) ListWalks(_ context.Context, filter walkports.WalkFilte
 		}
 		out = filtered
 	}
-	if filter.Offset > 0 {
-		if filter.Offset >= len(out) {
-			return nil, nil
-		}
-		out = out[filter.Offset:]
-	}
-	if filter.Limit > 0 && len(out) > filter.Limit {
-		out = out[:filter.Limit]
-	}
-	return out, nil
+	return out
 }
 
 // FakeDiffWalks implements cli.DiffWalksUseCase.
@@ -1037,37 +1051,44 @@ func (f *FakeQueryCallGraph) unlistedLedgerCoordinates(filter cgports.CallGraphF
 		if filter.PipelineVersion != "" && pipelineVersion != filter.PipelineVersion {
 			continue
 		}
-		c := cgports.CallGraphCoordinate{
-			ModulePath:      coord.Path(),
-			ModuleVersion:   coord.Version(),
-			PipelineVersion: pipelineVersion,
-		}
-		// Newest first, as the store's own ordering returns them.
-		for _, rec := range slices.Backward(gens) {
-			c.Generations = append(c.Generations, cgports.CallGraphGeneration{
-				ExtractedAt:    rec.ExtractedAt.UTC(),
-				Algorithm:      rec.Algorithm,
-				OverallStatus:  rec.OverallStatus,
-				Completeness:   rec.Completeness,
-				AnalysisSource: rec.AnalysisSource,
-				NodeCount:      rec.NodeCount,
-				EdgeCount:      rec.EdgeCount,
-				ContentHash:    rec.ContentHash,
-				Analyser:       rec.Analyser,
-			})
-			if !c.Generations[len(c.Generations)-1].StatesTheSame(c.Generations[0]) {
-				c.GenerationsDiffer = true
-			}
-			if rec.OverallStatus == cgdomain.CallGraphStatusPartial {
-				c.AnyPartial = true
-			}
-			if rec.Completeness != cgdomain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
-				c.AnyBelowFull = true
-			}
-		}
+		c := ledgerCoordinateOf(coord, pipelineVersion, gens)
 		out = append(out, c)
 	}
 	return out
+}
+
+// ledgerCoordinateOf is the listing row for one coordinate's generations,
+// newest first, with the flags the store derives over them.
+func ledgerCoordinateOf(coord coordinate.ModuleCoordinate, pipelineVersion string, gens []cgdomain.CallGraphRecord) cgports.CallGraphCoordinate {
+	c := cgports.CallGraphCoordinate{
+		ModulePath:      coord.Path(),
+		ModuleVersion:   coord.Version(),
+		PipelineVersion: pipelineVersion,
+	}
+	// Newest first, as the store's own ordering returns them.
+	for _, rec := range slices.Backward(gens) {
+		c.Generations = append(c.Generations, cgports.CallGraphGeneration{
+			ExtractedAt:    rec.ExtractedAt.UTC(),
+			Algorithm:      rec.Algorithm,
+			OverallStatus:  rec.OverallStatus,
+			Completeness:   rec.Completeness,
+			AnalysisSource: rec.AnalysisSource,
+			NodeCount:      rec.NodeCount,
+			EdgeCount:      rec.EdgeCount,
+			ContentHash:    rec.ContentHash,
+			Analyser:       rec.Analyser,
+		})
+		if !c.Generations[len(c.Generations)-1].StatesTheSame(c.Generations[0]) {
+			c.GenerationsDiffer = true
+		}
+		if rec.OverallStatus == cgdomain.CallGraphStatusPartial {
+			c.AnyPartial = true
+		}
+		if rec.Completeness != cgdomain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
+			c.AnyBelowFull = true
+		}
+	}
+	return c
 }
 
 func (f *FakeQueryCallGraph) SetCallers(refs []cgports.CallEdgeRef) {

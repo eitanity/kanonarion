@@ -148,3 +148,24 @@ func TestNegativeSoundness_ACrossFrameRouteIsStatedWithItsFrameNamed(t *testing.
 		t.Errorf("a multi-hop cross-frame route was reported without the route:\n%s", reason)
 	}
 }
+
+// TestNegativeSoundness_AnUnjoinedSearchNamesTheRemedy: a search that ran over
+// the module's own graph because the build it was measured in has none keeps
+// its rung and says which command lets the join run.
+func TestNegativeSoundness_AnUnjoinedSearchNamesTheRemedy(t *testing.T) {
+	t.Parallel()
+	f := negative(domain.AnalyserGovulncheck, string(domain.ScanModeSource))
+	f.NegativeSearch = &domain.NegativeSearch{
+		EntryPointRoots: 1, Fidelity: "BUILT_WITH_BODIES", PathFound: true,
+		NotJoined: "the build has no stored call graph; analyse it with: kanonarion local /srv/app",
+	}
+
+	got, reason := domain.NegativeSoundness(f)
+
+	if got != domain.SoundnessInferred {
+		t.Errorf("soundness = %s, want %s", got, domain.SoundnessInferred)
+	}
+	if !strings.Contains(reason, ". The build has no stored call graph; analyse it with: kanonarion local /srv/app") {
+		t.Errorf("the remedy is not stated as its own sentence:\n%s", reason)
+	}
+}

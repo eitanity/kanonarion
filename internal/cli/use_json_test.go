@@ -196,7 +196,7 @@ func TestUseJSON_StdoutIsOneDocumentNamingEveryModule(t *testing.T) {
 	// blobs, so the copy fails and the run exits non-zero. What it wrote to
 	// stdout is the assertion, and a failing run is the case that matters —
 	// it is the one whose answer used to be invisible there.
-	_ = Run([]string{"use", jsonDocRootCoord, "--recursive", "--walk-id", jsonDocWalkID,
+	_ = Run([]string{"use", jsonDocRootCoord, "--recursive", "--walk-id", jsonDocWalkID, //nolint:errcheck // fails by design; see above
 		"--mod-cache", cache, "--json", "--store-root", fx.storeRoot}, &stdout, &stderr)
 
 	doc := assertSingleJSONDocument(t, "use --json", stdout.Bytes())
@@ -221,6 +221,18 @@ func TestUseJSON_StdoutIsOneDocumentNamingEveryModule(t *testing.T) {
 	} else if !strings.Contains(stderr.String(), "(frame "+frame+")") {
 		t.Errorf("the document names frame %q and stderr names another:\n%s", frame, stderr.String())
 	}
+	assertEveryModuleFailedToCopy(t, doc)
+	// The same failures are still named for a person, on the stream that carries
+	// the run's statements in both modes.
+	if !strings.Contains(stderr.String(), "did not reach the cache") {
+		t.Errorf("--json must not silence the stderr statements, got:\n%s", stderr.String())
+	}
+}
+
+// assertEveryModuleFailedToCopy checks both modules appear, each failed, each
+// saying why.
+func assertEveryModuleFailedToCopy(t *testing.T, doc map[string]any) {
+	t.Helper()
 	modules, ok := doc["modules"].([]any)
 	if !ok || len(modules) != 2 {
 		t.Fatalf("the walk holds two modules and both must appear whatever became of them, got %v", doc["modules"])
@@ -237,10 +249,5 @@ func TestUseJSON_StdoutIsOneDocumentNamingEveryModule(t *testing.T) {
 		if entry["error"] == "" || entry["error"] == nil {
 			t.Errorf("a failure must say why on the stream the consumer reads: %v", entry)
 		}
-	}
-	// The same failures are still named for a person, on the stream that carries
-	// the run's statements in both modes.
-	if !strings.Contains(stderr.String(), "did not reach the cache") {
-		t.Errorf("--json must not silence the stderr statements, got:\n%s", stderr.String())
 	}
 }

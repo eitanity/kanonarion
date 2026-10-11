@@ -52,9 +52,9 @@ func countingServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 		hits.Add(1)
 		switch r.URL.Path {
 		case "/index/db.json":
-			_, _ = w.Write([]byte(`{"modified":"2026-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"modified":"2026-01-01T00:00:00Z"}`)) //nolint:errcheck // a failed write is seen by the client under test
 		case "/vulndb.zip":
-			_, _ = w.Write(defaultVulnDBZip(t))
+			_, _ = w.Write(defaultVulnDBZip(t)) //nolint:errcheck // a failed write is seen by the client under test
 		default:
 			http.NotFound(w, r)
 		}

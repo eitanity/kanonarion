@@ -57,7 +57,7 @@ func TestStampedSubjectHasOneIdentityInTheDocument(t *testing.T) {
 	if entry["type"] != "application" {
 		t.Errorf("subject component type = %v, want application (it is the same component as the subject)", entry["type"])
 	}
-	if got := licenseIDs(entry); len(got) != 1 || got[0] != "Apache-2.0" {
+	if got := licenseIDs(t, entry); len(got) != 1 || got[0] != "Apache-2.0" {
 		t.Errorf("subject component licences = %v, want [Apache-2.0]", got)
 	}
 }
@@ -114,15 +114,15 @@ func TestStampedSubjectAppearsOnceInDependencies(t *testing.T) {
 	if err := json.Unmarshal(rec.Content, &bom); err != nil {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
-	deps, _ := bom["dependencies"].([]any)
+	deps := optAs[[]any](t, bom["dependencies"])
 	var refs []string
 	var stampedDependsOn []any
 	for _, d := range deps {
-		dm, _ := d.(map[string]any)
-		ref, _ := dm["ref"].(string)
+		dm := optAs[map[string]any](t, d)
+		ref := optAs[string](t, dm["ref"])
 		refs = append(refs, ref)
 		if ref == "pkg:golang/example.com/project@v9.9.9" {
-			stampedDependsOn, _ = dm["dependsOn"].([]any)
+			stampedDependsOn = optAs[[]any](t, dm["dependsOn"])
 		}
 	}
 	seen := map[string]int{}
@@ -141,13 +141,14 @@ func TestStampedSubjectAppearsOnceInDependencies(t *testing.T) {
 }
 
 // licenseIDs returns the SPDX ids on a component.
-func licenseIDs(comp map[string]any) []string {
-	lics, _ := comp["licenses"].([]any)
+func licenseIDs(t *testing.T, comp map[string]any) []string {
+	t.Helper()
+	lics := optAs[[]any](t, comp["licenses"])
 	out := make([]string, 0, len(lics))
 	for _, l := range lics {
-		lm, _ := l.(map[string]any)
+		lm := optAs[map[string]any](t, l)
 		if obj, ok := lm["license"].(map[string]any); ok {
-			id, _ := obj["id"].(string)
+			id := optAs[string](t, obj["id"])
 			out = append(out, id)
 		}
 		if expr, ok := lm["expression"].(string); ok {
@@ -218,11 +219,11 @@ func TestMainLicenseReachesTheSubjectWhateverItsLicenceRecord(t *testing.T) {
 				t.Fatalf("Generate: %v", err)
 			}
 			primary, byPURL := bomComponents(t, rec.Content)
-			entry, ok := byPURL[primary["purl"].(string)]
+			entry, ok := byPURL[mustAs[string](t, primary["purl"])]
 			if !ok {
 				t.Fatalf("the subject %v has no entry in the component list", primary["purl"])
 			}
-			gotMeta, gotEntry := licenseIDs(primary), licenseIDs(entry)
+			gotMeta, gotEntry := licenseIDs(t, primary), licenseIDs(t, entry)
 			if len(gotMeta) != 1 || gotMeta[0] != tc.want {
 				t.Errorf("metadata.component licences = %v, want [%s]", gotMeta, tc.want)
 			}
@@ -275,14 +276,14 @@ func TestMainLicenseIsARemedyNotASuppressor(t *testing.T) {
 				t.Fatalf("LicensesIncomplete = false; the subject has no licence and none was supplied")
 			}
 			primary, byPURL := bomComponents(t, rec.Content)
-			if got := licenseIDs(primary); len(got) != 0 {
+			if got := licenseIDs(t, primary); len(got) != 0 {
 				t.Errorf("metadata.component licences = %v, want none", got)
 			}
-			entry, ok := byPURL[primary["purl"].(string)]
+			entry, ok := byPURL[mustAs[string](t, primary["purl"])]
 			if !ok {
 				t.Fatalf("the subject %v has no entry in the component list", primary["purl"])
 			}
-			if got := licenseIDs(entry); len(got) != 0 {
+			if got := licenseIDs(t, entry); len(got) != 0 {
 				t.Errorf("subject's component-list licences = %v, want none", got)
 			}
 			var bom map[string]any

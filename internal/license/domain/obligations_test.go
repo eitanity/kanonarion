@@ -9,34 +9,7 @@ import (
 
 func TestLookupObligations_KnownPermissive(t *testing.T) {
 	t.Run("MIT", func(t *testing.T) {
-		o := domain.LookupObligations("MIT")
-		if o.Status != domain.ObligationStatusKnown {
-			t.Fatalf("expected known, got %s", o.Status)
-		}
-		if !o.IncludeNotice {
-			t.Error("MIT: IncludeNotice should be true")
-		}
-		if !o.IncludeLicenseText {
-			t.Error("MIT: IncludeLicenseText should be true")
-		}
-		if o.StateChanges {
-			t.Error("MIT: StateChanges should be false")
-		}
-		if o.DiscloseSource {
-			t.Error("MIT: DiscloseSource should be false")
-		}
-		if o.SameLicense != domain.CopyleftNone {
-			t.Errorf("MIT: SameLicense should be none, got %s", o.SameLicense)
-		}
-		if o.NetworkUseTrigger {
-			t.Error("MIT: NetworkUseTrigger should be false")
-		}
-		if o.NoTrademarkUse {
-			t.Error("MIT: NoTrademarkUse should be false")
-		}
-		if o.ExplicitPatentGrant {
-			t.Error("MIT: ExplicitPatentGrant should be false")
-		}
+		testMITObligations(t)
 	})
 
 	t.Run("BSD-3-Clause", func(t *testing.T) {
@@ -88,6 +61,38 @@ func TestLookupObligations_KnownPermissive(t *testing.T) {
 			t.Errorf("Apache-2.0: SameLicense should be none, got %s", o.SameLicense)
 		}
 	})
+}
+
+// testMITObligations checks MIT's obligations field by field.
+func testMITObligations(t *testing.T) {
+	o := domain.LookupObligations("MIT")
+	if o.Status != domain.ObligationStatusKnown {
+		t.Fatalf("expected known, got %s", o.Status)
+	}
+	if !o.IncludeNotice {
+		t.Error("MIT: IncludeNotice should be true")
+	}
+	if !o.IncludeLicenseText {
+		t.Error("MIT: IncludeLicenseText should be true")
+	}
+	if o.StateChanges {
+		t.Error("MIT: StateChanges should be false")
+	}
+	if o.DiscloseSource {
+		t.Error("MIT: DiscloseSource should be false")
+	}
+	if o.SameLicense != domain.CopyleftNone {
+		t.Errorf("MIT: SameLicense should be none, got %s", o.SameLicense)
+	}
+	if o.NetworkUseTrigger {
+		t.Error("MIT: NetworkUseTrigger should be false")
+	}
+	if o.NoTrademarkUse {
+		t.Error("MIT: NoTrademarkUse should be false")
+	}
+	if o.ExplicitPatentGrant {
+		t.Error("MIT: ExplicitPatentGrant should be false")
+	}
 }
 
 func TestLookupObligations_WeakCopyleft(t *testing.T) {
@@ -221,39 +226,49 @@ func TestLookupObligations_StoreGapsFilled(t *testing.T) {
 	})
 
 	t.Run("CC-BY-4.0", func(t *testing.T) {
-		o := domain.LookupObligations("CC-BY-4.0")
-		if o.Status != domain.ObligationStatusKnown {
-			t.Fatalf("expected known, got %s", o.Status)
-		}
-		if !o.IncludeNotice || !o.IncludeLicenseText {
-			t.Error("CC-BY-4.0: IncludeNotice and IncludeLicenseText should be true")
-		}
-		if !o.StateChanges {
-			t.Error("CC-BY-4.0: StateChanges should be true (§3(a)(1)(B))")
-		}
-		if !o.NoTrademarkUse {
-			t.Error("CC-BY-4.0: NoTrademarkUse should be true")
-		}
-		if o.SameLicense != domain.CopyleftNone {
-			t.Errorf("CC-BY-4.0: SameLicense should be none, got %s", o.SameLicense)
-		}
+		testCCBY4Obligations(t)
 	})
 
 	t.Run("OFL-1.1", func(t *testing.T) {
-		o := domain.LookupObligations("OFL-1.1")
-		if o.Status != domain.ObligationStatusKnown {
-			t.Fatalf("expected known, got %s", o.Status)
-		}
-		if !o.IncludeNotice || !o.IncludeLicenseText {
-			t.Error("OFL-1.1: IncludeNotice and IncludeLicenseText should be true")
-		}
-		if o.SameLicense != domain.CopyleftWeak {
-			t.Errorf("OFL-1.1: SameLicense should be weak (font-level), got %s", o.SameLicense)
-		}
-		if !o.NoTrademarkUse {
-			t.Error("OFL-1.1: NoTrademarkUse should be true (reserved font name clause)")
-		}
+		testOFL11Obligations(t)
 	})
+}
+
+// testOFL11Obligations checks OFL-1.1's obligations, filled in over the store's gaps.
+func testOFL11Obligations(t *testing.T) {
+	o := domain.LookupObligations("OFL-1.1")
+	if o.Status != domain.ObligationStatusKnown {
+		t.Fatalf("expected known, got %s", o.Status)
+	}
+	if !o.IncludeNotice || !o.IncludeLicenseText {
+		t.Error("OFL-1.1: IncludeNotice and IncludeLicenseText should be true")
+	}
+	if o.SameLicense != domain.CopyleftWeak {
+		t.Errorf("OFL-1.1: SameLicense should be weak (font-level), got %s", o.SameLicense)
+	}
+	if !o.NoTrademarkUse {
+		t.Error("OFL-1.1: NoTrademarkUse should be true (reserved font name clause)")
+	}
+}
+
+// testCCBY4Obligations checks CC-BY-4.0's obligations, filled in over the store's gaps.
+func testCCBY4Obligations(t *testing.T) {
+	o := domain.LookupObligations("CC-BY-4.0")
+	if o.Status != domain.ObligationStatusKnown {
+		t.Fatalf("expected known, got %s", o.Status)
+	}
+	if !o.IncludeNotice || !o.IncludeLicenseText {
+		t.Error("CC-BY-4.0: IncludeNotice and IncludeLicenseText should be true")
+	}
+	if !o.StateChanges {
+		t.Error("CC-BY-4.0: StateChanges should be true (§3(a)(1)(B))")
+	}
+	if !o.NoTrademarkUse {
+		t.Error("CC-BY-4.0: NoTrademarkUse should be true")
+	}
+	if o.SameLicense != domain.CopyleftNone {
+		t.Errorf("CC-BY-4.0: SameLicense should be none, got %s", o.SameLicense)
+	}
 }
 
 func TestLookupObligations_CCBYSA30(t *testing.T) {

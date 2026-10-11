@@ -135,6 +135,18 @@ func TestScanWalk_EmitsAuditEvents(t *testing.T) {
 	}
 
 	// Exactly one vuln_scan_completed with the run identity and count breakdown.
+	assertScanCompletedEvent(t, sink, run, walkID)
+
+	// The completed summary must be the final event (findings precede it).
+	if last := sink.events[len(sink.events)-1]; last.Type != audit.EventVulnScanCompleted {
+		t.Errorf("last event = %q, want vuln_scan_completed", last.Type)
+	}
+}
+
+// assertScanCompletedEvent checks one vuln_scan_completed event names the run,
+// the walk, its counts and the snapshot.
+func assertScanCompletedEvent(t *testing.T, sink *recordingAuditSink, run domain.WalkScanRun, walkID string) {
+	t.Helper()
 	completed := sink.ofType(audit.EventVulnScanCompleted)
 	if len(completed) != 1 {
 		t.Fatalf("expected 1 vuln_scan_completed event, got %d", len(completed))
@@ -154,11 +166,6 @@ func TestScanWalk_EmitsAuditEvents(t *testing.T) {
 	}
 	if got := p["snapshot_version"]; got != "v1" {
 		t.Errorf("snapshot_version = %v, want v1", got)
-	}
-
-	// The completed summary must be the final event (findings precede it).
-	if last := sink.events[len(sink.events)-1]; last.Type != audit.EventVulnScanCompleted {
-		t.Errorf("last event = %q, want vuln_scan_completed", last.Type)
 	}
 }
 

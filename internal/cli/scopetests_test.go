@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // goModWithToolDirective writes a go.mod carrying a tool directive, so the tool
@@ -285,4 +287,15 @@ func TestRecordingCommandsRefuseTheFlagByName(t *testing.T) {
 	if err := refuseTestScopeOnRecordingCommand("walk --gomod", false); err != nil {
 		t.Errorf("refused a run that did not pass the flag: %v", err)
 	}
+}
+
+// hideFlag names a flag defined on the line before; a name with no flag is a
+// typo in this package and stops the command tree from being built.
+func TestHideFlag_RefusesAnUndefinedFlag(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("hideFlag accepted a flag that was never defined")
+		}
+	}()
+	hideFlag(&cobra.Command{Use: "probe"}, "never-defined")
 }

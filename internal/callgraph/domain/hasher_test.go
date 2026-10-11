@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -26,8 +26,8 @@ func TestHasherRoundTrip(t *testing.T) {
 		t.Errorf("ContentHash %q does not start with sha256:", hashed.ContentHash)
 	}
 
-	if err := h.VerifyContentHash(hashed); err != nil {
-		t.Errorf("VerifyContentHash: %v", err)
+	if verr := h.VerifyContentHash(hashed); verr != nil {
+		t.Errorf("VerifyContentHash: %v", verr)
 	}
 
 	blob, err := h.Marshal(hashed)
@@ -78,8 +78,8 @@ func TestHasherRoundTripFailedPackages(t *testing.T) {
 		!slices.Contains(restored.FailedPackages, "example.com/mod/z") {
 		t.Errorf("FailedPackages not preserved across round-trip: %v", restored.FailedPackages)
 	}
-	if err := h.VerifyContentHash(restored); err != nil {
-		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	if verr := h.VerifyContentHash(restored); verr != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", verr)
 	}
 	// The content hash must not depend on the input ordering of FailedPackages.
 	r2 := makeTestRecord()
@@ -114,8 +114,8 @@ func TestHasherRoundTripCompleteness(t *testing.T) {
 	if restored.Completeness != domain2.CompletenessMetadataOnly {
 		t.Errorf("Completeness not preserved across round-trip: got %q", restored.Completeness)
 	}
-	if err := h.VerifyContentHash(restored); err != nil {
-		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	if verr := h.VerifyContentHash(restored); verr != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", verr)
 	}
 	// The level is part of identity: a different level must change the hash.
 	r2 := makeTestRecord()
@@ -149,8 +149,8 @@ func TestHasherRoundTripArtifactKind(t *testing.T) {
 	if restored.ArtifactKind != domain2.ArtifactApplication {
 		t.Errorf("ArtifactKind not preserved across round-trip: got %q", restored.ArtifactKind)
 	}
-	if err := h.VerifyContentHash(restored); err != nil {
-		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	if verr := h.VerifyContentHash(restored); verr != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", verr)
 	}
 	// The kind decides how the graph is rooted, so it is part of identity: the
 	// same nodes and edges classified differently must not share a hash.
@@ -229,8 +229,8 @@ func TestHasherRoundTripUsesPlugin(t *testing.T) {
 	if !restored.Nodes[0].UsesPlugin {
 		t.Error("UsesPlugin not preserved across round-trip")
 	}
-	if err := h.VerifyContentHash(restored); err != nil {
-		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	if verr := h.VerifyContentHash(restored); verr != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", verr)
 	}
 	// The fact is part of node identity: flipping it must change the hash.
 	r2 := makeTestRecord()
@@ -379,7 +379,7 @@ func TestHasherMarshalRoundTrip_ManyNodes(t *testing.T) {
 }
 
 func TestCanonicalEdgeTieBreaking(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		SchemaVersion: domain2.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
@@ -400,7 +400,7 @@ func TestCanonicalEdgeTieBreaking(t *testing.T) {
 }
 
 func TestCanonicalEdgeSameFromDifferentTo(t *testing.T) {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		SchemaVersion: domain2.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
@@ -436,7 +436,7 @@ func canonicalEdgesOf(t *testing.T, r domain2.CallGraphRecord) []domain2.CallEdg
 // only in FromID, ToID, File, and Line respectively.
 func TestMarshalCanonical_AllEdgeSortBranches(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		SchemaVersion:   domain2.CallGraphSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,
@@ -500,7 +500,10 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
 	r := makeTestRecord()
 	r.Ecosystem = "npm"
-	hashed, _ := h.SetContentHash(r)
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	blob, err := h.Marshal(hashed)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

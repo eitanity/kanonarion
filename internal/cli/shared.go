@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -204,9 +205,7 @@ func applyConfigVCSHosts(ctx context.Context, p walkdomain.DepthPolicy, logger *
 	// Copy before writing: DepthPolicy carries a map, and callers hold the
 	// default policy value in package state.
 	stages := make(map[string]walkdomain.StageDepth, len(p.Stages)+1)
-	for k, v := range p.Stages {
-		stages[k] = v
-	}
+	maps.Copy(stages, p.Stages)
 	fetch.AllowedVCSHosts = &hosts
 	stages["fetch"] = fetch
 	p.Stages = stages
@@ -1087,7 +1086,7 @@ func offlineFlagsOf(cmd *cobra.Command) []string {
 		return nil
 	}
 	var out []string
-	for _, f := range strings.Split(raw, ",") {
+	for f := range strings.SplitSeq(raw, ",") {
 		if f = strings.TrimSpace(f); f != "" {
 			out = append(out, f)
 		}
@@ -1677,7 +1676,7 @@ func proxyAdapterError(err error) error {
 // Used by main to translate categorised errors (e.g. ExitNotFound) into
 // distinct process exit codes rather than the catch-all ExitConfig.
 func ExitCodeFromError(err error) (int, bool) {
-	if _, ok := errors.AsType[*interruptedError](err); ok {
+	if errors.As(err, new(*interruptedError)) {
 		return ExitCancelled, true
 	}
 	if ee, ok := errors.AsType[*exitError](err); ok {
@@ -1739,7 +1738,7 @@ func ExitCodeForError(err error) int {
 	// one: nothing this build can serve to answer, which is an absence. A
 	// set-aside reaches here only as a failure, since reads return it beside an
 	// answer; checked after the sentinels so an altered row still wins.
-	if _, ok := errors.AsType[*recordseal.SetAside](err); ok {
+	if errors.As(err, new(*recordseal.SetAside)) {
 		return ExitNotFound
 	}
 	// A divergence — two records for one coordinate disagreeing on a hash they
@@ -1748,7 +1747,7 @@ func ExitCodeForError(err error) int {
 	// goSumWalkGate; a store-inspection command reports it and exits 0 (see
 	// reportDivergence), so the tool used to diagnose the problem is not the one
 	// that refuses to run.
-	if _, ok := errors.AsType[*fetchdomain.Divergence](err); ok {
+	if errors.As(err, new(*fetchdomain.Divergence)) {
 		return ExitIntegrity
 	}
 	return ExitConfig

@@ -125,7 +125,7 @@ func runDirectives(ctx context.Context, gomodFlag string, stdout, stderr io.Writ
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	rec, err := ctr.ExtractDirectives.Extract(ctx, gomodPath, activeConfig.DirectivePolicy)
 	if err != nil {

@@ -170,6 +170,7 @@ func printFullInterface(w *errWriter, ifc contextInterface, cmd string) {
 		if ifc.Error != "" {
 			w.printf("Detail:       %s\n", ifc.Error)
 		}
+		printAnalyserLimitLine(w, "Limit:        ", ifc.AnalyserLimit)
 		for _, pkg := range ifc.Packages {
 			w.printf("\n  %s\n", pkg.ImportPath)
 			for _, t := range pkg.Types {
@@ -252,6 +253,7 @@ func printFullExamples(w *errWriter, ex contextExamples, cmd string) {
 			w.printf("Detail:       %s\n", ex.Error)
 		}
 		printSetAsideLines(w, "Set Aside:    ", ex.SetAside)
+		printAnalyserLimitLine(w, "Limit:        ", ex.AnalyserLimit)
 		for _, e := range ex.Examples {
 			printFullExample(w, e)
 		}
@@ -300,35 +302,41 @@ func printFullVulnerabilities(w *errWriter, v contextVulnerabilities, cmd contex
 		if v.Reason != "" {
 			w.printf("Reason:       %s\n", v.Reason)
 		}
-		if v.FirstValidatedAt != "" {
-			w.printf("First Validated: %s\n", v.FirstValidatedAt)
-		}
-		if v.LastValidatedAt != "" {
-			w.printf("Last Validated:  %s\n", v.LastValidatedAt)
-		} else if v.ExtractedAt != "" {
-			w.printf("Scanned At:   %s\n", v.ExtractedAt)
-		}
-		if v.WalkID != "" {
-			w.printf("Walk ID:      %s\n", v.WalkID)
-		}
-		printWalkBasis(w, "Walk Basis:   %s\n", v)
-		printRunContextNote(w, "Run Context:  %s\n", v)
-		if v.SnapshotVersion != "" {
-			w.printf("Snapshot:     %s\n", v.SnapshotVersion)
-		}
-		if v.PipelineVersion != "" {
-			w.printf("Pipeline:     %s\n", v.PipelineVersion)
-		}
-		if v.SnapshotRetrievedAt != "" {
-			age := 0
-			if v.SnapshotAgeDays != nil {
-				age = *v.SnapshotAgeDays
-			}
-			w.printf("Snapshot Age: retrieved %s (%d day(s) old at validation)\n", v.SnapshotRetrievedAt, age)
-		}
+		printFullScanBasis(w, v)
 		for _, cve := range v.Findings {
 			printFullCVE(w, cve)
 		}
+	}
+}
+
+// printFullScanBasis prints when the statuses were validated, the walk and
+// run they were read in, and the advisory snapshot behind them.
+func printFullScanBasis(w *errWriter, v contextVulnerabilities) {
+	if v.FirstValidatedAt != "" {
+		w.printf("First Validated: %s\n", v.FirstValidatedAt)
+	}
+	if v.LastValidatedAt != "" {
+		w.printf("Last Validated:  %s\n", v.LastValidatedAt)
+	} else if v.ExtractedAt != "" {
+		w.printf("Scanned At:   %s\n", v.ExtractedAt)
+	}
+	if v.WalkID != "" {
+		w.printf("Walk ID:      %s\n", v.WalkID)
+	}
+	printWalkBasis(w, "Walk Basis:   %s\n", v)
+	printRunContextNote(w, "Run Context:  %s\n", v)
+	if v.SnapshotVersion != "" {
+		w.printf("Snapshot:     %s\n", v.SnapshotVersion)
+	}
+	if v.PipelineVersion != "" {
+		w.printf("Pipeline:     %s\n", v.PipelineVersion)
+	}
+	if v.SnapshotRetrievedAt != "" {
+		age := 0
+		if v.SnapshotAgeDays != nil {
+			age = *v.SnapshotAgeDays
+		}
+		w.printf("Snapshot Age: retrieved %s (%d day(s) old at validation)\n", v.SnapshotRetrievedAt, age)
 	}
 }
 

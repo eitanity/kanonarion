@@ -65,10 +65,12 @@ var _ ifaceports.InterfaceStore = (*queryFakeStore)(nil)
 func TestQueryInterfaceUseCase_GetInterfaceRecord(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	store := &queryFakeStore{}
-	_ = store.PutInterfaceRecord(context.Background(), domain.InterfaceRecord{
+	if err := store.PutInterfaceRecord(context.Background(), domain.InterfaceRecord{
 		Coordinate:      coord,
 		PipelineVersion: "0.1.0",
-	})
+	}); err != nil {
+		t.Fatalf("PutInterfaceRecord: %v", err)
+	}
 
 	uc := application.NewQueryInterfaceUseCase(store)
 

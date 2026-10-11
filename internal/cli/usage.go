@@ -171,7 +171,7 @@ func runUsage(ctx context.Context, arg string, f buildScopeFlags, stdout, stderr
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return usageWith(ctx, ctr, coord, f, stdout, stderr)
 }
@@ -806,7 +806,8 @@ func (r *usageReport) usageVerdict() cgdomain.Answer {
 	if len(r.DroppedPackages) > 0 {
 		sinks = append(sinks, cgdomain.SoundnessSink{
 			Kind: cgdomain.SinkDroppedPackageEdges, Site: site,
-			Detail: strings.Join(r.DroppedPackages, ", ") + " did not typecheck, so their edges were dropped",
+			Detail: strings.Join(r.DroppedPackages, ", ") + " " + cgdomain.DroppedPackageReason(r.DroppedDetail) +
+				", so their edges were dropped",
 		})
 	}
 	if len(r.Dispatch) > 0 {

@@ -149,8 +149,8 @@ func TestLicenseJSON_CoverageIsEmittedAlways(t *testing.T) {
 		if !present {
 			t.Fatalf("license_files[%v] carries no coverage key", f["path"])
 		}
-		if got != want[f["path"].(string)] {
-			t.Errorf("license_files[%v].coverage = %v, want %v", f["path"], got, want[f["path"].(string)])
+		if got != want[mustAs[string](t, f["path"])] {
+			t.Errorf("license_files[%v].coverage = %v, want %v", f["path"], got, want[mustAs[string](t, f["path"])])
 		}
 	}
 }

@@ -211,7 +211,16 @@ func testScopeNoScopeFlag(set bool) []inapplicableFlag {
 func registerRecordedTestScopeFlag(cmd *cobra.Command, p *bool) {
 	cmd.Flags().BoolVar(p, testScopeFlagName, false,
 		"not accepted here: a walk record names its scope but not its test axis")
-	_ = cmd.Flags().MarkHidden(testScopeFlagName)
+	hideFlag(cmd, testScopeFlagName)
+}
+
+// hideFlag hides a flag the caller has just defined. MarkHidden fails only for
+// an undefined name, so a failure is a typo in this package and stops the
+// command tree from being built rather than leaving the flag in --help.
+func hideFlag(cmd *cobra.Command, name string) {
+	if err := cmd.Flags().MarkHidden(name); err != nil {
+		panic(fmt.Sprintf("hiding --%s on %s: %v", name, cmd.Name(), err))
+	}
 }
 
 // refuseTestScopeOnRecordingCommand refuses --exclude-tests on the commands that

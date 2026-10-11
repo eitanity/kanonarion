@@ -99,22 +99,22 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 		if ierr != nil {
 			return ServeResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, ierr)
 		}
-		present, err := ok, error(nil)
+		present, eerr := ok, error(nil)
 		if ok {
-			present, err = uc.blobs.Exists(ctx, identity)
+			present, eerr = uc.blobs.Exists(ctx, identity)
 		}
-		if err != nil {
-			return ServeResult{}, fmt.Errorf("checking blob presence for %s: %w", req.Coordinate, err)
+		if eerr != nil {
+			return ServeResult{}, fmt.Errorf("checking blob presence for %s: %w", req.Coordinate, eerr)
 		}
 		if !present {
-			res, err = uc.fetch.Execute(ctx, FetchRequest{
+			res, eerr = uc.fetch.Execute(ctx, FetchRequest{
 				Coordinate:    req.Coordinate,
 				Force:         true,
 				SkipVCSVerify: req.SkipVCSVerify,
 				VCSHosts:      req.VCSHosts,
 			})
-			if err != nil {
-				return ServeResult{}, fmt.Errorf("re-fetch of evicted %s: %w", req.Coordinate, err)
+			if eerr != nil {
+				return ServeResult{}, fmt.Errorf("re-fetch of evicted %s: %w", req.Coordinate, eerr)
 			}
 		}
 	}

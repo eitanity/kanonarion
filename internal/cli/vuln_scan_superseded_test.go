@@ -309,7 +309,10 @@ func TestScanShow_WithdrawnSectionAndModuleCountSurvive(t *testing.T) {
 		{PipelineVersion: "v22", Records: 1, Findings: 0},
 	})
 
-	out, _ := showRun(t, ucRuns, ucVuln, false)
+	out, err := showRun(t, ucRuns, ucVuln, false)
+	if err == nil {
+		t.Fatal("a module recorded at a superseded generation is reported as a refusal; want one")
+	}
 	if !strings.Contains(out, "Modules:     2") {
 		t.Errorf("the module count moved:\n%s", out)
 	}

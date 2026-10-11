@@ -141,7 +141,7 @@ type storeCleanResult struct {
 // number beside it is a report of it.
 func dirSize(path string) int64 {
 	var total int64
-	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error { //nolint:errcheck // the callback returns only nil
 		if err != nil || d.IsDir() {
 			return nil //nolint:nilerr // a file that cannot be read is not counted, not a refusal
 		}
@@ -792,7 +792,7 @@ func runStoreInfo(storeRoot string, jsonOut bool, stdout, _ io.Writer) error {
 	}
 	dbPath := filepath.Join(absStore, "mirror.db")
 
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	if _, serr := os.Stat(dbPath); os.IsNotExist(serr) {
 		return fmt.Errorf("store not found at %s: run a kanonarion command to initialise it", dbPath)
 	}
 

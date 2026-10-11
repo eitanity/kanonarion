@@ -401,6 +401,14 @@ type NegativeSearch struct {
 	// another build asked, and contradicting that record with it would report a
 	// disagreement that does not exist.
 	InRecordedFrame bool
+	// NotJoined is why the join could not settle a record measured in another
+	// build: that build has no graph (with the command that analyses it), or the
+	// search reached calls into unjoined modules (naming them). Empty otherwise.
+	NotJoined string
+	// UnjoinedCalls are calls the entry points reach into modules whose graphs
+	// the searched graph does not hold. A clean search past any of them does not
+	// confirm: the route may continue there. Empty where none was reached.
+	UnjoinedCalls []string
 }
 
 // ReflectiveDispatchSite is one call the search could not follow: a call site in
@@ -561,34 +569,57 @@ func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness,
 	// the record denies, neither answer is discarded: rule 4 still refuses to
 	// confirm, and the rung says the two disagree.
 	if s := f.NegativeSearch; s != nil {
-		// A search that could not be made says so on the rung, which keeps the
-		// recorded derivation: the absence of a search is not evidence either way,
-		// and a rung with nothing beside it is the silence this field exists to end.
-		if why := s.unsearchedReason(); why != "" {
-			rung, reason := soundnessFromDerivation(d)
-			return rung, reason + ". No call-graph search stands behind this rung: " + why
-		}
-		switch {
-		case s.PathFound && s.InRecordedFrame:
-			return SoundnessDisputed, disputedReason(d, s) + searchedGraphsNote(s)
-		case s.PathFound:
-			// A path inside the module's own graph is not a contradiction of a
-			// negative measured in another build. The recorded rung stands, and the
-			// path is stated beside it rather than dropped: a route this tool found
-			// and did not report is the one outcome a reachability tool must never
-			// produce.
-			rung, reason := soundnessFromDerivation(d)
-			return rung, reason + crossFrameNote(s) + searchedGraphsNote(s)
-		default:
-			// Nothing the analysis can name as an entry point reaches the vulnerable
-			// symbol. That is the search rules 3 to 5 weigh, so the derivation
-			// becomes this tool's own, at the fidelity of the graph it ran over.
-			rung, reason := soundnessFromDerivation(
-				ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting})
-			return rung, reason + entryPointRootingNote(s) + searchedGraphsNote(s)
-		}
+		rung, reason := searchedSoundness(d, s)
+		return rung, reason + notJoinedNote(s)
 	}
 	return soundnessFromDerivation(d)
+}
+
+// searchedSoundness is NegativeSoundness for a finding a read-time search
+// attached a result to.
+func searchedSoundness(d ReachabilityDerivation, s *NegativeSearch) (soundness ReachabilitySoundness, reason string) {
+	// A search that could not be made says so on the rung, which keeps the
+	// recorded derivation: the absence of a search is not evidence either way,
+	// and a rung with nothing beside it is the silence this field exists to end.
+	if why := s.unsearchedReason(); why != "" {
+		rung, reason := soundnessFromDerivation(d)
+		return rung, reason + ". No call-graph search stands behind this rung: " + why
+	}
+	switch {
+	case s.PathFound && s.InRecordedFrame:
+		return SoundnessDisputed, disputedReason(d, s) + searchedGraphsNote(s)
+	case s.PathFound:
+		// A path inside the module's own graph is not a contradiction of a
+		// negative measured in another build. The recorded rung stands, and the
+		// path is stated beside it rather than dropped: a route this tool found
+		// and did not report is the one outcome a reachability tool must never
+		// produce.
+		rung, reason := soundnessFromDerivation(d)
+		return rung, reason + crossFrameNote(s) + searchedGraphsNote(s)
+	case len(s.UnjoinedCalls) > 0:
+		// The traversal stopped at calls into modules it holds no graph for, so its
+		// empty result is not an absence; the recorded derivation keeps the rung.
+		rung, reason := soundnessFromDerivation(d)
+		return rung, reason + ". A call-graph search from the entry points found no path" +
+			entryPointRootingNote(s) + searchedGraphsNote(s)
+	default:
+		// Nothing the analysis can name as an entry point reaches the vulnerable
+		// symbol. That is the search rules 3 to 5 weigh, so the derivation
+		// becomes this tool's own, at the fidelity of the graph it ran over.
+		rung, reason := soundnessFromDerivation(
+			ReachabilityDerivation{Analyser: AnalyserCallGraphBFS, Fidelity: s.Fidelity, Rooting: d.Rooting})
+		return rung, reason + entryPointRootingNote(s) + searchedGraphsNote(s)
+	}
+}
+
+// notJoinedNote states why the search ran over the coordinate's own graph
+// rather than the build the record was measured in, and the command that
+// lets it run there.
+func notJoinedNote(s *NegativeSearch) string {
+	if s.NotJoined == "" {
+		return ""
+	}
+	return ". " + strings.ToUpper(s.NotJoined[:1]) + s.NotJoined[1:]
 }
 
 // unsearchedReason states why no search stands behind this finding, and "" where
@@ -607,7 +638,7 @@ func (s *NegativeSearch) unsearchedReason() string {
 		return s.NotSearched
 	}
 	if s.EntryPointRoots == 0 {
-		return "the call graph names no entry point at all — no public API, no package initialiser, no command — so a traversal over it would start nowhere and could only come back empty"
+		return "the call graph names no entry point at all — no public API, no package initialiser, no command, no export directive, no http.Handler — so a traversal over it would start nowhere and could only come back empty"
 	}
 	return ""
 }
@@ -622,7 +653,8 @@ func (s *NegativeSearch) unsearchedReason() string {
 // because it started somewhere the analysis could not name.
 func entryPointRootingNote(s *NegativeSearch) string {
 	note := ", rooted at the " + plural(s.EntryPointRoots, "entry point") +
-		" the analysis can name — the public API, package init and the process entry point"
+		" the analysis can name — the public API, package init, the process entry point, export directives and" +
+		" http.Handler methods"
 	if s.ArtifactKind != "" {
 		note += "; the graph is " + s.ArtifactKind
 	}

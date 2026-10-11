@@ -320,15 +320,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// nodes are extracted upfront so the scan pool only processes
 	// modules govulncheck can actually open. Local-analysed nodes
 	// have a real FactRecord zip and are treated as normal scannable modules.
-	allCoords := make([]coordinate.ModuleCoordinate, 0, len(walk.Graph.Nodes))
-	localReplaceNodes := make([]walkdomain.GraphNode, 0)
-	for _, node := range walk.Graph.Nodes {
-		if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
-			localReplaceNodes = append(localReplaceNodes, node)
-			continue
-		}
-		allCoords = append(allCoords, node.Coordinate)
-	}
+	allCoords, localReplaceNodes := splitLocalReplaceNodes(walk)
 	total := len(allCoords)
 	uc.logger.Info("scanning walk modules", "walk_id", params.WalkID, "module_count", total)
 
@@ -392,42 +384,8 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		}
 	}
 
-	switch {
-	case walk.Target.IsLocal() && params.ProjectDir != "" && len(projectDivergence) > 0:
-		// The directory moved on from the walk. The coordinate answer is still
-		// this walk's to give and is still given; the reachability answer belongs
-		// to a build nothing here measured, so it is left unrecorded instead of
-		// being filled in from an analysis of the wrong versions.
-		uc.logger.Warn("vuln-scan: the project directory no longer requires the module versions this walk resolved, so no analysis of it is attributed to this walk; matching advisories by coordinate and recording no reachability",
-			"walk_id", params.WalkID, "project_dir", params.ProjectDir, "disagreements", strings.Join(projectDivergence, ", "))
-		if derr := uc.scanProjectDiverged(ctx, walk, allCoords, params, snapshot, closure, projectDivergence, finalResults); derr != nil {
-			return domain.WalkScanRun{}, derr
-		}
-	case walk.Target.IsLocal() && params.ProjectDir != "":
-		// A project walk is rooted at the local main module. Its verdict is the
-		// project's resolved, pruned build — derive it from a single
-		// project-rooted scan of the live working tree, not from re-scanning each
-		// dependency in isolation (which re-selects versions the project never
-		// builds and reports a self-inflicted version-not-in-toolchain gap).
-		//
-		// A vendored project is analysed from vendor/ rather than from the
-		// artefacts kanonarion fetched: the vendored tree is what the project
-		// compiles, and a verdict about anything else is a verdict about a build
-		// that does not exist.
-		uc.logger.Info("project-rooted vuln scan",
-			"walk_id", params.WalkID, "root", walk.Target, "project_dir", params.ProjectDir,
-			"vendored", closure.Vendored)
-		if perr := uc.scanProjectRooted(ctx, walk, allCoords, params, snapshot, vulnDBDir, closure, finalResults); perr != nil {
-			return domain.WalkScanRun{}, perr
-		}
-	case targetRooted:
-		// Verdicts already derived from the target-rooted analysis.
-	case params.BinaryModePrePass:
-		uc.binaryModePrePass(allCoords, total, scanPool, finalResults)
-	default:
-		for _, r := range scanPool(allCoords, domain.ScanModeSource) {
-			finalResults[r.coord] = r
-		}
+	if derr := uc.dispatchModuleScans(ctx, walk, allCoords, params, snapshot, vulnDBDir, closure, projectDivergence, targetRooted, total, scanPool, finalResults); derr != nil {
+		return domain.WalkScanRun{}, derr
 	}
 
 	uc.applyFrameGaps(frameGaps, finalResults, walk.Target)
@@ -436,8 +394,8 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// one module's failure. The pool would otherwise fold it into a per-module
 	// StatusScanFailed record and let the run complete, which is the same
 	// swallow this abort exists to remove — one layer further down.
-	if err := firstSnapshotIntegrityFailure(allCoords, finalResults); err != nil {
-		return domain.WalkScanRun{}, err
+	if ferr := firstSnapshotIntegrityFailure(allCoords, finalResults); ferr != nil {
+		return domain.WalkScanRun{}, ferr
 	}
 
 	progressCount := 0
@@ -457,14 +415,78 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// 4b. Every coordinate the run reported a verdict for must have that verdict
 	// in the store. A module that produced a progress line and no record is a
 	// verdict the run claims to have made and did not keep.
-	if err := uc.verifyRecordsPersisted(ctx, walk, run, snapshot); err != nil {
-		return domain.WalkScanRun{}, err
+	if verr := uc.verifyRecordsPersisted(ctx, walk, run, snapshot); verr != nil {
+		return domain.WalkScanRun{}, verr
 	}
 
 	// 5. Status determination. The two axes are stored separately so a run that
 	// both found something and left part of the build list unanalysed keeps both
 	// facts; OverallStatus is the derived compatibility summary that collapses
 	// them into one word.
+	return uc.completeRun(ctx, run, walk, counts, allCoords, finalResults)
+}
+
+// splitLocalReplaceNodes separates the walk's local-replace nodes, which have
+// no artefact to scan, from the coordinates that are scanned.
+func splitLocalReplaceNodes(walk walkdomain.WalkRecord) ([]coordinate.ModuleCoordinate, []walkdomain.GraphNode) {
+	allCoords := make([]coordinate.ModuleCoordinate, 0, len(walk.Graph.Nodes))
+	localReplaceNodes := make([]walkdomain.GraphNode, 0)
+	for _, node := range walk.Graph.Nodes {
+		if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
+			localReplaceNodes = append(localReplaceNodes, node)
+			continue
+		}
+		allCoords = append(allCoords, node.Coordinate)
+	}
+	return allCoords, localReplaceNodes
+}
+
+// dispatchModuleScans scans the walk's modules in the frame the walk calls
+// for: project-rooted, diverged, target-rooted, or isolated.
+func (uc *ScanWalkUseCase) dispatchModuleScans(ctx context.Context, walk walkdomain.WalkRecord, allCoords []coordinate.ModuleCoordinate, params ScanWalkParams, snapshot *domain.DatabaseSnapshot, vulnDBDir string, closure ports.VendoredClosure, projectDivergence []string, targetRooted bool, total int, scanPool func([]coordinate.ModuleCoordinate, domain.ScanMode) []moduleResult, finalResults map[coordinate.ModuleCoordinate]moduleResult) error {
+	switch {
+	case walk.Target.IsLocal() && params.ProjectDir != "" && len(projectDivergence) > 0:
+		// The directory moved on from the walk. The coordinate answer is still
+		// this walk's to give and is still given; the reachability answer belongs
+		// to a build nothing here measured, so it is left unrecorded instead of
+		// being filled in from an analysis of the wrong versions.
+		uc.logger.Warn("vuln-scan: the project directory no longer requires the module versions this walk resolved, so no analysis of it is attributed to this walk; matching advisories by coordinate and recording no reachability",
+			"walk_id", params.WalkID, "project_dir", params.ProjectDir, "disagreements", strings.Join(projectDivergence, ", "))
+		if derr := uc.scanProjectDiverged(ctx, walk, allCoords, params, snapshot, closure, projectDivergence, finalResults); derr != nil {
+			return derr
+		}
+	case walk.Target.IsLocal() && params.ProjectDir != "":
+		// A project walk is rooted at the local main module. Its verdict is the
+		// project's resolved, pruned build — derive it from a single
+		// project-rooted scan of the live working tree, not from re-scanning each
+		// dependency in isolation (which re-selects versions the project never
+		// builds and reports a self-inflicted version-not-in-toolchain gap).
+		//
+		// A vendored project is analysed from vendor/ rather than from the
+		// artefacts kanonarion fetched: the vendored tree is what the project
+		// compiles, and a verdict about anything else is a verdict about a build
+		// that does not exist.
+		uc.logger.Info("project-rooted vuln scan",
+			"walk_id", params.WalkID, "root", walk.Target, "project_dir", params.ProjectDir,
+			"vendored", closure.Vendored)
+		if perr := uc.scanProjectRooted(ctx, walk, allCoords, params, snapshot, vulnDBDir, closure, finalResults); perr != nil {
+			return perr
+		}
+	case targetRooted:
+		// Verdicts already derived from the target-rooted analysis.
+	case params.BinaryModePrePass:
+		uc.binaryModePrePass(allCoords, total, scanPool, finalResults)
+	default:
+		for _, r := range scanPool(allCoords, domain.ScanModeSource) {
+			finalResults[r.coord] = r
+		}
+	}
+	return nil
+}
+
+// completeRun derives the run's status and counts, seals and persists it, and
+// appends its audit events.
+func (uc *ScanWalkUseCase) completeRun(ctx context.Context, run domain.WalkScanRun, walk walkdomain.WalkRecord, counts scanCounts, allCoords []coordinate.ModuleCoordinate, finalResults map[coordinate.ModuleCoordinate]moduleResult) (domain.WalkScanRun, error) {
 	run.CompletedAt = uc.clock.Now()
 	nodeCount := len(walk.Graph.Nodes)
 	run.OverallStatus = domain.DetermineWalkScanStatus(
@@ -484,7 +506,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 
 	// 6. Hash & Persist
-	run, err = domain.WalkScanRunHasher{}.SetContentHash(run)
+	run, err := domain.WalkScanRunHasher{}.SetContentHash(run)
 	if err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("hashing walk scan run: %w", err)
 	}
@@ -1211,26 +1233,7 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 		for _, r := range requires {
 			goModSet[r] = struct{}{}
 		}
-		// A required module whose path is a proper ancestor of another path in
-		// the build list needs its source, not just its go.mod: resolving an
-		// import under the nested path makes the toolchain read the ancestor's
-		// source to confirm the ancestor does not itself provide the package.
-		// The nested descendant can be another required module (sibling-nested,
-		// e.g. grpc requiring both cloud.google.com/go/compute and
-		// .../compute/metadata) or the scanned node's own module path
-		// (self-nested, e.g. google.golang.org/genproto/googleapis/rpc requiring
-		// its own ancestor google.golang.org/genproto). Both make the toolchain
-		// read the ancestor's source, so both seed the source set.
-		for _, a := range requires {
-			if strings.HasPrefix(node.Path(), a.Path()+"/") {
-				sourceSet[a] = struct{}{}
-			}
-			for _, b := range requires {
-				if a != b && strings.HasPrefix(b.Path(), a.Path()+"/") {
-					sourceSet[a] = struct{}{}
-				}
-			}
-		}
+		markNestedAncestors(node, requires, sourceSet)
 	}
 	// A module supplied as source already carries its go.mod, so drop it from the
 	// go.mod-only set rather than populate it twice.
@@ -1263,6 +1266,31 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 			uc.logger.Warn("some build-list go.mod files could not be populated; modules requiring these versions may fail to resolve offline",
 				"written", report.Written, "requested", report.Requested,
 				"failures", report.FailureSummary(populateFailureLogLimit))
+		}
+	}
+}
+
+// markNestedAncestors adds to sourceSet each required module that is a path
+// ancestor of the node or of another requirement.
+func markNestedAncestors(node coordinate.ModuleCoordinate, requires []coordinate.ModuleCoordinate, sourceSet map[coordinate.ModuleCoordinate]struct{}) {
+	// A required module whose path is a proper ancestor of another path in
+	// the build list needs its source, not just its go.mod: resolving an
+	// import under the nested path makes the toolchain read the ancestor's
+	// source to confirm the ancestor does not itself provide the package.
+	// The nested descendant can be another required module (sibling-nested,
+	// e.g. grpc requiring both cloud.google.com/go/compute and
+	// .../compute/metadata) or the scanned node's own module path
+	// (self-nested, e.g. google.golang.org/genproto/googleapis/rpc requiring
+	// its own ancestor google.golang.org/genproto). Both make the toolchain
+	// read the ancestor's source, so both seed the source set.
+	for _, a := range requires {
+		if strings.HasPrefix(node.Path(), a.Path()+"/") {
+			sourceSet[a] = struct{}{}
+		}
+		for _, b := range requires {
+			if a != b && strings.HasPrefix(b.Path(), a.Path()+"/") {
+				sourceSet[a] = struct{}{}
+			}
 		}
 	}
 }
@@ -1489,8 +1517,8 @@ func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domai
 	}
 	cleanup := func() { _ = os.RemoveAll(dbDir) }
 
-	if err := ziparchive.ExtractStream(content, dbDir); err != nil {
-		uc.logger.Warn("failed to pre-extract snapshot, each module scan will extract independently", "error", err)
+	if eerr := ziparchive.ExtractStream(content, dbDir); eerr != nil {
+		uc.logger.Warn("failed to pre-extract snapshot, each module scan will extract independently", "error", eerr)
 		cleanup()
 		return "", noop, nil
 	}

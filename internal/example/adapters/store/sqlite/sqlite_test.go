@@ -192,7 +192,10 @@ func TestGet_IntegrityError(t *testing.T) {
 
 	r.ContentHash = "sha256:invalid"
 	var h domain2.ExampleRecordHasher
-	blob, _ := h.Marshal(r)
+	blob, merr := h.Marshal(r)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if _, err := db.Exec("UPDATE example_records SET serialised = ?", blob); err != nil {
 		t.Fatalf("failed to tamper with db: %v", err)
 	}
@@ -342,8 +345,8 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	if err := s1.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	if cerr := s1.Close(); cerr != nil {
+		t.Fatalf("Close: %v", cerr)
 	}
 	s2, err := examplesqlite.Open(":memory:")
 	if err != nil {

@@ -179,6 +179,13 @@ func TestToLicenseDiffJSON_DistinguishesUnchangedFromAbsent(t *testing.T) {
 
 	// And the facts themselves, so the documents differ for the stated reason
 	// rather than incidentally.
+	assertDiffDeclaresPopulations(t, docs)
+}
+
+// assertDiffDeclaresPopulations checks each side's declared licence and the
+// populations the no-change line names.
+func assertDiffDeclaresPopulations(t *testing.T, docs map[string]string) {
+	t.Helper()
 	var apache, absent licenseDiffJSON
 	if err := json.Unmarshal([]byte(docs["both Apache-2.0"]), &apache); err != nil {
 		t.Fatal(err)

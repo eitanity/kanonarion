@@ -208,7 +208,7 @@ func TestRecordingFetcher_RecoversFromPanic(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from panic recovery, got nil")
 	}
-	if _, ok := errors.AsType[*panicError](err); !ok {
+	if !errors.As(err, new(*panicError)) {
 		t.Errorf("err type = %T, want *panicError", err)
 	}
 
@@ -306,11 +306,17 @@ func TestRecordingFetcher_ProgressAdvancesOncePerDistinctCoord(t *testing.T) {
 	r := newRecorderForTestWithProgress(inner, prog)
 	ctx := context.Background()
 
-	_, _ = r.EnsureFetched(ctx, rcoord("example.com/a", "v1.0.0"))
-	_, _ = r.EnsureFetched(ctx, rcoord("example.com/b", "v1.0.0"))
-	// Repeat of a: the recorder returns the memoised outcome and must not
-	// report progress again.
-	_, _ = r.EnsureFetched(ctx, rcoord("example.com/a", "v1.0.0"))
+	for _, c := range []coordinate.ModuleCoordinate{
+		rcoord("example.com/a", "v1.0.0"),
+		rcoord("example.com/b", "v1.0.0"),
+		// Repeat of a: the recorder returns the memoised outcome and must not
+		// report progress again.
+		rcoord("example.com/a", "v1.0.0"),
+	} {
+		if _, err := r.EnsureFetched(ctx, c); err != nil {
+			t.Fatalf("EnsureFetched %s: %v", c, err)
+		}
+	}
 
 	got := prog.snapshot()
 	if len(got) != 2 || got[0] != 1 || got[1] != 2 {

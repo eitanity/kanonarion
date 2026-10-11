@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -116,8 +117,10 @@ func TestHasher_VerifyContentHash_Valid(t *testing.T) {
 
 func TestHasher_VerifyContentHash_Tampered(t *testing.T) {
 	var h domain2.InterfaceRecordHasher
-	r := makeTestRecord(t)
-	r, _ = h.SetContentHash(r)
+	r, err := h.SetContentHash(makeTestRecord(t))
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 
 	r.Packages[0].Name = "tampered"
 	if err := h.VerifyContentHash(r); err == nil {
@@ -127,11 +130,11 @@ func TestHasher_VerifyContentHash_Tampered(t *testing.T) {
 
 func TestHasher_Deterministic(t *testing.T) {
 	var h domain2.InterfaceRecordHasher
-	r1 := makeTestRecord(t)
-	r2 := makeTestRecord(t)
-
-	r1, _ = h.SetContentHash(r1)
-	r2, _ = h.SetContentHash(r2)
+	r1, err1 := h.SetContentHash(makeTestRecord(t))
+	r2, err2 := h.SetContentHash(makeTestRecord(t))
+	if err1 != nil || err2 != nil {
+		t.Fatalf("SetContentHash: %v / %v", err1, err2)
+	}
 
 	if r1.ContentHash != r2.ContentHash {
 		t.Errorf("hashes differ across identical records: %q vs %q", r1.ContentHash, r2.ContentHash)
@@ -140,7 +143,7 @@ func TestHasher_Deterministic(t *testing.T) {
 
 func TestHasher_EmptyRecord(t *testing.T) {
 	var h domain2.InterfaceRecordHasher
-	coord, _ := coordinate.NewModuleCoordinate("example.com/m", "v0.0.1")
+	coord := coordinatetest.MustNew("example.com/m", "v0.0.1")
 	r := domain2.InterfaceRecord{
 		SchemaVersion:   domain2.InterfaceSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,
@@ -193,7 +196,10 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 	var h domain2.InterfaceRecordHasher
 	r := makeTestRecord(t)
 	r.Ecosystem = "npm"
-	hashed, _ := h.SetContentHash(r)
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	blob, err := h.Marshal(hashed)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

@@ -47,8 +47,8 @@ func TestGoldenFactRecord(t *testing.T) {
 
 	goldenPath := "gorilla-mux-v1.8.1.json"
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
-		if err := os.WriteFile(goldenPath, append(got, '\n'), 0o600); err != nil {
-			t.Fatalf("writing golden: %v", err)
+		if werr := os.WriteFile(goldenPath, append(got, '\n'), 0o600); werr != nil {
+			t.Fatalf("writing golden: %v", werr)
 		}
 		t.Log("golden file updated")
 		return
@@ -70,8 +70,14 @@ func TestGoldenFactRecord(t *testing.T) {
 	if err := json.Unmarshal(want, &wantJSON); err != nil {
 		t.Fatalf("parsing want: %v", err)
 	}
-	gotBytes, _ := json.Marshal(gotJSON)
-	wantBytes, _ := json.Marshal(wantJSON)
+	gotBytes, merr := json.Marshal(gotJSON)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
+	wantBytes, merr := json.Marshal(wantJSON)
+	if merr != nil {
+		t.Fatalf("Marshal: %v", merr)
+	}
 	if string(gotBytes) != string(wantBytes) {
 		t.Errorf("golden mismatch\ngot:  %s\nwant: %s", gotBytes, wantBytes)
 	}

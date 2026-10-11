@@ -27,42 +27,7 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 			if !inA || !containsFinding(recA.Findings, fB.ID) {
 				diff.NewFindings = append(diff.NewFindings, FindingDelta{Coordinate: coord, Finding: fB})
 			} else if inA {
-				// Both runs have this finding — check for a withdrawal, then for a
-				// reachability change.
-				fA, ok := findByID(recA.Findings, fB.ID)
-				// A retraction that landed between the runs is the one transition that
-				// takes a finding out of contention with a reason attached. It is
-				// reported here rather than as a reachability change or a resolution:
-				// the finding is still in B (retained as the historical fact), so
-				// neither of those buckets would ever see it, and before withdrawal was
-				// parsed the advisory instead vanished from the database and was filed
-				// as an unexplained resolution.
-				if ok && !fA.IsWithdrawn() && fB.IsWithdrawn() {
-					diff.WithdrawnFindings = append(diff.WithdrawnFindings, FindingDelta{Coordinate: coord, Finding: fB})
-					continue
-				}
-				if ok && reachabilityChanged(fA, fB) {
-					wasReachable, isReachable := reachableFlag(fA), reachableFlag(fB)
-					// A reachable→not-reachable flip is a green "now unaffected"
-					// verdict. If the two runs analysed the module at unequal
-					// fidelity, that flip may be an artefact of dropped fidelity,
-					// not a fix — hold it back as UNRESOLVED. The reverse flip
-					// (newly reachable) is not a green result, so it stands.
-					if wasReachable && !isReachable {
-						if mismatch, reason := completenessMismatch(recA, recB); mismatch {
-							diff.UnresolvedFindings = append(diff.UnresolvedFindings, UnresolvedFinding{
-								Coordinate: coord, Finding: fB, Kind: UnresolvedKindReachability, Reason: reason,
-							})
-							continue
-						}
-					}
-					diff.ReachabilityChanges = append(diff.ReachabilityChanges, ReachabilityChange{
-						Coordinate:   coord,
-						Finding:      fB,
-						WasReachable: wasReachable,
-						IsReachable:  isReachable,
-					})
-				}
+				diffCommonFinding(&diff, coord, recA, recB, fB)
 			}
 		}
 	}
@@ -119,6 +84,48 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 	})
 
 	return diff
+}
+
+// diffCommonFinding files a finding both runs hold: as withdrawn when the
+// retraction landed between them, or as a reachability change, held back as
+// unresolved when the runs analysed the module at unequal fidelity.
+func diffCommonFinding(diff *ScanRunDiff, coord coordinate.ModuleCoordinate, recA, recB VulnerabilityRecord, fB VulnerabilityFinding) {
+	// Both runs have this finding — check for a withdrawal, then for a
+	// reachability change.
+	fA, ok := findByID(recA.Findings, fB.ID)
+	// A retraction that landed between the runs is the one transition that
+	// takes a finding out of contention with a reason attached. It is
+	// reported here rather than as a reachability change or a resolution:
+	// the finding is still in B (retained as the historical fact), so
+	// neither of those buckets would ever see it, and before withdrawal was
+	// parsed the advisory instead vanished from the database and was filed
+	// as an unexplained resolution.
+	if ok && !fA.IsWithdrawn() && fB.IsWithdrawn() {
+		diff.WithdrawnFindings = append(diff.WithdrawnFindings, FindingDelta{Coordinate: coord, Finding: fB})
+		return
+	}
+	if ok && reachabilityChanged(fA, fB) {
+		wasReachable, isReachable := reachableFlag(fA), reachableFlag(fB)
+		// A reachable→not-reachable flip is a green "now unaffected"
+		// verdict. If the two runs analysed the module at unequal
+		// fidelity, that flip may be an artefact of dropped fidelity,
+		// not a fix — hold it back as UNRESOLVED. The reverse flip
+		// (newly reachable) is not a green result, so it stands.
+		if wasReachable && !isReachable {
+			if mismatch, reason := completenessMismatch(recA, recB); mismatch {
+				diff.UnresolvedFindings = append(diff.UnresolvedFindings, UnresolvedFinding{
+					Coordinate: coord, Finding: fB, Kind: UnresolvedKindReachability, Reason: reason,
+				})
+				return
+			}
+		}
+		diff.ReachabilityChanges = append(diff.ReachabilityChanges, ReachabilityChange{
+			Coordinate:   coord,
+			Finding:      fB,
+			WasReachable: wasReachable,
+			IsReachable:  isReachable,
+		})
+	}
 }
 
 func indexByCoordinate(recs []VulnerabilityRecord) map[coordinate.ModuleCoordinate]VulnerabilityRecord {

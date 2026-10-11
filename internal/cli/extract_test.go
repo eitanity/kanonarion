@@ -74,7 +74,7 @@ func TestExtractCmd_StatusPreambleGoesToStderr(t *testing.T) {
 				args = append(args, "--json")
 			}
 			args = append(args, "01ARZ3NDEKTSV4RRFFQ69G5FAV") // non-existent walk
-			_ = Run(args, &stdout, &stderr)
+			_ = Run(args, &stdout, &stderr)                   //nolint:errcheck // the walk does not exist; the subject is where the preamble went
 
 			if strings.Contains(stdout.String(), "Starting extraction") {
 				t.Errorf("preamble leaked to stdout (breaks --json piping):\nstdout=%q", stdout.String())
@@ -94,7 +94,7 @@ func TestExtractCmd_StatusPreambleGoesToStderr(t *testing.T) {
 func TestExtractCmd_StatusPreambleIsProgress(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	_ = Run([]string{"extract", "--no-progress", "--store-root", dir, "01ARZ3NDEKTSV4RRFFQ69G5FAV"}, &stdout, &stderr)
+	_ = Run([]string{"extract", "--no-progress", "--store-root", dir, "01ARZ3NDEKTSV4RRFFQ69G5FAV"}, &stdout, &stderr) //nolint:errcheck // the walk does not exist; the subject is where the preamble went
 
 	if strings.Contains(stderr.String(), "Starting extraction") {
 		t.Errorf("--no-progress left the preamble on stderr, so the flag silences the heartbeat and not the narration it opens:\nstderr=%q",
@@ -218,7 +218,7 @@ func TestExtractionFailures_NameWhatTheGapIsAStatementAbout(t *testing.T) {
 		"example.com/slow@v1.0.0":   "environment",
 	}
 	for _, d := range docs {
-		module, _ := d["module"].(string)
+		module := optAs[string](t, d["module"])
 		if got, want := d["cause"], wantCause[module]; got != want {
 			t.Errorf("%s: --json cause = %v, want %v", module, got, want)
 		}

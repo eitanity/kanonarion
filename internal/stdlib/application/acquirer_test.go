@@ -99,7 +99,9 @@ type memBlobs struct{ puts int }
 
 func (b *memBlobs) Put(_ context.Context, identity fetchports.BlobIdentity, r io.Reader) error {
 	b.puts++
-	_, _ = io.ReadAll(r)
+	if _, err := io.ReadAll(r); err != nil {
+		return fmt.Errorf("reading blob %s: %w", identity, err)
+	}
 	return nil
 }
 func (b *memBlobs) Get(context.Context, fetchports.BlobIdentity) (io.ReadCloser, error) {

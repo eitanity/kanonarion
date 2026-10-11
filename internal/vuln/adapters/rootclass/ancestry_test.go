@@ -293,3 +293,24 @@ func TestClassify_TwoEquallyRankedConfidencesReportTheSameWeakestHop(t *testing.
 		}
 	}
 }
+
+// TestClassify_AnExportIsTheAncestorOfWhatItCalls: below a function the host
+// calls, the distance is measured from the export, not reported as nothing.
+func TestClassify_AnExportIsTheAncestorOfWhatItCalls(t *testing.T) {
+	const (
+		parse  = "example.com/app/handlers.parse"
+		helper = "example.com/app/handlers.decode"
+	)
+	rec := appRecord([]cgdomain.CallNode{
+		node(parse, "", "parse", exportedAs(cgdomain.ExportWasm, "parse")),
+		node(helper, "", "decode"),
+	}, []cgdomain.CallEdge{{FromID: parse, ToID: helper, Confidence: cgdomain.ConfidenceDirect}})
+
+	a := classifyEntry(t, rec, "decode", "").Ancestry
+	if !a.Found || a.Hops != 1 || a.EntryPointID != parse {
+		t.Fatalf("ancestry = %+v, want the export one hop above", a)
+	}
+	if !strings.Contains(a.EntryPointReason, "//go:wasmexport parse") {
+		t.Errorf("EntryPointReason = %q, want it to name the directive", a.EntryPointReason)
+	}
+}

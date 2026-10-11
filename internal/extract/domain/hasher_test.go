@@ -8,16 +8,17 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestExtractionRunHasher(t *testing.T) {
-	coord1, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
-	coord2, _ := coordinate.NewModuleCoordinate("github.com/baz/qux", "v2.0.0")
+	coord1 := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	coord2 := coordinatetest.MustNew("github.com/baz/qux", "v2.0.0")
 	// Same Path as coord1, different Version: exercises the Version-comparison
 	// branch of marshalCanonicalRun's coordinate sort when Path is equal.
-	coord3, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.1.0")
+	coord3 := coordinatetest.MustNew("github.com/foo/bar", "v1.1.0")
 
 	run := ExtractionRun{
 		SchemaVersion:   ExtractionRunSchemaVersion,
@@ -81,35 +82,7 @@ func TestExtractionRunHasher(t *testing.T) {
 	})
 
 	t.Run("Marshal and Unmarshal Canonical", func(t *testing.T) {
-		runWithHash, _ := hasher.SetContentHash(run)
-		data, err := json.Marshal(runWithHash)
-		if err != nil {
-			t.Fatalf("json.Marshal(run) error = %v", err)
-		}
-
-		var unmarshaled ExtractionRun
-		err = json.Unmarshal(data, &unmarshaled)
-		if err != nil {
-			t.Fatalf("json.Unmarshal(run) error = %v", err)
-		}
-
-		// Verify key fields match
-		if unmarshaled.ID != run.ID {
-			t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, run.ID)
-		}
-		if !unmarshaled.StartedAt.Equal(run.StartedAt) {
-			t.Errorf("StartedAt mismatch: got %v, want %v", unmarshaled.StartedAt, run.StartedAt)
-		}
-		if len(unmarshaled.PerModuleResults) != len(run.PerModuleResults) {
-			t.Errorf("PerModuleResults length mismatch: got %d, want %d", len(unmarshaled.PerModuleResults), len(run.PerModuleResults))
-		}
-
-		// Check canonical order of keys in JSON (implicitly tested by hasher consistency)
-		// We can also verify that we can marshal again and get same hash
-		err = hasher.VerifyContentHash(unmarshaled)
-		if err != nil {
-			t.Errorf("VerifyContentHash failed after unmarshal: %v", err)
-		}
+		testCanonicalRoundTrip(t, hasher, run)
 	})
 
 	t.Run("Hashing error on invalid status", func(t *testing.T) {
@@ -131,7 +104,10 @@ func TestExtractionRunHasher(t *testing.T) {
 	})
 
 	t.Run("ecosystem present after round-trip", func(t *testing.T) {
-		runWithHash, _ := hasher.SetContentHash(run)
+		runWithHash, err := hasher.SetContentHash(run)
+		if err != nil {
+			t.Fatalf("SetContentHash: %v", err)
+		}
 		data, err := hasher.Marshal(runWithHash)
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
@@ -151,7 +127,10 @@ func TestExtractionRunHasher(t *testing.T) {
 	t.Run("rejects foreign ecosystem", func(t *testing.T) {
 		foreign := run
 		foreign.Ecosystem = "npm"
-		hashed, _ := hasher.SetContentHash(foreign)
+		hashed, err := hasher.SetContentHash(foreign)
+		if err != nil {
+			t.Fatalf("SetContentHash: %v", err)
+		}
 		data, err := hasher.Marshal(hashed)
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
@@ -160,6 +139,43 @@ func TestExtractionRunHasher(t *testing.T) {
 			t.Errorf("expected ErrUnsupportedEcosystem, got %v", err)
 		}
 	})
+}
+
+// testCanonicalRoundTrip checks a hashed run survives the canonical JSON
+// round trip.
+func testCanonicalRoundTrip(t *testing.T, hasher ExtractionRunHasher, run ExtractionRun) {
+	runWithHash, err := hasher.SetContentHash(run)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	data, err := json.Marshal(runWithHash)
+	if err != nil {
+		t.Fatalf("json.Marshal(run) error = %v", err)
+	}
+
+	var unmarshaled ExtractionRun
+	err = json.Unmarshal(data, &unmarshaled)
+	if err != nil {
+		t.Fatalf("json.Unmarshal(run) error = %v", err)
+	}
+
+	// Verify key fields match
+	if unmarshaled.ID != run.ID {
+		t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, run.ID)
+	}
+	if !unmarshaled.StartedAt.Equal(run.StartedAt) {
+		t.Errorf("StartedAt mismatch: got %v, want %v", unmarshaled.StartedAt, run.StartedAt)
+	}
+	if len(unmarshaled.PerModuleResults) != len(run.PerModuleResults) {
+		t.Errorf("PerModuleResults length mismatch: got %d, want %d", len(unmarshaled.PerModuleResults), len(run.PerModuleResults))
+	}
+
+	// Check canonical order of keys in JSON (implicitly tested by hasher consistency)
+	// We can also verify that we can marshal again and get same hash
+	err = hasher.VerifyContentHash(unmarshaled)
+	if err != nil {
+		t.Errorf("VerifyContentHash failed after unmarshal: %v", err)
+	}
 }
 
 func TestMarshalCanonicalRun_MarshalFailure(t *testing.T) {
@@ -194,7 +210,7 @@ func TestVerifyContentHash_MarshalFailure(t *testing.T) {
 
 func TestUnmarshal_MalformedInputs(t *testing.T) {
 	hasher := ExtractionRunHasher{}
-	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	run := ExtractionRun{
 		SchemaVersion: ExtractionRunSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,

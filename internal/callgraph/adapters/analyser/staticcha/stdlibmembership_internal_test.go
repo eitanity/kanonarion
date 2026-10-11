@@ -1,6 +1,7 @@
 package staticcha
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -82,5 +83,31 @@ func TestModuleMembership_StdlibPackagesIsTheBuildsClosure(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("stdlibPackages() = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestModuleMembership_DependencyPackagesIsEveryOtherModule: the dependency
+// closure is every package the loader placed in a module other than the
+// analysed one; the module's own, the standard library and the unplaced are not
+// in it.
+func TestModuleMembership_DependencyPackagesIsEveryOtherModule(t *testing.T) {
+	t.Parallel()
+
+	m := moduleMembership{
+		coord: mustCoord(t, "example.com/mod", "v1.0.0"),
+		pkgModule: map[string]string{
+			"example.com/mod":            "example.com/mod",
+			"example.com/mod/sub":        "example.com/mod",
+			"example.com/mod/nested/pkg": "example.com/mod/nested",
+			"net/http":                   "",
+			"gopkg.in/yaml.v2":           "gopkg.in/yaml.v2",
+			"example.com/old":            "",
+		},
+		pkgVersion: map[string]string{},
+	}
+	got := m.dependencyPackages()
+	want := []string{"example.com/mod/nested/pkg", "gopkg.in/yaml.v2"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("dependencyPackages() = %v, want %v", got, want)
 	}
 }

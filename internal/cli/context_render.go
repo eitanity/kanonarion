@@ -159,6 +159,52 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		w.printf("  Replace:         %s\n", r.statement())
 	}
 
+	printVerificationSummary(w, out)
+
+	switch out.Provenance.ForkHeuristic.Status {
+	case forkStatusPathMatch:
+		for _, ind := range out.Provenance.ForkHeuristic.ForkIndicators {
+			w.printf("  Provenance:      %s\n", ind.Statement)
+		}
+	case forkStatusNone:
+		w.printf("  Provenance:      no fork indicators (name-path heuristic, catalogue %s)\n",
+			out.Provenance.ForkHeuristic.CatalogueVersion)
+	default:
+		w.printf("  Provenance:      (not analysed)\n")
+	}
+
+	printDependenciesSummary(w, out)
+
+	printLicenseSummary(w, out)
+
+	printInterfaceSummary(w, out)
+
+	switch out.CallGraph.Status {
+	case sectionStatusNotRun:
+		if out.Commands.CallGraph != "" {
+			w.printf("  Call Graph:      (not run — run: %s)\n", out.Commands.CallGraph)
+		} else {
+			w.printf("  Call Graph:      (not run)\n")
+		}
+	case sectionStatusReadError:
+		w.printf("  Call Graph:      (failed: %s)\n", out.CallGraph.Error)
+	default:
+		w.printf("  Call Graph:      %d nodes, %d edges (%s)\n",
+			out.CallGraph.NodeCount, out.CallGraph.EdgeCount,
+			statusWithReason(out.CallGraph.Status, out.CallGraph.Error))
+	}
+
+	printExamplesSummary(w, out)
+
+	printVulnerabilitiesSummary(w, out)
+	printNativeSummary(w, out)
+
+	return w.err
+}
+
+// printVerificationSummary is the verification line of the summary, split out
+// on the same terms as printLicenseSummary.
+func printVerificationSummary(w *errWriter, out contextOutput) {
 	switch out.Verification.Status {
 	case sectionStatusNotFetched:
 		w.printf("  Verification:    (not fetched)\n")
@@ -181,19 +227,11 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		w.printf("  Verification:    %s\n", line)
 		printSetAsideLines(w, "  Set aside:       ", v.SetAside)
 	}
+}
 
-	switch out.Provenance.ForkHeuristic.Status {
-	case forkStatusPathMatch:
-		for _, ind := range out.Provenance.ForkHeuristic.ForkIndicators {
-			w.printf("  Provenance:      %s\n", ind.Statement)
-		}
-	case forkStatusNone:
-		w.printf("  Provenance:      no fork indicators (name-path heuristic, catalogue %s)\n",
-			out.Provenance.ForkHeuristic.CatalogueVersion)
-	default:
-		w.printf("  Provenance:      (not analysed)\n")
-	}
-
+// printDependenciesSummary is the dependencies line of the summary, split out
+// on the same terms as printLicenseSummary.
+func printDependenciesSummary(w *errWriter, out contextOutput) {
 	switch out.Dependencies.Status {
 	case sectionStatusNotRun:
 		w.printf("  Dependencies:    (not run — run: %s)\n",
@@ -217,9 +255,11 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		w.printf("  Dependencies:    %s\n", line)
 		printPreModulesCaveat(w, out.Dependencies.PreModulesCaveat)
 	}
+}
 
-	printLicenseSummary(w, out)
-
+// printInterfaceSummary is the interface line of the summary, split out on the
+// same terms as printLicenseSummary.
+func printInterfaceSummary(w *errWriter, out contextOutput) {
 	switch out.Interface.Status {
 	case sectionStatusNotRun:
 		if out.Commands.Interface != "" {
@@ -239,29 +279,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		w.printf("  Interface:       %d package(s), %d symbol(s) (%s)\n",
 			len(out.Interface.Packages), total,
 			statusWithReason(out.Interface.Status, out.Interface.Error))
+		printAnalyserLimitLine(w, "  Analyser limit:  ", out.Interface.AnalyserLimit)
 	}
-
-	switch out.CallGraph.Status {
-	case sectionStatusNotRun:
-		if out.Commands.CallGraph != "" {
-			w.printf("  Call Graph:      (not run — run: %s)\n", out.Commands.CallGraph)
-		} else {
-			w.printf("  Call Graph:      (not run)\n")
-		}
-	case sectionStatusReadError:
-		w.printf("  Call Graph:      (failed: %s)\n", out.CallGraph.Error)
-	default:
-		w.printf("  Call Graph:      %d nodes, %d edges (%s)\n",
-			out.CallGraph.NodeCount, out.CallGraph.EdgeCount,
-			statusWithReason(out.CallGraph.Status, out.CallGraph.Error))
-	}
-
-	printExamplesSummary(w, out)
-
-	printVulnerabilitiesSummary(w, out)
-	printNativeSummary(w, out)
-
-	return w.err
 }
 
 // printNativeSummary is the native line of the summary: what this module's own
@@ -327,7 +346,21 @@ func printExamplesSummary(w *errWriter, out contextOutput) {
 		w.printf("  Examples:        %d (%s)\n", out.Examples.Count,
 			statusWithReason(out.Examples.Status, out.Examples.Error))
 		printSetAsideLines(w, "  Set aside:       ", out.Examples.SetAside)
+		printAnalyserLimitLine(w, "  Analyser limit:  ", out.Examples.AnalyserLimit)
 	}
+}
+
+// printAnalyserLimitLine states a section's analyser limit and, while it binds
+// this binary, the remedy.
+func printAnalyserLimitLine(w *errWriter, label string, l *analyserLimitJSON) {
+	if l == nil {
+		return
+	}
+	line := l.Statement + "."
+	if l.Remedy != "" {
+		line += " " + l.Remedy
+	}
+	w.printf("%s%s\n", label, line)
 }
 
 // printVulnerabilitiesSummary is the vulnerabilities line of the summary, split

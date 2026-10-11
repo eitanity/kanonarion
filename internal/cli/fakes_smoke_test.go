@@ -15,6 +15,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	exports "github.com/eitanity/kanonarion/internal/example/ports"
@@ -67,7 +68,10 @@ func TestFakeQueryFetch_GetFetchRecord(t *testing.T) {
 	if err != nil || !ok || rec.ModulePath != c.Path() {
 		t.Fatalf("expected record, got ok=%v err=%v", ok, err)
 	}
-	_, ok2, _ := f.GetFetchRecord(context.Background(), c, cgapp.PipelineVersion)
+	_, ok2, err := f.GetFetchRecord(context.Background(), c, cgapp.PipelineVersion)
+	if err != nil {
+		t.Fatalf("GetFetchRecord: %v", err)
+	}
 	if ok2 {
 		t.Fatal("expected not found for wrong version")
 	}
@@ -231,16 +235,7 @@ func TestFakeQueryCallGraph_AllMethods(t *testing.T) {
 		t.Fatalf("FindCallees: %v %v", callees, err)
 	}
 
-	req := cgapp.TraversalRequest{SymbolID: "sym", PipelineVersion: "0.1.0", MaxDepth: 5}
-	res, err := f.TraverseCallers(context.Background(), req)
-	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
-		t.Fatalf("TraverseCallers: %+v %v", res, err)
-	}
-
-	res, err = f.TraverseCallees(context.Background(), req)
-	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
-		t.Fatalf("TraverseCallees: %+v %v", res, err)
-	}
+	assertEmptyTraversals(t, f)
 
 	f.Err = errTest
 	_, _, err = f.GetCallGraphRecord(context.Background(), c, "0.1.0")
@@ -250,6 +245,22 @@ func TestFakeQueryCallGraph_AllMethods(t *testing.T) {
 	_, err = f.ListCallGraphRecords(context.Background(), cgports.CallGraphFilter{})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// assertEmptyTraversals checks both traversals of an empty fake answer with
+// nothing.
+func assertEmptyTraversals(t *testing.T, f *testfakes.FakeQueryCallGraph) {
+	t.Helper()
+	req := cgapp.TraversalRequest{SymbolID: "sym", PipelineVersion: "0.1.0", MaxDepth: 5}
+	res, err := f.TraverseCallers(context.Background(), req)
+	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
+		t.Fatalf("TraverseCallers: %+v %v", res, err)
+	}
+
+	res, err = f.TraverseCallees(context.Background(), req)
+	if err != nil || res.Edges != nil || res.Nodes != nil || res.Truncated {
+		t.Fatalf("TraverseCallees: %+v %v", res, err)
 	}
 }
 
@@ -355,12 +366,20 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 		t.Fatalf("ListRecordsByFindingID: %v %v", byID, err)
 	}
 
-	empty, _ := coordinate.NewModuleCoordinate("example.com/z", "v1.0.0")
+	empty := coordinatetest.MustNew("example.com/z", "v1.0.0")
 	list2, err := f.ListRecordsForModule(context.Background(), empty, "0.1.0")
 	if err != nil || list2 != nil {
 		t.Fatalf("empty ListRecordsForModule: %v %v", list2, err)
 	}
 
+	assertFakeVulnErrors(t, f, c)
+}
+
+// assertFakeVulnErrors checks every read of the fake returns the error it was
+// armed with.
+func assertFakeVulnErrors(t *testing.T, f *testfakes.FakeQueryVuln, c coordinate.ModuleCoordinate) {
+	t.Helper()
+	var err error
 	f.Err = errTest
 	_, _, err = f.GetRecord(context.Background(), c, "0.1.0", vulndomain.DatabaseSnapshot{})
 	if err == nil {
@@ -393,7 +412,10 @@ func TestFakeQueryScanRuns_AllMethods(t *testing.T) {
 	if err != nil || !found || got.ID != "SR1" {
 		t.Fatalf("GetRun: %v %v %v", got, found, err)
 	}
-	_, found2, _ := f.GetRun(context.Background(), "MISSING")
+	_, found2, err := f.GetRun(context.Background(), "MISSING")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
 	if found2 {
 		t.Fatal("expected not found")
 	}
@@ -402,7 +424,10 @@ func TestFakeQueryScanRuns_AllMethods(t *testing.T) {
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("ListRunsForWalk: %v %v", runs, err)
 	}
-	empty, _ := f.ListRunsForWalk(context.Background(), "OTHER")
+	empty, err := f.ListRunsForWalk(context.Background(), "OTHER")
+	if err != nil {
+		t.Fatalf("ListRunsForWalk: %v", err)
+	}
 	if empty != nil {
 		t.Fatalf("expected nil for different walk: %v", empty)
 	}
@@ -412,6 +437,15 @@ func TestFakeQueryScanRuns_AllMethods(t *testing.T) {
 		t.Fatalf("ListAllRuns: %v %v", all, err)
 	}
 
+	assertFakeHoldsNoSnapshot(t, f)
+
+	assertFakeScanRunsErrors(t, f)
+}
+
+// assertFakeHoldsNoSnapshot checks an empty fake lists no snapshot and has no
+// latest one.
+func assertFakeHoldsNoSnapshot(t *testing.T, f *testfakes.FakeQueryScanRuns) {
+	t.Helper()
 	snaps, err := f.ListSnapshots(context.Background())
 	if err != nil || snaps != nil {
 		t.Fatalf("ListSnapshots: %v %v", snaps, err)
@@ -421,7 +455,13 @@ func TestFakeQueryScanRuns_AllMethods(t *testing.T) {
 	if err != nil || found3 {
 		t.Fatalf("GetLatestSnapshot (empty): %v %v", found3, err)
 	}
+}
 
+// assertFakeScanRunsErrors checks every read of the fake returns the error it
+// was armed with.
+func assertFakeScanRunsErrors(t *testing.T, f *testfakes.FakeQueryScanRuns) {
+	t.Helper()
+	var err error
 	f.GetErr = errTest
 	_, _, err = f.GetRun(context.Background(), "SR1")
 	if err == nil {
@@ -466,7 +506,9 @@ func TestFakeGenerateSBOM_Generate(t *testing.T) {
 func TestFakeQuerySBOM_AllMethods(t *testing.T) {
 	f := testfakes.NewFakeQuerySBOM()
 
-	_, _ = f.GetSBOMRecord(context.Background(), "MISSING")
+	if _, err := f.GetSBOMRecord(context.Background(), "MISSING"); err != nil {
+		t.Fatalf("GetSBOMRecord: %v", err)
+	}
 
 	list, err := f.ListSBOMRecords(context.Background(), "W1")
 	if err != nil || list != nil {

@@ -115,7 +115,7 @@ func TestAuditJSON_VulnWithdrawnIsEmittedAtZero(t *testing.T) {
 	if !present {
 		t.Fatal("vuln_withdrawn is absent on a row with no retraction; vuln_findings is emitted at zero on the same row and the two are one fact")
 	}
-	if int(got.(float64)) != 0 {
+	if int(mustAs[float64](t, got)) != 0 {
 		t.Errorf("vuln_withdrawn = %v, want 0", got)
 	}
 	if _, present := zero["vuln_findings"]; !present {
@@ -139,10 +139,10 @@ func TestAuditJSON_VulnWithdrawnIsEmittedAtZero(t *testing.T) {
 		t.Fatalf("derived findings/withdrawn = %d/%d, want 2/1", res.VulnFindings, res.VulnWithdrawn)
 	}
 	nonZero := auditRowKeys(t, res)
-	if got := nonZero["vuln_withdrawn"]; int(got.(float64)) != 1 {
+	if got := nonZero["vuln_withdrawn"]; int(mustAs[float64](t, got)) != 1 {
 		t.Errorf("vuln_withdrawn = %v on a row with one retraction, want 1", got)
 	}
-	if got := nonZero["vuln_findings"]; int(got.(float64)) != 2 {
+	if got := nonZero["vuln_findings"]; int(mustAs[float64](t, got)) != 2 {
 		t.Errorf("vuln_findings = %v, want 2 (retracted advisories are counted in the total)", got)
 	}
 }

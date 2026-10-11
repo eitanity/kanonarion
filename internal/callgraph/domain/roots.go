@@ -26,6 +26,9 @@ type RootCandidate struct {
 	// owned like any other, so without it the selector cannot tell a consumer's
 	// entry point from one only `go test` runs.
 	IsTest bool
+	// Export is the directive that hands the node to a caller outside Go, zero
+	// when it carries none.
+	Export ExportDirective
 }
 
 // RootScope says whether test-declared nodes may root a traversal.
@@ -77,7 +80,7 @@ func IsSyntheticTestMain(pkg, symbol, receiver string) bool {
 // ideas of an entry point. It reads only the node's own identity, which is what
 // makes it usable from a stored record with no source in hand.
 //
-// The three facts it can witness, and the limit of each:
+// The facts it can witness, and the limit of each:
 //
 //   - Package initialisation, recognised by IsInitSymbol. The runtime runs it
 //     when the package is loaded, so it runs unconditionally — a stronger claim
@@ -92,6 +95,9 @@ func IsSyntheticTestMain(pkg, symbol, receiver string) bool {
 //     graph records no signatures, so this is the method NAME, not a proof the
 //     type satisfies http.Handler. In Go the name has essentially one meaning,
 //     and the reason string says what was matched so a reader can check it.
+//   - An export directive (see ExportDirective), the one witness read from
+//     source rather than identity: the WebAssembly host, C code or the hardware
+//     calls the function, so nothing in the Go call graph does.
 //
 // A registered route — a handler function stored into a router — is NOT
 // witnessed here, and cannot be. Registration is a value flowing into a data
@@ -101,12 +107,18 @@ func IsSyntheticTestMain(pkg, symbol, receiver string) bool {
 // point. Claiming ingress from a node fact would be a guess; measuring the hops
 // is not, so a root reached only that way keeps its kind and states the
 // distance.
-func ExternalEntryPointReason(symbol, receiver string) string {
+func ExternalEntryPointReason(symbol, receiver string, export ExportDirective) string {
 	switch {
 	case IsInitSymbol(symbol):
 		return "package initialisation — the runtime runs it when the package is loaded, so it runs unconditionally"
 	case symbol == "main" && receiver == "":
 		return "the process entry point — the runtime invokes it"
+	case export.Kind == ExportWasm:
+		return "a function exported to the WebAssembly host (" + export.String() + ") — the host invokes it"
+	case export.Kind == ExportC:
+		return "a function exported to C (" + export.String() + ") — C code, assembly or a vector table invokes it"
+	case export.Kind == ExportInterrupt:
+		return "an interrupt handler (" + export.String() + ") — the hardware invokes it"
 	case symbol == "ServeHTTP" && receiver != "":
 		return "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request"
 	}
@@ -201,7 +213,7 @@ func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind, scop
 //
 //   - part of the public API — a consumer's build can call it directly; or
 //   - witnessed by ExternalEntryPointReason: package init, the process entry
-//     point, an http.Handler's ServeHTTP.
+//     point, an export directive, an http.Handler's ServeHTTP.
 //
 // The set is deliberately generous. Every extra root can only turn a confirmed
 // absence back into a found path, so an over-approximation here is the safe
@@ -234,7 +246,7 @@ func SelectEntryPointRoots(candidates []RootCandidate, scope RootScope) []string
 		if IsSyntheticTestMain(c.Package, c.Symbol, c.Receiver) {
 			continue
 		}
-		if c.IsExportedAPI || ExternalEntryPointReason(c.Symbol, c.Receiver) != "" {
+		if c.IsExportedAPI || ExternalEntryPointReason(c.Symbol, c.Receiver, c.Export) != "" {
 			roots = append(roots, c.ID)
 		}
 	}

@@ -57,7 +57,7 @@ the callers and callees queries also accept.`,
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err
@@ -208,6 +208,7 @@ type implementerLookup struct {
 	testScope        domain.TestScope
 	testScopeDetail  string
 	partialPkg       string
+	partialDetail    string
 }
 
 func (l implementerLookup) hasMethod(method string) bool {
@@ -231,7 +232,7 @@ func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) do
 		sinks = append(sinks, domain.SoundnessSink{
 			Kind:   domain.SinkDroppedPackageEdges,
 			Site:   l.iface.ID,
-			Detail: "package " + l.partialPkg + " did not typecheck, so its edges were dropped",
+			Detail: "package " + l.partialPkg + " " + domain.DroppedPackageReason(l.partialDetail) + ", so its edges were dropped",
 		})
 	}
 	if l.belowFull != domain.CompletenessUnknown && !l.belowFull.IsBuiltWithBodies() {
@@ -338,24 +339,31 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 				foreign:       fm,
 			})
 		}
-		if rec.OverallStatus == domain.CallGraphStatusPartial && out.partialPkg == "" {
-			if fp, hit := symbolFailedPackage(interfaceID, rec.FailedPackages); hit {
-				out.partialPkg = fp
-			}
-		}
-		if out.belowFull == domain.CompletenessUnknown &&
-			rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
-			out.belowFull = rec.Completeness
-		}
-		if !rec.TestScope.IsMeasured() && out.testScope.IsMeasured() {
-			out.testScope = rec.TestScope
-			out.testScopeDetail = rec.TestScopeDetail
-		}
+		noteRecordQualifications(&out, rec, interfaceID)
 	}
 	sort.Slice(out.implementations, func(i, j int) bool {
 		return out.implementations[i].impl.TypeID < out.implementations[j].impl.TypeID
 	})
 	return out, nil
+}
+
+// noteRecordQualifications records the first partial package, below-full
+// completeness and unmeasured test scope a contributing record carries.
+func noteRecordQualifications(out *implementerLookup, rec domain.CallGraphRecord, interfaceID string) {
+	if rec.OverallStatus == domain.CallGraphStatusPartial && out.partialPkg == "" {
+		if fp, hit := symbolFailedPackage(interfaceID, rec.FailedPackages); hit {
+			out.partialPkg = fp
+			out.partialDetail = rec.FailureDetail
+		}
+	}
+	if out.belowFull == domain.CompletenessUnknown &&
+		rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
+		out.belowFull = rec.Completeness
+	}
+	if !rec.TestScope.IsMeasured() && out.testScope.IsMeasured() {
+		out.testScope = rec.TestScope
+		out.testScopeDetail = rec.TestScopeDetail
+	}
 }
 
 // foreignDrawOfImplementers classifies an implementers answer the way
@@ -452,27 +460,8 @@ func writeImplementersText(stdout io.Writer, queryID, method string, perMethod b
 			return fmt.Errorf("writing header: %w", err)
 		}
 		for _, im := range impls {
-			shown := im.impl.TypeID
-			promoted := ""
-			if perMethod {
-				if id := methodNodeID(im.impl, method); id != "" {
-					shown = id
-					// A promoted method is declared on an embedded type, so two
-					// implementers can share one declaration. Naming the type that
-					// satisfies the interface keeps the row distinguishable — and
-					// tells the reader that editing that one declaration covers both.
-					if !strings.HasPrefix(id, im.impl.TypeID+".") {
-						promoted = "  (promoted into " + im.impl.TypeID + ")"
-					}
-				}
-			}
-			testTag := ""
-			if im.impl.IsTest {
-				testTag = "  [test]"
-			}
-			if _, err := fmt.Fprintf(stdout, "  %s%s%s  (%s@%s)\n",
-				shown, testTag, promoted, im.modulePath, im.moduleVersion); err != nil {
-				return fmt.Errorf("writing implementer: %w", err)
+			if err := writeImplementerRow(stdout, im, method, perMethod); err != nil {
+				return err
 			}
 		}
 	}
@@ -501,6 +490,34 @@ func writeImplementersText(stdout io.Writer, queryID, method string, perMethod b
 			moduleOfScopeLine(scopeLine), queryID); err != nil {
 			return fmt.Errorf("writing answer: %w", err)
 		}
+	}
+	return nil
+}
+
+// writeImplementerRow writes one implementer, or its method when the query
+// named one.
+func writeImplementerRow(stdout io.Writer, im scopedImplementer, method string, perMethod bool) error {
+	shown := im.impl.TypeID
+	promoted := ""
+	if perMethod {
+		if id := methodNodeID(im.impl, method); id != "" {
+			shown = id
+			// A promoted method is declared on an embedded type, so two
+			// implementers can share one declaration. Naming the type that
+			// satisfies the interface keeps the row distinguishable — and
+			// tells the reader that editing that one declaration covers both.
+			if !strings.HasPrefix(id, im.impl.TypeID+".") {
+				promoted = "  (promoted into " + im.impl.TypeID + ")"
+			}
+		}
+	}
+	testTag := ""
+	if im.impl.IsTest {
+		testTag = "  [test]"
+	}
+	if _, err := fmt.Fprintf(stdout, "  %s%s%s  (%s@%s)\n",
+		shown, testTag, promoted, im.modulePath, im.moduleVersion); err != nil {
+		return fmt.Errorf("writing implementer: %w", err)
 	}
 	return nil
 }

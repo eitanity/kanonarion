@@ -115,7 +115,7 @@ func TestRecordingFetcher_WaiterHonoursContextCancellation(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		_, _ = rec.EnsureFetched(context.Background(), c)
+		_, _ = rec.EnsureFetched(context.Background(), c) //nolint:errcheck // the leader only holds the flight open
 	})
 	<-gate.entered
 

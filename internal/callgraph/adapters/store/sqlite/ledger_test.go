@@ -629,8 +629,8 @@ func TestLedger_LegacyRecordVerifiesUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, sealed); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, sealed); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 
 	got, found, err := s.GetCallGraphRecord(ctx, testCoord, testPipeline)
@@ -1158,6 +1158,13 @@ func TestLedger_QueryIsAnsweredFromTheTreeTheCallerIsIn(t *testing.T) {
 		t.Fatalf("the edges came from another tree: %s", got.Edges[0].ToID)
 	}
 
+	assertEdgesRoutedToTree(ctx, t, s, local, checkoutA)
+}
+
+// assertEdgesRoutedToTree checks the edge read and the routing report both
+// answer from checkoutA.
+func assertEdgesRoutedToTree(ctx context.Context, t *testing.T, s *sqlite.Store, local coordinate.ModuleCoordinate, checkoutA string) {
+	t.Helper()
 	// The edge read resolves the served generation through the same composition,
 	// so it must route the same way. It is the path `callers` actually takes.
 	refs, err := s.FindCallers(ctx, "example.com/mod.FromTreeA", testPipeline, coordinate.ModuleSet{}, ports.EdgeQueryOptions{})
@@ -1692,8 +1699,8 @@ func TestLedger_DerivationSurvivesTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := s.PutCallGraphRecord(ctx, sealed); err != nil {
-		t.Fatalf("PutCallGraphRecord: %v", err)
+	if perr := s.PutCallGraphRecord(ctx, sealed); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
 	}
 
 	got, found, err := s.GetCallGraphRecord(ctx, sealed.Coordinate, testPipeline)

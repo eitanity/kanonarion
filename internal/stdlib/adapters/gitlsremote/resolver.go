@@ -104,8 +104,8 @@ func (r *Resolver) ResolveCommit(ctx context.Context, repoURL, tag string) (stri
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git ls-remote %s %s: %w: %s", repoURL, ref, err, strings.TrimSpace(stderr.String()))
+	if rerr := cmd.Run(); rerr != nil {
+		return "", fmt.Errorf("git ls-remote %s %s: %w: %s", repoURL, ref, rerr, strings.TrimSpace(stderr.String()))
 	}
 
 	commit, err := parseLsRemote(stdout.Bytes(), ref)

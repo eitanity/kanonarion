@@ -46,8 +46,8 @@ func neutraliseLocalReplaces(path string) (bool, error) {
 		return false, nil
 	}
 	for _, d := range toDrop {
-		if err := f.DropReplace(d.path, d.version); err != nil {
-			return false, fmt.Errorf("drop replace %s: %w", d.path, err)
+		if derr := f.DropReplace(d.path, d.version); derr != nil {
+			return false, fmt.Errorf("drop replace %s: %w", d.path, derr)
 		}
 	}
 	f.Cleanup()

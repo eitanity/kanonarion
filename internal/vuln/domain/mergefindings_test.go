@@ -181,7 +181,6 @@ func sealedHash(t *testing.T, fs []domain.VulnerabilityFinding) string {
 // withdrawal timestamp means "live OR no advisory was read", and a finding
 // missing it counts as live. A match that read the advisory fills it.
 func TestMergeCoordinateMatches_FillsARetractionTheAnalysisMissed(t *testing.T) {
-	withdrawnAt := time.Date(2026, 4, 8, 13, 33, 56, 0, time.UTC)
 	match := coordinateMatch()
 	match.WithdrawnAt = withdrawnAt
 
@@ -322,12 +321,19 @@ func TestMergeCoordinateMatches_AddedMatchNamingNoSymbolsCarriesNoConfidentNegat
 		t.Errorf("derivation = %+v, want the caller's: withdrawing the claim must not erase what produced it", got.Reachable.DerivedBy)
 	}
 
+	assertNamedMatchKeepsConfidence(t)
+}
+
+// assertNamedMatchKeepsConfidence is the control: an added match whose
+// advisory names symbols keeps its confident negative and its symbols.
+func assertNamedMatchKeepsConfidence(t *testing.T) {
+	t.Helper()
 	// The control: an added match whose advisory DOES name symbols keeps the
 	// confident negative. A fix that demoted every added match would pass the
 	// assertions above and fail here.
 	named := coordinateMatch()
 	named.ID = "GO-2026-6354"
-	merged, _ = domain.MergeCoordinateMatches(
+	merged, _ := domain.MergeCoordinateMatches(
 		nil,
 		[]domain.VulnerabilityFinding{named},
 		func(f *domain.VulnerabilityFinding) {

@@ -92,9 +92,6 @@ FROM vulnerability_findings_index`
 	// record is composed. The pool holds a single connection, so composing inside
 	// the loop would issue a query against the connection this cursor is holding
 	// and deadlock.
-	type indexRow struct {
-		findingID, path, version, pipeline, snapSource, snapVersion, rooting string
-	}
 	var indexRows []indexRow
 
 	if err := func() error {
@@ -124,29 +121,7 @@ FROM vulnerability_findings_index`
 	// Most-specific key order, with both version legs read as versions. The
 	// finding id closes the order: the index key is unique, so no two rows tie.
 	sort.Slice(indexRows, func(i, j int) bool {
-		a, b := indexRows[i], indexRows[j]
-		if a.path != b.path {
-			return a.path < b.path
-		}
-		if c := versionorder.CompareModuleVersions(a.version, b.version); c != 0 {
-			return c < 0
-		}
-		if c := versionorder.ComparePipelineVersions(a.pipeline, b.pipeline); c != 0 {
-			return c < 0
-		}
-		if a.pipeline != b.pipeline {
-			return a.pipeline < b.pipeline
-		}
-		if a.snapSource != b.snapSource {
-			return a.snapSource < b.snapSource
-		}
-		if a.snapVersion != b.snapVersion {
-			return a.snapVersion < b.snapVersion
-		}
-		if a.rooting != b.rooting {
-			return a.rooting < b.rooting
-		}
-		return a.findingID < b.findingID
+		return indexRowLess(indexRows[i], indexRows[j])
 	})
 
 	// supported caches, per (key, frame), the identifier set the composed record
@@ -189,6 +164,39 @@ FROM vulnerability_findings_index`
 		}
 	}
 	return defects, nil
+}
+
+// indexRow is one row of the findings index, read whole before any record is
+// composed.
+type indexRow struct {
+	findingID, path, version, pipeline, snapSource, snapVersion, rooting string
+}
+
+// indexRowLess orders index rows most-specific key first, both version legs
+// read as versions; the finding id closes the order.
+func indexRowLess(a, b indexRow) bool {
+	if a.path != b.path {
+		return a.path < b.path
+	}
+	if c := versionorder.CompareModuleVersions(a.version, b.version); c != 0 {
+		return c < 0
+	}
+	if c := versionorder.ComparePipelineVersions(a.pipeline, b.pipeline); c != 0 {
+		return c < 0
+	}
+	if a.pipeline != b.pipeline {
+		return a.pipeline < b.pipeline
+	}
+	if a.snapSource != b.snapSource {
+		return a.snapSource < b.snapSource
+	}
+	if a.snapVersion != b.snapVersion {
+		return a.snapVersion < b.snapVersion
+	}
+	if a.rooting != b.rooting {
+		return a.rooting < b.rooting
+	}
+	return a.findingID < b.findingID
 }
 
 // composedFindingIDs returns the identifiers the composed record of one key and

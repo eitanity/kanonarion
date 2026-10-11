@@ -257,6 +257,11 @@ type InterfaceRecord struct {
 	// measurement of it, so a reader can fetch that record and check the claim
 	// against it. Empty exactly when ArtefactIdentity is.
 	SourceContentHash string
+	// AnalyserLimit names the files this binary's parser refused because the
+	// module's go directive is newer than the Go it was built with: not analysed,
+	// so not parse failures of the module. Nil when no file was refused, which is
+	// every record written before the field existed.
+	AnalyserLimit *gotoolchain.UnreadSource
 }
 
 // Sort puts all collections in the record into a canonical, deterministic

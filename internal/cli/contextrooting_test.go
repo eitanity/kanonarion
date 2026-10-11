@@ -42,47 +42,7 @@ func TestContextStatesWhetherTheWalkWasNamedOrChosen(t *testing.T) {
 	chdirWithGoMod(t, "")
 
 	t.Run("no walk named: the basis is chosen, out of a stated candidate count", func(t *testing.T) {
-		rooting := contextRootingOf(t, "context --gomod",
-			"context", "--gomod", fx.populatedGoMod(), "--store-root", fx.storeRoot)
-
-		if rooting["basis"] != "chosen" {
-			t.Errorf("basis = %v, want \"chosen\": the caller named no walk and one was picked for them", rooting["basis"])
-		}
-		selection, ok := rooting["walk_selection"].(map[string]any)
-		if !ok {
-			t.Fatalf("walk_selection is not an object: %v", rooting["walk_selection"])
-		}
-		if selection["rule"] == "pinned" {
-			t.Error("walk_selection.rule = \"pinned\" on a read that named no walk")
-		}
-		// The count is the other half. "One was chosen" without it does not say
-		// what it was chosen from, and the fixture holds two project walks
-		// precisely so the number is not 1.
-		candidates, ok := selection["candidates"].(float64)
-		if !ok {
-			t.Fatalf("walk_selection.candidates is not a number: %v — a chosen walk with no candidate count "+
-				"does not say what it was chosen from", selection["candidates"])
-		}
-		if candidates < 2 {
-			t.Errorf("walk_selection.candidates = %v, want at least 2: with one candidate nothing was chosen", candidates)
-		}
-		// The rest of what the person is told, as fields.
-		if rooting["walk_id"] == "" || rooting["walk_id"] == nil {
-			t.Error("walk_id is absent")
-		}
-		if rooting["gomod"] != fx.populatedGoMod() {
-			t.Errorf("gomod = %v, want the manifest that named the build (%s)", rooting["gomod"], fx.populatedGoMod())
-		}
-		if rooting["manifest_reresolved"] != false {
-			t.Errorf("manifest_reresolved = %v, want false: this read compares require directives, it does not resolve",
-				rooting["manifest_reresolved"])
-		}
-		if rooting["pin_with"] != "--walk-id" {
-			t.Errorf("pin_with = %v, want the flag that takes the choice back", rooting["pin_with"])
-		}
-		if rooting["toolchain"] == "" || rooting["toolchain"] == nil {
-			t.Error("toolchain is absent: the answer names no standard library")
-		}
+		testChosenRooting(t, fx)
 	})
 
 	t.Run("--walk-id: the basis is named, and nothing was enumerated", func(t *testing.T) {
@@ -113,6 +73,52 @@ func TestContextStatesWhetherTheWalkWasNamedOrChosen(t *testing.T) {
 			t.Errorf("gomod = %v on a pinned read: no manifest named this build", got)
 		}
 	})
+}
+
+// testChosenRooting checks a read that named no walk states the walk was
+// chosen, out of how many, and how to pin it.
+func testChosenRooting(t *testing.T, fx jsonStdoutFixture) {
+	rooting := contextRootingOf(t, "context --gomod",
+		"context", "--gomod", fx.populatedGoMod(), "--store-root", fx.storeRoot)
+
+	if rooting["basis"] != "chosen" {
+		t.Errorf("basis = %v, want \"chosen\": the caller named no walk and one was picked for them", rooting["basis"])
+	}
+	selection, ok := rooting["walk_selection"].(map[string]any)
+	if !ok {
+		t.Fatalf("walk_selection is not an object: %v", rooting["walk_selection"])
+	}
+	if selection["rule"] == "pinned" {
+		t.Error("walk_selection.rule = \"pinned\" on a read that named no walk")
+	}
+	// The count is the other half. "One was chosen" without it does not say
+	// what it was chosen from, and the fixture holds two project walks
+	// precisely so the number is not 1.
+	candidates, ok := selection["candidates"].(float64)
+	if !ok {
+		t.Fatalf("walk_selection.candidates is not a number: %v — a chosen walk with no candidate count "+
+			"does not say what it was chosen from", selection["candidates"])
+	}
+	if candidates < 2 {
+		t.Errorf("walk_selection.candidates = %v, want at least 2: with one candidate nothing was chosen", candidates)
+	}
+	// The rest of what the person is told, as fields.
+	if rooting["walk_id"] == "" || rooting["walk_id"] == nil {
+		t.Error("walk_id is absent")
+	}
+	if rooting["gomod"] != fx.populatedGoMod() {
+		t.Errorf("gomod = %v, want the manifest that named the build (%s)", rooting["gomod"], fx.populatedGoMod())
+	}
+	if rooting["manifest_reresolved"] != false {
+		t.Errorf("manifest_reresolved = %v, want false: this read compares require directives, it does not resolve",
+			rooting["manifest_reresolved"])
+	}
+	if rooting["pin_with"] != "--walk-id" {
+		t.Errorf("pin_with = %v, want the flag that takes the choice back", rooting["pin_with"])
+	}
+	if rooting["toolchain"] == "" || rooting["toolchain"] == nil {
+		t.Error("toolchain is absent: the answer names no standard library")
+	}
 }
 
 // TestContextRootingIsAbsentWhereNothingRootedTheRun pins the forms that anchor

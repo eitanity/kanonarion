@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ExampleSchemaVersion is the version of the ExampleRecord JSON schema. Bump
@@ -106,6 +107,12 @@ type ExampleRecord struct {
 	// measurement of it, so a reader can fetch that record and check the claim
 	// against it. Empty exactly when ArtefactIdentity is.
 	SourceContentHash string
+	// AnalyserLimit names the _test.go files this binary's parser refused because
+	// the module's go directive is newer than the Go it was built with: the
+	// examples they hold were not analysed, rather than the files failing to
+	// parse. Nil when no file was refused, which is every record written before
+	// the field existed, and omitted from JSON then.
+	AnalyserLimit *gotoolchain.UnreadSource `json:",omitempty"`
 }
 
 // SortExamples sorts r.Examples by (Package, AssociatedSymbol, Name) and

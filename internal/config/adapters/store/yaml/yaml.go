@@ -378,6 +378,21 @@ func Parse(data []byte) (domain.Config, error) {
 		}
 	}
 
+	applyOptionalDefaults(&cfg, defaults)
+
+	if err := applyLicensePolicy(&cfg, y, defaults); err != nil {
+		return domain.Config{}, err
+	}
+
+	if err := applyGovernance(&cfg, y, defaults); err != nil {
+		return domain.Config{}, err
+	}
+
+	return cfg, nil
+}
+
+// applyOptionalDefaults fills each optional field the file left unset.
+func applyOptionalDefaults(cfg *domain.Config, defaults domain.Config) {
 	// Apply defaults for missing optional fields.
 	if cfg.Preferences.LogLevel == "" {
 		cfg.Preferences.LogLevel = defaults.Preferences.LogLevel
@@ -391,7 +406,10 @@ func Parse(data []byte) (domain.Config, error) {
 	if cfg.Callgraph.Exclude == nil {
 		cfg.Callgraph.Exclude = defaults.Callgraph.Exclude
 	}
+}
 
+// applyLicensePolicy overlays the file's license_policy on the built-in one.
+func applyLicensePolicy(cfg *domain.Config, y configYAML, defaults domain.Config) error {
 	// License policy is a sparse overlay on the built-in defaults, so a
 	// fully-commented template (or a file that sets only one key) never
 	// silently drops the rest. Categories merge by name: a file entry adds or
@@ -410,11 +428,11 @@ func Parse(data []byte) (domain.Config, error) {
 		for i, r := range y.LicensePolicy.Rules {
 			outcome, err := parseOutcome(r.Default)
 			if err != nil {
-				return domain.Config{}, fmt.Errorf("rule %d (scope %q): %w", i, r.Scope, err)
+				return fmt.Errorf("rule %d (scope %q): %w", i, r.Scope, err)
 			}
 			ulp, err := parseUnknownLicense(r.UnknownLicense)
 			if err != nil {
-				return domain.Config{}, fmt.Errorf("rule %d (scope %q): %w", i, r.Scope, err)
+				return fmt.Errorf("rule %d (scope %q): %w", i, r.Scope, err)
 			}
 			rules = append(rules, domain.LicensePolicyRule{
 				Scope:          r.Scope,
@@ -427,12 +445,7 @@ func Parse(data []byte) (domain.Config, error) {
 		}
 		cfg.LicensePolicy.Rules = rules
 	}
-
-	if err := applyGovernance(&cfg, y, defaults); err != nil {
-		return domain.Config{}, err
-	}
-
-	return cfg, nil
+	return nil
 }
 
 // applyGovernance maps the optional supply-chain governance blocks (schema
@@ -442,57 +455,16 @@ func Parse(data []byte) (domain.Config, error) {
 func applyGovernance(cfg *domain.Config, y configYAML, defaults domain.Config) error {
 	cfg.DirectivePolicy = defaults.DirectivePolicy
 	if d := y.DirectivePolicy; d != nil {
-		out := func(field, s string) (domain.PolicyOutcome, error) {
-			o, err := parseOutcome(s)
-			if err != nil {
-				return "", fmt.Errorf("directive_policy.%s: %w", field, err)
-			}
-			return o, nil
-		}
-		var err error
-		dp := domain.DirectivePolicy{}
-		if dp.LocalPathReplace, err = out("local_path_replace", d.LocalPathReplace); err != nil {
+		if err := applyDirectivePolicy(cfg, d); err != nil {
 			return err
 		}
-		if dp.ModulePathReplace, err = out("module_path_replace", d.ModulePathReplace); err != nil {
-			return err
-		}
-		if dp.VersionReplace, err = out("version_replace", d.VersionReplace); err != nil {
-			return err
-		}
-		if dp.ExcludeNewer, err = out("exclude_newer", d.ExcludeNewer); err != nil {
-			return err
-		}
-		if dp.ExcludeOlder, err = out("exclude_older", d.ExcludeOlder); err != nil {
-			return err
-		}
-		if dp.Default, err = out("default", d.Default); err != nil {
-			return err
-		}
-		cfg.DirectivePolicy = dp
 	}
 
 	cfg.GoDebugPolicy = defaults.GoDebugPolicy
 	if g := y.GoDebugPolicy; g != nil {
-		out := func(field, s string) (domain.PolicyOutcome, error) {
-			o, err := parseOutcome(s)
-			if err != nil {
-				return "", fmt.Errorf("godebug_policy.%s: %w", field, err)
-			}
-			return o, nil
-		}
-		var err error
-		gp := domain.GoDebugPolicy{}
-		if gp.Red, err = out("red", g.Red); err != nil {
+		if err := applyGoDebugPolicy(cfg, g); err != nil {
 			return err
 		}
-		if gp.Amber, err = out("amber", g.Amber); err != nil {
-			return err
-		}
-		if gp.Green, err = out("green", g.Green); err != nil {
-			return err
-		}
-		cfg.GoDebugPolicy = gp
 	}
 
 	cfg.VendorPolicy = defaults.VendorPolicy
@@ -538,5 +510,62 @@ func applyGovernance(cfg *domain.Config, y configYAML, defaults domain.Config) e
 	if err := cfg.ValidateGovernance(); err != nil {
 		return fmt.Errorf("invalid governance policy: %w", err)
 	}
+	return nil
+}
+
+// applyDirectivePolicy parses the file's directive_policy onto cfg.
+func applyDirectivePolicy(cfg *domain.Config, d *directivePolicyYAML) error {
+	out := func(field, s string) (domain.PolicyOutcome, error) {
+		o, err := parseOutcome(s)
+		if err != nil {
+			return "", fmt.Errorf("directive_policy.%s: %w", field, err)
+		}
+		return o, nil
+	}
+	var err error
+	dp := domain.DirectivePolicy{}
+	if dp.LocalPathReplace, err = out("local_path_replace", d.LocalPathReplace); err != nil {
+		return err
+	}
+	if dp.ModulePathReplace, err = out("module_path_replace", d.ModulePathReplace); err != nil {
+		return err
+	}
+	if dp.VersionReplace, err = out("version_replace", d.VersionReplace); err != nil {
+		return err
+	}
+	if dp.ExcludeNewer, err = out("exclude_newer", d.ExcludeNewer); err != nil {
+		return err
+	}
+	if dp.ExcludeOlder, err = out("exclude_older", d.ExcludeOlder); err != nil {
+		return err
+	}
+	if dp.Default, err = out("default", d.Default); err != nil {
+		return err
+	}
+	cfg.DirectivePolicy = dp
+	return nil
+}
+
+// applyGoDebugPolicy parses the file's godebug_policy onto cfg.
+func applyGoDebugPolicy(cfg *domain.Config, g *godebugPolicyYAML) error {
+	out := func(field, s string) (domain.PolicyOutcome, error) {
+		o, err := parseOutcome(s)
+		if err != nil {
+			return "", fmt.Errorf("godebug_policy.%s: %w", field, err)
+		}
+		return o, nil
+	}
+	var err error
+	gp := domain.GoDebugPolicy{}
+	if gp.Red, err = out("red", g.Red); err != nil {
+		return err
+	}
+	if gp.Amber, err = out("amber", g.Amber); err != nil {
+		return err
+	}
+	if gp.Green, err = out("green", g.Green); err != nil {
+		return err
+	}
+	cfg.GoDebugPolicy = gp
 	return nil
 }

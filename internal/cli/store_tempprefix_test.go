@@ -42,26 +42,14 @@ func TestStoreCleanCoversEveryTempPrefix(t *testing.T) {
 			return fmt.Errorf("parsing %s: %w", path, perr)
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) != 2 {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || (sel.Sel.Name != "MkdirTemp" && sel.Sel.Name != "CreateTemp") {
-				return true
-			}
-			if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "os" {
-				return true
-			}
-			dir, ok := call.Args[0].(*ast.BasicLit)
-			if !ok || dir.Value != `""` {
-				return true // a named directory, not the system temp directory
-			}
-			lit, ok := call.Args[1].(*ast.BasicLit)
+			sel, lit, ok := systemTempPattern(n)
 			if !ok {
-				return true // a constant expression; the scratch prefix is checked above
+				return true
 			}
-			pattern, _ := strconv.Unquote(lit.Value)
+			pattern, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				t.Fatalf("Unquote: %v", err)
+			}
 			seen++
 			if !covered(pattern) {
 				t.Errorf("%s: os.%s pattern %q is not in tempPrefixes, so store clean never recovers it", path, sel.Sel.Name, pattern)
@@ -76,4 +64,30 @@ func TestStoreCleanCoversEveryTempPrefix(t *testing.T) {
 	if seen == 0 {
 		t.Fatal("found no temp-directory creation at all; the walk is not reading the source")
 	}
+}
+
+// systemTempPattern reports whether n is an os.MkdirTemp or os.CreateTemp call
+// in the system temp directory with a literal pattern, and returns its
+// selector and pattern literal.
+func systemTempPattern(n ast.Node) (*ast.SelectorExpr, *ast.BasicLit, bool) {
+	call, ok := n.(*ast.CallExpr)
+	if !ok || len(call.Args) != 2 {
+		return nil, nil, false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || (sel.Sel.Name != "MkdirTemp" && sel.Sel.Name != "CreateTemp") {
+		return nil, nil, false
+	}
+	if pkg, isIdent := sel.X.(*ast.Ident); !isIdent || pkg.Name != "os" {
+		return nil, nil, false
+	}
+	dir, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || dir.Value != `""` {
+		return nil, nil, false // a named directory, not the system temp directory
+	}
+	lit, ok := call.Args[1].(*ast.BasicLit)
+	if !ok {
+		return nil, nil, false // a constant expression; the scratch prefix is checked above
+	}
+	return sel, lit, true
 }

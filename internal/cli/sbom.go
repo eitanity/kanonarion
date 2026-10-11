@@ -218,7 +218,7 @@ func runSBOMGenerate(
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	return sbomGenerateWith(ctx, ctr, walkID, f, generatedAt, stdout, stderr)
 }
@@ -250,20 +250,9 @@ func sbomGenerateWith(
 		}
 	}
 
-	var err error
-	var allowList []coordinate.ModuleCoordinate
-	if f.packagePattern != "" {
-		var aerr error
-		allowList, aerr = buildPackageAllowList(ctx, f.packagePattern)
-		if aerr != nil {
-			return aerr
-		}
-		if walkID == "" {
-			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, f.force, f.stdlibFromGoMod, f.noProgress, f.policyPath, stderr)
-			if err != nil {
-				return err
-			}
-		}
+	allowList, walkID, err := sbomPackageScope(ctx, ctr, walkID, f, stderr)
+	if err != nil {
+		return err
 	}
 
 	req := application.SBOMRequest{
@@ -346,6 +335,27 @@ func sbomGenerateWith(
 		}
 	}
 	return nil
+}
+
+// sbomPackageScope is the import closure --package names, and the walk it is
+// read from, built when none was named.
+func sbomPackageScope(ctx context.Context, ctr *Container, walkID string, f sbomFlags, stderr io.Writer) ([]coordinate.ModuleCoordinate, string, error) {
+	var err error
+	var allowList []coordinate.ModuleCoordinate
+	if f.packagePattern != "" {
+		var aerr error
+		allowList, aerr = buildPackageAllowList(ctx, f.packagePattern)
+		if aerr != nil {
+			return nil, walkID, aerr
+		}
+		if walkID == "" {
+			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, f.force, f.stdlibFromGoMod, f.noProgress, f.policyPath, stderr)
+			if err != nil {
+				return nil, walkID, err
+			}
+		}
+	}
+	return allowList, walkID, nil
 }
 
 // parseGeneratedAt reads the --generated-at flag. An empty value is not an
@@ -457,7 +467,7 @@ func runSBOMShow(ctx context.Context, id, storeRoot string, stdout, stderr io.Wr
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	record, err := ctr.QuerySBOM.GetSBOMRecord(ctx, id)
 	if err != nil {
@@ -476,7 +486,7 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	records, err := ctr.QuerySBOM.ListSBOMRecords(ctx, walkID)
 	if err != nil {

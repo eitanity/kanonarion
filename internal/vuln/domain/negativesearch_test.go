@@ -319,3 +319,31 @@ func TestNegativeSoundness_NamesTheGraphsTheSearchRanOver(t *testing.T) {
 		})
 	}
 }
+
+// TestNegativeSoundness_AnUnjoinedCallKeepsTheRecordedRung: a clean search that
+// reached calls into modules it holds no graph for is not an absence, so the
+// recorded derivation keeps the rung. The search still names what it ran over.
+func TestNegativeSoundness_AnUnjoinedCallKeepsTheRecordedRung(t *testing.T) {
+	search := &domain.NegativeSearch{
+		EntryPointRoots: 1, Fidelity: "BUILT_WITH_BODIES",
+		GraphsSearched: []string{"example.com/mod@local", "stdlib@v1.26.6"},
+		UnjoinedCalls:  []string{"example.com/wrap.Next"},
+		NotJoined:      "it reached 1 call into modules whose call graphs are not joined (example.com/wrap.Next)",
+	}
+
+	got, reason := domain.NegativeSoundness(searchedNegative(search))
+
+	if got != domain.SoundnessInferred {
+		t.Errorf("soundness = %s (%s), want %s", got, reason, domain.SoundnessInferred)
+	}
+	for _, want := range []string{"A call-graph search from the entry points found no path", "stdlib@v1.26.6", "(example.com/wrap.Next)"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("the reason does not say %q:\n%s", want, reason)
+		}
+	}
+
+	search.UnjoinedCalls = nil
+	if got, _ := domain.NegativeSoundness(searchedNegative(search)); got != domain.SoundnessConfirmed {
+		t.Errorf("the same search with no unjoined call -> %s, want %s", got, domain.SoundnessConfirmed)
+	}
+}

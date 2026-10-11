@@ -219,7 +219,7 @@ change; re-analysing is what fixes both.
 
 ```
 $ kanonarion capability golang.org/x/sys@v0.47.0
-no callgraph record for golang.org/x/sys@v0.47.0 at pipeline 0.7.0 - the store
+no callgraph record for golang.org/x/sys@v0.47.0 at pipeline 0.8.0 - the store
 holds it at superseded pipeline 0.5.0, 0.6.0, which this build does not serve.
 Re-analyse it:
   kanonarion callgraph golang.org/x/sys@v0.47.0

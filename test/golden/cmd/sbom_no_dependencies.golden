@@ -12,15 +12,15 @@ exit 0
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "fc7a432cbe4564c3fa8e6c5aac5cb84a9cd13519db6f55d89d7b756b84619dac"
+          "content": "f145d3194239785a34da841a73adbec9d9a844dab8f460678d6b64f6267cc597"
         },
         {
           "alg": "SHA-384",
-          "content": "e4f65b616a8565d3ba0038d057ad4cdc54bd734cceb3488dcd60e1fbd286f9a1910927e4cff101a751e1b1ff341532af"
+          "content": "40bef2156786309b53a20c0c7f7e5f2ce3d50e54df5243a55d5bb9ddcf5e0c73c9cc485ff80bbf8c3002c0cb7d15e84c"
         },
         {
           "alg": "SHA-512",
-          "content": "85f769787a06b879a482e19fcc988273d0e180a5c90961b25b0ab4248235b2780c447d1b128c76a2b10e6ce1a7a2a8eaf86dac2e58908b4ddab7c1f47fa0cb5d"
+          "content": "fd9714d7ada916d3977748cfb75cd2ef549e47aee831d6fc3e9e1766c8320b8117d2e96ba72fb35ee17df3382ffa4b7066250233fe94476e6fb9f8eb1e5170f9"
         }
       ],
       "licenses": [

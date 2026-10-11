@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -69,8 +69,8 @@ func TestDiffRecords_CompletenessMismatch(t *testing.T) {
 // "the dependency set did not move", and that claim is only readable if the
 // answer says what was on each side of the comparison.
 func TestDiffRecords_CarriesTheComparedPopulation(t *testing.T) {
-	depOne, _ := coordinate.NewModuleCoordinate("example.com/one", "v1.0.0")
-	depTwo, _ := coordinate.NewModuleCoordinate("example.com/two", "v1.0.0")
+	depOne := coordinatetest.MustNew("example.com/one", "v1.0.0")
+	depTwo := coordinatetest.MustNew("example.com/two", "v1.0.0")
 
 	a := walkWith("a", domain.WalkScopeCode, domain.WalkDepthFull)
 	a.Graph = domain.Graph{
@@ -118,8 +118,8 @@ func TestDiffRecords_UnrecordedFrameIsNamed(t *testing.T) {
 // they were not; neither has one. The token says so, and the basis is what a
 // consumer keys on.
 func TestDiffRecords_TwoModuleRootedWalksDoNotShareAFrame(t *testing.T) {
-	one, _ := coordinate.NewModuleCoordinate("example.com/one", "v1.0.0")
-	two, _ := coordinate.NewModuleCoordinate("example.com/two", "v2.0.0")
+	one := coordinatetest.MustNew("example.com/one", "v1.0.0")
+	two := coordinatetest.MustNew("example.com/two", "v2.0.0")
 
 	a := walkWith("a", domain.WalkScopeCode, domain.WalkDepthFull)
 	a.Graph = domain.Graph{Target: one}

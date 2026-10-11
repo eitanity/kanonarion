@@ -323,6 +323,40 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 	// recorder. The resolver has already fetched every successful node by this
 	// point; the walker no longer re-fetches — it just reads back what
 	// the recorder captured.
+	toFetchLocal := w.classifyGraphNodes(req, graph, recorder, &outcome)
+
+	// Step 4: ingest local-replace nodes from the filesystem.
+	// Sequential: local I/O is fast and there are typically few local replaces.
+	w.fetchLocalReplaces(ctx, log, req, toFetchLocal, &outcome)
+
+	// Step 5: ingest the project root's own working tree when requested.
+	// Mirrors the local-replace ingest above: the root gets a real FactRecord
+	// and is promoted to ResolutionLocalAnalysed so extraction treats it as a
+	// normal analysable module instead of skipping it. The ingest is
+	// always fresh — the localFetcher never serves a cached record for the
+	// local version, so an edited tree is re-read on every run.
+	rootIngested := true
+	if req.ProjectMode && req.AnalyseLocalRoot {
+		rootIngested = w.ingestProjectRoot(ctx, req, &outcome, log)
+	}
+
+	// Step 6: aggregate overall status.
+	outcome.CompletedAt = w.clock.Now()
+	outcome.OverallStatus = degradeForIncompleteGraph(
+		degradeForRootIngest(
+			aggregateStatus(ctx, outcome.PerNodeResults, req.Target), rootIngested),
+		outcome.Graph)
+
+	log.InfoContext(ctx, "walker.end",
+		slog.String("status", outcome.OverallStatus.String()),
+		slog.Int("nodes", len(outcome.PerNodeResults)),
+	)
+	return outcome, nil
+}
+
+// classifyGraphNodes records each graph node's result from what the recorder
+// captured, returning the local-replace nodes still to ingest.
+func (w *Walker) classifyGraphNodes(req WalkRequest, graph domain2.Graph, recorder *recordingFetcher, outcome *domain2.WalkOutcome) []domain2.GraphNode {
 	toFetchLocal := make([]domain2.GraphNode, 0)
 	for _, node := range graph.Nodes {
 		if node.Coordinate == req.Target {
@@ -425,9 +459,12 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 			}
 		}
 	}
+	return toFetchLocal
+}
 
-	// Step 4: ingest local-replace nodes from the filesystem.
-	// Sequential: local I/O is fast and there are typically few local replaces.
+// fetchLocalReplaces ingests each local-replace node from the filesystem and
+// records its result, marking the node locally analysed when it succeeds.
+func (w *Walker) fetchLocalReplaces(ctx context.Context, log *slog.Logger, req WalkRequest, toFetchLocal []domain2.GraphNode, outcome *domain2.WalkOutcome) {
 	for _, node := range toFetchLocal {
 		absPath := filepath.Join(req.LocalReplaceBase, node.LocalPath)
 		fr, ferr := w.localFetcher.EnsureFetchedFromPath(ctx, node.Coordinate, absPath)
@@ -464,30 +501,6 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 			slog.Bool("from_cache", fr.FromCache),
 		)
 	}
-
-	// Step 5: ingest the project root's own working tree when requested.
-	// Mirrors the local-replace ingest above: the root gets a real FactRecord
-	// and is promoted to ResolutionLocalAnalysed so extraction treats it as a
-	// normal analysable module instead of skipping it. The ingest is
-	// always fresh — the localFetcher never serves a cached record for the
-	// local version, so an edited tree is re-read on every run.
-	rootIngested := true
-	if req.ProjectMode && req.AnalyseLocalRoot {
-		rootIngested = w.ingestProjectRoot(ctx, req, &outcome, log)
-	}
-
-	// Step 6: aggregate overall status.
-	outcome.CompletedAt = w.clock.Now()
-	outcome.OverallStatus = degradeForIncompleteGraph(
-		degradeForRootIngest(
-			aggregateStatus(ctx, outcome.PerNodeResults, req.Target), rootIngested),
-		outcome.Graph)
-
-	log.InfoContext(ctx, "walker.end",
-		slog.String("status", outcome.OverallStatus.String()),
-		slog.Int("nodes", len(outcome.PerNodeResults)),
-	)
-	return outcome, nil
 }
 
 // perWalkFetcher derives the fetcher this walk will use from the shared

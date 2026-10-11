@@ -137,6 +137,13 @@ func TestAcquire_AppendsCustodyRecordedEvent(t *testing.T) {
 		}
 	}
 
+	assertCacheHitAppendsNothing(t, acq, store, sink)
+}
+
+// assertCacheHitAppendsNothing checks a cached Acquire writes and appends
+// nothing, and that a forced one appends again.
+func assertCacheHitAppendsNothing(t *testing.T, acq *application.Acquirer, store *memStore, sink *recordingSink) {
+	t.Helper()
 	// CONTROL/CACHE HIT: a second Acquire is served from cache, which is not a
 	// write and must not append — the event says a measurement was persisted.
 	if _, err := acq.Acquire(context.Background(), "v1.26.4", application.Options{}); err != nil {

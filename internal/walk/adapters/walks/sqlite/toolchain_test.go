@@ -261,7 +261,7 @@ func TestMigration9_BackfillsTheToolchainFromTheSealedRecord(t *testing.T) {
 	}
 	// Written the way the previous build did: every column it had, and no
 	// go_version.
-	if _, err := handle.DB().ExecContext(ctx, `
+	if _, eerr := handle.DB().ExecContext(ctx, `
 INSERT INTO walks (id, target_path, target_version, started_at, completed_at,
     overall_status, pipeline_version, operator, content_hash,
     node_count, failure_count, scope, depth, project_dir, identity_hash,
@@ -271,19 +271,19 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'code', '', '', ?, 'linux', 'amd64', ?)
 		rec.StartedAt.UTC().Format(time.RFC3339), rec.CompletedAt.UTC().Format(time.RFC3339),
 		int(rec.OverallStatus), rec.PipelineVersion, rec.Operator, rec.ContentHash,
 		identity, blobcodec.Encode(raw),
-	); err != nil {
-		t.Fatalf("inserting a pre-migration row: %v", err)
+	); eerr != nil {
+		t.Fatalf("inserting a pre-migration row: %v", eerr)
 	}
 
-	if err := sqlitestore.Apply(handle, all); err != nil {
-		t.Fatalf("applying migration 9: %v", err)
+	if aerr := sqlitestore.Apply(handle, all); aerr != nil {
+		t.Fatalf("applying migration 9: %v", aerr)
 	}
 
 	var goVersion, storedHash, storedIdentity string
-	if err := handle.DB().QueryRowContext(ctx,
+	if serr := handle.DB().QueryRowContext(ctx,
 		`SELECT go_version, content_hash, identity_hash FROM walks WHERE id = ?`, rec.ID).
-		Scan(&goVersion, &storedHash, &storedIdentity); err != nil {
-		t.Fatalf("reading the back-filled toolchain: %v", err)
+		Scan(&goVersion, &storedHash, &storedIdentity); serr != nil {
+		t.Fatalf("reading the back-filled toolchain: %v", serr)
 	}
 	if goVersion != "go1.26.5" {
 		t.Errorf("back-filled toolchain = %q, want go1.26.5", goVersion)
@@ -307,6 +307,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'code', '', '', ?, 'linux', 'amd64', ?)
 
 	// And the back-filled row is reachable by a toolchain-filtered lookup, which
 	// is the whole point of back-filling rather than defaulting to empty.
+	assertToolchainLookupFinds(ctx, t, store, rec)
+}
+
+// assertToolchainLookupFinds checks a toolchain-filtered listing reaches the
+// back-filled walk.
+func assertToolchainLookupFinds(ctx context.Context, t *testing.T, store *walksqlite.Store, rec domain.WalkRecord) {
+	t.Helper()
 	asked := "go1.26.5"
 	got, err := store.ListWalks(ctx, walkports.WalkFilter{Toolchain: &asked})
 	if err != nil {

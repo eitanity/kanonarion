@@ -9,7 +9,7 @@ import (
 
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/adapters/sqlitestore"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
@@ -24,10 +24,10 @@ func TestOpen_FetchSetAsideReachesTheLibraryCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if err := cleanup(); err != nil {
-		t.Fatal(err)
+	if cerr := cleanup(); cerr != nil {
+		t.Fatal(cerr)
 	}
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	r := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("0.4.0"),
 		fetchtest.FetchedAt(time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)))
 	db, err := sqlitestore.Open(filepath.Join(root, "mirror.db"), nil, sqlitestore.IntentCreate)
@@ -38,12 +38,12 @@ func TestOpen_FetchSetAsideReachesTheLibraryCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fetchsqlite.New(db).PutFetchRecord(context.Background(), sealed); err != nil {
-		t.Fatal(err)
+	if perr := fetchsqlite.New(db).PutFetchRecord(context.Background(), sealed); perr != nil {
+		t.Fatal(perr)
 	}
 	fetchedAt, seal := fetchtest.Respelt(t, r)
-	if _, err := db.DB().Exec(`UPDATE fetch_records SET fetched_at = ?, content_hash = ?`, fetchedAt, seal); err != nil {
-		t.Fatal(err)
+	if _, eerr := db.DB().Exec(`UPDATE fetch_records SET fetched_at = ?, content_hash = ?`, fetchedAt, seal); eerr != nil {
+		t.Fatal(eerr)
 	}
 	_ = db.Close()
 
@@ -54,7 +54,11 @@ func TestOpen_FetchSetAsideReachesTheLibraryCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	t.Cleanup(func() {
+		if cerr := cleanup(); cerr != nil {
+			t.Errorf("closing: %v", cerr)
+		}
+	})
 
 	_, _, err = queries.Fetch.ComposeFetchRecord(context.Background(), coord)
 	if !errors.As(err, new(*kanonarion.NothingServable)) {

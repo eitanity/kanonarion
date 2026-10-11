@@ -184,7 +184,7 @@ func TestMigration14_CarriesExistingRowsInAsTheFirstGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalling legacy record: %v", err)
 	}
-	if _, err := db.DB().ExecContext(ctx, `
+	if _, eerr := db.DB().ExecContext(ctx, `
 INSERT INTO vulnerability_records (
     module_path, module_version, pipeline_version, snapshot_source, snapshot_version,
     walk_id, overall_status, coverage_status, findings_status, finding_count,
@@ -193,11 +193,11 @@ INSERT INTO vulnerability_records (
           '2026-05-01T12:00:00Z', '2026-05-01T12:00:00Z', ?, ?)`,
 		legacy.Coordinate.Path(), legacy.Coordinate.Version(), legacy.PipelineVersion,
 		legacy.DatabaseSnapshot.Source(), legacy.DatabaseSnapshot.Version(),
-		legacy.ContentHash, blob); err != nil {
-		t.Fatalf("seeding pre-ledger row: %v", err)
+		legacy.ContentHash, blob); eerr != nil {
+		t.Fatalf("seeding pre-ledger row: %v", eerr)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("closing at migration 13: %v", err)
+	if cerr := db.Close(); cerr != nil {
+		t.Fatalf("closing at migration 13: %v", cerr)
 	}
 
 	migrated, err := sqlitestore.Open(dsn, all, sqlitestore.IntentCreate)
@@ -222,8 +222,8 @@ INSERT INTO vulnerability_records (
 
 	// And a scan in a stated frame appends beside it rather than replacing it.
 	fresh := ledgerRecord(t, domain.RootingIsolated, time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC), domain.StatusClean)
-	if err := store.PutVulnerabilityRecord(ctx, fresh); err != nil {
-		t.Fatalf("appending after migration: %v", err)
+	if perr := store.PutVulnerabilityRecord(ctx, fresh); perr != nil {
+		t.Fatalf("appending after migration: %v", perr)
 	}
 	history, err := store.ListVulnerabilityRecordsForModule(ctx, legacy.Coordinate, legacy.PipelineVersion)
 	if err != nil {

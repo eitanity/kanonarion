@@ -188,8 +188,8 @@ func TestMeasurementSeal_AMarshalFailureIsNotAgreement(t *testing.T) {
 
 	canonicalMarshal = func(any) ([]byte, error) { return nil, injected }
 
-	if _, _, err := SealMeasurement(sealTestRecord(t, 1)); !errors.Is(err, injected) {
-		t.Errorf("SealMeasurement error = %v, want it to wrap the injected error", err)
+	if _, _, serr := SealMeasurement(sealTestRecord(t, 1)); !errors.Is(serr, injected) {
+		t.Errorf("SealMeasurement error = %v, want it to wrap the injected error", serr)
 	}
 	same, err := sealed.SameAs(held)
 	if !errors.Is(err, injected) {

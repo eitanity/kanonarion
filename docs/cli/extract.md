@@ -96,6 +96,7 @@ and the process agree:
 | `1` | `partial`: some stage failed. The stages that ran ARE stored and usable; the `Failed stages (N)` breakdown names the module and stage of each one |
 | `2` | `failed`: the run produced no usable stage |
 | `3` | `cancelled`: the context ended before every module was reached |
+| `20` | a stage could not read a module's code because this kanonarion was built with an older Go than the module's `go` directive asks for. The stage is failed with cause `environment`, and the message names both versions and the remedy: a kanonarion built with a new enough Go |
 
 A partial run leaves the named modules' facts permanently unmeasured until they
 are re-extracted, so a pipeline step reading only the exit code must be able to

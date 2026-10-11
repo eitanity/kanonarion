@@ -128,7 +128,7 @@ func TestAuditParity_ContainerAndLibraryPathsAppendIdentically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewContainer: %v", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer mustClose(t, cleanup)
 
 	target, err := coordinate.NewLocalCoordinate("example.test/proj")
 	if err != nil {
@@ -146,11 +146,11 @@ func TestAuditParity_ContainerAndLibraryPathsAppendIdentically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("container walk: %v", err)
 	}
-	if _, err := ctr.Extract.Execute(ctx, extractapp.ExtractRequest{
+	if _, eerr := ctr.Extract.Execute(ctx, extractapp.ExtractRequest{
 		WalkID: walkRes.Record.ID,
 		Stages: bothPathsStages,
-	}); err != nil {
-		t.Fatalf("container extract: %v", err)
+	}); eerr != nil {
+		t.Fatalf("container extract: %v", eerr)
 	}
 	cliCounts := auditEventCounts(t, cliRoot)
 
@@ -160,7 +160,7 @@ func TestAuditParity_ContainerAndLibraryPathsAppendIdentically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDriver: %v", err)
 	}
-	defer func() { _ = libCleanup() }()
+	defer mustClose(t, libCleanup)
 
 	if _, err := drv.LocalWalkExtract.Run(ctx, driver.LocalWalkExtractRequest{
 		Dir:              projDir,

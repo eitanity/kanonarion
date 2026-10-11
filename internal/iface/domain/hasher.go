@@ -85,6 +85,7 @@ func (InterfaceRecordHasher) Unmarshal(data []byte) (InterfaceRecord, error) {
 	}
 
 	return InterfaceRecord{
+		AnalyserLimit:     c.AnalyserLimit.toDomain(),
 		SchemaVersion:     c.SchemaVersion,
 		BuildFrame:        frame,
 		Ecosystem:         c.Ecosystem,
@@ -112,12 +113,38 @@ type canonicalFrame struct {
 	GOOS   string `json:"goos"`
 }
 
+// canonicalLimit is the wire shape of an UnreadSource. Omitted when nil, so a
+// record that met no limit keeps the bytes it had before the field existed.
+type canonicalLimit struct {
+	Built    string   `json:"built"`
+	Files    []string `json:"files"`
+	Required string   `json:"required"`
+}
+
+func toCanonicalLimit(u *gotoolchain.UnreadSource) *canonicalLimit {
+	if u == nil {
+		return nil
+	}
+	return &canonicalLimit{Built: u.Limit.Built, Files: append([]string{}, u.Files...), Required: u.Limit.Required}
+}
+
+func (c *canonicalLimit) toDomain() *gotoolchain.UnreadSource {
+	if c == nil {
+		return nil
+	}
+	return &gotoolchain.UnreadSource{
+		Limit: gotoolchain.AnalyserLimit{Required: c.Required, Built: c.Built},
+		Files: append([]string{}, c.Files...),
+	}
+}
+
 type canonicalCoord struct {
 	Path    string `json:"path"`
 	Version string `json:"version"`
 }
 
 type canonicalRecord struct {
+	AnalyserLimit *canonicalLimit `json:"analyser_limit,omitempty"`
 	// ArtefactIdentity and SourceContentHash are omitted when empty so
 	// records that predate them keep their stored content hash verifiable,
 	// on the same terms every additive field on this shape has used.
@@ -233,6 +260,7 @@ func marshalCanonical(r InterfaceRecord) ([]byte, error) {
 	}
 
 	c := canonicalRecord{
+		AnalyserLimit:     toCanonicalLimit(r.AnalyserLimit),
 		ArtefactIdentity:  r.ArtefactIdentity,
 		BuildFrame:        frame,
 		ContentHash:       r.ContentHash,

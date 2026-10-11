@@ -79,16 +79,16 @@ func seedCopyableModule(t *testing.T, facts *pvFakeFacts, blobs *useBlobs, coord
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Write([]byte("package doc\n")); err != nil {
-		t.Fatal(err)
+	if _, werr := w.Write([]byte("package doc\n")); werr != nil {
+		t.Fatal(werr)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
+	if cerr := zw.Close(); cerr != nil {
+		t.Fatal(cerr)
 	}
 
 	zipPath := filepath.Join(t.TempDir(), "module.zip")
-	if err := os.WriteFile(zipPath, buf.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
+	if werr := os.WriteFile(zipPath, buf.Bytes(), 0o600); werr != nil {
+		t.Fatal(werr)
 	}
 	h1, err := dirhash.HashZip(zipPath, dirhash.Hash1)
 	if err != nil {

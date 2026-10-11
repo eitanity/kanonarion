@@ -72,7 +72,7 @@ func TestLocalWalkExtract_AnalyseLocalRoot_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDriver: %v", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer mustClose(t, cleanup)
 
 	ctx := context.Background()
 	root := coordinatetest.MustNew("example.test/proj", coordinate.LocalVersion)
@@ -108,26 +108,13 @@ func TestLocalWalkExtract_AnalyseLocalRoot_EndToEnd(t *testing.T) {
 
 	// Every requested stage produced a real (succeeded, not skipped) record
 	// for the project's own packages.
-	modRes, ok := res.Extraction.PerModuleResults[root]
-	if !ok {
-		t.Fatalf("no extraction result for root %s", root)
-	}
-	for _, stage := range stages {
-		sr, ok := modRes.Stages[stage]
-		if !ok {
-			t.Errorf("stage %s missing for root", stage)
-			continue
-		}
-		if sr.Status.String() != "succeeded" {
-			t.Errorf("stage %s = %s (%s), want succeeded", stage, sr.Status, sr.Error)
-		}
-	}
+	assertRootStagesSucceeded(t, res, root, stages)
 
 	queries, qcleanup, err := composition.NewQueries(storeRoot)
 	if err != nil {
 		t.Fatalf("NewQueries: %v", err)
 	}
-	defer func() { _ = qcleanup() }()
+	defer mustClose(t, qcleanup)
 
 	// The root licence record is the project's own outbound declaration.
 	licRec, found, err := queries.License.GetLicenseRecord(ctx, root, licapp.PipelineVersion)
@@ -143,16 +130,43 @@ func TestLocalWalkExtract_AnalyseLocalRoot_EndToEnd(t *testing.T) {
 
 	// FRESHNESS: edit the tree, re-run, and the new symbol must appear — no
 	// stale cached record for the root is ever served.
-	edited := "// Package proj is the project root.\npackage proj\n\n// Answer returns 42.\nfunc Answer() int { return 42 }\n\n// Extra is new.\nfunc Extra() string { return \"new\" }\n"
-	if err := os.WriteFile(filepath.Join(projDir, "lib.go"), []byte(edited), 0o600); err != nil {
-		t.Fatalf("editing lib.go: %v", err)
+	assertEditIsReMeasured(ctx, t, drv, queries, projDir, root)
+}
+
+// assertRootStagesSucceeded checks every requested stage ran and succeeded
+// for the root.
+func assertRootStagesSucceeded(t *testing.T, res driver.LocalWalkExtractResult, root coordinate.ModuleCoordinate, stages []string) {
+	t.Helper()
+	modRes, ok := res.Extraction.PerModuleResults[root]
+	if !ok {
+		t.Fatalf("no extraction result for root %s", root)
 	}
-	if _, err := drv.LocalWalkExtract.Run(ctx, driver.LocalWalkExtractRequest{
+	for _, stage := range stages {
+		sr, ok := modRes.Stages[stage]
+		if !ok {
+			t.Errorf("stage %s missing for root", stage)
+			continue
+		}
+		if sr.Status.String() != "succeeded" {
+			t.Errorf("stage %s = %s (%s), want succeeded", stage, sr.Status, sr.Error)
+		}
+	}
+}
+
+// assertEditIsReMeasured edits the tree, re-runs, and checks the new symbol
+// is in the root's interface record.
+func assertEditIsReMeasured(ctx context.Context, t *testing.T, drv *composition.Driver, queries *composition.Queries, projDir string, root coordinate.ModuleCoordinate) {
+	t.Helper()
+	edited := "// Package proj is the project root.\npackage proj\n\n// Answer returns 42.\nfunc Answer() int { return 42 }\n\n// Extra is new.\nfunc Extra() string { return \"new\" }\n"
+	if werr := os.WriteFile(filepath.Join(projDir, "lib.go"), []byte(edited), 0o600); werr != nil {
+		t.Fatalf("editing lib.go: %v", werr)
+	}
+	if _, rerr := drv.LocalWalkExtract.Run(ctx, driver.LocalWalkExtractRequest{
 		Dir:              projDir,
 		Stages:           []string{"interface"},
 		AnalyseLocalRoot: true,
-	}); err != nil {
-		t.Fatalf("second Run: %v", err)
+	}); rerr != nil {
+		t.Fatalf("second Run: %v", rerr)
 	}
 	ifaceRec, found, err := queries.Interface.GetInterfaceRecord(ctx, root, ifaceapp.PipelineVersion)
 	if err != nil || !found {
@@ -181,7 +195,7 @@ func TestLocalWalkExtract_DefaultRootStaysSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDriver: %v", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer mustClose(t, cleanup)
 
 	root := coordinatetest.MustNew("example.test/proj", coordinate.LocalVersion)
 	res, err := drv.LocalWalkExtract.Run(context.Background(), driver.LocalWalkExtractRequest{
@@ -207,5 +221,14 @@ func TestLocalWalkExtract_DefaultRootStaysSkipped(t *testing.T) {
 	}
 	if res.Walk.OverallStatus != walkdomain.WalkPartial {
 		t.Errorf("walk status = %s, want partial", res.Walk.OverallStatus)
+	}
+}
+
+// mustClose runs a store's cleanup at the end of a test and fails the test if
+// the store reports an error closing.
+func mustClose(t *testing.T, cleanup func() error) {
+	t.Helper()
+	if err := cleanup(); err != nil {
+		t.Errorf("closing the store: %v", err)
 	}
 }

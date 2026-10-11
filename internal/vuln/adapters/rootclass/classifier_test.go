@@ -85,6 +85,10 @@ func node(id, receiver, symbol string, opts ...func(*cgdomain.CallNode)) cgdomai
 	return n
 }
 
+func exportedAs(kind cgdomain.ExportKind, name string) func(*cgdomain.CallNode) {
+	return func(n *cgdomain.CallNode) { n.ExportDirective = cgdomain.ExportDirective{Kind: kind, Name: name} }
+}
+
 func exported(n *cgdomain.CallNode)   { n.IsExportedAPI = true }
 func testScope(n *cgdomain.CallNode)  { n.IsTest = true }
 func externalTo(n *cgdomain.CallNode) { n.IsExternal = true; n.Module = "example.com/dep" }
@@ -117,6 +121,42 @@ func TestClassify_ReadsTheNodeFactsOffTheServedGraph(t *testing.T) {
 			}, nil),
 			wantKind: vuldomain.RootIngress,
 			wantIn:   "package initialisation",
+		},
+		{
+			name:  "a function exported to the WebAssembly host is entered by the host",
+			entry: handlerFrame("parse", ""),
+			record: appRecord([]cgdomain.CallNode{
+				node("example.com/app/handlers.parse", "", "parse", exportedAs(cgdomain.ExportWasm, "parse")),
+			}, nil),
+			wantKind: vuldomain.RootIngress,
+			wantIn:   "(//go:wasmexport parse) — the host invokes it",
+		},
+		{
+			name:  "a function exported to C is entered by C code",
+			entry: handlerFrame("goParse", ""),
+			record: appRecord([]cgdomain.CallNode{
+				node("example.com/app/handlers.goParse", "", "goParse", exportedAs(cgdomain.ExportC, "goParse")),
+			}, nil),
+			wantKind: vuldomain.RootIngress,
+			wantIn:   "(//export goParse) — C code, assembly or a vector table invokes it",
+		},
+		{
+			name:  "an interrupt handler is entered by the hardware",
+			entry: handlerFrame("irq", ""),
+			record: appRecord([]cgdomain.CallNode{
+				node("example.com/app/handlers.irq", "", "irq", exportedAs(cgdomain.ExportInterrupt, "")),
+			}, nil),
+			wantKind: vuldomain.RootIngress,
+			wantIn:   "(//go:interrupt) — the hardware invokes it",
+		},
+		{
+			name:  "the same function without its directive is entered by nothing",
+			entry: handlerFrame("parse", ""),
+			record: appRecord([]cgdomain.CallNode{
+				node("example.com/app/handlers.parse", "", "parse"),
+			}, nil),
+			wantKind: vuldomain.RootInternal,
+			wantIn:   "nothing in the graph says what enters it",
 		},
 		{
 			name:  "a test declaration is test scope however exported it looks",

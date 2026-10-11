@@ -132,7 +132,10 @@ func TestChooseWalk_FallsBackToRecencyAndNamesWhatDisagrees(t *testing.T) {
 	older := selectionWalk(t, "W-older", modulePath, dir, "v4.5.1")
 	walks := selectionStore(newer, older)
 
-	summaries, _ := walks.ListWalks(context.Background(), walkports.WalkFilter{})
+	summaries, err := walks.ListWalks(context.Background(), walkports.WalkFilter{})
+	if err != nil {
+		t.Fatalf("ListWalks: %v", err)
+	}
 	choice := chooseWalk(context.Background(), walks, summaries, "")
 
 	if choice.summary.ID != newer.ID {
@@ -165,7 +168,10 @@ func TestChooseWalk_WithoutAManifestSaysWhatItCouldNotCheck(t *testing.T) {
 	}
 	walks := selectionStore(mk("W2"), mk("W1"))
 
-	summaries, _ := walks.ListWalks(context.Background(), walkports.WalkFilter{})
+	summaries, err := walks.ListWalks(context.Background(), walkports.WalkFilter{})
+	if err != nil {
+		t.Fatalf("ListWalks: %v", err)
+	}
 	choice := chooseWalk(context.Background(), walks, summaries, "")
 
 	if choice.summary.ID != "W2" {
@@ -188,7 +194,10 @@ func TestChooseWalk_SingleWalkStatesNothing(t *testing.T) {
 	only := selectionWalk(t, "W-only", modulePath, dir, "v4.5.1")
 	walks := selectionStore(only)
 
-	summaries, _ := walks.ListWalks(context.Background(), walkports.WalkFilter{})
+	summaries, err := walks.ListWalks(context.Background(), walkports.WalkFilter{})
+	if err != nil {
+		t.Fatalf("ListWalks: %v", err)
+	}
 	choice := chooseWalk(context.Background(), walks, summaries, "")
 
 	if choice.rule != walkChosenSole {

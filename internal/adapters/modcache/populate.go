@@ -127,8 +127,8 @@ func populateOne(
 	if !hasZip {
 		return fmt.Errorf("fact record for %s carries no module zip to populate the cache with", coord)
 	}
-	if err := linkOrCopy(ctx, blobs, zipIdentity, base+".zip"); err != nil {
-		return fmt.Errorf("writing zip: %w", err)
+	if lerr := linkOrCopy(ctx, blobs, zipIdentity, base+".zip"); lerr != nil {
+		return fmt.Errorf("writing zip: %w", lerr)
 	}
 	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(record.FactRecord)
 	if err != nil {
@@ -430,7 +430,10 @@ func writeInfo(base, version string, fetchedAt time.Time) error {
 		Version string    `json:"Version"`
 		Time    time.Time `json:"Time"`
 	}
-	infoData, _ := json.Marshal(infoFile{Version: version, Time: fetchedAt.UTC()})
+	infoData, err := json.Marshal(infoFile{Version: version, Time: fetchedAt.UTC()})
+	if err != nil {
+		return fmt.Errorf("encoding info for %s: %w", version, err)
+	}
 	if err := writeIfAbsent(base+".info", infoData); err != nil {
 		return fmt.Errorf("writing info: %w", err)
 	}

@@ -74,6 +74,11 @@ its module appears at import level and not at symbol level. Neither is a subset
 of the other - a module reached only through a dependency's exported types (for
 example `spf13/pflag` through `cobra`) is referenced without being imported.
 
+The symbol level type-checks with the Go compiled into kanonarion. When the tree
+requires a newer Go than the binary was built with, it refuses with exit `20`,
+names both versions, and names the remedy: a kanonarion built with a new enough
+Go.
+
 Both levels include dependency users declared in `_test.go` files and external
 test packages, and tag a module only test code reaches with `[test]`. The
 `Test scope` line states this on every answer, narrowed or not.

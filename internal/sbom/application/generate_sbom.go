@@ -217,31 +217,64 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 
 	// 1a. Apply allowlist: restrict nodes/edges to the binary's import closure.
 	if scoped {
-		allowed := make(map[coordinate.ModuleCoordinate]bool, len(req.AllowList))
-		for _, c := range req.AllowList {
-			allowed[c] = true
-		}
-		// The allow-list is keyed by require/import coordinates (`go list -deps`
-		// reports a replaced module at its original path@version, never the
-		// replacement — that lives under .Module.Replace), so a replace-to-fork node
-		// is matched via its OriginalCoordinate; FilterGraph tests both identities.
-		// The synthetic stdlib node is a universal build input — every binary links
-		// against it — but it is not a module `go list -deps` reports, so it never
-		// appears in the allow-list. Keep it regardless, mirroring the walk
-		// resolver's injectStdlib, so a --package SBOM still records the
-		// standard-library component (and its --stdlib-from-gomod-pinned version).
-		// The allow-list is version-sensitive, so match and key edges on the full
-		// coordinate rather than the bare path.
-		inScope := func(c coordinate.ModuleCoordinate) bool {
-			return allowed[c] || c.Path() == walkdomain.StdlibModulePath
-		}
-		walk.Graph.Nodes, walk.Graph.Edges = walkdomain.FilterGraph(
-			walk.Graph,
-			inScope,
-			func(c coordinate.ModuleCoordinate) coordinate.ModuleCoordinate { return c },
-		)
+		walk.Graph.Nodes, walk.Graph.Edges = filterToAllowList(walk.Graph, req.AllowList)
 	}
 
+	record, err := uc.generateDocument(ctx, req, format, scoped, walk)
+	if err != nil {
+		return domain.SBOMRecord{}, err
+	}
+
+	// 4. Persist — skipped for scoped (package-filtered) requests, and for a
+	// request that named the subject, whose document describes that request
+	// rather than the walk.
+	if !scoped && !stamped {
+		if err := uc.persistSBOM(ctx, req, record); err != nil {
+			return domain.SBOMRecord{}, err
+		}
+	}
+
+	uc.logger.InfoContext(ctx, "sbom.generated",
+		"id", record.ID,
+		"walk_id", record.WalkID,
+		"format", record.Format,
+		"content_hash", record.ContentHash,
+		"licenses_incomplete", record.LicensesIncomplete,
+	)
+	return record, nil
+}
+
+// filterToAllowList restricts the graph's nodes and edges to the binary's
+// import closure, keeping the standard library.
+func filterToAllowList(graph walkdomain.Graph, allowList []coordinate.ModuleCoordinate) ([]walkdomain.GraphNode, []walkdomain.GraphEdge) {
+	allowed := make(map[coordinate.ModuleCoordinate]bool, len(allowList))
+	for _, c := range allowList {
+		allowed[c] = true
+	}
+	// The allow-list is keyed by require/import coordinates (`go list -deps`
+	// reports a replaced module at its original path@version, never the
+	// replacement — that lives under .Module.Replace), so a replace-to-fork node
+	// is matched via its OriginalCoordinate; FilterGraph tests both identities.
+	// The synthetic stdlib node is a universal build input — every binary links
+	// against it — but it is not a module `go list -deps` reports, so it never
+	// appears in the allow-list. Keep it regardless, mirroring the walk
+	// resolver's injectStdlib, so a --package SBOM still records the
+	// standard-library component (and its --stdlib-from-gomod-pinned version).
+	// The allow-list is version-sensitive, so match and key edges on the full
+	// coordinate rather than the bare path.
+	inScope := func(c coordinate.ModuleCoordinate) bool {
+		return allowed[c] || c.Path() == walkdomain.StdlibModulePath
+	}
+	return walkdomain.FilterGraph(
+		graph,
+		inScope,
+		func(c coordinate.ModuleCoordinate) coordinate.ModuleCoordinate { return c },
+	)
+}
+
+// generateDocument loads the records the document is built from and
+// generates it over the walk's graph.
+func (uc *GenerateSBOMUseCase) generateDocument(ctx context.Context, req SBOMRequest, format domain.SBOMFormat, scoped bool, walk walkdomain.WalkRecord) (domain.SBOMRecord, error) {
 	// 2. Load licence records for all modules.
 	licenses := make(map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, len(walk.Graph.Nodes))
 	for _, node := range walk.Graph.Nodes {
@@ -302,31 +335,22 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 	if err != nil {
 		return domain.SBOMRecord{}, fmt.Errorf("generating sbom: %w", err)
 	}
-
-	// 4. Persist — skipped for scoped (package-filtered) requests, and for a
-	// request that named the subject, whose document describes that request
-	// rather than the walk.
-	if !scoped && !stamped {
-		if err := uc.sbomStore.PutSBOMRecord(ctx, record); err != nil {
-			return domain.SBOMRecord{}, fmt.Errorf("persisting sbom record: %w", err)
-		}
-		// Assurance log: one event per persisted document, written after the record
-		// so a failed append reports an unlogged write rather than undoing it. A
-		// package-scoped request persisted nothing and so appends nothing — the
-		// event states that a record exists, and an ephemeral document leaves none.
-		if err := emitSBOMGenerated(uc.audit, record, !req.GeneratedAt.IsZero()); err != nil {
-			return domain.SBOMRecord{}, err
-		}
-	}
-
-	uc.logger.InfoContext(ctx, "sbom.generated",
-		"id", record.ID,
-		"walk_id", record.WalkID,
-		"format", record.Format,
-		"content_hash", record.ContentHash,
-		"licenses_incomplete", record.LicensesIncomplete,
-	)
 	return record, nil
+}
+
+// persistSBOM stores the document and appends the event that witnesses it.
+func (uc *GenerateSBOMUseCase) persistSBOM(ctx context.Context, req SBOMRequest, record domain.SBOMRecord) error {
+	if err := uc.sbomStore.PutSBOMRecord(ctx, record); err != nil {
+		return fmt.Errorf("persisting sbom record: %w", err)
+	}
+	// Assurance log: one event per persisted document, written after the record
+	// so a failed append reports an unlogged write rather than undoing it. A
+	// package-scoped request persisted nothing and so appends nothing — the
+	// event states that a record exists, and an ephemeral document leaves none.
+	if err := emitSBOMGenerated(uc.audit, record, !req.GeneratedAt.IsZero()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // moduleOrigins reads the recorded origin of every module in the walk.

@@ -55,8 +55,8 @@ func TestExecute_ProjectGoSum_ZipMismatchHardFails(t *testing.T) {
 	if !errors.Is(err, application.ErrGoSumVerification) {
 		t.Fatalf("Execute err = %v, want ErrGoSumVerification", err)
 	}
-	if _, ok, _ := facts.GetFetchRecord(context.Background(), testCoord, "test-0.1.0"); ok {
-		t.Error("a record was persisted for a go.sum tamper; want none")
+	if _, ok, rerr := facts.GetFetchRecord(context.Background(), testCoord, "test-0.1.0"); rerr != nil || ok {
+		t.Errorf("a record was persisted for a go.sum tamper; want none (read error: %v)", rerr)
 	}
 }
 

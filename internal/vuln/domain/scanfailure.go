@@ -47,17 +47,10 @@ func IsBuildIncompatibility(detail string) bool {
 // without reproducing the full govulncheck stderr.
 func ClassifyBuildIncompatibility(detail string) string {
 	d := strings.ToLower(detail)
+	if reason, ok := classifyEnvironmentIncompatibility(d); ok {
+		return reason
+	}
 	switch {
-	case isToolchainTooOldFailure(d):
-		return "host Go toolchain is older than the version the module asks for: the scan runs offline, so it can " +
-			"only switch to a toolchain already unpacked on this host and none is new enough — a property of this " +
-			"host and not of the module"
-	case isWorkspaceModeFailure(d):
-		return "scan environment entered Go workspace mode: a go.work applied to a module scanned in isolation"
-	case strings.Contains(d, "go.work file") && (strings.Contains(d, "no such file or directory") || strings.Contains(d, "cannot load module")):
-		return "go.work mono-repo: sibling modules not present in module zip"
-	case strings.Contains(d, "replacement directory") && strings.Contains(d, "does not exist"):
-		return "relative replace directive: sibling module not present in module zip"
 	case strings.Contains(d, "build constraints exclude all go files") && strings.Contains(d, "windows"):
 		return "Windows-only package: not buildable on Linux"
 	case strings.Contains(d, "fatal error:") && strings.Contains(d, ".h: no such file or directory"):
@@ -73,6 +66,25 @@ func ClassifyBuildIncompatibility(detail string) string {
 	default:
 		return "module does not build under the host Go toolchain"
 	}
+}
+
+// classifyEnvironmentIncompatibility names the build failures that come from
+// the scan environment or the module's repository layout rather than its code;
+// ok is false for any other failure.
+func classifyEnvironmentIncompatibility(d string) (string, bool) {
+	switch {
+	case isToolchainTooOldFailure(d):
+		return "host Go toolchain is older than the version the module asks for: the scan runs offline, so it can " +
+			"only switch to a toolchain already unpacked on this host and none is new enough — a property of this " +
+			"host and not of the module", true
+	case isWorkspaceModeFailure(d):
+		return "scan environment entered Go workspace mode: a go.work applied to a module scanned in isolation", true
+	case strings.Contains(d, "go.work file") && (strings.Contains(d, "no such file or directory") || strings.Contains(d, "cannot load module")):
+		return "go.work mono-repo: sibling modules not present in module zip", true
+	case strings.Contains(d, "replacement directory") && strings.Contains(d, "does not exist"):
+		return "relative replace directive: sibling module not present in module zip", true
+	}
+	return "", false
 }
 
 // isWorkspaceModeFailure reports whether an already-lowercased error detail is

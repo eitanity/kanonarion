@@ -191,7 +191,7 @@ func runNotice(ctx context.Context, f noticeFlags, stdout, stderr io.Writer) err
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// The snippet root is the directory holding the resolved go.mod, derived
 	// here rather than by the caller so the two scopes it depends on arrive
@@ -263,25 +263,7 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 	reviews = append(reviews, result.ReviewItems...)
 	sort.SliceStable(reviews, func(i, j int) bool { return reviews[i].Coordinate.String() < reviews[j].Coordinate.String() })
 	if len(reviews) > 0 {
-		if _, werr := fmt.Fprintf(stderr, "notice: %d module(s) require human review before publishing:\n\n", len(reviews)); werr != nil {
-			return fmt.Errorf("writing review header: %w", werr)
-		}
-		for _, item := range reviews {
-			name := item.Coordinate.String()
-			if orig, ok := replaced[item.Coordinate]; ok {
-				name = fmt.Sprintf("%s (replaces %s)", name, orig)
-			}
-			if _, werr := fmt.Fprintf(stderr, "  %s: %s\n", name, item.Reason); werr != nil {
-				return fmt.Errorf("writing review item: %w", werr)
-			}
-		}
-		if werr := writeLicenceRemedy(reviews, stderr); werr != nil {
-			return werr
-		}
-		if werr := writeCopyrightRemedy(reviews, stderr); werr != nil {
-			return werr
-		}
-		return &exitError{code: ExitPolicy, msg: fmt.Sprintf("%d module(s) require review", len(reviews))}
+		return reportNoticeReviews(reviews, replaced, stderr)
 	}
 
 	entries := append(append([]licensedomain.NoticeEntry{}, result.Entries...), snippetEntries...)
@@ -301,6 +283,30 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 	// document redirects stdout, and notice already reports scope and the review
 	// list on stderr, so the two streams stay one document and one commentary.
 	return writeArtefactFile("NOTICE", output, doc.Bytes(), stderr)
+}
+
+// reportNoticeReviews lists the modules that need a human decision before
+// publishing, with the remedies, and refuses the run.
+func reportNoticeReviews(reviews []licensedomain.ReviewItem, replaced map[coordinate.ModuleCoordinate]coordinate.ModuleCoordinate, stderr io.Writer) error {
+	if _, werr := fmt.Fprintf(stderr, "notice: %d module(s) require human review before publishing:\n\n", len(reviews)); werr != nil {
+		return fmt.Errorf("writing review header: %w", werr)
+	}
+	for _, item := range reviews {
+		name := item.Coordinate.String()
+		if orig, ok := replaced[item.Coordinate]; ok {
+			name = fmt.Sprintf("%s (replaces %s)", name, orig)
+		}
+		if _, werr := fmt.Fprintf(stderr, "  %s: %s\n", name, item.Reason); werr != nil {
+			return fmt.Errorf("writing review item: %w", werr)
+		}
+	}
+	if werr := writeLicenceRemedy(reviews, stderr); werr != nil {
+		return werr
+	}
+	if werr := writeCopyrightRemedy(reviews, stderr); werr != nil {
+		return werr
+	}
+	return &exitError{code: ExitPolicy, msg: fmt.Sprintf("%d module(s) require review", len(reviews))}
 }
 
 // noticeDeclarations builds the operator's recorded copyrights from the loaded

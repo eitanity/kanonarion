@@ -14,6 +14,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/failurecause"
 
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -56,7 +57,7 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runScanList(cmd.Context(), walkID, limit, offset, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
@@ -105,42 +106,7 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 		return fmt.Errorf("listing scan runs: %w", uerr)
 	}
 	if jsonOut {
-		type entry struct {
-			ID          string `json:"id"`
-			WalkID      string `json:"walk_id"`
-			Status      string `json:"status"`
-			CompletedAt string `json:"completed_at"`
-			Reason      string `json:"reason,omitempty"`
-			// InputsUnresolvable states, when present, that the walk this run
-			// names is gone. Absent on a run whose walk resolves, so an existing
-			// consumer sees no change.
-			InputsUnresolvable string `json:"inputs_unresolvable,omitempty"`
-		}
-		out := make([]entry, 0, len(runs)+len(unreadable))
-		for _, r := range runs {
-			e := entry{ID: r.ID, WalkID: r.WalkID, Status: string(r.OverallStatus), CompletedAt: ledgerStamp(r.CompletedAt)}
-			if unresolved[r.WalkID] {
-				e.InputsUnresolvable = unresolvableInputsNote(r.WalkID)
-			}
-			out = append(out, e)
-		}
-		// The unreadable rows join the same array rather than a section of their
-		// own: a caller that reads this output as "the runs in the store" must
-		// not be able to miss them, and one that filters on status still can.
-		for _, u := range unreadable {
-			// A run's identity is its id and it has no generation, so the label is
-			// the bare id — the same value, under the same key the readable rows use.
-			out = append(out, entry{ID: u.label(), Status: statusUnreadable, Reason: u.Reason})
-		}
-		var zero *listZeroScope
-		if len(out) == 0 {
-			scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
-			if serr != nil {
-				return serr
-			}
-			zero = &scope
-		}
-		return writeListDocument(stdout, out, trunc, zero)
+		return writeScanListJSON(ctx, walkID, offset, runs, unreadable, unresolved, trunc, uc, stdout)
 	}
 	if len(runs) == 0 && len(unreadable) == 0 {
 		scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
@@ -159,6 +125,47 @@ func runScanList(ctx context.Context, walkID string, limit, offset int, uc Query
 	}
 	writeUnreadableRows(stdout, unreadable, scanRunIDColumn)
 	return writeListTruncationNotice(stdout, trunc)
+}
+
+// writeScanListJSON writes the runs, the unreadable rows among them, as one
+// JSON document.
+func writeScanListJSON(ctx context.Context, walkID string, offset int, runs []vuldomain.WalkScanRun, unreadable []unreadableRowEntry, unresolved map[string]bool, trunc listTruncation, uc QueryScanRunsUseCase, stdout io.Writer) error {
+	type entry struct {
+		ID          string `json:"id"`
+		WalkID      string `json:"walk_id"`
+		Status      string `json:"status"`
+		CompletedAt string `json:"completed_at"`
+		Reason      string `json:"reason,omitempty"`
+		// InputsUnresolvable states, when present, that the walk this run
+		// names is gone. Absent on a run whose walk resolves, so an existing
+		// consumer sees no change.
+		InputsUnresolvable string `json:"inputs_unresolvable,omitempty"`
+	}
+	out := make([]entry, 0, len(runs)+len(unreadable))
+	for _, r := range runs {
+		e := entry{ID: r.ID, WalkID: r.WalkID, Status: string(r.OverallStatus), CompletedAt: ledgerStamp(r.CompletedAt)}
+		if unresolved[r.WalkID] {
+			e.InputsUnresolvable = unresolvableInputsNote(r.WalkID)
+		}
+		out = append(out, e)
+	}
+	// The unreadable rows join the same array rather than a section of their
+	// own: a caller that reads this output as "the runs in the store" must
+	// not be able to miss them, and one that filters on status still can.
+	for _, u := range unreadable {
+		// A run's identity is its id and it has no generation, so the label is
+		// the bare id — the same value, under the same key the readable rows use.
+		out = append(out, entry{ID: u.label(), Status: statusUnreadable, Reason: u.Reason})
+	}
+	var zero *listZeroScope
+	if len(out) == 0 {
+		scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
+		if serr != nil {
+			return serr
+		}
+		zero = &scope
+	}
+	return writeListDocument(stdout, out, trunc, zero)
 }
 
 // scanListZeroScope lifts the walk-id filter and re-asks the store, so a zero
@@ -256,7 +263,7 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, ctr.QueryCallGraph, ctr.QueryWalks, ctr.QueryNative, stdout, stderr)
 		},
 	}
@@ -418,69 +425,10 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	nativeCov := nativeRollupOver(ctx, natives, nativeWalkCoords(ctx, walks, run.WalkID))
 
 	if jsonOut {
-		out := scanShowJSON{
-			ID:               run.ID,
-			WalkID:           run.WalkID,
-			Build:            walkBuildOf(scannedWalk),
-			Snapshot:         run.Snapshot,
-			PerModuleResults: run.PerModuleResults,
-			StartedAt:        run.StartedAt,
-			CompletedAt:      run.CompletedAt,
-			OverallStatus:    run.OverallStatus,
-			PipelineVersion:  run.PipelineVersion,
-			Operator:         run.Operator,
-			ContentHash:      run.ContentHash,
-			AffectedModules:  affected,
-			WithdrawnModules: summary.withdrawn,
-			ScanFailures:     summary.scanFailed,
-			ReadErrors:       summary.readErrors,
-			MissingRecords:   summary.missing,
-
-			Superseded:           run.PipelineVersion != vulnPipelineVersion,
-			ReadsPipelineVersion: vulnPipelineVersion,
-			SupersededRecords:    summary.superseded,
-			NativeCoverage:       nativeCov,
-		}
-		if !walkPresent {
-			out.InputsUnresolvable = unresolvableInputsNote(run.WalkID)
-		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding scan run: %w", err)
-		}
-		// The same gate as the text surface. A caller reading JSON branches on the
-		// exit status for the same reason a caller reading prose does, and the two
-		// surfaces answering one question with two numbers is the drift this change
-		// exists to remove.
-		return scanShowServedExit(summary.superseded, summary.missing, len(run.PerModuleResults))
+		return writeScanShowJSON(stdout, run, scannedWalk, summary, walkPresent, nativeCov)
 	}
 
-	_, _ = fmt.Fprintf(stdout, "ID:          %s\n", run.ID)
-	if walkPresent {
-		_, _ = fmt.Fprintf(stdout, "Walk ID:     %s\n", run.WalkID)
-	} else {
-		// Stated on the line the reference is rendered on, so a reader cannot take
-		// the id for a resolvable one without also reading that it is not.
-		_, _ = fmt.Fprintf(stdout, "Walk ID:     %s (%s)\n", run.WalkID, unresolvableInputsShort)
-	}
-	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", run.OverallStatus)
-	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
-	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", ledgerStamp(run.StartedAt))
-	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", ledgerStamp(run.CompletedAt))
-	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
-	_, _ = fmt.Fprintf(stdout, "Advisories:  %s\n", advisoryCountLine(run.Snapshot))
-	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
-	// One line per reason rather than one for the out-of-toolchain set alone, so
-	// a Partial run is explained whichever reason produced it and no Unscannable
-	// module is absent from the detail view.
-	for _, section := range unscannable.sections() {
-		line := fmt.Sprintf("%s: %d", section.display.heading, len(section.coords))
-		if section.display.hint != "" {
-			line += " — " + section.display.hint
-		}
-		_, _ = fmt.Fprintf(stdout, "%s\n", line)
-	}
+	printScanShowHeader(stdout, run, walkPresent, unscannable)
 	// The build the walk was resolved in, and the reachability split over the
 	// findings below, are both whole-run statements: they belong beside Status,
 	// ahead of the per-module detail a reader drops into afterwards. The build
@@ -523,6 +471,77 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		_, _ = fmt.Fprint(stdout, note)
 	}
 	return scanShowServedExit(summary.superseded, summary.missing, len(run.PerModuleResults))
+}
+
+// writeScanShowJSON writes the run as JSON and returns the exit its served
+// records call for.
+func writeScanShowJSON(stdout io.Writer, run vuldomain.WalkScanRun, scannedWalk walkdomain.WalkRecord, summary scanShowSummary, walkPresent bool, nativeCov *nativeWalkRollup) error {
+	out := scanShowJSON{
+		ID:               run.ID,
+		WalkID:           run.WalkID,
+		Build:            walkBuildOf(scannedWalk),
+		Snapshot:         run.Snapshot,
+		PerModuleResults: run.PerModuleResults,
+		StartedAt:        run.StartedAt,
+		CompletedAt:      run.CompletedAt,
+		OverallStatus:    run.OverallStatus,
+		PipelineVersion:  run.PipelineVersion,
+		Operator:         run.Operator,
+		ContentHash:      run.ContentHash,
+		AffectedModules:  summary.affected,
+		WithdrawnModules: summary.withdrawn,
+		ScanFailures:     summary.scanFailed,
+		ReadErrors:       summary.readErrors,
+		MissingRecords:   summary.missing,
+
+		Superseded:           run.PipelineVersion != vulnPipelineVersion,
+		ReadsPipelineVersion: vulnPipelineVersion,
+		SupersededRecords:    summary.superseded,
+		NativeCoverage:       nativeCov,
+	}
+	if !walkPresent {
+		out.InputsUnresolvable = unresolvableInputsNote(run.WalkID)
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		return fmt.Errorf("encoding scan run: %w", err)
+	}
+	// The same gate as the text surface. A caller reading JSON branches on the
+	// exit status for the same reason a caller reading prose does, and the two
+	// surfaces answering one question with two numbers is the drift this change
+	// exists to remove.
+	return scanShowServedExit(summary.superseded, summary.missing, len(run.PerModuleResults))
+}
+
+// printScanShowHeader prints the run's identity, status, snapshot and module
+// count, and one line per reason a module went unscanned.
+func printScanShowHeader(stdout io.Writer, run vuldomain.WalkScanRun, walkPresent bool, unscannable *unscannableRollup) {
+	_, _ = fmt.Fprintf(stdout, "ID:          %s\n", run.ID)
+	if walkPresent {
+		_, _ = fmt.Fprintf(stdout, "Walk ID:     %s\n", run.WalkID)
+	} else {
+		// Stated on the line the reference is rendered on, so a reader cannot take
+		// the id for a resolvable one without also reading that it is not.
+		_, _ = fmt.Fprintf(stdout, "Walk ID:     %s (%s)\n", run.WalkID, unresolvableInputsShort)
+	}
+	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", run.OverallStatus)
+	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
+	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", ledgerStamp(run.StartedAt))
+	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", ledgerStamp(run.CompletedAt))
+	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+	_, _ = fmt.Fprintf(stdout, "Advisories:  %s\n", advisoryCountLine(run.Snapshot))
+	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
+	// One line per reason rather than one for the out-of-toolchain set alone, so
+	// a Partial run is explained whichever reason produced it and no Unscannable
+	// module is absent from the detail view.
+	for _, section := range unscannable.sections() {
+		line := fmt.Sprintf("%s: %d", section.display.heading, len(section.coords))
+		if section.display.hint != "" {
+			line += " — " + section.display.hint
+		}
+		_, _ = fmt.Fprintf(stdout, "%s\n", line)
+	}
 }
 
 // writeScanModuleFindings prints one findings section: a heading with the module
@@ -690,7 +709,7 @@ func scanRunPinnedRecord(
 	// does: the run's record is then one this build cannot serve, and that is
 	// reported as the read failure it is rather than as absence.
 	var aside setAsideRows
-	if err := aside.take(err); err != nil {
+	if err = aside.take(err); err != nil {
 		return vuldomain.VulnerabilityRecord{}, false, fmt.Errorf(
 			"reading the record %s pinned for %s: %w", contentHash, coord, err)
 	}
@@ -795,7 +814,7 @@ func newVulnScanHistoryCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runScanHistory(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, stdout)
 		},
 	}
@@ -825,37 +844,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	// empty array, never a human sentence that fails to parse. Only the text
 	// path gets the prose.
 	if jsonOut {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if runs == nil {
-			runs = []vuldomain.WalkScanRun{}
-		}
-		// The unreadable rows are reported on their own key rather than folded
-		// into the run array, whose elements are whole WalkScanRuns: an entry
-		// that is not one would have to be faked, and a fabricated run is a
-		// worse answer than an omitted one. The key is absent when there are
-		// none, so an existing consumer sees no change. The unresolvable-inputs
-		// statement joins on the same terms and for the same reason: it is a fact
-		// about the walk, not a field of any run.
-		if len(unreadable) > 0 || len(aside) > 0 || !walkPresent {
-			payload := struct {
-				Runs               []vuldomain.WalkScanRun `json:"runs"`
-				Unreadable         []unreadableRowEntry    `json:"unreadable,omitempty"`
-				SetAside           []setAsideJSON          `json:"set_aside,omitempty"`
-				InputsUnresolvable string                  `json:"inputs_unresolvable,omitempty"`
-			}{Runs: runs, Unreadable: unreadable, SetAside: aside.json()}
-			if !walkPresent {
-				payload.InputsUnresolvable = unresolvableInputsNote(walkID)
-			}
-			if err := enc.Encode(payload); err != nil {
-				return fmt.Errorf("encoding scan runs: %w", err)
-			}
-			return nil
-		}
-		if err := enc.Encode(runs); err != nil {
-			return fmt.Errorf("encoding scan runs: %w", err)
-		}
-		return nil
+		return writeScanHistoryJSON(stdout, walkID, runs, unreadable, aside, walkPresent)
 	}
 
 	// Stated on stderr when the command ends, as every text read states one.
@@ -882,6 +871,42 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	return nil
 }
 
+// writeScanHistoryJSON writes the walk's runs as JSON: a bare array, or an
+// object when there are unreadable rows or the walk is gone.
+func writeScanHistoryJSON(stdout io.Writer, walkID string, runs []vuldomain.WalkScanRun, unreadable []unreadableRowEntry, aside setAsideRows, walkPresent bool) error {
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if runs == nil {
+		runs = []vuldomain.WalkScanRun{}
+	}
+	// The unreadable rows are reported on their own key rather than folded
+	// into the run array, whose elements are whole WalkScanRuns: an entry
+	// that is not one would have to be faked, and a fabricated run is a
+	// worse answer than an omitted one. The key is absent when there are
+	// none, so an existing consumer sees no change. The unresolvable-inputs
+	// statement joins on the same terms and for the same reason: it is a fact
+	// about the walk, not a field of any run.
+	if len(unreadable) > 0 || len(aside) > 0 || !walkPresent {
+		payload := struct {
+			Runs               []vuldomain.WalkScanRun `json:"runs"`
+			Unreadable         []unreadableRowEntry    `json:"unreadable,omitempty"`
+			SetAside           []setAsideJSON          `json:"set_aside,omitempty"`
+			InputsUnresolvable string                  `json:"inputs_unresolvable,omitempty"`
+		}{Runs: runs, Unreadable: unreadable, SetAside: aside.json()}
+		if !walkPresent {
+			payload.InputsUnresolvable = unresolvableInputsNote(walkID)
+		}
+		if err := enc.Encode(payload); err != nil {
+			return fmt.Errorf("encoding scan runs: %w", err)
+		}
+		return nil
+	}
+	if err := enc.Encode(runs); err != nil {
+		return fmt.Errorf("encoding scan runs: %w", err)
+	}
+	return nil
+}
+
 // newVulnScanDiffCmd returns the vuln-scan-diff command.
 func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
@@ -904,7 +929,7 @@ func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runScanDiff(cmd.Context(), args[0], args[1], jsonOut, ctr.DiffScanRuns, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
@@ -920,7 +945,7 @@ func runScanDiff(
 	// and says so: in the document under --json, on stderr otherwise.
 	var aside setAsideRows
 	diff, err := ucDiff.Diff(ctx, runIDA, runIDB)
-	if err := aside.take(err); err != nil {
+	if err = aside.take(err); err != nil {
 		return fmt.Errorf("computing scan diff: %w", err)
 	}
 	// A diff is a claim about two runs of one walk, so the walk it names carries
@@ -961,6 +986,14 @@ func runScanDiff(
 		return nil
 	}
 
+	printScanDiffSections(stdout, diff)
+
+	return nil
+}
+
+// printScanDiffSections prints each non-empty section of the diff: new,
+// withdrawn, resolved, reachability changes and unresolved.
+func printScanDiffSections(stdout io.Writer, diff vuldomain.ScanRunDiff) {
 	if len(diff.NewFindings) > 0 {
 		_, _ = fmt.Fprintf(stdout, "NEW findings (%d):\n", len(diff.NewFindings))
 		for _, d := range diff.NewFindings {
@@ -1025,6 +1058,4 @@ func runScanDiff(
 				u.Finding.ID, u.Coordinate.Path(), u.Coordinate.Version(), u.Kind, u.Reason)
 		}
 	}
-
-	return nil
 }

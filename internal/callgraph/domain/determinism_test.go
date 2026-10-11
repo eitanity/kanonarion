@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/wireshape"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -37,6 +37,7 @@ var sealedCallGraphCollections = map[string]bool{
 	"Nodes":                     true,
 	"PrefixAttributedPackages":  true,
 	"StdlibPackages":            true,
+	"DependencyPackages":        true,
 	"SynthesisedGoMod.Requires": true,
 }
 
@@ -88,7 +89,7 @@ func TestCallGraphRecord_ContentHashIsIndependentOfInputOrder(t *testing.T) {
 // makeTiedCallGraphRecord populates every sealed collection, with pairs that
 // tie on the leading key of each comparator.
 func makeTiedCallGraphRecord() domain.CallGraphRecord {
-	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	return domain.CallGraphRecord{
 		SchemaVersion: domain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
@@ -121,6 +122,7 @@ func makeTiedCallGraphRecord() domain.CallGraphRecord {
 		FailedPackages:           []string{"example.com/mod/broken", "example.com/mod/worse"},
 		PrefixAttributedPackages: []string{"example.com/mod/x", "example.com/mod/y"},
 		StdlibPackages:           []string{"encoding/json", "net/http", "os"},
+		DependencyPackages:       []string{"example.com/dep", "example.com/dep/sub", "gopkg.in/yaml.v2"},
 		ForeignModulesBuilt: []domain.ForeignModule{
 			{Path: "example.com/mod/nested", Version: "v1.0.0"},
 			{Path: "example.com/mod/nested", Version: "v1.1.0"},
@@ -167,6 +169,9 @@ func shuffleCallGraphRecord(rng *rand.Rand, r *domain.CallGraphRecord) {
 	})
 	rng.Shuffle(len(r.StdlibPackages), func(i, j int) {
 		r.StdlibPackages[i], r.StdlibPackages[j] = r.StdlibPackages[j], r.StdlibPackages[i]
+	})
+	rng.Shuffle(len(r.DependencyPackages), func(i, j int) {
+		r.DependencyPackages[i], r.DependencyPackages[j] = r.DependencyPackages[j], r.DependencyPackages[i]
 	})
 	rng.Shuffle(len(r.PrefixAttributedPackages), func(i, j int) {
 		r.PrefixAttributedPackages[i], r.PrefixAttributedPackages[j] = r.PrefixAttributedPackages[j], r.PrefixAttributedPackages[i]

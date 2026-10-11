@@ -2,8 +2,10 @@ package domain
 
 import (
 	"container/heap"
+	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 )
@@ -154,6 +156,13 @@ func Analyse(rec cgdomain.CallGraphRecord, roots []string) CapabilityReport {
 			rec.OverallStatus.String() + "); capability set is a lower bound and may be incomplete"
 	}
 
+	// A graph the analysing binary could not read is not a lower bound found in
+	// the source, and the reader is owed the reason and what lifts it.
+	if clause, remedy, ok := cgdomain.AnalyserLimitCaveat(rec.FailureDetail); ok && report.Partial {
+		report.Caveat = strings.TrimSpace("call graph did not fully resolve (status " + rec.OverallStatus.String() +
+			"): " + clause + "; capability set is a lower bound and may be incomplete. " + remedy)
+	}
+
 	nodeByID := make(map[string]cgdomain.CallNode, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		nodeByID[n.ID] = n
@@ -209,7 +218,7 @@ func widestPaths(
 	}
 
 	for pq.Len() > 0 {
-		it := heap.Pop(pq).(widestItem)
+		it := popWidest(pq)
 		if settled[it.id] {
 			continue
 		}
@@ -397,7 +406,25 @@ func (q widestQueue) Less(i, j int) bool {
 
 func (q widestQueue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
 
-func (q *widestQueue) Push(x any) { *q = append(*q, x.(widestItem)) }
+// Push is called by container/heap with what heap.Push was given, and only
+// this file calls heap.Push, always with a widestItem.
+func (q *widestQueue) Push(x any) {
+	it, ok := x.(widestItem)
+	if !ok {
+		panic(fmt.Sprintf("capability: widestQueue pushed %T, not widestItem", x))
+	}
+	*q = append(*q, it)
+}
+
+// popWidest pops the next item. The queue holds widestItem only (see Push).
+func popWidest(pq *widestQueue) widestItem {
+	x := heap.Pop(pq)
+	it, ok := x.(widestItem)
+	if !ok {
+		panic(fmt.Sprintf("capability: widestQueue popped %T, not widestItem", x))
+	}
+	return it
+}
 
 func (q *widestQueue) Pop() any {
 	old := *q

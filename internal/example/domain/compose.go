@@ -191,6 +191,11 @@ func servesBefore(a, b ExampleRecord) bool {
 	if ca, cb := completed(a), completed(b); ca != cb {
 		return ca
 	}
+	// Files the binary could not read are a weaker measurement than any the
+	// module failed to parse: a newer binary reads them.
+	if la, lb := a.AnalyserLimit != nil, b.AnalyserLimit != nil; la != lb {
+		return lb
+	}
 	if len(a.ParseFailures) != len(b.ParseFailures) {
 		return len(a.ParseFailures) < len(b.ParseFailures)
 	}

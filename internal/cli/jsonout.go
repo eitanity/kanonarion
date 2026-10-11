@@ -151,6 +151,9 @@ type interfaceRecordJSON struct {
 	// rather than spelling it as an empty string a consumer reads as an absent
 	// toolchain.
 	Toolchain string `json:"toolchain"`
+	// AnalyserLimit names the files this kanonarion could not read. Absent when
+	// it read every file, which is every record written before the field existed.
+	AnalyserLimit *analyserLimitJSON `json:"analyser_limit,omitempty"`
 }
 
 func toPosJSON(p ifacedomain.SourcePosition) sourcePositionJSON {
@@ -237,5 +240,6 @@ func toInterfaceRecordJSON(r ifacedomain.InterfaceRecord) interfaceRecordJSON {
 		ContentHash:       r.ContentHash,
 		ArtefactIdentity:  r.ArtefactIdentity,
 		SourceContentHash: r.SourceContentHash,
+		AnalyserLimit:     toAnalyserLimitJSON(r.AnalyserLimit),
 	}
 }

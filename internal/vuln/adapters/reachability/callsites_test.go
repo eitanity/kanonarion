@@ -112,25 +112,7 @@ func TestReadCallSites_ReadsTheEdgesOfTheCallersItWasAsked(t *testing.T) {
 			len(answer.Edges), answer.Edges)
 	}
 
-	iface := answer.Edges[ports.CallSiteKey{
-		FromID: "example.com/dep/auto.(*Uploader).upload",
-		ToID:   "example.com/dep/aws.(*S3Client).CurrentID",
-	}]
-	if iface.Confidence != string(callgraphdomain.ConfidenceCHAOverapprox) {
-		t.Errorf("the interface edge's confidence is %q", iface.Confidence)
-	}
-	if iface.InterfaceID != "example.com/dep/auto.StorageClient" {
-		t.Errorf("the interface attributed is %q", iface.InterfaceID)
-	}
-	if iface.Implementers != 2 {
-		t.Errorf("the implementer count is %d, want 2", iface.Implementers)
-	}
-	if iface.ImplementationModule != "example.com/dep" {
-		t.Errorf("the implementation module is %q", iface.ImplementationModule)
-	}
-	if iface.CallSiteFile != "auto/uploader.go" || iface.CallSiteLine != 167 {
-		t.Errorf("the call site is %s:%d", iface.CallSiteFile, iface.CallSiteLine)
-	}
+	assertInterfaceCallSite(t, answer)
 
 	reflectEdge := answer.Edges[ports.CallSiteKey{
 		FromID: "example.com/dep/auto.(*Uploader).upload",
@@ -159,6 +141,31 @@ func TestReadCallSites_ReadsTheEdgesOfTheCallersItWasAsked(t *testing.T) {
 	}]
 	if direct.CallSiteLine != 12 {
 		t.Errorf("the repeated call site resolved to line %d, want the first row's 12", direct.CallSiteLine)
+	}
+}
+
+// assertInterfaceCallSite checks the interface edge carries its confidence,
+// interface, implementers, implementation module and call site.
+func assertInterfaceCallSite(t *testing.T, answer ports.CallSiteAnswer) {
+	t.Helper()
+	iface := answer.Edges[ports.CallSiteKey{
+		FromID: "example.com/dep/auto.(*Uploader).upload",
+		ToID:   "example.com/dep/aws.(*S3Client).CurrentID",
+	}]
+	if iface.Confidence != string(callgraphdomain.ConfidenceCHAOverapprox) {
+		t.Errorf("the interface edge's confidence is %q", iface.Confidence)
+	}
+	if iface.InterfaceID != "example.com/dep/auto.StorageClient" {
+		t.Errorf("the interface attributed is %q", iface.InterfaceID)
+	}
+	if iface.Implementers != 2 {
+		t.Errorf("the implementer count is %d, want 2", iface.Implementers)
+	}
+	if iface.ImplementationModule != "example.com/dep" {
+		t.Errorf("the implementation module is %q", iface.ImplementationModule)
+	}
+	if iface.CallSiteFile != "auto/uploader.go" || iface.CallSiteLine != 167 {
+		t.Errorf("the call site is %s:%d", iface.CallSiteFile, iface.CallSiteLine)
 	}
 }
 

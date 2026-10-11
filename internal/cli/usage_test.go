@@ -308,7 +308,7 @@ func TestUsage_ProductionAndTestSitesAreNeverMerged(t *testing.T) {
 		t.Fatalf("used site counts are not the two measured axes: %v / %v",
 			doc["used_production_sites"], doc["used_test_sites"])
 	}
-	sym := doc["used"].([]any)[0].(map[string]any)
+	sym := mustAs[map[string]any](t, mustAs[[]any](t, doc["used"])[0])
 	if sym["production_sites"] != float64(1) || sym["test_sites"] != float64(1) {
 		t.Errorf("per-symbol counts are not split: %v", sym)
 	}
@@ -317,7 +317,7 @@ func TestUsage_ProductionAndTestSitesAreNeverMerged(t *testing.T) {
 			t.Errorf("the document carries %q: a merged site count is exactly what must not be readable", banned)
 		}
 	}
-	dispatch := doc["unresolved_dispatch"].(map[string]any)
+	dispatch := mustAs[map[string]any](t, doc["unresolved_dispatch"])
 	if dispatch["production_edges"] != float64(2) || dispatch["test_edges"] != float64(0) {
 		t.Errorf("the dispatch class merges its surfaces: %v", dispatch)
 	}
@@ -342,8 +342,11 @@ func TestUsage_ReferenceEdgeIsUseAndIsNotACall(t *testing.T) {
 	if !strings.Contains(got, "[reference]") {
 		t.Errorf("a value reference is rendered as a call:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
-	sym := doc["used"].([]any)[0].(map[string]any)
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
+	sym := mustAs[map[string]any](t, mustAs[[]any](t, doc["used"])[0])
 	if sym["reference_sites"] != float64(1) {
 		t.Errorf("reference_sites does not carry the distinction: %v", sym)
 	}
@@ -377,15 +380,18 @@ func TestUsage_OverApproximatedEdgesAreItsOwnClassAndNotUse(t *testing.T) {
 // A machine consumer merging the two arrays would lose the distinction, so the
 // class states it as a field rather than only in prose.
 func TestUsage_DispatchClassStatesItEstablishesNoUse(t *testing.T) {
-	doc, _, _ := runUsageJSON(t, defaultUsageFixture(t), usageModCoord())
-	dispatch := doc["unresolved_dispatch"].(map[string]any)
+	doc, _, err := runUsageJSON(t, defaultUsageFixture(t), usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
+	dispatch := mustAs[map[string]any](t, doc["unresolved_dispatch"])
 	if dispatch["establishes_use"] != false {
 		t.Errorf("establishes_use is not stated false: %v", dispatch["establishes_use"])
 	}
 	if dispatch["symbol_count"] != float64(2) || dispatch["site_count"] != float64(1) {
 		t.Errorf("the fan-out shape is not readable: %v", dispatch)
 	}
-	if note, _ := dispatch["note"].(string); note != usageConfidenceNote {
+	if note := optAs[string](t, dispatch["note"]); note != usageConfidenceNote {
 		t.Errorf("the class carries no note saying what it is: %q", note)
 	}
 }
@@ -416,13 +422,16 @@ func TestUsage_InitEdgeIsLinkageNotUse(t *testing.T) {
 // that are not part of it are excluded for stated reasons: a test declaration is
 // not API, and an SSA wrapper is an ID no callee could ever match.
 func TestUsage_UnreachedIsDrawnFromTheModulesOwnPublicAPI(t *testing.T) {
-	doc, _, _ := runUsageJSON(t, defaultUsageFixture(t), usageModCoord())
+	doc, _, err := runUsageJSON(t, defaultUsageFixture(t), usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["public_api_count"] != float64(3) {
 		t.Fatalf("public API population = %v, want 3 (Encode, Decode, Unused)", doc["public_api_count"])
 	}
 	var got []string
-	for _, v := range doc["unreached_public_api"].([]any) {
-		got = append(got, v.(string))
+	for _, v := range mustAs[[]any](t, doc["unreached_public_api"]) {
+		got = append(got, mustAs[string](t, v))
 	}
 	want := []string{usageModPath + ".Decode", usageModPath + ".Unused"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
@@ -434,7 +443,10 @@ func TestUsage_UnreachedIsDrawnFromTheModulesOwnPublicAPI(t *testing.T) {
 // is marked where the reader meets it: it is not reached by a Direct edge, and
 // it is not a symbol nothing goes near.
 func TestUsage_UnreachedNamesTheOnesAnUnresolvedDispatchReaches(t *testing.T) {
-	got, _ := runUsageText(t, defaultUsageFixture(t), usageModCoord())
+	got, err := runUsageText(t, defaultUsageFixture(t), usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, "example.com/mod.Decode  (named by an unresolved dispatch above)") {
 		t.Errorf("an unreached symbol the fan-out names is not marked:\n%s", got)
 	}
@@ -446,14 +458,20 @@ func TestUsage_AbsentModuleGraphMakesUnreachedUnmeasured(t *testing.T) {
 	fx := newUsageFixture(t, usageFixtureOpts{
 		projectNodes: usageNodes(), projectEdges: usageDefaultEdges(), moduleMissing: true,
 	})
-	got, _ := runUsageText(t, fx, usageModCoord())
+	got, err := runUsageText(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, "Unreached — unmeasured: the store holds no call graph for any version of example.com/mod") {
 		t.Errorf("an absent module graph is not stated as unmeasured:\n%s", got)
 	}
 	if !strings.Contains(got, "kanonarion callgraph example.com/mod@v1.0.0") {
 		t.Errorf("the remedy that produces the population is not named:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["module_call_graph_found"] != false {
 		t.Errorf("module_call_graph_found does not state the absence: %v", doc["module_call_graph_found"])
 	}
@@ -484,7 +502,10 @@ func TestUsage_ModuleNeverEnumeratedIsUnresolvedNotAbsent(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err == nil {
+		t.Fatal("an UNRESOLVED answer exits non-zero; want the refusal")
+	}
 	if doc["answer"] != "UNRESOLVED" {
 		t.Errorf("answer = %v, want UNRESOLVED", doc["answer"])
 	}
@@ -507,7 +528,10 @@ func TestUsage_EnumerableModuleWithNoEdgesStaysResolvedAbsent(t *testing.T) {
 	if !strings.Contains(got, "answer: RESOLVED-ABSENT") {
 		t.Errorf("a measured absence was downgraded:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["answer"] != "RESOLVED-ABSENT" || doc["module_call_graph_found"] != true {
 		t.Errorf("answer=%v graph_found=%v", doc["answer"], doc["module_call_graph_found"])
 	}
@@ -543,7 +567,10 @@ func TestUsage_AFailedModuleGraphEnumeratesNoSurfaceAndIsNotAnAbsence(t *testing
 	if strings.Contains(got, "with no Direct edge from this project (0 of 0)") {
 		t.Errorf("an unlisted surface was printed as an enumerated empty one:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err == nil {
+		t.Fatal("an UNRESOLVED answer exits non-zero; want the refusal")
+	}
 	if doc["answer"] != "UNRESOLVED" {
 		t.Errorf("answer = %v, want UNRESOLVED", doc["answer"])
 	}
@@ -635,7 +662,10 @@ func TestUsage_AVersionWithNoGraphIsNeverNamedAsMeasured(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	doc, _, _ := runUsageJSON(t, fx, asked)
+	doc, _, err := runUsageJSON(t, fx, asked)
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["version"] != "v1.0.0" || doc["requested_version"] != "v9.9.9" || doc["version_basis"] != "build_resolved" {
 		t.Errorf("the document does not separate the two versions: %v / %v / %v",
 			doc["version"], doc["requested_version"], doc["version_basis"])
@@ -654,11 +684,17 @@ func TestUsage_HighestStoredVersionAnswersWhenTheBuildOffersNone(t *testing.T) {
 		projectNodes: usageNodes(), projectEdges: usageDefaultEdges(), moduleNodes: usageModuleNodes(),
 		walkModules: []coordinate.ModuleCoordinate{coordinatetest.MustNew(usageModPath, "v0.9.0")},
 	})
-	got, _ := runUsageText(t, fx, coordinatetest.MustNew(usageModPath, "v9.9.9"))
+	got, err := runUsageText(t, fx, coordinatetest.MustNew(usageModPath, "v9.9.9"))
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, "This report measures example.com/mod@v1.0.0 — the newest version of the module the store holds") {
 		t.Errorf("the rule that chose the version is not stated:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, coordinatetest.MustNew(usageModPath, "v9.9.9"))
+	doc, _, err := runUsageJSON(t, fx, coordinatetest.MustNew(usageModPath, "v9.9.9"))
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["version_basis"] != "highest_stored" {
 		t.Errorf("version_basis = %v, want highest_stored", doc["version_basis"])
 	}
@@ -671,7 +707,10 @@ func TestUsage_AStoredRequestedVersionIsNeverSubstituted(t *testing.T) {
 		projectNodes: usageNodes(), projectEdges: usageDefaultEdges(), moduleNodes: usageModuleNodes(),
 		walkModules: []coordinate.ModuleCoordinate{coordinatetest.MustNew(usageModPath, "v0.9.0")},
 	})
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["version"] != "v1.0.0" || doc["version_basis"] != "as_requested" {
 		t.Errorf("the version asked for was not the one measured: %v / %v", doc["version"], doc["version_basis"])
 	}
@@ -773,7 +812,7 @@ func TestUsage_NestedModuleOutsideTheBuildIsStillItsOwnOwner(t *testing.T) {
 // the same conflation wearing a different heading.
 func assertUsageIDsBelongToTheModule(t *testing.T, doc map[string]any, raw []byte) {
 	t.Helper()
-	path, _ := doc["module"].(string)
+	path := optAs[string](t, doc["module"])
 	owns := func(id string) bool {
 		return strings.HasPrefix(id, path+".") || strings.HasPrefix(id, path+"/")
 	}
@@ -785,7 +824,7 @@ func assertUsageIDsBelongToTheModule(t *testing.T, doc map[string]any, raw []byt
 		}
 	}
 	check("used", usageJSONSymbolIDs(t, doc["used"]))
-	dispatch, _ := doc["unresolved_dispatch"].(map[string]any)
+	dispatch := optAs[map[string]any](t, doc["unresolved_dispatch"])
 	check("unresolved_dispatch", usageJSONSymbolIDs(t, dispatch["symbols"]))
 	check("unreached_public_api", usageJSONStrings(t, doc["unreached_public_api"]))
 	for _, pkg := range usageJSONStrings(t, doc["linked_not_called_packages"]) {
@@ -797,11 +836,11 @@ func assertUsageIDsBelongToTheModule(t *testing.T, doc map[string]any, raw []byt
 
 func usageJSONSymbolIDs(t *testing.T, v any) []string {
 	t.Helper()
-	items, _ := v.([]any)
+	items := optAs[[]any](t, v)
 	out := make([]string, 0, len(items))
 	for _, it := range items {
-		m, _ := it.(map[string]any)
-		id, _ := m["node_id"].(string)
+		m := optAs[map[string]any](t, it)
+		id := optAs[string](t, m["node_id"])
 		out = append(out, id)
 	}
 	return out
@@ -809,10 +848,10 @@ func usageJSONSymbolIDs(t *testing.T, v any) []string {
 
 func usageJSONStrings(t *testing.T, v any) []string {
 	t.Helper()
-	items, _ := v.([]any)
+	items := optAs[[]any](t, v)
 	out := make([]string, 0, len(items))
 	for _, it := range items {
-		s, _ := it.(string)
+		s := optAs[string](t, it)
 		out = append(out, s)
 	}
 	return out
@@ -839,7 +878,10 @@ func TestUsage_MeasuredZeroIsResolvedAbsentWithItsScopeAndExitsZero(t *testing.T
 		"reaches example.com/mod@v1.0.0, measured over the 1 edge(s) of its stored call graph") {
 		t.Errorf("the zero does not state what it was measured over:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["answer"] != "RESOLVED-ABSENT" {
 		t.Errorf("answer = %v, want RESOLVED-ABSENT", doc["answer"])
 	}
@@ -930,7 +972,10 @@ func TestUsage_DeclaredInterfacesAreNamedAndSatisfactionIsStatedUnmeasured(t *te
 			{ID: usageModPath + ".testDouble", Package: usageModPath, Name: "testDouble", IsTest: true},
 		},
 	})
-	got, _ := runUsageText(t, fx, usageModCoord())
+	got, err := runUsageText(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, "Interfaces declared by the module (1):") ||
 		!strings.Contains(got, usageModPath+".Writer") {
 		t.Errorf("the module's interfaces are not named:\n%s", got)
@@ -941,7 +986,10 @@ func TestUsage_DeclaredInterfacesAreNamedAndSatisfactionIsStatedUnmeasured(t *te
 	if !strings.Contains(got, usageSatisfactionNote) {
 		t.Errorf("satisfaction is not stated as unmeasured:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["interface_satisfaction_measured"] != false {
 		t.Errorf("interface_satisfaction_measured is not stated: %v", doc["interface_satisfaction_measured"])
 	}
@@ -950,7 +998,10 @@ func TestUsage_DeclaredInterfacesAreNamedAndSatisfactionIsStatedUnmeasured(t *te
 // With no interface there is nothing to satisfy, so the caveat does not arise.
 // A caveat printed where it cannot apply is how a reader learns to skip caveats.
 func TestUsage_NoDeclaredInterfaceCarriesNoSatisfactionCaveat(t *testing.T) {
-	got, _ := runUsageText(t, defaultUsageFixture(t), usageModCoord())
+	got, err := runUsageText(t, defaultUsageFixture(t), usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, "Interfaces declared by the module: none") {
 		t.Errorf("the empty case is not stated:\n%s", got)
 	}
@@ -965,14 +1016,20 @@ func TestUsage_NoDeclaredInterfaceCarriesNoSatisfactionCaveat(t *testing.T) {
 // every list above is an absence of measurement. It is said where the reader
 // meets the numbers and fielded for a machine.
 func TestUsage_UnmeasuredKindsAreNamedOnBothSurfaces(t *testing.T) {
-	got, _ := runUsageText(t, defaultUsageFixture(t), usageModCoord())
+	got, err := runUsageText(t, defaultUsageFixture(t), usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, usageUnmeasuredKindsNote(usageModCoord())) {
 		t.Errorf("the unmeasured kinds are not named beside the counts:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, defaultUsageFixture(t), usageModCoord())
+	doc, _, err := runUsageJSON(t, defaultUsageFixture(t), usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	var kinds []string
-	for _, v := range doc["unmeasured_kinds"].([]any) {
-		kinds = append(kinds, v.(string))
+	for _, v := range mustAs[[]any](t, doc["unmeasured_kinds"]) {
+		kinds = append(kinds, mustAs[string](t, v))
 	}
 	if strings.Join(kinds, ",") != "type,const,var" {
 		t.Errorf("unmeasured_kinds = %v", kinds)
@@ -989,11 +1046,17 @@ func TestUsage_ModuleAtAnotherVersionInTheBuildIsStated(t *testing.T) {
 		projectNodes: usageNodes(), projectEdges: usageDefaultEdges(), moduleNodes: usageModuleNodes(),
 		walkModules: []coordinate.ModuleCoordinate{coordinatetest.MustNew(usageModPath, "v0.9.0")},
 	})
-	got, _ := runUsageText(t, fx, usageModCoord())
+	got, err := runUsageText(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, "caveat: the build above resolves example.com/mod to v0.9.0, not the v1.0.0 measured here") {
 		t.Errorf("the disagreement between the build and the graph is not stated:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["module_in_build"] != false || doc["module_path_in_build"] != true {
 		t.Errorf("the two build facts are not separated: %v / %v",
 			doc["module_in_build"], doc["module_path_in_build"])
@@ -1023,7 +1086,10 @@ func TestUsage_ModuleOutsideTheBuildIsAnsweredAndSaidToBe(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["module_in_build"] != false || doc["module_path_in_build"] != false {
 		t.Errorf("the two build facts are not both false: %v / %v",
 			doc["module_in_build"], doc["module_path_in_build"])
@@ -1066,9 +1132,18 @@ func TestUsage_IsByteIdenticalUnderReorderedEdges(t *testing.T) {
 		projectNodes: usageNodes(), projectEdges: reversed, moduleNodes: usageModuleNodes(), dir: dir,
 	})
 
-	a, _ := runUsageText(t, forward, usageModCoord())
-	b, _ := runUsageText(t, backward, usageModCoord())
-	again, _ := runUsageText(t, forward, usageModCoord())
+	a, err := runUsageText(t, forward, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
+	b, err := runUsageText(t, backward, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
+	again, err := runUsageText(t, forward, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if a != b {
 		t.Errorf("edge order changed the answer:\n--- forward\n%s\n--- backward\n%s", a, b)
 	}
@@ -1076,8 +1151,14 @@ func TestUsage_IsByteIdenticalUnderReorderedEdges(t *testing.T) {
 		t.Errorf("two runs of one query differ:\n%s\n%s", a, again)
 	}
 
-	_, rawA, _ := runUsageJSON(t, forward, usageModCoord())
-	_, rawB, _ := runUsageJSON(t, backward, usageModCoord())
+	_, rawA, err := runUsageJSON(t, forward, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
+	_, rawB, err := runUsageJSON(t, backward, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if !bytes.Equal(rawA, rawB) {
 		t.Errorf("the JSON document is not stable under edge order:\n%s\n%s", rawA, rawB)
 	}
@@ -1125,11 +1206,17 @@ func TestUsage_JSONStatesMeasuredZerosAndEmptyArrays(t *testing.T) {
 // it filtered against, and each of those is readable off the document.
 func TestUsage_ScopeNoticeFactsAreAllFielded(t *testing.T) {
 	fx := defaultUsageFixture(t)
-	got, _ := runUsageText(t, fx, usageModCoord())
+	got, err := runUsageText(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, "notice: results restricted to the 2 module versions resolved by walk \"walk-1\"") {
 		t.Errorf("the scope notice is missing:\n%s", got)
 	}
-	doc, _, _ := runUsageJSON(t, fx, usageModCoord())
+	doc, _, err := runUsageJSON(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageJSON: %v", err)
+	}
 	if doc["scope_size"] != float64(2) || doc["walk_id"] != "walk-1" || doc["walk_scope"] != "code" {
 		t.Errorf("the notice's facts are not readable off the document: %v", doc)
 	}
@@ -1231,7 +1318,10 @@ func TestUsage_ASiteWithNoRecordedPositionSaysSo(t *testing.T) {
 		}},
 		moduleNodes: usageModuleNodes(),
 	})
-	got, _ := runUsageText(t, fx, usageModCoord())
+	got, err := runUsageText(t, fx, usageModCoord())
+	if err != nil {
+		t.Fatalf("runUsageText: %v", err)
+	}
 	if !strings.Contains(got, "(position not recorded)") {
 		t.Errorf("a site with no position is rendered as a blank location:\n%s", got)
 	}
@@ -1310,7 +1400,7 @@ func TestUsage_ANamedWalkIsReportedAsPinned(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	sel := doc["walk_selection"].(map[string]any)
+	sel := mustAs[map[string]any](t, doc["walk_selection"])
 	if sel["rule"] != "pinned" || sel["candidates"] != nil {
 		t.Errorf("a caller-named walk is reported as a choice this command made: %v", sel)
 	}
@@ -1348,12 +1438,12 @@ func TestUsage_DispatchSitesAreDeduplicatedAndOrdered(t *testing.T) {
 	})
 	doc, _, err := runUsageJSON(t, fx, usageModCoord())
 	requireExit(t, err, ExitPartial)
-	dispatch := doc["unresolved_dispatch"].(map[string]any)
-	sites := dispatch["sites"].([]any)
+	dispatch := mustAs[map[string]any](t, doc["unresolved_dispatch"])
+	sites := mustAs[[]any](t, dispatch["sites"])
 	if len(sites) != 2 {
 		t.Fatalf("two distinct sites naming three edges = %d rows, want 2", len(sites))
 	}
-	if sites[0].(map[string]any)["file"] != "svc/a.go" {
+	if mustAs[map[string]any](t, sites[0])["file"] != "svc/a.go" {
 		t.Errorf("the sites are not ordered: %v", sites)
 	}
 	if dispatch["edge_count"] != float64(3) {

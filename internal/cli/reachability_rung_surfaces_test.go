@@ -82,7 +82,7 @@ func decodeFindings(t *testing.T, raw []byte) map[string]map[string]any {
 	}
 	out := map[string]map[string]any{}
 	for _, f := range doc.Findings {
-		id, _ := f["id"].(string)
+		id := optAs[string](t, f["id"])
 		out[id] = f
 	}
 	return out
@@ -122,7 +122,7 @@ func TestRecordJSONCarriesTheRung(t *testing.T) {
 	}
 	// The reason is what turns the rung from a label into a measurement, and a
 	// verdict with no absence to qualify must not invent one.
-	if r, _ := findings["GO-2025-0001"]["soundness_reason"].(string); !strings.Contains(r, "govulncheck") {
+	if r := optAs[string](t, findings["GO-2025-0001"]["soundness_reason"]); !strings.Contains(r, "govulncheck") {
 		t.Errorf("the negative's reason does not name its analyser: %q", r)
 	}
 	if _, present := findings["GO-2025-0002"]["soundness_reason"]; present {
@@ -333,7 +333,7 @@ func TestLocalProbeJSONCarriesTheRung(t *testing.T) {
 	}
 	got := map[string]any{}
 	for _, f := range doc.Modules[0].Findings {
-		id, _ := f["cve_id"].(string)
+		id := optAs[string](t, f["cve_id"])
 		got[id] = f["soundness"]
 	}
 	for id, want := range map[string]string{

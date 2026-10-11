@@ -96,20 +96,20 @@ func TestPrefetchMissing_FetchesMissingModules(t *testing.T) {
 	missing := coordinatetest.MustNew("github.com/missing/mod", "v2.0.0")
 
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID: walkID,
 		Graph: walkdomain.Graph{
 			Nodes: []walkdomain.GraphNode{{Coordinate: present}, {Coordinate: missing}},
 		},
-	})
+	}))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 
 	// Only seed the 'present' module in the fact store and blob store.
 	presentRec := fetchtest.Record(t, fetchtest.Coordinate(present), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-present"))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, presentRec), strings.NewReader("zip-present"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(present), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-present")))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, presentRec), strings.NewReader("zip-present")))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(present), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-present"))))
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}
@@ -118,7 +118,7 @@ func TestPrefetchMissing_FetchesMissingModules(t *testing.T) {
 
 	// The scan will fail to populate the modcache for 'missing' since there's no
 	// blob, but that's fine — we only care that FetchModule was called for it.
-	_, _ = uc.Scan(ctx, application.ScanWalkParams{WalkID: walkID})
+	_, _ = uc.Scan(ctx, application.ScanWalkParams{WalkID: walkID}) //nolint:errcheck // expected to fail; the assertion is what was fetched
 
 	if !fetcher.wasFetched(missing) {
 		t.Errorf("expected FetchModule to be called for %s, but it was not", missing)
@@ -139,18 +139,18 @@ func TestPrefetchMissing_RefetchesGoModOnlyRecord(t *testing.T) {
 	node := coordinatetest.MustNew("github.com/gomod/only", "v1.0.0")
 
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: node}}},
-	})
+	}))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 
 	// Seed a go.mod-only record: the go.mod is held and no zip was ever fetched.
 	goModRec := fetchtest.Record(t, fetchtest.Coordinate(node), fetchtest.PipelineVersion("v1"), fetchtest.GoModOnly("gomod-only"))
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, goModRec), strings.NewReader("module github.com/gomod/only"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(node), fetchtest.PipelineVersion("v1"), fetchtest.GoModOnly("gomod-only")))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, goModRec), strings.NewReader("module github.com/gomod/only")))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(node), fetchtest.PipelineVersion("v1"), fetchtest.GoModOnly("gomod-only"))))
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}
@@ -178,16 +178,16 @@ func TestPrefetchMissing_NilFetcherIsNoop(t *testing.T) {
 
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: coord}}},
-	})
+	}))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip")))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip")))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))))
 
 	vulnStore := newFakeVulnStore()
 
@@ -215,10 +215,10 @@ func TestPrefetchMissing_FetchErrorIsWarningOnly(t *testing.T) {
 
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: coord}}},
-	})
+	}))
 
 	// Module is NOT in the fact store — prefetch will be attempted.
 	facts := newFakeFacts()
@@ -252,14 +252,14 @@ func TestPrefetchMissing_AllPresentSkipsFetch(t *testing.T) {
 	for i, c := range coords {
 		nodes[i] = walkdomain.GraphNode{Coordinate: c}
 	}
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{ID: walkID, Graph: walkdomain.Graph{Nodes: nodes}})
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{ID: walkID, Graph: walkdomain.Graph{Nodes: nodes}}))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	for _, c := range coords {
 		rec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))
-		_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+c.Path()))
-		_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path())))
+		mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+c.Path())))
+		mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))))
 	}
 
 	vulnStore := newFakeVulnStore()
@@ -285,16 +285,16 @@ func TestPrefetchMissing_EverythingSetAsideIsFetched(t *testing.T) {
 	aside := coordinatetest.MustNew("github.com/aside/mod", "v1.0.0")
 
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: aside}}},
-	})
+	}))
 	facts := newFakeFacts()
 	facts.setAside = true
 	fetcher := &fakeFetcher{}
 
 	uc := makePrefetchScanWalkUC(t, walkStore, newFakeVulnStore(), facts, newFakeBlob(), fetcher)
-	_, _ = uc.Scan(ctx, application.ScanWalkParams{WalkID: walkID})
+	_, _ = uc.Scan(ctx, application.ScanWalkParams{WalkID: walkID}) //nolint:errcheck // the assertion is what was fetched, not the scan's answer
 
 	if !fetcher.wasFetched(aside) {
 		t.Errorf("FetchModule was not called for %s, whose every record was set aside", aside)

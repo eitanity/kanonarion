@@ -92,27 +92,7 @@ func (uc *FetchModuleUseCase) persistRecord(ctx context.Context, log *slog.Logge
 			slog.Bool("force", req.Force),
 		}
 		if !uc.allowVerificationDowngrade {
-			log.LogAttrs(ctx, slog.LevelWarn, "record_write_refused_weaker_verification", attrs...)
-			if aerr := uc.recordOverwriteEvent(audit.EventFactRecordWriteRefused, existing.FactRecord, record, req.Force); aerr != nil {
-				return domain2.CompositeRecord{}, aerr
-			}
-			if uc.cachedArtefactsReadable(ctx, log, existing.FactRecord) {
-				return existing, nil
-			}
-			// The composed record is the stronger fact, but this run cannot resolve
-			// its artefacts — the very reason the cache check re-fetched. Handing it
-			// back would return an address the caller cannot read, trading one half
-			// of the fix for the other. The store keeps the stronger fact; this run
-			// gets the artefacts it just measured, unpersisted.
-			log.InfoContext(ctx, "kept_record_unreadable_returning_measured_artefacts",
-				slog.String("kept_content_location", existing.ContentLocation),
-				slog.String("measured_content_location", record.ContentLocation),
-			)
-			measured, cerr := domain2.Compose([]domain2.FactRecord{record})
-			if cerr != nil {
-				return domain2.CompositeRecord{}, fmt.Errorf("composing the unpersisted measurement of %s: %w", m.Coordinate, cerr)
-			}
-			return measured, nil
+			return uc.refuseWeakerRecord(ctx, log, req, m, existing, record, attrs)
 		}
 		log.LogAttrs(ctx, slog.LevelWarn, "record_downgraded_by_operator_request", attrs...)
 		if aerr := uc.recordOverwriteEvent(audit.EventFactRecordDowngraded, existing.FactRecord, record, req.Force); aerr != nil {
@@ -120,8 +100,8 @@ func (uc *FetchModuleUseCase) persistRecord(ctx context.Context, log *slog.Logge
 		}
 	}
 
-	if err := uc.facts.PutFetchRecord(ctx, sealed); err != nil {
-		return domain2.CompositeRecord{}, fmt.Errorf("appending fact record: %w", err)
+	if perr := uc.facts.PutFetchRecord(ctx, sealed); perr != nil {
+		return domain2.CompositeRecord{}, fmt.Errorf("appending fact record: %w", perr)
 	}
 	log.InfoContext(ctx, "record_appended",
 		slog.String("verification_status", record.VerificationStatus),
@@ -143,6 +123,32 @@ func (uc *FetchModuleUseCase) persistRecord(ctx context.Context, log *slog.Logge
 		return domain2.CompositeRecord{}, fmt.Errorf("appended fact record for %s is absent from the store", m.Coordinate)
 	}
 	return composed, nil
+}
+
+// refuseWeakerRecord keeps the stored, stronger record in place of a weaker
+// measurement, returning what this run can read.
+func (uc *FetchModuleUseCase) refuseWeakerRecord(ctx context.Context, log *slog.Logger, req FetchRequest, m domain2.FetchedModule, existing domain2.CompositeRecord, record domain2.FactRecord, attrs []slog.Attr) (domain2.CompositeRecord, error) {
+	log.LogAttrs(ctx, slog.LevelWarn, "record_write_refused_weaker_verification", attrs...)
+	if aerr := uc.recordOverwriteEvent(audit.EventFactRecordWriteRefused, existing.FactRecord, record, req.Force); aerr != nil {
+		return domain2.CompositeRecord{}, aerr
+	}
+	if uc.cachedArtefactsReadable(ctx, log, existing.FactRecord) {
+		return existing, nil
+	}
+	// The composed record is the stronger fact, but this run cannot resolve
+	// its artefacts — the very reason the cache check re-fetched. Handing it
+	// back would return an address the caller cannot read, trading one half
+	// of the fix for the other. The store keeps the stronger fact; this run
+	// gets the artefacts it just measured, unpersisted.
+	log.InfoContext(ctx, "kept_record_unreadable_returning_measured_artefacts",
+		slog.String("kept_content_location", existing.ContentLocation),
+		slog.String("measured_content_location", record.ContentLocation),
+	)
+	measured, cerr := domain2.Compose([]domain2.FactRecord{record})
+	if cerr != nil {
+		return domain2.CompositeRecord{}, fmt.Errorf("composing the unpersisted measurement of %s: %w", m.Coordinate, cerr)
+	}
+	return measured, nil
 }
 
 // inheritLegs transfers a validation leg this measurement did not perform from

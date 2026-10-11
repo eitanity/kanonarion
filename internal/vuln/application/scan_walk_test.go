@@ -61,8 +61,8 @@ func TestScanWalk_PreflightFailsFast(t *testing.T) {
 	if scanned {
 		t.Error("scanner.Scan was invoked despite pre-flight failure")
 	}
-	if runs, _ := vulnStore.ListAllWalkScanRuns(ctx); len(runs) != 0 {
-		t.Errorf("expected no persisted scan runs, got %d", len(runs))
+	if runs, err := vulnStore.ListAllWalkScanRuns(ctx); err != nil || len(runs) != 0 {
+		t.Errorf("expected no persisted scan runs, got %d (err %v)", len(runs), err)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestScanWalk_SnapshotPersisted(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip1"))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip1"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip1")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip1"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
@@ -217,7 +217,10 @@ func TestScanWalk_SnapshotPersisted(t *testing.T) {
 		t.Fatalf("snapshot not persisted in vuln store: %v", err)
 	}
 	defer func() { _ = rc.Close() }()
-	got, _ := io.ReadAll(rc)
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
 	if string(got) != snapshotContent {
 		t.Errorf("persisted snapshot content = %q, want %q", got, snapshotContent)
 	}
@@ -364,23 +367,23 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 
 	coord := coordinatetest.MustNew("m1", "v1")
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    "w1",
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: coord}}},
-	})
+	}))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip")))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip")))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))))
 
 	scanner := &fakeScanner{}
 	vulnStore := newFakeVulnStore()
 
 	// 1. Put a cached snapshot.
 	cachedSnap := vulntest.MustNewAt("test", "v1", now.Add(-time.Hour))
-	_ = vulnStore.PutDatabaseSnapshot(ctx, cachedSnap, strings.NewReader("cached"))
+	mustSucceed(t, vulnStore.PutDatabaseSnapshot(ctx, cachedSnap, strings.NewReader("cached")))
 
 	// 2. Mock database publishes a newer snapshot, and publishes a different
 	// advisory for the module this walk holds — so the refresh has a reason to
@@ -420,7 +423,10 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 	}
 
 	// 5. Verify v2 was persisted.
-	persisted, ok, _ := vulnStore.GetLatestDatabaseSnapshot(ctx)
+	persisted, ok, err := vulnStore.GetLatestDatabaseSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("GetLatestDatabaseSnapshot: %v", err)
+	}
 	if !ok || persisted.Version() != "v2" {
 		t.Errorf("fresh snapshot v2 not persisted")
 	}
@@ -476,7 +482,7 @@ func TestScanWalk_LocalReplaceUnscannable(t *testing.T) {
 	// Fact for the target only — the local-replace dep deliberately has no
 	// fact record, mirroring the live wiring where the walker never fetched it.
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(target), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-target"))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-target"))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-target")))
 	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(target), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-target"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
@@ -562,7 +568,7 @@ func TestScanWalk_WorkerFailureRecordIsSealed(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	for _, c := range []coordinate.ModuleCoordinate{target, dep} {
 		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
-		_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip"))
+		mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip")))
 		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 			t.Fatalf("PutFetchRecord: %v", err)
 		}

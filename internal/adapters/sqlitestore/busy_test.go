@@ -63,7 +63,7 @@ func holdWriteLock(t *testing.T, holder *sql.DB, d time.Duration) *sync.WaitGrou
 		}
 		if _, err := tx.Exec(`INSERT INTO rows (v) VALUES ('holder')`); err != nil {
 			held.Done()
-			_ = tx.Rollback()
+			_ = tx.Rollback() //nolint:errcheck // the write error below is the failure
 			t.Errorf("holder write: %v", err)
 			return
 		}

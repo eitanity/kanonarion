@@ -8,10 +8,10 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
-var refCoord, _ = coordinate.NewModuleCoordinate("example.com/refmod", "v1.0.0")
+var refCoord = coordinatetest.MustNew("example.com/refmod", "v1.0.0")
 
 // refModuleFiles is the shape the blind spot was found in: a router that stores
 // handlers, a type whose methods ARE the handlers, and a registrar that hands

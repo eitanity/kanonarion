@@ -92,7 +92,7 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	result, err := ctr.ExtractLocalCallGraph.Execute(ctx, cgapp.LocalExtractRequest{
 		Dir:        abs,

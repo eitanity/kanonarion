@@ -24,9 +24,9 @@ func seedFactNodeGoMod(t testing.TB, ctx context.Context, facts *fakeFacts, blob
 		fetchtest.GoMod("gomod-" + coord.Path() + "-" + coord.Version()),
 	}
 	rec := fetchtest.Record(t, opts...)
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path()+"-"+coord.Version()))
-	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path()+"-"+coord.Version())))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod)))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...)))
 }
 
 // TestScan_PopulatesScannedNodeBuildListDeps verifies that a scannable node's own
@@ -55,12 +55,12 @@ func TestScan_PopulatesScannedNodeBuildListDeps(t *testing.T) {
 		")\n"
 
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID: walkID,
 		Graph: walkdomain.Graph{
 			Nodes: []walkdomain.GraphNode{{Coordinate: consumer}},
 		},
-	})
+	}))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -117,10 +117,10 @@ func TestScan_SourcesSelfNestedAncestor(t *testing.T) {
 	goMod := "module " + consumer.Path() + "\n\ngo 1.19\n\nrequire " + ancestor.Path() + " " + ancestor.Version() + "\n"
 
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: consumer}}},
-	})
+	}))
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()

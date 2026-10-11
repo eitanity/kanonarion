@@ -24,15 +24,15 @@ func TestAuditingStore_AttestationDelegates(t *testing.T) {
 		t.Fatalf("NewAuditingStore: %v", err)
 	}
 	defer func() {
-		if err := store.Close(); err != nil {
-			t.Errorf("store.Close: %v", err)
+		if cerr := store.Close(); cerr != nil {
+			t.Errorf("store.Close: %v", cerr)
 		}
 	}()
 
 	ctx := context.Background()
 	att := sampleAttestation("github.com/foo/bar", "v2.0.0", "0.1.0", domain2.SubjectBlob, "abcd")
-	if err := store.PutAttestation(ctx, att); err != nil {
-		t.Fatalf("PutAttestation: %v", err)
+	if perr := store.PutAttestation(ctx, att); perr != nil {
+		t.Fatalf("PutAttestation: %v", perr)
 	}
 	got, err := store.ListAttestations(ctx, att.Coordinate, "0.1.0")
 	if err != nil {
@@ -57,14 +57,14 @@ func TestAuditingStore_RecordsOnPut(t *testing.T) {
 		t.Fatalf("NewAuditingStore: %v", err)
 	}
 	defer func() {
-		if err := store.Close(); err != nil {
-			t.Errorf("store.Close: %v", err)
+		if cerr := store.Close(); cerr != nil {
+			t.Errorf("store.Close: %v", cerr)
 		}
 	}()
 
 	r := sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.1.0")
-	if err := store.PutFetchRecord(context.Background(), mustSeal(t, r)); err != nil {
-		t.Fatalf("PutFetchRecord: %v", err)
+	if perr := store.PutFetchRecord(context.Background(), mustSeal(t, r)); perr != nil {
+		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 
 	// Audit file should have one JSONL line.
@@ -109,13 +109,13 @@ func TestAuditLog_RecordEvent_GenericEnvelope(t *testing.T) {
 		t.Fatalf("NewAuditLog: %v", err)
 	}
 
-	if err := log.RecordEvent(audit.Event{
+	if rerr := log.RecordEvent(audit.Event{
 		Type:    audit.EventReplaceDirectiveObserved,
 		Payload: map[string]any{"target": "../local/fork", "classification": "highest"},
-	}); err != nil {
-		t.Fatalf("RecordEvent: %v", err)
+	}); rerr != nil {
+		t.Fatalf("RecordEvent: %v", rerr)
 	}
-	if err := log.RecordEvent(audit.Event{Type: audit.EventType("not_a_real_event")}); err == nil {
+	if rerr := log.RecordEvent(audit.Event{Type: audit.EventType("not_a_real_event")}); rerr == nil {
 		t.Fatal("RecordEvent accepted an unknown event type")
 	}
 
@@ -162,15 +162,15 @@ func TestAuditingStore_GetDelegates(t *testing.T) {
 		t.Fatalf("NewAuditingStore: %v", err)
 	}
 	defer func() {
-		if err := store.Close(); err != nil {
-			t.Errorf("store.Close: %v", err)
+		if cerr := store.Close(); cerr != nil {
+			t.Errorf("store.Close: %v", cerr)
 		}
 	}()
 
 	ctx := context.Background()
 	r := sampleRecord(t, "example.com/m", "v1.0.0", "0.1.0")
-	if err := store.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
-		t.Fatalf("PutFetchRecord: %v", err)
+	if perr := store.PutFetchRecord(ctx, mustSeal(t, r)); perr != nil {
+		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 
 	got, ok, err := store.GetFetchRecord(ctx, r.Coordinate(), r.PipelineVersion)

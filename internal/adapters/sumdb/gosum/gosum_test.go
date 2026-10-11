@@ -80,7 +80,7 @@ func TestOps(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/test-path" {
-			_, _ = w.Write([]byte("test data"))
+			_, _ = w.Write([]byte("test data")) //nolint:errcheck // a failed write is seen by the client under test
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -108,25 +108,7 @@ func TestOps(t *testing.T) {
 		t.Error("ReadRemote should fail for 404")
 	}
 
-	// Test ReadConfig/WriteConfig
-	err = o.WriteConfig("test-config", nil, []byte("config data"))
-	if err != nil {
-		t.Errorf("WriteConfig failed: %v", err)
-	}
-
-	data, err = o.ReadConfig("test-config")
-	if err != nil {
-		t.Errorf("ReadConfig failed: %v", err)
-	}
-	if string(data) != "config data" {
-		t.Errorf("expected 'config data', got %q", string(data))
-	}
-
-	// Test WriteConfig update
-	err = o.WriteConfig("test-config", []byte("config data"), []byte("new config data"))
-	if err != nil {
-		t.Errorf("WriteConfig update failed: %v", err)
-	}
+	checkOpsConfigRoundTrip(t, o)
 
 	// Test WriteCache update
 	o.WriteCache("cache-file", []byte("new cache data"))
@@ -145,8 +127,45 @@ func TestOps(t *testing.T) {
 		t.Errorf("SecurityError not recorded correctly: %v", o.secErr)
 	}
 
+	checkOpsConfigEdgeCases(t, o)
+
+	// Test ReadRemote edge cases
+	_, err = o.ReadRemote("/not-found")
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Errorf("ReadRemote expected 404 error, got %v", err)
+	}
+}
+
+// checkOpsConfigRoundTrip writes, reads back and updates a config entry.
+func checkOpsConfigRoundTrip(t *testing.T, o *ops) {
+	t.Helper()
+	// Test ReadConfig/WriteConfig
+	err := o.WriteConfig("test-config", nil, []byte("config data"))
+	if err != nil {
+		t.Errorf("WriteConfig failed: %v", err)
+	}
+
+	data, err := o.ReadConfig("test-config")
+	if err != nil {
+		t.Errorf("ReadConfig failed: %v", err)
+	}
+	if string(data) != "config data" {
+		t.Errorf("expected 'config data', got %q", string(data))
+	}
+
+	// Test WriteConfig update
+	err = o.WriteConfig("test-config", []byte("config data"), []byte("new config data"))
+	if err != nil {
+		t.Errorf("WriteConfig update failed: %v", err)
+	}
+}
+
+// checkOpsConfigEdgeCases covers the reserved "key" entry, a missing entry,
+// and a WriteConfig whose old value does not match.
+func checkOpsConfigEdgeCases(t *testing.T, o *ops) {
+	t.Helper()
 	// Test ReadConfig edge cases
-	data, err = o.ReadConfig("key")
+	data, err := o.ReadConfig("key")
 	if err != nil || string(data) != "test-key" {
 		t.Errorf("ReadConfig('key') failed: data=%q, err=%v", string(data), err)
 	}
@@ -164,12 +183,6 @@ func TestOps(t *testing.T) {
 	err = o.WriteConfig("test-config", []byte("wrong old"), []byte("new"))
 	if err == nil {
 		t.Error("WriteConfig with wrong 'old' data should fail")
-	}
-
-	// Test ReadRemote edge cases
-	_, err = o.ReadRemote("/not-found")
-	if err == nil || !strings.Contains(err.Error(), "404") {
-		t.Errorf("ReadRemote expected 404 error, got %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package application_test
 
 import (
+	"context"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -38,19 +39,19 @@ func TestScanWalk_TwoScansInOneSecondAreTwoCompleteRuns(t *testing.T) {
 
 	m1 := coordinatetest.MustNew("m1", "v1")
 	walkStore := newFakeWalkStore()
-	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+	mustSucceed(t, walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    "w1",
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: m1}}},
-	})
+	}))
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(m1), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(m1), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip")))
+	mustSucceed(t, blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip")))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(m1), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))))
 
 	snapshot := vulntest.MustNewAt("test", "v1", now.Add(-time.Hour))
-	if err := vulnStore.PutDatabaseSnapshot(ctx, snapshot, strings.NewReader("cached")); err != nil {
-		t.Fatalf("PutDatabaseSnapshot: %v", err)
+	if perr := vulnStore.PutDatabaseSnapshot(ctx, snapshot, strings.NewReader("cached")); perr != nil {
+		t.Fatalf("PutDatabaseSnapshot: %v", perr)
 	}
 	scanner := &fakeScanner{}
 	moduleUC := application.NewScanModuleUseCase(
@@ -100,6 +101,13 @@ func TestScanWalk_TwoScansInOneSecondAreTwoCompleteRuns(t *testing.T) {
 		t.Fatalf("store holds %d runs of w1, want 2", len(runs))
 	}
 
+	assertRunsStoredWhole(ctx, t, vulnStore, db, m1, first, second)
+}
+
+// assertRunsStoredWhole checks each run is stored under its own seal with a
+// membership index naming its own record.
+func assertRunsStoredWhole(ctx context.Context, t *testing.T, vulnStore *vulnsqlite.Store, db sqlitestore.DB, m1 coordinate.ModuleCoordinate, first, second domain.WalkScanRun) {
+	t.Helper()
 	hashes := make(map[string]string, 2)
 	for _, want := range []domain.WalkScanRun{first, second} {
 		got, found, err := vulnStore.GetWalkScanRun(ctx, want.ID)

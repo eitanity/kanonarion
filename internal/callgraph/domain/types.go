@@ -412,6 +412,9 @@ type CallNode struct {
 	// production blast radius of a change from its test surface without hiding
 	// either: both are in the graph, and the caller chooses.
 	IsTest bool
+	// ExportDirective is the directive that hands a package-level function to a
+	// caller outside Go, read from its doc comment; zero when it carries none.
+	ExportDirective ExportDirective
 }
 
 // InterfaceType is an interface declared in the analysed module, made
@@ -783,6 +786,12 @@ type CallGraphRecord struct {
 	// closure must therefore refuse to act on an empty one rather than treat it
 	// as an empty set.
 	StdlibPackages []string
+	// DependencyPackages is the build's dependency closure: every import path
+	// the go command placed in a module other than the analysed one, sorted. A
+	// read joining a dependency's own graph to this one keeps only these
+	// packages of it. Empty is a build that links no other module, or a record
+	// from before the field.
+	DependencyPackages []string
 	// DerivedBy states WHY this generation exists: which reuse gate governed the
 	// append, and whether the run asked it or forced past it. See
 	// GenerationDerivation.

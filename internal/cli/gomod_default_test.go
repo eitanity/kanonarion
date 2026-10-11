@@ -38,7 +38,7 @@ func chdirWithGoMod(t *testing.T, gomod string) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(orig) })
+	t.Cleanup(func() { mustChdir(t, orig) })
 }
 
 func TestInspectDefaultsToCwdGoMod(t *testing.T) {

@@ -115,9 +115,9 @@ func TestMigrate(t *testing.T) {
 		// Verify tables exist
 		for _, table := range []string{"t1", "t2", "schema_migrations"} {
 			var name string
-			err := db.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
-			if err != nil {
-				t.Errorf("table %s not found: %v", table, err)
+			serr := db.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+			if serr != nil {
+				t.Errorf("table %s not found: %v", table, serr)
 			}
 		}
 
@@ -210,8 +210,8 @@ func TestMigrate_StoreMetaUpdatesOnNewMigration(t *testing.T) {
 		t.Fatalf("first Open: %v", err)
 	}
 	var v1 string
-	if err := db1.DB().QueryRow(`SELECT value FROM _store_meta WHERE key = 'schema_version'`).Scan(&v1); err != nil {
-		t.Fatalf("reading schema_version after v1: %v", err)
+	if serr := db1.DB().QueryRow(`SELECT value FROM _store_meta WHERE key = 'schema_version'`).Scan(&v1); serr != nil {
+		t.Fatalf("reading schema_version after v1: %v", serr)
 	}
 	_ = db1.Close()
 
@@ -239,7 +239,10 @@ func TestMigrate_StoreMetaUpdatesOnNewMigration(t *testing.T) {
 
 func TestFakeDB(t *testing.T) {
 	// FakeDB is just a wrapper, but let's test it for completeness
-	sqlDB, _ := sql.Open("sqlite", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("opening an in-memory database: %v", err)
+	}
 	f := &sqlitestore.FakeDB{SqlDB: sqlDB}
 	if f.DB() != sqlDB {
 		t.Error("FakeDB.DB() returned wrong pointer")

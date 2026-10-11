@@ -22,7 +22,7 @@ func countingServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
-		_, _ = w.Write([]byte(`[{"version":"go1.26.4","files":[]}]`))
+		_, _ = w.Write([]byte(`[{"version":"go1.26.4","files":[]}]`)) //nolint:errcheck // a failed write is seen by the client under test
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &hits

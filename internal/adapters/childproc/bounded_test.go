@@ -121,7 +121,7 @@ func TestRunBounded_CallersCancellationIsNotADeadline(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("the cancellation is missing from the killed child's error: %v", err)
 	}
-	if _, ok := errors.AsType[*exec.ExitError](err); !ok || err.Error() != "signal: killed" {
+	if !errors.As(err, new(*exec.ExitError)) || err.Error() != "signal: killed" {
 		t.Errorf("err = %q, want the child's own exit error", err)
 	}
 }

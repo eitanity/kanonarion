@@ -111,6 +111,12 @@ func TestExtract_ClassifiesPolicyAndAudits(t *testing.T) {
 		t.Errorf("exclude-newer class = %v, want high", exc.Class)
 	}
 
+	assertDirectiveAuditEvents(t, sink)
+}
+
+// assertDirectiveAuditEvents checks one valid audit event per directive kind.
+func assertDirectiveAuditEvents(t *testing.T, sink *fakeSink) {
+	t.Helper()
 	if len(sink.events) != 2 {
 		t.Fatalf("want 2 audit events, got %d", len(sink.events))
 	}

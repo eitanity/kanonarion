@@ -114,9 +114,16 @@ func TestFetchRecord_DriftedRecordSetAsideAndTheRestServed(t *testing.T) {
 		t.Errorf("verification = %+v, stderr %q; want the readable record with the other in set_aside", v, stderr)
 	}
 
+	assertCoverageNamesSetAside(t, root, seal)
+}
+
+// assertCoverageNamesSetAside checks verification-coverage serves the readable
+// record and names the other once: on stderr as text, in the document as JSON.
+func assertCoverageNamesSetAside(t *testing.T, root, seal string) {
+	t.Helper()
 	// verification-coverage has no section for it: stderr on the text path, the
 	// document under --json.
-	stdout, stderr, err = runAside("verification-coverage", jsonDocWalkID, "--detail", "--store-root", root)
+	stdout, stderr, err := runAside("verification-coverage", jsonDocWalkID, "--detail", "--store-root", root)
 	if err != nil {
 		t.Fatalf("verification-coverage = %v\n%s", err, stderr)
 	}
@@ -269,28 +276,8 @@ func divergentStore(t *testing.T) string {
 func TestFetchRecord_DivergentRecordsAreNotAbsent(t *testing.T) {
 	root := divergentStore(t)
 
-	stdout, stderr, err := runAside("verification-coverage", jsonDocWalkID, "--json", "--store-root", root)
-	if err != nil {
-		t.Fatalf("verification-coverage --json = %v\n%s", err, stderr)
-	}
-	var cov struct {
-		Unrecorded, Divergent int
-		Modules               []struct{ Coordinate, Class, Reason string }
-	}
-	if jerr := json.Unmarshal([]byte(stdout), &cov); jerr != nil {
-		t.Fatalf("decoding: %v\n%s", jerr, stdout)
-	}
-	// The walk's root has no fetch record; it alone is unrecorded.
-	if cov.Divergent != 1 || cov.Unrecorded != 1 {
-		t.Errorf("divergent = %d, unrecorded = %d; want 1 and 1 (the root alone)", cov.Divergent, cov.Unrecorded)
-	}
-	for _, m := range cov.Modules {
-		if m.Coordinate == jsonDocDep.String() &&
-			(m.Class != fetchdomain.BucketDivergent.String() || !strings.Contains(m.Reason, "module_hash disagrees")) {
-			t.Errorf("module row = %+v, want the divergent class with the disagreement", m)
-		}
-	}
-	stdout, _, err = runAside("verification-coverage", jsonDocWalkID, "--store-root", root)
+	assertDivergentCoverageJSON(t, root)
+	stdout, _, err := runAside("verification-coverage", jsonDocWalkID, "--store-root", root)
 	divergentLine := regexp.MustCompile(`divergent fetch records\s+1\s`)
 	unrecordedLine := regexp.MustCompile(`no fetch record\s+1\s`)
 	if err != nil || !divergentLine.MatchString(stdout) || !unrecordedLine.MatchString(stdout) {
@@ -322,5 +309,32 @@ func TestFetchRecord_DivergentRecordsAreNotAbsent(t *testing.T) {
 	}
 	if code := ExitCodeForError(auditOutcomeErr([]auditModuleResult{res})); code == ExitIntegrity {
 		t.Errorf("a divergence made audit exit %d; its exit contribution is unchanged", code)
+	}
+}
+
+// assertDivergentCoverageJSON checks the coverage document counts the module
+// divergent, not unrecorded, and its row names the disagreement.
+func assertDivergentCoverageJSON(t *testing.T, root string) {
+	t.Helper()
+	stdout, stderr, err := runAside("verification-coverage", jsonDocWalkID, "--json", "--store-root", root)
+	if err != nil {
+		t.Fatalf("verification-coverage --json = %v\n%s", err, stderr)
+	}
+	var cov struct {
+		Unrecorded, Divergent int
+		Modules               []struct{ Coordinate, Class, Reason string }
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &cov); jerr != nil {
+		t.Fatalf("decoding: %v\n%s", jerr, stdout)
+	}
+	// The walk's root has no fetch record; it alone is unrecorded.
+	if cov.Divergent != 1 || cov.Unrecorded != 1 {
+		t.Errorf("divergent = %d, unrecorded = %d; want 1 and 1 (the root alone)", cov.Divergent, cov.Unrecorded)
+	}
+	for _, m := range cov.Modules {
+		if m.Coordinate == jsonDocDep.String() &&
+			(m.Class != fetchdomain.BucketDivergent.String() || !strings.Contains(m.Reason, "module_hash disagrees")) {
+			t.Errorf("module row = %+v, want the divergent class with the disagreement", m)
+		}
 	}
 }

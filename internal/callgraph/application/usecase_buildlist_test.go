@@ -121,8 +121,8 @@ func TestExecute_RecordFromTheSameBuildListIsStillServed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sealing: %v", err)
 	}
-	if err := store.PutCallGraphRecord(context.Background(), rec); err != nil {
-		t.Fatalf("seeding: %v", err)
+	if perr := store.PutCallGraphRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("seeding: %v", perr)
 	}
 
 	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.2.3") //nolint:errcheck // fixed literal

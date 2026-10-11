@@ -93,29 +93,9 @@ func parseSnippetBlock(sourcePath string, lines []string, start int) (SnippetAtt
 			ErrMalformedSnippet, sourcePath, start+1, fmt.Sprintf(format, args...))
 	}
 
-	var (
-		spdx, copyright, comment, name string
-		end                            = -1
-	)
-	for i := start + 1; i < len(lines); i++ {
-		tag := commentTag(lines[i])
-		switch {
-		case tag == snippetEndTag:
-			end = i
-		case tag == snippetBeginTag:
-			return fail("nested %s before %s", snippetBeginTag, snippetEndTag)
-		case strings.HasPrefix(tag, tagLicenseID):
-			spdx = strings.TrimSpace(strings.TrimPrefix(tag, tagLicenseID))
-		case strings.HasPrefix(tag, tagCopyrightText):
-			copyright = strings.TrimSpace(strings.TrimPrefix(tag, tagCopyrightText))
-		case strings.HasPrefix(tag, tagComment):
-			comment = strings.TrimSpace(strings.TrimPrefix(tag, tagComment))
-		case strings.HasPrefix(tag, tagName):
-			name = strings.TrimSpace(strings.TrimPrefix(tag, tagName))
-		}
-		if end >= 0 {
-			break
-		}
+	spdx, copyright, comment, name, end, nested := readSnippetTags(lines, start)
+	if nested {
+		return fail("nested %s before %s", snippetBeginTag, snippetEndTag)
 	}
 	if end < 0 {
 		return fail("unterminated block: no %s", snippetEndTag)
@@ -151,6 +131,34 @@ func parseSnippetBlock(sourcePath string, lines []string, start int) (SnippetAtt
 		att.Name = coord.String()
 	}
 	return att, end, nil
+}
+
+// readSnippetTags reads the tags of the block opened at lines[start] up to its
+// end tag; end is -1 when there is none, and nested reports a begin tag met
+// before it.
+func readSnippetTags(lines []string, start int) (spdx, copyright, comment, name string, end int, nested bool) {
+	end = -1
+	for i := start + 1; i < len(lines); i++ {
+		tag := commentTag(lines[i])
+		switch {
+		case tag == snippetEndTag:
+			end = i
+		case tag == snippetBeginTag:
+			return "", "", "", "", 0, true
+		case strings.HasPrefix(tag, tagLicenseID):
+			spdx = strings.TrimSpace(strings.TrimPrefix(tag, tagLicenseID))
+		case strings.HasPrefix(tag, tagCopyrightText):
+			copyright = strings.TrimSpace(strings.TrimPrefix(tag, tagCopyrightText))
+		case strings.HasPrefix(tag, tagComment):
+			comment = strings.TrimSpace(strings.TrimPrefix(tag, tagComment))
+		case strings.HasPrefix(tag, tagName):
+			name = strings.TrimSpace(strings.TrimPrefix(tag, tagName))
+		}
+		if end >= 0 {
+			break
+		}
+	}
+	return spdx, copyright, comment, name, end, false
 }
 
 // commentTag returns the tag text of a line-comment, or "" if the line is not

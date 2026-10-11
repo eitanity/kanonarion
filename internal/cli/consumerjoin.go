@@ -84,6 +84,8 @@ type consumerBinding struct {
 	// direction — one states the gap and the other prints a bare "not reached"
 	// over the same missing edges.
 	DroppedPackages []string
+	// DroppedDetail is the project graph's failure detail, which says why.
+	DroppedDetail string
 }
 
 // bindConsumer resolves the analysed project a call-graph join answers about:
@@ -157,6 +159,7 @@ func bindConsumer(
 	if cg.OverallStatus == cgdomain.CallGraphStatusPartial {
 		b.DroppedPackages = append(b.DroppedPackages, cg.FailedPackages...)
 		sort.Strings(b.DroppedPackages)
+		b.DroppedDetail = cg.FailureDetail
 	}
 	return b, nil
 }
@@ -214,11 +217,15 @@ func writeConsumerDroppedPackages(stdout io.Writer, b *consumerBinding) error {
 	if len(b.DroppedPackages) == 0 {
 		return nil
 	}
+	why := "did not typecheck when it was analysed"
+	if l, ok := gotoolchain.ReadAnalyserLimit(b.DroppedDetail); ok {
+		why = "were not analysed: " + l.Clause()
+	}
 	if _, err := fmt.Fprintf(stdout,
-		"  %d of %s own package(s) did not typecheck when it was analysed, so their edges were "+
+		"  %d of %s own package(s) %s, so their edges were "+
 			"dropped: %s. A call site declared in one of them cannot appear in any count above — "+
 			"those declarations are unmeasured, not unreached.\n",
-		len(b.DroppedPackages), b.Consumer.Path(), strings.Join(b.DroppedPackages, ", ")); err != nil {
+		len(b.DroppedPackages), b.Consumer.Path(), why, strings.Join(b.DroppedPackages, ", ")); err != nil {
 		return fmt.Errorf("writing consumer dropped packages: %w", err)
 	}
 	return nil

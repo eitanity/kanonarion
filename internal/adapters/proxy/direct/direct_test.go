@@ -18,9 +18,10 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
-func fakeInfoJSON(version string, origin *struct {
+func fakeInfoJSON(t *testing.T, version string, origin *struct {
 	VCS, URL, Ref, Hash string
 }) []byte {
+	t.Helper()
 	type infoOrigin struct {
 		VCS  string `json:"VCS,omitempty"`
 		URL  string `json:"URL,omitempty"`
@@ -36,7 +37,10 @@ func fakeInfoJSON(version string, origin *struct {
 	if origin != nil {
 		v.Origin = &infoOrigin{VCS: origin.VCS, URL: origin.URL, Ref: origin.Ref, Hash: origin.Hash}
 	}
-	b, _ := json.Marshal(v)
+	b, merr := json.Marshal(v)
+	if merr != nil {
+		t.Fatalf("encoding the fake .info: %v", merr)
+	}
 	return b
 }
 
@@ -64,12 +68,13 @@ func setupFakeProxy(t *testing.T, modPath, version, goModContent string, origin 
 }) *httptest.Server {
 	t.Helper()
 	zipData := createMinimalZip(t, modPath, version)
+	infoJSON := fakeInfoJSON(t, version, origin)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case matchSuffix(r.URL.Path, ".info"):
 			w.Header().Set("Content-Type", "application/json")
-			if _, err := w.Write(fakeInfoJSON(version, origin)); err != nil {
+			if _, err := w.Write(infoJSON); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 		case matchSuffix(r.URL.Path, ".ziphash"):
@@ -208,7 +213,10 @@ func TestProxy_DownloadGoMod_FetchesOnlyGoMod(t *testing.T) {
 	if dl.GoModHash.Algorithm() != "h1" || dl.GoModHash.Value() == "" {
 		t.Errorf("GoModHash = %v, want non-empty h1 hash", dl.GoModHash)
 	}
-	body, _ := io.ReadAll(dl.GoMod)
+	body, rerr := io.ReadAll(dl.GoMod)
+	if rerr != nil {
+		t.Fatalf("reading go.mod: %v", rerr)
+	}
 	if string(body) != goModContent {
 		t.Errorf("go.mod bytes = %q, want %q", body, goModContent)
 	}
@@ -313,7 +321,7 @@ func TestProxy_DownloadLimit(t *testing.T) {
 		}
 		// Return more than MaxZipBytes
 		data := make([]byte, 2048)
-		_, _ = w.Write(data)
+		_, _ = w.Write(data) //nolint:errcheck // the client stops reading at its limit
 	}))
 	defer srv.Close()
 

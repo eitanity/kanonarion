@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"sort"
 	"testing"
@@ -136,6 +137,13 @@ func TestDriftedGeneration_SetAsideOnWriteAndRead(t *testing.T) {
 		t.Errorf("findings index = %v, want ComposeAt over the readable generations %v", got, wantIDs)
 	}
 
+	assertReadNamesDrift(ctx, t, store, second, want, driftSeal)
+}
+
+// assertReadNamesDrift checks the composed read serves the readable
+// generations and names the drifted one.
+func assertReadNamesDrift(ctx context.Context, t *testing.T, store *sqlite.Store, second, want domain.VulnerabilityRecord, driftSeal string) {
+	t.Helper()
 	served, found, rerr := store.GetVulnerabilityRecordAt(ctx, second.Coordinate, "v1", second.DatabaseSnapshot, domain.RootingIsolated)
 	if !found {
 		t.Fatalf("GetVulnerabilityRecordAt found nothing (%v), want the composed record", rerr)

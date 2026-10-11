@@ -750,7 +750,9 @@ func (r *GraphResolver) fetchLevel(ctx context.Context, coords []fetchCoord, wor
 			return nil
 		})
 	}
-	_ = g.Wait()
+	// Every worker returns nil, so Wait has nothing to report: a failure travels
+	// in its result, and a cancelled fetch carries the context's error there.
+	_ = g.Wait() //nolint:errcheck // workers return nil
 	return results
 }
 
@@ -879,46 +881,7 @@ func (r *GraphResolver) resolveFromParsed(
 		// Marking st.processed here dedupes fetches within the wave; a local set
 		// dedupes expansion tasks the same way the old in-loop expandedKeys guard
 		// did. No network or parse work happens here.
-		var toFetch []bfsItem
-		var toExpand []bfsItem
-		expandQueued := make(map[string]bool)
-		for _, item := range wave {
-			coord := item.coord
-			// Coerce to the MVS-selected version of this item's own require path.
-			// A pinned (replaced) module is exempt: its coordinate is fixed by the
-			// replace directive, and the selected version tracked under its require
-			// path belongs to that path, not to the replacement target.
-			if !item.pinned {
-				if sel := st.selected[item.nodeKey]; sel != "" && sel != coord.Version() {
-					// The selected version comes from the build list, so it is a
-					// version; if it somehow is not, the item keeps the coordinate it
-					// already had rather than being coerced to a nonexistent one.
-					if selected, err := coordinate.NewModuleCoordinate(coord.Path(), sel); err == nil {
-						coord = selected
-					}
-				}
-			}
-			key := coord.String()
-
-			alreadyProcessed := st.processed[key]
-			if alreadyProcessed && (!item.expand || st.expandedKeys[key]) {
-				continue
-			}
-			atMaxDepth := depth.MaxDepth > 0 && item.depth >= depth.MaxDepth
-			bi := bfsItem{
-				coord: coord, original: st.nodes[item.nodeKey].OriginalCoordinate,
-				key: key, nodeKey: item.nodeKey, depth: item.depth, atMaxDepth: atMaxDepth,
-			}
-
-			if !alreadyProcessed {
-				st.processed[key] = true
-				toFetch = append(toFetch, bi)
-			}
-			if item.expand && !st.expandedKeys[key] && !expandQueued[key] {
-				expandQueued[key] = true
-				toExpand = append(toExpand, bi)
-			}
-		}
+		toFetch, toExpand := partitionWave(wave, st, depth)
 
 		// Phase 2 (concurrent): fetch+parse the level's new modules off the shared
 		// state, bounded by the worker pool. Per-module failures are captured in
@@ -996,6 +959,52 @@ func (r *GraphResolver) resolveFromParsed(
 	)
 
 	return g
+}
+
+// partitionWave coerces each queued item to its selected version and sorts
+// the wave into the modules to fetch and parse and those to expand.
+func partitionWave(wave []queueItem, st *resolveState, depth domain3.StageDepth) ([]bfsItem, []bfsItem) {
+	var toFetch []bfsItem
+	var toExpand []bfsItem
+	expandQueued := make(map[string]bool)
+	for _, item := range wave {
+		coord := item.coord
+		// Coerce to the MVS-selected version of this item's own require path.
+		// A pinned (replaced) module is exempt: its coordinate is fixed by the
+		// replace directive, and the selected version tracked under its require
+		// path belongs to that path, not to the replacement target.
+		if !item.pinned {
+			if sel := st.selected[item.nodeKey]; sel != "" && sel != coord.Version() {
+				// The selected version comes from the build list, so it is a
+				// version; if it somehow is not, the item keeps the coordinate it
+				// already had rather than being coerced to a nonexistent one.
+				if selected, err := coordinate.NewModuleCoordinate(coord.Path(), sel); err == nil {
+					coord = selected
+				}
+			}
+		}
+		key := coord.String()
+
+		alreadyProcessed := st.processed[key]
+		if alreadyProcessed && (!item.expand || st.expandedKeys[key]) {
+			continue
+		}
+		atMaxDepth := depth.MaxDepth > 0 && item.depth >= depth.MaxDepth
+		bi := bfsItem{
+			coord: coord, original: st.nodes[item.nodeKey].OriginalCoordinate,
+			key: key, nodeKey: item.nodeKey, depth: item.depth, atMaxDepth: atMaxDepth,
+		}
+
+		if !alreadyProcessed {
+			st.processed[key] = true
+			toFetch = append(toFetch, bi)
+		}
+		if item.expand && !st.expandedKeys[key] && !expandQueued[key] {
+			expandQueued[key] = true
+			toExpand = append(toExpand, bi)
+		}
+	}
+	return toFetch, toExpand
 }
 
 // ResolveShallow fetches only the target module, parses its go.mod require
@@ -1214,9 +1223,9 @@ func (r *GraphResolver) fetchParseLevel(ctx context.Context, items []bfsItem, wo
 			return nil
 		})
 	}
-	// Workers never return an error; Wait only surfaces context cancellation,
-	// which is already reflected in each cancelled outcome's fetchErr.
-	_ = g.Wait()
+	// Every worker returns nil, so Wait has nothing to report: a failure travels
+	// in its outcome, and a cancelled fetch carries the context's error there.
+	_ = g.Wait() //nolint:errcheck // workers return nil
 	return outcomes
 }
 
@@ -1391,9 +1400,9 @@ func (r *GraphResolver) extractGoMod(ctx context.Context, fact domain2.FactRecor
 		return nil, fmt.Errorf("deriving go.mod address for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
 	}
 	if hasGoMod {
-		data, err := r.readBlob(ctx, goModIdentity)
-		if err != nil {
-			return nil, fmt.Errorf("reading go.mod blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
+		data, rerr := r.readBlob(ctx, goModIdentity)
+		if rerr != nil {
+			return nil, fmt.Errorf("reading go.mod blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, rerr)
 		}
 		// An empty standalone go.mod is equivalent to "no go.mod" — preserve
 		// the leaf-node semantics of the zip-scan path.

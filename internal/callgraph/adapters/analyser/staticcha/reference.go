@@ -112,18 +112,24 @@ func (a *Analyser) collectReferenceEdges(
 						Kind:       domain.EdgeKindReference,
 					})
 					added++
-					for _, n := range []domain.CallNode{from, to} {
-						if _, ok := seenNodes[n.ID]; !ok {
-							seenNodes[n.ID] = struct{}{}
-							nodes = append(nodes, n)
-						}
-					}
+					nodes = appendUnseenNodes(seenNodes, nodes, from, to)
 				}
 			}
 		}
 	}
 	a.logger.InfoContext(ctx, "callgraph_reference_edges", slog.Int("count", added))
 	return nodes, edges
+}
+
+// appendUnseenNodes adds an edge's endpoints to nodes when not already there.
+func appendUnseenNodes(seenNodes map[string]struct{}, nodes []domain.CallNode, from, to domain.CallNode) []domain.CallNode {
+	for _, n := range []domain.CallNode{from, to} {
+		if _, ok := seenNodes[n.ID]; !ok {
+			seenNodes[n.ID] = struct{}{}
+			nodes = append(nodes, n)
+		}
+	}
+	return nodes
 }
 
 // referencedFuncs returns the functions instr names as a VALUE rather than as a

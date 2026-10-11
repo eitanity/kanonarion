@@ -94,7 +94,7 @@ func componentsOf(t *testing.T, doc map[string]any) []map[string]any {
 	}
 	out := make([]map[string]any, 0, len(raw))
 	for _, c := range raw {
-		out = append(out, c.(map[string]any))
+		out = append(out, mustAs[map[string]any](t, c))
 	}
 	return out
 }
@@ -117,14 +117,17 @@ func TestNative_IdentifiedLibraryBecomesItsOwnComponent(t *testing.T) {
 		}
 	}
 	if found == nil {
-		t.Fatalf("no pkg:generic component for the C library; the document lists only:\n%v", purlsOf(comps))
+		t.Fatalf("no pkg:generic component for the C library; the document lists only:\n%v", purlsOf(t, comps))
 	}
 	if found["name"] != "SQLite" || found["version"] != "3.38.0" {
 		t.Errorf("component identity = %v@%v, want SQLite@3.38.0", found["name"], found["version"])
 	}
 	// The evidence that named it travels with it, so a reader can check the claim
 	// against the artefact without re-running the tool.
-	ev, _ := json.Marshal(found["evidence"])
+	ev, err := json.Marshal(found["evidence"])
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
 	for _, want := range []string{"source-code-analysis", "sqlite3-binding.c", "sqlite3-binding.h", `#define SQLITE_VERSION`} {
 		if !strings.Contains(string(ev), want) {
 			t.Errorf("the component's evidence does not carry %q:\n%s", want, ev)
@@ -149,7 +152,7 @@ func TestNative_AssertsNothingItDidNotRead(t *testing.T) {
 				t.Errorf("the native component carries %q, which nothing measured:\n%v", forbidden, c)
 			}
 		}
-		if purl := c["purl"].(string); strings.Contains(purl, "?") {
+		if purl := mustAs[string](t, c["purl"]); strings.Contains(purl, "?") {
 			t.Errorf("the native component's purl carries qualifiers: %q", purl)
 		}
 	}
@@ -164,15 +167,15 @@ func TestNative_HostModuleDependsOnTheLibrary(t *testing.T) {
 		dep: identifiedRecord(dep, "3.38.0"),
 	})
 	deps := map[string][]string{}
-	for _, d := range doc["dependencies"].([]any) {
-		e := d.(map[string]any)
+	for _, d := range mustAs[[]any](t, doc["dependencies"]) {
+		e := mustAs[map[string]any](t, d)
 		var on []string
 		if raw, ok := e["dependsOn"].([]any); ok {
 			for _, r := range raw {
-				on = append(on, r.(string))
+				on = append(on, mustAs[string](t, r))
 			}
 		}
-		deps[e["ref"].(string)] = on
+		deps[mustAs[string](t, e["ref"])] = on
 	}
 	host := "pkg:golang/example.com/go-sqlite3@v1.14.12"
 	if !containsString(deps[host], "pkg:generic/sqlite@3.38.0") {
@@ -197,8 +200,14 @@ func TestNative_GoComponentsAreUntouched(t *testing.T) {
 		t.Fatalf("component count went %d -> %d, want exactly one more", len(before), len(after))
 	}
 	for i := range before {
-		b, _ := json.Marshal(before[i])
-		a, _ := json.Marshal(after[i])
+		b, err := json.Marshal(before[i])
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		a, err := json.Marshal(after[i])
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
 		if string(a) != string(b) {
 			t.Errorf("Go component %d changed:\n before %s\n after  %s", i, b, a)
 		}
@@ -256,7 +265,7 @@ func TestNative_UnidentifiedIsReportedToTheCaller(t *testing.T) {
 	rec.Components = nil
 	doc := generateNative(t, walk, map[coordinate.ModuleCoordinate]nativedomain.Record{dep: rec})
 	for _, c := range componentsOf(t, doc) {
-		if strings.HasPrefix(c["purl"].(string), "pkg:generic/") {
+		if strings.HasPrefix(mustAs[string](t, c["purl"]), "pkg:generic/") {
 			t.Errorf("an unidentified record produced a component: %v", c)
 		}
 	}
@@ -294,10 +303,10 @@ func TestNative_OneLibraryShippedTwiceIsOneComponent(t *testing.T) {
 			continue
 		}
 		n++
-		for _, p := range c["properties"].([]any) {
-			prop := p.(map[string]any)
+		for _, p := range mustAs[[]any](t, c["properties"]) {
+			prop := mustAs[map[string]any](t, p)
 			if prop["name"] == "kanonarion:native:host_module" {
-				hosts = append(hosts, prop["value"].(string))
+				hosts = append(hosts, mustAs[string](t, prop["value"]))
 			}
 		}
 	}
@@ -334,8 +343,8 @@ func TestNative_DifferentVersionsAreDifferentComponents(t *testing.T) {
 	})
 	var got []string
 	for _, c := range componentsOf(t, doc) {
-		if strings.HasPrefix(c["purl"].(string), "pkg:generic/") {
-			got = append(got, c["purl"].(string))
+		if strings.HasPrefix(mustAs[string](t, c["purl"]), "pkg:generic/") {
+			got = append(got, mustAs[string](t, c["purl"]))
 		}
 	}
 	// Sorted by purl, which is unique across the set, so the order is total.
@@ -407,9 +416,9 @@ func TestNative_StatesWhatItDidNotEstablish(t *testing.T) {
 		if c["purl"] != "pkg:generic/sqlite@3.38.0" {
 			continue
 		}
-		for _, p := range c["properties"].([]any) {
-			prop := p.(map[string]any)
-			props[prop["name"].(string)] = prop["value"].(string)
+		for _, p := range mustAs[[]any](t, c["properties"]) {
+			prop := mustAs[map[string]any](t, p)
+			props[mustAs[string](t, prop["name"])] = mustAs[string](t, prop["value"])
 		}
 	}
 	for name, want := range map[string]string{
@@ -458,10 +467,11 @@ func TestNative_LicenceCompletenessCountsOnlyTheGoComponents(t *testing.T) {
 	}
 }
 
-func purlsOf(comps []map[string]any) []string {
+func purlsOf(t *testing.T, comps []map[string]any) []string {
+	t.Helper()
 	out := make([]string, 0, len(comps))
 	for _, c := range comps {
-		out = append(out, c["purl"].(string))
+		out = append(out, mustAs[string](t, c["purl"]))
 	}
 	return out
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 
@@ -24,7 +25,7 @@ var sbomTestEnv = walkBuildEnv{platform: walkports.BuildEnvFilter{GOOS: "linux",
 
 func TestFindLatestProjectWalk_Found(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
+	coord := coordinatetest.MustNew("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-proj-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded, GOOS: "linux", GOARCH: "amd64"},
 	})
@@ -41,7 +42,7 @@ func TestFindLatestProjectWalk_Found(t *testing.T) {
 func TestFindLatestProjectWalk_NotFound(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
 	// Store has walks, but none matching this module.
-	other, _ := coordinate.NewModuleCoordinate("example.com/other", coordinate.LocalVersion)
+	other := coordinatetest.MustNew("example.com/other", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-other", Target: other, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded, GOOS: "linux", GOARCH: "amd64"},
 	})
@@ -67,7 +68,7 @@ func TestFindLatestProjectWalk_ListError(t *testing.T) {
 
 func TestFindLatestProjectWalk_ExcludesFailedWalks(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
+	coord := coordinatetest.MustNew("example.com/myapp", coordinate.LocalVersion)
 	// Only a failed walk is present.
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-failed", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkFailed, GOOS: "linux", GOARCH: "amd64"},
@@ -83,7 +84,7 @@ func TestFindLatestProjectWalk_ExcludesFailedWalks(t *testing.T) {
 
 func TestProjectWalkToReuse_ReusesSucceededWalk(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
+	coord := coordinatetest.MustNew("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded, GOOS: "linux", GOARCH: "amd64"},
 	})
@@ -113,7 +114,7 @@ func TestProjectWalkToReuse_ColdStoreSignalsBuild(t *testing.T) {
 // --force never reuses, even when a succeeded walk exists.
 func TestProjectWalkToReuse_ForceAlwaysBuilds(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
+	coord := coordinatetest.MustNew("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded, GOOS: "linux", GOARCH: "amd64"},
 	})

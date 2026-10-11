@@ -136,8 +136,8 @@ func ExtractStream(r io.Reader, dest string) error {
 	if err != nil {
 		return fmt.Errorf("write temp zip file: %w", err)
 	}
-	if _, err := tmpZip.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("seek temp zip file: %w", err)
+	if _, serr := tmpZip.Seek(0, io.SeekStart); serr != nil {
+		return fmt.Errorf("seek temp zip file: %w", serr)
 	}
 
 	zr, err := zip.NewReader(tmpZip, n)

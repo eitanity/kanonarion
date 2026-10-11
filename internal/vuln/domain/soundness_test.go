@@ -61,6 +61,13 @@ func TestNegativeSoundness_TheThreeModesAreDistinguishable(t *testing.T) {
 	if got["binary"] != domain.SoundnessUnconfirmed {
 		t.Errorf("govulncheck binary-mode negative = %s, want %s", got["binary"], domain.SoundnessUnconfirmed)
 	}
+	assertModesDistinguishable(t, got)
+}
+
+// assertModesDistinguishable checks the three rungs differ, only the search is
+// confirmed, and source mode outranks binary mode.
+func assertModesDistinguishable(t *testing.T, got map[string]domain.ReachabilitySoundness) {
+	t.Helper()
 	if got["source"] == got["binary"] || got["source"] == got["searched"] || got["binary"] == got["searched"] {
 		t.Errorf("the three modes are not distinguishable: %+v", got)
 	}

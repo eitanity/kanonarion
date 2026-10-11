@@ -60,7 +60,7 @@ var _ extractports.ExtractionStore = (*queryExtFakeStore)(nil)
 func TestQueryExtractionUseCase_GetExtractionRun(t *testing.T) {
 	run := domain.ExtractionRun{ID: "run-1", WalkID: "walk-1", StartedAt: time.Now()}
 	store := &queryExtFakeStore{}
-	_ = store.PutExtractionRun(context.Background(), run)
+	mustSucceed(t, store.PutExtractionRun(context.Background(), run))
 
 	uc := application.NewQueryExtractionUseCase(store)
 
@@ -94,8 +94,8 @@ func TestQueryExtractionUseCase_GetExtractionRun_StoreError(t *testing.T) {
 
 func TestQueryExtractionUseCase_ListExtractionRuns(t *testing.T) {
 	store := &queryExtFakeStore{}
-	_ = store.PutExtractionRun(context.Background(), domain.ExtractionRun{ID: "run-1", WalkID: "walk-1", StartedAt: time.Now()})
-	_ = store.PutExtractionRun(context.Background(), domain.ExtractionRun{ID: "run-2", WalkID: "walk-1", StartedAt: time.Now()})
+	mustSucceed(t, store.PutExtractionRun(context.Background(), domain.ExtractionRun{ID: "run-1", WalkID: "walk-1", StartedAt: time.Now()}))
+	mustSucceed(t, store.PutExtractionRun(context.Background(), domain.ExtractionRun{ID: "run-2", WalkID: "walk-1", StartedAt: time.Now()}))
 
 	uc := application.NewQueryExtractionUseCase(store)
 
@@ -115,5 +115,14 @@ func TestQueryExtractionUseCase_ListExtractionRuns_Error(t *testing.T) {
 	_, err := uc.ListExtractionRuns(context.Background(), extractports.ExtractionRunFilter{})
 	if !errors.Is(err, listErr) {
 		t.Errorf("got %v, want wrapping %v", err, listErr)
+	}
+}
+
+// mustSucceed fails the test when a setup step returns an error, so a fixture
+// that was never stored cannot pass as the state under test.
+func mustSucceed(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("setup: %v", err)
 	}
 }

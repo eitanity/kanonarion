@@ -304,34 +304,7 @@ func VerificationCoverageOf(obs []CoverageObservation) VerificationCoverage {
 			c.Unrecorded++
 			continue
 		}
-		switch o.Bucket {
-		case BucketCrossVerified:
-			c.CrossVerified++
-			c.CrossVerifiedBindingUnrecorded++
-		case BucketCrossVerifiedModulePathURL:
-			c.CrossVerified++
-			c.CrossVerifiedModulePathURL++
-		case BucketCrossVerifiedProxyNamedURL:
-			c.CrossVerified++
-			c.CrossVerifiedProxyNamedURL++
-		case BucketChecksumDBOnly:
-			c.ChecksumDBOnly++
-		case BucketGoSumOnly:
-			c.GoSumOnly++
-		case BucketUnverified:
-			c.Unverified++
-		case BucketLocalSource:
-			c.LocalSource++
-		case BucketUnrecorded:
-			// Not reachable from a status — BucketUnrecorded describes an absent
-			// record, handled above — but counted rather than dropped so the
-			// buckets keep partitioning the total if the mapping ever changes.
-			c.Unrecorded++
-		case BucketUnrecognised:
-			c.Unrecognised++
-		case BucketDivergent:
-			c.Divergent++
-		}
+		countBucket(&c, o)
 
 		// Local source has no remote artefact to cross-verify, so it is not a
 		// gap in the ledger's evidence either. Counting it as "not measured"
@@ -340,20 +313,57 @@ func VerificationCoverageOf(obs []CoverageObservation) VerificationCoverage {
 		if o.Bucket == BucketLocalSource || o.Bucket == BucketDivergent {
 			continue
 		}
-		switch VCSEvidenceOf(o.Legs, o.UnderLedger) {
-		case VCSRechecked:
-			c.VCSRechecked++
-		case VCSInherited:
-			c.VCSInherited++
-		case VCSNever:
-			c.VCSNever++
-		case VCSNotMeasured:
-			c.VCSNotMeasured++
-		case VCSUnavailable:
-			c.VCSUnavailable++
-		}
+		countVCSEvidence(&c, o)
 	}
 	return c
+}
+
+// countBucket counts o under its verification bucket.
+func countBucket(c *VerificationCoverage, o CoverageObservation) {
+	switch o.Bucket {
+	case BucketCrossVerified:
+		c.CrossVerified++
+		c.CrossVerifiedBindingUnrecorded++
+	case BucketCrossVerifiedModulePathURL:
+		c.CrossVerified++
+		c.CrossVerifiedModulePathURL++
+	case BucketCrossVerifiedProxyNamedURL:
+		c.CrossVerified++
+		c.CrossVerifiedProxyNamedURL++
+	case BucketChecksumDBOnly:
+		c.ChecksumDBOnly++
+	case BucketGoSumOnly:
+		c.GoSumOnly++
+	case BucketUnverified:
+		c.Unverified++
+	case BucketLocalSource:
+		c.LocalSource++
+	case BucketUnrecorded:
+		// Not reachable from a status — BucketUnrecorded describes an absent
+		// record, handled above — but counted rather than dropped so the
+		// buckets keep partitioning the total if the mapping ever changes.
+		c.Unrecorded++
+	case BucketUnrecognised:
+		c.Unrecognised++
+	case BucketDivergent:
+		c.Divergent++
+	}
+}
+
+// countVCSEvidence counts o under the evidence its git leg carries.
+func countVCSEvidence(c *VerificationCoverage, o CoverageObservation) {
+	switch VCSEvidenceOf(o.Legs, o.UnderLedger) {
+	case VCSRechecked:
+		c.VCSRechecked++
+	case VCSInherited:
+		c.VCSInherited++
+	case VCSNever:
+		c.VCSNever++
+	case VCSNotMeasured:
+		c.VCSNotMeasured++
+	case VCSUnavailable:
+		c.VCSUnavailable++
+	}
 }
 
 // Recorded is the number of observations backed by a measurement.

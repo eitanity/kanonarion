@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -20,6 +21,9 @@ type ExampleRecordHasher struct{}
 // canonical structs use alphabetically sorted JSON keys for deterministic output.
 
 type canonicalExampleRecord struct {
+	// AnalyserLimit is omitted when nil, so a record that met no limit keeps the
+	// bytes it had before the field existed.
+	AnalyserLimit *canonicalLimit `json:"analyser_limit,omitempty"`
 	// ArtefactIdentity and SourceContentHash are omitted when empty so
 	// records that predate them keep their stored content hash verifiable,
 	// on the same terms every additive field on this shape has used.
@@ -35,6 +39,29 @@ type canonicalExampleRecord struct {
 	PipelineVersion   string                  `json:"pipeline_version"`
 	SchemaVersion     string                  `json:"schema_version"`
 	SourceContentHash string                  `json:"source_content_hash,omitempty"`
+}
+
+type canonicalLimit struct {
+	Built    string   `json:"built"`
+	Files    []string `json:"files"`
+	Required string   `json:"required"`
+}
+
+func toCanonicalLimit(u *gotoolchain.UnreadSource) *canonicalLimit {
+	if u == nil {
+		return nil
+	}
+	return &canonicalLimit{Built: u.Limit.Built, Files: append([]string{}, u.Files...), Required: u.Limit.Required}
+}
+
+func (c *canonicalLimit) toDomain() *gotoolchain.UnreadSource {
+	if c == nil {
+		return nil
+	}
+	return &gotoolchain.UnreadSource{
+		Limit: gotoolchain.AnalyserLimit{Required: c.Required, Built: c.Built},
+		Files: append([]string{}, c.Files...),
+	}
 }
 
 type canonicalExampleCoord struct {
@@ -148,6 +175,7 @@ func (ExampleRecordHasher) Unmarshal(data []byte) (ExampleRecord, error) {
 	}
 
 	return ExampleRecord{
+		AnalyserLimit:     c.AnalyserLimit.toDomain(),
 		SchemaVersion:     c.SchemaVersion,
 		Ecosystem:         c.Ecosystem,
 		Coordinate:        coord,
@@ -198,6 +226,7 @@ func marshalCanonicalExample(r ExampleRecord) ([]byte, error) {
 	}
 
 	c := canonicalExampleRecord{
+		AnalyserLimit:    toCanonicalLimit(r.AnalyserLimit),
 		ArtefactIdentity: r.ArtefactIdentity,
 		ContentHash:      r.ContentHash,
 		Coordinate: canonicalExampleCoord{

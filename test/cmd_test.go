@@ -194,9 +194,13 @@ func cmdSeedWalk(args []string) {
 			os.Exit(1)
 		}
 		modContent := []byte("module " + node.Coordinate.Path() + "\n")
-		modHash, _ := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
+		modHash, herr := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(modContent)), nil
 		})
+		if herr != nil {
+			_ = db.Close()
+			os.Exit(1)
+		}
 
 		// This is a testscript subprocess entry point: it calls os.Exit and has no
 		// testing handle, so it cannot use the fetchtest builder. It seals through
@@ -267,11 +271,11 @@ func fixtureArtefact(coord coordinate.ModuleCoordinate) ([]byte, fetchdomain.Mod
 	if err != nil {
 		return fail("creating zip entry", err)
 	}
-	if _, err := f.Write([]byte("zip content for " + coord.String())); err != nil {
-		return fail("writing zip entry", err)
+	if _, werr := f.Write([]byte("zip content for " + coord.String())); werr != nil {
+		return fail("writing zip entry", werr)
 	}
-	if err := zw.Close(); err != nil {
-		return fail("closing zip", err)
+	if cerr := zw.Close(); cerr != nil {
+		return fail("closing zip", cerr)
 	}
 	content := buf.Bytes()
 
@@ -280,11 +284,11 @@ func fixtureArtefact(coord coordinate.ModuleCoordinate) ([]byte, fetchdomain.Mod
 		return fail("creating temp zip", err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(content); err != nil {
-		return fail("writing temp zip", err)
+	if _, werr := tmp.Write(content); werr != nil {
+		return fail("writing temp zip", werr)
 	}
-	if err := tmp.Close(); err != nil {
-		return fail("closing temp zip", err)
+	if cerr := tmp.Close(); cerr != nil {
+		return fail("closing temp zip", cerr)
 	}
 	raw, err := dirhash.HashZip(tmp.Name(), dirhash.Hash1)
 	if err != nil {
@@ -314,8 +318,8 @@ func seedFixtureFetchRecord(
 	if err != nil {
 		return fetchports.BlobIdentity{}, err
 	}
-	if err := blobStore.Put(context.Background(), identity, bytes.NewReader(content)); err != nil {
-		return fetchports.BlobIdentity{}, fmt.Errorf("storing fixture artefact for %s: %w", coord, err)
+	if perr := blobStore.Put(context.Background(), identity, bytes.NewReader(content)); perr != nil {
+		return fetchports.BlobIdentity{}, fmt.Errorf("storing fixture artefact for %s: %w", coord, perr)
 	}
 	sealed, err := fetchdomain.Seal(fetchdomain.FetchedModule{
 		Coordinate:         coord,
@@ -390,9 +394,13 @@ func buildFixtureWalkRecords() []domain.WalkRecord {
 	}
 	var hasher domain.WalkRecordHasher
 	recA := domain.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "fixture", "1.0.0", domain.WalkScopeCode, domain.WalkDepthFull, outcomeA, domain.DefaultDepthPolicy(), "")
-	recA, _ = hasher.SetContentHash(recA)
+	recA, errA := hasher.SetContentHash(recA)
 	recB := domain.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FBB", "fixture", "1.0.0", domain.WalkScopeCode, domain.WalkDepthFull, outcomeB, domain.DefaultDepthPolicy(), "")
-	recB, _ = hasher.SetContentHash(recB)
+	recB, errB := hasher.SetContentHash(recB)
+	if errA != nil || errB != nil {
+		// A seed subprocess has no test to fail; an unsealed fixture must not be seeded.
+		os.Exit(1)
+	}
 	return []domain.WalkRecord{recA, recB}
 }
 
@@ -481,7 +489,11 @@ func cmdSeedCallGraph(args []string) {
 		ArtefactIdentity: appArtefact.String(),
 	}
 	var hasher cgdomain.CallGraphRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err = hasher.SetContentHash(rec)
+	if err != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 
 	if err := store.PutCallGraphRecord(context.Background(), rec); err != nil {
 		_ = db.Close()
@@ -517,7 +529,11 @@ func cmdSeedLicense(args []string) {
 	}
 	rec.SortFiles()
 	var hasher licdomain.LicenseRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err = hasher.SetContentHash(rec)
+	if err != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 
 	if err := store.PutLicenseRecord(context.Background(), rec); err != nil {
 		_ = db.Close()
@@ -558,7 +574,11 @@ func cmdSeedIface(args []string) {
 		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
 	var hasher ifdomain.InterfaceRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err = hasher.SetContentHash(rec)
+	if err != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 
 	if err := store.PutInterfaceRecord(context.Background(), rec); err != nil {
 		_ = db.Close()
@@ -608,7 +628,11 @@ func cmdSeedExamples(args []string) {
 		ArtefactIdentity: appArtefact.String(),
 	}
 	var hasher exdomain.ExampleRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err = hasher.SetContentHash(rec)
+	if err != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 
 	if err := store.PutExampleRecord(context.Background(), rec); err != nil {
 		_ = db.Close()
@@ -1040,11 +1064,11 @@ func nativeFixtureArtefact(
 		return fail("creating temp zip", err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(content); err != nil {
-		return fail("writing temp zip", err)
+	if _, werr := tmp.Write(content); werr != nil {
+		return fail("writing temp zip", werr)
 	}
-	if err := tmp.Close(); err != nil {
-		return fail("closing temp zip", err)
+	if cerr := tmp.Close(); cerr != nil {
+		return fail("closing temp zip", cerr)
 	}
 	raw, err := dirhash.HashZip(tmp.Name(), dirhash.Hash1)
 	if err != nil {

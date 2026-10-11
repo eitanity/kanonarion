@@ -66,22 +66,7 @@ func CanonicalDeclaration(s string) (string, bool) {
 		return "", false
 	}
 
-	var wrapped string
-	typeOnly := false
-	switch {
-	case strings.HasPrefix(src, "func "):
-		// A method signature keeps its "func (recv T) Name(...)" form; a bare
-		// "func(...)" is a type expression, not a declaration, and falls to the
-		// value branch below.
-		wrapped = "package p\n" + src
-	case strings.HasPrefix(src, "type "):
-		wrapped = "package p\n" + src
-	default:
-		// A ValueDecl carries a bare type expression ("map[string]any"), which is
-		// only parseable in a declaration context.
-		wrapped = "package p\nvar _ " + src
-		typeOnly = true
-	}
+	wrapped, typeOnly := wrapDeclaration(src)
 
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "signature.go", wrapped, parser.SkipObjectResolution)
@@ -140,6 +125,28 @@ func CanonicalDeclaration(s string) (string, bool) {
 		return "", false
 	}
 	return strings.Join(strings.Fields(buf.String()), " "), true
+}
+
+// wrapDeclaration wraps src in the file context it parses in; typeOnly says it
+// was a bare type expression, wrapped as a value declaration.
+func wrapDeclaration(src string) (string, bool) {
+	var wrapped string
+	typeOnly := false
+	switch {
+	case strings.HasPrefix(src, "func "):
+		// A method signature keeps its "func (recv T) Name(...)" form; a bare
+		// "func(...)" is a type expression, not a declaration, and falls to the
+		// value branch below.
+		wrapped = "package p\n" + src
+	case strings.HasPrefix(src, "type "):
+		wrapped = "package p\n" + src
+	default:
+		// A ValueDecl carries a bare type expression ("map[string]any"), which is
+		// only parseable in a declaration context.
+		wrapped = "package p\nvar _ " + src
+		typeOnly = true
+	}
+	return wrapped, typeOnly
 }
 
 // posType is token.Pos, the one field kind the canonical form must forget.
@@ -275,6 +282,16 @@ func normaliseExpr(e ast.Expr) ast.Expr {
 			return ast.NewIdent("any")
 		}
 		normaliseFieldList(t.Methods, false)
+	default:
+		normaliseSubExprs(e)
+	}
+	return e
+}
+
+// normaliseSubExprs normalises, in place, the type expressions a composite
+// expression holds.
+func normaliseSubExprs(e ast.Expr) {
+	switch t := e.(type) {
 	case *ast.StarExpr:
 		t.X = normaliseExpr(t.X)
 	case *ast.ParenExpr:
@@ -308,7 +325,6 @@ func normaliseExpr(e ast.Expr) ast.Expr {
 		// An approximation element: ~T.
 		t.X = normaliseExpr(t.X)
 	}
-	return e
 }
 
 // ResultRegistryShape reports whether a function signature returns a

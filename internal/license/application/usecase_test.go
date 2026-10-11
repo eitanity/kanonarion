@@ -53,8 +53,8 @@ func TestExecute_CacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licenceStore.PutLicenseRecord(context.Background(), existing); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licenceStore.PutLicenseRecord(context.Background(), existing); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	uc := buildUseCase(t, factStore, nil, licenceStore)
@@ -95,8 +95,8 @@ func TestExecute_ForceBypassesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licenceStore.PutLicenseRecord(context.Background(), existing); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licenceStore.PutLicenseRecord(context.Background(), existing); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	uc := buildUseCase(t, factStore, blobStore, licenceStore)

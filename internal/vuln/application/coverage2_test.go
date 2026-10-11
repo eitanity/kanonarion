@@ -35,13 +35,15 @@ func TestScanWalk_ProgressOnScanFailure(t *testing.T) {
 	uc := application.NewScanWalkUseCase(walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 
 	var progressCalled int
-	_, _ = uc.Scan(t.Context(), application.ScanWalkParams{
+	if _, err := uc.Scan(t.Context(), application.ScanWalkParams{
 		WalkID:   "w1",
 		Snapshot: &snap,
 		Progress: func(_ coordinate.ModuleCoordinate, _ domain.VulnerabilityRecord, _, _ int) {
 			progressCalled++
 		},
-	})
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
 	if progressCalled != 1 {
 		t.Errorf("expected Progress called once on failure, got %d", progressCalled)
 	}

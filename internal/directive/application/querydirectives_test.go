@@ -137,7 +137,9 @@ func TestQueryDirectives_ListScans(t *testing.T) {
 	store := newFakeDirectiveStore()
 	ctx := context.Background()
 	for _, id := range []string{"S1", "S2", "S3"} {
-		_ = store.PutDirectiveRecord(ctx, domain.Record{ID: id, ProjectModulePath: "example.com/proj"})
+		if err := store.PutDirectiveRecord(ctx, domain.Record{ID: id, ProjectModulePath: "example.com/proj"}); err != nil {
+			t.Fatalf("PutDirectiveRecord: %v", err)
+		}
 	}
 
 	uc := application.NewQueryDirectivesUseCase(store)

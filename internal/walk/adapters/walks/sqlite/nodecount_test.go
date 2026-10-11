@@ -106,7 +106,7 @@ func TestMigration11_RecomputesTheNodeCountFromTheSealedRecord(t *testing.T) {
 	}
 	// Written the way the previous build did: two nodes, because two were
 	// fetched — over a graph of four.
-	if _, err := handle.DB().ExecContext(ctx, `
+	if _, eerr := handle.DB().ExecContext(ctx, `
 INSERT INTO walks (id, target_path, target_version, started_at, completed_at,
     overall_status, pipeline_version, operator, content_hash,
     node_count, failure_count, scope, depth, project_dir, identity_hash,
@@ -116,18 +116,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 2, 0, 'code', '', '', '', '', '', '', ?)`,
 		rec.StartedAt.UTC().Format(time.RFC3339), rec.CompletedAt.UTC().Format(time.RFC3339),
 		int(rec.OverallStatus), rec.PipelineVersion, rec.Operator, rec.ContentHash,
 		blobcodec.Encode(raw),
-	); err != nil {
-		t.Fatalf("inserting a pre-migration row: %v", err)
+	); eerr != nil {
+		t.Fatalf("inserting a pre-migration row: %v", eerr)
 	}
 
-	if err := sqlitestore.Apply(handle, all); err != nil {
-		t.Fatalf("applying migration 11: %v", err)
+	if aerr := sqlitestore.Apply(handle, all); aerr != nil {
+		t.Fatalf("applying migration 11: %v", aerr)
 	}
 
 	var nodes int
-	if err := handle.DB().QueryRowContext(ctx,
-		`SELECT node_count FROM walks WHERE id = ?`, rec.ID).Scan(&nodes); err != nil {
-		t.Fatalf("reading the re-derived count: %v", err)
+	if serr := handle.DB().QueryRowContext(ctx,
+		`SELECT node_count FROM walks WHERE id = ?`, rec.ID).Scan(&nodes); serr != nil {
+		t.Fatalf("reading the re-derived count: %v", serr)
 	}
 	if nodes != len(rec.Graph.Nodes) {
 		t.Errorf("node_count after migration = %d, want %d", nodes, len(rec.Graph.Nodes))

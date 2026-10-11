@@ -169,14 +169,31 @@ func TestExternalEntryPointReason(t *testing.T) {
 		name     string
 		symbol   string
 		receiver string
+		export   domain.ExportDirective
 		wantIn   string
 	}{
 		{name: "package init", symbol: "init", wantIn: "package initialisation"},
 		{name: "generated package init", symbol: "init#1", wantIn: "package initialisation"},
 		{name: "process entry point", symbol: "main", wantIn: "process entry point"},
 		{name: "http handler method", symbol: "ServeHTTP", receiver: "*Server", wantIn: "http.Handler"},
+		{
+			name: "function exported to the WebAssembly host", symbol: "parse",
+			export: domain.ExportDirective{Kind: domain.ExportWasm, Name: "parse"},
+			wantIn: "a function exported to the WebAssembly host (//go:wasmexport parse) — the host invokes it",
+		},
+		{
+			name: "function exported to C", symbol: "goParse",
+			export: domain.ExportDirective{Kind: domain.ExportC, Name: "goParse"},
+			wantIn: "a function exported to C (//export goParse) — C code, assembly or a vector table invokes it",
+		},
+		{
+			name: "interrupt handler", symbol: "handleIRQ",
+			export: domain.ExportDirective{Kind: domain.ExportInterrupt},
+			wantIn: "an interrupt handler (//go:interrupt) — the hardware invokes it",
+		},
 
 		{name: "a method named main is not the entry point", symbol: "main", receiver: "*App"},
+		{name: "the same function with no directive is entered by nothing", symbol: "parse"},
 		{name: "a free function named ServeHTTP is not a handler method", symbol: "ServeHTTP"},
 		{name: "an init-like name is not init", symbol: "initialise"},
 		{name: "an ordinary exported method", symbol: "CompleteUserAuth", receiver: "*Handler"},
@@ -185,7 +202,7 @@ func TestExternalEntryPointReason(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := domain.ExternalEntryPointReason(tt.symbol, tt.receiver)
+			got := domain.ExternalEntryPointReason(tt.symbol, tt.receiver, tt.export)
 			if tt.wantIn == "" {
 				if got != "" {
 					t.Fatalf("ExternalEntryPointReason(%q, %q) = %q, want no entry-point claim",

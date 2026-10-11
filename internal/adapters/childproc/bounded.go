@@ -242,7 +242,9 @@ func childScratch() (string, func()) {
 	if err != nil {
 		return "", func() {}
 	}
-	return dir, func() { _ = modcache.Remove(dir) }
+	// A root that cannot be removed is left for `store clean`, which sweeps
+	// ScratchPrefix; the child's result is already settled by then.
+	return dir, func() { _ = modcache.Remove(dir) } //nolint:errcheck // swept by store clean
 }
 
 // scratchEnv points every temp-dir variable a child may consult at dir: TMPDIR

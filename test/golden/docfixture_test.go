@@ -171,7 +171,7 @@ func docArtefact(
 	// artefact identity every record in this fixture pins — are a function of
 	// the content and not of map iteration.
 	write := func(name, body string) {
-		f, err := zw.Create(prefix + name)
+		f, err := fixtureZipEntry(zw, prefix+name)
 		if err != nil {
 			t.Fatalf("fixture zip entry %s: %v", name, err)
 		}

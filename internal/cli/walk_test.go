@@ -158,7 +158,7 @@ func TestRunWalkList_Empty(t *testing.T) {
 
 func TestRunWalkList_WithSummaries(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/pkg", "v1.0.0")
+	coord := coordinatetest.MustNew("example.com/pkg", "v1.0.0")
 	uc.SetSummaries([]walkports.WalkSummary{
 		{
 			ID:            "WALK001",
@@ -198,7 +198,7 @@ func TestRunWalkList_ByID_NotFound(t *testing.T) {
 
 func TestRunWalkList_ByID_Found(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/app", "v2.0.0")
+	coord := coordinatetest.MustNew("example.com/app", "v2.0.0")
 	rec := walkdomain.WalkRecord{
 		ID:             "WALK002",
 		Target:         coord,
@@ -246,7 +246,7 @@ func TestRunWalkShow_NotFound(t *testing.T) {
 
 func TestRunWalkShow_Found(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/thing", "v0.1.0")
+	coord := coordinatetest.MustNew("example.com/thing", "v0.1.0")
 	rec := walkdomain.WalkRecord{
 		ID:             "WALK003",
 		Target:         coord,
@@ -526,8 +526,8 @@ func TestRunWalkList_ToolScope_Empty(t *testing.T) {
 
 func TestRunWalkList_ToolScope_FiltersMixedScopes(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
-	prod, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
-	tool, _ := coordinate.NewModuleCoordinate("golang.org/x/tools", "v0.30.0")
+	prod := coordinatetest.MustNew("example.com/app", "v1.0.0")
+	tool := coordinatetest.MustNew("golang.org/x/tools", "v0.30.0")
 	uc.SetSummaries([]walkports.WalkSummary{
 		{ID: "PROD001", Target: prod, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
 		{ID: "TOOL001", Target: tool, Scope: walkdomain.WalkScopeTool, OverallStatus: walkdomain.WalkSucceeded},
@@ -691,8 +691,8 @@ func TestRunWalkList_FilterStatusFailed(t *testing.T) {
 
 func buildFixtureWalkRecordA(t *testing.T) walkdomain.WalkRecord {
 	t.Helper()
-	app, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
-	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	app := coordinatetest.MustNew("example.com/app", "v1.0.0")
+	dep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
 	startA := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	outcome := walkdomain.WalkOutcome{
 		Target: app,
@@ -711,7 +711,10 @@ func buildFixtureWalkRecordA(t *testing.T) walkdomain.WalkRecord {
 	}
 	rec := walkdomain.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "fixture", "1.0.0", walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, outcome, walkdomain.DefaultDepthPolicy(), "")
 	var hasher walkdomain.WalkRecordHasher
-	rec, _ = hasher.SetContentHash(rec)
+	rec, err := hasher.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
 	return rec
 }
 
@@ -739,8 +742,8 @@ func TestRunWalkShow_JSONOutput(t *testing.T) {
 }
 
 func TestRunWalkDiff_TextOutput(t *testing.T) {
-	app, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
-	newDep, _ := coordinate.NewModuleCoordinate("example.com/new", "v1.0.0")
+	app := coordinatetest.MustNew("example.com/app", "v1.0.0")
+	newDep := coordinatetest.MustNew("example.com/new", "v1.0.0")
 	uc := &testfakes.FakeDiffWalks{
 		Result: walkapp.WalkDiff{
 			WalkA:          "01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -773,7 +776,7 @@ func TestRunWalkDiff_TextOutput(t *testing.T) {
 func TestRunWalkDiff_JSONOutput(t *testing.T) {
 	jsonOut = true
 	t.Cleanup(func() { jsonOut = false })
-	newDep, _ := coordinate.NewModuleCoordinate("example.com/new", "v1.0.0")
+	newDep := coordinatetest.MustNew("example.com/new", "v1.0.0")
 	uc := &testfakes.FakeDiffWalks{
 		Result: walkapp.WalkDiff{
 			WalkA:          "01ARZ3NDEKTSV4RRFFQ69G5FAV",

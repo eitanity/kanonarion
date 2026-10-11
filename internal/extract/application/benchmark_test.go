@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
@@ -27,7 +28,7 @@ func (s *slowExtractor) Extract(_ context.Context, _ coordinate.ModuleCoordinate
 func buildBenchWalk(n int) walkdomain.WalkRecord {
 	nodes := make([]walkdomain.GraphNode, n)
 	for i := range n {
-		c, _ := coordinate.NewModuleCoordinate(fmt.Sprintf("github.com/pkg/m%d", i), "v1.0.0")
+		c := coordinatetest.MustNew(fmt.Sprintf("github.com/pkg/m%d", i), "v1.0.0")
 		nodes[i] = walkdomain.GraphNode{Coordinate: c}
 	}
 	return walkdomain.WalkRecord{

@@ -128,23 +128,7 @@ func (uc *FetchModuleUseCase) tryRevalidate(
 	})
 
 	if zerr != nil || gerr != nil || zipHashStr != existing.ModuleHash || goModHashStr != existing.GoModHash {
-		// The store holds bytes that are not the bytes it recorded. That is a
-		// finding, not a miss: it is audited and the run downloads a clean copy
-		// rather than silently overwriting the evidence of the disagreement.
-		attrs := []slog.Attr{
-			slog.String("recorded_module_hash", existing.ModuleHash),
-			slog.String("computed_module_hash", zipHashStr),
-			slog.String("recorded_go_mod_hash", existing.GoModHash),
-			slog.String("computed_go_mod_hash", goModHashStr),
-		}
-		if rerr := errors.Join(zerr, gerr); rerr != nil {
-			attrs = append(attrs, slog.String("hash_error", rerr.Error()))
-		}
-		log.LogAttrs(ctx, slog.LevelWarn, "held_artefact_disagrees_with_record", attrs...)
-		if aerr := uc.recordTamperEvent(existing, zipHashStr, goModHashStr); aerr != nil {
-			return revalidation{}, false, aerr
-		}
-		return revalidation{}, false, nil
+		return revalidation{}, false, uc.reportHeldArtefactDisagreement(ctx, log, existing, zipHashStr, goModHashStr, zerr, gerr)
 	}
 
 	zipHash, err := domain2.ParseModuleHash(zipHashStr)
@@ -171,6 +155,28 @@ func (uc *FetchModuleUseCase) tryRevalidate(
 		zipData:   zipData,
 		goModData: goModData,
 	}, true, nil
+}
+
+// reportHeldArtefactDisagreement logs and audits held bytes that are not the
+// bytes their record describes.
+func (uc *FetchModuleUseCase) reportHeldArtefactDisagreement(ctx context.Context, log *slog.Logger, existing domain2.FactRecord, zipHashStr, goModHashStr string, zerr, gerr error) error {
+	// The store holds bytes that are not the bytes it recorded. That is a
+	// finding, not a miss: it is audited and the run downloads a clean copy
+	// rather than silently overwriting the evidence of the disagreement.
+	attrs := []slog.Attr{
+		slog.String("recorded_module_hash", existing.ModuleHash),
+		slog.String("computed_module_hash", zipHashStr),
+		slog.String("recorded_go_mod_hash", existing.GoModHash),
+		slog.String("computed_go_mod_hash", goModHashStr),
+	}
+	if rerr := errors.Join(zerr, gerr); rerr != nil {
+		attrs = append(attrs, slog.String("hash_error", rerr.Error()))
+	}
+	log.LogAttrs(ctx, slog.LevelWarn, "held_artefact_disagrees_with_record", attrs...)
+	if aerr := uc.recordTamperEvent(existing, zipHashStr, goModHashStr); aerr != nil {
+		return aerr
+	}
+	return nil
 }
 
 // readHeldArtefact returns the bytes the blob store holds for identity. ok is

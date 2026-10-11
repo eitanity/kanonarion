@@ -293,8 +293,8 @@ func TestGenerateNotice_EmbeddedComponentTexts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licences.PutLicenseRecord(context.Background(), rec); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licences.PutLicenseRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
@@ -433,8 +433,8 @@ func TestGenerateNotice_ExcludesUnbuiltPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licences.PutLicenseRecord(context.Background(), rec); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licences.PutLicenseRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
@@ -517,8 +517,8 @@ func TestGenerateNotice_UnclassifiedRootFileIsRecordedNotReproduced(t *testing.T
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := licences.PutLicenseRecord(context.Background(), rec); err != nil {
-		t.Fatalf("PutLicenseRecord: %v", err)
+	if perr := licences.PutLicenseRecord(context.Background(), rec); perr != nil {
+		t.Fatalf("PutLicenseRecord: %v", perr)
 	}
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
@@ -540,6 +540,13 @@ func TestGenerateNotice_UnclassifiedRootFileIsRecordedNotReproduced(t *testing.T
 		t.Fatalf("LicenseTexts paths = %v, want 4", byPath)
 	}
 
+	assertRootFilesClassified(t, byPath)
+}
+
+// assertRootFilesClassified checks the licence is reproduced, the unidentified
+// files recorded but not printed, and the notice carried whole.
+func assertRootFilesClassified(t *testing.T, byPath map[string]domain.NoticeLicenseFile) {
+	t.Helper()
 	if lf := byPath["LICENSE"]; lf.Classification != domain.ClassificationLicence ||
 		lf.SPDX != "MIT" || lf.Content != "MIT License text" {
 		t.Errorf("LICENSE = %+v, want classified MIT with verbatim text", lf)

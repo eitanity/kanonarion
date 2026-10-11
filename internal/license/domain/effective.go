@@ -43,22 +43,7 @@ func DeriveEffectiveLicenseSet(entries []LicenseFileEntry) EffectiveLicenseSet {
 
 	sort.Strings(rootSPDXs)
 
-	prefixes := make([]string, 0, len(compMap))
-	for p := range compMap {
-		prefixes = append(prefixes, p)
-	}
-	sort.Strings(prefixes)
-
-	components := make([]EmbeddedComponent, 0, len(prefixes))
-	for _, p := range prefixes {
-		spdxSet := compMap[p]
-		spdxs := make([]string, 0, len(spdxSet))
-		for s := range spdxSet {
-			spdxs = append(spdxs, s)
-		}
-		sort.Strings(spdxs)
-		components = append(components, EmbeddedComponent{PathPrefix: p, SPDXs: spdxs})
-	}
+	components := embeddedComponents(compMap)
 
 	// AllSPDXs = union of root and component SPDXs, sorted.
 	allSeen := make(map[string]bool)
@@ -82,6 +67,28 @@ func DeriveEffectiveLicenseSet(entries []LicenseFileEntry) EffectiveLicenseSet {
 		Components: components,
 		AllSPDXs:   allSPDXs,
 	}
+}
+
+// embeddedComponents lists each embedded component prefix with its SPDX
+// identifiers, both sorted.
+func embeddedComponents(compMap map[string]map[string]bool) []EmbeddedComponent {
+	prefixes := make([]string, 0, len(compMap))
+	for p := range compMap {
+		prefixes = append(prefixes, p)
+	}
+	sort.Strings(prefixes)
+
+	components := make([]EmbeddedComponent, 0, len(prefixes))
+	for _, p := range prefixes {
+		spdxSet := compMap[p]
+		spdxs := make([]string, 0, len(spdxSet))
+		for s := range spdxSet {
+			spdxs = append(spdxs, s)
+		}
+		sort.Strings(spdxs)
+		components = append(components, EmbeddedComponent{PathPrefix: p, SPDXs: spdxs})
+	}
+	return components
 }
 
 // embeddedComponentPrefix returns the directory portion of a vendored path,

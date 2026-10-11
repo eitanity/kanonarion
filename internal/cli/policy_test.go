@@ -246,7 +246,7 @@ func TestRunPolicyShow_ReportsEffectiveVCSHosts(t *testing.T) {
 	}
 	// A policy that does not override the list must render exactly as before,
 	// so the absent field stays absent from the per-stage object.
-	if _, present := got.StageDepths["fetch"].(map[string]any)["AllowedVCSHosts"]; present {
+	if _, present := mustAs[map[string]any](t, got.StageDepths["fetch"])["AllowedVCSHosts"]; present {
 		t.Error("an unset allowed_vcs_hosts must not appear in the per-stage output")
 	}
 }

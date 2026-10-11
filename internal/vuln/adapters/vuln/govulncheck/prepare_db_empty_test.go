@@ -144,32 +144,7 @@ func TestPrepareDBArg_ReportsTheAdvisoryCountItMeasured(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	t.Run("a database it extracted is counted", func(t *testing.T) {
-		s := &Scanner{
-			logger:    logger,
-			vulnStore: &snapshotBlobStore{blob: vulnDBZip(t, "GO-2026-0001", "GO-2026-0002", "GO-2026-0003")},
-		}
-		arg, count, cleanup, err := s.prepareDBArg(context.Background(), snapshot, "")
-		if cleanup != nil {
-			cleanup()
-		}
-		if err != nil {
-			t.Fatalf("a populated database must be prepared, got: %v", err)
-		}
-		if !strings.HasPrefix(arg, "file://") {
-			t.Fatalf("expected the extracted local database, got %q", arg)
-		}
-		if count != 3 {
-			t.Errorf("advisory count = %d, want 3 — the record must be able to name what was consulted", count)
-		}
-
-		// And the count reaches the snapshot the record will name.
-		counted, cerr := snapshotCountingAdvisories(snapshot, count)
-		if cerr != nil {
-			t.Fatalf("carrying the count onto the snapshot: %v", cerr)
-		}
-		if counted.AdvisoryCount() != 3 {
-			t.Errorf("snapshot advisory count = %d, want 3", counted.AdvisoryCount())
-		}
+		testExtractedDatabaseCounted(t, logger, snapshot)
 	})
 
 	t.Run("a pre-extracted directory reports no count of its own", func(t *testing.T) {
@@ -218,4 +193,35 @@ func TestPrepareDBArg_ReportsTheAdvisoryCountItMeasured(t *testing.T) {
 			t.Errorf("advisory count = %d, want 0: nothing was opened", count)
 		}
 	})
+}
+
+// testExtractedDatabaseCounted checks a database the scanner extracted is
+// counted and the count carried onto the snapshot.
+func testExtractedDatabaseCounted(t *testing.T, logger *slog.Logger, snapshot domain.DatabaseSnapshot) {
+	s := &Scanner{
+		logger:    logger,
+		vulnStore: &snapshotBlobStore{blob: vulnDBZip(t, "GO-2026-0001", "GO-2026-0002", "GO-2026-0003")},
+	}
+	arg, count, cleanup, err := s.prepareDBArg(context.Background(), snapshot, "")
+	if cleanup != nil {
+		cleanup()
+	}
+	if err != nil {
+		t.Fatalf("a populated database must be prepared, got: %v", err)
+	}
+	if !strings.HasPrefix(arg, "file://") {
+		t.Fatalf("expected the extracted local database, got %q", arg)
+	}
+	if count != 3 {
+		t.Errorf("advisory count = %d, want 3 — the record must be able to name what was consulted", count)
+	}
+
+	// And the count reaches the snapshot the record will name.
+	counted, cerr := snapshotCountingAdvisories(snapshot, count)
+	if cerr != nil {
+		t.Fatalf("carrying the count onto the snapshot: %v", cerr)
+	}
+	if counted.AdvisoryCount() != 3 {
+		t.Errorf("snapshot advisory count = %d, want 3", counted.AdvisoryCount())
+	}
 }

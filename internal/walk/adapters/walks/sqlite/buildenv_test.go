@@ -169,7 +169,7 @@ func TestMigration8_BackfillsTheFrameFromTheSealedRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if _, err := handle.DB().ExecContext(ctx, `
+	if _, eerr := handle.DB().ExecContext(ctx, `
 INSERT INTO walks (id, target_path, target_version, started_at, completed_at,
     overall_status, pipeline_version, operator, content_hash,
     node_count, failure_count, scope, depth, project_dir, identity_hash, serialised)
@@ -178,19 +178,19 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'code', '', '', '', ?)`,
 		rec.StartedAt.UTC().Format(time.RFC3339), rec.CompletedAt.UTC().Format(time.RFC3339),
 		int(rec.OverallStatus), rec.PipelineVersion, rec.Operator, rec.ContentHash,
 		blobcodec.Encode(raw),
-	); err != nil {
-		t.Fatalf("inserting a pre-migration row: %v", err)
+	); eerr != nil {
+		t.Fatalf("inserting a pre-migration row: %v", eerr)
 	}
 
 	// Apply the migration under test.
-	if err := sqlitestore.Apply(handle, all); err != nil {
-		t.Fatalf("applying migration 8: %v", err)
+	if aerr := sqlitestore.Apply(handle, all); aerr != nil {
+		t.Fatalf("applying migration 8: %v", aerr)
 	}
 
 	var goos, goarch string
-	if err := handle.DB().QueryRowContext(ctx,
-		`SELECT goos, goarch FROM walks WHERE id = ?`, rec.ID).Scan(&goos, &goarch); err != nil {
-		t.Fatalf("reading the back-filled frame: %v", err)
+	if serr := handle.DB().QueryRowContext(ctx,
+		`SELECT goos, goarch FROM walks WHERE id = ?`, rec.ID).Scan(&goos, &goarch); serr != nil {
+		t.Fatalf("reading the back-filled frame: %v", serr)
 	}
 	if goos != "windows" || goarch != "arm64" {
 		t.Errorf("back-filled frame = %s/%s, want windows/arm64", goos, goarch)

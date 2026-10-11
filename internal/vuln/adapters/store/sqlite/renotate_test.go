@@ -1,6 +1,7 @@
 package sqlite_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -262,6 +263,13 @@ func TestNotationMigration_ReNotatesEverySeal(t *testing.T) {
 	// Read back the way a reader reads: both legs verify their own seal, so a
 	// mis-migrated row would surface as an integrity failure rather than as a
 	// column that merely looks right.
+	assertServedAfterNotation(ctx, t, db, c, snapshot, wantRec, wantRun)
+}
+
+// assertServedAfterNotation checks the store serves the re-notated record and
+// run, sealed as today's hasher seals them.
+func assertServedAfterNotation(ctx context.Context, t *testing.T, db sqlitestore.DB, c coordinate.ModuleCoordinate, snapshot domain.DatabaseSnapshot, wantRec domain.VulnerabilityRecord, wantRun domain.WalkScanRun) {
+	t.Helper()
 	store := sqlite.New(db)
 	served, found, err := store.GetVulnerabilityRecord(ctx, c, wantRec.PipelineVersion, snapshot)
 	if err != nil || !found {

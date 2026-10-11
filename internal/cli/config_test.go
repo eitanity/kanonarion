@@ -210,7 +210,7 @@ func TestConfigGetValue(t *testing.T) {
 				if err == nil {
 					t.Fatalf("key %q: expected error, got %q", c.key, val)
 				}
-				if _, ok := errors.AsType[*exitError](err); !ok {
+				if !errors.As(err, new(*exitError)) {
 					t.Errorf("key %q: expected exitError, got %T: %v", c.key, err, err)
 				}
 				return

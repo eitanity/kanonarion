@@ -75,7 +75,10 @@ func TestLicenseCompat_MixedClosureSeparatesTheTwoStates(t *testing.T) {
 		},
 		[]string{"example.com/never-extracted@v1.0.0"},
 	)
-	out, _ := runCompat(t, ctr, root, "Apache-2.0", false)
+	out, err := runCompat(t, ctr, root, "Apache-2.0", false)
+	if err == nil {
+		t.Fatal("the closure holds an open review item; want a non-clean result")
+	}
 	if n := strings.Count(out, extractionHint); n != 1 {
 		t.Errorf("the extraction hint must appear exactly once, got %d:\n%s", n, out)
 	}
@@ -101,7 +104,10 @@ func TestLicenseCompat_JSONDistinguishesUnmeasuredFromUnclassifiable(t *testing.
 		},
 		[]string{"example.com/never-extracted@v1.0.0"},
 	)
-	out, _ := runCompat(t, ctr, root, "Apache-2.0", true)
+	out, err := runCompat(t, ctr, root, "Apache-2.0", true)
+	if err == nil {
+		t.Fatal("the closure holds an open review item; want a non-clean result")
+	}
 
 	var doc struct {
 		Conflicts []struct {

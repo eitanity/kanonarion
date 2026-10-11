@@ -66,7 +66,10 @@ func TestRunWalkProject_RootIngestFailureIsReportedAsDegraded(t *testing.T) {
 	}
 
 	t.Run("states the missing capability", func(t *testing.T) {
-		out, _ := run(t, true)
+		out, err := run(t, true)
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
 		if !strings.Contains(out, "--analyse-root did not ingest example.com/app/v2") {
 			t.Errorf("stderr does not name the capability the walk lacks:\n%s", out)
 		}

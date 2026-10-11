@@ -6,64 +6,70 @@ run:
 linters:
   default: none
   enable:
+    - contextcheck
     - errcheck
     - errorlint
-    - nilerr
-    - wrapcheck
-    - contextcheck
-    - gocritic
-    - govet
-    - staticcheck
-    - ineffassign
-    - gosec
-    - gocyclo
     - forbidigo
+    - gocritic
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - nilerr
+    - staticcheck
+    - wrapcheck
 
-# gofmt is a formatter, not a linter, so it lives in its own v2 section. It is
-# enabled because nothing else in the project verifies formatting: `make lint`
-# runs vet/staticcheck/govulncheck/gosec, none of which look at layout, so
-# unformatted code could reach a commit unnoticed. `golangci-lint fmt` rewrites;
-# `golangci-lint run` reports.
+  settings:
+    errcheck:
+      # Plan requires zero exclusions, so no exclude-functions. Unchecked type
+      # assertions and errors assigned to _ are reported too.
+      check-type-assertions: true
+      check-blank: true
+    govet:
+      enable:
+        - shadow
+    wrapcheck:
+      # Only errors from outside this module need wrapping.
+      ignore-package-globs:
+        - github.com/eitanity/kanonarion/*
+    gocyclo:
+      min-complexity: 15
+    forbidigo:
+      # Wall-clock access in the application or domain layer must go through
+      # the injected Clock (record timestamps) or Stopwatch (latency metrics),
+      # never a direct time.Now/time.Since read. Scoped by the rules below.
+      forbid:
+        - pattern: '^time\.Now$'
+          msg: "no time.Now() in application/domain — inject clock.Clock (record timestamps) or a Stopwatch (latency)"
+        - pattern: '^time\.Since$'
+          msg: "no time.Since() in application/domain — measure elapsed time via an injected Stopwatch"
+
+  exclusions:
+    # Skip files whose header comment marks them generated, as before v2.
+    # No file in the repo carries such a header today.
+    generated: lax
+    # The four presets golangci-lint applied by default before v2. Kept on
+    # explicitly so the policy stays the one the project has always declared.
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # forbidigo applies ONLY to the application and domain layers. Wall-clock
+      # reads are legitimate in adapters, the CLI, cmd and tests. Path segments
+      # are exact, so internal/<ctx>/application and internal/<ctx>/domain are
+      # never excluded while every adapters/cli/cmd path is.
+      - linters: [forbidigo]
+        path: '(^|/)(adapters|cli|cmd)(/|$)'
+      - linters: [forbidigo]
+        path: '_test\.go$'
+
+# gofmt is a formatter, not a linter, so it lives in its own section. Nothing
+# else in the project checks layout, so unformatted code could otherwise reach
+# a commit. `golangci-lint fmt` rewrites; `golangci-lint run` reports.
 formatters:
   enable:
     - gofmt
-
-settings:
-  errcheck:
-    # No exclude-functions — plan requires zero exclusions.
-    check-blank: true
-    check-type-assertions: true
-    exclude-functions: []
-  govet:
-    enable:
-      - shadow
-  wrapcheck:
-    # Only errors from outside this module need wrapping.
-    ignorePackageGlobs:
-      - "github.com/eitanity/kanonarion/*"
-  gocyclo:
-    min-complexity: 15
-  forbidigo:
-    # wall-clock access in the application or domain layer must go through the 
-    # injected Clock (record timestamps) or Stopwatch (latency metrics), never
-    # a direct time.Now/time.Since read. Scoped to application/domain via the
-    # issues.exclude-rules below.
-    forbid:
-      - pattern: '^time\.Now$'
-        msg: "no time.Now() in application/domain — inject clock.Clock (record timestamps) or a Stopwatch (latency)"
-      - pattern: '^time\.Since$'
-        msg: "no time.Since() in application/domain — measure elapsed time via an injected Stopwatch"
-
-issues:
-  exclude-rules:
-    # forbidigo (time.Now/time.Since ban) applies ONLY to the application and
-    # domain layers. Wall-clock reads are legitimate in adapters, the CLI, cmd,
-    # and in tests. Path segments are exact, so internal/<ctx>/application and
-    # internal/<ctx>/domain are never excluded while every adapters/cli/cmd
-    # path is. The SQLite store needed a segment of its own while it sat at
-    # internal/ top level; it is under internal/adapters/ now, so the adapters
-    # segment covers it.
-    - linters: [forbidigo]
-      path: '(^|/)(adapters|cli|cmd)(/|$)'
-    - linters: [forbidigo]
-      path: '_test\.go$'
+  exclusions:
+    generated: lax

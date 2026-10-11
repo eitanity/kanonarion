@@ -191,6 +191,9 @@ type InterfaceSummary struct {
 	PackageCount    int
 	ExtractedAt     time.Time
 	ContentHash     string
+	// AnalyserLimit is the served record's, read only for a Partial record, the
+	// one status that can carry it.
+	AnalyserLimit *gotoolchain.UnreadSource
 
 	// Conflict is non-nil when the ledger holds records for this module that
 	// composition refused to pick between, and every other field but the three

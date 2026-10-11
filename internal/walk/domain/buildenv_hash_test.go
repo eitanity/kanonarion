@@ -19,8 +19,8 @@ func TestWalkRecordHasher_BuildEnvRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
-	if err := hasher.VerifyContentHash(rec); err != nil {
-		t.Fatalf("VerifyContentHash: %v", err)
+	if verr := hasher.VerifyContentHash(rec); verr != nil {
+		t.Fatalf("VerifyContentHash: %v", verr)
 	}
 
 	data, err := hasher.Marshal(rec)

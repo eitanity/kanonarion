@@ -44,7 +44,7 @@ query, so listing it beside the others would pad the count of what is known.
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runCallGraphList(cmd.Context(), moduleFilter, limit, offset, allGenerations, ctr.QueryCallGraph, stdout, stderr)
 		},
 	}

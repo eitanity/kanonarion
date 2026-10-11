@@ -156,12 +156,18 @@ func TestEnsureConfig_Idempotent_WhenFileComplete(t *testing.T) {
 	if err := config.EnsureConfig(path); err != nil {
 		t.Fatalf("first EnsureConfig: %v", err)
 	}
-	original, _ := os.ReadFile(path) // #nosec G304 -- t.TempDir() path
+	original, rerr := os.ReadFile(path) // #nosec G304 -- t.TempDir() path
+	if rerr != nil {
+		t.Fatalf("ReadFile: %v", rerr)
+	}
 
 	if err := config.EnsureConfig(path); err != nil {
 		t.Fatalf("second EnsureConfig: %v", err)
 	}
-	after, _ := os.ReadFile(path) // #nosec G304 -- t.TempDir() path
+	after, rerr := os.ReadFile(path) // #nosec G304 -- t.TempDir() path
+	if rerr != nil {
+		t.Fatalf("ReadFile: %v", rerr)
+	}
 
 	if string(original) != string(after) {
 		t.Error("EnsureConfig modified a complete config file on second call")
@@ -182,7 +188,10 @@ func TestEnsureConfig_AppendsMissingSections(t *testing.T) {
 		t.Fatalf("EnsureConfig: %v", err)
 	}
 
-	data, _ := os.ReadFile(path) // #nosec G304 -- t.TempDir() path
+	data, rerr := os.ReadFile(path) // #nosec G304 -- t.TempDir() path
+	if rerr != nil {
+		t.Fatalf("ReadFile: %v", rerr)
+	}
 	content := string(data)
 
 	// Original content preserved.
@@ -214,7 +223,10 @@ func TestEnsureConfig_LeavesUnparseableFileUntouched(t *testing.T) {
 		t.Fatalf("EnsureConfig should not error on unparseable file: %v", err)
 	}
 
-	after, _ := os.ReadFile(path) // #nosec G304 -- t.TempDir() path
+	after, rerr := os.ReadFile(path) // #nosec G304 -- t.TempDir() path
+	if rerr != nil {
+		t.Fatalf("ReadFile: %v", rerr)
+	}
 	if string(after) != string(garbage) {
 		t.Error("EnsureConfig modified an unparseable file")
 	}
@@ -229,7 +241,11 @@ func TestEnsureConfig_ReadError(t *testing.T) {
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chmod(path, 0o600) }()
+	defer func() {
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Errorf("restoring %s: %v", path, err)
+		}
+	}()
 
 	err := config.EnsureConfig(path)
 	if err == nil {

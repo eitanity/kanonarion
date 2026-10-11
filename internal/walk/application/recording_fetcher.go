@@ -187,7 +187,7 @@ func (r *recordingFetcher) fetchAndRecord(ctx context.Context, c, original coord
 		durationMs: dur,
 		err:        err,
 	}
-	if _, ok := errors.AsType[*panicError](err); ok {
+	if errors.As(err, new(*panicError)) {
 		out.panicked = true
 	}
 

@@ -26,7 +26,7 @@ func newVulnSnapshotListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runSnapshotList(cmd.Context(), jsonOut, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
@@ -106,7 +106,7 @@ func newVulnSnapshotShowCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			return runSnapshotShow(cmd.Context(), args[0], args[1], jsonOut, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}

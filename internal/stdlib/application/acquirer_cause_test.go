@@ -68,7 +68,7 @@ func acquireAgainstManifest(t *testing.T, manifest http.HandlerFunc) domain.Fact
 func manifestJSON(body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, body)
+		_, _ = io.WriteString(w, body) //nolint:errcheck // a failed write is seen by the client under test
 	}
 }
 

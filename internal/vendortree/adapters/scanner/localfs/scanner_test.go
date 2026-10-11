@@ -84,11 +84,11 @@ func seedZip(t *testing.T, storeRoot string) string {
 			t.Fatalf("writing %s to the module zip: %v", name, werr)
 		}
 	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("closing the module zip: %v", err)
+	if cerr := w.Close(); cerr != nil {
+		t.Fatalf("closing the module zip: %v", cerr)
 	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("closing the module zip file: %v", err)
+	if cerr := f.Close(); cerr != nil {
+		t.Fatalf("closing the module zip file: %v", cerr)
 	}
 
 	h1, err := dirhash.HashZip(zipPath, dirhash.Hash1)

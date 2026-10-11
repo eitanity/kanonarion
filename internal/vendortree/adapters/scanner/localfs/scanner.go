@@ -255,40 +255,7 @@ func parseModulesTxt(path string) ([]domain.VendoredModule, map[string]string, e
 				mods[len(mods)-1].Explicit = true
 			}
 		case strings.HasPrefix(line, "# "):
-			fields := strings.Fields(strings.TrimPrefix(line, "# "))
-			if len(fields) < 2 {
-				continue
-			}
-			// `# path => target version` (no version on the left) is the
-			// trailing replacement-directive footer go mod vendor appends, not
-			// a module entry — the module it names already has its own
-			// `# path version => …` line above. Taking the footer as an entry
-			// fabricates a module whose version is the literal "=>".
-			if fields[1] == "=>" {
-				continue
-			}
-			// `# path version [=> replacement...]` — record the
-			// left-hand module identity; reconciling the replacement target
-			// against a reproducible vendor tree is out of scope for this
-			// scanner.
-			mods = append(mods, domain.VendoredModule{Path: fields[0], Version: fields[1]})
-			// `=> replacement [version]` names the module whose source was
-			// actually vendored here, under this entry's original path. A
-			// filesystem replace (`=> ./dir`) has no version and is mapped the
-			// same way: the target is still the name a consumer may hold.
-			if len(fields) >= 4 && fields[2] == "=>" {
-				replacements[fields[3]] = fields[0]
-				entry := &mods[len(mods)-1]
-				entry.ReplacementPath = fields[3]
-				// A version is recorded only for a module replacement. The
-				// directory-path check is belt and braces over the field count:
-				// `go mod vendor` writes no version after a filesystem target,
-				// and reading one there would hand the domain an attestable
-				// coordinate for a replacement that publishes nothing.
-				if len(fields) >= 5 && !modfile.IsDirectoryPath(fields[3]) {
-					entry.ReplacementVersion = fields[4]
-				}
-			}
+			mods = appendModuleEntry(mods, replacements, line)
 		default:
 			// A bare line is one package `go mod vendor` wrote under the
 			// heading above it. Counting them is what tells a module the build
@@ -305,6 +272,47 @@ func parseModulesTxt(path string) ([]domain.VendoredModule, map[string]string, e
 		return nil, nil, fmt.Errorf("reading %q: %w", path, err)
 	}
 	return mods, replacements, nil
+}
+
+// appendModuleEntry records the module a `# path version [=> replacement]`
+// line of modules.txt names, and its replacement target; any other `# ` line
+// adds nothing.
+func appendModuleEntry(mods []domain.VendoredModule, replacements map[string]string, line string) []domain.VendoredModule {
+	fields := strings.Fields(strings.TrimPrefix(line, "# "))
+	if len(fields) < 2 {
+		return mods
+	}
+	// `# path => target version` (no version on the left) is the
+	// trailing replacement-directive footer go mod vendor appends, not
+	// a module entry — the module it names already has its own
+	// `# path version => …` line above. Taking the footer as an entry
+	// fabricates a module whose version is the literal "=>".
+	if fields[1] == "=>" {
+		return mods
+	}
+	// `# path version [=> replacement...]` — record the
+	// left-hand module identity; reconciling the replacement target
+	// against a reproducible vendor tree is out of scope for this
+	// scanner.
+	mods = append(mods, domain.VendoredModule{Path: fields[0], Version: fields[1]})
+	// `=> replacement [version]` names the module whose source was
+	// actually vendored here, under this entry's original path. A
+	// filesystem replace (`=> ./dir`) has no version and is mapped the
+	// same way: the target is still the name a consumer may hold.
+	if len(fields) >= 4 && fields[2] == "=>" {
+		replacements[fields[3]] = fields[0]
+		entry := &mods[len(mods)-1]
+		entry.ReplacementPath = fields[3]
+		// A version is recorded only for a module replacement. The
+		// directory-path check is belt and braces over the field count:
+		// `go mod vendor` writes no version after a filesystem target,
+		// and reading one there would hand the domain an attestable
+		// coordinate for a replacement that publishes nothing.
+		if len(fields) >= 5 && !modfile.IsDirectoryPath(fields[3]) {
+			entry.ReplacementVersion = fields[4]
+		}
+	}
+	return mods
 }
 
 // parseGoSum parses go.sum into "path@version" → module h1 hash. The

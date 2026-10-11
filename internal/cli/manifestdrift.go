@@ -102,8 +102,8 @@ func manifestDriftAgainstWalk(
 	if err != nil {
 		return manifestDrift{}, walkdomain.WalkRecord{}, fmt.Errorf("loading walk %q: %w", walkID, err)
 	}
-	if err := ctx.Err(); err != nil {
-		return manifestDrift{}, rec, fmt.Errorf("checking whether walk %s still describes %s: %w", walkID, gomodPath, err)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return manifestDrift{}, rec, fmt.Errorf("checking whether walk %s still describes %s: %w", walkID, gomodPath, ctxErr)
 	}
 	// A manifest that does not resolve is not evidence that the stored walk still
 	// describes it, so the failure is the answer rather than a reason to fall

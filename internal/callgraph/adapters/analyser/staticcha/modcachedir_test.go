@@ -2,6 +2,7 @@ package staticcha_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -27,6 +28,9 @@ type recordingCache struct {
 	// plantReadOnlyEntry writes the shape the go command leaves behind: a file
 	// inside a read-only directory, which os.RemoveAll cannot unlink.
 	plantReadOnlyEntry bool
+	// plantErr is why the entry could not be planted; a test that asked for
+	// one checks it, so a failed plant cannot pass as a removed one.
+	plantErr error
 }
 
 func (c *recordingCache) Materialise(_ context.Context, dir string, main cgports.MainModule) cgports.ModuleCacheReport {
@@ -35,9 +39,12 @@ func (c *recordingCache) Materialise(_ context.Context, dir string, main cgports
 	c.main = main
 	if c.plantReadOnlyEntry {
 		extracted := filepath.Join(dir, "example.com", "dep@v1.2.3")
-		if err := os.MkdirAll(extracted, 0o700); err == nil {
-			_ = os.WriteFile(filepath.Join(extracted, "a.go"), []byte("package dep\n"), 0o400)
-			_ = os.Chmod(extracted, 0o500) // #nosec G302 -- the read-only mode the go command itself writes, which is the shape under test
+		c.plantErr = os.MkdirAll(extracted, 0o700)
+		if c.plantErr == nil {
+			c.plantErr = errors.Join(
+				os.WriteFile(filepath.Join(extracted, "a.go"), []byte("package dep\n"), 0o400),
+				os.Chmod(extracted, 0o500), // #nosec G302 -- the read-only mode the go command itself writes, which is the shape under test
+			)
 		}
 	}
 	return c.report
@@ -147,6 +154,9 @@ func TestAnalyse_MaterialisedCacheIsRemoved(t *testing.T) {
 
 	childEnv(t, a, recorded, dependentModuleFiles)
 
+	if cache.plantErr != nil {
+		t.Fatalf("planting the read-only entry: %v", cache.plantErr)
+	}
 	if _, err := os.Stat(cache.dir); err == nil {
 		t.Errorf("the materialised cache %s survived the analysis", cache.dir)
 	}

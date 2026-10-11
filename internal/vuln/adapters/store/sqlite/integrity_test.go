@@ -88,8 +88,8 @@ func TestReadPaths_RefuseTamperedRecord(t *testing.T) {
 	rec := seal(t, integrityRecord())
 	rec.Findings = []domain.VulnerabilityFinding{{ID: "GO-2024-0001"}}
 	rec = seal(t, rec)
-	if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
-		t.Fatalf("PutVulnerabilityRecord: %v", err)
+	if perr := store.PutVulnerabilityRecord(ctx, rec); perr != nil {
+		t.Fatalf("PutVulnerabilityRecord: %v", perr)
 	}
 
 	run := sealRun(t, domain.WalkScanRun{
@@ -101,8 +101,8 @@ func TestReadPaths_RefuseTamperedRecord(t *testing.T) {
 		CompletedAt:      rec.ScannedAt,
 		PipelineVersion:  "v1",
 	})
-	if err := store.PutWalkScanRun(ctx, run); err != nil {
-		t.Fatalf("PutWalkScanRun: %v", err)
+	if perr := store.PutWalkScanRun(ctx, run); perr != nil {
+		t.Fatalf("PutWalkScanRun: %v", perr)
 	}
 
 	// Alter the stored body without touching the hash — exactly what a tamper
@@ -171,8 +171,8 @@ func TestGetWalkScanRun_RefusesTamperedRun(t *testing.T) {
 		CompletedAt:     time.Date(2024, 1, 1, 0, 1, 0, 0, time.UTC),
 		PipelineVersion: "v1",
 	})
-	if err := store.PutWalkScanRun(ctx, run); err != nil {
-		t.Fatalf("PutWalkScanRun: %v", err)
+	if perr := store.PutWalkScanRun(ctx, run); perr != nil {
+		t.Fatalf("PutWalkScanRun: %v", perr)
 	}
 
 	tampered := run
@@ -181,8 +181,8 @@ func TestGetWalkScanRun_RefusesTamperedRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalling tampered run: %v", err)
 	}
-	if _, err := db.DB().ExecContext(ctx, `UPDATE walk_scan_runs SET serialised = ?`, blob); err != nil {
-		t.Fatalf("tampering with stored run: %v", err)
+	if _, eerr := db.DB().ExecContext(ctx, `UPDATE walk_scan_runs SET serialised = ?`, blob); eerr != nil {
+		t.Fatalf("tampering with stored run: %v", eerr)
 	}
 
 	_, found, err := store.GetWalkScanRun(ctx, run.ID)
@@ -263,7 +263,7 @@ func TestMigration_PurgesEmptyHashRows(t *testing.T) {
 		t.Fatalf("opening db at version 8: %v", err)
 	}
 
-	if _, err := db.DB().ExecContext(ctx, `
+	if _, eerr := db.DB().ExecContext(ctx, `
 INSERT INTO vulnerability_records (
     module_path, module_version, pipeline_version, snapshot_source,
     snapshot_version, walk_id, overall_status, finding_count,
@@ -275,11 +275,11 @@ INSERT INTO vulnerability_findings_index (
     finding_id, module_path, module_version, pipeline_version,
     snapshot_source, snapshot_version, is_reachable
 ) VALUES ('GO-2024-0001', 'example.com/localdep', 'v0.0.0', 'v14', 'govulndb', 'v1', NULL);
-`); err != nil {
-		t.Fatalf("seeding legacy empty-hash row: %v", err)
+`); eerr != nil {
+		t.Fatalf("seeding legacy empty-hash row: %v", eerr)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("closing db: %v", err)
+	if cerr := db.Close(); cerr != nil {
+		t.Fatalf("closing db: %v", cerr)
 	}
 
 	// Re-open with the full migration set, which applies version 9.

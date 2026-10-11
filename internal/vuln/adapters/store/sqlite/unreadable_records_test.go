@@ -173,43 +173,50 @@ func TestRecordListings_ReportUnreadableRowsAndKeepTheRest(t *testing.T) {
 				t.Fatalf("set aside = %v, want exactly the one drifted row", aside.Rows)
 			}
 			row := aside.Rows[0]
-			// Naming the row is the point: a caller told only that something is
-			// wrong cannot go and look at it. The identity is BARE — a machine
-			// surface renders it under the key a readable record uses, so a
-			// coordinate spliced into a display string would have to be parsed back
-			// out.
-			if row.ID != bad.Coordinate.String() {
-				t.Errorf("unreadable row ID = %q, want the bare coordinate %s", row.ID, bad.Coordinate)
-			}
-			if row.Kind != "vulnerability record" {
-				t.Errorf("row kind = %q, want %q", row.Kind, "vulnerability record")
-			}
-			// The generation travels beside the identity, because a coordinate
-			// alone does not pick one row out of a history.
-			if row.Generation.PipelineVersion != bad.PipelineVersion {
-				t.Errorf("pipeline version = %q, want %q", row.Generation.PipelineVersion, bad.PipelineVersion)
-			}
-			if row.Generation.Snapshot.Version != bad.DatabaseSnapshot.Version() {
-				t.Errorf("snapshot version = %q, want %q", row.Generation.Snapshot.Version, bad.DatabaseSnapshot.Version())
-			}
-			if row.Generation.Snapshot.Source != bad.DatabaseSnapshot.Source() {
-				t.Errorf("snapshot source = %q, want %q", row.Generation.Snapshot.Source, bad.DatabaseSnapshot.Source())
-			}
-			// A generation this build no longer seals must not be reported in the
-			// words reserved for altered bytes.
-			if !errors.Is(row.Reason, recordseal.ErrGenerationDrift) {
-				t.Errorf("reason = %v, want it to classify as generation drift", row.Reason)
-			}
-			// The generation is named by its seal, which is what picks it out of a
-			// coordinate's history.
-			if row.ContentHash == "" || row.ContentHash != sealInRow(t, store, bad) {
-				t.Errorf("set-aside content hash = %q, want the drifted row's own seal", row.ContentHash)
-			}
-			// Drift is excused: a consuming command must not fail closed on it.
-			if errors.Is(err, ports.ErrVulnIntegrity) {
-				t.Error("errors.Is(err, ErrVulnIntegrity) = true for a drifted row; consumers would refuse to answer")
-			}
+			assertDriftedRecordRow(t, store, bad, row, err)
 		})
+	}
+}
+
+// assertDriftedRecordRow checks the set-aside row names the drifted record by
+// its bare coordinate, generation, reason and own seal.
+func assertDriftedRecordRow(t *testing.T, store *sqlite.Store, bad domain.VulnerabilityRecord, row recordseal.SetAsideRow, err error) {
+	t.Helper()
+	// Naming the row is the point: a caller told only that something is
+	// wrong cannot go and look at it. The identity is BARE — a machine
+	// surface renders it under the key a readable record uses, so a
+	// coordinate spliced into a display string would have to be parsed back
+	// out.
+	if row.ID != bad.Coordinate.String() {
+		t.Errorf("unreadable row ID = %q, want the bare coordinate %s", row.ID, bad.Coordinate)
+	}
+	if row.Kind != "vulnerability record" {
+		t.Errorf("row kind = %q, want %q", row.Kind, "vulnerability record")
+	}
+	// The generation travels beside the identity, because a coordinate
+	// alone does not pick one row out of a history.
+	if row.Generation.PipelineVersion != bad.PipelineVersion {
+		t.Errorf("pipeline version = %q, want %q", row.Generation.PipelineVersion, bad.PipelineVersion)
+	}
+	if row.Generation.Snapshot.Version != bad.DatabaseSnapshot.Version() {
+		t.Errorf("snapshot version = %q, want %q", row.Generation.Snapshot.Version, bad.DatabaseSnapshot.Version())
+	}
+	if row.Generation.Snapshot.Source != bad.DatabaseSnapshot.Source() {
+		t.Errorf("snapshot source = %q, want %q", row.Generation.Snapshot.Source, bad.DatabaseSnapshot.Source())
+	}
+	// A generation this build no longer seals must not be reported in the
+	// words reserved for altered bytes.
+	if !errors.Is(row.Reason, recordseal.ErrGenerationDrift) {
+		t.Errorf("reason = %v, want it to classify as generation drift", row.Reason)
+	}
+	// The generation is named by its seal, which is what picks it out of a
+	// coordinate's history.
+	if row.ContentHash == "" || row.ContentHash != sealInRow(t, store, bad) {
+		t.Errorf("set-aside content hash = %q, want the drifted row's own seal", row.ContentHash)
+	}
+	// Drift is excused: a consuming command must not fail closed on it.
+	if errors.Is(err, ports.ErrVulnIntegrity) {
+		t.Error("errors.Is(err, ErrVulnIntegrity) = true for a drifted row; consumers would refuse to answer")
 	}
 }
 
@@ -317,14 +324,14 @@ func TestRecordListings_UnparseableRowIsStillReported(t *testing.T) {
 	good := recordAt(t, "example.com/alpha", "v1.0.0", snapshot, time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC))
 	bad := recordAt(t, "example.com/bravo", "v2.0.0", snapshot, time.Date(2024, 2, 1, 1, 0, 0, 0, time.UTC))
 	for _, rec := range []domain.VulnerabilityRecord{good, bad} {
-		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
-			t.Fatalf("PutVulnerabilityRecord(%s): %v", rec.Coordinate, err)
+		if perr := store.PutVulnerabilityRecord(ctx, rec); perr != nil {
+			t.Fatalf("PutVulnerabilityRecord(%s): %v", rec.Coordinate, perr)
 		}
 	}
-	if _, err := db.DB().ExecContext(ctx,
+	if _, eerr := db.DB().ExecContext(ctx,
 		`UPDATE vulnerability_records SET serialised = ? WHERE module_path = ?`,
-		[]byte("not json at all"), bad.Coordinate.Path()); err != nil {
-		t.Fatalf("installing unparseable row: %v", err)
+		[]byte("not json at all"), bad.Coordinate.Path()); eerr != nil {
+		t.Fatalf("installing unparseable row: %v", eerr)
 	}
 
 	records, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-9001", "")
@@ -364,13 +371,13 @@ func TestRecordListings_RowWithNoReadableCoordinateIsReportedUnnamed(t *testing.
 
 			snapshot := snap("govulndb", "v2024-01-01")
 			bad := recordAt(t, "example.com/bravo", "v2.0.0", snapshot, time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC))
-			if err := store.PutVulnerabilityRecord(ctx, bad); err != nil {
-				t.Fatalf("PutVulnerabilityRecord: %v", err)
+			if perr := store.PutVulnerabilityRecord(ctx, bad); perr != nil {
+				t.Fatalf("PutVulnerabilityRecord: %v", perr)
 			}
-			if _, err := db.DB().ExecContext(ctx,
+			if _, eerr := db.DB().ExecContext(ctx,
 				`UPDATE vulnerability_records SET serialised = ? WHERE module_path = ?`,
-				[]byte(blob), bad.Coordinate.Path()); err != nil {
-				t.Fatalf("installing the damaged row: %v", err)
+				[]byte(blob), bad.Coordinate.Path()); eerr != nil {
+				t.Fatalf("installing the damaged row: %v", eerr)
 			}
 
 			_, err = store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-9001", "")

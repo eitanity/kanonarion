@@ -65,10 +65,12 @@ var _ cgports.CallGraphStore = (*queryCGFakeStore)(nil)
 func TestQueryCallGraphUseCase_GetCallGraphRecord(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	store := &queryCGFakeStore{}
-	_ = store.PutCallGraphRecord(context.Background(), domain.CallGraphRecord{
+	if err := store.PutCallGraphRecord(context.Background(), domain.CallGraphRecord{
 		Coordinate:      coord,
 		PipelineVersion: "0.1.0",
-	})
+	}); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
 
 	uc := application.NewQueryCallGraphUseCase(store)
 

@@ -916,6 +916,20 @@ type WalkProjectDirReader interface {
 	WalkProjectDir(ctx context.Context, walkID string) (string, bool, error)
 }
 
+// BuildModule is one module a walk selected for its build. LocalReplace marks
+// a module replaced by a directory, which no stored call graph is taken of.
+type BuildModule struct {
+	Coordinate   coordinate.ModuleCoordinate
+	LocalReplace bool
+}
+
+// WalkModuleReader answers which modules a walk selected, so a joined search
+// can load the call graph the store holds for each. Declared narrowly for the
+// same reason as WalkProjectDirReader. The bool is false for a walk not found.
+type WalkModuleReader interface {
+	WalkModules(ctx context.Context, walkID string) ([]BuildModule, bool, error)
+}
+
 // CallGraphProjection is the minimal view of a call graph the reachability
 // analyser consumes: the nodes and the directed call edges between them, plus
 // the fidelity signature that backed them.
@@ -967,6 +981,11 @@ type CallGraphProjection struct {
 	// the build links no standard library: a reader must refuse to act on it
 	// rather than read it as an empty set.
 	StdlibPackages []string
+	// DependencyPackages is the build's dependency closure: every import path
+	// placed in a module other than the analysed one. A join keeps only these
+	// packages of a dependency's own graph. Empty on a record from before the
+	// field, so a reader refuses the join rather than read it as an empty set.
+	DependencyPackages []string
 	// AnalysisRoot is the working tree this graph was taken of, empty for a graph
 	// built from anything else. It is carried so a refusal about this graph can
 	// name the directory a re-analysis must run in, rather than telling the
@@ -987,6 +1006,11 @@ type CallGraphNode struct {
 	// selection is fed the fact rather than a zero value that reads as "not a
 	// test", leaving the scope the only thing that decides.
 	IsTest bool
+	// ExportKind and ExportName are the node's export directive, as opaque
+	// strings so this port stays free of the callgraph domain; both empty when
+	// it carries none.
+	ExportKind string
+	ExportName string
 }
 
 // CallGraphEdge is a directed call edge between two node IDs.

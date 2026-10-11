@@ -332,32 +332,40 @@ func declaredEvidenceSentinels(t *testing.T) []string {
 		if perr != nil {
 			t.Fatalf("parsing %s: %v", file, perr)
 		}
-		ast.Inspect(parsed, func(n ast.Node) bool {
-			vs, ok := n.(*ast.ValueSpec)
-			if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
-				return true
-			}
-			name := vs.Names[0].Name
-			if !strings.HasPrefix(name, "Err") ||
-				(!strings.HasSuffix(name, "Integrity") && !strings.HasSuffix(name, "Conflict")) {
-				return true
-			}
-			call, ok := vs.Values[0].(*ast.CallExpr)
-			if !ok || len(call.Args) != 1 {
-				return true
-			}
-			lit, ok := call.Args[0].(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				return true
-			}
-			msg, uerr := strconv.Unquote(lit.Value)
-			if uerr != nil {
-				return true
-			}
-			msgs = append(msgs, msg)
-			return true
-		})
+		msgs = append(msgs, evidenceSentinelMessages(parsed)...)
 	}
+	return msgs
+}
+
+// evidenceSentinelMessages is the message of each Err*Integrity and
+// Err*Conflict sentinel the file declares with errors.New.
+func evidenceSentinelMessages(parsed *ast.File) []string {
+	var msgs []string
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
+			return true
+		}
+		name := vs.Names[0].Name
+		if !strings.HasPrefix(name, "Err") ||
+			(!strings.HasSuffix(name, "Integrity") && !strings.HasSuffix(name, "Conflict")) {
+			return true
+		}
+		call, ok := vs.Values[0].(*ast.CallExpr)
+		if !ok || len(call.Args) != 1 {
+			return true
+		}
+		lit, ok := call.Args[0].(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		msg, uerr := strconv.Unquote(lit.Value)
+		if uerr != nil {
+			return true
+		}
+		msgs = append(msgs, msg)
+		return true
+	})
 	return msgs
 }
 

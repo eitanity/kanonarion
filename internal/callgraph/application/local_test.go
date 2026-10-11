@@ -45,8 +45,8 @@ func TestLocalExecute_PersistsAndForwardsDir(t *testing.T) {
 	if analyser.lastDir != "/work/tree" {
 		t.Errorf("analyser dir = %q, want /work/tree", analyser.lastDir)
 	}
-	if _, ok, _ := store.GetCallGraphRecord(context.Background(), testCoord, testPipelineV); !ok {
-		t.Errorf("local record not persisted; callers/callees cannot resolve internal symbols")
+	if _, ok, rerr := store.GetCallGraphRecord(context.Background(), testCoord, testPipelineV); rerr != nil || !ok {
+		t.Errorf("local record not persisted; callers/callees cannot resolve internal symbols (read error: %v)", rerr)
 	}
 }
 

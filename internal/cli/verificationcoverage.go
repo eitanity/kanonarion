@@ -295,6 +295,15 @@ func writeVerificationCoverage(w io.Writer, c fetchdomain.VerificationCoverage) 
 	// State the honest denominator. Against the graph total a project walk
 	// reports a shortfall for its own main module and the standard library,
 	// neither of which has a module artefact to anchor.
+	if err := writeCoverageAnchorLines(w, c); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeCoverageAnchorLines states the cross-verified share of the modules it
+// applies to, the fetch ledger's VCS evidence, and a collapse when there is one.
+func writeCoverageAnchorLines(w io.Writer, c fetchdomain.VerificationCoverage) error {
 	if n := c.CrossVerifiable(); n > 0 {
 		if _, err := fmt.Fprintf(w, "  cross-verified %d of %d module(s) where it applies (%.1f%%)\n",
 			c.CrossVerified, n, percentOf(c.CrossVerified, n)); err != nil {

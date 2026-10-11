@@ -379,8 +379,8 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return terr
 	}
 
-	if err := resolveModcacheMode(ctx, f.fromModcache, gomodPath); err != nil {
-		return err
+	if merr := resolveModcacheMode(ctx, f.fromModcache, gomodPath); merr != nil {
+		return merr
 	}
 	// On the normal network path, layer the project go.sum on as an always-on
 	// offline integrity check. No-op in --from-modcache mode.
@@ -422,16 +422,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	// on the text path. Answered here, before the store and proxy are opened,
 	// because there is nothing to audit either way.
 	if len(coords) == 0 {
-		if jsonOut {
-			enc := json.NewEncoder(stdout)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(newAuditOutput(envelope, unauditedRunJSON(), nil)); err != nil {
-				return fmt.Errorf("encoding results: %w", err)
-			}
-			return nil
-		}
-		_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
-		return nil
+		return writeNoAuditDependencies(stdout, envelope, scope, f.gomodPath)
 	}
 
 	logger := buildLogger(logLevel, stderr)
@@ -439,7 +430,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// Which lookup answers the staleness column, and why, is decided in one
 	// place so the offline and online wirings cannot drift apart.
@@ -472,6 +463,39 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	// documented array of per-module rows that consumers index into — there is
 	// no envelope on that channel to add a field to, and inventing one would
 	// break every existing caller to state a fact about the run.
+	if err := writeAuditCoverage(stderr, gomodPath, derivation, results); err != nil {
+		return err
+	}
+
+	// The native axis, on stderr with the others. The verdict columns above
+	// cover Go code; this states which part of the build they do not reach. It
+	// is derived from the rows themselves, so the set it describes is exactly
+	// the set the table lists.
+	native := nativeRollupOver(ctx, ctr.QueryNative, nativeCoordsOf(auditCoordinateStrings(results)))
+	if nerr := writeNativeCoverageSummary(stderr, native); nerr != nil {
+		return nerr
+	}
+
+	return writeAuditResults(stdout, envelope, derivation, results, native)
+}
+
+// writeNoAuditDependencies reports a scope with no dependencies to audit.
+func writeNoAuditDependencies(stdout io.Writer, envelope envelopeScope, scope depScope, gomodPath string) error {
+	if jsonOut {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if eerr := enc.Encode(newAuditOutput(envelope, unauditedRunJSON(), nil)); eerr != nil {
+			return fmt.Errorf("encoding results: %w", eerr)
+		}
+		return nil
+	}
+	_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, gomodPath)
+	return nil
+}
+
+// writeAuditCoverage states on stderr what the audit's answers rest on: the
+// vendoring, the derivation, the toolchain and each coverage axis.
+func writeAuditCoverage(stderr io.Writer, gomodPath string, derivation auditDerivation, results []auditModuleResult) error {
 	if verr := writeBuildVendoring(stderr, detectBuildVendoringForGoMod(gomodPath)); verr != nil {
 		return verr
 	}
@@ -512,16 +536,12 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if cerr := writePreModulesCaveatForSet(stderr, auditPreModulesCoords(results)); cerr != nil {
 		return cerr
 	}
+	return nil
+}
 
-	// The native axis, on stderr with the others. The verdict columns above
-	// cover Go code; this states which part of the build they do not reach. It
-	// is derived from the rows themselves, so the set it describes is exactly
-	// the set the table lists.
-	native := nativeRollupOver(ctx, ctr.QueryNative, nativeCoordsOf(auditCoordinateStrings(results)))
-	if nerr := writeNativeCoverageSummary(stderr, native); nerr != nil {
-		return nerr
-	}
-
+// writeAuditResults writes the audit as JSON or a table, and returns the
+// outcome the results call for.
+func writeAuditResults(stdout io.Writer, envelope envelopeScope, derivation auditDerivation, results []auditModuleResult, native *nativeWalkRollup) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -730,21 +750,9 @@ func auditScope(
 	}
 	walkID := walkResult.Record.ID
 
-	rec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID)
-	if gerr != nil {
-		return nil, derivation, fmt.Errorf("loading project walk %s: %w", walkID, gerr)
-	}
-
-	// In --from-modcache mode a module that fails go.sum verification is a hard
-	// error: stop before extract/scan and exit non-zero rather than reporting a
-	// row for it.
-	if gateErr := modcacheWalkGate(rec, localCoord); gateErr != nil {
-		return nil, derivation, gateErr
-	}
-	// On the normal path, a local go.sum mismatch is tamper-evidence: fail hard
-	// before extract/scan rather than reporting a row for the tampered module.
-	if gateErr := goSumWalkGate(rec, localCoord); gateErr != nil {
-		return nil, derivation, gateErr
+	rec, err := loadGatedProjectWalk(ctx, ctr, walkID, localCoord)
+	if err != nil {
+		return nil, derivation, err
 	}
 
 	_, _ = fmt.Fprintf(progressOut, "==> audit: extracting licenses for walk %s\n", walkID)
@@ -766,45 +774,11 @@ func auditScope(
 	// anything this walk is judged on — leaves it answering. A failed refresh is
 	// reported and the audit continues against the stored database rather than
 	// losing the whole report.
-	if f.fresh {
-		_, _ = fmt.Fprintf(progressOut, "==> audit: refreshing the advisory database\n")
-		derivation.refreshed = true
-		refresh, frerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
-		if ierr := stopIfInterrupted(ctx, "refreshing the advisory database", frerr); ierr != nil {
-			return nil, derivation, ierr
-		}
-		if frerr != nil {
-			derivation.refreshErr = frerr
-		} else {
-			derivation.refresh = refresh
-		}
+	if rerr := refreshAdvisoryDatabase(ctx, ctr, walkID, f, progressOut, &derivation); rerr != nil {
+		return nil, derivation, rerr
 	}
-
-	// Asked before the scan is driven so the derivation statement can name the
-	// run that answered, and answered with the same lookup the scan itself makes:
-	// audit narrates the whole derivation in one place, so runVulnScan is told not
-	// to announce the reuse a second time.
-	prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, filepath.Dir(f.gomodPath))
-	if ierr := stopIfInterrupted(ctx, "finding a reusable scan of walk "+walkID, rerr); ierr != nil {
-		return nil, derivation, ierr
-	}
-	if rerr != nil {
-		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
-	} else if ok && !f.force {
-		derivation.scanReused = true
-		derivation.scanRun = prior
-		// How much of the served answer is a function of source, counted from the
-		// records that run wrote. Asked on the reuse path only: a run that measures
-		// for itself pays nothing for it. A read that fails is reported rather than
-		// silently collapsing the count to nought, because nought is also the
-		// answer that removes the statement.
-		var aside setAsideRows
-		if recs, lerr := ctr.QueryVuln.ListRecordsForRun(ctx, prior.ID); aside.take(lerr) != nil {
-			_, _ = fmt.Fprintf(stderr, "vuln-scan: reading the reused run's records: %v\n", lerr)
-		} else {
-			aside.write(stderr)
-			derivation.scanReachabilityVerdicts = reachabilityVerdicts(recs)
-		}
+	if ferr := findReusableScan(ctx, ctr, walkID, f, stderr, &derivation); ferr != nil {
+		return nil, derivation, ferr
 	}
 
 	// fresh=false: the refresh above already happened, and the snapshot it
@@ -835,6 +809,90 @@ func auditScope(
 	if err != nil {
 		return nil, derivation, fmt.Errorf("loading license overrides: %w", err)
 	}
+	results, err := auditDependencyResults(ctx, rec, localCoord, walkID, walkScope, overrides, staleness, ctr, stderr)
+	if err != nil {
+		return nil, derivation, err
+	}
+	return results, derivation, nil
+}
+
+// loadGatedProjectWalk loads the project walk and refuses one a go.sum
+// verification gate fails.
+func loadGatedProjectWalk(ctx context.Context, ctr *Container, walkID string, localCoord coordinate.ModuleCoordinate) (walkdomain.WalkRecord, error) {
+	rec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID)
+	if gerr != nil {
+		return walkdomain.WalkRecord{}, fmt.Errorf("loading project walk %s: %w", walkID, gerr)
+	}
+
+	// In --from-modcache mode a module that fails go.sum verification is a hard
+	// error: stop before extract/scan and exit non-zero rather than reporting a
+	// row for it.
+	if gateErr := modcacheWalkGate(rec, localCoord); gateErr != nil {
+		return walkdomain.WalkRecord{}, gateErr
+	}
+	// On the normal path, a local go.sum mismatch is tamper-evidence: fail hard
+	// before extract/scan rather than reporting a row for the tampered module.
+	if gateErr := goSumWalkGate(rec, localCoord); gateErr != nil {
+		return walkdomain.WalkRecord{}, gateErr
+	}
+	return rec, nil
+}
+
+// refreshAdvisoryDatabase refreshes the advisory database when --fresh asks,
+// noting the outcome on derivation; a failed refresh is noted, not returned.
+func refreshAdvisoryDatabase(ctx context.Context, ctr *Container, walkID string, f auditFlags, progressOut io.Writer, derivation *auditDerivation) error {
+	if f.fresh {
+		_, _ = fmt.Fprintf(progressOut, "==> audit: refreshing the advisory database\n")
+		derivation.refreshed = true
+		refresh, frerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
+		if ierr := stopIfInterrupted(ctx, "refreshing the advisory database", frerr); ierr != nil {
+			return ierr
+		}
+		if frerr != nil {
+			derivation.refreshErr = frerr
+		} else {
+			derivation.refresh = refresh
+		}
+	}
+	return nil
+}
+
+// findReusableScan notes on derivation the stored scan run that answers the
+// walk, when one does and no re-scan was asked for.
+func findReusableScan(ctx context.Context, ctr *Container, walkID string, f auditFlags, stderr io.Writer, derivation *auditDerivation) error {
+
+	// Asked before the scan is driven so the derivation statement can name the
+	// run that answered, and answered with the same lookup the scan itself makes:
+	// audit narrates the whole derivation in one place, so runVulnScan is told not
+	// to announce the reuse a second time.
+	prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, filepath.Dir(f.gomodPath))
+	if ierr := stopIfInterrupted(ctx, "finding a reusable scan of walk "+walkID, rerr); ierr != nil {
+		return ierr
+	}
+	if rerr != nil {
+		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
+	} else if ok && !f.force {
+		derivation.scanReused = true
+		derivation.scanRun = prior
+		// How much of the served answer is a function of source, counted from the
+		// records that run wrote. Asked on the reuse path only: a run that measures
+		// for itself pays nothing for it. A read that fails is reported rather than
+		// silently collapsing the count to nought, because nought is also the
+		// answer that removes the statement.
+		var aside setAsideRows
+		if recs, lerr := ctr.QueryVuln.ListRecordsForRun(ctx, prior.ID); aside.take(lerr) != nil {
+			_, _ = fmt.Fprintf(stderr, "vuln-scan: reading the reused run's records: %v\n", lerr)
+		} else {
+			aside.write(stderr)
+			derivation.scanReachabilityVerdicts = reachabilityVerdicts(recs)
+		}
+	}
+	return nil
+}
+
+// auditDependencyResults builds one audit row per dependency node of the
+// project walk, in graph order.
+func auditDependencyResults(ctx context.Context, rec walkdomain.WalkRecord, localCoord coordinate.ModuleCoordinate, walkID string, walkScope walkdomain.WalkScope, overrides licdomain.LicenseOverrideSet, staleness stalenessLookup, ctr *Container, stderr io.Writer) ([]auditModuleResult, error) {
 
 	// Iterate the walk's dependency nodes (every graph node bar the local root):
 	// the dependency set is a structural subset of the project walk. Nodes are
@@ -847,16 +905,16 @@ func auditScope(
 	policyScope := policyScopeForWalkScope(walkScope)
 	for _, node := range depNodes {
 		if ierr := stopIfInterrupted(ctx, "auditing "+node.Coordinate.String(), nil); ierr != nil {
-			return nil, derivation, ierr
+			return nil, ierr
 		}
 		res, rerr := buildAuditResult(ctx, node, walkFrameAnchor(walkID, rec.Target), policyScope, overrides, staleness, ctr, stderr)
 		if rerr != nil {
-			return nil, derivation, rerr
+			return nil, rerr
 		}
 		res.Direct = node.DirectDependency
 		results = append(results, res)
 	}
-	return results, derivation, nil
+	return results, nil
 }
 
 // stopIfInterrupted ends an audit the operator interrupted. The phases tolerate
@@ -1767,13 +1825,7 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	// ragged left edge. It is a FLOOR, never a ceiling: a longer coordinate
 	// widens the column rather than overflowing it.
 	const minCoordWidth = 55
-	showScope := false
-	for _, r := range results {
-		if r.Scope != "" {
-			showScope = true
-			break
-		}
-	}
+	showScope := anyAuditScope(results)
 
 	// Every cell is built before anything is printed, because a column can only
 	// be sized from the widest value the run actually produced. The previous
@@ -1813,30 +1865,11 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	// noteIndent lines the continuation up under the staleness column it
 	// belongs to, so the clause reads as that row's second staleness fact
 	// rather than as a new row.
-	noteIndent := 0
-	stalenessCol := 3
-	if showScope {
-		stalenessCol = 4
-	}
-	for i := 0; i < stalenessCol && i < len(widths); i++ {
-		noteIndent += widths[i] + 2
-	}
+	noteIndent := auditNoteIndent(widths, showScope)
 
 	for _, rw := range rows {
-		var b strings.Builder
-		for i, c := range rw.cells {
-			if i > 0 {
-				b.WriteString("  ")
-			}
-			// The last column is never padded: trailing whitespace is not
-			// alignment, and it is what a reader's diff notices.
-			if i == len(rw.cells)-1 {
-				b.WriteString(c)
-				continue
-			}
-			fmt.Fprintf(&b, "%-*s", widths[i], c)
-		}
-		if _, err := fmt.Fprintln(stdout, b.String()); err != nil {
+		line := padAuditRow(rw.cells, widths)
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 		if rw.note != "" {
@@ -1863,4 +1896,49 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 		}
 	}
 	return nil
+}
+
+// anyAuditScope reports whether any row carries a dependency scope.
+func anyAuditScope(results []auditModuleResult) bool {
+	showScope := false
+	for _, r := range results {
+		if r.Scope != "" {
+			showScope = true
+			break
+		}
+	}
+	return showScope
+}
+
+// auditNoteIndent is the indent that puts a row's note under its staleness
+// column.
+func auditNoteIndent(widths []int, showScope bool) int {
+	noteIndent := 0
+	stalenessCol := 3
+	if showScope {
+		stalenessCol = 4
+	}
+	for i := 0; i < stalenessCol && i < len(widths); i++ {
+		noteIndent += widths[i] + 2
+	}
+	return noteIndent
+}
+
+// padAuditRow lays one row's cells out at the column widths, the last one
+// unpadded.
+func padAuditRow(cells []string, widths []int) string {
+	var b strings.Builder
+	for i, c := range cells {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		// The last column is never padded: trailing whitespace is not
+		// alignment, and it is what a reader's diff notices.
+		if i == len(cells)-1 {
+			b.WriteString(c)
+			continue
+		}
+		fmt.Fprintf(&b, "%-*s", widths[i], c)
+	}
+	return b.String()
 }

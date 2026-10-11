@@ -157,24 +157,8 @@ func (uc *GenerateNoticeUseCase) processModule(
 	// classify. ExtractionFailed is not such an answer. Nothing was measured
 	// there, so there is nothing for a determination to supersede, and the
 	// remedy remains to make the measurement.
-	switch rec.OverallStatus {
-	case licensedomain.LicenceStatusAmbiguous:
-		if !overridden {
-			return nil, &licensedomain.ReviewItem{Coordinate: coord, Reason: ambiguousReason(rec), UndeterminedLicence: true}, nil
-		}
-	case licensedomain.LicenseStatusNone:
-		if !overridden {
-			return nil, &licensedomain.ReviewItem{Coordinate: coord, Reason: "no license found", UndeterminedLicence: true}, nil
-		}
-	case licensedomain.LicenseStatusExtractionFailed:
-		detail := rec.FailureDetail
-		if detail == "" {
-			detail = "unknown failure"
-		}
-		return nil, &licensedomain.ReviewItem{
-			Coordinate: coord,
-			Reason:     "license extraction failed: " + detail,
-		}, nil
+	if item := statusReview(coord, rec, overridden); item != nil {
+		return nil, item, nil
 	}
 
 	// Copyright must be present. Where extraction found none, an operator may
@@ -197,22 +181,7 @@ func (uc *GenerateNoticeUseCase) processModule(
 		return nil, nil, fmt.Errorf("reading license texts for %s: %w", coord, err)
 	}
 
-	// Collect deduped, sorted copyright statements from root-level non-vendored files.
-	seen := make(map[string]struct{})
-	var copyrights []string
-	for _, f := range rec.LicenseFiles {
-		if f.IsVendored || !isRootLevel(f.Path) {
-			continue
-		}
-		for _, s := range f.CopyrightStatements {
-			if _, dup := seen[s.Verbatim]; dup {
-				continue
-			}
-			seen[s.Verbatim] = struct{}{}
-			copyrights = append(copyrights, s.Verbatim)
-		}
-	}
-	sort.Strings(copyrights)
+	copyrights := rootCopyrights(rec)
 
 	// The identity the document publishes is the licence covering the module's
 	// code, read through what each of the record's licences covers. The TEXTS
@@ -248,6 +217,53 @@ func (uc *GenerateNoticeUseCase) processModule(
 		entry.Declaration = &declaration
 	}
 	return entry, nil, nil
+}
+
+// statusReview is the review item a record's status blocks NOTICE generation
+// with, or nil when it does not.
+func statusReview(coord coordinate.ModuleCoordinate, rec licensedomain.LicenseRecord, overridden bool) *licensedomain.ReviewItem {
+	switch rec.OverallStatus {
+	case licensedomain.LicenceStatusAmbiguous:
+		if !overridden {
+			return &licensedomain.ReviewItem{Coordinate: coord, Reason: ambiguousReason(rec), UndeterminedLicence: true}
+		}
+	case licensedomain.LicenseStatusNone:
+		if !overridden {
+			return &licensedomain.ReviewItem{Coordinate: coord, Reason: "no license found", UndeterminedLicence: true}
+		}
+	case licensedomain.LicenseStatusExtractionFailed:
+		detail := rec.FailureDetail
+		if detail == "" {
+			detail = "unknown failure"
+		}
+		return &licensedomain.ReviewItem{
+			Coordinate: coord,
+			Reason:     "license extraction failed: " + detail,
+		}
+	}
+	return nil
+}
+
+// rootCopyrights is the deduplicated, sorted copyright statements of the
+// record's root-level, non-vendored files.
+func rootCopyrights(rec licensedomain.LicenseRecord) []string {
+	// Collect deduped, sorted copyright statements from root-level non-vendored files.
+	seen := make(map[string]struct{})
+	var copyrights []string
+	for _, f := range rec.LicenseFiles {
+		if f.IsVendored || !isRootLevel(f.Path) {
+			continue
+		}
+		for _, s := range f.CopyrightStatements {
+			if _, dup := seen[s.Verbatim]; dup {
+				continue
+			}
+			seen[s.Verbatim] = struct{}{}
+			copyrights = append(copyrights, s.Verbatim)
+		}
+	}
+	sort.Strings(copyrights)
+	return copyrights
 }
 
 func (uc *GenerateNoticeUseCase) readLicenseTexts(

@@ -88,7 +88,7 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err
@@ -139,34 +139,8 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		}
 	}
 
-	if !jsonOut {
-		if err := writeScopeNotice(stdout, sc); err != nil {
-			return err
-		}
-	}
-	// The dropped-edges notice supersedes the generic Partial caveat when the
-	// queried symbol's OWN package is the one that failed: it says the same thing
-	// with the part that bears on this answer, and printing both would state the
-	// gap twice in two strengths.
-	if !jsonOut {
-		switch {
-		case pr.failedPkg != "":
-			if err := writeDroppedEdgesNotice(stdout, "callers", symbolID, pr); err != nil {
-				return err
-			}
-		case pr.isPartial:
-			if err := writePartialNotice(stdout, "callers", symbolID, pr.failedPkgs); err != nil {
-				return err
-			}
-		}
-	}
-	if !jsonOut {
-		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
-			return err
-		}
-		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
-			return err
-		}
+	if err := writeEdgeQueryNotices(ctx, stdout, "callers", symbolID, uc, sc, pr, jsonOut); err != nil {
+		return err
 	}
 
 	if err := printEdgeRefs("callers", symbolID, refs, jsonOut, stdout); err != nil {
@@ -179,11 +153,47 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callers", symbolID, refs, true)
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg, pr.detail)
 		if verr != nil {
 			return verr
 		}
 		return writeCallAnswer(stdout, "callers", symbolID, v, opts)
+	}
+	return nil
+}
+
+// writeEdgeQueryNotices writes, on the text path, the notices that qualify an
+// edge query's answer: the build scope, a dropped or partial graph, the
+// graph's completeness and the worktree it was read from.
+func writeEdgeQueryNotices(ctx context.Context, stdout io.Writer, label, symbolID string, uc QueryCallGraphUseCase, sc buildScope, pr partialRoot, jsonOut bool) error {
+	if !jsonOut {
+		if err := writeScopeNotice(stdout, sc); err != nil {
+			return err
+		}
+	}
+	// The dropped-edges notice supersedes the generic Partial caveat when the
+	// queried symbol's OWN package is the one that failed: it says the same thing
+	// with the part that bears on this answer, and printing both would state the
+	// gap twice in two strengths.
+	if !jsonOut {
+		switch {
+		case pr.failedPkg != "":
+			if err := writeDroppedEdgesNotice(stdout, label, symbolID, pr); err != nil {
+				return err
+			}
+		case pr.isPartial:
+			if err := writePartialNotice(stdout, label, symbolID, pr); err != nil {
+				return err
+			}
+		}
+	}
+	if !jsonOut {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
+			return err
+		}
+		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -219,7 +229,7 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
-			defer func() { _ = cleanup() }()
+			defer releaseStore(cleanup)
 			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
 			if err != nil {
 				return err
@@ -267,34 +277,8 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		}
 	}
 
-	if !jsonOut {
-		if err := writeScopeNotice(stdout, sc); err != nil {
-			return err
-		}
-	}
-	// The dropped-edges notice supersedes the generic Partial caveat when the
-	// queried symbol's OWN package is the one that failed: it says the same thing
-	// with the part that bears on this answer, and printing both would state the
-	// gap twice in two strengths.
-	if !jsonOut {
-		switch {
-		case pr.failedPkg != "":
-			if err := writeDroppedEdgesNotice(stdout, "callees", symbolID, pr); err != nil {
-				return err
-			}
-		case pr.isPartial:
-			if err := writePartialNotice(stdout, "callees", symbolID, pr.failedPkgs); err != nil {
-				return err
-			}
-		}
-	}
-	if !jsonOut {
-		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
-			return err
-		}
-		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
-			return err
-		}
+	if err := writeEdgeQueryNotices(ctx, stdout, "callees", symbolID, uc, sc, pr, jsonOut); err != nil {
+		return err
 	}
 
 	if err := printEdgeRefs("callees", symbolID, refs, jsonOut, stdout); err != nil {
@@ -307,7 +291,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return writeForeignEdgeAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "callees", symbolID, refs, false)
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg, pr.detail)
 		if verr != nil {
 			return verr
 		}
@@ -472,34 +456,8 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return cerr
 		}
 	}
-	if !jsonOut {
-		if err := writeScopeNotice(stdout, sc); err != nil {
-			return err
-		}
-	}
-	// The dropped-edges notice supersedes the generic Partial caveat when the
-	// queried symbol's OWN package is the one that failed: it says the same thing
-	// with the part that bears on this answer, and printing both would state the
-	// gap twice in two strengths.
-	if !jsonOut {
-		switch {
-		case pr.failedPkg != "":
-			if err := writeDroppedEdgesNotice(stdout, "transitive callers", symbolID, pr); err != nil {
-				return err
-			}
-		case pr.isPartial:
-			if err := writePartialNotice(stdout, "transitive callers", symbolID, pr.failedPkgs); err != nil {
-				return err
-			}
-		}
-	}
-	if !jsonOut {
-		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
-			return err
-		}
-		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
-			return err
-		}
+	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callers", symbolID, uc, sc, pr, jsonOut); err != nil {
+		return err
 	}
 	if err := printTransitiveResult("callers", symbolID, maxDepth, res, jsonOut, stdout, opts); err != nil {
 		return err
@@ -511,7 +469,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callers", symbolID, edges, nodes, true)
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, true, uc, sc, opts, pr.failedPkg, pr.detail)
 		if verr != nil {
 			return verr
 		}
@@ -551,34 +509,8 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return cerr
 		}
 	}
-	if !jsonOut {
-		if err := writeScopeNotice(stdout, sc); err != nil {
-			return err
-		}
-	}
-	// The dropped-edges notice supersedes the generic Partial caveat when the
-	// queried symbol's OWN package is the one that failed: it says the same thing
-	// with the part that bears on this answer, and printing both would state the
-	// gap twice in two strengths.
-	if !jsonOut {
-		switch {
-		case pr.failedPkg != "":
-			if err := writeDroppedEdgesNotice(stdout, "transitive callees", symbolID, pr); err != nil {
-				return err
-			}
-		case pr.isPartial:
-			if err := writePartialNotice(stdout, "transitive callees", symbolID, pr.failedPkgs); err != nil {
-				return err
-			}
-		}
-	}
-	if !jsonOut {
-		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
-			return err
-		}
-		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
-			return err
-		}
+	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callees", symbolID, uc, sc, pr, jsonOut); err != nil {
+		return err
 	}
 	if err := printTransitiveResult("callees", symbolID, maxDepth, res, jsonOut, stdout, opts); err != nil {
 		return err
@@ -590,7 +522,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return writeForeignTransitiveAnswer(ctx, newForeignModuleIndex(uc, sc), stdout, "transitive callees", symbolID, edges, nodes, false)
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg)
+		v, verr := negativeCallAnswer(ctx, symbolID, false, uc, sc, opts, pr.failedPkg, pr.detail)
 		if verr != nil {
 			return verr
 		}

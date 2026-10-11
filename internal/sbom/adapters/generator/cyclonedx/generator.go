@@ -157,52 +157,7 @@ func (g *Generator) buildBOM(
 
 	// Components — assembly policy (inclusion, license attach, ordering,
 	// incomplete-license determination) lives in sbom/domain.
-	inputs := make([]domain.ComponentInput, 0, len(walk.Graph.Nodes))
-	for _, node := range walk.Graph.Nodes {
-		// The standard library ships with the toolchain under the Go project's
-		// BSD-3-Clause licence and has no fetched licence record. Its licence
-		// resolves through walkdomain.StdlibLicense — the source tarball's
-		// extracted LICENSE facts when present, the published constant for a
-		// legacy or offline node that carries none — the shared rule every
-		// surface applies, so it is never counted as an unknown-licence gap.
-		if node.ResolutionSource == walkdomain.ResolutionStdlib {
-			spdx, _ := walkdomain.StdlibLicense(node.Stdlib)
-			inputs = append(inputs, domain.ComponentInput{
-				Module:      moduleRef(node.Coordinate),
-				HasLicense:  true,
-				PrimarySPDX: spdx,
-			})
-			continue
-		}
-		lic, hasLic := licenses[node.Coordinate]
-		// A component's licence clause states what governs that component's
-		// code. Reading the record through coverage keeps an embedded font's or
-		// a documentation licence out of it — the SBOM would otherwise assert a
-		// Go library is licensed OFL-1.1.
-		covered := licensedomain.ReadCoverage(lic)
-		input := domain.ComponentInput{
-			Module:      moduleRef(node.Coordinate),
-			HasLicense:  hasLic,
-			PrimarySPDX: covered.PrimarySPDX,
-			Expression:  covered.Expression,
-			Copyright:   copyrightString(lic),
-		}
-		// The subject's component entry carries the clause the subject carries,
-		// which is the same clause metadata.component states — extracted, or
-		// stamped by --main-license when the extraction reached none.
-		//
-		// Keying this on the ABSENCE OF A LICENCE RECORD instead is what let the
-		// stamp miss: a subject whose extraction ran and resolved to no licence
-		// has a record, so the stamp was applied to metadata.component and
-		// withheld from the component list, and the undetermined count — which
-		// reads the component list — named the operator's own module anyway.
-		if subj.is(node.Coordinate) && subj.licenseSPDX != "" {
-			input.HasLicense = true
-			input.PrimarySPDX = subj.licenseSPDX
-			input.Expression = ""
-		}
-		inputs = append(inputs, input)
-	}
+	inputs := componentInputs(walk, licenses, subj)
 	assembled, undeterminedRefs := domain.AssembleComponents(inputs)
 	components := make([]cdx.Component, 0, len(assembled))
 	for _, c := range assembled {
@@ -270,24 +225,7 @@ func (g *Generator) buildBOM(
 	// it is not a graph node — and a subject with no licence clause would
 	// otherwise be the one component in a distributed document whose licensing
 	// nobody counted.
-	undetermined := make([]string, 0, len(undeterminedRefs)+1)
-	seen := make(map[string]struct{}, len(undeterminedRefs)+1)
-	addUndetermined := func(ref string) {
-		if ref == "" {
-			return
-		}
-		if _, dup := seen[ref]; dup {
-			return
-		}
-		seen[ref] = struct{}{}
-		undetermined = append(undetermined, ref)
-	}
-	if bom.Metadata.Component != nil && bom.Metadata.Component.Licenses == nil {
-		addUndetermined(bom.Metadata.Component.BOMRef)
-	}
-	for _, m := range undeterminedRefs {
-		addUndetermined(modulePURL(subj.rewrite(m)))
-	}
+	undetermined := undeterminedLicences(bom, undeterminedRefs, subj)
 
 	// Scope statements. Vendor coverage is emitted whenever a tree was read, full
 	// coverage included: an artefact that describes a smaller set than the build
@@ -307,6 +245,82 @@ func (g *Generator) buildBOM(
 	}
 
 	return bom, undetermined, nil
+}
+
+// componentInputs is the assembly policy's input for each graph node: its
+// licence clause read through coverage, the subject's own stamp applied.
+func componentInputs(walk walkdomain.WalkRecord, licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, subj subject) []domain.ComponentInput {
+	inputs := make([]domain.ComponentInput, 0, len(walk.Graph.Nodes))
+	for _, node := range walk.Graph.Nodes {
+		// The standard library ships with the toolchain under the Go project's
+		// BSD-3-Clause licence and has no fetched licence record. Its licence
+		// resolves through walkdomain.StdlibLicense — the source tarball's
+		// extracted LICENSE facts when present, the published constant for a
+		// legacy or offline node that carries none — the shared rule every
+		// surface applies, so it is never counted as an unknown-licence gap.
+		if node.ResolutionSource == walkdomain.ResolutionStdlib {
+			spdx, _ := walkdomain.StdlibLicense(node.Stdlib)
+			inputs = append(inputs, domain.ComponentInput{
+				Module:      moduleRef(node.Coordinate),
+				HasLicense:  true,
+				PrimarySPDX: spdx,
+			})
+			continue
+		}
+		lic, hasLic := licenses[node.Coordinate]
+		// A component's licence clause states what governs that component's
+		// code. Reading the record through coverage keeps an embedded font's or
+		// a documentation licence out of it — the SBOM would otherwise assert a
+		// Go library is licensed OFL-1.1.
+		covered := licensedomain.ReadCoverage(lic)
+		input := domain.ComponentInput{
+			Module:      moduleRef(node.Coordinate),
+			HasLicense:  hasLic,
+			PrimarySPDX: covered.PrimarySPDX,
+			Expression:  covered.Expression,
+			Copyright:   copyrightString(lic),
+		}
+		// The subject's component entry carries the clause the subject carries,
+		// which is the same clause metadata.component states — extracted, or
+		// stamped by --main-license when the extraction reached none.
+		//
+		// Keying this on the ABSENCE OF A LICENCE RECORD instead is what let the
+		// stamp miss: a subject whose extraction ran and resolved to no licence
+		// has a record, so the stamp was applied to metadata.component and
+		// withheld from the component list, and the undetermined count — which
+		// reads the component list — named the operator's own module anyway.
+		if subj.is(node.Coordinate) && subj.licenseSPDX != "" {
+			input.HasLicense = true
+			input.PrimarySPDX = subj.licenseSPDX
+			input.Expression = ""
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs
+}
+
+// undeterminedLicences names, once each, the subject and every component whose
+// licence clause could not be determined.
+func undeterminedLicences(bom *cdx.BOM, undeterminedRefs []domain.ModuleRef, subj subject) []string {
+	undetermined := make([]string, 0, len(undeterminedRefs)+1)
+	seen := make(map[string]struct{}, len(undeterminedRefs)+1)
+	addUndetermined := func(ref string) {
+		if ref == "" {
+			return
+		}
+		if _, dup := seen[ref]; dup {
+			return
+		}
+		seen[ref] = struct{}{}
+		undetermined = append(undetermined, ref)
+	}
+	if bom.Metadata.Component != nil && bom.Metadata.Component.Licenses == nil {
+		addUndetermined(bom.Metadata.Component.BOMRef)
+	}
+	for _, m := range undeterminedRefs {
+		addUndetermined(modulePURL(subj.rewrite(m)))
+	}
+	return undetermined
 }
 
 // documentSubject returns the bom-ref of the document's subject component, which

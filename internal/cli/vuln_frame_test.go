@@ -12,6 +12,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
@@ -71,6 +72,7 @@ type frameRecordSpec struct {
 	completeness string
 	scannedAt    time.Time
 	reachable    bool
+	toolchain    gotoolchain.Version
 }
 
 func frameRecord(t *testing.T, s frameRecordSpec) vuldomain.VulnerabilityRecord {
@@ -98,6 +100,7 @@ func frameRecord(t *testing.T, s frameRecordSpec) vuldomain.VulnerabilityRecord 
 		PipelineVersion:       vulnPipelineVersion,
 		CallGraphCompleteness: s.completeness,
 		Rooting:               s.rooting,
+		Toolchain:             s.toolchain,
 	}
 	vuldomain.StampReachabilityRooting(&draft)
 	rec, err := vuldomain.VulnerabilityRecordHasher{}.SetContentHash(draft)

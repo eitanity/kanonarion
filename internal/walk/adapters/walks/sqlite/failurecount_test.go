@@ -139,7 +139,7 @@ func TestMigration10_RecomputesTheFailureCountFromTheSealedRecord(t *testing.T) 
 	}
 	// Written the way the previous build did: two nodes counted as failures,
 	// because one of them merely did not succeed.
-	if _, err := handle.DB().ExecContext(ctx, `
+	if _, eerr := handle.DB().ExecContext(ctx, `
 INSERT INTO walks (id, target_path, target_version, started_at, completed_at,
     overall_status, pipeline_version, operator, content_hash,
     node_count, failure_count, scope, depth, project_dir, identity_hash,
@@ -149,18 +149,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 2, 'code', '', '', '', '', '', '', ?)`,
 		rec.StartedAt.UTC().Format(time.RFC3339), rec.CompletedAt.UTC().Format(time.RFC3339),
 		int(rec.OverallStatus), rec.PipelineVersion, rec.Operator, rec.ContentHash,
 		blobcodec.Encode(raw),
-	); err != nil {
-		t.Fatalf("inserting a pre-migration row: %v", err)
+	); eerr != nil {
+		t.Fatalf("inserting a pre-migration row: %v", eerr)
 	}
 
-	if err := sqlitestore.Apply(handle, all); err != nil {
-		t.Fatalf("applying migration 10: %v", err)
+	if aerr := sqlitestore.Apply(handle, all); aerr != nil {
+		t.Fatalf("applying migration 10: %v", aerr)
 	}
 
 	var failures int
-	if err := handle.DB().QueryRowContext(ctx,
-		`SELECT failure_count FROM walks WHERE id = ?`, rec.ID).Scan(&failures); err != nil {
-		t.Fatalf("reading the re-derived count: %v", err)
+	if serr := handle.DB().QueryRowContext(ctx,
+		`SELECT failure_count FROM walks WHERE id = ?`, rec.ID).Scan(&failures); serr != nil {
+		t.Fatalf("reading the re-derived count: %v", serr)
 	}
 	if failures != 1 {
 		t.Errorf("failure_count after migration = %d, want 1", failures)

@@ -174,11 +174,11 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	// Step 1: walk
-	if _, err := fmt.Fprintf(stderr, "==> inspect: walking %s\n", arg); err != nil {
-		return fmt.Errorf("writing output: %w", err)
+	if _, werr := fmt.Fprintf(stderr, "==> inspect: walking %s\n", arg); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
 	walkResult, err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
@@ -205,8 +205,8 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	walkID := walkRec.ID
 
 	// Step 3: extract. The banner names the frame the walk was resolved in.
-	if _, err := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); err != nil {
-		return fmt.Errorf("writing output: %w", err)
+	if _, werr := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.Frame()); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
 	}
 	ef := extractFlags{
 		goBinary:   f.goBinary,
@@ -267,9 +267,9 @@ func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr 
 		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid argument %q: %w", arg, err)
 	}
 	if version == "latest" {
-		proxy, err := proxyadapter.New(goproxy, false)
-		if err != nil {
-			return coordinate.ModuleCoordinate{}, proxyAdapterError(err)
+		proxy, proxyErr := proxyadapter.New(goproxy, false)
+		if proxyErr != nil {
+			return coordinate.ModuleCoordinate{}, proxyAdapterError(proxyErr)
 		}
 		return resolveLatest(ctx, path, proxy, stderr)
 	}
@@ -623,18 +623,8 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	// For code and tool scopes, check whether the scope is empty before
 	// spinning up the project walk. An empty import closure is valid but
 	// produces no dependency analysis; surface it early and clearly.
-	if scope != scopeComplete {
-		mods, _, cerr := resolveScopeModules(ctx, f.gomodPath, scope, false)
-		if cerr == nil && len(mods) == 0 {
-			if f.sizeOnly {
-				// A size question about an empty scope gets the zero-module size
-				// report, matching what 'context --gomod --size-only' answers for
-				// the same scope.
-				var report contextSizeReport
-				return report.write(jsonOut, stdout)
-			}
-			return writeEmptyInspectScope(scope, f.gomodPath, stdout)
-		}
+	if handled, err := answerEmptyInspectScope(ctx, f, scope, stdout); handled || err != nil {
+		return err
 	}
 
 	// A project walk has a local go.sum available: layer it on as an always-on
@@ -647,7 +637,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
-	defer func() { _ = cleanup() }()
+	defer releaseStore(cleanup)
 
 	modulePath, err := readGoModulePath(f.gomodPath)
 	if err != nil {
@@ -665,14 +655,11 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		nodeFails = 1
 	}
 
-	projectWalk, qerr := inspectProjectWalk(ctx, ctr, walkResult, modulePath, scope)
+	projectWalk, nodeFails, qerr := inspectWalkTally(ctx, ctr, walkResult, modulePath, scope, nodeFails)
 	if qerr != nil {
 		return qerr
 	}
-	walkID, moduleCount, walkFails := projectWalk.ID, projectWalk.NodeCount, projectWalk.FailureCount
-	if walkFails > 0 && nodeFails == 0 {
-		nodeFails = walkFails
-	}
+	walkID, moduleCount := projectWalk.ID, projectWalk.NodeCount
 
 	var extractFails, scanFails int
 	var scanFacts vulnScanRunFacts
@@ -726,30 +713,8 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	}
 
 	if jsonOut {
-		var directives *directivesSection
-		if rec, derr := ctr.ExtractDirectives.Extract(ctx, f.gomodPath, activeConfig.DirectivePolicy); derr == nil {
-			s := toDirectivesSection(rec)
-			directives = &s
-		} else {
-			_, _ = fmt.Fprintf(stderr, "==> inspect: directive scan skipped: %v\n", derr)
-		}
-		var godebug *godebugSection
-		if rec, derr := ctr.ExtractGoDebug.Extract(ctx, f.gomodPath, activeConfig.GoDebugPolicy); derr == nil {
-			s := toGoDebugSection(rec)
-			godebug = &s
-		} else {
-			_, _ = fmt.Fprintf(stderr, "==> inspect: godebug scan skipped: %v\n", derr)
-		}
-		var vendor *vendorSection
-		if rec, derr := ctr.ExtractVendor.Extract(ctx, f.gomodPath, activeConfig.VendorPolicy.VendorOnly, activeConfig.VendorPolicy); derr == nil {
-			s := toVendorSection(rec)
-			vendor = &s
-		} else if !errors.Is(derr, vendports.ErrNotVendored) {
-			_, _ = fmt.Fprintf(stderr, "==> inspect: vendor scan skipped: %v\n", derr)
-		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(inspectSummary{
+		directives, godebug, vendor := inspectPolicySections(ctx, ctr, f.gomodPath, stderr)
+		return writeInspectJSON(stdout, inspectSummary{
 			ModuleCount:     moduleCount,
 			NodeFails:       nodeFails,
 			ExtractFails:    extractFails,
@@ -775,12 +740,16 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 				Toolchain: inspectToolchain(scanFacts, scanState),
 			},
 			Native: native,
-		}); err != nil {
-			return fmt.Errorf("encoding summary: %w", err)
-		}
-		return inspectExit(overallStatus)
+		}, overallStatus)
 	}
 
+	printInspectText(stdout, f, scope, overallStatus, moduleCount, nodeFails, affectedCount, extractFails, scanFails, snapshotVersion, native, walkID, projectWalk)
+	return inspectExit(overallStatus)
+}
+
+// printInspectText prints the inspect summary as text. Write errors are
+// ignored, as on every line of this summary.
+func printInspectText(stdout io.Writer, f inspectFlags, scope depScope, overallStatus string, moduleCount, nodeFails, affectedCount, extractFails, scanFails int, snapshotVersion string, native *nativeWalkRollup, walkID string, projectWalk walkports.WalkSummary) {
 	_, _ = fmt.Fprintf(stdout, "Status:   %s\n", overallStatus)
 	// Beside the module count, never below it: the count is the figure the scope
 	// decided, and the two axes that move it are the frame (already stated on the
@@ -800,13 +769,83 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	// Write errors on this tail are ignored exactly as the lines above ignore
 	// them: the summary is the last thing printed, and a stdout that has stopped
 	// accepting bytes is not something the exit code can usefully re-report.
-	_ = writeNativeCoverageSummary(stdout, native)
+	_ = writeNativeCoverageSummary(stdout, native) //nolint:errcheck // see above
 	if walkID != "" {
 		_, _ = fmt.Fprintf(stdout, "Walk ID:  %s\n", walkID)
 		_, _ = fmt.Fprintf(stdout, "Frame:    %s\n", projectWalk.BuildFrame())
 		_, _ = fmt.Fprintf(stdout, "\nTo get module context: kanonarion context --gomod %s\n", f.gomodPath)
 	}
+}
+
+// inspectPolicySections runs the directive, godebug and vendor scans for the
+// JSON summary; a scan that cannot run is reported and its section omitted.
+func inspectPolicySections(ctx context.Context, ctr *Container, gomodPath string, stderr io.Writer) (*directivesSection, *godebugSection, *vendorSection) {
+	var directives *directivesSection
+	if rec, derr := ctr.ExtractDirectives.Extract(ctx, gomodPath, activeConfig.DirectivePolicy); derr == nil {
+		s := toDirectivesSection(rec)
+		directives = &s
+	} else {
+		_, _ = fmt.Fprintf(stderr, "==> inspect: directive scan skipped: %v\n", derr)
+	}
+	var godebug *godebugSection
+	if rec, derr := ctr.ExtractGoDebug.Extract(ctx, gomodPath, activeConfig.GoDebugPolicy); derr == nil {
+		s := toGoDebugSection(rec)
+		godebug = &s
+	} else {
+		_, _ = fmt.Fprintf(stderr, "==> inspect: godebug scan skipped: %v\n", derr)
+	}
+	var vendor *vendorSection
+	if rec, derr := ctr.ExtractVendor.Extract(ctx, gomodPath, activeConfig.VendorPolicy.VendorOnly, activeConfig.VendorPolicy); derr == nil {
+		s := toVendorSection(rec)
+		vendor = &s
+	} else if !errors.Is(derr, vendports.ErrNotVendored) {
+		_, _ = fmt.Fprintf(stderr, "==> inspect: vendor scan skipped: %v\n", derr)
+	}
+	return directives, godebug, vendor
+}
+
+// writeInspectJSON writes the summary as JSON and returns the exit its status
+// calls for.
+func writeInspectJSON(stdout io.Writer, summary inspectSummary, overallStatus string) error {
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(summary); err != nil {
+		return fmt.Errorf("encoding summary: %w", err)
+	}
 	return inspectExit(overallStatus)
+}
+
+// answerEmptyInspectScope answers a code or tool scope whose import closure is
+// empty, before the project walk is started; handled reports that it did.
+func answerEmptyInspectScope(ctx context.Context, f inspectFlags, scope depScope, stdout io.Writer) (bool, error) {
+	if scope != scopeComplete {
+		mods, _, cerr := resolveScopeModules(ctx, f.gomodPath, scope, false)
+		if cerr == nil && len(mods) == 0 {
+			if f.sizeOnly {
+				// A size question about an empty scope gets the zero-module size
+				// report, matching what 'context --gomod --size-only' answers for
+				// the same scope.
+				var report contextSizeReport
+				return true, report.write(jsonOut, stdout)
+			}
+			return true, writeEmptyInspectScope(scope, f.gomodPath, stdout)
+		}
+	}
+	return false, nil
+}
+
+// inspectWalkTally reads the project walk the run recorded and folds its
+// failures into nodeFails when the walk itself reported none.
+func inspectWalkTally(ctx context.Context, ctr *Container, walkResult application.ExecuteWalkResult, modulePath string, scope depScope, nodeFails int) (walkports.WalkSummary, int, error) {
+	projectWalk, qerr := inspectProjectWalk(ctx, ctr, walkResult, modulePath, scope)
+	if qerr != nil {
+		return walkports.WalkSummary{}, nodeFails, qerr
+	}
+	walkFails := projectWalk.FailureCount
+	if walkFails > 0 && nodeFails == 0 {
+		nodeFails = walkFails
+	}
+	return projectWalk, nodeFails, nil
 }
 
 // printReachabilityClosureBanner discloses that --gomod reachability roots at

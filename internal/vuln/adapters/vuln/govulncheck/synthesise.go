@@ -136,7 +136,7 @@ func moduleRoot(extractRoot string) (string, error) {
 func collectImports(root string) (imports, skipped []string) {
 	seen := make(map[string]struct{})
 	fset := token.NewFileSet()
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error { //nolint:errcheck // the callback returns only nil; failures go to skipped
 		if err != nil {
 			skipped = append(skipped, path)
 			return nil //nolint:nilerr // recorded in skipped and reported by the caller; an unreadable entry must not fail the scan

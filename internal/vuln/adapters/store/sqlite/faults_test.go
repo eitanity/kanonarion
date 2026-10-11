@@ -225,16 +225,16 @@ func TestMigration_DropsReachabilityColumn(t *testing.T) {
 		t.Fatalf("opening the store before the drop: %v", err)
 	}
 
-	if _, err := db.DB().ExecContext(ctx, `
+	if _, eerr := db.DB().ExecContext(ctx, `
 INSERT INTO vulnerability_findings_index (
     finding_id, module_path, module_version, pipeline_version,
     snapshot_source, snapshot_version, rooting, is_reachable
 ) VALUES ('GO-2024-0001', 'example.com/mod', 'v1.0.0', 'v16', 'govulndb', 'v1', '', 1);
-`); err != nil {
-		t.Fatalf("seeding a row carrying the superseded claim: %v", err)
+`); eerr != nil {
+		t.Fatalf("seeding a row carrying the superseded claim: %v", eerr)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("closing the store: %v", err)
+	if cerr := db.Close(); cerr != nil {
+		t.Fatalf("closing the store: %v", cerr)
 	}
 
 	migrated, err := sqlitestore.Open(path, sqlite.Migrations(), sqlitestore.IntentCreate)

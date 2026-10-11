@@ -408,6 +408,7 @@ see [`callgraph-show`](#callgraph-show).
 | `2` | No graph at all: `LoadFailed`, or a `Partial` that measured no functions. The message repeats the recorded failure detail |
 | `3` | `Cancelled`: the run ended before the graph was walked |
 | `10` | Two stored records for this coordinate disagree, or one failed its content-hash check. The message names what differs and the remedy, `callgraph-show --diff` |
+| `20` | This kanonarion was built with a Go older than the code requires, so it could not read the source. The record is still stored; the message names both versions and the remedy, a kanonarion built with a new enough Go |
 
 `ExcludedByConfig` exits `0`: the module is listed in `callgraph.exclude`, so the
 absent graph is the outcome the operator asked for rather than one the run failed
@@ -434,6 +435,7 @@ it. The causes that recur:
 | `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
 | `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
+| `package requires newer Go version goX (application built with goY)`, or `This application uses version goY of the source-processing packages but runs version goX of 'go list'` | This kanonarion was built with goY and the code requires goX. It type-checks with the Go compiled into the binary, so the `go` on `PATH` and `GOTOOLCHAIN` do not change it. Use a kanonarion built with goX or newer — a newer release, or `go install github.com/eitanity/kanonarion@latest` run with that Go — and re-analyse. The cause is `environment`, the record is never served as a cache hit, and the run exits `20`. `callers`, `callees`, `usage`, `capability` and `interface-diff --used-by` say the package was not analysed, rather than that it did not typecheck |
 | `this host could not supply N module(s) the analysed module needs … : <path> <version>, …` | The module's dependency closure could not be assembled — the store does not hold those versions and the fetch for them failed (no network, a withdrawn version, a private module). The cause is `environment`, so the record is never served as a cache hit and a later run re-establishes the answer |
 
 #### What the load resolves against
@@ -1094,10 +1096,10 @@ recently extracted one:
 
 ```
 $ kanonarion callgraph-list
-golang.org/x/text@v0.42.0              0.7.0  Extracted  5931 nodes 48484 edges
-github.com/spf13/cobra@v1.10.2         0.7.0  Extracted  1404 nodes  6583 edges  [2 generations; counts from 2026-09-20T11:30:56.168419348Z]
-github.com/eitanity/kanonarion@local   0.7.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show github.com/eitanity/kanonarion@local --history
-listing call graph records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+golang.org/x/text@v0.42.0              0.8.0  Extracted  5931 nodes 48484 edges
+github.com/spf13/cobra@v1.10.2         0.8.0  Extracted  1404 nodes  6583 edges  [2 generations; counts from 2026-09-20T11:30:56.168419348Z]
+github.com/eitanity/kanonarion@local   0.8.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show github.com/eitanity/kanonarion@local --history
+listing call graph records at pipeline 0.8.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 ```
 
 Those counts belong to the generation the row names, which is **not**
@@ -1369,6 +1371,7 @@ constructing them by hand.
 | `is_assembly_or_linkname` | The function has no Go body (assembly or `//go:linkname`) |
 | `uses_plugin` | The body references the Go `plugin` package |
 | `position_file`, `position_line` | Where the symbol is declared. Absent when the record states no position — see below |
+| `export_directive` | The function hands itself to a caller outside Go. `kind` is `wasmexport` (`//go:wasmexport`), `export` (`//export`, and TinyGo's `//go:export`) or `interrupt` (TinyGo's `//go:interrupt`); `name` is the exported name, absent for an interrupt. Read from the doc comment of a package-level function in the analysed packages; a method records none. Absent when the function carries no directive |
 
 The three body-level facts are ones a callee-identity map cannot witness. They
 are used by [`capability`](capability.md) analysis and by the answer layer,
