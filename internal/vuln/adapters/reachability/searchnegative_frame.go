@@ -39,6 +39,30 @@ func (s *NegativeSearcher) load(ctx context.Context, coord coordinate.ModuleCoor
 	return proj, err
 }
 
+// linksNoneOf says the frame's build links none of the packages a dependency's
+// refs are scoped to. That answer is not searched, so it needs no held
+// dependency graph, and reading them is most of a joined search's cost. A
+// standard-library join keeps unlinked packages and is searched, so it never is.
+// The caller holds s.mu.
+func (s *NegativeSearcher) linksNoneOf(ctx context.Context, subject coordinate.ModuleCoordinate, frameTarget string, refs []ports.SymbolReference) bool {
+	frameCoord, err := coordinate.ParseModuleCoordinate(frameTarget)
+	if subject.IsStdlib() || err != nil {
+		return false
+	}
+	consumer, err := s.load(ctx, frameCoord)
+	if err != nil {
+		return false
+	}
+	for _, pkg := range consumer.DependencyPackages {
+		for _, r := range refs {
+			if pkg == r.Package || (r.Package == "" && (pkg == r.Module || strings.HasPrefix(pkg, r.Module+"/"))) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // heldGraph is one dependency graph the store holds for a frame's build.
 type heldGraph struct {
 	coord coordinate.ModuleCoordinate
