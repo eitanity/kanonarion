@@ -139,7 +139,7 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		}
 	}
 
-	if err := writeEdgeQueryNotices(ctx, stdout, "callers", symbolID, uc, sc, pr, jsonOut); err != nil {
+	if err := writeEdgeQueryNotices(ctx, stdout, "callers", symbolID, uc, sc, pr, jsonOut, edgeGaps(uc, symbolID, true, opts)); err != nil {
 		return err
 	}
 
@@ -164,8 +164,16 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 
 // writeEdgeQueryNotices writes, on the text path, the notices that qualify an
 // edge query's answer: the build scope, a dropped or partial graph, the
-// graph's completeness and the worktree it was read from.
-func writeEdgeQueryNotices(ctx context.Context, stdout io.Writer, label, symbolID string, uc QueryCallGraphUseCase, sc buildScope, pr partialRoot, jsonOut bool) error {
+// graph's completeness and the worktree it was read from. On both paths it
+// collects the graphs the answer could not read, from gaps and the scope.
+func writeEdgeQueryNotices(ctx context.Context, stdout io.Writer, label, symbolID string, uc QueryCallGraphUseCase, sc buildScope, pr partialRoot, jsonOut bool, gaps edgeGapsFunc) error {
+	touching, err := gaps(ctx, sc)
+	if err != nil {
+		return err
+	}
+	if err := reportNotSearched(ctx, uc, sc, touching); err != nil {
+		return err
+	}
 	if !jsonOut {
 		if err := writeScopeNotice(stdout, sc); err != nil {
 			return err
@@ -277,7 +285,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		}
 	}
 
-	if err := writeEdgeQueryNotices(ctx, stdout, "callees", symbolID, uc, sc, pr, jsonOut); err != nil {
+	if err := writeEdgeQueryNotices(ctx, stdout, "callees", symbolID, uc, sc, pr, jsonOut, edgeGaps(uc, symbolID, false, opts)); err != nil {
 		return err
 	}
 
@@ -423,6 +431,9 @@ type transitiveResult struct {
 	// SetAside names the stored call graph generations the reads behind this
 	// document left out because this build cannot reproduce them.
 	SetAside []setAsideJSON `json:"set_aside,omitempty"`
+	// NotSearched names the coordinates the walk could not read: graphs only
+	// at a superseded pipeline, or, under a build scope, none at all.
+	NotSearched []notSearchedJSON `json:"not_searched,omitempty"`
 }
 
 func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions, progress ports.TraversalProgressReporter) error {
@@ -456,7 +467,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return cerr
 		}
 	}
-	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callers", symbolID, uc, sc, pr, jsonOut); err != nil {
+	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callers", symbolID, uc, sc, pr, jsonOut, knownGaps(res.NotSearched)); err != nil {
 		return err
 	}
 	if err := printTransitiveResult("callers", symbolID, maxDepth, res, jsonOut, stdout, opts); err != nil {
@@ -509,7 +520,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return cerr
 		}
 	}
-	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callees", symbolID, uc, sc, pr, jsonOut); err != nil {
+	if err := writeEdgeQueryNotices(ctx, stdout, "transitive callees", symbolID, uc, sc, pr, jsonOut, knownGaps(res.NotSearched)); err != nil {
 		return err
 	}
 	if err := printTransitiveResult("callees", symbolID, maxDepth, res, jsonOut, stdout, opts); err != nil {
@@ -577,17 +588,18 @@ func printTransitiveResult(direction, root string, maxDepth int, res cgapp.Trave
 			nodes = []string{}
 		}
 		result := transitiveResult{
-			Root:      root,
-			Direction: direction,
-			MaxDepth:  maxDepth,
-			Truncated: truncated,
-			Remedy:    traversalDepthRemedy,
-			NodeCount: len(nodes),
-			EdgeCount: len(edges),
-			Nodes:     nodes,
-			Edges:     toEdgeRefsJSON(edges),
-			Scope:     edgeScopeLine(direction, opts),
-			SetAside:  storeSetAside.take().json(),
+			Root:        root,
+			Direction:   direction,
+			MaxDepth:    maxDepth,
+			Truncated:   truncated,
+			Remedy:      traversalDepthRemedy,
+			NodeCount:   len(nodes),
+			EdgeCount:   len(edges),
+			Nodes:       nodes,
+			Edges:       toEdgeRefsJSON(edges),
+			Scope:       edgeScopeLine(direction, opts),
+			SetAside:    storeSetAside.take().json(),
+			NotSearched: storeNotSearched.take().json(),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

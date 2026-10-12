@@ -198,6 +198,12 @@ type QueryCallGraphUseCase interface {
 	// unexpanded frontier is a comparison against a second, unbounded run.
 	TraverseCallers(ctx context.Context, req cgapp.TraversalRequest) (cgapp.TraversalResult, error)
 	TraverseCallees(ctx context.Context, req cgapp.TraversalRequest) (cgapp.TraversalResult, error)
+	// NotSearchedByCallers, NotSearchedByCallees and UnservedCoordinates name
+	// the coordinates an edge query could not read because they hold no
+	// generation at the served pipeline.
+	NotSearchedByCallers(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error)
+	NotSearchedByCallees(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error)
+	UnservedCoordinates(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]cgports.UnservedCoordinate, error)
 }
 
 // --- example context ---

@@ -855,6 +855,7 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 // BEFORE the invocation runs, and resetting it here would unpin every golden.
 func resetInvocationState() {
 	storeSetAside.reset()
+	storeNotSearched.reset()
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""
 	// The built-in defaults, which is what a store with no config file loads —

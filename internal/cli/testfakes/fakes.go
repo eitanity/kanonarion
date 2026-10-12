@@ -1240,6 +1240,22 @@ func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, req cgapp.Traver
 	}, nil
 }
 
+// NotSearchedByCallers names nothing: the fake holds one generation per
+// coordinate, so nothing it holds is superseded.
+func (f *FakeQueryCallGraph) NotSearchedByCallers(context.Context, []string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error) {
+	return nil, nil
+}
+
+// NotSearchedByCallees names nothing, as NotSearchedByCallers.
+func (f *FakeQueryCallGraph) NotSearchedByCallees(context.Context, []string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error) {
+	return nil, nil
+}
+
+// UnservedCoordinates names nothing, as NotSearchedByCallers.
+func (f *FakeQueryCallGraph) UnservedCoordinates(context.Context, []coordinate.ModuleCoordinate, string) ([]cgports.UnservedCoordinate, error) {
+	return nil, nil
+}
+
 // ---- example context ----
 
 // FakeExtractExample implements cli.ExtractExampleUseCase.

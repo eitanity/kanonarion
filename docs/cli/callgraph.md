@@ -1190,6 +1190,10 @@ $ kanonarion callers '...sqlite.(*Store).PutLicenseRecord' --exclude-tests
 scope: test callers omitted (--exclude-tests was given)
 ```
 
+An answer that could not read some stored graphs, because they come only from
+superseded extraction logic, still exits `0` and names them on stderr — see
+[Graphs an answer could not read](#graphs-an-answer-could-not-read).
+
 #### A bounded traversal says it is bounded
 
 `--depth N` stops the walk after N levels. When it stops while symbols are still
@@ -1265,7 +1269,8 @@ output is byte-identical with and without it.
 ### `callees`
 
 Find every recorded call site where a symbol is the caller. Same flags as
-`callers`, including `--no-progress` and the truncation statement above.
+`callers`, including `--no-progress`, the truncation statement above and the
+[not-searched notice](#graphs-an-answer-could-not-read).
 
 ### `implementers`
 
@@ -1335,6 +1340,7 @@ one module:
 | `tests_exclude_flag` | The flag that narrows it, so a consumer can ask the other question |
 | `scope` | The sentence the text prints, kept as it was |
 | `answer_foreign_modules` | The modules other than the searched one that own implementers in this answer, `path`/`version`. Present only when non-empty — see [Answers drawn from a module the record is not about](#answers-drawn-from-a-module-the-record-is-not-about) |
+| `not_searched` | The coordinates whose graphs this answer could not read: other versions of the searched module held only at a superseded pipeline, and under `--gomod`/`--walk-id` every module version in scope with no served graph. Absent when none. See [Graphs an answer could not read](#graphs-an-answer-could-not-read) |
 
 Three failure modes are kept distinct rather than collapsed into an empty list:
 
@@ -1501,7 +1507,7 @@ A record is served only at the pipeline version the binary was built with. When
 the extraction pipeline is bumped, every stored record for a coordinate becomes
 unreachable until it is re-analysed, and a query for one does not answer empty —
 `callers`, `callees`, their `--transitive` forms and `implementers` refuse with
-exit 20, naming the versions the store holds and the command that re-derives
+exit 4, naming the versions the store holds and the command that re-derives
 them:
 
 ```
@@ -1516,6 +1522,65 @@ pipeline 0.3.0, 0.4.1. …
 `callgraph-show` and `callgraph-show --history` say the same thing for the
 coordinate they were asked about. A module the store holds at both a superseded
 and the serving version is answered normally from the served generation.
+
+#### Graphs an answer could not read
+
+When the symbol is in a served graph, the answer is given from the served graphs
+and exits `0`. Other coordinates may still hold edges touching the symbol only in
+graphs from superseded extraction logic. Those edges are not searched, and the
+answer names the coordinates that hold them, with the command that re-derives
+each one. The notice goes to **stderr**:
+
+```
+$ kanonarion callers 'github.com/spf13/cobra.(*Command).Execute'
+45 callers of github.com/spf13/cobra.(*Command).Execute:
+  ...
+notice: 7 coordinate(s) hold call graphs only from superseded extraction logic and were not searched: example.com/app@local (pipeline 0.5.0, 0.6.0), github.com/spf13/cobra@v1.10.2 (pipeline 0.5.0, 0.6.0, 0.7.0), ... — re-derive with:
+  kanonarion local /home/me/src/app
+  kanonarion callgraph github.com/spf13/cobra@v1.10.2
+  ...
+```
+
+- A coordinate is named only when it has **no** generation at the serving
+  pipeline. A coordinate that has one is searched, and is not named even if it
+  also holds older generations.
+- `callers` and `callees` name the coordinates holding edges into (or out of) the
+  queried symbol. With `--transitive`, they name the coordinates holding such
+  edges for every symbol the walk expanded.
+- `implementers` names the other versions of the interface's module that are
+  held only at a superseded pipeline, because each would have been searched.
+- With `--gomod` or `--walk-id`, every module version in the build's scope that
+  has no served graph is also named, whether or not it touches the symbol. A
+  module version with no call graph at all gets its own line:
+
+  ```
+  notice: 1 module version(s) in the build scope have no call graph at any pipeline and were not searched: modernc.org/libc@v1.75.7 — analyse with:
+    kanonarion callgraph modernc.org/libc@v1.75.7
+  ```
+
+- For a `@local` coordinate the remedy is `kanonarion local <dir>`, using the
+  working tree its newest graph recorded. When no graph recorded one, the line
+  names the coordinate and reads `no stored record names the working tree, so
+  run kanonarion local from inside it`.
+
+Under `--json`, the `--transitive` and `implementers` documents carry the same
+list as `not_searched`, sorted by coordinate. The key is absent when nothing was
+skipped:
+
+```json
+"not_searched": [
+  {"coordinate": "github.com/spf13/cobra@v1.10.2", "pipelines": ["0.5.0", "0.6.0", "0.7.0"],
+   "reason": "superseded", "remedy": "kanonarion callgraph github.com/spf13/cobra@v1.10.2"},
+  {"coordinate": "modernc.org/libc@v1.75.7", "reason": "not_analysed",
+   "remedy": "kanonarion callgraph modernc.org/libc@v1.75.7"}
+]
+```
+
+`reason` is `superseded` (graphs only at older pipelines, listed in `pipelines`)
+or `not_analysed` (no graph at all; only under `--gomod` or `--walk-id`).
+`remedy` is absent for a local coordinate whose working tree no graph recorded.
+`callers` and `callees` without `--transitive` print a JSON array, so they state
+the notice on stderr instead.
 
 The callgraph schema is tracked in the shared `schema_migrations` table under
 module key `callgraph` (current version: 13). A record whose `schema_version`

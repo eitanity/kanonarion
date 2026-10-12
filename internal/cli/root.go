@@ -251,6 +251,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	root.SetArgs(args)
 	err := root.ExecuteContext(ctx)
 	storeSetAside.flush(stderr, err)
+	storeNotSearched.flush(stderr)
 	if err == nil {
 		// A signal that arrived after the work was done stopped nothing.
 		return nil
