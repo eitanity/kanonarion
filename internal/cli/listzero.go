@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 )
 
 // listZeroScope is everything a listing knows about a zero result: the filter it
@@ -32,6 +34,9 @@ type listZeroScope struct {
 	// listing was unfiltered, and the zero is about the store, not the filter.
 	filterName  string
 	filterValue string
+	// filterValues names each value separately when one statement covers
+	// several missed selectors, so two ids never read as one id with a comma.
+	filterValues []string
 	// field names the column the value was compared against and matchKind names
 	// how, so a reader who passed a prefix of a module path learns why an
 	// exact-match filter refused it rather than concluding the record is absent.
@@ -64,6 +69,19 @@ type listZeroScope struct {
 // storeEmpty reports the case whose remedy is "produce a record", as opposed to
 // "check the filter".
 func (s listZeroScope) storeEmpty() bool { return s.considered == 0 }
+
+// quotedFilter renders the filter and its value: `run id "a"`, or
+// `run ids "a" or "b"` when several values missed.
+func (s listZeroScope) quotedFilter() string {
+	if len(s.filterValues) < 2 {
+		return fmt.Sprintf("%s %q", s.filterName, s.filterValue)
+	}
+	quoted := make([]string, len(s.filterValues))
+	for i, v := range s.filterValues {
+		quoted[i] = strconv.Quote(v)
+	}
+	return s.filterName + "s " + strings.Join(quoted, " or ")
+}
 
 // plural renders the subject in the plural the counting sentences need.
 func (s listZeroScope) plural() string {
@@ -119,12 +137,16 @@ func listZeroStatement(s listZeroScope) (line, remedyLabel, remedy string) {
 		line = fmt.Sprintf("the store holds no %s at all", s.subject)
 		remedyLabel, remedy = "to produce one", s.produce
 	case s.storeEmpty():
-		line = fmt.Sprintf("the store holds no %s at all, so %s %q is not what made this empty",
-			s.subject, s.filterName, s.filterValue)
+		verb := "is"
+		if len(s.filterValues) > 1 {
+			verb = "are"
+		}
+		line = fmt.Sprintf("the store holds no %s at all, so %s %s not what made this empty",
+			s.subject, s.quotedFilter(), verb)
 		remedyLabel, remedy = "to produce one", s.produce
 	case s.filterValue != "":
-		line = fmt.Sprintf("no %s matched %s %q — the value is compared %s against the %s of all %d %s in the store",
-			s.subject, s.filterName, s.filterValue, s.matchKind, s.field, s.considered, s.plural())
+		line = fmt.Sprintf("no %s matched %s — the value is compared %s against the %s of all %d %s in the store",
+			s.subject, s.quotedFilter(), s.matchKind, s.field, s.considered, s.plural())
 		if s.example != "" {
 			line += fmt.Sprintf(" (e.g. %s)", s.example)
 		}
@@ -142,10 +164,12 @@ func listZeroStatement(s listZeroScope) (line, remedyLabel, remedy string) {
 
 // listZeroFilterJSON carries the filter half of the statement.
 type listZeroFilterJSON struct {
-	Name            string `json:"name"`
-	Value           string `json:"value"`
-	ComparedAgainst string `json:"compared_against"`
-	Match           string `json:"match"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	// Values lists each missed value when the statement covers several.
+	Values          []string `json:"values,omitempty"`
+	ComparedAgainst string   `json:"compared_against"`
+	Match           string   `json:"match"`
 }
 
 // listZeroJSON is the machine-readable form of the same statement.
@@ -179,6 +203,7 @@ func listZeroStatementJSON(s listZeroScope) listZeroJSON {
 		out.Filter = &listZeroFilterJSON{
 			Name:            s.filterName,
 			Value:           s.filterValue,
+			Values:          s.filterValues,
 			ComparedAgainst: s.field,
 			Match:           s.matchKind,
 		}

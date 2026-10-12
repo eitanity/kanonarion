@@ -222,7 +222,7 @@ Where no walk matches, the command **refuses and names the remedy**, and the
 refusal distinguishes "no walk of that scope" from "no walk at all":
 
 ```
-error: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
+error: execute root command: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
 ```
 
 The **toolchain ranks above recency, and then relaxes**. Two walks under two
@@ -491,15 +491,15 @@ stays the data channel; under `--json` the object is emitted on stderr as well.
 The selectors are `walk-list --walk-id`, `walk-list --latest-success`,
 `directives show`, `vuln-snapshot-show`, `walk-show`, `verification-coverage`,
 `dependents --walk-id`, `context --walk-id`, `walk-diff`, `vuln-scan-show`,
-`examples-show`, `examples-list <module>`, `interface-show`,
+`vuln-scan-diff`, `examples-show`, `examples-list <module>`, `interface-show`,
 `interface-list <module>`, `use`, `license --recursive` and `license-compat`.
 
 Every command that reads a walk by ID answers a missing one with the identical
 sentence, whichever command it was.
 
-`walk-diff` takes two IDs, so it names **which** of them is missing — or both
-when both are. The corpus it counts is the store's, not the two IDs it was
-given.
+`walk-diff` and `vuln-scan-diff` take two IDs, so they name **which** of them
+is missing — or both when both are. The corpus counted is the store's, not the
+two IDs given.
 
 Where the older message already carried a remedy — `use`, `license-compat`,
 `license --recursive`, `examples-show`, `examples-list <module>`,
@@ -687,7 +687,8 @@ Point one at a root that does not exist and it refuses with exit code **20**,
 naming the path it looked at:
 
 ```
-no store at ./typo-store
+$ kanonarion walk-show 01NOPE --store-root ./typo-store
+error: execute root command: no store at ./typo-store
   this command reads recorded evidence; it does not create a store, so nothing was written there
   to create one and record the module set: kanonarion inspect --store-root ./typo-store
 ```
@@ -769,7 +770,7 @@ code says the invocation is what has to change.
 | 1 | `walk`, `inspect` (partial closure); `extract` (the run is recorded partial — the stages that ran ARE stored, and the failed-stage breakdown names the rest); `callgraph`, `local` (a `Partial` graph — it IS still an answer, and the failed packages line scopes what it does not cover); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs); `use` (some modules with a stored artefact did not reach the module cache); `vuln-scan` (some modules in the walk were not analysed) |
 | 2 | `walk`, `inspect` (target unfetchable); `callgraph`, `local` (no graph at all: `LoadFailed`, or a `Partial` that measured no function); `extract` (the run itself failed and produced no usable stage); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity); `use` (no module reached the module cache); `vuln-scan` (no module in the walk was analysed) |
 | 3 | every command, when interrupted by `SIGINT`, `SIGTERM` or `SIGHUP` - whatever the interrupted step would otherwise have exited with (see [Interrupting a run](#interrupting-a-run)) |
-| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `capability` (no call graph is stored for the coordinate, at this build's pipeline version, and the message names the invocation that produces it with the coordinate filled in); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree) |
+| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `vuln-scan-diff`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `capability` (no call graph is stored for the coordinate, at this build's pipeline version, and the message names the invocation that produces it with the coordinate filled in); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree) |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review); `interface-diff --used-by` (the consumer's own code calls a declaration the bump removes or changes) |
 | 10 | any command consuming a record whose content hash does not verify, or that meets two records for one coordinate which disagree — a walk node, a fetched artefact, an extraction run, a call graph, an interface, a licence, an example, a vulnerability record, an advisory snapshot or the stdlib facts. A store-inspection command reports the same condition and exits 0 (see [Store layout](#store-layout)); a consuming command fails closed |
 | 20 | `callgraph`, `local`, `context <dir> --symbol`, `interface`, `examples`, `extract` (this kanonarion was built with a Go older than the code requires, so it could not read the source: the remedy is a kanonarion built with a new enough Go, which no invocation of this binary can run. `callgraph`, `local`, `interface`, `examples` and `extract` still store the record they made); every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)); `callers`, `callees`, `implementers` (a symbol or interface that is in no served graph at all — a typo, unexported or unreachable code, or a module never analysed: the invocation named something that is not there. A module nothing has analysed cannot be named as a coordinate either — the store knows no version for it — so the refusal shows the form of the producing command, `kanonarion callgraph <module>@<version>`, rather than one that can be run; that is why it is a 20 and not a 4) |

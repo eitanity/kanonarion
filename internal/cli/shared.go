@@ -867,6 +867,12 @@ func resetInvocationState() {
 	// No remedy, so a refusal raised before a command was resolved names none
 	// rather than the last command's.
 	offlineRemedy = ""
+	if restoreGoproxy != nil {
+		if err := restoreGoproxy(); err != nil {
+			slog.Default().Error("restoring GOPROXY after --goproxy", slog.String("error", err.Error()))
+		}
+		restoreGoproxy = nil
+	}
 	// The rendering flags, in the state a command that was passed neither is
 	// entitled to: text on stdout at the default verbosity.
 	jsonOut = false
@@ -1123,6 +1129,25 @@ func offlineAlternativeOf(cmd *cobra.Command) string {
 // print a no-network refusal — the proxy adapter is built in a dozen places and
 // none of them knows which command is running.
 var offlineRemedy string
+
+// restoreGoproxy undoes the invocation's --goproxy declaration; nil when the
+// command was given none.
+var restoreGoproxy func() error
+
+// declareGoproxyFlag makes a --goproxy value the effective GOPROXY for the whole
+// invocation, so every egress decides on it and not only the module proxy.
+func declareGoproxyFlag(cmd *cobra.Command) error {
+	fl := cmd.Flags().Lookup("goproxy")
+	if fl == nil || strings.TrimSpace(fl.Value.String()) == "" {
+		return nil
+	}
+	restore, err := goenv.Declare(fl.Value.String())
+	if err != nil {
+		return &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	restoreGoproxy = restore
+	return nil
+}
 
 // renderOfflineRemedy builds that line from what the command declared about
 // itself.

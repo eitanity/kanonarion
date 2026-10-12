@@ -205,7 +205,7 @@ produces the record, with the coordinate filled in, so it can be run as printed.
 
 ```
 $ kanonarion capability example.com/mod@v1.2.0
-no callgraph record for example.com/mod@v1.2.0 - analyse it first:
+error: execute root command: no callgraph record for example.com/mod@v1.2.0 — analyse it first:
   kanonarion callgraph example.com/mod@v1.2.0
 $ echo $?
 4

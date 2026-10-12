@@ -607,9 +607,13 @@ Interpretation rules. These are load-bearing.
    result is empty. Never report "no vulnerabilities" or "no licence issues"
    from a not_run or not_fetched section. Run the command the status implies
    (not_fetched: fetch or inspect the module; not_run: extract) and ask again.
-2. Queries over unanalysed data exit non-zero and print the command to run.
-   Run that command, then repeat the query. An empty result with exit 0 over
-   analysed data is a real zero. Report it as one.
+2. Most queries over unanalysed data exit non-zero and print the command to
+   run. Run that command, then repeat the query. Two exit 0 instead.
+   symbol-context --module, for a module with no interface record, prints
+   the command to run on stderr. callgraph-show --history lists stored
+   generations, and prints "no callgraph records" for a module with none this
+   build serves. Neither is a real zero. Otherwise an empty result with exit 0
+   over analysed data is a real zero. Report it as one.
 3. Read the answer line on callers, callees and implementers, not just the
    list. RESOLVED-ABSENT is a measurement and you may report it as "nothing
    calls this". UNRESOLVED is not an answer: the graph could not decide, and

@@ -11,7 +11,8 @@ package golden_test
 //	audit                 --json and text; POPULATED (the whole derivation, run
 //	                      offline against a fixture module cache and a fixture
 //	                      advisory database), the same run under GOPROXY=off with
-//	                      no --from-modcache, empty scope, missing go.mod.
+//	                      no --from-modcache and under --goproxy off, empty
+//	                      scope, missing go.mod.
 //	latest                --json and text; populated, the no-publication-date
 //	                      zero, an empty scope, the GOPROXY=off answer served
 //	                      from the ledger, and the GOPROXY=off refusal for a
@@ -95,6 +96,7 @@ package golden_test
 // recorded as an answer and not only assumed.
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -820,6 +822,17 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 				"itself. Its control is audit_text_populated, the same audit under --from-modcache.",
 			"audit", "--gomod", audit.gomod()),
 		{
+			name: "audit_text_no_network_flag",
+			args: []string{"audit", "--gomod", audit.gomod(), "--goproxy", "off"},
+			// The environment names a route; only the flag declares the air gap.
+			env:          flagAirGapEnv(audit.env()),
+			storeRoot:    audit.newStore(t),
+			mintedValues: true,
+			why: "--goproxy off with the environment naming a proxy: the flag declares the same air gap as " +
+				"GOPROXY=off, so everything below this header matches audit_text_no_network byte for byte, " +
+				"including the scan the stored snapshot still answers.",
+		},
+		{
 			name: "audit_json_empty_scope",
 			args: []string{"audit", "--gomod", gomod, "--json"},
 			env:  unroutable,
@@ -1052,4 +1065,11 @@ func noticeCases(docStore string) []cmdCase {
 				"a readable diff, and the bytes it would print are already recorded by sbom_populated.",
 		},
 	}
+}
+
+// flagAirGapEnv is env with GOPROXY naming an unroutable proxy instead of off.
+func flagAirGapEnv(env map[string]string) map[string]string {
+	out := maps.Clone(env)
+	out["GOPROXY"] = "https://127.0.0.1:1"
+	return out
 }

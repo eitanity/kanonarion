@@ -127,7 +127,7 @@ example.com/mod@v1.0.0: Partial — 2 package(s), build frame linux/amd64 (cgo o
   failure: not analysed: 1 file (mod.go): the kanonarion that ran was built with go1.26.6 and the code requires go1.27.2
   Use a kanonarion built with go1.27.2 or newer: a newer release, or `go install github.com/eitanity/kanonarion@latest` run with go1.27.2 or newer.
   example.com/mod                                              0T 0F 0C 0V (1 file not analysed)
-error: example.com/mod@v1.0.0: Partial — this kanonarion cannot read this code: it was built with go1.26.6 and the code requires go1.27.2. ...
+error: execute root command: example.com/mod@v1.0.0: Partial — this kanonarion cannot read this code: it was built with go1.26.6 and the code requires go1.27.2. ...
 ```
 
 The record is stored and the command exits `20`. Under `--json` the record
@@ -207,11 +207,7 @@ absent record. The two are told apart wherever a record can go missing:
 
 ```
 $ kanonarion interface-show github.com/golang-jwt/jwt/v4@v4.5.1
-error: the interface record for github.com/golang-jwt/jwt/v4@v4.5.1 was produced by
-superseded extraction logic: this build serves pipeline 0.6.0 and the store holds this
-coordinate at pipeline 0.3.0. A superseded record is not served, so this answer is empty
-for want of a measurement of this module, not because the coordinate is wrong.
-Re-extract it:
+error: execute root command: the interface record for github.com/golang-jwt/jwt/v4@v4.5.1 was produced by superseded extraction logic: this build serves pipeline 0.6.0 and the store holds this coordinate at pipeline 0.3.0. A superseded record is not served, so this answer is empty for want of a measurement of this module, not because the coordinate is wrong. Re-extract it:
   kanonarion interface github.com/golang-jwt/jwt/v4@v4.5.1
 ```
 

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	exports "github.com/eitanity/kanonarion/internal/example/ports"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -526,6 +528,9 @@ func TestRunWalkDiff_NamesTheMissingSide(t *testing.T) {
 				t.Errorf("%s is missing from the message: %s", id, msg)
 			}
 		}
+		if !strings.Contains(msg, `no walk record matched walk ids "01NOPEA" or "01NOPEB" — `) {
+			t.Errorf("the two ids are not named separately: %s", msg)
+		}
 		if strings.Contains(msg, "one or both") {
 			t.Errorf("the sentence that named neither survived: %s", msg)
 		}
@@ -775,5 +780,38 @@ func TestSnapshotMiss_IsOneStatementForBothSurfaces(t *testing.T) {
 	}
 	if code := ExitCodeForError(pinMiss); code != ExitNotFound {
 		t.Errorf("exit code = %d, want %d", code, ExitNotFound)
+	}
+}
+
+// vuln-scan-diff naming a run the store does not hold is an absent record, as it
+// is on vuln-scan-show: exit 4, the corpus stated, and the missing side named.
+func TestRunScanDiff_NamesTheMissingSide(t *testing.T) {
+	diffMiss := func(t *testing.T, idA, idB string) string {
+		t.Helper()
+		withJSON(t, false)
+		var stdout, stderr bytes.Buffer
+		err := runScanDiff(context.Background(), idA, idB, false,
+			&testfakes.FakeDiffScanRuns{Err: fmt.Errorf("%w: %s", vulnapp.ErrScanRunNotFound, idA)},
+			scanRunsFixture(), &stdout, &stderr)
+		if err == nil {
+			t.Fatal("a diff over a missing run returned a nil error")
+		}
+		if code := ExitCodeForError(err); code != ExitNotFound {
+			t.Errorf("exit code = %d, want %d: %v", code, ExitNotFound, err)
+		}
+		return err.Error()
+	}
+	for _, tc := range []struct{ idA, idB, side, missing string }{
+		{"vscan-NOPE", "vscan-real", "the <run-id-a> argument", `run id "vscan-NOPE"`},
+		{"vscan-real", "vscan-NOPE", "the <run-id-b> argument", `run id "vscan-NOPE"`},
+		{"vscan-NOPEA", "vscan-NOPEB", "both arguments", `no scan run matched run ids "vscan-NOPEA" or "vscan-NOPEB" — `},
+	} {
+		msg := diffMiss(t, tc.idA, tc.idB)
+		if !strings.Contains(msg, tc.side+" named a scan run the store does not hold") || !strings.Contains(msg, tc.missing) {
+			t.Errorf("diff(%s, %s): the missing side is not named: %s", tc.idA, tc.idB, msg)
+		}
+		if !strings.Contains(msg, "all 1 scan run(s) in the store") {
+			t.Errorf("diff(%s, %s): the corpus is not the store's: %s", tc.idA, tc.idB, msg)
+		}
 	}
 }

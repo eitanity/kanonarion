@@ -114,31 +114,41 @@ cross-verification runs; to skip the git leg entirely use `--skip-vcs-verify`.
 ### `GOPROXY=off` and `direct`
 
 `GOPROXY=off` is Go's declaration that this environment does no module
-fetching. kanonarion honours it: every fetch-capable command - `fetch`,
-`walk`, `latest`, `audit`, `inspect` against `@latest` - refuses before it
-opens a socket and exits `20`, naming the offline way to proceed.
+fetching. kanonarion honours it. `--goproxy off` on `fetch`, `walk`, `latest`,
+`audit` and `inspect` declares the same air gap: when the flag is given, its
+value is used in place of the environment's for the whole run, and the run
+prints what it prints under `GOPROXY=off`. No command fetches a module over
+the network. What each one does next differs:
 
-The remedy is rendered **per command**, and names only what the command it
-stopped will accept. `fetch` defines no `--from-modcache`, so it is told what
-to run instead:
+| Command | Under `GOPROXY=off` |
+|---|---|
+| `fetch` | Refuses before it opens a socket, exit `20` |
+| `walk <module>@latest`, `inspect <module>@latest` | Refuse before they open a socket, exit `20` |
+| `latest` | Serves a lookup the store recorded inside `staleness.ttl`; with none, refuses, exit `20` |
+| `walk --gomod` | Runs. Each module it cannot fetch is recorded as failed, and the walk ends partial, exit `1` |
+| `walk <module>@<version>`, `inspect <module>@<version>` | Run. The target cannot be fetched, so the walk fails, exit `2` |
+| `audit` | Warns and runs to completion. Modules it cannot fetch show `(not fetched)`, and the staleness column answers from the ledger |
+
+Each refusal names the offline way to proceed. The remedy is rendered **per
+command**, and names only what that command accepts. `fetch` defines no
+`--from-modcache`, so it is told what to run instead:
 
 ```
 $ GOPROXY=off kanonarion fetch github.com/spf13/cobra@v1.8.1
-GOPROXY=off: the environment declares no module fetching
-  kanonarion fetch reaches the network on every invocation and has no flag
-  that withdraws it; to do this offline, run:
+error: execute root command: GOPROXY=off: the environment declares no module fetching
+  kanonarion fetch reaches the network on every invocation and has no flag that withdraws it; to do this offline, run:
     kanonarion walk --gomod ./go.mod --from-modcache
 $ echo $?
 20
 ```
 
-`walk`, `audit` and `sbom` do define the flag, and are told to pass it:
+`walk`, `audit` and `sbom` do define the flag, and are told to pass it. `audit`
+is not stopped: it logs the remedy as a warning and carries on:
 
 ```
 $ GOPROXY=off kanonarion audit --gomod ./go.mod
-GOPROXY=off: the environment declares no module fetching
-  run it offline instead: kanonarion audit accepts --from-modcache, which
-  answers without the network
+notice: code scope resolved 1 module(s); test-scope dependencies included
+time=2026-10-12T19:30:33.638040142Z level=WARN msg="module fetching refused by the environment; reads continue, fetches will fail" reason="GOPROXY=off: the environment declares no module fetching\n  run it offline instead: kanonarion audit accepts --from-modcache, which answers without the network"
 ```
 
 The refusal withdraws **fetching**, not the store. Reading what has already
@@ -150,10 +160,12 @@ reconstitutes a module and its closure from the store into a module cache a
 plain `go build` can consume.
 
 `GOPROXY=direct` selects VCS-origin fetching, which this build does not
-implement. It refuses the same way, naming the unsupported mode. What neither
-value does is fall back to `proxy.golang.org`: `off` and `direct` are the two
-values whose meaning is "not that proxy", and treating them as "unset" would
-cross exactly the boundary the operator drew.
+implement. The module proxy refuses it, naming the unsupported mode; it is not
+an air gap, so nothing else is withdrawn. `--goproxy direct` is refused the same
+way, and it does not lift an air gap the environment declares.
+What neither value does is fall back to `proxy.golang.org`: `off` and `direct`
+are the two values whose meaning is "not that proxy", and treating them as
+"unset" would cross exactly the boundary the operator drew.
 
 The list form follows Go's own resolution: entries are separated by `,` or
 `|` and tried in order, so `GOPROXY=https://proxy.example.com,direct` uses the
@@ -163,17 +175,21 @@ after it is tried.
 `GOPROXY` is read from Go's own sources, not just the shell: the environment
 variable first, then the env file `go env -w` writes to. `go env -w
 GOPROXY=off` therefore declares the air gap for kanonarion exactly as it does
-for `go build`, with nothing set in the environment.
+for `go build`, with nothing set in the environment. A `--goproxy` flag, when
+given, comes before both, and the `go` commands kanonarion starts are given the
+same value. `--goproxy direct` is the exception: it declares nothing, so the
+environment's decision stays in force, an air gap included.
 
 ### What else `GOPROXY=off` withdraws
 
-The declaration is not the module proxy's alone. Under `GOPROXY=off` every
-network path kanonarion owns refuses before it opens a socket or starts a
-subprocess:
+The declaration is not the module proxy's alone. Under `GOPROXY=off`, or
+`--goproxy off`, every network path kanonarion owns refuses before it opens a
+socket or starts a subprocess, and every `go` child it starts is given
+`GOPROXY=off`:
 
 | Path | Under `GOPROXY=off` | What still answers |
 |---|---|---|
-| Module fetch | Refuses, exit `20` | `--from-modcache`, [`use --recursive`](use.md) |
+| Module fetch | `fetch` refuses, exit `20`; a walk records the module as failed (exit `1`, or `2` when it is the walk's own target); `audit` carries on | `--from-modcache`, [`use --recursive`](use.md) |
 | Advisory snapshot download (`vuln-scan`, `audit`, `inspect`) | Refuses the download | A snapshot the store already holds - see [`vuln`](vuln.md#air-gapped-scanning) |
 | Checksum database (`sum.golang.org`) | Treated as `GOSUMDB=off`: modules record `UnverifiedNoSumDB`, or `VerifiedByGoSum` where a project `go.sum` anchors them | The local `go.sum` anchor |
 | Standard-library `go.dev/dl` acquisition | Not used; the local-toolchain anchor is selected instead, as under `--from-modcache` | `$GOROOT/src` + `$GOROOT/LICENSE`, recorded `VerifiedLocalToolchain` |

@@ -72,7 +72,7 @@ exits `0` and prints the effective configuration, with a line in place of the
 file saying which path was looked for:
 
 ```
-# no config file at /home/you/.kanonarion/config.yaml - nothing is set in this store, so every value below is a built-in default
+# no config file at /home/you/.kanonarion/config.yaml — nothing is set in this store, so every value below is a built-in default
 #   to write a commented template: kanonarion config init
 
 # effective configuration (resolved; (default) = not set in this file)
@@ -232,7 +232,7 @@ the loader objected to:
 
 ```
 $ kanonarion audit --gomod ./go.mod
-error: config file /home/you/.kanonarion/config.yaml was rejected: rule 0 (scope "production"): unknown policy outcome "block": must be allow, notify, or warn
+error: execute root command: config file /home/you/.kanonarion/config.yaml was rejected: rule 0 (scope "production"): unknown policy outcome "block": must be allow, notify, or warn
   nothing in that file is in force; the built-in defaults would apply instead
   fix the named value, then re-run. To see the file and this rejection: kanonarion config show
   To rewrite one key: kanonarion config set <key> <value>

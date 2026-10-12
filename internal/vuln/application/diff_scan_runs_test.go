@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -247,9 +248,11 @@ func TestDiff_MissingRun(t *testing.T) {
 	seedScanRun(t, ctx, store, runA, nil)
 
 	uc := application.NewDiffScanRunsUseCase(store)
-	_, err := uc.Diff(ctx, "run-a", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for missing run, got nil")
+	for _, ids := range [][2]string{{"run-a", "nonexistent"}, {"nonexistent", "run-a"}} {
+		_, err := uc.Diff(ctx, ids[0], ids[1])
+		if !errors.Is(err, application.ErrScanRunNotFound) {
+			t.Errorf("Diff(%q, %q) = %v, want ErrScanRunNotFound", ids[0], ids[1], err)
+		}
 	}
 }
 

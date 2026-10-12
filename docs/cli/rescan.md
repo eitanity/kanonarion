@@ -255,7 +255,8 @@ kanonarion vuln-show github.com/some/lib@v1.2.3 --history --store-root ~/.kanona
   scanned project-rooted, because the scan can be pointed at a tree directly
   (`--gomod`, `--project`, `kanonarion local`).
 - `vuln-scan-diff` requires both run IDs to belong to the same walk; diffing runs
-  from different walks is an error.
+  from different walks is an error. A run ID the store does not hold exits `4`,
+  naming which argument it was.
 - Snapshot pinning (`--snapshot-source` / `--snapshot-version`) is useful for
   reproducing a prior scan exactly. Use `vuln-snapshot-list` to enumerate stored
   snapshots.

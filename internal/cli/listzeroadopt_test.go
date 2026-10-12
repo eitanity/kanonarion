@@ -8,6 +8,7 @@ import (
 	"fmt"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -183,7 +184,7 @@ func checkZeroNotice(t *testing.T, notice listZeroJSON, tc zeroCase) {
 		t.Errorf("an unfiltered listing claimed a filter: %+v", notice.Filter)
 	case tc.wantFilter != nil && notice.Filter == nil:
 		t.Errorf("the filter that emptied the page is not named: %+v", notice)
-	case tc.wantFilter != nil && *notice.Filter != *tc.wantFilter:
+	case tc.wantFilter != nil && !reflect.DeepEqual(*notice.Filter, *tc.wantFilter):
 		t.Errorf("filter = %+v, want %+v", *notice.Filter, *tc.wantFilter)
 	}
 }

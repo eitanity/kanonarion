@@ -2,12 +2,17 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
+
+// ErrScanRunNotFound is a scan-run id the store does not hold. It is an absent
+// record, not a malformed request, so a caller can name the missing side.
+var ErrScanRunNotFound = errors.New("scan run not found")
 
 // DiffScanRunsUseCase compares two WalkScanRuns of the same walk.
 type DiffScanRunsUseCase struct {
@@ -27,7 +32,7 @@ func (uc *DiffScanRunsUseCase) Diff(ctx context.Context, runIDA, runIDB string) 
 		return domain.ScanRunDiff{}, fmt.Errorf("getting scan run A %q: %w", runIDA, err)
 	}
 	if !foundA {
-		return domain.ScanRunDiff{}, fmt.Errorf("scan run not found: %s", runIDA)
+		return domain.ScanRunDiff{}, fmt.Errorf("%w: %s", ErrScanRunNotFound, runIDA)
 	}
 
 	runB, foundB, err := uc.vulnStore.GetWalkScanRun(ctx, runIDB)
@@ -35,7 +40,7 @@ func (uc *DiffScanRunsUseCase) Diff(ctx context.Context, runIDA, runIDB string) 
 		return domain.ScanRunDiff{}, fmt.Errorf("getting scan run B %q: %w", runIDB, err)
 	}
 	if !foundB {
-		return domain.ScanRunDiff{}, fmt.Errorf("scan run not found: %s", runIDB)
+		return domain.ScanRunDiff{}, fmt.Errorf("%w: %s", ErrScanRunNotFound, runIDB)
 	}
 
 	if runA.WalkID != runB.WalkID {

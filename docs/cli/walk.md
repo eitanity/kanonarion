@@ -44,7 +44,7 @@ kanonarion walk --gomod ./go.mod [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy. `off` and `direct` are honoured, not rewritten: a walk that would fetch refuses before any network I/O and exits `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
+| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy. `off` declares the same air gap as `GOPROXY=off`: no module is fetched over the network, so the walk ends partial (exit `1`), or failed (exit `2`) when its own target cannot be fetched, and `<module>@latest` refuses, exit `20`. `direct` is refused by the module proxy, with the same exit codes. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--force` | `false` | Re-fetch and re-verify every module in the closure, bypassing the fact-store cache. Wall time scales with the closure size; `per_node_results[].from_cache` will be `false` for every node. |
 | `--allow-partial` | `false` | Exit 0 even when the walk status is partial |
 | `--workers` | `16` | Concurrent fetch workers |
@@ -349,14 +349,23 @@ a primary supply-chain attack surface, so it is a first-class, separately
 addressable scope (`--tool`) - never folded silently into the code view, never
 dropped.
 
-**Toolchain-unavailable fallback.** If `go` is absent or `go list` fails
-(incomplete `go.sum`, restricted network, a vendor-only tree), the walk falls
-back to the go.mod require directives. That set is not the set that compiles, so
-the walk is recorded `partial` with reason `build_list_unavailable: …` and the
-command exits `1`. The toolchain's own reason is printed under
+**Toolchain-unavailable fallback.** Under `--tool` and `--project`, if `go` is
+absent or `go list` fails (incomplete `go.sum`, restricted network, a
+vendor-only tree), the walk falls back to the go.mod require directives. That
+set is not the set that compiles, so the walk is recorded `partial` with reason
+`build_list_unavailable: …` and the command exits `1`. The toolchain's own reason is printed under
 `build list unavailable:` and recorded on the walk at
 `.graph.build_list_unavailable`, so `walk-show` states it too. `--allow-partial`
 exits `0` as it does for any partial walk.
+
+The default code scope has no fallback: it is the import closure `go list
+-deps` resolves, and no require directive states it. Without `go`, or when
+`go list` fails, the walk refuses and exits `20`:
+
+```
+$ kanonarion walk --gomod ./go.mod
+error: execute root command: resolving code scope: go toolchain not found on PATH: required to resolve the dependency scope
+```
 
 **Why `local`?** The main module is unpublished, so it has no semver to pin. The
 synthetic `local` marker anchors the record and the SBOM subject. (The Go-native
@@ -468,9 +477,7 @@ list:
 
 ```console
 $ kanonarion walk --gomod ./go.mod --target windows/riscv64
-error: build target windows/riscv64 is not one this Go toolchain builds for
-(it does build linux/riscv64, openbsd/riscv64, windows/386, windows/amd64);
-run `go tool dist list` for the 47 pairs it offers
+error: execute root command: build target windows/riscv64 is not one this Go toolchain builds for (it does build linux/riscv64, openbsd/riscv64, windows/386, windows/amd64); run `go tool dist list` for the 47 pairs it offers
 ```
 
 The check is here because the toolchain's own refusal is unreadable. `go list`
@@ -486,13 +493,14 @@ the toolchain's own sentence does not:
 
 ```console
 $ kanonarion walk --gomod ./go.mod --target wasip1/wasm
-error: resolving code scope: go list -deps -test ... (resolving for the declared
-build target wasip1/wasm; this failure may be the target's rather than the
-project's): build constraints exclude all Go files in .../modernc.org/libc/errno
+error: execute root command: resolving code scope: go list -deps -test -f ... ./... (resolving for the declared build target wasip1/wasm; this failure may be the target's rather than the project's): go: can't load test package: package github.com/eitanity/kanonarion
+	imports github.com/eitanity/kanonarion/internal/cli
+	...
+	imports modernc.org/libc/errno: build constraints exclude all Go files in .../modernc.org/libc@v1.75.7/errno
 ```
 
-That is a truthful answer about this project: it depends on a cgo SQLite driver
-with no `wasip1` files, so it has no `wasip1/wasm` build to resolve. A project
+That is a truthful answer about this project: its SQLite driver depends on a
+libc package with no `wasip1` files, so it has no `wasip1/wasm` build to resolve. A project
 whose dependencies do build for the target resolves normally.
 
 ## Standard-library version (`--stdlib-from-gomod`)
@@ -541,9 +549,7 @@ flag by name rather than walk unverified bytes:
 
 ```
 $ kanonarion walk example.com/mod@v1.0.0 --from-modcache
-error: walk <module@version> does not act on --from-modcache (applies to walk
---gomod, which has the project go.sum the cache is verified against; a published
-coordinate has none)
+error: execute root command: walk <module@version> does not act on --from-modcache (applies to walk --gomod, which has the project go.sum the cache is verified against; a published coordinate has none)
 ```
 
 The record says what the bytes were checked against, and does not claim the
@@ -560,8 +566,8 @@ record for is refused unless `--allow-verification-downgrade` is passed. See
 anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade).
 
 A walk **without** `--from-modcache` is fetch-capable, so an environment that
-declares no module fetching stops it: under `GOPROXY=off` no network I/O is
-attempted, and each module that would have to be fetched fails with a reason
+declares no module fetching stops it: under `GOPROXY=off`, or `--goproxy
+off`, no network I/O is attempted, and each module that would have to be fetched fails with a reason
 naming `--from-modcache` and [`use --recursive`](use.md) rather than falling
 back to `proxy.golang.org`. The walk is then `partial` (exit `1`), or `failed`
 (exit `2`) when it is the positional walk's own target that could not be
@@ -569,7 +575,7 @@ fetched. Reading walks already recorded (`walk show`, `callgraph`, `interface`,
 `license`, `vuln show`) is unaffected - the refusal withdraws fetching, not the
 store.
 
-`GOPROXY=off` also selects the local-toolchain standard-library anchor without
+`GOPROXY=off` (or `--goproxy off`) also selects the local-toolchain standard-library anchor without
 `--from-modcache`, and stops `git` cross-verification from spawning, which is
 counted as a missing VCS leg the way `--skip-vcs-verify` is. The value is read
 the way the go command reads it, so `go env -w GOPROXY=off` is honoured with

@@ -63,7 +63,7 @@ Findings are evaluated against the `fips_policy` governance block. The default
 is **opt-in**: `required: false` surfaces findings but never gates. With
 `required: true`, a non-FIPS-capable toolchain, a non-FIPS algorithm import,
 or a cgo crypto dependency resolves to a blocking outcome and the command
-exits **20** (`ExitConfig`) - suitable as a CI gate. The exit contract is
+exits **5** (`ExitPolicy`) - suitable as a CI gate. The exit contract is
 identical in text and `--json` mode, so a policy violation gates regardless of
 output format.
 

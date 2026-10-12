@@ -50,6 +50,9 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			// sites that print a no-network refusal — the proxy adapter is
 			// built in a dozen of them — have no command to ask.
 			offlineRemedy = renderOfflineRemedy(cmd)
+			if err := declareGoproxyFlag(cmd); err != nil {
+				return err
+			}
 			if err := requireStoreRoot(storeRoot); err != nil {
 				return err
 			}
@@ -211,6 +214,9 @@ func usageErr(cmd *cobra.Command) error {
 	return fmt.Errorf("invalid arguments\nusage: %s", cmd.UseLine())
 }
 
+// rootErrorPrefix leads every error Run returns; main prints it after "error: ".
+const rootErrorPrefix = "execute root command: "
+
 // Run is the testable entry point for the kanonarion CLI.
 func Run(args []string, stdout, stderr io.Writer) error {
 	// Cancel the command context on SIGINT, SIGTERM, or SIGHUP so that
@@ -262,7 +268,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		_, _ = fmt.Fprintln(stderr, interrupt.Statement(cause))
 		return &interruptedError{err: err}
 	}
-	return fmt.Errorf("execute root command: %w", err)
+	return fmt.Errorf("%s%w", rootErrorPrefix, err)
 }
 
 // interruptCause returns the signal that cancelled ctx, or nil when no signal
@@ -295,7 +301,7 @@ func answeredDespite(err error) bool {
 // command's failure is the interruption's consequence rather than its own.
 type interruptedError struct{ err error }
 
-func (e *interruptedError) Error() string { return "execute root command: " + e.err.Error() }
+func (e *interruptedError) Error() string { return rootErrorPrefix + e.err.Error() }
 
 func (e *interruptedError) Unwrap() error { return e.err }
 

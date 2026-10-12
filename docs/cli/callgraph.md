@@ -1512,16 +1512,28 @@ them:
 
 ```
 $ kanonarion callers 'github.com/golang-jwt/jwt/v4.(*Parser).ParseUnverified'
-error: symbol "…ParseUnverified" belongs to module "github.com/golang-jwt/jwt/v4",
-whose every stored call graph was produced by superseded extraction logic: this
-build serves pipeline 0.5.0 and the store holds v4.5.0, v4.5.1, v4.5.2 at
-pipeline 0.3.0, 0.4.1. …
-  kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.0
+error: execute root command: symbol "github.com/golang-jwt/jwt/v4.(*Parser).ParseUnverified" belongs to module "github.com/golang-jwt/jwt/v4", whose every stored call graph was produced by superseded extraction logic: this build serves pipeline 0.9.0 and the store holds v4.5.1 at pipeline 0.5.0, 0.6.0. A superseded record is not served, so this answer is empty for want of a measurement of this module, not because the code holds nothing. Re-analyse it:
+  kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.1
+$ echo $?
+4
 ```
 
 `callgraph-show` and `callgraph-show --history` say the same thing for the
-coordinate they were asked about. A module the store holds at both a superseded
-and the serving version is answered normally from the served generation.
+coordinate they were asked about, with different exit codes. `callgraph-show`
+serves one record, so it refuses with exit 4. `--history` lists generations,
+and an empty list is an answer, so it exits `0`, as it also does for a
+coordinate the store has never held:
+
+```
+$ kanonarion callgraph-show github.com/golang-jwt/jwt/v4@v4.5.1 --history
+no callgraph records for github.com/golang-jwt/jwt/v4@v4.5.1 at pipeline 0.9.0 — the store holds it at superseded pipeline 0.5.0, 0.6.0, which this build does not serve.
+  re-analyse it: kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.1
+$ echo $?
+0
+```
+
+A module the store holds at both a superseded and the serving version is
+answered normally from the served generation.
 
 #### Graphs an answer could not read
 
@@ -1710,7 +1722,7 @@ silently short answer.
 
 ```
 $ kanonarion callers 'golang.org/x/tools/go/packages.Load'
-error: ... toolchain disagrees ([GOROOT usr/local/go go1.26.6]) ...
+error: execute root command: ... conflicting call graph records for golang.org/x/tools@v… at pipeline 0.9.0: toolchain disagrees ([GOROOT /usr/local/go go1.26.6]; records [sha256:… sha256:…]) ...
 
 $ kanonarion callers 'golang.org/x/tools/go/packages.Load' --toolchain go1.26.6
 297 callers of golang.org/x/tools/go/packages.Load:

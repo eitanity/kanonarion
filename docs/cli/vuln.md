@@ -171,7 +171,8 @@ one, so the rebuild needs no upgrade to the installed Go.
 ### Air-gapped scanning
 
 Under `GOPROXY=off` - read as the go command reads it, so `go env -w
-GOPROXY=off` counts - the advisory snapshot is **not downloaded**. What that
+GOPROXY=off` counts, and so does `--goproxy off` on `audit` and `inspect` -
+the advisory snapshot is **not downloaded**. What that
 means in practice:
 
 - A store that already holds a snapshot **scans normally**. Snapshot resolution
@@ -991,7 +992,7 @@ answer depends on which build you mean:
   the store — the read refuses and names the walk that would answer it:
 
   ```
-  error: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
+  error: execute root command: no succeeded code project walk for example.com/myapp on linux/amd64, though the store holds 2 succeeded walk(s) of it (complete on linux/amd64, tool on linux/amd64); a walk of another scope or platform is a different build, so it does not answer here — run: kanonarion walk --gomod ./go.mod
   ```
 
   Where the project has no walk at all the refusal says that instead, so the two
@@ -1010,11 +1011,16 @@ serve the newest: the newest scan of a shared dependency belongs to whichever
 project was scanned last.
 
 ```
-$ kanonarion vuln-show github.com/golang-jwt/jwt/v4@v4.5.1
-error: the store holds github.com/golang-jwt/jwt/v4@v4.5.1 in 2 consumer frames, and this question names none:
+$ kanonarion vuln-show github.com/pkg/errors@v0.9.1
+error: execute root command: the store holds github.com/pkg/errors@v0.9.1 in 6 consumer frames, and this question names none:
+  target-rooted:github.com/AustralianCyberSecurityCentre/azul-bedrock/v13@local
   target-rooted:github.com/cortezaproject/corteza/server@local
-  target-rooted:github.com/tmc/langchaingo@v0.1.14
-name the build you mean: kanonarion vuln-show github.com/golang-jwt/jwt/v4@v4.5.1 --walk-id <walk of that build>, or ... --gomod <path/to/go.mod>
+  target-rooted:github.com/eitanity/kanonarion@local
+  target-rooted:github.com/grafana/loki/v3@local
+  target-rooted:github.com/guacsec/guac@local
+  target-rooted:ragflow@local
+name the build you mean: kanonarion vuln-show github.com/pkg/errors@v0.9.1 --walk-id <walk of that build>, or kanonarion vuln-show github.com/pkg/errors@v0.9.1 --gomod <path/to/go.mod>
+kanonarion vuln-show github.com/pkg/errors@v0.9.1 --history lists every stored record and the frame it was measured in
 ```
 
 A pinned walk that covered the module but holds no record in its own frame is
@@ -1028,7 +1034,7 @@ records and findings sit in it:
 
 ```
 $ kanonarion vuln-show golang.org/x/crypto@v0.31.0
-error: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v25 and the store holds this coordinate at pipeline v24 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it — the walk that measured it most recently, of the 3 that hold it:
+error: execute root command: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v25 and the store holds this coordinate at pipeline v24 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it — the walk that measured it most recently, of the 3 that hold it:
   kanonarion vuln-scan 01M0VG1267S1XDJGDFZTVRPM84 --reachability
 ```
 

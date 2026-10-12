@@ -22,6 +22,7 @@ package goenv
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,11 +55,60 @@ func Value(key string) string {
 	return fileValues()[key]
 }
 
-// Proxy returns the resolved GOPROXY value, empty when neither the environment
-// nor the env file names one.
-func Proxy() string { return Value("GOPROXY") }
+// Proxy returns the effective GOPROXY: the value a command line declared with
+// Declare, else the resolved environment value, empty when none names one.
+func Proxy() string {
+	declaredMu.Lock()
+	v := declared
+	declaredMu.Unlock()
+	if v != "" {
+		return v
+	}
+	return Value("GOPROXY")
+}
 
-// NetworkForbidden reports whether the resolved GOPROXY declares that this
+var (
+	declaredMu sync.Mutex
+	declared   string
+)
+
+// Declare makes a GOPROXY named on the command line (--goproxy) the effective
+// one for this process and, exported, for its go and git children. A value led
+// by `direct` declares nothing: this tool refuses that route, so it never opens
+// the network, and the environment's decision stays in force. The returned
+// function restores the previous state.
+func Declare(value string) (func() error, error) {
+	value = strings.TrimSpace(value)
+	if FirstProxyEntry(value) == "direct" {
+		value = ""
+	}
+	prevEnv, hadEnv := os.LookupEnv("GOPROXY")
+	exported := value != ""
+	if exported {
+		if err := os.Setenv("GOPROXY", value); err != nil {
+			return nil, fmt.Errorf("--goproxy %q: %w", value, err)
+		}
+	}
+	declaredMu.Lock()
+	prevDeclared := declared
+	declared = value
+	declaredMu.Unlock()
+	return func() error {
+		declaredMu.Lock()
+		declared = prevDeclared
+		declaredMu.Unlock()
+		switch {
+		case !exported:
+			return nil
+		case hadEnv:
+			return os.Setenv("GOPROXY", prevEnv) //nolint:wrapcheck // restores a value read from this environment
+		default:
+			return os.Unsetenv("GOPROXY") //nolint:wrapcheck // as above
+		}
+	}, nil
+}
+
+// NetworkForbidden reports whether the effective GOPROXY declares that this
 // environment does no network module traffic.
 //
 // Only `off` forbids the network. `direct` does not: it selects VCS-origin

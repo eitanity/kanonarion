@@ -84,11 +84,16 @@ the query **refuses** (exit 20) and names the frames it found plus the flags
 that select one:
 
 ```
-$ kanonarion reachability github.com/golang-jwt/jwt/v4@v4.5.1 --vuln GO-2025-3553
-error: the store holds github.com/golang-jwt/jwt/v4@v4.5.1 in 2 consumer frames, and this question names none:
+$ kanonarion reachability github.com/pkg/errors@v0.9.1 --vuln GO-2022-0603
+error: execute root command: the store holds github.com/pkg/errors@v0.9.1 in 6 consumer frames, and this question names none:
+  target-rooted:github.com/AustralianCyberSecurityCentre/azul-bedrock/v13@local
   target-rooted:github.com/cortezaproject/corteza/server@local
-  target-rooted:github.com/tmc/langchaingo@v0.1.14
-name the build you mean: kanonarion reachability … --walk-id <walk of that build>, or … --gomod <path/to/go.mod>
+  target-rooted:github.com/eitanity/kanonarion@local
+  target-rooted:github.com/grafana/loki/v3@local
+  target-rooted:github.com/guacsec/guac@local
+  target-rooted:ragflow@local
+name the build you mean: kanonarion reachability github.com/pkg/errors@v0.9.1 --vuln GO-2022-0603 --walk-id <walk of that build>, or kanonarion reachability github.com/pkg/errors@v0.9.1 --vuln GO-2022-0603 --gomod <path/to/go.mod>
+kanonarion vuln-show github.com/pkg/errors@v0.9.1 --history lists every stored record and the frame it was measured in
 ```
 
 One project's scans in the store leave nothing to disambiguate, and the query
