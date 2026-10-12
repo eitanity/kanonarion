@@ -48,6 +48,8 @@ type fakeVulnLoader struct {
 	// were all measured in another build's frame.
 	otherFrameOnly []coordinate.ModuleCoordinate
 	supersededOnly []coordinate.ModuleCoordinate
+	notInSeedWalk  []coordinate.ModuleCoordinate
+	notAnalysed    []coordinate.ModuleCoordinate
 	// gotConsumer records the module path the use case anchored the seed to, so
 	// a test can assert the probe named the tree it is measuring.
 	gotConsumer string
@@ -71,7 +73,19 @@ func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.Mod
 		Scanned:        make(map[coordinate.ModuleCoordinate]struct{}),
 		OtherFrameOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		SupersededOnly: make(map[coordinate.ModuleCoordinate]struct{}),
+		NotInSeedWalk:  make(map[coordinate.ModuleCoordinate]struct{}),
+		NotAnalysed:    make(map[coordinate.ModuleCoordinate]struct{}),
 		Restriction:    "seed restricted to " + consumerModulePath,
+	}
+	for _, c := range f.notAnalysed {
+		if _, ok := asked[c]; ok {
+			set.NotAnalysed[c] = struct{}{}
+		}
+	}
+	for _, c := range f.notInSeedWalk {
+		if _, ok := asked[c]; ok {
+			set.NotInSeedWalk[c] = struct{}{}
+		}
 	}
 	for _, c := range f.otherFrameOnly {
 		if _, ok := asked[c]; !ok {
@@ -635,6 +649,43 @@ func TestLocalReachability_OtherFrameOnlyModuleNamesItsOwnReason(t *testing.T) {
 	}
 	if got := reasons["example.com/unknown"]; got != domain.UncoveredNoStoredRecord {
 		t.Errorf("reason for the unknown module = %q, want UncoveredNoStoredRecord", got)
+	}
+}
+
+// A module the seed walk did not scan, though other walks did, names that
+// absence rather than "never vuln-scanned".
+func TestLocalReachability_NotInSeedWalkNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{notInSeedWalk: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredNotInSeedWalk {
+		t.Errorf("uncovered = %+v, want the one module with UncoveredNotInSeedWalk", result.Coverage.Uncovered)
+	}
+}
+
+// A module whose seeding scan failed names that, not "never vuln-scanned".
+func TestLocalReachability_NotAnalysedNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{notAnalysed: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredNotAnalysed {
+		t.Errorf("uncovered = %+v, want the one module with UncoveredNotAnalysed", result.Coverage.Uncovered)
 	}
 }
 

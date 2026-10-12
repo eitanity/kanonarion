@@ -37,7 +37,9 @@ type fakeVulnStore struct {
 	// of records: the case it reproduces is a coordinate held only at a pipeline
 	// version the reads do not return.
 	generations map[string][]vulnports.VulnerabilityRecordGeneration
-	err         error
+	// inWalk is what a walk-anchored load reads, keyed by walk id then coord.Path.
+	inWalk map[string]map[string][]vulndomain.VulnerabilityRecord
+	err    error
 }
 
 func (s *fakeVulnStore) ListVulnerabilityRecordGenerationsForModule(_ context.Context, coord coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error) {
@@ -65,14 +67,14 @@ func (s *fakeVulnStore) ListVulnerabilityRecordsForModuleAllGenerations(_ contex
 func (s *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.VulnerabilityRecord) error {
 	panic("unexpected call: PutVulnerabilityRecord")
 }
-func (s *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
-	panic("unexpected call: GetVulnerabilityRecord")
-}
-func (s *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
-	panic("unexpected call: GetLatestVulnerabilityRecord")
-}
-func (s *fakeVulnStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) ([]vulndomain.VulnerabilityRecord, error) {
-	panic("unexpected call: ListVulnerabilityRecordsForModuleInWalk")
+func (s *fakeVulnStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, coord coordinate.ModuleCoordinate, _ string, walkID string) ([]vulndomain.VulnerabilityRecord, error) {
+	if s.inWalk == nil {
+		panic("unexpected call: ListVulnerabilityRecordsForModuleInWalk")
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.inWalk[walkID][coord.Path()], nil
 }
 func (s *fakeVulnStore) PutWalkScanRun(_ context.Context, _ vulndomain.WalkScanRun) error {
 	panic("unexpected call: PutWalkScanRun")

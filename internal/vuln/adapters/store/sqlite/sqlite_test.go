@@ -84,9 +84,9 @@ func TestPutAndGetVulnerabilityRecord(t *testing.T) {
 		t.Fatalf("PutVulnerabilityRecord: %v", err)
 	}
 
-	got, found, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, "v1", snapshot)
+	got, found, err := store.GetVulnerabilityRecordAt(ctx, rec.Coordinate, "v1", snapshot, domain.RecordRooting(rec))
 	if err != nil {
-		t.Fatalf("GetVulnerabilityRecord: %v", err)
+		t.Fatalf("GetVulnerabilityRecordAt: %v", err)
 	}
 	if !found {
 		t.Fatal("expected record to be found")
@@ -136,9 +136,9 @@ func TestPutVulnerabilityRecord_FirstScannedAtImmutableOnReScan(t *testing.T) {
 		t.Fatalf("re-scan PutVulnerabilityRecord: %v", err)
 	}
 
-	got, found, err := store.GetVulnerabilityRecord(ctx, c, "v1", snapshot)
+	got, found, err := store.GetVulnerabilityRecordAt(ctx, c, "v1", snapshot, domain.RecordRooting(rec))
 	if err != nil {
-		t.Fatalf("GetVulnerabilityRecord: %v", err)
+		t.Fatalf("GetVulnerabilityRecordAt: %v", err)
 	}
 	if !found {
 		t.Fatal("expected record to be found")
@@ -154,11 +154,11 @@ func TestPutVulnerabilityRecord_FirstScannedAtImmutableOnReScan(t *testing.T) {
 	}
 }
 
-func TestGetVulnerabilityRecord_NotFound(t *testing.T) {
+func TestGetVulnerabilityRecordAt_NotFound(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
 
-	_, found, err := store.GetVulnerabilityRecord(ctx, coord("github.com/missing/mod", "v1.0.0"), "v1", snap("govulndb", "v1"))
+	_, found, err := store.GetVulnerabilityRecordAt(ctx, coord("github.com/missing/mod", "v1.0.0"), "v1", snap("govulndb", "v1"), domain.RootingIsolated)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

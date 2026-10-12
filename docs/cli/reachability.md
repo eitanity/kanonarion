@@ -796,21 +796,40 @@ examined eleven and cleared one.
 | `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
 | `the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned` | The module has been scanned — for a different project. Nothing measured this build, so nothing seeded the probe. Scan this build to cover it. |
 | `the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again` | The module has been scanned for this build, under scan logic this build supersedes. Re-scan it to cover it. |
+| `the stored scan record for this coordinate says it was not analysed (the scan failed or the module was unscannable), so it is no answer about this build` | A scan ran and did not analyse the module. A record like that found nothing because nothing was looked at, so it is not counted as covered. Read the record's reason with `kanonarion vuln-show <module>@<version> --gomod ./go.mod`. |
+| `the walk this probe was seeded from holds no vulnerability record for this coordinate; other walks scanned it, and their records do not seed this build` | The newest project walk of this tree did not scan the module — usually because `go.mod` changed since that walk. Scan the build to cover it. |
 
 ### Which records seeded the probe
 
 The probe is seeded from stored records, and a store shared by several projects
-holds several answers per dependency. The seed is restricted to the records
-measured in **this tree's own frame** — a walk rooted at the module path this
-tree's `go.mod` declares, at any version — plus the **isolated** frame, which
-answers "the module built alone" and belongs to no project. Another project's
-records are never read.
+holds several answers per dependency.
+
+When the store holds a project walk for this tree's `go.mod`, the seed is drawn
+from **one walk**: the newest code-scope project walk for that `go.mod` on this
+platform, chosen the way `vuln-show --gomod` chooses it. Within that walk it uses
+the records measured in the walk's own frame, plus the **isolated** frame, which
+answers "the module built alone" and belongs to no project. Records of older
+walks are not read. An older walk taken under an earlier Go release can disagree
+with the newer one, and reading both would refuse the probe. The `seed:` line
+names the walk:
+
+```
+seed restricted to stored records scanned by walk "01K…" (code scope, frame
+target-rooted:github.com/example/app@local), the newest project walk for this
+tree's go.mod, in its own frame or in the isolated frame; records of older walks
+and of another consumer's build were not read
+```
+
+When the store holds no project walk for the tree, the seed is restricted to
+the records measured in **this tree's own frame** — a walk rooted at the module
+path this tree's `go.mod` declares, at any version — plus the isolated frame.
+Another project's records are never read.
 
 **Why this matters:** another project resolves the same dependency to its own
 version set and its own entry points, so its reachability answer is about a
 build that is not yours. Read here it would answer a question you never asked,
 with nothing to show it had. `seed_restriction` states the boundary on every
-run:
+run. Without a project walk it reads:
 
 ```
 seed restricted to stored records measured in this tree's own frame (rooted at

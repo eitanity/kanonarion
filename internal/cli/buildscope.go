@@ -342,11 +342,18 @@ func noProjectWalkOfScope(
 	// report the project as never walked.
 	others, err := walks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, OverallStatus: &succeeded, Toolchain: nil})
 	if err != nil || len(others) == 0 {
-		return fmt.Errorf("no succeeded project walk for %s — %s", coord.Path(), remedy)
+		return noProjectWalkError{fmt.Errorf("no succeeded project walk for %s — %s", coord.Path(), remedy)}
 	}
-	return fmt.Errorf("no succeeded %s project walk for %s on %s, though the store holds %d succeeded walk(s) of it (%s); a walk of another scope or platform is a different build, so it does not answer here — %s",
-		scope, coord.Path(), platform, len(others), describeWalkBuilds(others), remedy)
+	return noProjectWalkError{fmt.Errorf("no succeeded %s project walk for %s on %s, though the store holds %d succeeded walk(s) of it (%s); a walk of another scope or platform is a different build, so it does not answer here — %s",
+		scope, coord.Path(), platform, len(others), describeWalkBuilds(others), remedy)}
 }
+
+// noProjectWalkError marks noProjectWalkOfScope's refusal, so a caller with an
+// answer that needs no walk — the local probe — can tell it from a failed read.
+type noProjectWalkError struct{ err error }
+
+func (e noProjectWalkError) Error() string { return e.err.Error() }
+func (e noProjectWalkError) Unwrap() error { return e.err }
 
 // describeWalkBuilds names the distinct builds a candidate list covers, as
 // "<scope> on <platform>", sorted and deduplicated. It is what a refusal shows

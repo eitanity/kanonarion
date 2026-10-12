@@ -482,7 +482,7 @@ func (b *vulnBatchCtx) nameRecordBasis(ctx context.Context, result *contextVulne
 // among consumers when it did not.
 func (b *vulnBatchCtx) selectForBatch(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, bool, error) {
 	if b.anchored && b.anchor.rooting.IsRecorded() {
-		rec, _, _, ok, err := selectRecordInFrame(recs, b.anchor.rooting)
+		rec, _, _, ok, err := vuldomain.ComposeInFrame(recs, b.anchor.rooting)
 		return rec, ok, err
 	}
 	rec, _, _, ok, err := selectConsumerRecord(recs, coord)

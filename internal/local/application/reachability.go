@@ -194,6 +194,10 @@ func appendUnservedCoordinates(uncovered []domain.UncoveredModule, coords []coor
 			reason = domain.UncoveredSupersededPipeline
 		case setContains(set.SetAsideOnly, coord):
 			reason = domain.UncoveredSetAside
+		case setContains(set.NotInSeedWalk, coord):
+			reason = domain.UncoveredNotInSeedWalk
+		case setContains(set.NotAnalysed, coord):
+			reason = domain.UncoveredNotAnalysed
 		}
 		uncovered = append(uncovered, domain.UncoveredModule{
 			Path: coord.Path(), Version: coord.Version(), Reason: reason,

@@ -28,31 +28,51 @@ type ToolchainConflict struct {
 	Values []string
 	// ContentHashes name the records carrying each of Values, in the same order.
 	ContentHashes []string
+	// NewestWalkID is the walk named by the newest of the disagreeing records,
+	// empty when that record names none. It is the pin the refusal offers.
+	NewestWalkID string
 }
 
 // Error renders the conflict as a message. ToolchainConflict satisfies error so
 // the store can return it directly.
 func (c ToolchainConflict) Error() string {
-	// 'vuln-scan-rescan' takes a walk id, which a conflict between two records
-	// does not hold; naming it bare printed a line that exits 20. The history
-	// read takes the coordinate this conflict is about and names the walk each
-	// record was measured in, which is what the rescan then needs.
+	// No re-scan line: a re-scan appends a record and leaves the other
+	// toolchain's standing, so the pair the refusal fired on is unchanged.
+	// Naming one build is what resolves it, and the pins name builds.
+	coord := c.Coordinate.String()
+	lines := make([]string, 0, 3)
+	if c.NewestWalkID != "" {
+		lines = append(lines, "kanonarion vuln-show "+coord+" --walk-id "+c.NewestWalkID)
+	}
+	lines = append(lines,
+		"kanonarion vuln-show "+coord+" --gomod ./go.mod",
+		"kanonarion vuln-show "+coord+" --history")
 	return fmt.Sprintf(
 		"conflicting vulnerability records for %s: two Go toolchains scanned it (%v; records %v). "+
-			"A scan's reachable set is the toolchain's, so neither answer supersedes the other. "+
-			"Each record names the walk it was measured in; re-scan that walk under the toolchain "+
-			"you are using with 'kanonarion vuln-scan-rescan':\n  kanonarion vuln-show %s --history",
-		c.Coordinate, c.Values, c.ContentHashes, c.Coordinate)
+			"A scan's reachable set is the toolchain's, so neither answer supersedes the other, and no "+
+			"re-scan settles it: a re-scan appends a record and the other toolchain's stays. Name the build you mean — "+
+			"the walk of the newest record, or the newest project walk for your go.mod, run from the "+
+			"project — and --history lists every record with the walk it was measured in:\n  %s",
+		c.Coordinate, c.Values, c.ContentHashes, strings.Join(lines, "\n  "))
 }
 
 // findToolchainConflict reports two toolchains that reached DIFFERENT verdicts
-// for one coordinate, or nil.
+// for one coordinate against the SAME advisory-database snapshot, or nil.
 //
-// The verdict difference is the disagreement; the toolchain is what explains it.
+// The comparison is confined to the snapshot of the record the ladder would
+// serve. Records on other snapshots were measured against other advisory sets,
+// so their verdicts differ for that reason and say nothing about the toolchain.
+// Within the snapshot each toolchain is represented by its best record under
+// servesBefore, so the answer does not depend on the order rows arrive in.
+//
 // Two toolchains that reached the same verdict reached the same answer, and
 // refusing on the label alone would refuse reads this dimension has nothing to
 // say about — measured on the call-graph ledger, that mistake made 18 of 30
 // refusals byte-identical results.
+//
+// A record that analysed nothing and reported nothing takes no part either: a
+// failed or unscannable scan makes no claim about the module, so it cannot
+// contradict one that does. One that did report a finding still claims it.
 //
 // A record that states NO toolchain takes no part. That is a DELIBERATE
 // EXCEPTION to the rule that an absent value is not a dimension value: no stored
@@ -63,30 +83,63 @@ func findToolchainConflict(records []VulnerabilityRecord) *ToolchainConflict {
 	if len(records) < 2 {
 		return nil
 	}
-	seen := map[string]string{}    // toolchain -> content hash of a record stating it
-	verdict := map[string]string{} // toolchain -> the verdict it reached
+	served := best(records).DatabaseSnapshot
+	rep := map[string]VulnerabilityRecord{} // toolchain -> its best record on the served snapshot
+	var (
+		newest    VulnerabilityRecord
+		hasNewest bool
+	)
 	for _, r := range records {
 		v := string(r.Toolchain)
-		if v == "" {
+		if v == "" || !sameSnapshot(r.DatabaseSnapshot, served) || !claimsAVerdict(r) {
 			continue
 		}
-		if _, ok := seen[v]; !ok {
-			seen[v], verdict[v] = r.ContentHash, verdictDigest(r)
+		if cur, ok := rep[v]; !ok || servesBefore(r, cur) {
+			rep[v] = r
+		}
+		if !hasNewest || newerScan(r, newest) {
+			newest, hasNewest = r, true
 		}
 	}
-	if len(seen) < 2 || sameVerdicts(verdict) {
+	verdict := make(map[string]string, len(rep))
+	for v, r := range rep {
+		verdict[v] = verdictDigest(r)
+	}
+	if len(rep) < 2 || sameVerdicts(verdict) {
 		return nil
 	}
-	values := make([]string, 0, len(seen))
-	for v := range seen {
+	values := make([]string, 0, len(rep))
+	for v := range rep {
 		values = append(values, v)
 	}
 	sort.Strings(values)
 	hashes := make([]string, 0, len(values))
 	for _, v := range values {
-		hashes = append(hashes, seen[v])
+		hashes = append(hashes, rep[v].ContentHash)
 	}
-	return &ToolchainConflict{Coordinate: records[0].Coordinate, Values: values, ContentHashes: hashes}
+	return &ToolchainConflict{Coordinate: records[0].Coordinate, Values: values, ContentHashes: hashes, NewestWalkID: newest.WalkID}
+}
+
+// claimsAVerdict reports whether a record says anything about the module: it
+// was analysed, or it reported an advisory whatever its coverage.
+func claimsAVerdict(r VulnerabilityRecord) bool {
+	coverage, findings := RecordAxes(r)
+	return coverage == CoverageAnalysed || reportsAdvisory(findings)
+}
+
+// sameSnapshot reports whether two records were measured against one advisory
+// set: the same generation, retrieved at the same instant.
+func sameSnapshot(a, b DatabaseSnapshot) bool {
+	return a.Version() == b.Version() && a.RetrievedAt().Equal(b.RetrievedAt())
+}
+
+// newerScan orders records by scan time, the content hash breaking a tie so the
+// pick does not depend on row order.
+func newerScan(a, b VulnerabilityRecord) bool {
+	if !a.ScannedAt.Equal(b.ScannedAt) {
+		return a.ScannedAt.After(b.ScannedAt)
+	}
+	return a.ContentHash < b.ContentHash
 }
 
 // verdictDigest is what a record CLAIMS about the module's vulnerability state,

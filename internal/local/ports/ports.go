@@ -95,6 +95,14 @@ type FindingSet struct {
 	// pipeline version was set aside: written in a canonical shape this build
 	// cannot reproduce.
 	SetAsideOnly map[coordinate.ModuleCoordinate]struct{}
+	// NotInSeedWalk is every coordinate the store holds records for that the
+	// walk the seed was anchored to did not scan: another walk measured it, and
+	// the tree's current build has not been scanned for it.
+	NotInSeedWalk map[coordinate.ModuleCoordinate]struct{}
+	// NotAnalysed is every coordinate whose seeding record says the scan failed
+	// or could not analyse it, and reported nothing. Such a record is not an
+	// answer, so the coordinate is not covered.
+	NotAnalysed map[coordinate.ModuleCoordinate]struct{}
 	// SetAside names, one line each, every stored generation the seed was drawn
 	// without because this build cannot reproduce it. It is reported with the
 	// answer, for the reason Restriction is.

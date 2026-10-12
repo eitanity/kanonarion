@@ -1156,13 +1156,23 @@ constraints selected, which stdlib was linked and which symbols the analysis
 could reach are all the toolchain's, so what a record states is stated about
 that build. Records written before it was recorded read
 `Toolchain: not recorded`. Two records for one coordinate naming different
-toolchains are reported as a conflict **when they reached different answers** —
-the difference between them is the disagreement and the toolchain is what
-explains it; two toolchains that reached
-the same status, the same findings and the same reachability produced the same
-answer and compose. A record naming no toolchain never conflicts with one that
-does. Under `--json` the field is `toolchain`, emitted on every record, empty when
-not recorded.
+toolchains are reported as a conflict only when they were scanned against the
+**same advisory-database snapshot** and reached **different answers**. The
+snapshot compared is the one of the record that would be served. Records on
+other snapshots never conflict: they were checked against different advisory
+sets, so a difference between them is not the toolchain's. Within the snapshot,
+each toolchain is represented by the record it would serve, so the result does
+not depend on the order records are read. Two toolchains that reached the same
+status, the same findings and the same reachability produced the same answer and
+compose. A record naming no toolchain never conflicts with one that does, and
+neither does a scan that failed or could not analyse the module and reported no
+advisory: it makes no claim about the module. One that did report an advisory
+still takes part. The
+refusal names the build to answer for instead: `--walk-id` with the walk of the
+newest disagreeing record, and `--gomod ./go.mod` run from the project. A
+re-scan does not clear it, because the record it writes is added beside the
+other toolchain's, which stays. Under `--json` the field is `toolchain`,
+emitted on every record, empty when not recorded.
 
 Use `--history` to list every stored scan record across all walks, snapshots
 and pipeline generations, ordered newest first. This is the primary way to

@@ -1554,8 +1554,7 @@ type FakeQueryVuln struct {
 	// what is missing from it.
 	PartialErr error
 	// ForceLatestRecordForWalkNotFound empties the walk-scoped candidate read
-	// regardless of the records map. Use this to exercise the fallback path that
-	// checks GetLatestRecord for a ScanFailed status.
+	// regardless of the records map.
 	ForceLatestRecordForWalkNotFound bool
 	// supersededLedger holds records the store has at a generation this build's
 	// keyed reads cannot see. They are returned only by the all-generations read,
@@ -1598,26 +1597,6 @@ func (f *FakeQueryVuln) AddRecord(coord coordinate.ModuleCoordinate, rec vulndom
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[coord.String()] = rec
-}
-
-func (f *FakeQueryVuln) GetRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
-	if f.Err != nil {
-		return vulndomain.VulnerabilityRecord{}, false, f.Err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	rec, ok := f.records[coord.String()]
-	return rec, ok, nil
-}
-
-func (f *FakeQueryVuln) GetLatestRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
-	if f.Err != nil {
-		return vulndomain.VulnerabilityRecord{}, false, f.Err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	rec, ok := f.records[coord.String()]
-	return rec, ok, nil
 }
 
 // ListRecordsForModuleInWalk returns the walk's candidate records for a

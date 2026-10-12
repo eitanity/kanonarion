@@ -1038,57 +1038,6 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	return t, true, nil
 }
 
-// GetVulnerabilityRecord returns the composed record for a coordinate,
-// pipeline version and snapshot, across every analysis frame the ledger holds.
-//
-// It is the read for a caller that has explicitly declined to name a frame and
-// is asking what the store's best-founded answer about this module is. A caller
-// that HAS a frame in mind — a scan deciding whether it may reuse an earlier
-// record, a run reading back what it wrote — must use
-// GetVulnerabilityRecordAt, or it will be handed an answer to the other
-// question.
-//
-// See domain.Compose for the ladder: a finding outranks an all-clear, an
-// analysed record outranks a coverage gap, a better call graph outranks a
-// weaker one, and only then does recency decide. The served record states its
-// own frame, snapshot and completeness, so a composed answer always names the
-// evidence it rests on.
-func (s *Store) GetVulnerabilityRecord(
-	ctx context.Context,
-	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
-	snapshot domain.DatabaseSnapshot,
-) (domain.VulnerabilityRecord, bool, error) {
-	// The zero coordinate names no module, so this is a question about nothing.
-	// Answering it with absence would report "no record here" for a module that
-	// was never asked about — see coordinate.ErrZeroCoordinate.
-	if coord.IsZero() {
-		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
-	}
-	// The zero snapshot names no advisory database at no generation, so this is a
-	// question about nothing. Answering it with absence would report "no record
-	// here" against a database that was never named — and, worse, would read the
-	// composition group every record that recorded no snapshot fell into.
-	if snapshot.IsZero() {
-		return domain.VulnerabilityRecord{}, false, domain.ErrZeroSnapshot
-	}
-	records, aside, err := s.listGenerations(ctx, s.db.DB(),
-		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source(), snapshot.Version())
-	if err != nil {
-		return domain.VulnerabilityRecord{}, false, err
-	}
-	// Nothing reproducible but something set aside is "no record this build can
-	// serve", and the set-aside error is what says so.
-	if len(records) == 0 {
-		return domain.VulnerabilityRecord{}, false, setAsideErr(aside)
-	}
-	composed, cerr := domain.Compose(records)
-	if cerr != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
-	}
-	return composed, true, setAsideErr(aside)
-}
-
 // GetVulnerabilityRecordAt returns the composed record for a coordinate,
 // pipeline version and snapshot WITHIN one analysis frame. found is false when
 // the ledger holds no record produced in that frame.
@@ -1181,49 +1130,6 @@ LIMIT 1`
 		return false, fmt.Errorf("checking stored vulnerability record for %s: %w", coord, err)
 	}
 	return true, nil
-}
-
-// GetLatestVulnerabilityRecord returns the composed record for a coordinate and
-// pipeline version across every snapshot and every frame the ledger holds.
-//
-// "Latest" is the name it has always had; what it serves is the best-founded
-// answer, not the newest row. The distinction is the point of the ladder: a
-// re-scan under a newer advisory database backed by a weaker call graph is a
-// legitimate append and a worse basis for a reachability finding, so ordering by
-// scanned_at alone would let it retract an established finding merely by running
-// later.
-func (s *Store) GetLatestVulnerabilityRecord(
-	ctx context.Context,
-	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
-) (domain.VulnerabilityRecord, bool, error) {
-	// The zero coordinate names no module, so this is a question about nothing.
-	// Answering it with absence would report "no record here" for a module that
-	// was never asked about — see coordinate.ErrZeroCoordinate.
-	if coord.IsZero() {
-		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
-	}
-	const q = `
-SELECT serialised FROM vulnerability_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY julianday(scanned_at) ASC, rowid ASC`
-
-	records, err := s.queryRecords(ctx, "latest vulnerability record", q,
-		coord.Path(), coord.Version(), pipelineVersion)
-	// Drift alone is composed around and returned beside the answer; any other
-	// failure, an altered row among them, still refuses.
-	var aside *recordseal.SetAside
-	if err != nil && !errors.As(err, &aside) {
-		return domain.VulnerabilityRecord{}, false, err
-	}
-	if len(records) == 0 {
-		return domain.VulnerabilityRecord{}, false, err
-	}
-	composed, cerr := domain.Compose(records)
-	if cerr != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
-	}
-	return composed, true, err
 }
 
 // ListVulnerabilityRecordsForModuleInWalk returns every generation of a

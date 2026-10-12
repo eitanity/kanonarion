@@ -49,8 +49,8 @@ func TestPutVulnerabilityRecord_RefusesUnsealedRecord(t *testing.T) {
 	}
 
 	// Nothing was stored by either refusal.
-	if _, found, gerr := store.GetVulnerabilityRecord(ctx, unsealed.Coordinate, "v1", unsealed.DatabaseSnapshot); gerr != nil || found {
-		t.Fatalf("GetVulnerabilityRecord() = found %v, err %v; want a refused write to store nothing", found, gerr)
+	if _, found, gerr := store.GetVulnerabilityRecordAt(ctx, unsealed.Coordinate, "v1", unsealed.DatabaseSnapshot, domain.RecordRooting(unsealed)); gerr != nil || found {
+		t.Fatalf("GetVulnerabilityRecordAt() = found %v, err %v; want a refused write to store nothing", found, gerr)
 	}
 }
 
@@ -118,12 +118,8 @@ func TestReadPaths_RefuseTamperedRecord(t *testing.T) {
 		t.Fatalf("tampering with stored record: %v", err)
 	}
 
-	t.Run("GetVulnerabilityRecord", func(t *testing.T) {
-		_, found, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, "v1", rec.DatabaseSnapshot)
-		assertTamperReported(t, err, found)
-	})
-	t.Run("GetLatestVulnerabilityRecord", func(t *testing.T) {
-		_, found, err := store.GetLatestVulnerabilityRecord(ctx, rec.Coordinate, "v1")
+	t.Run("GetVulnerabilityRecordAt", func(t *testing.T) {
+		_, found, err := store.GetVulnerabilityRecordAt(ctx, rec.Coordinate, "v1", rec.DatabaseSnapshot, domain.RecordRooting(rec))
 		assertTamperReported(t, err, found)
 	})
 	t.Run("ListVulnerabilityRecordsForModuleInWalk", func(t *testing.T) {

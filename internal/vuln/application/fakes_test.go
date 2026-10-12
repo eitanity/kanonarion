@@ -272,9 +272,12 @@ func (f *fakeVulnStore) served(key string) (domain.VulnerabilityRecord, bool) {
 	return rec, true
 }
 
-func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
+// recordAtSnapshot is a read-back convenience for the scan tests, which assert
+// what a scan wrote at one snapshot. It is not part of the store port: every
+// production point read names its frame.
+func (f *fakeVulnStore) recordAtSnapshot(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
 	if snapshot.IsZero() {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("fakeVulnStore.GetVulnerabilityRecord: %w", domain.ErrZeroSnapshot)
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("fakeVulnStore.recordAtSnapshot: %w", domain.ErrZeroSnapshot)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -308,14 +311,6 @@ func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, coord coordina
 		}
 	}
 	return false, nil
-}
-
-func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.VulnerabilityRecord, bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.composeMatching(func(rec domain.VulnerabilityRecord) bool {
-		return rec.Coordinate == coord && rec.PipelineVersion == pv
-	})
 }
 
 // ListVulnerabilityRecordsForModuleInWalk is the port method: candidates, not an

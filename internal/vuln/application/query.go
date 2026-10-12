@@ -21,37 +21,6 @@ func NewQueryVulnUseCase(store ports.VulnerabilityStore) *QueryVulnUseCase {
 	return &QueryVulnUseCase{store: store}
 }
 
-// GetRecord retrieves a vulnerability record by coordinate, pipeline version, and snapshot.
-//
-// The composed record comes back beside a *recordseal.SetAside naming the
-// generations it was composed without; see recordseal.SetAside.
-func (uc *QueryVulnUseCase) GetRecord(
-	ctx context.Context,
-	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
-	snapshot domain.DatabaseSnapshot,
-) (domain.VulnerabilityRecord, bool, error) {
-	rec, found, err := uc.store.GetVulnerabilityRecord(ctx, coord, pipelineVersion, snapshot)
-	if err != nil {
-		return rec, found, fmt.Errorf("getting vulnerability record for %s: %w", coord, err)
-	}
-	return rec, found, nil
-}
-
-// GetLatestRecord returns the most recently scanned record for a coordinate and
-// pipeline version, on the same set-aside terms as GetRecord.
-func (uc *QueryVulnUseCase) GetLatestRecord(
-	ctx context.Context,
-	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
-) (domain.VulnerabilityRecord, bool, error) {
-	rec, found, err := uc.store.GetLatestVulnerabilityRecord(ctx, coord, pipelineVersion)
-	if err != nil {
-		return rec, found, fmt.Errorf("getting latest vulnerability record for %s: %w", coord, err)
-	}
-	return rec, found, nil
-}
-
 // ListRecordsForModuleInWalk returns every generation of a coordinate the named
 // walk's scan runs covered — the candidates, not an answer.
 //

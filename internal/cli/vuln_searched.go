@@ -45,38 +45,11 @@ func newSearchedVulnQuery(uc QueryVulnUseCase, searcher negativeSearcher) QueryV
 	return &searchedVulnQuery{inner: uc, searcher: searcher}
 }
 
-func (q *searchedVulnQuery) search(ctx context.Context, rec vulndomain.VulnerabilityRecord) vulndomain.VulnerabilityRecord {
-	q.searcher.Search(ctx, &rec)
-	return rec
-}
-
 func (q *searchedVulnQuery) searchAll(ctx context.Context, recs []vulndomain.VulnerabilityRecord) []vulndomain.VulnerabilityRecord {
 	for i := range recs {
 		q.searcher.Search(ctx, &recs[i])
 	}
 	return recs
-}
-
-func (q *searchedVulnQuery) GetRecord(
-	ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, snapshot vulndomain.DatabaseSnapshot,
-) (vulndomain.VulnerabilityRecord, bool, error) {
-	rec, found, err := q.inner.GetRecord(ctx, coord, pipelineVersion, snapshot)
-	// A composed record served beside set-aside generations is still an answer,
-	// so it is searched like any other.
-	if !found {
-		return rec, found, err //nolint:wrapcheck // the inner use case's error is the answer; wrapping it here would double-name the read
-	}
-	return q.search(ctx, rec), true, err //nolint:wrapcheck // as above
-}
-
-func (q *searchedVulnQuery) GetLatestRecord(
-	ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string,
-) (vulndomain.VulnerabilityRecord, bool, error) {
-	rec, found, err := q.inner.GetLatestRecord(ctx, coord, pipelineVersion)
-	if !found {
-		return rec, found, err //nolint:wrapcheck // as above
-	}
-	return q.search(ctx, rec), true, err //nolint:wrapcheck // as above
 }
 
 func (q *searchedVulnQuery) ListRecordsForModuleInWalk(

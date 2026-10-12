@@ -34,13 +34,6 @@ func TestRefusesZeroSnapshot(t *testing.T) {
 		})
 		return s.PutVulnerabilityRecord(ctx, rec)
 	})
-	vulntest.AssertRefusesZeroSnapshot(t, "GetVulnerabilityRecord", func() error {
-		_, _, err := s.GetVulnerabilityRecord(ctx, coord, "0.1.0", domain.DatabaseSnapshot{})
-		if err != nil {
-			return fmt.Errorf("GetVulnerabilityRecord: %w", err)
-		}
-		return nil
-	})
 	vulntest.AssertRefusesZeroSnapshot(t, "GetVulnerabilityRecordAt", func() error {
 		_, _, err := s.GetVulnerabilityRecordAt(ctx, coord, "0.1.0", domain.DatabaseSnapshot{}, domain.RootingIsolated)
 		if err != nil {

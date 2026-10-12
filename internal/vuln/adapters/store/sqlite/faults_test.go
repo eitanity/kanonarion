@@ -96,7 +96,7 @@ func TestPutVulnerabilityRecord_ReportsEveryWriteFailure(t *testing.T) {
 			// including its index rows, which the failed reconciliation had already
 			// deleted inside the transaction.
 			rec := faultRecord(t)
-			_, found, gerr := store.GetVulnerabilityRecord(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot)
+			_, found, gerr := store.GetVulnerabilityRecordAt(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot, domain.RecordRooting(rec))
 			if gerr != nil {
 				t.Fatalf("reading back after a failed write: %v", gerr)
 			}
@@ -316,9 +316,9 @@ INSERT INTO vulnerability_records (
 		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
 			t.Fatalf("PutVulnerabilityRecord: %v", err)
 		}
-		got, found, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot)
+		got, found, err := store.GetVulnerabilityRecordAt(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot, domain.RecordRooting(rec))
 		if err != nil || !found {
-			t.Fatalf("GetVulnerabilityRecord() = found %v, err %v", found, err)
+			t.Fatalf("GetVulnerabilityRecordAt() = found %v, err %v", found, err)
 		}
 		if !got.FirstScannedAt.Equal(rec.FirstScannedAt) {
 			t.Fatalf("first scanned at = %s, want the caller's %s", got.FirstScannedAt, rec.FirstScannedAt)

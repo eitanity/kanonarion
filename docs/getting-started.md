@@ -492,7 +492,7 @@ kanonarion reachability --local .
 local reachability probe of /home/mb/dev/kanonarion
   module:    github.com/eitanity/kanonarion
   snapshot:  local-5f4438c9453f312e903b0c61eb5cbef18633b072bdbe9ef4f1586e0ecf00a384 taken 2026-08-27T01:33:16Z
-  seed:      seed restricted to stored records measured in this tree's own frame (rooted at github.com/eitanity/kanonarion) or in the isolated frame; records measured in another consumer's build were not read
+  seed:      seed restricted to stored records scanned by walk "01M4DN1KPYJM458G55MJEGK9NV" (code scope, frame target-rooted:github.com/eitanity/kanonarion@local), the newest project walk for this tree's go.mod, in its own frame or in the isolated frame; records of older walks and of another consumer's build were not read
   notice:    no stored vulnerability findings for the 18 module(s) of this build the store holds a record for
 
 coverage: 18 build module(s), 18 queried, 18 covered, 0 with findings
@@ -500,7 +500,8 @@ coverage: 18 build module(s), 18 queried, 18 covered, 0 with findings
 no affected modules in the analysed build
 ```
 
-This probe reads only records measured in your own tree's frame, and says so.
+This probe reads only the records of your tree's newest project walk, and says
+which walk that is.
 When there are findings to probe, it walks the call graph from your code to the
 affected symbols, which takes about 30 seconds.
 

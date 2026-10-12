@@ -187,7 +187,7 @@ func runVulnShow(
 // selectShowRecord picks the record vuln-show serves when no walk anchors the
 // question: the consumer frame's, refused when several consumers hold one.
 func selectShowRecord(ctx context.Context, uc QueryVulnUseCase, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate, aside *setAsideRows) (rec, isolated vuldomain.VulnerabilityRecord, hasIsolated bool, _ error) {
-	// Every generation is read rather than the store's composed "latest",
+	// Every generation is read rather than one frame-blind composition,
 	// because "show me this module's record" is a question a consumer asks
 	// about a module they depend on, and the frame-blind ladder answers it in
 	// whichever frame happens to rank first. The rung that decides is

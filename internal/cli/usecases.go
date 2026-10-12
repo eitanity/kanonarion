@@ -263,8 +263,6 @@ type RescanWalkUseCase interface {
 
 // QueryVulnUseCase is the interface for querying vulnerability records.
 type QueryVulnUseCase interface {
-	GetRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, snapshot vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error)
-	GetLatestRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (vulndomain.VulnerabilityRecord, bool, error)
 	// ListRecordsForModuleInWalk returns a walk's candidate records for a
 	// coordinate, unranked. Every caller ranks them within a named frame — see
 	// recordInWalkFrame — because a walk's candidates span every frame the

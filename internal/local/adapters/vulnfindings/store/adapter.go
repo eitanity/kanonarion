@@ -21,6 +21,19 @@ type VulnStoreAdapter struct {
 	store           vulnports.VulnerabilityStore
 	pipelineVersion string
 	searcher        NegativeSearcher
+	anchor          *WalkAnchor
+}
+
+// WalkAnchor is the walk a probe is seeded from: the newest project walk for the
+// tree's go.mod, which the caller resolves. Rooting is empty when the walk record
+// is no longer in the store, and the seed then falls back to the tree's frame
+// within the walk's records.
+type WalkAnchor struct {
+	WalkID  string
+	Rooting vulndomain.Rooting
+	// Source names the walk for the seed line, e.g.
+	// `walk "01K…" (code scope, frame target-rooted:example.com/app@local)`.
+	Source string
 }
 
 // NegativeSearcher is the read-time call-graph search a record's negatives are
@@ -42,6 +55,14 @@ func New(store vulnports.VulnerabilityStore, pipelineVersion string) *VulnStoreA
 // rung, which is what it carried before the search existed.
 func (a *VulnStoreAdapter) WithNegativeSearcher(s NegativeSearcher) *VulnStoreAdapter {
 	a.searcher = s
+	return a
+}
+
+// WithWalkAnchor seeds the probe from one walk's records instead of every record
+// in the tree's frame. Older walks of the same tree can carry another toolchain's
+// verdict, and composing across them refused a probe no re-scan could unblock.
+func (a *VulnStoreAdapter) WithWalkAnchor(anchor WalkAnchor) *VulnStoreAdapter {
+	a.anchor = &anchor
 	return a
 }
 
@@ -72,10 +93,12 @@ func (a *VulnStoreAdapter) LoadFindings(
 		OtherFrameOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		SupersededOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		SetAsideOnly:   make(map[coordinate.ModuleCoordinate]struct{}),
-		Restriction:    seedRestriction(consumerModulePath),
+		NotInSeedWalk:  make(map[coordinate.ModuleCoordinate]struct{}),
+		NotAnalysed:    make(map[coordinate.ModuleCoordinate]struct{}),
+		Restriction:    a.seedRestriction(consumerModulePath),
 	}
 	for _, coord := range coords {
-		candidates, err := a.store.ListVulnerabilityRecordsForModule(ctx, coord, a.pipelineVersion)
+		candidates, err := a.candidates(ctx, coord)
 		// Generations this build cannot reproduce are left out of the seed and
 		// named beside it; an altered row still fails the load.
 		var aside *recordseal.SetAside
@@ -95,12 +118,10 @@ func (a *VulnStoreAdapter) LoadFindings(
 			// therefore silent about every other generation, and a coordinate the
 			// store holds only at one of those is not an unscanned dependency —
 			// which is what the coverage block would otherwise call it.
-			if a.supersededOnly(ctx, coord) {
-				result.SupersededOnly[coord] = struct{}{}
-			}
+			a.classifyEmpty(ctx, coord, &result)
 			continue
 		}
-		rec, found, err := vulndomain.ComposeForTree(candidates, consumerModulePath)
+		rec, found, err := a.selectSeed(candidates, consumerModulePath)
 		if err != nil {
 			return ports.FindingSet{}, fmt.Errorf("selecting vuln record for %s: %w", coord, err)
 		}
@@ -111,6 +132,12 @@ func (a *VulnStoreAdapter) LoadFindings(
 			result.OtherFrameOnly[coord] = struct{}{}
 			continue
 		}
+		if len(rec.Findings) == 0 && notAnalysed(rec) {
+			// A failed or unscannable scan with nothing found is not a clean answer;
+			// counting it covered turned a failed walk scan into "no findings".
+			result.NotAnalysed[coord] = struct{}{}
+			continue
+		}
 		result.Scanned[coord] = struct{}{}
 		if len(rec.Findings) == 0 {
 			continue
@@ -118,41 +145,76 @@ func (a *VulnStoreAdapter) LoadFindings(
 		if a.searcher != nil {
 			a.searcher.Search(ctx, &rec)
 		}
-		findings := make([]ports.VulnFinding, 0, len(rec.Findings))
-		for _, f := range rec.Findings {
-			vf := ports.VulnFinding{
-				ID:              f.ID,
-				Aliases:         f.Aliases,
-				Summary:         f.Summary,
-				AffectedSymbols: f.AffectedSymbols,
-				// Carried so an empty symbol list is read as "the advisory named
-				// none" rather than as a probe that found nothing.
-				AdvisoryNamesNoSymbols: f.AdvisoryNamesNoSymbols,
-			}
-			if f.Reachable != nil {
-				r := f.Reachable.IsReachable
-				vf.Reachable = &r
-				// The basis rides along with the verdict rather than being looked up
-				// later: it is what says the verdict came from a stored scan, and which
-				// build that scan was rooted at.
-				vf.ReachableBasis = f.Reachable.DerivedBy.String()
-				// The rung behind a negative is derived here, where the whole finding is
-				// in hand. Below this seam the analyser and its fidelity are gone, so a
-				// probe that carried the verdict on and derived the rung later would be
-				// deriving it from nothing.
-				soundness, reason := vulndomain.NegativeSoundness(f)
-				vf.ReachableSoundness, vf.ReachableSoundnessReason = string(soundness), reason
-			}
-			findings = append(findings, vf)
-		}
-		result.Findings[coord] = findings
+		result.Findings[coord] = seedFindings(rec.Findings)
 	}
 	return result, nil
 }
 
+// seedFindings maps a seeding record's findings onto the probe's shape.
+func seedFindings(recFindings []vulndomain.VulnerabilityFinding) []ports.VulnFinding {
+	findings := make([]ports.VulnFinding, 0, len(recFindings))
+	for _, f := range recFindings {
+		vf := ports.VulnFinding{
+			ID:              f.ID,
+			Aliases:         f.Aliases,
+			Summary:         f.Summary,
+			AffectedSymbols: f.AffectedSymbols,
+			// Carried so an empty symbol list is read as "the advisory named
+			// none" rather than as a probe that found nothing.
+			AdvisoryNamesNoSymbols: f.AdvisoryNamesNoSymbols,
+		}
+		if f.Reachable != nil {
+			r := f.Reachable.IsReachable
+			vf.Reachable = &r
+			// The basis rides along with the verdict rather than being looked up
+			// later: it is what says the verdict came from a stored scan, and which
+			// build that scan was rooted at.
+			vf.ReachableBasis = f.Reachable.DerivedBy.String()
+			// The rung behind a negative is derived here, where the whole finding is
+			// in hand. Below this seam the analyser and its fidelity are gone, so a
+			// probe that carried the verdict on and derived the rung later would be
+			// deriving it from nothing.
+			soundness, reason := vulndomain.NegativeSoundness(f)
+			vf.ReachableSoundness, vf.ReachableSoundnessReason = string(soundness), reason
+		}
+		findings = append(findings, vf)
+	}
+	return findings
+}
+
+// candidates reads the records a coordinate's seed is chosen from: the anchored
+// walk's, or every record at this pipeline version when no walk anchors it.
+func (a *VulnStoreAdapter) candidates(ctx context.Context, coord coordinate.ModuleCoordinate) ([]vulndomain.VulnerabilityRecord, error) {
+	if a.anchor == nil {
+		return a.store.ListVulnerabilityRecordsForModule(ctx, coord, a.pipelineVersion) //nolint:wrapcheck // wrapped by the caller, which also inspects it for set-aside rows
+	}
+	return a.store.ListVulnerabilityRecordsForModuleInWalk(ctx, coord, a.pipelineVersion, a.anchor.WalkID) //nolint:wrapcheck // as above
+}
+
+// selectSeed picks the record that seeds one coordinate. Anchored, it is the
+// selection vuln-show --gomod makes in the same walk, so the two answer alike.
+func (a *VulnStoreAdapter) selectSeed(candidates []vulndomain.VulnerabilityRecord, consumerModulePath string) (vulndomain.VulnerabilityRecord, bool, error) {
+	if a.anchor != nil && a.anchor.Rooting.IsRecorded() {
+		rec, _, _, found, err := vulndomain.ComposeInFrame(candidates, a.anchor.Rooting)
+		return rec, found, err //nolint:wrapcheck // wrapped by the caller with the coordinate
+	}
+	return vulndomain.ComposeForTree(candidates, consumerModulePath) //nolint:wrapcheck // as above
+}
+
 // seedRestriction is the one-line statement of what the seed was drawn from,
 // for the probe to report beside its answer.
-func seedRestriction(consumerModulePath string) string {
+func (a *VulnStoreAdapter) seedRestriction(consumerModulePath string) string {
+	if a.anchor != nil {
+		return fmt.Sprintf(
+			"seed restricted to stored records scanned by %s, the newest project walk for this tree's go.mod, "+
+				"in its own frame or in the isolated frame; records of older walks and of another consumer's build were not read",
+			a.anchor.Source)
+	}
+	return treeSeedRestriction(consumerModulePath)
+}
+
+// treeSeedRestriction states the seed boundary when no walk anchors it.
+func treeSeedRestriction(consumerModulePath string) string {
 	if consumerModulePath == "" {
 		// No go.mod path to anchor to, so nothing but the frame that belongs to no
 		// project may seed. Saying so is the point: a silent narrowing here reads
@@ -186,4 +248,36 @@ func (a *VulnStoreAdapter) supersededOnly(ctx context.Context, coord coordinate.
 		}
 	}
 	return true
+}
+
+// classifyEmpty records which absence an empty read is: superseded only, held
+// only by walks other than the seed walk, or never scanned (neither set).
+func (a *VulnStoreAdapter) classifyEmpty(ctx context.Context, coord coordinate.ModuleCoordinate, result *ports.FindingSet) {
+	switch {
+	case a.supersededOnly(ctx, coord):
+		result.SupersededOnly[coord] = struct{}{}
+	case a.heldOutsideAnchor(ctx, coord):
+		result.NotInSeedWalk[coord] = struct{}{}
+	}
+}
+
+// heldOutsideAnchor reports whether an anchored load found nothing in the seed
+// walk for a coordinate the store does hold at this pipeline version — another
+// walk scanned it, so "never vuln-scanned" would be false. Advisory, on the
+// terms supersededOnly states.
+func (a *VulnStoreAdapter) heldOutsideAnchor(ctx context.Context, coord coordinate.ModuleCoordinate) bool {
+	if a.anchor == nil {
+		return false
+	}
+	recs, err := a.store.ListVulnerabilityRecordsForModule(ctx, coord, a.pipelineVersion)
+	return err == nil && len(recs) > 0
+}
+
+// notAnalysed reports whether a record says its module was not analysed. A
+// record stating nothing about coverage is not read as a failure.
+func notAnalysed(r vulndomain.VulnerabilityRecord) bool {
+	if r.OverallStatus == "" && r.UnscanReason == "" && r.UnscannableReason == "" && r.ErrorDetail == "" {
+		return false
+	}
+	return vulndomain.DetermineRecordCoverage(r) != vulndomain.CoverageAnalysed
 }

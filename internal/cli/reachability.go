@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -410,9 +411,9 @@ func runVulnReachabilityQuery(
 		return err
 	}
 
-	// Every generation is read, not the composed "latest", because which record
-	// answers this question is a question about analysis frames and the composed
-	// read has none: it ranks an isolated scan against a consumer-rooted one on
+	// Every generation is read, not one frame-blind composition, because which
+	// record answers this question is a question about analysis frames and such a
+	// composition has none: it ranks an isolated scan against a consumer-rooted one on
 	// call-graph completeness, a rung the isolated scan always wins. See
 	// vuldomain.ComposeForConsumer.
 	var (
@@ -1557,6 +1558,13 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 
 	vulnLoader := localvulnstore.New(ctr.VulnStore, localVulnPipelineVersion).
 		WithNegativeSearcher(ctr.NegativeSearch)
+	anchor, anchored, err := localSeedAnchor(ctx, ctr.QueryWalks, abs)
+	if err != nil {
+		return reachabilityOutput{}, err
+	}
+	if anchored {
+		vulnLoader = vulnLoader.WithWalkAnchor(anchor)
+	}
 	uc := localapp.NewLocalReachabilityUseCase(
 		localsnapshot.Builder{},
 		localimporter.New(""),
@@ -1571,6 +1579,29 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 	}
 
 	return reachabilityResultToOutput(result), nil
+}
+
+// localSeedAnchor resolves the walk the local probe is seeded from: the newest
+// project walk for the tree's go.mod, chosen by the rule vuln-show --gomod uses.
+// A tree with no go.mod of its own, or no project walk, keeps the frame-wide seed.
+func localSeedAnchor(ctx context.Context, walks QueryWalksUseCase, abs string) (localvulnstore.WalkAnchor, bool, error) {
+	gomod := filepath.Join(abs, "go.mod")
+	if _, err := os.Stat(gomod); err != nil {
+		return localvulnstore.WalkAnchor{}, false, nil //nolint:nilerr // no go.mod at the root: the probe resolves its own module
+	}
+	anchor, ok, err := resolveVulnFrameAnchor(ctx, walks, "", gomod, true)
+	var none noProjectWalkError
+	if errors.As(err, &none) {
+		return localvulnstore.WalkAnchor{}, false, nil
+	}
+	if err != nil {
+		return localvulnstore.WalkAnchor{}, false, fmt.Errorf("selecting the walk to seed from: %w", err)
+	}
+	return localvulnstore.WalkAnchor{
+		WalkID:  anchor.walkID,
+		Rooting: anchor.rooting,
+		Source:  anchor.source,
+	}, ok, nil
 }
 
 func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabilityOutput {

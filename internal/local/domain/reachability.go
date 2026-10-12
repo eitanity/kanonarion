@@ -61,6 +61,14 @@ const (
 	// remedy is a re-scan, not a first scan, and the module is not an
 	// unexamined dependency.
 	UncoveredSupersededPipeline = "the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again"
+	// UncoveredNotInSeedWalk means the probe was seeded from the tree's newest
+	// project walk, which did not scan the coordinate, though another walk did.
+	// Other walks are not read: an older one may carry another toolchain's verdict.
+	UncoveredNotInSeedWalk = "the walk this probe was seeded from holds no vulnerability record for this coordinate; other walks scanned it, and their records do not seed this build"
+	// UncoveredNotAnalysed means the record that would seed the coordinate says
+	// its scan failed or could not analyse it, and found nothing. That is not
+	// "no known vulnerabilities", so the module is not counted as covered.
+	UncoveredNotAnalysed = "the stored scan record for this coordinate says it was not analysed (the scan failed or the module was unscannable), so it is no answer about this build"
 	// UncoveredSetAside means every record the store holds for the coordinate at
 	// this build's pipeline version was written in a canonical shape this build
 	// cannot reproduce, so it serves none of them. SeedSetAside names them.
