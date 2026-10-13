@@ -40,7 +40,9 @@ For each module in the scope, `audit` emits a single line containing:
 
 - **Coordinate** - `module@version`
 - **Verification** - outcome of sumdb/VCS cross-verification (`Verified`,
-  `VerifiedBySumDBOnly`, `VerifiedByGoSum`, `UnverifiedNoSumDB`, etc.). See
+  `VerifiedBySumDBOnly`, `VerifiedByGoSum`, `UnverifiedNoSumDB`, etc.). The
+  checksum-database check covers the module's zip and its `go.mod`; a go.mod-only
+  fetch is checked against the database's `go.mod` hash. See
   [Local `go.sum` verification](#local-gosum-verification) for `VerifiedByGoSum`.
   `(set aside)` when every fetch record of the module was written in a shape
   this build cannot reproduce; the run names each one on stderr.

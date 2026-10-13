@@ -166,17 +166,23 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 	}
 
 	sc, o := c.client()
-	lines, err := sc.Lookup(coord.Path(), coord.Version())
-	if err != nil {
-		// The failed lookup is memoised inside sc (errors included), so drop the
-		// client: a retry must reach the network, not replay this error.
-		c.discard(sc)
-		return ports.SumDBResult{
-			Available:      false,
-			Reason:         fmt.Sprintf("sumdb lookup: %v", err),
-			Unavailability: ports.SumDBUnavailabilityFailure,
-			Err:            classifiableLookupError(err, o),
+	// x/mod returns only the lines for the version it is asked; the go.mod line
+	// needs its own call, served from the same cached, verified record.
+	var lines []string
+	for _, vers := range []string{coord.Version(), coord.Version() + "/go.mod"} {
+		got, err := sc.Lookup(coord.Path(), vers)
+		if err != nil {
+			// The failed lookup is memoised inside sc (errors included), so drop the
+			// client: a retry must reach the network, not replay this error.
+			c.discard(sc)
+			return ports.SumDBResult{
+				Available:      false,
+				Reason:         fmt.Sprintf("sumdb lookup: %v", err),
+				Unavailability: ports.SumDBUnavailabilityFailure,
+				Err:            classifiableLookupError(err, o),
+			}
 		}
+		lines = append(lines, got...)
 	}
 
 	zipHash, goModHash, perr := parseLookupLines(lines)

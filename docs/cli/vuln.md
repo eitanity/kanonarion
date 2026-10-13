@@ -239,7 +239,8 @@ of the *superseded* intermediate versions minimal version selection compares
 a higher `logr@v1.4.3`). kanonarion fetches those intermediate versions and
 writes their `go.mod` (only - a superseded version is never compiled, so its zip
 is never needed) into the cache alongside the selected build list, so the module
-graph rebuilds entirely offline. This extra work is skipped for a fully pruned
+graph rebuilds entirely offline. Each of those `go.mod` files is checked against
+the checksum database's `go.mod` hash, as [`fetch`](fetch.md) describes. This extra work is skipped for a fully pruned
 graph, which never reads a superseded `go.mod`.
 
 The scan then runs pinned to that cache (`GOPROXY=off`, see the resolution note

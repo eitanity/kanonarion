@@ -22,10 +22,9 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// PipelineVersion identifies this release of the fetch pipeline. Bump this
-// constant whenever any stage logic changes to ensure old cached records are
-// not confused with new ones.
-const PipelineVersion = "0.4.0"
+// PipelineVersion identifies this release of the fetch pipeline; bump
+// domain.PipelineVersion, which it names.
+const PipelineVersion = domain2.PipelineVersion
 
 // FetchModuleUseCase orchestrates fetching, verification, and persistence of
 // a single Go module at a pinned version.
@@ -1005,8 +1004,9 @@ func zipContentStatus(dl ports.ModuleDownload, zipData, goModData []byte, coord 
 	return earlyStatus, earlyDetail
 }
 
-// sumdbLeg looks the zip hash up in the checksum database unless a content
-// problem was already found, falling back to the project's go.sum.
+// sumdbLeg checks the zip and go.mod hashes against the checksum database
+// unless a content problem was already found, falling back to the project's
+// go.sum.
 func (uc *FetchModuleUseCase) sumdbLeg(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate, dl ports.ModuleDownload, goSumAnchoredUnder string, earlyStatus domain2.VerificationStatus, earlyDetail string) (ports.SumDBResult, domain2.VerificationStatus, string, bool) {
 	var sumdbLookupFailed bool
 	// Sumdb lookup (T1/T6). Skipped if we already detected a content problem.
@@ -1018,10 +1018,15 @@ func (uc *FetchModuleUseCase) sumdbLeg(ctx context.Context, log *slog.Logger, co
 				slog.String("sumdb_zip_hash", sumdbResult.ZipHash.String()),
 				slog.String("computed_zip_hash", dl.ZipHash.String()),
 			)
-			if !sumdbResult.ZipHash.Equal(dl.ZipHash) {
+			switch {
+			case !sumdbResult.ZipHash.Equal(dl.ZipHash):
 				earlyStatus = domain2.UnverifiedHashMismatch
 				earlyDetail = fmt.Sprintf("sumdb expects %s but computed %s from proxy zip",
 					sumdbResult.ZipHash, dl.ZipHash)
+			case goModMismatch(sumdbResult.GoModHash, dl.GoModHash):
+				earlyStatus = domain2.UnverifiedHashMismatch
+				earlyDetail = fmt.Sprintf("sumdb expects go.mod %s but computed %s from proxy go.mod",
+					sumdbResult.GoModHash, dl.GoModHash)
 			}
 		} else {
 			sumdbLookupFailed = sumdbResult.LookupFailed()
@@ -1044,6 +1049,13 @@ func (uc *FetchModuleUseCase) sumdbLeg(ctx context.Context, log *slog.Logger, co
 		}
 	}
 	return sumdbResult, earlyStatus, earlyDetail, sumdbLookupFailed
+}
+
+// goModMismatch reports whether the database's go.mod hash and the downloaded
+// go.mod's disagree. With either absent there is nothing to compare, so the zip
+// verdict stands.
+func goModMismatch(sumdb, computed domain2.ModuleHash) bool {
+	return !sumdb.IsZero() && !computed.IsZero() && !sumdb.Equal(computed)
 }
 
 // withOriginRefusal puts a refused proxy Origin at the FRONT of the detail.

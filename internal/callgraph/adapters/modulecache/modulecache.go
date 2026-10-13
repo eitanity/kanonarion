@@ -303,8 +303,8 @@ func (c *Cache) prefetchSource(ctx context.Context, coords []coordinate.ModuleCo
 	}
 }
 
-// prefetchGoMod acquires the go.mod alone of every coordinate the store does not
-// hold. It is the closure's ensure hook: these versions exist in the cache so
+// prefetchGoMod acquires the go.mod alone of every coordinate whose records do
+// not spare the fetch (see fetchports.SparesGoModFetch). It is the closure's ensure hook: these versions exist in the cache so
 // that MVS can read their requirements, and are never compiled, so their zips
 // would be discarded work.
 func (c *Cache) prefetchGoMod(ctx context.Context, coords []coordinate.ModuleCoordinate) {
@@ -315,7 +315,7 @@ func (c *Cache) prefetchGoMod(ctx context.Context, coords []coordinate.ModuleCoo
 		if ctx.Err() != nil {
 			return
 		}
-		_, ok, err := fetchports.AbsentIfNothingServable(fetchports.ComposedFetchRecord(ctx, c.facts, coord))
+		ok, err := fetchports.SparesGoModFetch(ctx, c.facts, coord)
 		if interrupt.Cancelled(ctx, err) {
 			return
 		}

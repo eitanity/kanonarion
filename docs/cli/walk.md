@@ -777,6 +777,9 @@ was unavailable reports `VerifiedByGoSum` (a positive offline anchor) rather tha
 tamper-evidence and records a fetch failure with the mismatch detail. A module
 **absent** from `go.sum` simply falls through to the network checksum database.
 
+The network check covers the same two hashes: a module whose zip or `go.mod`
+disagrees with the checksum database records `UnverifiedHashMismatch`.
+
 ### Replaced modules
 
 `go.sum` records a replaced module's checksum under the **replace target**. The

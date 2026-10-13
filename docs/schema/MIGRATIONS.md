@@ -116,6 +116,32 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Fetch record: pipeline `0.4.0` → `0.5.0`
+
+**Derivation change; no record shape change, no store migration.** The checksum
+database records two hashes per module version: one for the zip and one for the
+`go.mod`. A `0.4.0` build never read the `go.mod` hash, so:
+
+- every go.mod-only record read `UnverifiedNoSumDB`, "checksum database
+  returned no go.mod hash", or `VerifiedByGoSum` where a project `go.sum`
+  confirmed the `go.mod`. A `0.5.0` record compares the `go.mod` with the
+  database: `VerifiedBySumDBOnly` on a match, `UnverifiedHashMismatch` naming
+  both hashes on a mismatch;
+- a full record never compared its `go.mod` with the database. A `0.5.0` full
+  record does, and a mismatch records `UnverifiedHashMismatch`.
+
+Fetch records are append-only, so `0.4.0` rows stay as written. A fetch at
+`0.5.0` does not serve a `0.4.0` row from cache: the next full fetch of a
+coordinate (`fetch`, `walk --force`) appends a `0.5.0` record, and reads serve
+it. The steps that fetch a `go.mod` alone (`vuln-scan`'s module-graph
+preparation, the call-graph module cache) skip a coordinate held as a full
+record at any version, or as a `0.5.0` go.mod-only record. A coordinate held only
+as a `0.4.0` go.mod-only record is fetched again: the next scan that needs its
+`go.mod` downloads it from the proxy, verifies it and appends a `0.5.0` record,
+which reads then serve. A walk or scan that is itself reused fetches nothing.
+Cost is one proxy `go.mod` request per such coordinate, once; the checksum
+database answers from its local cache when it already holds the lookup.
+
 ## Vulnerability record: pipeline `v25` → `v26`
 
 **Derivation change; one additive field, hash-transparent when unset; no store

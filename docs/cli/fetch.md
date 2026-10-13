@@ -19,7 +19,13 @@ the module coordinate, content hash, and verification status.
 Verification has two independent checks:
 
 - **Checksum database** - the module hash is checked against the Go checksum
-  database (`sum.golang.org` or a configured mirror).
+  database (`sum.golang.org` or a configured mirror). The database records two
+  hashes per version, one for the zip and one for the `go.mod`. A full fetch
+  checks both; either disagreeing records `UnverifiedHashMismatch` naming the
+  two hashes. A go.mod-only fetch (the `go.mod` alone, taken when only a
+  module's requirements are needed) is checked against the database's `go.mod`
+  hash: a match records `VerifiedBySumDBOnly`, a mismatch
+  `UnverifiedHashMismatch`.
 - **VCS cross-verification** - the proxy zip is compared against the upstream
   source repository. Skippable with `--skip-vcs-verify`; the checksum check
   still runs. **Requires a `git` binary on `PATH`.** If `git` is absent the

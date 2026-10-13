@@ -1093,10 +1093,10 @@ func (uc *ScanWalkUseCase) prefetchMissing(ctx context.Context, coords []coordin
 // absent from the fact store. It is the go.mod closure's fetch callback: those
 // versions exist in the scan cache purely so the toolchain can read their
 // requirements while rebuilding a module graph, never to be compiled, so
-// downloading their zips (as prefetchMissing does) is discarded work. Any
-// existing record — full or go.mod-only — already carries the go.mod, so its
-// coordinate is skipped. Errors are logged as warnings; individual failures do
-// not abort the scan.
+// downloading their zips (as prefetchMissing does) is discarded work. A
+// coordinate is skipped when fetchports.SparesGoModFetch says its records make
+// the fetch pointless; an older go.mod-only record is re-derived.
+// Errors are logged as warnings; individual failures do not abort the scan.
 func (uc *ScanWalkUseCase) prefetchGoModOnly(ctx context.Context, coords []coordinate.ModuleCoordinate) {
 	if uc.fetcher == nil {
 		return
@@ -1105,7 +1105,7 @@ func (uc *ScanWalkUseCase) prefetchGoModOnly(ctx context.Context, coords []coord
 		if ctx.Err() != nil {
 			return
 		}
-		_, ok, err := fetchports.AbsentIfNothingServable(uc.moduleScanner.getFetchRecord(ctx, coord))
+		ok, err := fetchports.SparesGoModFetch(ctx, uc.moduleScanner.factStore, coord)
 		if interrupt.Cancelled(ctx, err) {
 			return
 		}
