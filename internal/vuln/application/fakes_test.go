@@ -123,6 +123,10 @@ type fakeFacts struct {
 	// setAside answers a coordinate with no readable record as one whose every
 	// record was set aside.
 	setAside bool
+	// uncomposed is the fault seam for a store whose read serves a record
+	// without composing it, so a hash composition would refuse reaches the
+	// identity derivation that follows the read.
+	uncomposed map[coordinate.ModuleCoordinate]fetchdomain.FactRecord
 }
 
 func newFakeFacts() *fakeFacts { return &fakeFacts{records: make(map[string]fetchdomain.FactRecord)} }
@@ -164,6 +168,10 @@ func (f *fakeFacts) ComposeFetchRecord(_ context.Context, coord coordinate.Modul
 		return fetchdomain.CompositeRecord{}, false, coordinate.ErrZeroCoordinate
 	}
 	f.mu.Lock()
+	if r, ok := f.uncomposed[coord]; ok {
+		f.mu.Unlock()
+		return fetchdomain.CompositeRecord{FactRecord: r}, true, nil
+	}
 	held := make([]fetchdomain.FactRecord, 0, len(f.records))
 	for _, r := range f.records {
 		held = append(held, r)

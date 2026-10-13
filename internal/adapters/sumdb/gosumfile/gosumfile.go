@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -27,21 +28,33 @@ type Client struct {
 	zip map[string]domain2.ModuleHash
 	// gomod maps "path@version" to the go.mod h1 hash.
 	gomod map[string]domain2.ModuleHash
+	// badZip and badGoMod map "path@version" to the error for a zip or
+	// go.mod line of that module whose hash does not parse, naming the line.
+	badZip, badGoMod map[string]error
+	// logger states a bad line that a good line of the same kind outranks.
+	logger *slog.Logger
 	// path is the go.sum path, retained for error messages.
 	path string
 }
 
 var _ ports.SumDBClient = (*Client)(nil)
 
-// New parses the go.sum file at path and returns a Client. A missing go.sum is
+// New parses the go.sum file at path and returns a Client; logger receives
+// the bad lines a lookup tolerates. A missing go.sum is
 // not an error here — it parses to an empty client, and every Lookup then
 // reports Available=false so the caller's hard-fail policy fires with a clear
 // "not in go.sum" reason rather than a load error.
-func New(path string) (*Client, error) {
+func New(path string, logger *slog.Logger) (*Client, error) {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	c := &Client{
-		zip:   make(map[string]domain2.ModuleHash),
-		gomod: make(map[string]domain2.ModuleHash),
-		path:  path,
+		zip:      make(map[string]domain2.ModuleHash),
+		gomod:    make(map[string]domain2.ModuleHash),
+		badZip:   make(map[string]error),
+		badGoMod: make(map[string]error),
+		path:     path,
+		logger:   logger,
 	}
 	data, err := os.ReadFile(path) // #nosec G304 -- path is the operator-supplied project go.sum
 	if os.IsNotExist(err) {
@@ -61,28 +74,42 @@ func New(path string) (*Client, error) {
 //	<module> <version> h1:<base64>=
 //	<module> <version>/go.mod h1:<base64>=
 //
-// Malformed lines are skipped; a go.sum written by the Go toolchain is always
-// well-formed, so a skipped line reflects a comment or blank, not data loss.
+// A line without exactly three fields is skipped: it is a blank line or one
+// that is not a hash line at all. A three-field line whose hash does not parse
+// is remembered with its line number. As in the go command, a line of the
+// same kind that parses answers for the module and the bad one is ignored,
+// stated at warn; with no such line the lookup fails on it. The file as a
+// whole is never refused, and the module is never reported absent.
 func (c *Client) parse(content string) error {
 	sc := bufio.NewScanner(strings.NewReader(content))
 	// go.sum lines are short, but raise the buffer to tolerate unusually long
 	// module paths without a token-too-long error.
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
+	for lineno := 1; sc.Scan(); lineno++ {
 		fields := strings.Fields(sc.Text())
 		if len(fields) != 3 {
 			continue
 		}
 		modPath, verField, hashStr := fields[0], fields[1], fields[2]
+		version, isGoMod := strings.CutSuffix(verField, "/go.mod")
+		k := key(modPath, version)
 		hash, err := domain2.ParseModuleHash(hashStr)
-		if err != nil {
-			continue
+		if err == nil && hash.IsZero() {
+			err = fmt.Errorf("invalid module hash %q: a go.sum line carries a hash, never an absence", hashStr)
 		}
-		if before, ok := strings.CutSuffix(verField, "/go.mod"); ok {
-			version := before
-			c.gomod[key(modPath, version)] = hash
-		} else {
-			c.zip[key(modPath, verField)] = hash
+		bad := c.badZip
+		if isGoMod {
+			bad = c.badGoMod
+		}
+		switch {
+		case err != nil:
+			if _, seen := bad[k]; !seen {
+				bad[k] = fmt.Errorf("malformed go.sum line %d: %w", lineno, err)
+			}
+		case isGoMod:
+			c.gomod[k] = hash
+		default:
+			c.zip[k] = hash
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -96,8 +123,30 @@ func (c *Client) parse(content string) error {
 // reason; the caller's --from-modcache policy turns that into a hard failure.
 func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) ports.SumDBResult {
 	k := key(coord.Path(), coord.Version())
-	zipHash, ok := c.zip[k]
-	if !ok {
+	zipHash, hasZip := c.zip[k]
+	goModHash, hasGoMod := c.gomod[k]
+	for _, leg := range []struct {
+		has bool
+		bad error
+	}{{hasZip, c.badZip[k]}, {hasGoMod, c.badGoMod[k]}} {
+		switch {
+		case leg.bad == nil:
+		case leg.has:
+			c.logger.Warn("go.sum: a line whose hash does not parse is ignored; another line answers for the module",
+				slog.String("go_sum", c.path), slog.String("coordinate", coord.String()), slog.String("error", leg.bad.Error()))
+		default:
+			// go.sum names this module only on a line that cannot be read, so
+			// it says nothing usable about it: a failed lookup naming the
+			// line, never the absence below.
+			return ports.SumDBResult{
+				Available:      false,
+				Reason:         fmt.Sprintf("%s in %s for %s", leg.bad, c.path, coord),
+				Unavailability: ports.SumDBUnavailabilityFailure,
+				Err:            leg.bad,
+			}
+		}
+	}
+	if !hasZip {
 		// An absent entry is go.sum's real answer, and this adapter performs no
 		// network I/O, so the outcome is policy-unavailable: nothing here can flake
 		// and a later attempt would read the same file.
@@ -110,7 +159,7 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 	return ports.SumDBResult{
 		Available: true,
 		ZipHash:   zipHash,
-		GoModHash: c.gomod[k],
+		GoModHash: goModHash,
 	}
 }
 

@@ -606,7 +606,7 @@ func (uc *FetchModuleUseCase) cachedArtefactsReadable(ctx context.Context, log *
 	zip, hasZip, zerr := ports.ZipIdentity(r)
 	goMod, hasGoMod, gerr := ports.GoModIdentity(r)
 	if zerr != nil || gerr != nil {
-		log.InfoContext(ctx, "cache_reverify_identity_underivable",
+		log.WarnContext(ctx, "cache_reverify_identity_underivable",
 			slog.String("error", errors.Join(zerr, gerr).Error()),
 		)
 		return false
@@ -778,13 +778,19 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 
 // checkProjectGoSumGoMod cross-checks a go.mod-only fetch's go.mod h1 against
 // the walk root's local go.sum, the go.mod-only analogue of checkProjectGoSum.
-// A present entry whose go.mod hash disagrees is a hard tamper failure; an
-// absent entry (or no verifier) falls through to network checksum verification.
+// A present entry whose go.mod hash disagrees, or one that cannot be read, is
+// a hard failure; an absent entry (or no verifier) falls through to network
+// checksum verification.
 func (uc *FetchModuleUseCase) checkProjectGoSumGoMod(ctx context.Context, log *slog.Logger, coord, original coordinate.ModuleCoordinate, dl ports.GoModDownload) (string, error) {
 	if uc.goSum == nil {
 		return "", nil
 	}
 	res := uc.goSum.Lookup(ctx, coord)
+	if res.LookupFailed() {
+		// go.sum names the module on a line that cannot be read. That is not
+		// an absence to fall through on: the anchor says something unreadable.
+		return "", fmt.Errorf("%w: %s: %s", ErrGoSumVerification, goSumAnchor(coord, original), res.Reason)
+	}
 	if !res.Available {
 		if isReplaced(coord, original) {
 			return "", errReplacedModuleNotInGoSum(coord, original, res.Reason)
@@ -1108,6 +1114,8 @@ func errReplacedModuleNotInGoSum(coord, original coordinate.ModuleCoordinate, re
 //     anchor names the coordinate the entry was found under: a positive offline
 //     integrity signal that elevates a no-network-sumdb outcome to
 //     VerifiedByGoSum.
+//   - entry on a line whose hash does not parse → ("", ErrGoSumVerification)
+//     naming the line: an unreadable entry is never read as an absent one.
 //   - entry present and either h1 disagrees → ("", ErrGoSumVerification): a
 //     hard tamper failure. The caller aborts with no blob stored and no record
 //     persisted; a go.sum mismatch must never be silently downgraded.
@@ -1116,6 +1124,11 @@ func (uc *FetchModuleUseCase) checkProjectGoSum(ctx context.Context, log *slog.L
 		return "", nil
 	}
 	res := uc.goSum.Lookup(ctx, coord)
+	if res.LookupFailed() {
+		// go.sum names the module on a line that cannot be read. That is not
+		// an absence to fall through on: the anchor says something unreadable.
+		return "", fmt.Errorf("%w: %s: %s", ErrGoSumVerification, goSumAnchor(coord, original), res.Reason)
+	}
 	if !res.Available {
 		if isReplaced(coord, original) {
 			return "", errReplacedModuleNotInGoSum(coord, original, res.Reason)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"runtime"
@@ -1297,30 +1296,10 @@ func markNestedAncestors(node coordinate.ModuleCoordinate, requires []coordinate
 
 // readNodeGoMod fetches and parses a node's stored go.mod. The bool is false
 // when no go.mod could be read or parsed, so both callers rest on positive
-// evidence rather than on an assumed-empty file.
+// evidence rather than on an assumed-empty file. It is the scanned-module read,
+// so a recorded go.mod that cannot be produced is logged the same way.
 func (uc *ScanWalkUseCase) readNodeGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) (*modfile.File, bool) {
-	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
-	if err != nil || !ok {
-		return nil, false
-	}
-	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(fact)
-	if err != nil || !hasGoMod {
-		return nil, false
-	}
-	rc, err := uc.moduleScanner.blobs.Get(ctx, goModIdentity)
-	if err != nil {
-		return nil, false
-	}
-	defer func() { _ = rc.Close() }()
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return nil, false
-	}
-	f, err := modfile.Parse("go.mod", data, nil)
-	if err != nil {
-		return nil, false
-	}
-	return f, true
+	return uc.moduleScanner.scannedGoMod(ctx, coord)
 }
 
 // nodeGoModRequires reads the require directives from a node's stored go.mod.

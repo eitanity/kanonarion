@@ -149,3 +149,30 @@ func TestExecute_SelfReplacement_IsNotTreatedAsReplaced(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 }
+
+// Under --from-modcache, a replaced module whose target entry sits on a go.sum
+// line that cannot be read is refused naming the line. It is never reported
+// as "go.sum has no entry for the replacement", which would be untrue.
+func TestExecute_Modcache_ReplacedModuleWithAnUnreadableEntryIsNotCalledAbsent(t *testing.T) {
+	const reason = `malformed go.sum line 7: invalid module hash "garbage"`
+	sumdb := &keyedSumDB{entries: map[coordinate.ModuleCoordinate]ports.SumDBResult{
+		forkCoord: {Reason: reason, Unavailability: ports.SumDBUnavailabilityFailure, Err: errors.New(reason)},
+	}}
+	for name, goModOnly := range map[string]bool{"full fetch": false, "go.mod-only fetch": true} {
+		t.Run(name, func(t *testing.T) {
+			uc := application.NewFetchModuleUseCase(
+				downloadWithHashes(forkCoord, fakeZipHash, fakeGoModHash), &fakeVCS{}, newModcacheBlob(t), newFakeFacts(),
+				sumdb, fixedClock{fixedTime}, fakeStopwatch{}, "test-0.1.0", discardLog,
+			).WithModcacheMode()
+			_, err := uc.Execute(context.Background(), application.FetchRequest{
+				Coordinate: forkCoord, OriginalCoordinate: upstreamCoord, GoModOnly: goModOnly,
+			})
+			if !errors.Is(err, application.ErrGoSumVerification) || !strings.Contains(err.Error(), "malformed go.sum line 7") {
+				t.Fatalf("Execute err = %v, want ErrGoSumVerification naming the line", err)
+			}
+			if strings.Contains(err.Error(), "no entry") {
+				t.Errorf("refusal %q calls an unreadable entry absent", err)
+			}
+		})
+	}
+}

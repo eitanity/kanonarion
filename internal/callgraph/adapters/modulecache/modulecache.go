@@ -201,28 +201,53 @@ func (c *Cache) unprunedRoots(ctx context.Context, main cgports.MainModule) []co
 // store holds for it. An unreadable one answers the empty string, which
 // PrePruning reads as pre-pruning.
 func (c *Cache) goVersionOf(ctx context.Context, coord coordinate.ModuleCoordinate) string {
-	record, ok, err := fetchports.ComposedFetchRecord(ctx, c.facts, coord)
-	if err != nil || !ok {
+	// A coordinate whose every measurement was set aside holds no record here,
+	// on the same terms as one never fetched.
+	record, ok, err := fetchports.AbsentIfNothingServable(fetchports.ComposedFetchRecord(ctx, c.facts, coord))
+	if err != nil {
+		return c.goModUnreadable(ctx, coord, "reading the fetch record", err)
+	}
+	if !ok {
 		return ""
 	}
 	identity, hasGoMod, err := fetchports.GoModIdentity(record.FactRecord)
-	if err != nil || !hasGoMod {
+	if err != nil {
+		return c.goModUnreadable(ctx, coord, "deriving the go.mod address", err)
+	}
+	if !hasGoMod {
 		return ""
 	}
 	rc, err := c.blobs.Get(ctx, identity)
 	if err != nil {
-		return ""
+		return c.goModUnreadable(ctx, coord, "opening the go.mod blob", err)
 	}
 	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return ""
+		return c.goModUnreadable(ctx, coord, "reading the go.mod blob", err)
 	}
 	f, err := modfile.Parse("go.mod", data, nil)
-	if err != nil || f.Go == nil {
+	if err != nil {
+		return c.goModUnreadable(ctx, coord, "parsing the go.mod", err)
+	}
+	if f.Go == nil {
 		return ""
 	}
 	return f.Go.Version
+}
+
+// goModUnreadable logs why a recorded go.mod could not be produced, since the
+// empty answer it returns is read as pre-pruning. A cancelled run is not
+// logged: the run reports its own stop.
+func (c *Cache) goModUnreadable(ctx context.Context, coord coordinate.ModuleCoordinate, step string, err error) string {
+	if !interrupt.Cancelled(ctx, err) {
+		c.logger.WarnContext(ctx, "callgraph: a requirement's stored go.mod could not be read, treating it as pre-pruning",
+			slog.String("coordinate", coord.String()),
+			slog.String("step", step),
+			slog.String("error", err.Error()),
+		)
+	}
+	return ""
 }
 
 // report states what one population leg wrote, and warns when it wrote less than

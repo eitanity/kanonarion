@@ -1218,30 +1218,50 @@ func goModModulePaths(f *modfile.File) map[string]struct{} {
 
 // scannedGoMod reads and parses the scanned module's own go.mod from the blob
 // store. ok is false when no go.mod is recorded for it or it cannot be read or
-// parsed — treated as a recovery miss, never a fabricated requirement.
+// parsed — treated as a recovery miss, never a fabricated requirement. A
+// recorded go.mod that cannot be produced is logged, so it never reads as one
+// that was never recorded.
 func (uc *ScanModuleUseCase) scannedGoMod(ctx context.Context, scanned coordinate.ModuleCoordinate) (*modfile.File, bool) {
-	fact, ok, err := uc.getFetchRecord(ctx, scanned)
-	if err != nil || !ok {
+	// A coordinate whose every measurement was set aside holds no record here,
+	// on the same terms as one never fetched.
+	fact, ok, err := fetchports.AbsentIfNothingServable(uc.getFetchRecord(ctx, scanned))
+	if err != nil {
+		return uc.goModUnreadable(ctx, scanned, "reading the fetch record", err)
+	}
+	if !ok {
 		return nil, false
 	}
 	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(fact)
-	if err != nil || !hasGoMod {
+	if err != nil {
+		return uc.goModUnreadable(ctx, scanned, "deriving the go.mod address", err)
+	}
+	if !hasGoMod {
 		return nil, false
 	}
 	rc, err := uc.blobs.Get(ctx, goModIdentity)
 	if err != nil {
-		return nil, false
+		return uc.goModUnreadable(ctx, scanned, "opening the go.mod blob", err)
 	}
 	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return nil, false
+		return uc.goModUnreadable(ctx, scanned, "reading the go.mod blob", err)
 	}
 	f, err := modfile.Parse("go.mod", data, nil)
 	if err != nil {
-		return nil, false
+		return uc.goModUnreadable(ctx, scanned, "parsing the go.mod", err)
 	}
 	return f, true
+}
+
+// goModUnreadable logs why a recorded go.mod could not be produced and answers
+// the miss. A cancelled run is not logged: the run reports its own stop.
+func (uc *ScanModuleUseCase) goModUnreadable(ctx context.Context, coord coordinate.ModuleCoordinate, step string, err error) (*modfile.File, bool) {
+	if !interrupt.Cancelled(ctx, err) {
+		uc.logger.Warn("vuln-scan: the module's stored go.mod could not be read, treating it as absent",
+			"coordinate", coord, "step", step, "error", err)
+	}
+	return nil, false
 }
 
 // modulePaths projects a set of coordinates onto their distinct module paths,

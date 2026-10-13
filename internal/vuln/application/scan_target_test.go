@@ -24,6 +24,7 @@ type targetScanFixture struct {
 	vulnStore *fakeVulnStore
 	db        *fakeDatabase
 	facts     *fakeFacts
+	blobs     *fakeBlob
 	target    coordinate.ModuleCoordinate
 	depA      coordinate.ModuleCoordinate
 	depB      coordinate.ModuleCoordinate
@@ -31,6 +32,13 @@ type targetScanFixture struct {
 }
 
 func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...coordinate.ModuleCoordinate) targetScanFixture {
+	t.Helper()
+	return newLoggedTargetScanFixture(t, slog.Default(), scanner, fetchedCoords...)
+}
+
+// newLoggedTargetScanFixture is newTargetScanFixture with both use cases
+// logging to logger, for a test whose subject is what the scan says.
+func newLoggedTargetScanFixture(t *testing.T, logger *slog.Logger, scanner *fakeScanner, fetchedCoords ...coordinate.ModuleCoordinate) targetScanFixture {
 	t.Helper()
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -78,14 +86,14 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 	}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", logger,
 	)
 	walkUC := application.NewScanWalkUseCase(
-		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
+		walkStore, vulnStore, moduleUC, nil, clock, "v1", logger,
 	)
 
 	return targetScanFixture{
-		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db, facts: facts,
+		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db, facts: facts, blobs: blobs,
 		target: target, depA: depA, depB: depB, walkID: walkID,
 	}
 }

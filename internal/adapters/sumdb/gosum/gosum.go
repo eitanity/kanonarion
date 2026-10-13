@@ -179,23 +179,16 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 		}
 	}
 
-	var zipHash, goModHash domain2.ModuleHash
-	for _, line := range lines {
-		parts := strings.Fields(line)
-		if len(parts) != 3 {
-			continue
-		}
-		hashStr := parts[2]
-		if strings.HasSuffix(parts[1], "/go.mod") {
-			h, err := domain2.ParseModuleHash(hashStr)
-			if err == nil {
-				goModHash = h
-			}
-		} else {
-			h, err := domain2.ParseModuleHash(hashStr)
-			if err == nil {
-				zipHash = h
-			}
+	zipHash, goModHash, perr := parseLookupLines(lines)
+	if perr != nil {
+		// A line that does not parse is not the database carrying no hash: it
+		// says nothing settled about the module, so it is a failed lookup that a
+		// later run asks again, never the policy answer below.
+		return ports.SumDBResult{
+			Available:      false,
+			Reason:         fmt.Sprintf("sumdb lookup: %v", perr),
+			Unavailability: ports.SumDBUnavailabilityFailure,
+			Err:            perr,
 		}
 	}
 
@@ -214,6 +207,32 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 		ZipHash:   zipHash,
 		GoModHash: goModHash,
 	}
+}
+
+// parseLookupLines reads the zip and go.mod hashes out of a lookup's record
+// lines. Lines without three fields are not hash lines and are skipped; a hash
+// line whose hash does not parse, or parses to the recorded-absence spelling,
+// is an error naming the line.
+func parseLookupLines(lines []string) (zipHash, goModHash domain2.ModuleHash, err error) {
+	for _, line := range lines {
+		parts := strings.Fields(line)
+		if len(parts) != 3 {
+			continue
+		}
+		h, perr := domain2.ParseModuleHash(parts[2])
+		if perr == nil && h.IsZero() {
+			perr = fmt.Errorf("invalid module hash %q: a checksum database line carries a hash, never an absence", parts[2])
+		}
+		if perr != nil {
+			return domain2.ModuleHash{}, domain2.ModuleHash{}, fmt.Errorf("record line %q: %w", line, perr)
+		}
+		if strings.HasSuffix(parts[1], "/go.mod") {
+			goModHash = h
+		} else {
+			zipHash = h
+		}
+	}
+	return zipHash, goModHash, nil
 }
 
 // classifiableLookupError returns the error a retry decorator should classify
