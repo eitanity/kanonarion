@@ -183,7 +183,7 @@ exit 0
         },
         {
           "name": "kanonarion:native:generation",
-          "value": "0.3.0+recipes.1"
+          "value": "0.4.0+recipes.1"
         },
         {
           "name": "kanonarion:native:advisories_searched",

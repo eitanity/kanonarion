@@ -30,7 +30,9 @@ const EcosystemGo = "go"
 // presence. 0.3.0 added `#cgo pkg-config` as a fourth operand form, which moves
 // a module linking only through pkg-config off absent. Neither older record
 // describes the same measurement, and neither is ever served for one taken now.
-const PipelineVersion = "0.3.0"
+// 0.4.0 ignores a source file whose own name begins with "_" or ".", as the go
+// tool does; a 0.3.0 record could name such a file as compiled.
+const PipelineVersion = "0.4.0"
 
 // ErrUnsupportedEcosystem is returned when a stored record's ecosystem is
 // absent or holds a value other than EcosystemGo.

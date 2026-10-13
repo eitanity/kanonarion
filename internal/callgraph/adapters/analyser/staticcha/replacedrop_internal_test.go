@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // writeGoMod puts a go.mod in a fresh directory and returns the directory.
@@ -55,7 +57,7 @@ replace example.com/nested => ./nested/
 `
 
 	dir := writeGoMod(t, monorepo)
-	dropped, err := dropLocalReplaces(dir)
+	dropped, err := dropLocalReplaces(dir, "example.com/mod/config")
 	if err != nil {
 		t.Fatalf("dropLocalReplaces: %v", err)
 	}
@@ -103,7 +105,7 @@ func TestDropLocalReplaces_AbsoluteTargetGoesToo(t *testing.T) {
 	t.Parallel()
 
 	dir := writeGoMod(t, "module example.com/mod\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n\nreplace example.com/dep => /home/publisher/dep\n")
-	dropped, err := dropLocalReplaces(dir)
+	dropped, err := dropLocalReplaces(dir, "example.com/mod")
 	if err != nil {
 		t.Fatalf("dropLocalReplaces: %v", err)
 	}
@@ -124,7 +126,7 @@ func TestDropLocalReplaces_LeavesAFileWithNothingToDropByteIdentical(t *testing.
 	const published = "module example.com/mod\n\n\ngo 1.21\n\n// a comment the module ships\nrequire example.com/dep v1.0.0\n\nreplace example.com/dep v1.0.0 => example.com/fork v2.0.0\n"
 
 	dir := writeGoMod(t, published)
-	dropped, err := dropLocalReplaces(dir)
+	dropped, err := dropLocalReplaces(dir, "example.com/mod")
 	if err != nil {
 		t.Fatalf("dropLocalReplaces: %v", err)
 	}
@@ -145,7 +147,7 @@ func TestDropLocalReplaces_AbsentAndUnparseableAreNoOps(t *testing.T) {
 
 	t.Run("absent", func(t *testing.T) {
 		t.Parallel()
-		dropped, err := dropLocalReplaces(t.TempDir())
+		dropped, err := dropLocalReplaces(t.TempDir(), "example.com/mod")
 		if err != nil {
 			t.Fatalf("dropLocalReplaces on a directory with no go.mod: %v", err)
 		}
@@ -158,7 +160,7 @@ func TestDropLocalReplaces_AbsentAndUnparseableAreNoOps(t *testing.T) {
 		t.Parallel()
 		const broken = "module example.com/mod\n\nthis is not a directive\n"
 		dir := writeGoMod(t, broken)
-		dropped, err := dropLocalReplaces(dir)
+		dropped, err := dropLocalReplaces(dir, "example.com/mod")
 		if err != nil {
 			t.Fatalf("dropLocalReplaces on an unparseable go.mod: %v", err)
 		}
@@ -180,7 +182,7 @@ func TestDropLocalReplaces_KeepsAnInsideTargetThatDoesNotExist(t *testing.T) {
 
 	const published = "module example.com/mod\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n\nreplace example.com/dep => ./dep\n"
 	dir := writeGoMod(t, published)
-	dropped, err := dropLocalReplaces(dir)
+	dropped, err := dropLocalReplaces(dir, "example.com/mod")
 	if err != nil {
 		t.Fatalf("dropLocalReplaces: %v", err)
 	}
@@ -199,11 +201,11 @@ func TestDropLocalReplaces_IsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	dir := writeGoMod(t, "module example.com/mod\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n\nreplace example.com/dep => ../dep/\n")
-	if _, err := dropLocalReplaces(dir); err != nil {
+	if _, err := dropLocalReplaces(dir, "example.com/mod"); err != nil {
 		t.Fatalf("first pass: %v", err)
 	}
 	first := readGoMod(t, dir)
-	dropped, err := dropLocalReplaces(dir)
+	dropped, err := dropLocalReplaces(dir, "example.com/mod")
 	if err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
@@ -212,5 +214,157 @@ func TestDropLocalReplaces_IsIdempotent(t *testing.T) {
 	}
 	if got := readGoMod(t, dir); got != first {
 		t.Errorf("second pass rewrote the file:\ngot:\n%s\nwant:\n%s", got, first)
+	}
+}
+
+// TestDropLocalReplaces_NestedModuleWithAbsentTarget is the otel shape: a
+// module replaces its own nested modules with in-tree paths, and the zip format
+// leaves those directories out. Each such directive is dropped and named, with a
+// version on the left kept as written; a nested replace whose target is present
+// stays, as does an absent target for a module that is not nested.
+func TestDropLocalReplaces_NestedModuleWithAbsentTarget(t *testing.T) {
+	t.Parallel()
+
+	const published = `module example.com/mod
+
+go 1.21
+
+require (
+	example.com/mod/file v1.0.0
+	example.com/mod/metric v1.0.0
+	example.com/mod/present v1.0.0
+	example.com/mod/trace v1.0.0
+	example.com/modx v1.0.0
+	example.com/other v1.0.0
+)
+
+replace example.com/mod/metric => ./metric
+
+replace example.com/mod/trace v1.0.0 => ./trace
+
+replace example.com/mod/file => ./afile/sub
+
+replace example.com/mod/present => ./present
+
+replace example.com/modx => ./modx
+
+replace example.com/other => ./other
+`
+	dir := writeGoMod(t, published)
+	if err := os.MkdirAll(filepath.Join(dir, "present"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "present", "go.mod"), []byte("module example.com/mod/present\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A path element that is a file leaves the target absent all the same.
+	if err := os.WriteFile(filepath.Join(dir, "afile"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dropped, err := dropLocalReplaces(dir, "example.com/mod")
+	if err != nil {
+		t.Fatalf("dropLocalReplaces: %v", err)
+	}
+	got := make([]string, 0, len(dropped))
+	for _, d := range dropped {
+		got = append(got, d.String())
+	}
+	want := []string{
+		"example.com/mod/file => ./afile/sub",
+		"example.com/mod/metric => ./metric",
+		"example.com/mod/trace v1.0.0 => ./trace",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("dropped = %q, want %q", got, want)
+	}
+
+	rewritten := readGoMod(t, dir)
+	for _, kept := range []string{
+		"example.com/mod/present => ./present",
+		"example.com/modx => ./modx",
+		"example.com/other => ./other",
+	} {
+		if !strings.Contains(rewritten, kept) {
+			t.Errorf("%q was dropped:\n%s", kept, rewritten)
+		}
+	}
+	for _, gone := range []string{"=> ./metric", "=> ./trace"} {
+		if strings.Contains(rewritten, gone) {
+			t.Errorf("%q survived the rewrite:\n%s", gone, rewritten)
+		}
+	}
+}
+
+// TestIsNestedModulePath pins the "/" boundary: a shared string prefix is not
+// nesting, and a module is not nested in itself.
+func TestIsNestedModulePath(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mod, path string
+		want      bool
+	}{
+		{"example.com/mod", "example.com/mod/sub", true},
+		{"example.com/mod", "example.com/mod/a/b", true},
+		{"example.com/mod/v2", "example.com/mod/v2/sub", true},
+		{"example.com/mod", "example.com/modx", false},
+		{"example.com/mod", "example.com/mod", false},
+		{"example.com/mod", "example.com/other", false},
+		{"example.com/mod/sub", "example.com/mod", false},
+		{"", "example.com/mod", false},
+	} {
+		if got := isNestedModulePath(tc.mod, tc.path); got != tc.want {
+			t.Errorf("isNestedModulePath(%q, %q) = %v, want %v", tc.mod, tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestDependencyListErrors reads the go command's errors off dependencies only:
+// a root's errors are LoadErrs already, a type error is a consequence, and a
+// cache miss or a missing go.sum entry has its own reading.
+func TestDependencyListErrors(t *testing.T) {
+	t.Parallel()
+	listErr := func(msg string) packages.Error { return packages.Error{Msg: msg, Kind: packages.ListError} }
+	replaced := &packages.Package{PkgPath: "example.com/other", Errors: []packages.Error{
+		listErr("example.com/other@v1.0.0: replacement directory ./other\n\tdoes not exist"),
+	}}
+	missing := &packages.Package{PkgPath: "example.com/cold", Errors: []packages.Error{
+		listErr("example.com/cold@v1.0.0: module lookup disabled by GOPROXY=off"),
+	}}
+	typed := &packages.Package{PkgPath: "example.com/typed", Errors: []packages.Error{
+		{Msg: "undefined: x", Kind: packages.TypeError},
+	}}
+	root := &packages.Package{
+		PkgPath: "example.com/mod",
+		Errors:  []packages.Error{listErr("a root error")},
+		Imports: map[string]*packages.Package{"a": replaced, "b": missing, "c": typed},
+	}
+	got := dependencyListErrors([]*packages.Package{root})
+	want := []string{"example.com/other@v1.0.0: replacement directory ./other does not exist"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("dependencyListErrors = %q, want %q", got, want)
+	}
+	if got := leadWithDependencyError("x; "+want[0], want); got != "x; "+want[0] {
+		t.Errorf("a sentence already in the detail was repeated: %q", got)
+	}
+}
+
+// TestSourceRootsRelText writes a path quoted in an error the way a position is
+// written: module-cache paths cache-relative, the extraction's module-relative,
+// GOROOT's GOROOT-relative. A path under no root is left as it is.
+func TestSourceRootsRelText(t *testing.T) {
+	t.Parallel()
+	roots := newSourceRoots("/tmp/x-extract-1", "/tmp/kanonarion-cg-modcache-1",
+		SourceDirs{GOROOT: "/usr/local/go", ModuleCache: "/home/u/go/pkg/mod"})
+	for in, want := range map[string]string{
+		"build constraints exclude all Go files in /tmp/kanonarion-cg-modcache-1/golang.org/x/sys@v0.1.0/windows": "build constraints exclude all Go files in golang.org/x/sys@v0.1.0/windows",
+		"/tmp/x-extract-1/premod.go:3:8: could not import x":                                                      "premod.go:3:8: could not import x",
+		"/home/u/go/pkg/mod/example.com/a@v1.0.0/a.go:1:1: x":                                                     "example.com/a@v1.0.0/a.go:1:1: x",
+		"/usr/local/go/src/os/file.go:1:1: x":                                                                     "src/os/file.go:1:1: x",
+		"/elsewhere/a.go: x":                                                                                      "/elsewhere/a.go: x",
+	} {
+		if got := roots.relText(in); got != want {
+			t.Errorf("relText(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

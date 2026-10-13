@@ -3,6 +3,8 @@ package domain
 import (
 	"sort"
 	"strings"
+
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // DeriveEffectiveLicenseSet computes the effective license set for a module
@@ -125,13 +127,5 @@ func embeddedComponentPrefix(relPath string) string {
 // DeriveEffectiveLicenseSet, so the derived set stays a faithful account of
 // what the module zip contains and each consumer states its own scope.
 func IsUnbuiltPath(prefix string) bool {
-	for _, seg := range strings.Split(prefix, "/") {
-		if seg == "testdata" {
-			return true
-		}
-		if len(seg) > 1 && (seg[0] == '_' || seg[0] == '.') {
-			return true
-		}
-	}
-	return false
+	return gotoolchain.IgnoredPath(prefix)
 }

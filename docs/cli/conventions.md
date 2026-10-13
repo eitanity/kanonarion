@@ -393,7 +393,7 @@ and names the re-derivation. These five listings therefore share one contract:
   truncation line:
 
   ```
-  listing interface records at pipeline 0.6.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+  listing interface records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
   ```
 
 - **`--all-generations` includes the earlier records.** Each is marked
@@ -409,7 +409,7 @@ and names the re-derivation. These five listings therefore share one contract:
   ```json
   {
     "generation": {
-      "served": "0.6.0",
+      "served": "0.7.0",
       "all_generations": false,
       "remedy": "--all-generations"
     }

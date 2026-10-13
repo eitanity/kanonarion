@@ -116,6 +116,52 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Native record: pipeline `0.3.0` → `0.4.0`
+
+**Derivation change; no record shape change, no store migration.** A source
+file whose own name begins with `_` or `.` is out of scope even in a directory
+the go tool builds, as the go tool ignores it: beside `_helper.c`, `go list`
+names only the other `.c` file, and linking fails with `undefined reference to
+helper`. A `0.3.0` record could count such a file as compiled native source.
+
+Records are keyed by generation (`<pipeline>+recipes.<n>`), so the bump is the
+migration: `0.3.0` rows stay and are never served for a `0.4.0` request. Cost is
+one re-measurement per coordinate on its next `native` run.
+
+## Call graph record: pipeline `0.9.0` → `0.10.0`
+
+**Derivation change; no record shape change, no schema bump, no store
+migration.** Two changes to how a record is derived:
+
+- **A `replace` of the module's own nested module onto an absent directory is
+  dropped**, and named in `dropped_replaces` as an out-of-tree drop is.
+  `go.opentelemetry.io/otel@v1.44.0` and later replace `…/otel/metric =>
+  ./metric` and `…/otel/trace => ./trace`; the zip format leaves both out, so a
+  `0.9.0` record of `otel@v1.45.0` is `LoadFailed` with no nodes. At `0.10.0` it
+  is `Extracted` with 50,798 nodes and 207,289 edges.
+- **A failed load leads with the go command's error on a dependency.** A
+  `replace example.com/other => ./other` with `./other` absent read only as
+  `could not import example.com/other (invalid package name: "")`; it now leads
+  with `replacement directory ./other does not exist`.
+
+Records are keyed `(module, version, pipeline_version)`, so the bump is the
+migration: `0.9.0` rows stay, become unreachable, and are never served for a
+`0.10.0` request. Cost is one re-extraction per coordinate on its next
+`callgraph` run; run `kanonarion local .` in each ingested tree whose answers you
+rely on.
+
+## Interface record: pipeline `0.6.0` → `0.7.0`
+
+**Derivation change; no record shape change, no store migration.** Extraction
+skips every file and directory whose name begins with `_` or `.`, at any depth,
+as the go tool does. A `0.6.0` record of `github.com/go-chi/chi/v5@v5.0.7` holds
+16 packages, 14 of them under `_examples/`; at `0.7.0` it holds the 2 that
+`go list ./...` names, and `symbol-find` and `interface-diff` no longer answer
+from example code. A directory holding only `_`- or `.`-named Go files is no
+longer recorded as a package.
+
+Migration: **none.** Reads key on the pipeline version.
+
 ## Call graph record: pipeline `0.8.0` → `0.9.0`
 
 **Record shape change; no schema bump, no store migration.** A call-graph

@@ -21,6 +21,11 @@ No code from the target module is executed.
 
 The module must have been fetched first (`kanonarion fetch`).
 
+The packages read are the ones `go list ./...` names in the module. Directories
+named `vendor` or `testdata`, and every file or directory whose name begins with
+`_` or `.`, at any depth, are skipped, as the go tool skips them: an
+`_examples/` tree is not part of the module's API.
+
 ## Build frame
 
 A record holds the public API of **one buildable configuration** — its build
@@ -207,7 +212,7 @@ absent record. The two are told apart wherever a record can go missing:
 
 ```
 $ kanonarion interface-show github.com/golang-jwt/jwt/v4@v4.5.1
-error: execute root command: the interface record for github.com/golang-jwt/jwt/v4@v4.5.1 was produced by superseded extraction logic: this build serves pipeline 0.6.0 and the store holds this coordinate at pipeline 0.3.0. A superseded record is not served, so this answer is empty for want of a measurement of this module, not because the coordinate is wrong. Re-extract it:
+error: execute root command: the interface record for github.com/golang-jwt/jwt/v4@v4.5.1 was produced by superseded extraction logic: this build serves pipeline 0.7.0 and the store holds this coordinate at pipeline 0.3.0. A superseded record is not served, so this answer is empty for want of a measurement of this module, not because the coordinate is wrong. Re-extract it:
   kanonarion interface github.com/golang-jwt/jwt/v4@v4.5.1
 ```
 
@@ -254,12 +259,12 @@ listing serves](conventions.md#the-generation-a-listing-serves).
 ```
 $ kanonarion interface-list
 github.com/spf13/cobra@v1.8.1               Extracted    1 package(s)
-listing interface records at pipeline 0.6.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+listing interface records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 
 $ kanonarion interface-list --all-generations
 github.com/spf13/cobra@v1.8.1               Extracted    1 package(s)
 github.com/spf13/pflag@v1.0.5               Extracted    1 package(s)  [superseded generation 0.3.0]
-1 of 2 listed record(s) were extracted at a superseded pipeline version; this build serves 0.6.0 and answers no query from them. Re-extract one:
+1 of 2 listed record(s) were extracted at a superseded pipeline version; this build serves 0.7.0 and answers no query from them. Re-extract one:
   kanonarion interface <module>@<version>
 ```
 

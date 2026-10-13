@@ -219,28 +219,24 @@ func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// collectPackageDirs walks sourceTree and returns every directory that
-// contains at least one non-test.go file, excluding vendor/ and testdata/
-// subtrees.
+// collectPackageDirs walks sourceTree and returns every directory holding a
+// non-test .go file the go tool reads. It skips what `go help packages` leaves
+// out of "./...": vendor and testdata, and every file or directory whose name
+// begins with "_" or ".". What they hold is not a package of this module.
 func collectPackageDirs(fsys fs.FS) ([]string, error) {
 	seen := map[string]bool{}
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		// Skip vendor directories entirely.
-		if d.IsDir() && (d.Name() == "vendor" || strings.Contains("/"+p+"/", "/vendor/")) {
-			return fs.SkipDir
+		if d.IsDir() {
+			if p != "." && (d.Name() == "vendor" || gotoolchain.IgnoredDir(d.Name())) {
+				return fs.SkipDir
+			}
+			return nil
 		}
-		// Skip testdata directories entirely. The go tool ignores them, so what
-		// they hold is not a package of this module and not part of its API;
-		// diff excludes them from every comparison for the same reason.
-		if d.IsDir() && (d.Name() == "testdata" || strings.Contains("/"+p+"/", "/testdata/")) {
-			return fs.SkipDir
-		}
-		if !d.IsDir() && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") {
-			dir := path.Dir(p)
-			seen[dir] = true
+		if isPackageSource(d.Name()) {
+			seen[path.Dir(p)] = true
 		}
 		return nil
 	})
@@ -252,6 +248,12 @@ func collectPackageDirs(fsys fs.FS) ([]string, error) {
 		dirs = append(dirs, d)
 	}
 	return sortedDirs(dirs), nil
+}
+
+// isPackageSource reports whether a file is non-test Go source the go tool
+// reads; a "_" or "." name is ignored by the go tool before build constraints.
+func isPackageSource(name string) bool {
+	return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") && !gotoolchain.IgnoredName(name)
 }
 
 // errDuplicateDecl is returned when the files of one directory declare the same
@@ -366,7 +368,7 @@ func parsePackageDir(fsys fs.FS, ctxt *build.Context, dir string, coord coordina
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+		if !isPackageSource(name) {
 			continue
 		}
 		sawGoSource = true

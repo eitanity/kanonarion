@@ -15,22 +15,20 @@ import (
 // WROTE, this records a directive kanonarion REMOVED, and both are the same
 // statement about the same divergence.
 //
-// The directives removed are the ones whose target is a directory OUTSIDE the
-// extracted tree. A module published from a monorepo carries them pointing at its
-// sibling checkouts — "replace example.com/mod/a => ../a/" — and they are dead
-// weight in a published artefact: the go command ignores a replace in any module
-// that is not the MAIN module, so no consumer's build has ever applied one. The
-// analysis is the first context in which the module IS the main module, and a zip
-// holds one module, so every such directive dangles and every requirement it
-// names fails to resolve. Dropping them restores the build every real consumer
-// gets; leaving them makes the analysis fail on a module the go command builds
-// cleanly, and file that failure as the module's fault.
+// Two kinds of filesystem replace are removed, both dead weight in a published
+// artefact: the go command ignores a replace in any module that is not the MAIN
+// module, so no consumer's build has ever applied one, and the analysis is the
+// first context in which the module IS the main module. One targets a directory
+// OUTSIDE the extracted tree — a monorepo's sibling checkout, "replace
+// example.com/mod/a => ../a/". The other targets an absent directory inside it
+// and replaces a nested module of this module — "replace example.com/mod/a =>
+// ./a" — which the zip format leaves out of the parent's zip by construction.
+// Either way the requirement dangles here and resolves for every consumer.
 //
-// Two kinds of replace are left alone, and both would be damaged by removal. One
-// pointing at a directory INSIDE the tree — a nested module the zip carries —
-// resolves exactly as published. One pointing at a MODULE VERSION resolves
-// without a filesystem at all. Neither is broken by the extraction, and both say
-// something real about what the publisher's own build selects.
+// Every other replace is left alone. One pointing at a directory inside the tree
+// that exists resolves exactly as published; one pointing at an absent directory
+// for any other module is the module's own fault, and the go command's message
+// says so; one pointing at a MODULE VERSION resolves without a filesystem.
 //
 // The zero value — an empty list — means nothing was dropped. That is
 // unambiguous rather than merely absent: no analysis removed a directive before

@@ -68,11 +68,16 @@ func TestIsIgnoredPath(t *testing.T) {
 			t.Errorf("IsIgnoredPath(%q) = true, want false", f)
 		}
 	}
-	// A file whose own name begins with "_" is still compiled when its
-	// directory is not ignored: the rule is about path elements, and the
-	// filename is not one of them.
-	if domain.IsIgnoredPath("_helper.c") {
-		t.Error(`IsIgnoredPath("_helper.c") = true: the rule reads directories, not file names`)
+	// A file whose own name begins with "_" or "." is ignored even in a built
+	// directory. Measured: `go list` names CFiles=[other.c] beside _helper.c, and
+	// linking fails with "undefined reference to `helper`".
+	for _, f := range []string{"_helper.c", ".helper.c", "dir/_x.h"} {
+		if !domain.IsIgnoredPath(f) {
+			t.Errorf("IsIgnoredPath(%q) = false: the go tool ignores the file by its name", f)
+		}
+	}
+	if domain.IsIgnoredPath("dir/x_.c") {
+		t.Error(`IsIgnoredPath("dir/x_.c") = true: only a leading "_" is ignored`)
 	}
 }
 

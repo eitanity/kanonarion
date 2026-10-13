@@ -23,7 +23,11 @@ import (
 // Bumped to "0.6.0" when extraction stopped walking testdata subtrees and
 // stopped reading a public API out of a directory that declares one identifier
 // twice: every record's package set and contents can change.
-const PipelineVersion = "0.6.0"
+//
+// Bumped to "0.7.0" when extraction stopped reading files and directories whose
+// name begins with "_" or ".", which the go tool ignores: a 0.6.0 record of
+// github.com/go-chi/chi/v5@v5.0.7 holds 16 packages where the go tool sees 2.
+const PipelineVersion = "0.7.0"
 
 // ExtractInterfaceUseCase extracts the public API of a module and persists an
 // InterfaceRecord.

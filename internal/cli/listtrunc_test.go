@@ -610,10 +610,10 @@ showing first 3 license records — more exist (--limit 0 for all, --offset 3 fo
 			text: `example.com/mod0@v1.0.0                            Unknown      2 package(s)
 example.com/mod1@v1.0.0                            Unknown      2 package(s)
 example.com/mod2@v1.0.0                            Unknown      2 package(s)
-listing interface records at pipeline 0.6.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+listing interface records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 showing first 3 interface records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
-			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"0.6.0","superseded":false,"package_count":2}`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"0.7.0","superseded":false,"package_count":2}`,
 		},
 		"examples-list": {
 			text: `example.com/mod0@v1.0.0                            Unknown      3 example(s)
@@ -625,13 +625,13 @@ showing first 3 example records — more exist (--limit 0 for all, --offset 3 fo
 			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"0.3.0","superseded":false,"example_count":3}`,
 		},
 		"callgraph-list": {
-			text: `example.com/mod0@v1.0.0                                      0.9.0        Unknown     4 nodes     3 edges
-example.com/mod1@v1.0.0                                      0.9.0        Unknown     4 nodes     3 edges
-example.com/mod2@v1.0.0                                      0.9.0        Unknown     4 nodes     3 edges
-listing call graph records at pipeline 0.9.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+			text: `example.com/mod0@v1.0.0                                      0.10.0       Unknown     4 nodes     3 edges
+example.com/mod1@v1.0.0                                      0.10.0       Unknown     4 nodes     3 edges
+example.com/mod2@v1.0.0                                      0.10.0       Unknown     4 nodes     3 edges
+listing call graph records at pipeline 0.10.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 showing first 3 call graph records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
-			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","pipeline_version":"0.9.0","superseded":false,"status":"Unknown","node_count":4,"edge_count":3,"generations_differ":false}`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","pipeline_version":"0.10.0","superseded":false,"status":"Unknown","node_count":4,"edge_count":3,"generations_differ":false}`,
 		},
 		"vuln-scan-list": {
 			text: `run-0                       walk=walk-0                      status=AllClean      2026-01-01T00:00:00Z
