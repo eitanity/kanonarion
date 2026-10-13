@@ -48,9 +48,10 @@ var loaderCoord = coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 func TestLoad_ProjectsRecord(t *testing.T) {
 	rec := callgraphdomain.CallGraphRecord{
-		Algorithm:    callgraphdomain.AlgorithmCHA,
-		Completeness: callgraphdomain.CompletenessBuiltWithBodies,
-		ArtifactKind: callgraphdomain.ArtifactApplication,
+		Algorithm:       callgraphdomain.AlgorithmCHA,
+		Completeness:    callgraphdomain.CompletenessBuiltWithBodies,
+		ArtifactKind:    callgraphdomain.ArtifactApplication,
+		PipelineVersion: "p1",
 		Nodes: []callgraphdomain.CallNode{{
 			ID: "github.com/foo/bar.Fn", Module: "github.com/foo/bar",
 			Package: "github.com/foo/bar", Symbol: "Fn", Receiver: "T", IsExportedAPI: true,
@@ -82,6 +83,10 @@ func TestLoad_ProjectsRecord(t *testing.T) {
 	}
 	if proj.Algorithm != string(callgraphdomain.AlgorithmCHA) {
 		t.Errorf("Algorithm = %q", proj.Algorithm)
+	}
+	// The generation an answer read from this graph will name.
+	if proj.PipelineVersion != "p1" {
+		t.Errorf("PipelineVersion = %q, want p1", proj.PipelineVersion)
 	}
 	// IsTest must survive the projection too: the root selection reads it here,
 	// and a dropped axis would reach the selector as "not a test" rather than as

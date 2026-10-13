@@ -918,6 +918,9 @@ type CallGraphProjection struct {
 	// verdict and checks completeness parity before trusting a green result.
 	Completeness string
 	Algorithm    string
+	// PipelineVersion is the call-graph pipeline the graph was built by, so an
+	// answer read from it names the generation it came from.
+	PipelineVersion string
 	// ArtifactKind is what the analysed module is (application, library, or not
 	// established), as an opaque string for the same reason. Reachability roots
 	// are conditioned on it: an application's own code is all reachable, because

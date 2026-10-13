@@ -34,7 +34,7 @@ func driftedRecords(coord string) error {
 		Kind: "vulnerability record",
 		ID:   coord,
 		Generation: recordseal.Generation{
-			PipelineVersion: "v25",
+			PipelineVersion: "v26",
 			Snapshot:        recordseal.Snapshot{Name: "vuln-db", Source: "govulndb", Version: "v2026-01-01"},
 		},
 		ContentHash: "sha256:00c9783d",
@@ -92,7 +92,7 @@ func TestRunVulnByID_ServesReadableRecordsAndNamesTheUnreadable(t *testing.T) {
 	// The bad row is named. Omitting it silently is the other wrong answer. In
 	// text the generation is composed into the label, which is what tells one row
 	// of a coordinate's history from another when prose is all there is.
-	if !strings.Contains(got, "example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01)") {
+	if !strings.Contains(got, "example.com/bravo@v2.0.0 (pipeline v26, vuln-db v2026-01-01)") {
 		t.Errorf("output does not name the unreadable record and its generation:\n%s", got)
 	}
 	if !strings.Contains(got, statusUnreadable) {
@@ -135,7 +135,7 @@ func TestRunVulnByID_JSONCarriesTheUnreadableRecord(t *testing.T) {
 	if last["coordinate"] != "example.com/bravo@v2.0.0" {
 		t.Errorf("coordinate = %v, want the bare coordinate under the sibling key", last["coordinate"])
 	}
-	if last["pipeline_version"] != "v25" {
+	if last["pipeline_version"] != "v26" {
 		t.Errorf("pipeline_version = %v, want the generation beside the coordinate", last["pipeline_version"])
 	}
 	snapshot := optAs[map[string]any](t, last["database_snapshot"])
@@ -256,7 +256,7 @@ func TestRunVulnShowHistory_JSONCarriesTheUnreadableRow(t *testing.T) {
 	// The history's unreadable row is structured exactly as vuln-by-id's: both
 	// surfaces go through one projection, so neither can drift from the other.
 	last := rows[len(rows)-1]
-	if last["coordinate"] != "example.com/bravo@v2.0.0" || last["pipeline_version"] != "v25" {
+	if last["coordinate"] != "example.com/bravo@v2.0.0" || last["pipeline_version"] != "v26" {
 		t.Errorf("the history's unreadable row is not structured like its siblings: %v", last)
 	}
 }

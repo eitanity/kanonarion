@@ -484,7 +484,7 @@ frame, and the frame decides `closure_rooted`.
 an SBOM asserts what is in the build and never what is reachable in it.
 | `… has not been vuln-scanned` | non-zero | No record at any pipeline version. Walk the module, then scan that walk. |
 | `… that this build serves: it reads pipeline <v> and the store holds this coordinate at pipeline <v>` | non-zero | The module has been scanned, under scan logic this build supersedes. The message names each generation held and how many records and findings sit in it. Re-scan the coordinate. |
-| `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
+| `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned and no call-graph answer was recorded; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
 | `no reachability route … it was rooted at <coord>` | non-zero | The scan **did** run with reachability, but the module was its own root. See below. |
 | `… reachability is undetermined` | non-zero | Reachability ran but the call graph was unavailable. |
@@ -726,6 +726,32 @@ carries no `soundness_reason`. A negative names its rung and its basis, and drop
 }
 ```
 
+
+### An answer for a module govulncheck could not analyse
+
+A module whose source govulncheck could not analyse (coverage `Unscannable`) can
+still carry an answer under `vuln-scan --reachability`: kanonarion's call-graph
+search reads the module's graph, built by `kanonarion callgraph` on demand if the
+store holds none. The answer is served with the gap beside it:
+
+```json
+{
+  "reachability_state": "reachable",
+  "confidence": "High",
+  "method": "callgraph-bfs",
+  "fidelity": "BUILT_WITH_BODIES",
+  "graph_pipeline": "0.10.0",
+  "rooting": "isolated",
+  "coverage_status": "Unscannable",
+  "unscannable_reason": "source analysis unavailable: ..."
+}
+```
+
+`graph_pipeline` names the call-graph pipeline of the graph searched.
+`coverage_status` and `unscannable_reason` appear only on such a record. In text,
+a `coverage:` line under the verdict says the same. A graph below
+`BUILT_WITH_BODIES` gives an `unconfirmed` negative. A finding the search could
+not answer keeps the `… is unscannable` refusal, or names why the search failed.
 
 ### `root_selection`
 

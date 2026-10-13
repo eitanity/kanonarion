@@ -310,7 +310,7 @@ func (s *Scanner) prepareScanDir(
 		// real: the module is analysable, and treating it as permanently
 		// unscannable would leave its advisories matched by coordinate alone,
 		// with no reachability, for a condition kanonarion can lift.
-		root, skipped, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, scanDir, env), buildList)
+		root, skipped, werr := writeSynthesisedGoMod(tmpDir, coord, toolchainGoVersion(ctx, scanDir, env), buildList)
 		if len(skipped) > 0 {
 			// The require set was assembled from less than the whole module. Name
 			// the files so a later unresolved-package failure is attributable here
@@ -344,10 +344,16 @@ func (s *Scanner) prepareScanDir(
 	return scanDir, nil, nil
 }
 
-// locateGoMod finds the directory containing the first go.mod under root.
-// mirror-fetch zips carry a module@version/ prefix, so the go.mod is rarely at
-// the extract root.
+// locateGoMod finds the module root of an extracted zip — the directory named
+// "path@version", below which the zip nests everything — and reports whether it
+// holds a go.mod. A go.mod deeper down belongs to a nested module or an ignored
+// directory, which "./..." at the root never builds as this module.
 func locateGoMod(root string) (string, bool) {
+	if dir, ok := zipModuleDir(root); ok {
+		_, err := os.Stat(filepath.Join(dir, "go.mod"))
+		return dir, err == nil
+	}
+	// Not the mirror-fetch layout: take the first go.mod the walk meets.
 	scanDir := root
 	found := false
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error { //nolint:errcheck // the callback returns only nil or SkipDir
@@ -359,6 +365,23 @@ func locateGoMod(root string) (string, bool) {
 		return nil
 	})
 	return scanDir, found
+}
+
+// zipModuleDir descends through the single-directory levels of a module zip's
+// "path@version/" prefix. A module path holds no "@", so the first directory
+// whose name does is the module root.
+func zipModuleDir(root string) (string, bool) {
+	dir := root
+	for {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 1 || !entries[0].IsDir() {
+			return "", false
+		}
+		dir = filepath.Join(dir, entries[0].Name())
+		if strings.Contains(entries[0].Name(), "@") {
+			return dir, true
+		}
+	}
 }
 
 // prepareDBArg resolves the govulncheck -db argument for a snapshot. It prefers

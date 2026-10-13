@@ -586,7 +586,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// module, and a ceiling that applied only on the extract path would leave the
 	// heaviest module able to take the host by the other route.
 	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary, callgraphCeiling, callgraphNarration).
-		WithMemoryCeiling(callgraphBound.CeilingBytes)
+		WithMemoryCeiling(callgraphBound.CeilingBytes).
+		// The same store and blob source the extract stage's child is given.
+		WithExtraArgs(cgExtraArgs)
 	setAside := newSetAsideRelay(logger)
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,

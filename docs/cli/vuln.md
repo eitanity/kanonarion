@@ -345,8 +345,20 @@ expensive SSA work to the modules that actually need it.
   deadline ended it or that the record's write lost the store lock. The overall
   status (`StatusAffected`) is not changed - the uncertainty is traceable.
 - `--force` re-runs callgraph extraction even when a cached record exists.
-- Modules with `StatusClean`, `StatusUnscannable`, or findings without
-  `AffectedSymbols` never trigger a subprocess.
+- Modules with no findings, or only findings without `AffectedSymbols`, never
+  trigger a subprocess.
+
+A module govulncheck could not analyse (coverage `Unscannable`) gets the same
+step when its advisory names symbols. The call-graph search reads the module's
+graph, not the build that failed, so its findings can carry a reachability
+answer. The record stays `Unscannable`, and the answer's `derived_by` names
+`callgraph-bfs`, the graph's completeness as `fidelity` and its
+`graph_pipeline`. A graph below `BUILT_WITH_BODIES` gives an `unconfirmed`
+negative, never a confident one. With no graph and a failed extraction,
+`reachable` stays `null` and `reachability_note` says why. A record from a
+diverged project build (`project-build-diverged`) does not take this step: it
+is filed in the project's frame, and the module's own graph answers only the
+isolated question.
 
 **Reuse of an existing run**
 
@@ -896,13 +908,13 @@ holds behind each, and a notice under the report names both generations:
 
 ```
 Modules:     283
-Superseded scan records (279): the store holds these modules at pipeline v24 and this build reads pipeline v25, so none of them is served
-  cel.dev/expr@v0.25.1 (1 record(s), 0 finding(s) at pipeline v24)
+Superseded scan records (279): the store holds these modules at pipeline v25 and this build reads pipeline v26, so none of them is served
+  cel.dev/expr@v0.25.1 (1 record(s), 0 finding(s) at pipeline v25)
   ...
 
-notice: 279 of 283 module(s) this run names are recorded at pipeline v24, holding 366
-        record(s) and 57 finding(s) this build does not serve: it reads pipeline v25 and
-        the store holds them at pipeline v24. A superseded record is not served, so this
+notice: 279 of 283 module(s) this run names are recorded at pipeline v25, holding 366
+        record(s) and 57 finding(s) this build does not serve: it reads pipeline v26 and
+        the store holds them at pipeline v25. A superseded record is not served, so this
         answer is empty for want of a scan at this generation — they have been
         vuln-scanned, and this is a stale cache, not a coverage gap. Re-scanning does
         not repair this run: a run names the records it was built from, so a new scan
@@ -1034,7 +1046,7 @@ records and findings sit in it:
 
 ```
 $ kanonarion vuln-show golang.org/x/crypto@v0.31.0
-error: execute root command: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v25 and the store holds this coordinate at pipeline v24 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it — the walk that measured it most recently, of the 3 that hold it:
+error: execute root command: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v26 and the store holds this coordinate at pipeline v25 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it — the walk that measured it most recently, of the 3 that hold it:
   kanonarion vuln-scan 01M0VG1267S1XDJGDFZTVRPM84 --reachability
 ```
 
@@ -1212,7 +1224,7 @@ version bump fix it?* and *which symbol is at risk?* - directly in the output:
 | `WITHDRAWN:` | The advisory was retracted upstream on the date given, and is **not a finding against this module**. Printed ahead of the range and the fix, because it changes what the rest of the entry means |
 | `affected:` | The version range the advisory applies to (e.g. `>= v1.7.3`) |
 | `fix:` | `fixed in <version>` when a patch exists, or **`no fix available`** when none does - the no-fix state is rendered explicitly, never left blank. An advisory backported across several release branches states one fix per branch; the version named is the fix for the branch the module's own version is on, not the newest of them, so a module on a supported older branch is not pointed at a release candidate |
-| `symbols:` | The at-risk symbols named by the advisory, surfaced even for metadata-only (Unscannable) modules where reachability could not be computed |
+| `symbols:` | The at-risk symbols named by the advisory, surfaced even for metadata-only (Unscannable) modules govulncheck could not analyse |
 | `fix refs:` | The advisory's own `FIX` links - the commit or CL that remediates the vulnerability. Printed only when the advisory publishes one |
 
 **When the record was validated**
@@ -1272,7 +1284,7 @@ an older pipeline version and are replaced by a re-scan.
 $ kanonarion vuln-show github.com/gorilla/csrf@v1.7.3
 github.com/gorilla/csrf@v1.7.3 - Affected
   Walk:            01KWA68CG1PT0R1PTT1X75HFAW
-  First validated: 2026-06-29T17:19:15Z  (against this snapshot at pipeline v25, not first awareness)
+  First validated: 2026-06-29T17:19:15Z  (against this snapshot at pipeline v26, not first awareness)
                    first observation: kanonarion store ledger --event-type vuln_finding_observed --module github.com/gorilla/csrf@v1.7.3
   Last validated:  2026-06-29T17:19:15Z
   Snapshot:        vuln.go.dev@2026-06-16T23:55:18Z
@@ -1294,7 +1306,7 @@ github.com/gin-gonic/gin@v1.6.2 - Affected
 $ kanonarion vuln-show go.etcd.io/bbolt@v1.4.3
 go.etcd.io/bbolt@v1.4.3 — Withdrawn
   Walk:            01KYKDXSM74WQ9FBSN7WX0S97P
-  First validated: 2026-07-28T06:06:20Z  (against this snapshot at pipeline v25, not first awareness)
+  First validated: 2026-07-28T06:06:20Z  (against this snapshot at pipeline v26, not first awareness)
                    first observation: kanonarion store ledger --event-type vuln_finding_observed --module go.etcd.io/bbolt@v1.4.3
   Last validated:  2026-07-28T06:06:20Z
   Snapshot:        vuln.go.dev@2026-07-27T16:28:49Z
@@ -1309,16 +1321,16 @@ www.velocidex.com/golang/velociraptor@v0.76.6 - Unscannable (generated-assets-mi
   Walk:     01KV3N2T20MWT7MPJPW4YAQM2F
   Scanned:  2026-06-16T08:51:03Z
   Snapshot: vuln.go.dev@2026-06-02T21:39:47Z
-  Reason:   source analysis unavailable: missing generated or embedded assets (module requires a code-generation step not present in the module zip); results are metadata-only with no reachability
+  Reason:   source analysis unavailable: missing generated or embedded assets (module requires a code-generation step not present in the module zip); results are metadata-only; govulncheck established no reachability
 
 $ kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history
 github.com/gin-gonic/gin@v1.6.2 - 3 scan record(s)
 
-  2024-03-01T08:00:00Z  walk=01KQDBVW092ER1HNXZ60X27CMD  snap=20240301000000  frame=target-rooted  pipeline=v25                 Affected  GO-2020-0001  GO-2024-0042
+  2024-03-01T08:00:00Z  walk=01KQDBVW092ER1HNXZ60X27CMD  snap=20240301000000  frame=target-rooted  pipeline=v26                 Affected  GO-2020-0001  GO-2024-0042
   2024-02-01T08:00:00Z  walk=01KQABC123...               snap=20240201000000  frame=target-rooted  pipeline=v24 [superseded]    Affected  GO-2020-0001
   2024-01-01T08:00:00Z  walk=01KQXYZ789...               snap=20240101000000  frame=target-rooted  pipeline=v24 [superseded]    Clean     no findings
 
-notice: 2 of 3 record(s) were produced by superseded scan logic (this build reads pipeline v25).
+notice: 2 of 3 record(s) were produced by superseded scan logic (this build reads pipeline v26).
         They are the history this coordinate has, and they are not what a current scan would
         answer — the point-in-time reads serve none of them.
         Re-scan to add a current record — the walk that measured it most recently, of the 3 that
@@ -1510,7 +1522,8 @@ learned about the module:
 
 - **`Metadata-only (…)`** - the isolated scan could not analyse the source, but
   the module's advisory set was still matched by coordinate. The finding is
-  real; only reachability is absent.
+  real; govulncheck established no reachability. Under `--reachability` the
+  call graph may still answer, and the finding says so.
 - **`Not scanned (…)`** - no advisory match was performed at all. A local
   filesystem replace has no fetched source, and a project-rooted scan that could
   not start never reached any module. The two project-directory reasons are a
@@ -1582,7 +1595,7 @@ build can reproduce, and state the ones set aside:
 
 ```
 $ kanonarion vuln-show example.com/bravo@v2.0.0
-set aside vulnerability record example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01) content_hash sha256:a2546bf0…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+set aside vulnerability record example.com/bravo@v2.0.0 (pipeline v26, vuln-db v2026-01-01) content_hash sha256:a2546bf0…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
 ...the record...
 ```
 
@@ -1594,7 +1607,7 @@ document instead, as `set_aside`; the key is absent when nothing was set aside:
   {
     "kind": "vulnerability record",
     "coordinate": "example.com/bravo@v2.0.0",
-    "pipeline_version": "v25",
+    "pipeline_version": "v26",
     "database_snapshot": { "source": "govulndb", "version": "v2026-01-01" },
     "content_hash": "sha256:a2546bf0…",
     "reason": "written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade"
@@ -1632,9 +1645,9 @@ place**, exiting `0`:
 
 ```
 $ kanonarion vuln-by-id GO-2026-9001
-example.com/charlie@v3.0.0            Affected  vuln-db=v2026-01-01  scanned=2026-02-01T02:00:00Z  pipeline=v25
-example.com/alpha@v1.0.0              Affected  vuln-db=v2026-01-01  scanned=2026-02-01T00:00:00Z  pipeline=v25
-example.com/bravo@v2.0.0 (pipeline v25, vuln-db v2026-01-01) content_hash sha256:a2546bf0…  status=unreadable  written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+example.com/charlie@v3.0.0            Affected  vuln-db=v2026-01-01  scanned=2026-02-01T02:00:00Z  pipeline=v26
+example.com/alpha@v1.0.0              Affected  vuln-db=v2026-01-01  scanned=2026-02-01T00:00:00Z  pipeline=v26
+example.com/bravo@v2.0.0 (pipeline v26, vuln-db v2026-01-01) content_hash sha256:a2546bf0…  status=unreadable  written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
 ```
 
 An omitted row and a row reported as unreadable say different things about the
@@ -1649,7 +1662,7 @@ consumer filtering on status sees it and cannot mistake it for one:
 ```json
 {
   "coordinate": "example.com/bravo@v2.0.0",
-  "pipeline_version": "v25",
+  "pipeline_version": "v26",
   "database_snapshot": { "source": "govulndb", "version": "v2026-01-01" },
   "content_hash": "sha256:a2546bf0…",
   "overall_status": "unreadable",
@@ -1679,7 +1692,7 @@ aside the same way. A run has no other generation to serve in its place, so:
   `kind: "walk scan run"` and the run under `id`:
 
 ```
-set aside walk scan run 01JS0NGARD0000000000000RN1 (pipeline v25) content_hash sha256:9c1e…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
+set aside walk scan run 01JS0NGARD0000000000000RN1 (pipeline v26) content_hash sha256:9c1e…: written in a canonical shape this build cannot reproduce; its bytes hash to their own seal, so nothing was altered — read it with the build that wrote it, or upgrade
 ```
 
 - `vuln-scan` does not reuse it, and names it.
@@ -1744,10 +1757,10 @@ and all.
 
 ```
 $ kanonarion vuln-by-id GO-2020-0001
-github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z   pipeline=v25
+github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z   pipeline=v26
 github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z   pipeline=v24 [superseded]
 
-notice: 1 of 2 row(s) were produced by superseded scan logic (this build reads pipeline v25).
+notice: 1 of 2 row(s) were produced by superseded scan logic (this build reads pipeline v26).
         They are the newest evidence the store holds for those coordinates, and they are not
         what a current scan would answer. Re-scan a coordinate to replace one.
 

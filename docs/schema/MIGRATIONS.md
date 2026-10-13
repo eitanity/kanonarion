@@ -116,6 +116,33 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Vulnerability record: pipeline `v25` → `v26`
+
+**Derivation change; one additive field, hash-transparent when unset; no store
+migration.** Three changes to how a record is derived:
+
+- **A metadata-only record takes the reachability step.** Under
+  `vuln-scan --reachability`, a finding on an `Unscannable` record whose
+  advisory names symbols is searched over the module's call graph, extracted on
+  demand as for an analysed record. Coverage stays `Unscannable`. At `v25` such a
+  finding was always `not_analysed`.
+- **`reachable.derived_by.graph_pipeline`** names the call-graph pipeline of the
+  graph a `callgraph-bfs` answer was read from. It is `omitzero`, so a record
+  without it hashes as before.
+- **The isolated scan reads what `./...` reads.** The go.mod synthesised for a
+  module zip with none takes its requires only from packages `./...` matches:
+  not from `_`/`.`-prefixed or `testdata` directories, `vendor/`, nested
+  modules, or `_`/`.`-prefixed files. `github.com/klauspost/cpuid@v1.2.3` no
+  longer requires `golang.org/x/net` for its `testdata/getall.go`, nor
+  `github.com/shirou/gopsutil@v3.21.11+incompatible` `golang.org/x/tools` for
+  its `_tools/`. The binary-mode package pick skips the same directories, a
+  go.mod below the module root no longer counts as the module's own, and the
+  synthesised go.mod is written at the zip's `path@version` directory.
+
+Records are keyed by `(module, version, pipeline_version, snapshot, frame)`, so
+the bump is the migration: `v25` rows stay, are not served for a `v26` question,
+and remain readable in the ledger. Cost is one re-scan per coordinate.
+
 ## Native record: pipeline `0.3.0` → `0.4.0`
 
 **Derivation change; no record shape change, no store migration.** A source

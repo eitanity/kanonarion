@@ -611,6 +611,14 @@ type vulnReachabilityQuery struct {
 	// whether the module builds a command, so the narrow consumer surface was
 	// rooted by default. Absent otherwise.
 	RootSelection string `json:"root_selection,omitempty"`
+	// GraphPipeline is the call-graph pipeline of the graph a call-graph search
+	// ran over. Absent on an answer from any other analyser.
+	GraphPipeline string `json:"graph_pipeline,omitempty"`
+	// CoverageStatus and UnscannableReason are present only when the record's
+	// source was not analysed: the answer then comes from the call graph alone,
+	// and the gap is stated beside it. Absent on an analysed record.
+	CoverageStatus    string `json:"coverage_status,omitempty"`
+	UnscannableReason string `json:"unscannable_reason,omitempty"`
 	// Soundness states how thorough the search behind a NEGATIVE was, and
 	// SoundnessReason names the basis for that rung in the producing analyser's
 	// own terms. Both are absent on a reachable verdict: a route is its own
@@ -992,18 +1000,33 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 			"%s could not be scanned (ScanFailed)%s; reachability is unknown. %s",
 			coord, detail, remedyRescanModule(coord, rec.WalkID))
 	case vuldomain.CoverageUnscannable:
-		detail := ""
-		if rec.UnscannableReason != "" {
-			detail = ": " + rec.UnscannableReason
+		// A call-graph search can answer for a module govulncheck could not
+		// analyse; that answer, or the recorded failure of the attempt, is served
+		// with the coverage gap beside it. Anything else has no answer to give.
+		if f, ok := findFindingByID(rec.Findings, vulnID); !ok || (f.Reachable == nil && !f.ReachabilityAttemptFailed()) {
+			detail := ""
+			if rec.UnscannableReason != "" {
+				detail = ": " + rec.UnscannableReason
+			}
+			return vulnReachabilityQuery{}, fmt.Errorf(
+				"%s is unscannable%s; reachability cannot be determined. %s",
+				coord, detail, remedyShowRecord(coord))
 		}
-		return vulnReachabilityQuery{}, fmt.Errorf(
-			"%s is unscannable%s; reachability cannot be determined. %s",
-			coord, detail, remedyShowRecord(coord))
 	case vuldomain.CoverageAnalysed:
 		// Analysed: the findings below are an answer about a module that was read.
 	}
 
-	// The module was analysed, so its findings answer the question.
+	res, err := findingReachabilityAnswer(coord, rec, vulnID, classify, aside)
+	if err == nil && coverage == vuldomain.CoverageUnscannable {
+		res.CoverageStatus = string(coverage)
+		res.UnscannableReason = rec.UnscannableReason
+	}
+	return res, err
+}
+
+// findingReachabilityAnswer answers from the record's findings, once the
+// coverage axis has said they can be read.
+func findingReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, vulnID string, classify routeRootFunc, aside *isolatedAside) (vulnReachabilityQuery, error) {
 	f, ok := findFindingByID(rec.Findings, vulnID)
 	if !ok {
 		// Genuine zero: the scan ran and this CVE is not among its findings.
@@ -1091,6 +1114,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		Fidelity:          f.Reachable.DerivedBy.Fidelity,
 		Rooting:           f.Reachable.DerivedBy.Rooting.String(),
 		RootSelection:     f.Reachable.DerivedBy.RootSelection,
+		GraphPipeline:     f.Reachable.DerivedBy.GraphPipeline,
 		Soundness:         soundness,
 		SoundnessReason:   soundnessReason,
 		Routes:            routes,
@@ -1179,6 +1203,9 @@ func derivationLine(res vulnReachabilityQuery) string {
 	parts = append(parts, "by: "+res.Method)
 	if res.Fidelity != "" {
 		parts = append(parts, "fidelity: "+res.Fidelity)
+	}
+	if res.GraphPipeline != "" {
+		parts = append(parts, "call-graph pipeline: "+res.GraphPipeline)
 	}
 	if res.Rooting != "" {
 		parts = append(parts, "rooted at: "+res.Rooting)
@@ -1394,6 +1421,10 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 			res.VulnID, res.WithdrawnAt, coord, res.ScannedAt)
 	}
 	printIsolatedAside(stdout, res.IsolatedAside)
+	if res.CoverageStatus != "" {
+		_, _ = fmt.Fprintf(stdout, "  coverage: %s — govulncheck did not analyse this module's source (%s); the answer above is from kanonarion's call graph alone\n",
+			res.CoverageStatus, res.UnscannableReason)
+	}
 }
 
 func runLocalReachability(ctx context.Context, dir string, stdout, stderr io.Writer) error {
