@@ -24,6 +24,7 @@ type latestFlags struct {
 	project      bool
 	fresh        bool
 	excludeTests bool
+	noProgress   bool
 }
 
 func newLatestCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -97,6 +98,7 @@ scope emits the same object with an empty "modules".`,
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "re-query the proxy instead of serving recorded lookups from the store")
 	cmd.Flags().BoolVar(&f.excludeTests, testScopeFlagName, false, "with --gomod: resolve the dependency scope without test imports")
+	registerNoProgressFlag(cmd, &f.noProgress)
 
 	return cmd
 }
@@ -417,7 +419,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		// asked.
 		lookup = newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
 	} else {
-		lookup = newStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr), nil),
+		lookup = newStalenessResolver(commandStalenessPort(proxy, stderr, f.noProgress),
 			ledger, activeConfig.Staleness.TTL, f.fresh)
 	}
 
@@ -451,7 +453,7 @@ func runLatestFromGoMod(ctx context.Context, f latestFlags, offline bool, lookup
 		if offline {
 			return lookup
 		}
-		return newGomodStalenessResolver(newProxyLatestResolver(proxy, buildLogger(logLevel, stderr), nil),
+		return newGomodStalenessResolver(commandStalenessPort(proxy, stderr, f.noProgress),
 			ledger, activeConfig.Staleness.TTL, f.fresh, gomodPath, f.goproxy, pinnedModulesOf(coords))
 	}, stdout, stderr)
 }

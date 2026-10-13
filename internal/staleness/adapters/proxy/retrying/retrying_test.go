@@ -1,10 +1,9 @@
-package retrying_test
+package retrying
 
 import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +12,6 @@ import (
 
 	directproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
-	"github.com/eitanity/kanonarion/internal/staleness/adapters/proxy/retrying"
 	"github.com/eitanity/kanonarion/internal/staleness/ports"
 )
 
@@ -22,7 +20,7 @@ import (
 // travelling from an HTTP response to a retry decision through two error
 // wrappings. A fake resolver returning a hand-built error would pass whether or
 // not the client actually produces one.
-func resolverFor(t *testing.T, h http.Handler, opts ...retrying.Option) ports.LatestResolver {
+func resolverFor(t *testing.T, h http.Handler) ports.LatestResolver {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
@@ -30,11 +28,10 @@ func resolverFor(t *testing.T, h http.Handler, opts ...retrying.Option) ports.La
 	if err != nil {
 		t.Fatalf("building proxy client: %v", err)
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	// Zero backoff: the schedule itself is measured in backoff_test.go, and a
-	// test that waits its own real 600ms is a test people stop running.
-	opts = append([]retrying.Option{retrying.WithBaseDelay(0)}, opts...)
-	return retrying.New(staleproxy.New(proxy), logger, opts...)
+	// A fake clock: the schedule itself is pinned in backoff_test.go.
+	r := New(staleproxy.New(proxy), discardLogger())
+	withFakeClock(r, 0)
+	return r
 }
 
 // An empty 200 is the shape a loaded proxy answers with. It settles nothing, so
@@ -80,7 +77,7 @@ func TestAbsentPathIsNotRetried(t *testing.T) {
 	}
 }
 
-// A proxy that answers empty every time is not covered up: the budget is spent
+// A proxy that answers empty every time is not covered up: the window is spent
 // and the failure reported, in the words it has always used.
 func TestPersistentEmptyResponseStillFails(t *testing.T) {
 	var calls atomic.Int64
@@ -96,8 +93,8 @@ func TestPersistentEmptyResponseStillFails(t *testing.T) {
 	if want := "proxy returned an empty response for example.com/mod/v2@latest"; !strings.Contains(err.Error(), want) {
 		t.Errorf("error = %q, want it to still contain %q", err.Error(), want)
 	}
-	if got := calls.Load(); got != 4 {
-		t.Errorf("proxy asked %d times, want the 4-attempt budget", got)
+	if got := calls.Load(); got != 13 {
+		t.Errorf("proxy asked %d times, want 13 (every 20s over the 240s window)", got)
 	}
 }
 

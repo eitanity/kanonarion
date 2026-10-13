@@ -73,6 +73,7 @@ kanonarion fetch <module>@<version> [flags]
 | `--project` | `false` | Fetch the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`; refused by name alongside a positional module |
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a coordinate to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage's `allowed_vcs_hosts` selects which forges may be cross-verified |
+| `--no-progress` | `false` | Suppress the stderr lines that say the staleness lookup is being asked again; results and warnings are unaffected |
 | `--json` | `false` | Emit the fact record as JSON |
 
 A scope fetch is triggered by `--gomod`, `--tool`, or `--project`; the scope is
@@ -254,6 +255,11 @@ as a trailing clause, in `--json` as the `staleness` block:
 ```
 
 A current pin emits `{"is_latest": true}` and no text clause.
+
+A lookup the proxy has not finished (an empty body, a timeout, a 5xx) is asked
+again every 20 seconds for up to 4 minutes, and each retry says so on stderr
+(`staleness progress: retrying example.com/mod (attempt 2, 10s of 4m0s)`); a
+lookup still unanswered after that is `lookup_failed` below.
 
 The question is not always asked, and is not always answerable. `is_latest` is
 then **null** with `staleness_unmeasured` naming why, and the text line says so

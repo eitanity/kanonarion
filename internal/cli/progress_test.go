@@ -142,24 +142,28 @@ func TestNewStalenessProgressReporter_Enablement(t *testing.T) {
 			if tt.wantNil {
 				return
 			}
-			got.RetryingLookup("example.com/mod/v2", 2, 4)
-			if buf.String() != "staleness progress: retrying example.com/mod/v2 (attempt 2 of 4)\n" {
+			got.RetryingLookup("example.com/mod/v2", 2, 20*time.Second, 4*time.Minute)
+			if buf.String() != "staleness progress: retrying example.com/mod/v2 (attempt 2, 20s of 4m0s)\n" {
 				t.Errorf("retry line = %q", buf.String())
 			}
 		})
 	}
 }
 
-// The retry line is NOT throttled the way the heartbeat is. The whole retry
-// schedule is 14s — shorter than the 20s heartbeat interval — so a throttled
-// reporter would print nothing at all for the wait it exists to explain.
+// The retry and settle lines are NOT throttled the way the heartbeat is: each
+// explains a wait the user is sitting through, and a throttled reporter at the
+// 20s heartbeat interval would drop the ones that matter.
 func TestStalenessProgressReporter_EveryRetryIsReported(t *testing.T) {
 	var buf bytes.Buffer
 	r := newStderrRetryReporter(&buf)
 	for attempt := 2; attempt <= 4; attempt++ {
-		r.RetryingLookup("example.com/mod/v2", attempt, 4)
+		r.RetryingLookup("example.com/mod/v2", attempt, time.Duration(attempt)*time.Second, 4*time.Minute)
 	}
-	if got := strings.Count(buf.String(), "\n"); got != 3 {
-		t.Errorf("lines = %d, want one per retry (3): %q", got, buf.String())
+	r.SettlingLookups(19, 20*time.Second, 4*time.Minute)
+	if got := strings.Count(buf.String(), "\n"); got != 4 {
+		t.Errorf("lines = %d, want one per retry plus the settle line (4): %q", got, buf.String())
+	}
+	if want := "staleness progress: waiting on 19 module path(s) the proxy has not finished (re-asking every 20s, up to 4m0s)\n"; !strings.HasSuffix(buf.String(), want) {
+		t.Errorf("settle line missing: %q, want suffix %q", buf.String(), want)
 	}
 }

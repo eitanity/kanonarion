@@ -1,39 +1,30 @@
-// Package retrying decorates a staleness ports.LatestResolver with bounded
-// exponential-backoff retries for transient proxy failures.
+// Package retrying decorates a staleness ports.LatestResolver so a lookup the
+// proxy has not finished is asked again until it answers or its window closes.
 //
-// A single empty 200 from the module proxy used to cost a module its
-// newer-major answer for the whole run. The lookup is not written when it
-// fails — a failed lookup is not a cacheable fact — so nothing wrong is
-// recorded, but the answer is simply lost, and a sweep is exactly where one
-// short row of hundreds goes unnoticed. The condition is load-related: the same
-// path asked again moments later answers cleanly.
-//
-// The budget is what the condition costs, not a round number, and it is sized
-// against what a lost probe costs TODAY rather than against zero. The proxy is
-// slow here rather than flaky: it spends about fifty-six seconds on an origin
-// lookup it cannot finish and then answers 200 with an empty body, so a probe
-// that never answers already costs the better part of a minute. Four attempts
-// bounded at ten seconds each, spread over a backoff of at most fourteen
-// seconds, come to fifty-four — the same minute, spent on four chances instead
-// of one dead wait. The friction lands only on the failing path, and one probe
-// at a time, because the sweep is sequential. A probe that answers — including
-// the definitive absent-major 404 that is this decorator's commonest result —
-// is untouched and still costs exactly one request.
+// Asked about a cold path it must look up at the origin — typically an absent
+// major in a large multi-module repository — the proxy holds the request for
+// about a minute and then answers 200 with an empty body, or the adapter times
+// out first. The proxy keeps working after the request ends, and a later ask
+// gets the definitive answer: measured over 20 such paths, re-asked every ~25 s,
+// 18 answered 404 within 240 s of the first ask. So the schedule is a window,
+// not an attempt count: re-ask every SettleInterval until SettleWindow after the
+// first attempt. The same window governs the single-path decorator and the
+// settle pass a concurrent round runs (Settle).
 //
 // Classification lives in the fetch domain (domain.IsTransientFetchError), the
 // same positive-match classifier the module download and checksum-database
-// paths use. That is deliberate: a second classifier is how two surfaces come
-// to disagree about what "transient" means. Everything it does not recognise
-// fails on the first attempt — above all ports.ErrPathAbsent, which is the
-// probe's ordinary answer for a major that does not exist and is a definitive
-// negative, not a failure. Retrying it would make every module's last probe
-// step the slowest part of a sweep.
+// paths use. Everything it does not recognise fails on the first attempt —
+// above all ports.ErrPathAbsent, the probe's ordinary definitive answer, which
+// must keep costing exactly one request and no wait.
 package retrying
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
+	"sync"
 	"time"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -41,85 +32,68 @@ import (
 )
 
 const (
-	// defaultAttempts is the total number of tries, not the number of retries:
-	// one initial attempt plus three retries.
-	defaultAttempts = 4
-	// defaultBaseDelay is the first backoff interval; it doubles per retry.
-	//
-	// It is sized from what the condition actually is. The proxy answering an
-	// absent major path is not blipping: it is running an origin lookup it has
-	// not finished, and it holds the request for about fifty-six seconds before
-	// answering 200 with an empty body. Measured against the live proxy from
-	// this host, that work CONTINUES after the client gives up and is resumed
-	// rather than restarted by the next request — paths that never answered
-	// inside a single sixty-second request answered a definitive 404 after
-	// several short attempts spread over minutes. A retry window of a few
-	// hundred milliseconds cannot reach that; seconds can.
-	defaultBaseDelay = 2 * time.Second
-	// maxBackoff caps the doubling so a raised attempt budget saturates rather
-	// than overflowing the interval to a negative duration, which would collapse
-	// the backoff to zero and turn the retry loop into a hot spin on the proxy.
-	// The default budget (2s, 4s then 8s) stops just short of it.
-	maxBackoff = 10 * time.Second
+	// SettleInterval is the pause between asks of a path the proxy has not
+	// finished (jittered over [d/2, d]).
+	SettleInterval = 20 * time.Second
+	// SettleWindow is how long after its first ask a path is still asked again.
+	SettleWindow = 240 * time.Second
 )
 
-// Resolver wraps a ports.LatestResolver and retries transient lookup failures.
+// Resolver wraps a ports.LatestResolver and re-asks transient lookup failures.
 type Resolver struct {
-	inner     ports.LatestResolver
-	logger    *slog.Logger
-	progress  ports.ProgressReporter
-	attempts  int
-	baseDelay time.Duration
+	inner    ports.LatestResolver
+	logger   *slog.Logger
+	progress ports.ProgressReporter
+	interval time.Duration
+	window   time.Duration
 
-	// sleep and jitter are seams: tests replace them to run the backoff
-	// schedule without real waiting or randomness.
+	// now, sleep and jitter are seams: tests replace them to run the schedule
+	// without real waiting or randomness.
+	now    func() time.Time
 	sleep  func(ctx context.Context, d time.Duration) error
 	jitter func(d time.Duration) time.Duration
 }
 
-var _ ports.LatestResolver = (*Resolver)(nil)
+var (
+	_ ports.LatestResolver = (*Resolver)(nil)
+	_ ports.RoundResolver  = (*Resolver)(nil)
+)
 
 // Option configures a Resolver.
 type Option func(*Resolver)
 
-// WithAttempts sets the total number of attempts (values below 1 are ignored).
-func WithAttempts(n int) Option {
-	return func(r *Resolver) {
-		if n >= 1 {
-			r.attempts = n
-		}
-	}
-}
-
-// WithProgress sets the reporter told about each retry (nil disables it, which
-// is the default). It is separate from the logger because the two serve
-// different readers: the logger answers afterwards, from a log, and the reporter
-// answers now, on the stream the operator is watching.
+// WithProgress sets the reporter told about each retry and settle pass (nil
+// disables it, which is the default).
 func WithProgress(p ports.ProgressReporter) Option {
 	return func(r *Resolver) {
 		r.progress = p
 	}
 }
 
-// WithBaseDelay sets the first backoff interval (values below zero are ignored).
-func WithBaseDelay(d time.Duration) Option {
+// WithSchedule replaces the shared interval and window (values not above zero
+// are ignored). It exists for callers that cannot reach the test seams.
+func WithSchedule(interval, window time.Duration) Option {
 	return func(r *Resolver) {
-		if d >= 0 {
-			r.baseDelay = d
+		if interval > 0 {
+			r.interval = interval
+		}
+		if window > 0 {
+			r.window = window
 		}
 	}
 }
 
-// New wraps inner so transient lookup failures are retried with bounded
-// exponential backoff.
+// New wraps inner so transient lookup failures are re-asked on the settle
+// schedule.
 func New(inner ports.LatestResolver, logger *slog.Logger, opts ...Option) *Resolver {
 	r := &Resolver{
-		inner:     inner,
-		logger:    logger,
-		attempts:  defaultAttempts,
-		baseDelay: defaultBaseDelay,
-		sleep:     sleepCtx,
-		jitter:    fullJitter,
+		inner:    inner,
+		logger:   logger,
+		interval: SettleInterval,
+		window:   SettleWindow,
+		now:      time.Now,
+		sleep:    sleepCtx,
+		jitter:   fullJitter,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -127,113 +101,201 @@ func New(inner ports.LatestResolver, logger *slog.Logger, opts ...Option) *Resol
 	return r
 }
 
-// LatestInfo delegates to the wrapped resolver, retrying transient failures
-// until they succeed or the attempt budget is spent. The error returned after
-// the final attempt is the underlying error unchanged, so a lookup that could
-// not be made reports exactly what it reported before this decorator existed.
+// LatestInfo asks for path, re-asking a transient failure every interval until
+// it settles or the window after the first attempt closes. The error returned
+// at the deadline is the underlying error unchanged.
 //
-// Logging is levelled so each outcome is visible to the reader already watching
-// for it: a retry at DEBUG, a success that needed one at INFO — it explains a
-// sweep that took longer than its module count suggests — and an exhausted
-// budget at WARN, so a genuinely unanswerable probe is distinguishable from one
-// that was never asked twice.
-//
-// A retry is ALSO announced to the progress reporter, which reaches the stream
-// the operator is watching rather than a log they will read later. It says the
-// same thing to a different reader: the wait this decorator is about to spend is
-// the one thing the command cannot leave unstated, because a minute of silence
-// is indistinguishable from a hang. Nothing is reported on a lookup that does
-// not retry.
+// A retry is logged at DEBUG and announced to the progress reporter before its
+// wait; a success that needed one is logged at INFO and a closed window at WARN.
 func (r *Resolver) LatestInfo(ctx context.Context, path string) (ports.LatestInfo, error) {
-	var (
-		info         ports.LatestInfo
-		err          error
-		totalBackoff time.Duration
-		started      = time.Now()
-	)
-	for attempt := 1; ; attempt++ {
-		info, err = r.inner.LatestInfo(ctx, path)
-		if err == nil {
-			if attempt > 1 {
-				r.logger.InfoContext(ctx, "staleness.latest.retried",
-					slog.String("module.path", path),
-					slog.Int("attempts", attempt),
-					slog.Int64("backoff_total_ms", totalBackoff.Milliseconds()),
-				)
-			}
-			return info, nil
+	a := r.AskOnce(ctx, path)
+	for a.Unsettled {
+		delay, ok := r.nextDelay(a.FirstAsked)
+		if !ok {
+			r.exhausted(ctx, a)
+			break
 		}
-		// A definitive answer is the proxy's real answer about the path: it is
-		// returned on sight, with no retry log at all. An absent major path is
-		// the commonest error this decorator sees and it must stay free.
-		if !fetchdomain.IsTransientFetchError(err) {
-			return info, err //nolint:wrapcheck // deliberate pass-through of the wrapped resolver's error
-		}
-		if attempt >= r.attempts {
-			r.logger.WarnContext(ctx, "staleness.latest.retries_exhausted",
-				slog.String("module.path", path),
-				slog.Int("attempts", attempt),
-				slog.Int("attempts.max", r.attempts),
-				slog.Int64("backoff_total_ms", totalBackoff.Milliseconds()),
-				slog.Int64("backoff_budget_ms", r.backoffBudget().Milliseconds()),
-				slog.Int64("elapsed_ms", time.Since(started).Milliseconds()),
-				slog.String("error", err.Error()),
-			)
-			return info, err //nolint:wrapcheck // deliberate pass-through of the wrapped resolver's error
-		}
-		delay := r.jitter(r.backoffFor(attempt))
 		if r.progress != nil {
-			// The attempt NAMED is the one about to be made, and it is reported
-			// before the backoff rather than after it, so the line arrives at the
-			// start of the wait it explains.
-			r.progress.RetryingLookup(path, attempt+1, r.attempts)
+			r.progress.RetryingLookup(path, a.Attempts+1, r.now().Sub(a.FirstAsked), r.window)
 		}
-		r.logger.DebugContext(ctx, "staleness.latest.retry",
-			slog.String("module.path", path),
-			slog.Int("attempt", attempt),
-			slog.Int("attempts.max", r.attempts),
-			slog.Int64("backoff_ms", delay.Milliseconds()),
-			slog.String("error", err.Error()),
-		)
+		r.logRetry(ctx, a, delay)
 		if serr := r.sleep(ctx, delay); serr != nil {
-			// The context ended during backoff — a deliberate stop, not an
-			// exhausted budget. The lookup error that prompted the retry is what
-			// the caller asked about, so that is what comes back.
-			r.logger.DebugContext(ctx, "staleness.latest.retry.aborted",
-				slog.String("module.path", path),
-				slog.Int("attempt", attempt),
-				slog.String("reason", serr.Error()),
-			)
-			return info, stoppedRetry{err: err, stop: serr}
+			return a.Info, r.stopped(ctx, a, serr)
 		}
-		totalBackoff += delay
+		r.reask(ctx, &a)
+	}
+	return a.Info, a.Err //nolint:wrapcheck // deliberate pass-through of the wrapped resolver's error
+}
+
+// AskOnce asks for path exactly once. A transient failure comes back Unsettled
+// for Settle to re-ask; nothing here waits.
+func (r *Resolver) AskOnce(ctx context.Context, path string) ports.RoundAnswer {
+	a := ports.RoundAnswer{Path: path, FirstAsked: r.now()}
+	r.reask(ctx, &a)
+	return a
+}
+
+// Settle re-asks the unsettled answers together, at most width at a time,
+// every interval, until each settles or its window closes. Answers already
+// settled are returned unchanged. The progress reporter hears once per call.
+func (r *Resolver) Settle(ctx context.Context, pending []ports.RoundAnswer, width int) []ports.RoundAnswer {
+	out := append([]ports.RoundAnswer(nil), pending...)
+	open := unsettledIndexes(out)
+	if len(open) == 0 {
+		return out
+	}
+	if width < 1 {
+		width = 1
+	}
+	if r.progress != nil {
+		r.progress.SettlingLookups(len(open), r.interval, r.window)
+	}
+	r.logger.InfoContext(ctx, "staleness.latest.settling",
+		slog.Int("pending", len(open)),
+		slog.Int64("interval_ms", r.interval.Milliseconds()),
+		slog.Int64("window_ms", r.window.Milliseconds()),
+	)
+	started, asked := r.now(), len(open)
+	defer func() {
+		r.logger.InfoContext(ctx, "staleness.latest.settled",
+			slog.Int("pending", asked),
+			slog.Int("unanswered", countFailed(out)),
+			slog.Int64("elapsed_ms", r.now().Sub(started).Milliseconds()),
+		)
+	}()
+	closed := make(map[int]bool)
+	for len(open) > 0 {
+		delay := r.jitter(r.interval)
+		var due []int
+		for _, i := range open {
+			if r.withinWindow(out[i].FirstAsked, delay) {
+				due = append(due, i)
+				continue
+			}
+			r.exhausted(ctx, out[i])
+			closed[i] = true
+		}
+		if len(due) == 0 {
+			break
+		}
+		if serr := r.sleep(ctx, delay); serr != nil {
+			for _, i := range due {
+				out[i].Err = r.stopped(ctx, out[i], serr)
+				out[i].Unsettled = false
+			}
+			break
+		}
+		r.reaskAll(ctx, out, due, width)
+		open = slices.DeleteFunc(unsettledIndexes(out), func(i int) bool { return closed[i] })
+	}
+	return out
+}
+
+// reask makes one request for a.Path and records its outcome in a.
+func (r *Resolver) reask(ctx context.Context, a *ports.RoundAnswer) {
+	a.Attempts++
+	info, err := r.inner.LatestInfo(ctx, a.Path)
+	a.Info, a.Err = info, err
+	a.Unsettled = err != nil && fetchdomain.IsTransientFetchError(err)
+	if a.Attempts > 1 && (err == nil || errors.Is(err, ports.ErrPathAbsent)) {
+		r.logger.InfoContext(ctx, "staleness.latest.retried",
+			slog.String("module.path", a.Path),
+			slog.Int("attempts", a.Attempts),
+			slog.Bool("absent", err != nil),
+			slog.Int64("elapsed_ms", r.now().Sub(a.FirstAsked).Milliseconds()),
+		)
 	}
 }
 
-// backoffFor returns the pre-jitter interval before the given attempt's retry:
-// baseDelay doubled once per attempt already spent, saturating at maxBackoff
-// rather than overflowing.
-func (r *Resolver) backoffFor(attempt int) time.Duration {
-	d := r.baseDelay
-	for i := 1; i < attempt; i++ {
-		if d >= maxBackoff/2 {
-			return maxBackoff
-		}
-		d *= 2
+// reaskAll re-asks out[i] for every i in due, at most width at a time.
+func (r *Resolver) reaskAll(ctx context.Context, out []ports.RoundAnswer, due []int, width int) {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, width)
+	for _, i := range due {
+		r.logRetry(ctx, out[i], 0)
+		wg.Add(1)
+		go func(a *ports.RoundAnswer) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			r.reask(ctx, a)
+		}(&out[i])
 	}
-	return d
+	wg.Wait()
 }
 
-// backoffBudget returns the largest total time this resolver will spend
-// sleeping between attempts, before jitter. It is the figure the exhaustion
-// warning names, so a reader who sees a probe give up can tell how long it
-// waited against how long it was ever going to.
-func (r *Resolver) backoffBudget() time.Duration {
-	var total time.Duration
-	for attempt := 1; attempt < r.attempts; attempt++ {
-		total += r.backoffFor(attempt)
+// nextDelay draws the wait before the next ask and reports whether that ask
+// still falls inside the window opened at first.
+func (r *Resolver) nextDelay(first time.Time) (time.Duration, bool) {
+	delay := r.jitter(r.interval)
+	return delay, r.withinWindow(first, delay)
+}
+
+// withinWindow reports whether an ask made delay from now is still inside the
+// window opened at first.
+func (r *Resolver) withinWindow(first time.Time, delay time.Duration) bool {
+	return r.now().Add(delay).Sub(first) <= r.window
+}
+
+func (r *Resolver) logRetry(ctx context.Context, a ports.RoundAnswer, delay time.Duration) {
+	r.logger.DebugContext(ctx, "staleness.latest.retry",
+		slog.String("module.path", a.Path),
+		slog.Int("attempt", a.Attempts),
+		slog.Int64("backoff_ms", delay.Milliseconds()),
+		slog.Int64("elapsed_ms", r.now().Sub(a.FirstAsked).Milliseconds()),
+		slog.String("error", errString(a.Err)),
+	)
+}
+
+// exhausted logs a path whose window closed with no definitive answer.
+func (r *Resolver) exhausted(ctx context.Context, a ports.RoundAnswer) {
+	r.logger.WarnContext(ctx, "staleness.latest.retries_exhausted",
+		slog.String("module.path", a.Path),
+		slog.Int("attempts", a.Attempts),
+		slog.Int64("interval_ms", r.interval.Milliseconds()),
+		slog.Int64("window_ms", r.window.Milliseconds()),
+		slog.Int64("elapsed_ms", r.now().Sub(a.FirstAsked).Milliseconds()),
+		slog.String("error", errString(a.Err)),
+	)
+}
+
+// stopped wraps the error that prompted a retry the context cut short: a
+// deliberate stop, not a closed window.
+func (r *Resolver) stopped(ctx context.Context, a ports.RoundAnswer, serr error) error {
+	r.logger.DebugContext(ctx, "staleness.latest.retry.aborted",
+		slog.String("module.path", a.Path),
+		slog.Int("attempt", a.Attempts),
+		slog.String("reason", serr.Error()),
+	)
+	return stoppedRetry{err: a.Err, stop: serr}
+}
+
+func unsettledIndexes(as []ports.RoundAnswer) []int {
+	var idx []int
+	for i := range as {
+		if as[i].Unsettled {
+			idx = append(idx, i)
+		}
 	}
-	return total
+	return idx
+}
+
+// countFailed counts answers that ended without a definitive result.
+func countFailed(as []ports.RoundAnswer) int {
+	n := 0
+	for _, a := range as {
+		if a.Err != nil && (a.Unsettled || errors.As(a.Err, new(stoppedRetry))) {
+			n++
+		}
+	}
+	return n
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // fullJitter spreads a backoff interval over [d/2, d] so a sweep hitting an

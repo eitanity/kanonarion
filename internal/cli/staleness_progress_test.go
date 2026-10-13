@@ -30,7 +30,7 @@ func TestStalenessRetry_NarratesAndIsSilencedByNoProgress(t *testing.T) {
 	}{
 		{
 			name: "narrated",
-			want: "staleness progress: retrying example.com/mod (attempt 2 of 4)\n",
+			want: "staleness progress: retrying example.com/mod (attempt 2, 0s of 1m0s)\n",
 		},
 		{
 			name:       "--no-progress",
@@ -55,6 +55,7 @@ func TestStalenessRetry_NarratesAndIsSilencedByNoProgress(t *testing.T) {
 			}
 			var stderr strings.Builder
 			progress := newStalenessProgressReporter(&stderr, tc.noProgress, on, "warn")
+			shortenStalenessSchedule(t)
 			latest := newProxyLatestResolver(proxy, discardLogger(), progress)
 
 			info, err := latest.LatestInfo(context.Background(), "example.com/mod")

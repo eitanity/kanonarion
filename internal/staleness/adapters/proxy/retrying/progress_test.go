@@ -3,8 +3,6 @@ package retrying
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -18,55 +16,43 @@ type recordingProgress struct {
 	lines []string
 }
 
-func (p *recordingProgress) RetryingLookup(path string, attempt, maxAttempts int) {
+func (p *recordingProgress) RetryingLookup(path string, attempt int, elapsed, window time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.lines = append(p.lines, fmt.Sprintf("%s %d/%d", path, attempt, maxAttempts))
+	p.lines = append(p.lines, fmt.Sprintf("%s %d %v/%v", path, attempt, elapsed, window))
 }
 
-// A retry is announced as it happens, naming the module, the attempt about to
-// be made and the budget it is bounded by.
-//
-// The failure is a FAKE transient one. A real one is a loaded proxy answering
-// an empty 200, which cannot be summoned on demand and which a test that waits
-// for it turns into a flake.
+func (p *recordingProgress) SettlingLookups(pending int, interval, window time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lines = append(p.lines, fmt.Sprintf("settling %d every %v for %v", pending, interval, window))
+}
+
+func (p *recordingProgress) got() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.lines...)
+}
+
+// A retry is announced before its wait, naming the module, the attempt about to
+// be made, the time spent so far and the window.
 func TestRetryIsReportedToProgress(t *testing.T) {
-	inner := &failingResolver{}
 	prog := &recordingProgress{}
-	r := New(inner, slog.New(slog.NewTextHandler(io.Discard, nil)), WithProgress(prog))
-	var waited []time.Duration
-	r.sleep = func(_ context.Context, d time.Duration) error {
-		waited = append(waited, d)
-		return nil
-	}
-	r.jitter = func(d time.Duration) time.Duration { return d }
+	r := New(nil, discardLogger(), WithProgress(prog))
+	clk := withFakeClock(r, 0)
+	inner := newScripted(clk)
+	inner.transient["example.com/mod/v2"] = 2
+	r.inner = inner
 
-	if _, err := r.LatestInfo(context.Background(), "example.com/mod/v2"); err == nil {
-		t.Fatal("a persistently empty proxy answered successfully")
+	if _, err := r.LatestInfo(context.Background(), "example.com/mod/v2"); err != nil {
+		t.Fatalf("LatestInfo: %v", err)
 	}
-
 	want := []string{
-		"example.com/mod/v2 2/4",
-		"example.com/mod/v2 3/4",
-		"example.com/mod/v2 4/4",
+		"example.com/mod/v2 2 0s/4m0s",
+		"example.com/mod/v2 3 20s/4m0s",
 	}
-	if len(prog.lines) != len(want) {
-		t.Fatalf("reported %v, want %v", prog.lines, want)
-	}
-	for i, line := range prog.lines {
-		if line != want[i] {
-			t.Errorf("report %d = %q, want %q", i+1, line, want[i])
-		}
-	}
-
-	// The control on the budget: attaching a reporter changes the narration and
-	// nothing else. Same four attempts, same 2s/4s/8s schedule as
-	// TestBackoffScheduleIsBoundedAndStated pins without one.
-	if inner.calls != 4 {
-		t.Errorf("attempts = %d, want 4", inner.calls)
-	}
-	if got := fmt.Sprint(waited); got != fmt.Sprint([]time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}) {
-		t.Errorf("waits = %v, want 2s 4s 8s", waited)
+	if got := prog.got(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("reported %v, want %v", got, want)
 	}
 }
 
@@ -78,10 +64,8 @@ func (f *answeringResolver) LatestInfo(context.Context, string) (ports.LatestInf
 	return ports.LatestInfo{Version: "v2.1.0"}, nil
 }
 
-// The control that matters most: a lookup that does not retry says nothing at
-// all. Both an answer and a definitive absence go through the decorator
-// silently, so a run with nothing slow in it narrates exactly what it narrated
-// before this port existed.
+// A lookup that does not retry says nothing at all: an answer and a definitive
+// absence both pass through silently.
 func TestNoRetryReportsNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -92,14 +76,14 @@ func TestNoRetryReportsNothing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := &recordingProgress{}
-			r := New(tc.inner, slog.New(slog.NewTextHandler(io.Discard, nil)), WithProgress(prog))
+			r := New(tc.inner, discardLogger(), WithProgress(prog))
 			r.sleep = func(context.Context, time.Duration) error {
 				t.Error("backoff slept on a lookup that should not retry")
 				return nil
 			}
 			_, _ = r.LatestInfo(context.Background(), "example.com/mod/v2") //nolint:errcheck // one case answers and one is a negative; the subject is the progress
-			if len(prog.lines) != 0 {
-				t.Errorf("reported %v, want nothing", prog.lines)
+			if got := prog.got(); len(got) != 0 {
+				t.Errorf("reported %v, want nothing", got)
 			}
 		})
 	}

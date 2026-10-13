@@ -280,7 +280,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `version` | string (read-only) | `"1"` |
 | `preferences.json` | bool | `true` |
 | `preferences.log_level` | string | `debug` / `info` / `warn` / `error` |
-| `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect`/`audit`/`sbom` runs, and the traversal lines a `callers`/`callees` `--transitive` walk writes; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
+| `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect`/`audit`/`sbom` runs, the traversal lines a `callers`/`callees` `--transitive` walk writes, and the staleness re-ask lines on `latest`, `fetch` and `audit`; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
 | `license_policy.categories.<name>` | sequence | `[MIT, Apache-2.0]` |
 | `license_policy.rules` | sequence (read-only) | - |
 | `license_policy.rules[].unknown_license` | string (read-only, edit the file) | `allow` / `notify` / `warn` / `block` - see below |
@@ -289,7 +289,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `callgraph.exclude` | sequence | `[github.com/foo/bar]` |
 | `callgraph.toolchain` | string | `go1.26.6` - the toolchain a read prefers when one coordinate holds graphs built by two of them. It only breaks that tie: a coordinate naming one toolchain, or none, is served exactly as it is with this unset. An explicit `--toolchain` wins over it. See [`callgraph`](callgraph.md#naming-a-toolchain-on-a-query) |
 | `staleness.ttl` | duration | `1h` |
-| `staleness.probe_concurrency` | int | `16` - newer-major probe requests in flight at once. Wider is not simply faster: past the default the proxy answers `200` with an empty body, which is a lost answer rather than an error. `0` is serial. |
+| `staleness.probe_concurrency` | int | `16` - newer-major probe requests in flight at once. A probe the proxy has not finished is re-asked after each round, whatever the width. `0` is serial. |
 | `fetch_policy.allowed_vcs_hosts` | sequence | `[github.com, git.example.org]` - absent leaves the built-in host set advisory; naming it switches to enforcing |
 
 The unified governance blocks (`directive_policy`, `godebug_policy`,

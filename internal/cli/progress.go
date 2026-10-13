@@ -97,9 +97,8 @@ func newExtractProgressReporter(stderr io.Writer, noProgress bool, cfg configdom
 }
 
 // newStalenessProgressReporter mirrors the two above for the staleness probe,
-// which is silent for as long as it waits: one module whose proxy lookup keeps
-// failing transiently spends the better part of a minute inside a command the
-// guide describes as taking about a second.
+// which is silent for as long as it waits: a lookup the proxy has not finished
+// is re-asked for up to four minutes.
 //
 // It is gated identically — --no-progress, the config preference, and a log
 // level that already streams the decorator's own retry lines — so the same
@@ -119,12 +118,9 @@ func newStalenessProgressReporter(stderr io.Writer, noProgress bool, cfg configd
 // production). It is safe for concurrent use: the newer-major probe resolves in
 // bounded parallel rounds.
 //
-// It is deliberately NOT throttled like the heartbeat above. The heartbeat
-// throttles a per-module firehose down to proof of life; a retry is the
-// opposite — rare, at most three per module, and each one explains a wait the
-// user is already sitting through. At the 20s heartbeat interval the whole
-// 14-second retry schedule would elapse without printing anything, which is the
-// silence this exists to end.
+// It is deliberately NOT throttled like the heartbeat above: a retry line is
+// rare and each one explains a wait the user is already sitting through, and a
+// settle pass reports once for all the paths it waits on.
 type stderrRetryReporter struct {
 	w io.Writer
 
@@ -135,11 +131,21 @@ func newStderrRetryReporter(w io.Writer) *stderrRetryReporter {
 	return &stderrRetryReporter{w: w}
 }
 
-// RetryingLookup names the module, the attempt about to be made and the budget.
-func (p *stderrRetryReporter) RetryingLookup(path string, attempt, maxAttempts int) {
+// RetryingLookup names the module, the attempt about to be made, the time
+// spent so far and the window it is bounded by.
+func (p *stderrRetryReporter) RetryingLookup(path string, attempt int, elapsed, window time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, _ = fmt.Fprintf(p.w, "staleness progress: retrying %s (attempt %d of %d)\n", path, attempt, maxAttempts)
+	_, _ = fmt.Fprintf(p.w, "staleness progress: retrying %s (attempt %d, %s of %s)\n",
+		path, attempt, elapsed.Round(time.Second), window)
+}
+
+// SettlingLookups names how many paths a settle pass is waiting on and for how long.
+func (p *stderrRetryReporter) SettlingLookups(pending int, interval, window time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, _ = fmt.Fprintf(p.w, "staleness progress: waiting on %d module path(s) the proxy has not finished (re-asking every %s, up to %s)\n",
+		pending, interval, window)
 }
 
 // stderrProgressReporter writes a single throttled progress line to an output

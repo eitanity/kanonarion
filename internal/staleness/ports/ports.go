@@ -50,6 +50,32 @@ type LatestResolver interface {
 	LatestInfo(ctx context.Context, path string) (LatestInfo, error)
 }
 
+// RoundAnswer is one path's answer from a concurrent probe round.
+type RoundAnswer struct {
+	Path string
+	Info LatestInfo
+	Err  error
+	// Unsettled reports that Err is the proxy not having finished its origin
+	// lookup yet (a transient failure), so the path is worth asking again.
+	Unsettled bool
+	// FirstAsked is when the path was first asked; the settle window runs from it.
+	FirstAsked time.Time
+	// Attempts counts the requests made for this path so far.
+	Attempts int
+}
+
+// RoundResolver is a LatestResolver that can answer a concurrent round without
+// waiting inside it: each path is asked once, and the unsettled ones are re-asked
+// together after the round, so a slow path never holds a pool slot.
+type RoundResolver interface {
+	LatestResolver
+	// AskOnce asks for path exactly once and never waits.
+	AskOnce(ctx context.Context, path string) RoundAnswer
+	// Settle re-asks the unsettled answers, at most width at a time, until each
+	// settles or its window closes, and returns one answer per input.
+	Settle(ctx context.Context, pending []RoundAnswer, width int) []RoundAnswer
+}
+
 // BatchLatest is one module's answer from a batched resolution: the same
 // same-major latest a LatestResolver returns, plus the module's own deprecation
 // notice, which the batch source reports at no extra cost and a per-path
@@ -131,27 +157,26 @@ type Clock interface {
 
 // ProgressReporter receives staleness lookup progress so a long, otherwise
 // silent probe can show proof of life. A probe that has to wait out a transient
-// proxy failure spends most of a minute on one module, and a command documented
-// as taking about a second cannot leave that unsaid: a user has no way to tell a
+// proxy failure can wait up to four minutes, and a user has no way to tell a
 // slow probe from a hang.
 //
 // It deliberately does NOT report a running count the way the walk and extract
-// reporters do. A retry is not "N of M done" — the reader's question is which
-// module is being waited on, how many chances it has had and how many it gets —
-// so the method carries those three and no denominator over the module set,
-// which the resolver does not know here anyway.
+// reporters do: the reader's question is what is being waited on and for how
+// long, not "N of M done".
 //
 // Implementations decide whether and how to surface the signal (e.g. a line on
 // stderr); a nil reporter disables reporting entirely, which is what every
 // caller that narrates nothing passes.
 //
-// RetryingLookup may be called concurrently: the newer-major probe asks in
+// Both methods may be called concurrently: the newer-major probe asks in
 // bounded parallel rounds, so implementations must be safe for that.
 type ProgressReporter interface {
 	// RetryingLookup reports that path's latest lookup failed transiently and
 	// will be tried again. attempt is the attempt about to be made, counting the
-	// first one, and maxAttempts is the budget it is bounded by — so the last
-	// line a give-up emits reads as the last attempt of the budget rather than
-	// stopping mid-count.
-	RetryingLookup(path string, attempt, maxAttempts int)
+	// first one; elapsed is the time since the first attempt and window the time
+	// after which no further attempt is made.
+	RetryingLookup(path string, attempt int, elapsed, window time.Duration)
+	// SettlingLookups reports, once per settle pass, that pending paths the
+	// proxy has not finished are being re-asked every interval for up to window.
+	SettlingLookups(pending int, interval, window time.Duration)
 }

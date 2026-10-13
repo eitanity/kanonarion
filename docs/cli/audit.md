@@ -397,15 +397,18 @@ it used (`latest as of ...`, dated by its oldest row) so a served answer is
 never mistaken for a live one, and a **failed** lookup is never recorded. Under
 `--json` that footer is the `staleness` key, dated by the same lookup.
 
-A lookup that fails transiently (a loaded proxy answering an empty body, a
-timeout, a 5xx) is retried, and each retry is narrated on stderr:
+A lookup the proxy has not finished (an empty body, a timeout, a 5xx) is asked
+again every 20 seconds for up to 4 minutes from its first ask. The newer-major
+probes run in rounds; a round does not wait on such a path, and after it the
+unanswered paths are asked again together. stderr says so once per round that
+needs it, and once per retry for a single lookup:
 
 ```text
-staleness progress: retrying example.com/mod/v2 (attempt 2 of 4)
+staleness progress: waiting on 19 module path(s) the proxy has not finished (re-asking every 20s, up to 4m0s)
+staleness progress: retrying example.com/mod/v2 (attempt 2, 0s of 4m0s)
 ```
 
-One line per retry, naming the module, the attempt and the budget - so a probe
-that spends most of a minute waiting is distinguishable from a hang. A run where
+So a wait of up to 4 minutes is distinguishable from a hang. A run where
 nothing retries prints none of these lines. `--no-progress` silences them, as
 does `preferences.progress: false` in the config; at `--log-level info` or
 `debug` they are omitted because the log already streams each retry. A
@@ -417,8 +420,8 @@ the module **path**. `newer_major_module` names the newest major-suffixed path
 above the pinned major - a dependency pinned a whole major line behind is at the
 latest version of its own path and is still behind. `major_probed` separates
 "probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
-whose request failed); an answered row whose probe was not is noted as `newer
-major: not probed`.
+the proxy did not answer within the 4-minute window); an answered row whose
+probe was not is noted as `newer major: not probed`.
 
 `republished_module` is a third fact and only a `+incompatible` pin can have one:
 the pinned major's own `/vN` publication. The major **number** is unchanged
