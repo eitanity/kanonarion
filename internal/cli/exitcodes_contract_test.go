@@ -86,7 +86,7 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 				&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, emptyWalks(), &bytes.Buffer{}, io.Discard)
 		}},
 		{"walk-list --walk-id", ExitNotFound, func(t *testing.T) error {
-			return runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
+			return runWalkList(context.Background(), "", "", "", "", buildTargetFlags{}, missingWalk, 0, 0, false, false,
 				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
 		}},
 		// --latest-success names one record too — the most recent succeeded
@@ -95,7 +95,7 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		// the record it selects is not there, which is the same class as every
 		// other selector above.
 		{"walk-list --latest-success", ExitNotFound, func(t *testing.T) error {
-			return runWalkList(context.Background(), "", "", "succeeded", "", "", 1, 0, false, true,
+			return runWalkList(context.Background(), "", "", "succeeded", "", buildTargetFlags{}, "", 1, 0, false, true,
 				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
 		}},
 		{"directives show", ExitNotFound, func(t *testing.T) error {
@@ -155,7 +155,7 @@ func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
 		"walk-show": runWalkShow(context.Background(), missingWalk, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, io.Discard),
 		"walk-diff": runWalkDiff(context.Background(), missingWalk, missingWalk,
 			&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, io.Discard),
-		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
+		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", buildTargetFlags{}, missingWalk, 0, 0, false, false,
 			testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, &bytes.Buffer{}),
 		"verification-coverage": runVerificationCoverage(context.Background(), missingWalk,
 			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, false, &bytes.Buffer{}, io.Discard),

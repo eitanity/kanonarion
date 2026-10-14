@@ -339,8 +339,8 @@ kanonarion license-compat github.com/spf13/cobra@v1.8.1
 github.com/spf13/cobra@v1.8.1: closure is compatible with Apache-2.0 (data v1.1.0, walk 01KZWK6GHN7CK9Y54YTHMTNRKJ, frame not-platform-scoped)
 ```
 
-Without `--target`, kanonarion compares the closure against the module's own
-licence. Pass `--target <SPDX id>` to compare it against the licence you ship
+Without `--target-license`, kanonarion compares the closure against the module's own
+licence. Pass `--target-license <SPDX id>` to compare it against the licence you ship
 under.
 
 **What does the vulnerability record say?**
@@ -596,7 +596,7 @@ Exit codes you must branch on:
                       walk exists but the root has no licence record. These are
                       different problems. The diagnostic says which one it is and
                       names the command that fixes it: `kanonarion walk <coord>`
-                      for the first, `--target <SPDX>` or an `--analyse-root`
+                      for the first, `--target-license <SPDX>` or an `--analyse-root`
                       walk plus `extract` for the second.
                    20 bad invocation
 

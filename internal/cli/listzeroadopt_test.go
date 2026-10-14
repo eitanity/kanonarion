@@ -321,7 +321,7 @@ func TestRunWalkList_ZeroNamesItsScope(t *testing.T) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runWalkList(context.Background(), "", "", status, "", "", 20, offset, false, false,
+			if err := runWalkList(context.Background(), "", "", status, "", buildTargetFlags{}, "", 20, offset, false, false,
 				uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runWalkList: %v", err)
 			}
@@ -608,7 +608,7 @@ func emptyListingSurfaces(t *testing.T) []listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runWalkList(context.Background(), "", "", "", "", "", limit, offset, false, false,
+			if err := runWalkList(context.Background(), "", "", "", "", buildTargetFlags{}, "", limit, offset, false, false,
 				testfakes.NewFakeQueryWalks(), &stdout, &stderr); err != nil {
 				t.Fatalf("runWalkList: %v", err)
 			}
@@ -685,7 +685,7 @@ func TestListings_OffsetOverAnEmptyStoreIsNotPagedPast(t *testing.T) {
 func TestRunWalkList_EveryAppliedFilterIsNamed(t *testing.T) {
 	withJSON(t, false)
 	var stdout, stderr bytes.Buffer
-	if err := runWalkList(context.Background(), "example.com/absent@v9.9.9", "", "cancelled", "tool", "",
+	if err := runWalkList(context.Background(), "example.com/absent@v9.9.9", "", "cancelled", "tool", buildTargetFlags{}, "",
 		20, 0, false, false, populatedWalkList(t), &stdout, &stderr); err != nil {
 		t.Fatalf("runWalkList: %v", err)
 	}
@@ -860,7 +860,7 @@ func walkSelectorMissText(t *testing.T, uc QueryWalksUseCase, walkID string, lat
 	if latestSuccess {
 		status = "succeeded"
 	}
-	err := runWalkList(context.Background(), "", "", status, "", walkID, limit, 0, false, latestSuccess,
+	err := runWalkList(context.Background(), "", "", status, "", buildTargetFlags{}, walkID, limit, 0, false, latestSuccess,
 		uc, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("a selector that matched nothing returned a nil error")
@@ -1104,7 +1104,7 @@ func TestRunWalkList_FoundSelectorsCarryNoNoticeAndNoSurveyRead(t *testing.T) {
 		withJSON(t, false)
 		uc := fixture(t)
 		var stdout, stderr bytes.Buffer
-		if err := runWalkList(context.Background(), "", "", "", "", "walk-0", 20, 0, false, false,
+		if err := runWalkList(context.Background(), "", "", "", "", buildTargetFlags{}, "walk-0", 20, 0, false, false,
 			uc, &stdout, &stderr); err != nil {
 			t.Fatalf("runWalkList: %v", err)
 		}
@@ -1120,7 +1120,7 @@ func TestRunWalkList_FoundSelectorsCarryNoNoticeAndNoSurveyRead(t *testing.T) {
 		withJSON(t, false)
 		uc := fixture(t)
 		var stdout, stderr bytes.Buffer
-		if err := runWalkList(context.Background(), "", "", "succeeded", "", "", 1, 0, false, true,
+		if err := runWalkList(context.Background(), "", "", "succeeded", "", buildTargetFlags{}, "", 1, 0, false, true,
 			uc, &stdout, &stderr); err != nil {
 			t.Fatalf("runWalkList: %v", err)
 		}

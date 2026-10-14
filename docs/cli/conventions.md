@@ -118,6 +118,14 @@ toolchain is not declarable: it comes from the project's own directory, because
 only the go command knows how the `toolchain` directive and any `GOTOOLCHAIN`
 switch settled.
 
+`--target` means the build target on every command that shows it. Two commands
+used it for something else and now spell those flags differently: `walk-list
+--module <module>@<version>` filters by the module a walk is rooted at (with
+`--goos`/`--goarch` filtering by the recorded platform), and `license-compat
+--target-license <SPDX id>` names the licence you distribute under. On those two
+commands `--target` is a deprecated spelling of the new flag: it warns on stderr
+and is refused when given together with it.
+
 **Commands that run analysis over a walk** select the walk resolved for the
 declared target — and for the current toolchain — not the newest one. This
 covers `vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan

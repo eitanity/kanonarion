@@ -109,14 +109,27 @@ The aggregate is still written to stderr on both paths, in the same words.
 List stored walk records, most recent first.
 
 ```
-kanonarion walk-list [--scope code|tool|complete] [--json]
+kanonarion walk-list [--module <module>@<version>] [--goos <os> --goarch <arch>] [--scope code|tool|complete] [--json]
 ```
+
+Each text row names the walk, its root module, start time, status, scope and
+recorded platform, which is what `--goos`/`--goarch` match:
+
+```
+01M4VFZT1GA721ZWJNE823C139  example.com/mod@local  2026-10-13T20:41:43Z  succeeded  scope=code  platform=linux/amd64  depth=full  nodes=4 failures=0
+```
+
+A walk rooted at a published `module@version` resolves no platform and prints
+`platform=not-platform-scoped`; a project walk that recorded none prints
+`platform=unrecorded`. Neither is matched by `--goos`/`--goarch`. `--walk-id` and
+`--latest-success` print the same row.
 
 **Flags:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--target` | _(all)_ | Filter by target `module@version` |
+| `--module` | _(all)_ | Filter by the `module@version` the walk is rooted at |
+| `--goos`, `--goarch` | _(all)_ | Filter by the recorded platform. Pass both; the pair is validated as `walk --goos/--goarch` validates it. Walks that recorded no platform never match |
 | `--since` | _(none)_ | Filter by start time (RFC3339) |
 | `--status` | _(all)_ | Filter by overall status (`succeeded`, `partial`, `failed`, or `cancelled`) |
 | `--scope` | _(all)_ | Filter by walk scope (`code`, `tool`, or `complete`) |
@@ -124,11 +137,16 @@ kanonarion walk-list [--scope code|tool|complete] [--json]
 | `--limit` | `20` | Maximum number of results to return (`0` = unlimited) |
 | `--offset` | `0` | Skip this many results before listing |
 
+`--target` is the deprecated spelling of `--module`: it still works, warns on
+stderr, and is refused when given together with `--module`. A GOOS/GOARCH pair
+given to either is refused, naming `--goos`/`--goarch`.
+
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
 Under `--json` the command answers with one object carrying `records` and the
-paging state, not a bare array, and writes nothing to stderr — see [Listing
+paging state, not a bare array, and writes nothing to stderr beyond a
+deprecation warning — see [Listing
 documents](conventions.md#listing-documents).
 A listing that comes back empty says which of its three causes emptied it, per
 [Zero-result listings](conventions.md#zero-result-listings).
@@ -136,6 +154,11 @@ A listing that comes back empty says which of its three causes emptied it, per
 `--walk-id` and `--latest-success` select a single record rather than listing, so
 a miss on either exits `4` and the message names how many walk records were
 searched and the invocation that lists them.
+
+`--walk-id` names one walk, so it is refused (exit `20`) beside any row filter
+— `--module`, `--goos`, `--goarch`, `--since`, `--status`, `--scope`, `--tool`,
+`--latest` or `--latest-success` — rather than ignoring it. `--limit`, `--offset`
+and `--json` still apply.
 
 | `--walk-id` | _(none)_ | Fetch a single walk summary by ID |
 | `--latest` | `false` | Return only the latest unique `(target, scope, platform, toolchain)` combination. Two walks of one project that differ on any of those axes are two candidates, not one winner by clock: another platform selects other files, and another toolchain records a different standard library |
@@ -391,7 +414,7 @@ kanonarion walk --gomod ./go.mod --analyse-root
 | Root resolution source | Promoted from `local_main_module` to `local_analysed`; the root carries a real `fetch_record` built from the working tree (verification status `LocalSource`) |
 | Extraction | All four stages (license, interface, callgraph, example) run on the project's own packages |
 | Root licence record | Marked `role: root_declaration` - the licence the project itself declares outbound (grant + asserted copyright), not an inbound obligation. A proprietary root resolving to `Unclassified` plus copyright statements is a correct outcome, not a failure |
-| `license-compat` | Adopts the analysed root licence as the implicit `--target` when the flag is omitted |
+| `license-compat` | Adopts the analysed root licence as the implicit `--target-license` when the flag is omitted |
 | `notice` / `sbom` | Carry the root's own licence and copyright (SBOM `metadata.component` gains `licenses` and `copyright`) |
 | Freshness | The working tree is re-read and re-analysed on every run; no cached record is ever served for the `local` coordinate, so an edit is always reflected in the next run. A re-analysis that comes back stating what the ledger already states appends no generation, so repeated runs over an unchanged tree do not grow the store |
 | Source locality | The tree is zipped into the local store only; nothing leaves the machine |

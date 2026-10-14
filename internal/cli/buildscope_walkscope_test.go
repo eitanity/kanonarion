@@ -267,7 +267,7 @@ func TestExplainWalkRecordAbsence_NamesTheScopeAndTheOtherScopes(t *testing.T) {
 	if !strings.Contains(msg, "(code scope)") {
 		t.Errorf("refusal does not name the scope of the walk it read: %q", msg)
 	}
-	if !strings.Contains(msg, "walk-list --target "+code.Target.String()) {
+	if !strings.Contains(msg, "walk-list --module "+code.Target.String()) {
 		t.Errorf("refusal does not point at the other scopes' walks: %q", msg)
 	}
 }

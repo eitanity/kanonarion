@@ -251,7 +251,7 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "walk-list",
 			run: func(stdout, stderr io.Writer) error {
-				return runWalkList(context.Background(), "", "", "", "", "", 20, 0, false, false,
+				return runWalkList(context.Background(), "", "", "", "", buildTargetFlags{}, "", 20, 0, false, false,
 					testfakes.NewFakeQueryWalks(), stdout, stderr)
 			},
 			want: []string{"the store holds no walk record at all",

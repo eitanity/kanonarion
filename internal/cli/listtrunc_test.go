@@ -276,7 +276,7 @@ func walkSurface(t *testing.T) listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runWalkList(context.Background(), "", "", "", "", "", limit, offset, false, false,
+			if err := runWalkList(context.Background(), "", "", "", "", buildTargetFlags{}, "", limit, offset, false, false,
 				uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runWalkList: %v", err)
 			}
@@ -642,9 +642,9 @@ showing first 3 scan runs — more exist (--limit 0 for all, --offset 3 for the 
 			firstRecord: `{"id":"run-0","walk_id":"walk-0","status":"AllClean","completed_at":"2026-01-01T00:00:00Z"}`,
 		},
 		"walk-list": {
-			text: `walk-0  example.com/mod0@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
-walk-1  example.com/mod1@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
-walk-2  example.com/mod2@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
+			text: `walk-0  example.com/mod0@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  platform=not-platform-scoped  depth=full  nodes=2 failures=0
+walk-1  example.com/mod1@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  platform=not-platform-scoped  depth=full  nodes=2 failures=0
+walk-2  example.com/mod2@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  platform=not-platform-scoped  depth=full  nodes=2 failures=0
 showing first 3 walk records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
 			firstRecord: `{"id":"walk-0","target":"example.com/mod0@v1.0.0","scope":"code","depth":"full","started_at":"2026-01-01T00:00:00Z","overall_status":"succeeded","node_count":2,"failure_count":0}`,
