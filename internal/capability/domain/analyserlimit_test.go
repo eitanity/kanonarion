@@ -16,7 +16,7 @@ func TestAnalyseAnalyserLimitIsCaveatedWithTheReason(t *testing.T) {
 		OverallStatus: cgdomain.CallGraphStatusPartial,
 		FailureDetail: "main.go:1:1: package requires newer Go version go1.27 (application built with go1.26)",
 	}
-	got := Analyse(rec, nil).Caveat
+	got := Analyse(rec, nil, cgdomain.RootScopeProduction).Caveat
 	for _, want := range []string{"built with go1.26 and the code requires go1.27", "lower bound", "kanonarion built with go1.27 or newer"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("caveat lacks %q: %s", want, got)

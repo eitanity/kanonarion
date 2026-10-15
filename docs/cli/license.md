@@ -22,6 +22,9 @@ The module must have been fetched first:
 kanonarion fetch github.com/spf13/cobra@v1.8.1
 ```
 
+An unfetched module exits `4`, and the message names the `kanonarion fetch` that
+supplies it.
+
 The one exception is the Go standard library, which is never fetched — see
 [Standard library](#standard-library-stdlibvtoolchain).
 

@@ -493,7 +493,7 @@ func TestExitCodeContract_SupersededMessageIsUnchanged(t *testing.T) {
 		`this build serves pipeline ` + cgapp.PipelineVersion + ` and the store holds v1.0.0 at pipeline 0.4.1. ` +
 		`A superseded record is not served, so this answer is empty for want of a measurement ` +
 		`of this module, not because the code holds nothing. Re-analyse it:` + "\n" +
-		`  kanonarion callgraph example.com/app@v1.0.0`
+		`  kanonarion fetch example.com/app@v1.0.0 && kanonarion callgraph example.com/app@v1.0.0`
 
 	err := runCallers(context.Background(), "example.com/app.Root", false,
 		supersededStore(t), &bytes.Buffer{}, buildScope{}, cgports.EdgeQueryOptions{})

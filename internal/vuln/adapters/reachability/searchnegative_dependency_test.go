@@ -272,7 +272,7 @@ func TestSearchNegative_DependencyJoinNamesWhatIsMissing(t *testing.T) {
 		},
 		"the dependency": {
 			graphs: map[string]ports.CallGraphProjection{projectCoord: projectGraph("parse", "", "ParseAcceptLanguage", linkedClosure)},
-			want:   []string{"(the dependency this record is about); extract it with: kanonarion callgraph " + depModule + "@" + depVersion},
+			want:   []string{"(the dependency this record is about); extract it with: kanonarion fetch " + depModule + "@" + depVersion + " && kanonarion callgraph " + depModule + "@" + depVersion},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

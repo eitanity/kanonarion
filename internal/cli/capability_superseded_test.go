@@ -53,7 +53,7 @@ func TestRunCapability_SupersededRecordIsDiagnosedNotDenied(t *testing.T) {
 	uc := fakeCapAnalyser{err: &capapp.NoCallGraphError{Coord: coord}}
 
 	var buf bytes.Buffer
-	err := runCapability(context.Background(), "example.com/mod@v1.2.0", uc, held, cgdomain.RootScopeProduction, false, &buf)
+	err := runCapability(context.Background(), "example.com/mod@v1.2.0", uc, held, cgdomain.RootScopeProduction, capabilityOutput{json: false}, &buf)
 	if err == nil {
 		t.Fatal("a missing call graph returned no error")
 	}
@@ -87,7 +87,7 @@ func TestRunCapability_NeverHeldCoordinateNamesNoPipeline(t *testing.T) {
 	uc := fakeCapAnalyser{err: &capapp.NoCallGraphError{Coord: coord}}
 
 	var buf bytes.Buffer
-	err := runCapability(context.Background(), "example.com/mod@v1.2.0", uc, noGenerations{}, cgdomain.RootScopeProduction, false, &buf)
+	err := runCapability(context.Background(), "example.com/mod@v1.2.0", uc, noGenerations{}, cgdomain.RootScopeProduction, capabilityOutput{json: false}, &buf)
 	if err == nil {
 		t.Fatal("a missing call graph returned no error")
 	}
@@ -111,7 +111,7 @@ func TestRunCapabilityDiff_SupersededSideIsTheOneDiagnosed(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runCapabilityDiff(context.Background(), "example.com/mod@v1.0.0", "example.com/mod@v2.0.0",
-		uc, held, cgdomain.RootScopeProduction, false, &buf)
+		uc, held, cgdomain.RootScopeProduction, capabilityOutput{}, &buf)
 	if err == nil {
 		t.Fatal("a missing call graph returned no error")
 	}

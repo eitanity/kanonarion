@@ -25,6 +25,16 @@ import (
 // asked, whether the parser or the use case is what says so.
 func parseInvocation(t *testing.T, line string) error {
 	t.Helper()
+	// A shell conjunction is two invocations; each must parse on its own, and
+	// parsing the whole line would hand "&&" to the first as a positional.
+	if parts := strings.Split(line, " && "); len(parts) > 1 {
+		for _, p := range parts {
+			if err := parseInvocation(t, strings.TrimSpace(p)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	fields := splitInvocation(line)
 	if len(fields) == 0 || fields[0] != "kanonarion" {
 		t.Fatalf("remedy line %q does not start with the binary name", line)

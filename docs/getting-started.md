@@ -514,7 +514,7 @@ would analyse it:
 
 ```
 error: execute root command: symbol "github.com/hashicorp/go-multierror.Append" is not in the call-graph store: its module has not been analysed (consumer-mode code). Analyse it first, e.g.:
-  kanonarion callgraph <module>@<version>
+  kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>
 ```
 
 | Status | Meaning | What to run next |

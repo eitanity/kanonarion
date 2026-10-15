@@ -18,6 +18,9 @@ kanonarion fetch github.com/spf13/cobra@v1.8.1
 kanonarion examples github.com/spf13/cobra@v1.8.1
 ```
 
+An unfetched module exits `4`, and the message names the `kanonarion fetch` that
+supplies it.
+
 ## Commands
 
 ### `examples` - harvest and list examples for a module

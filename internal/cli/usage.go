@@ -42,8 +42,8 @@ const usageUnmeasuredKindsLead = "unmeasured: types, constants and variables hav
 // interface-show reads a stored interface record and refuses a module that has
 // none, naming 'kanonarion interface'; that command in turn reads fetched bytes
 // and refuses a module the store has not fetched. Naming only the last step
-// therefore costs the reader two round trips, so the whole chain is named — see
-// usageMeasureRemedy for the rule.
+// therefore costs the reader two round trips, so the whole chain is named, as
+// cgdomain.ReanalysisCommand does for a call graph.
 func usageUnmeasuredKindsNote(coord coordinate.ModuleCoordinate) string {
 	line := "kanonarion interface-show " + coord.String()
 	if cgdomain.IsReFetchable(coord) {
@@ -53,32 +53,13 @@ func usageUnmeasuredKindsNote(coord coordinate.ModuleCoordinate) string {
 	return usageUnmeasuredKindsLead + line
 }
 
-// usageMeasureRemedy names the commands that put a stored call graph for coord
-// in the store, as one line a reader can paste.
-//
-// Both commands are named because the first creates what the second resolves.
-// 'kanonarion callgraph' reads bytes the store already holds: handed a module
-// it has not fetched it exits 20 with "module not fetched: run 'kanonarion
-// fetch <coord>' first", so a remedy naming it alone costs the reader exactly
-// the round trip the remedy existed to save. Fetching a module the store
-// already holds returns its verified record immediately, so the pair is right
-// whether or not the bytes are there — the same reasoning, and the same shape,
-// as the licence-record remedy in provenance_basis.go.
-//
-// force is owed exactly when a stored record would otherwise answer the re-run,
-// which is what RecordIsCacheable decides. A caller holding no record passes
-// false: there is nothing for the re-run to be served.
-func usageMeasureRemedy(coord coordinate.ModuleCoordinate, force bool) string {
-	reanalyse := cgdomain.ReanalysisInstruction(coord, "")
+// usageRemeasure re-derives a module's call graph; force is owed exactly when
+// a stored record would otherwise answer the re-run (RecordIsCacheable).
+func usageRemeasure(coord coordinate.ModuleCoordinate, force bool) string {
 	if force {
-		reanalyse = cgdomain.ForcedReanalysisInstruction(coord, "")
+		return cgdomain.ForcedReanalysisInstruction(coord, "")
 	}
-	// A project coordinate names a working tree rather than a published artefact,
-	// so there is nothing to fetch and no fetch can ever satisfy it.
-	if !cgdomain.IsReFetchable(coord) {
-		return reanalyse
-	}
-	return "kanonarion fetch " + coord.String() + " && " + reanalyse
+	return cgdomain.ReanalysisInstruction(coord, "")
 }
 
 // usageSatisfactionNote states the one axis of a migration inventory this report
@@ -775,7 +756,7 @@ func (r *usageReport) surfaceUnenumeratedReason() string {
 	if !r.ModuleGraphFound {
 		return fmt.Sprintf("the store holds no call graph for any version of %s, so its public "+
 			"API was never enumerated and nothing about the module was measured; check the module "+
-			"path, then run: %s", r.Module.Path(), usageMeasureRemedy(r.Requested, false))
+			"path, then run: %s", r.Module.Path(), cgdomain.ReanalysisInstruction(r.Requested, ""))
 	}
 	rec := r.ModuleRecord
 	if cgdomain.RecordIsFailure(rec) || cgdomain.RecordIsIncomplete(rec) {
@@ -783,7 +764,7 @@ func (r *usageReport) surfaceUnenumeratedReason() string {
 			"(%s, cause: %s), so its surface is unlisted and there is no population for an absence to be "+
 			"an absence of; re-measure it: %s",
 			r.Module, rec.OverallStatus, countOf(len(rec.Nodes), "nodes"), rec.FailureCause,
-			usageMeasureRemedy(r.Module, cgdomain.RecordIsCacheable(rec)))
+			usageRemeasure(r.Module, cgdomain.RecordIsCacheable(rec)))
 	}
 	return fmt.Sprintf("the stored call graph for %s is %s and declares no exported API at all, so "+
 		"there is nothing in it for this project to call and no absence to claim; see it: "+
@@ -960,7 +941,7 @@ func printUsageVersionBasis(stdout io.Writer, r *usageReport) error {
 	if _, err := fmt.Fprintf(stdout,
 		"version: %s has no stored call graph, so nothing below was measured against it. This report "+
 			"measures %s — %s. To measure the version you asked for, run: %s\n",
-		r.Requested, r.Module, why, usageMeasureRemedy(r.Requested, false)); err != nil {
+		r.Requested, r.Module, why, cgdomain.ReanalysisInstruction(r.Requested, "")); err != nil {
 		return fmt.Errorf("writing version basis: %w", err)
 	}
 	return nil

@@ -322,7 +322,7 @@ func TestNotSearched_RemedyNamesTheCommandThatReDerives(t *testing.T) {
 	_, stderr := nsRun(t, root, "callers", nsTarget)
 	for _, want := range []string{
 		nsReDerive,
-		"  kanonarion callgraph example.com/old@v1.0.0\n",
+		"  kanonarion fetch example.com/old@v1.0.0 && kanonarion callgraph example.com/old@v1.0.0\n",
 		"  kanonarion local " + nsWtRoot + "\n",
 		"  example.com/wt2@local: no stored record names the working tree, so run kanonarion local from inside it\n",
 		"example.com/old@v1.0.0 (pipeline 0.1.0)",
@@ -336,7 +336,7 @@ func TestNotSearched_RemedyNamesTheCommandThatReDerives(t *testing.T) {
 	for _, e := range nsDocNotSearched(t, stdout) {
 		got[e.Coordinate] = e
 	}
-	if e := got["example.com/old@v1.0.0"]; e.Remedy != "kanonarion callgraph example.com/old@v1.0.0" ||
+	if e := got["example.com/old@v1.0.0"]; e.Remedy != "kanonarion fetch example.com/old@v1.0.0 && kanonarion callgraph example.com/old@v1.0.0" ||
 		!reflect.DeepEqual(e.Pipelines, []string{nsOld}) {
 		t.Errorf("old = %+v", e)
 	}
@@ -353,7 +353,7 @@ func TestNotSearched_RemedyNamesTheCommandThatReDerives(t *testing.T) {
 func TestNotSearched_ScopeNamesTheNeverAnalysedRemedy(t *testing.T) {
 	root := nsStore(t, nsGenerations(true))
 	_, stderr := nsRun(t, root, "callers", nsTarget, "--walk-id", nsWalkID)
-	if !strings.Contains(stderr, "analyse with:\n  kanonarion callgraph example.com/never@v1.0.0\n") {
+	if !strings.Contains(stderr, "analyse with:\n  kanonarion fetch example.com/never@v1.0.0 && kanonarion callgraph example.com/never@v1.0.0\n") {
 		t.Errorf("stderr does not name the never-analysed module's remedy:\n%s", stderr)
 	}
 }

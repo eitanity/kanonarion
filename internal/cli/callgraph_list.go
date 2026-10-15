@@ -135,7 +135,7 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 // callGraphListGeneration is callgraph-list's generation contract.
 func callGraphListGeneration(allGenerations bool) listGeneration {
 	return pipelineGeneration("call graph records", cgapp.PipelineVersion, allGenerations,
-		"kanonarion callgraph <module>@<version>")
+		"kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>")
 }
 
 // writeCallGraphListRow prints ONE line per coordinate, whatever its history.
@@ -309,7 +309,7 @@ func callGraphListZeroScope(ctx context.Context, moduleFilter string, offset int
 		field:       "module path",
 		matchKind:   matchExact,
 		considered:  len(all),
-		produce:     "kanonarion callgraph <module>@<version>",
+		produce:     "kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>",
 		listAll:     "kanonarion callgraph-list",
 	}
 	if len(all) > 0 {

@@ -1734,6 +1734,14 @@ var evidenceInDoubt = []error{
 	nativeports.ErrNativeConflict,
 }
 
+// moduleNotFetched is every producer's refusal for a module whose bytes the
+// store does not hold. The printed 'kanonarion fetch' runs as given and supplies
+// them, so it is an absent record (4), not a malformed invocation (20).
+var moduleNotFetched = []error{
+	cgports.ErrModuleNotFetched, ifaceports.ErrModuleNotFetched, licenceports.ErrModuleNotFetched,
+	exampleports.ErrModuleNotFetched, nativeports.ErrModuleNotFetched,
+}
+
 // ExitCodeForError maps a Run error onto the process exit code. It honours an
 // explicit exit-code carrier on the chain first (so categories like ExitNotFound
 // survive), then the evidence-in-doubt sentinels, and otherwise falls back to
@@ -1758,6 +1766,11 @@ func ExitCodeForError(err error) int {
 	for _, sentinel := range evidenceInDoubt {
 		if errors.Is(err, sentinel) {
 			return ExitIntegrity
+		}
+	}
+	for _, sentinel := range moduleNotFetched {
+		if errors.Is(err, sentinel) {
+			return ExitNotFound
 		}
 	}
 	// Every stored generation was set aside, or a refusal was decided without

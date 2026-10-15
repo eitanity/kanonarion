@@ -22,7 +22,8 @@ Extraction runs `golang.org/x/tools/go/callgraph/cha` over an SSA program built
 from `go/packages`. The module's source is type-checked; no code from it is
 executed.
 
-To analyse a published module, fetch it first (`kanonarion fetch`). To analyse a
+To analyse a published module, fetch it first (`kanonarion fetch`); without the
+fetch it exits `4` naming that command. To analyse a
 working tree — including this repository — use [`kanonarion local`](local.md),
 which indexes the directory in place.
 
@@ -216,7 +217,8 @@ path is only as strong as its weakest hop.
 Records state whether the axis was measured. A graph extracted before references
 existed downgrades an empty `callers` answer to `UNRESOLVED` naming
 `reference-scope-unmeasured`, rather than claiming an absence it could not have
-seen. Re-extract the module (`kanonarion callgraph <module>@<version>`, or
+seen. Re-extract the module (`kanonarion fetch <module>@<version> && kanonarion callgraph
+<module>@<version>`, or
 `kanonarion local .` for a working tree) to get the measured answer.
 
 ## Test scope
@@ -407,6 +409,7 @@ see [`callgraph-show`](#callgraph-show).
 | `1` | `Partial`: a graph exists and is known-incomplete, with its incompleteness scoped to the packages named on the `failed packages` line |
 | `2` | No graph at all: `LoadFailed`, or a `Partial` that measured no functions. The message repeats the recorded failure detail |
 | `3` | `Cancelled`: the run ended before the graph was walked |
+| `4` | The store has not fetched the module. Nothing was extracted; the message names `kanonarion fetch <module>@<version>`, which supplies the bytes, and the analysis runs after it |
 | `10` | Two stored records for this coordinate disagree, or one failed its content-hash check. The message names what differs and the remedy, `callgraph-show --diff` |
 | `20` | This kanonarion was built with a Go older than the code requires, so it could not read the source. The record is still stored; the message names both versions and the remedy, a kanonarion built with a new enough Go |
 
@@ -956,7 +959,7 @@ columns still state that, and names the remedy:
 * served by the composed read (highest completeness, then most recent, within one analysis source)
 
 not listed above: the store holds 1 generation(s) of it written at a record schema this build no longer decodes, parsed by golang.org/x/tools v0.47.0 (observed).
-  re-analyse it: kanonarion callgraph example.com/mod@v1.2.3
+  re-analyse it: kanonarion fetch example.com/mod@v1.2.3 && kanonarion callgraph example.com/mod@v1.2.3
 ```
 
 The same sentence appears where **no** generation at the served pipeline version
@@ -1558,7 +1561,7 @@ them:
 ```
 $ kanonarion callers 'github.com/golang-jwt/jwt/v4.(*Parser).ParseUnverified'
 error: execute root command: symbol "github.com/golang-jwt/jwt/v4.(*Parser).ParseUnverified" belongs to module "github.com/golang-jwt/jwt/v4", whose every stored call graph was produced by superseded extraction logic: this build serves pipeline 0.10.0 and the store holds v4.5.1 at pipeline 0.5.0, 0.6.0. A superseded record is not served, so this answer is empty for want of a measurement of this module, not because the code holds nothing. Re-analyse it:
-  kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.1
+  kanonarion fetch github.com/golang-jwt/jwt/v4@v4.5.1 && kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.1
 $ echo $?
 4
 ```
@@ -1572,7 +1575,7 @@ coordinate the store has never held:
 ```
 $ kanonarion callgraph-show github.com/golang-jwt/jwt/v4@v4.5.1 --history
 no callgraph records for github.com/golang-jwt/jwt/v4@v4.5.1 at pipeline 0.10.0 — the store holds it at superseded pipeline 0.5.0, 0.6.0, which this build does not serve.
-  re-analyse it: kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.1
+  re-analyse it: kanonarion fetch github.com/golang-jwt/jwt/v4@v4.5.1 && kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.1
 $ echo $?
 0
 ```
@@ -1594,7 +1597,7 @@ $ kanonarion callers 'github.com/spf13/cobra.(*Command).Execute'
   ...
 notice: 7 coordinate(s) hold call graphs only from superseded extraction logic and were not searched: example.com/app@local (pipeline 0.5.0, 0.6.0), github.com/spf13/cobra@v1.10.2 (pipeline 0.5.0, 0.6.0, 0.7.0), ... — re-derive with:
   kanonarion local /home/me/src/app
-  kanonarion callgraph github.com/spf13/cobra@v1.10.2
+  kanonarion fetch github.com/spf13/cobra@v1.10.2 && kanonarion callgraph github.com/spf13/cobra@v1.10.2
   ...
 ```
 
@@ -1612,7 +1615,7 @@ notice: 7 coordinate(s) hold call graphs only from superseded extraction logic a
 
   ```
   notice: 1 module version(s) in the build scope have no call graph at any pipeline and were not searched: modernc.org/libc@v1.75.7 — analyse with:
-    kanonarion callgraph modernc.org/libc@v1.75.7
+    kanonarion fetch modernc.org/libc@v1.75.7 && kanonarion callgraph modernc.org/libc@v1.75.7
   ```
 
 - For a `@local` coordinate the remedy is `kanonarion local <dir>`, using the
@@ -1627,9 +1630,9 @@ skipped:
 ```json
 "not_searched": [
   {"coordinate": "github.com/spf13/cobra@v1.10.2", "pipelines": ["0.5.0", "0.6.0", "0.7.0"],
-   "reason": "superseded", "remedy": "kanonarion callgraph github.com/spf13/cobra@v1.10.2"},
+   "reason": "superseded", "remedy": "kanonarion fetch github.com/spf13/cobra@v1.10.2 && kanonarion callgraph github.com/spf13/cobra@v1.10.2"},
   {"coordinate": "modernc.org/libc@v1.75.7", "reason": "not_analysed",
-   "remedy": "kanonarion callgraph modernc.org/libc@v1.75.7"}
+   "remedy": "kanonarion fetch modernc.org/libc@v1.75.7 && kanonarion callgraph modernc.org/libc@v1.75.7"}
 ]
 ```
 

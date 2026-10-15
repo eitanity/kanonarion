@@ -572,5 +572,6 @@ carrying no native component.
 
 ## Exit codes
 
-`0` on success, `20` on a bad invocation or an unfetched module. See
+`0` on success, `4` for a module the store has not fetched (the message names
+the `kanonarion fetch` that supplies it), `20` on a bad invocation. See
 [`conventions.md`](conventions.md#exit-codes).

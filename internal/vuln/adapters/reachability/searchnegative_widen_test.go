@@ -146,7 +146,7 @@ func TestSearchNegative_WidenedJoinNamesTheCommandForAnUnheldDependency(t *testi
 	if n := strings.Count(s.NotJoined, "kanonarion callgraph"); n != 1 {
 		t.Errorf("two calls into one module name %d commands, want 1: %s", n, s.NotJoined)
 	}
-	for _, want := range []string{"(" + wrapModule + ".Hello, " + wrapModule + ".init)", "the module that provides them; extract it with: kanonarion callgraph " + wrapCoord} {
+	for _, want := range []string{"(" + wrapModule + ".Hello, " + wrapModule + ".init)", "the module that provides them; extract it with: kanonarion fetch " + wrapCoord + " && kanonarion callgraph " + wrapCoord} {
 		if !strings.Contains(s.NotJoined, want) || !strings.Contains(reason, want) {
 			t.Errorf("not_joined and the reason do not both say %q:\n%s\n%s", want, s.NotJoined, reason)
 		}
@@ -167,15 +167,16 @@ func TestSearchNegative_WidenedJoinStatesWhyEachCallWasNotJoined(t *testing.T) {
 		walk   ports.WalkModuleReader
 		want   string
 	}{
-		"local replace":      {widenLoader(wrapFrame("Hello"), held), buildList(true), wrapCoord + " is replaced by a local directory"},
-		"two unheld modules": {twoUnheld(), buildList(false), "the 2 modules that provide them; extract them with: kanonarion callgraph " + wrapCoord + "; kanonarion callgraph " + depModule + "@" + depVersion},
-		"held without node":  {widenLoader(wrapFrame("Missing"), held), buildList(false), "the stored call graphs of " + wrapCoord + " (BUILT_WITH_BODIES, 7 nodes) hold no node for those calls; kanonarion callgraph-show"},
-		"unreadable":         {wrapFaultLoader{widenLoader(wrapFrame("Hello"), nil)}, buildList(false), "the stored call graph of " + wrapCoord + " could not be read: blob missing"},
-		"no module":          {widenLoader(strange, held), buildList(false), "no module of this build's walk provides example.org/other"},
-		"no walk reader":     {widenLoader(wrapFrame("Hello"), held), nil, "no walk is named that lists the modules this build selected"},
-		"walk not held":      {widenLoader(wrapFrame("Hello"), held), fakeWalkModules{}, "the store holds no walk " + walkID},
-		"walk unreadable":    {widenLoader(wrapFrame("Hello"), held), fakeWalkModules{err: errors.New("disk on fire")}, "could not be read: disk on fire"},
-		"no closure":         {widenLoader(noDeps, held), buildList(false), "does not record which packages of other modules its build links, so no dependency graph was joined; re-analyse it with: kanonarion local /srv/app --force"},
+		"local replace": {widenLoader(wrapFrame("Hello"), held), buildList(true), wrapCoord + " is replaced by a local directory"},
+		"two unheld modules": {twoUnheld(), buildList(false), "the 2 modules that provide them; extract them with: kanonarion fetch " + wrapCoord + " && kanonarion callgraph " + wrapCoord +
+			"; kanonarion fetch " + depModule + "@" + depVersion + " && kanonarion callgraph " + depModule + "@" + depVersion},
+		"held without node": {widenLoader(wrapFrame("Missing"), held), buildList(false), "the stored call graphs of " + wrapCoord + " (BUILT_WITH_BODIES, 7 nodes) hold no node for those calls; kanonarion callgraph-show"},
+		"unreadable":        {wrapFaultLoader{widenLoader(wrapFrame("Hello"), nil)}, buildList(false), "the stored call graph of " + wrapCoord + " could not be read: blob missing"},
+		"no module":         {widenLoader(strange, held), buildList(false), "no module of this build's walk provides example.org/other"},
+		"no walk reader":    {widenLoader(wrapFrame("Hello"), held), nil, "no walk is named that lists the modules this build selected"},
+		"walk not held":     {widenLoader(wrapFrame("Hello"), held), fakeWalkModules{}, "the store holds no walk " + walkID},
+		"walk unreadable":   {widenLoader(wrapFrame("Hello"), held), fakeWalkModules{err: errors.New("disk on fire")}, "could not be read: disk on fire"},
+		"no closure":        {widenLoader(noDeps, held), buildList(false), "does not record which packages of other modules its build links, so no dependency graph was joined; re-analyse it with: kanonarion local /srv/app --force"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, got, reason := searchWidened(t, tt.loader, tt.walk)

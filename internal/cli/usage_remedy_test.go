@@ -7,14 +7,15 @@ import (
 	"strings"
 	"testing"
 
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // fetchFirstCommands are the subcommands that read a module's already-fetched
-// bytes. Handed a coordinate whose bytes the store does not hold they exit 20
-// with "module not fetched: run 'kanonarion fetch <coord>' first" — a refusal on
-// the argument's own shape, not on anything the reader got wrong — so a remedy
+// bytes, or a record only those bytes produce. Handed a coordinate whose bytes
+// the store does not hold they refuse with "module not fetched: run 'kanonarion
+// fetch <coord>' first" (or, for capability, a missing call graph), so a remedy
 // naming one of them without the fetch that satisfies it costs its reader
 // exactly the round trip the remedy existed to save.
 //
@@ -38,7 +39,7 @@ var fetchFirstCommands = []string{"callgraph", "license", "interface", "capabili
 // measured. The guard cannot see that from the source — the coordinate is a
 // variable — so a file joins this list once its invocations are all of the
 // plain kind.
-var remedyGuardFiles = []string{"usage.go"}
+var remedyGuardFiles = []string{"usage.go", "callgraph_resolution.go", "callgraph_list.go"}
 
 func TestFetchFirstCommands_AllNameARealSubcommand(t *testing.T) {
 	for _, name := range fetchFirstCommands {
@@ -97,19 +98,23 @@ func contains(in []string, v string) bool {
 	return false
 }
 
-// The builder every callgraph remedy in usage.go goes through, over both
-// coordinate kinds and both re-run forms. A project coordinate names a working
-// tree, so it must NOT be handed to fetch — that is the other half of the same
-// class, and assertRemedyLine is what refuses it.
-func TestUsageMeasureRemedy_IsARunnablePairForEveryCoordinateKind(t *testing.T) {
+// The builder every callgraph remedy goes through, over every coordinate kind
+// and both re-run forms. A project coordinate names a working tree, so it must
+// NOT be handed to fetch — that is the other half of the same class, and
+// assertRemedyLine is what refuses it.
+func TestReanalysisRemedy_IsARunnablePairForEveryCoordinateKind(t *testing.T) {
 	for _, coord := range []coordinate.ModuleCoordinate{
 		coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1"),
 		coordinatetest.MustNew("github.com/Masterminds/sprig", "v2.22.0+incompatible"),
 		coordinatetest.MustNew("github.com/cortezaproject/corteza/server", coordinate.LocalVersion),
 	} {
-		for _, force := range []bool{false, true} {
+		for _, build := range []func(coordinate.ModuleCoordinate, string) string{
+			cgdomain.ReanalysisInstruction, cgdomain.ForcedReanalysisInstruction,
+		} {
 			t.Run(coord.String(), func(t *testing.T) {
-				assertRemedyConjunction(t, coord, usageMeasureRemedy(coord, force))
+				assertRemedyConjunction(t, coord, build(coord, "/srv/checkouts/project"))
+				assertRemedyConjunction(t, coord, usageRemeasure(coord, false))
+				assertRemedyConjunction(t, coord, usageRemeasure(coord, true))
 			})
 		}
 	}
@@ -117,12 +122,17 @@ func TestUsageMeasureRemedy_IsARunnablePairForEveryCoordinateKind(t *testing.T) 
 	// still pass every parse above, because the line it leaves behind is a
 	// perfectly well-formed invocation of a command that refuses.
 	pub := coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1")
-	got := usageMeasureRemedy(pub, false)
+	got := cgdomain.ReanalysisInstruction(pub, "")
 	if want := "kanonarion fetch " + pub.String() + " && kanonarion callgraph " + pub.String(); got != want {
-		t.Errorf("usageMeasureRemedy = %q, want %q", got, want)
+		t.Errorf("ReanalysisInstruction = %q, want %q", got, want)
 	}
-	if forced := usageMeasureRemedy(pub, true); !strings.HasSuffix(forced, " --force") {
+	if forced := usageRemeasure(pub, true); !strings.HasSuffix(forced, " --force") {
 		t.Errorf("the forced form dropped its flag: %q", forced)
+	}
+	// The scoped callers/callees refusal names the version the build resolves.
+	assertRemedyConjunction(t, pub, buildVersionRemedy(pub.Path(), pub.Version()))
+	if got := buildVersionRemedy("", "v1"); got != "kanonarion fetch @v1 && kanonarion callgraph @v1" {
+		t.Errorf("an unparseable coordinate is named as given, got %q", got)
 	}
 	// The unmeasured-kinds note is the other chain usage prints, and it is three
 	// commands deep: interface-show reads a record, interface writes one from

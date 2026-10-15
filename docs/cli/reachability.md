@@ -392,7 +392,8 @@ the rung stays where govulncheck's answer puts it (`inferred` for a source
 scan), and `not_joined` names the calls and why each was not joined:
 
 - the store holds no call graph for the module: the answer names the
-  `kanonarion callgraph <mod>@<version>` that extracts it;
+  `kanonarion fetch <mod>@<version> && kanonarion callgraph <mod>@<version>` that
+  extracts it;
 - the module is replaced by a local directory, which no stored graph is taken
   of;
 - the module's stored graph holds no node for the call, or could not be read;
@@ -602,7 +603,7 @@ over — the test axis, the exported-API flag, and the edges into the node.
 | `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
 | `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
 | `test` | The root is a test-scope declaration. This is printed **on the same line as the answer**, so a test-only reach is never read as a production one. |
-| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. The `remedy` re-derives *that* module's graph: `kanonarion callgraph <module>@<version>` when the route starts in a dependency; when it starts in the project's own module (which carries the synthetic `@local` version and cannot be fetched) it names the working tree the stored record was analysed in — `kanonarion local /path/to/tree`. Where no stored record names that tree, the remedy says so rather than printing an argument you would have to guess. |
+| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. The `remedy` re-derives *that* module's graph: `kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>` when the route starts in a dependency; when it starts in the project's own module (which carries the synthetic `@local` version and cannot be fetched) it names the working tree the stored record was analysed in — `kanonarion local /path/to/tree`. Where no stored record names that tree, the remedy says so rather than printing an argument you would have to guess. |
 
 Two rules keep this honest:
 

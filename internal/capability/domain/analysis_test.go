@@ -2,6 +2,8 @@ package domain
 
 import (
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -66,13 +68,10 @@ func observationFor(r CapabilityReport, c Capability) (CapabilityFinding, bool) 
 	return CapabilityFinding{}, false
 }
 
-// TestAnalyseWitnessesBodyLevelCapabilities is the body-level capability
-// regression: two capabilities are properties of the module's OWN function
-// bodies, not of any callee identity, so the sink map alone cannot witness them.
-// UNSAFE_POINTER comes from an owned helper that converts through
-// unsafe.Pointer; ARBITRARY_EXECUTION from an owned assembly/linkname leaf with
-// no Go body. Both are in non-sink packages, so without the body facts neither
-// would appear.
+// TestAnalyseWitnessesBodyLevelCapabilities: UNSAFE_POINTER is a property of
+// the module's OWN function body, so the sink map alone cannot witness it. An
+// owned assembly/linkname body is not a capability at all: the graph cannot see
+// what it does, so it is listed as unanalysed instead.
 func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 	unsafeLeaf := cgdomain.CallNode{
 		ID: "m/internal.toBytes", Package: "m/internal", Module: "m",
@@ -95,14 +94,14 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 		},
 	}
 
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
 
 	up, ok := findingFor(report, CapabilityUnsafePointer)
 	if !ok {
 		t.Fatalf("UNSAFE_POINTER not witnessed; got %v", report.Capabilities())
 	}
-	if up.Basis != BasisUse {
-		t.Errorf("UNSAFE_POINTER basis = %q, want use", up.Basis)
+	if up.Basis != BasisUse || up.Reach != ReachDirectCall || up.CallerKind != CallerInternal {
+		t.Errorf("UNSAFE_POINTER = basis %q reach %q kind %q, want use DIRECT_CALL INTERNAL", up.Basis, up.Reach, up.CallerKind)
 	}
 	if up.WeakestConfidence != cgdomain.ConfidenceDirect {
 		t.Errorf("UNSAFE_POINTER weakest = %q, want Direct", up.WeakestConfidence)
@@ -110,34 +109,35 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 	if up.SinkPackage != "m/internal" || up.SinkSymbol != "toBytes" {
 		t.Errorf("UNSAFE_POINTER sink = %s.%s, want m/internal.toBytes", up.SinkPackage, up.SinkSymbol)
 	}
+	if got := report.Capabilities(); len(got) != 1 {
+		t.Errorf("the asm body must not witness a capability, got %v", got)
+	}
+	if want := []string{"m/internal.asmRound"}; !reflect.DeepEqual(report.Unanalyzed, want) {
+		t.Errorf("Unanalyzed = %v, want %v", report.Unanalyzed, want)
+	}
+	// The body fact is a row of its own, its callee the function itself.
+	wantRow := WitnessRow{
+		Caller: "m/internal.toBytes", CallerKind: CallerInternal, Capability: CapabilityUnsafePointer,
+		Reach: ReachDirectCall, Callee: "m/internal.toBytes", CalleePackage: "m/internal", BodyFact: true,
+		ClassifiedBy: ClassifiedByRule, Confidence: cgdomain.ConfidenceDirect,
+	}
+	if !reflect.DeepEqual(report.Rows, []WitnessRow{wantRow}) {
+		t.Errorf("Rows = %+v, want %+v", report.Rows, wantRow)
+	}
 
-	ae, ok := findingFor(report, CapabilityArbitraryExecution)
-	if !ok {
-		t.Fatalf("ARBITRARY_EXECUTION not witnessed; got %v", report.Capabilities())
-	}
-	if ae.Basis != BasisUse {
-		t.Errorf("ARBITRARY_EXECUTION basis = %q, want use", ae.Basis)
-	}
-	// The leaf is owned, so it is itself a root and the CHA edge above it is not
-	// on the witnessing path. Weakest-edge propagation is pinned on external
-	// sinks instead, which are never roots.
-	if ae.WeakestConfidence != cgdomain.ConfidenceDirect {
-		t.Errorf("ARBITRARY_EXECUTION weakest = %q, want Direct", ae.WeakestConfidence)
-	}
-
-	// Control: strip the body facts and the two capabilities vanish — proving
-	// they are witnessed only by the facts, never by callee identity.
+	// Control: strip the body facts and nothing is witnessed or listed.
 	rec.Nodes[1].UsesUnsafePointer = false
 	rec.Nodes[2].IsAssemblyOrLinkname = false
-	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
-		t.Errorf("without body facts the non-sink leaves witness nothing, got %v", got.Capabilities())
+	got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
+	if len(got.Findings) != 0 || len(got.Unanalyzed) != 0 || len(got.Rows) != 0 {
+		t.Errorf("without body facts the non-sink leaves witness nothing, got %v %v %v", got.Capabilities(), got.Unanalyzed, got.Rows)
 	}
 }
 
 // TestAnalyseDoesNotWitnessExternalBodyFacts is the same graph with the two
 // body-fact leaves owned by somebody else. Taking a mutex is not this module's
-// unsafe pointer arithmetic and sleeping is not its arbitrary execution, so
-// neither is a capability — and neither is silently dropped either.
+// unsafe pointer arithmetic, so it is an observation; sleeping through a
+// linkname body carries no label at all and is counted as an unanalysed callee.
 func TestAnalyseDoesNotWitnessExternalBodyFacts(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{
 		OverallStatus: cgdomain.CallGraphStatusExtracted,
@@ -151,25 +151,40 @@ func TestAnalyseDoesNotWitnessExternalBodyFacts(t *testing.T) {
 				ID: "time.Sleep", Package: "time", Symbol: "Sleep",
 				IsExternal: true, IsAssemblyOrLinkname: true,
 			},
+			{
+				ID: "syscall.RawSyscall", Package: "syscall", Symbol: "RawSyscall",
+				IsExternal: true, IsAssemblyOrLinkname: true,
+			},
 		},
 		Edges: []cgdomain.CallEdge{
 			edge("m.Root", "sync.(*RWMutex).Lock", cgdomain.ConfidenceDirect),
 			edge("m.Root", "time.Sleep", cgdomain.ConfidenceDirect),
+			edge("m.Root", "time.Sleep", cgdomain.ConfidenceUnknown),
+			edge("m.Root", "syscall.RawSyscall", cgdomain.ConfidenceDirect),
 		},
 	}
 
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
-	if len(report.Findings) != 0 {
-		t.Errorf("external body facts are not capabilities, got %v", report.Capabilities())
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
+	if got := report.Capabilities(); !reflect.DeepEqual(got, []Capability{CapabilitySyscallDirect}) {
+		t.Errorf("only the identity label survives, got %v", got)
 	}
-	for _, c := range []Capability{CapabilityUnsafePointer, CapabilityArbitraryExecution} {
-		obs, ok := observationFor(report, c)
-		if !ok {
-			t.Fatalf("%s should be reported as an observation, not dropped", c)
-		}
-		if obs.Basis != BasisCalleeBodyFact {
-			t.Errorf("%s observation basis = %q, want callee_body_fact", c, obs.Basis)
-		}
+	obs, ok := observationFor(report, CapabilityUnsafePointer)
+	if !ok || obs.Basis != BasisCalleeBodyFact {
+		t.Fatalf("UNSAFE_POINTER should be a callee_body_fact observation, got %+v", report.Observations)
+	}
+	if len(report.Observations) != 1 {
+		t.Errorf("an asm callee yields no observation, got %+v", report.Observations)
+	}
+	// An external asm callee with an identity label keeps it, reach UNANALYZED.
+	sys, _ := findingFor(report, CapabilitySyscallDirect)
+	if sys.Reach != ReachUnanalyzed {
+		t.Errorf("syscall.RawSyscall reach = %q, want UNANALYZED", sys.Reach)
+	}
+	if report.UnanalyzedCallees != 1 {
+		t.Errorf("UnanalyzedCallees = %d, want 1 (time.Sleep, counted once)", report.UnanalyzedCallees)
+	}
+	if len(report.Unanalyzed) != 0 {
+		t.Errorf("external bodies are never listed as this module's, got %v", report.Unanalyzed)
 	}
 }
 
@@ -185,54 +200,77 @@ func TestAnalyseTreatsExternalInitAsLinkage(t *testing.T) {
 			node("os/exec.init", "os/exec", "init", true, false),
 			node("net/http.init", "net/http", "init", true, false),
 			node("net/http.Get", "net/http", "Get", true, false),
+			node("reflect.init", "reflect", "init", true, false),
+			node("reflect.TypeOf", "reflect", "TypeOf", true, false),
 		},
 		Edges: []cgdomain.CallEdge{
 			edge("m.init", "os/exec.init", cgdomain.ConfidenceDirect),
 			edge("m.init", "net/http.init", cgdomain.ConfidenceDirect),
 			edge("m.Root", "net/http.Get", cgdomain.ConfidenceDirect),
+			edge("m.init", "reflect.init", cgdomain.ConfidenceDirect),
+			edge("m.Root", "reflect.TypeOf", cgdomain.ConfidenceDirect),
 		},
 	}
 
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
 
-	if _, ok := findingFor(report, CapabilityExec); ok {
-		t.Error("reaching os/exec.init must not witness EXEC")
+	if _, ok := findingFor(report, CapabilityExecProcess); ok {
+		t.Error("reaching os/exec.init must not witness EXEC_PROCESS")
 	}
-	obs, ok := observationFor(report, CapabilityExec)
+	obs, ok := observationFor(report, CapabilityExecProcess)
 	if !ok {
-		t.Fatal("EXEC should be reported as a linkage observation")
+		t.Fatal("EXEC_PROCESS should be reported as a linkage observation")
 	}
-	if obs.Basis != BasisLinkageOnly {
-		t.Errorf("EXEC observation basis = %q, want linkage_only", obs.Basis)
+	if obs.Basis != BasisLinkageOnly || obs.Reach != ReachPkgLinkage {
+		t.Errorf("EXEC_PROCESS observation = basis %q reach %q, want linkage_only PKG_LINKAGE", obs.Basis, obs.Reach)
 	}
-	// The init root itself still works, and the real call outranks the linkage:
-	// NETWORK is a capability and carries no observation beside it.
-	net, ok := findingFor(report, CapabilityNetwork)
+	net, ok := findingFor(report, CapabilityNetDial)
 	if !ok || net.SinkSymbol != "Get" {
-		t.Fatalf("NETWORK should be witnessed by net/http.Get, got %+v", net)
+		t.Fatalf("NET_DIAL should be witnessed by net/http.Get, got %+v", net)
 	}
-	if _, ok := observationFor(report, CapabilityNetwork); ok {
+	// The init's NET_INSPECT is linkage only and the package default.
+	insp, ok := observationFor(report, CapabilityNetInspect)
+	if !ok || insp.ClassifiedBy != ClassifiedByPackageDefault {
+		t.Errorf("net/http.init should be a package-default observation, got %+v", insp)
+	}
+	// A real call outranks the linkage: REFLECT_INSPECT carries no observation.
+	if _, ok := observationFor(report, CapabilityReflectInspect); ok {
 		t.Error("a capability with a real witness must not also carry an observation")
+	}
+	// Linkage is not a row: only the real calls are.
+	if len(report.Rows) != 2 {
+		t.Errorf("Rows = %+v, want only the two real calls", report.Rows)
 	}
 }
 
-func TestAnalyseReaches12of12WithBodyFacts(t *testing.T) {
+// TestAnalyseReachesEveryLabel reaches one callee per label, so every value in
+// the taxonomy has a producer.
+func TestAnalyseReachesEveryLabel(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{
 		OverallStatus: cgdomain.CallGraphStatusExtracted,
 		Nodes: []cgdomain.CallNode{
 			node("m.Root", "m", "Root", false, true),
-			node("net/http.Get", "net/http", "Get", true, false),
-			node("os.ReadFile", "os", "ReadFile", true, false),
 			node("os/exec.Command", "os/exec", "Command", true, false),
-			node("reflect.ValueOf", "reflect", "ValueOf", true, false),
-			node("runtime/cgo.Handle", "runtime/cgo", "NewHandle", true, false),
-			node("syscall.Syscall", "syscall", "Syscall", true, false),
-			node("runtime.GC", "runtime", "GC", true, false),
+			node("plugin.Open", "plugin", "Open", true, false),
+			node("net.Dial", "net", "Dial", true, false),
+			node("net.Listen", "net", "Listen", true, false),
+			{ID: "net.(*conn).Read", Package: "net", Receiver: "*conn", Symbol: "Read", IsExternal: true},
+			node("os.ReadFile", "os", "ReadFile", true, false),
+			node("os.WriteFile", "os", "WriteFile", true, false),
 			node("os.Getenv", "os", "Getenv", true, false),
-			node("os/signal.Notify", "os/signal", "Notify", true, false),
-			node("os.Getpid", "os", "Getpid", true, false),
+			node("os.Setenv", "os", "Setenv", true, false),
+			node("syscall.Syscall", "syscall", "Syscall", true, false),
+			node("runtime/cgo.NewHandle", "runtime/cgo", "NewHandle", true, false),
 			{ID: "m/internal.unsafeFn", Package: "m/internal", Symbol: "unsafeFn", UsesUnsafePointer: true},
-			{ID: "m/internal.asmFn", Package: "m/internal", Symbol: "asmFn", IsAssemblyOrLinkname: true},
+			{ID: "reflect.Value.Call", Package: "reflect", Receiver: "Value", Symbol: "Call", IsExternal: true},
+			node("net.ParseIP", "net", "ParseIP", true, false),
+			{ID: "os.(*File).Close", Package: "os", Receiver: "*File", Symbol: "Close", IsExternal: true},
+			node("path/filepath.Join", "path/filepath", "Join", true, false),
+			node("reflect.TypeOf", "reflect", "TypeOf", true, false),
+			node("os.Hostname", "os", "Hostname", true, false),
+			node("os.Exit", "os", "Exit", true, false),
+			node("log.Printf", "log", "Printf", true, false),
+			node("runtime.GC", "runtime", "GC", true, false),
 		},
 	}
 	for _, n := range rec.Nodes {
@@ -242,14 +280,22 @@ func TestAnalyseReaches12of12WithBodyFacts(t *testing.T) {
 		rec.Edges = append(rec.Edges, edge("m.Root", n.ID, cgdomain.ConfidenceDirect))
 	}
 
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
 	got := report.Capabilities()
-	if len(got) != 12 {
-		t.Fatalf("got %d capabilities, want 12: %v", len(got), got)
+	if len(got) != len(AllCapabilities()) {
+		t.Fatalf("got %d capabilities, want %d: %v", len(got), len(AllCapabilities()), got)
 	}
-	for _, want := range AllCapabilities() {
-		if _, ok := findingFor(report, want); !ok {
-			t.Errorf("missing capability %s", want)
+	want := slices.Clone(AllCapabilities())
+	slices.SortFunc(want, func(a, b Capability) int {
+		if ta, tb := tierRank(a.Tier()), tierRank(b.Tier()); ta != tb {
+			return ta - tb
+		}
+		return strings.Compare(string(a), string(b))
+	})
+	for i, f := range report.Findings {
+		if f.Capability != want[i] {
+			t.Errorf("finding %d is %s, want %s: findings are in tier then name order", i, f.Capability, want[i])
+			break
 		}
 	}
 	if len(report.Observations) != 0 {
@@ -259,17 +305,17 @@ func TestAnalyseReaches12of12WithBodyFacts(t *testing.T) {
 
 func TestAnalyseWitnessesCapabilitiesWithWeakestEdge(t *testing.T) {
 	rec := richGraph()
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
 
 	if report.Partial {
 		t.Error("Extracted graph should not be Partial")
 	}
 
 	want := map[Capability]cgdomain.EdgeConfidence{
-		CapabilityNetwork:     cgdomain.ConfidenceDirect,        // via m.Mid → net/http.Get, all Direct
-		CapabilityExec:        cgdomain.ConfidenceCHAOverapprox, // root → os/exec.Command
-		CapabilityReflect:     cgdomain.ConfidenceUnknown,       // reflect edge folds to Unknown
-		CapabilitySystemCalls: cgdomain.ConfidenceUnknown,       // Unknown edge
+		CapabilityNetDial:        cgdomain.ConfidenceDirect,        // via m.Mid → net/http.Get, all Direct
+		CapabilityExecProcess:    cgdomain.ConfidenceCHAOverapprox, // root → os/exec.Command
+		CapabilityReflectInspect: cgdomain.ConfidenceUnknown,       // reflect edge folds to Unknown
+		CapabilitySyscallDirect:  cgdomain.ConfidenceUnknown,       // Unknown edge
 	}
 	if len(report.Findings) != len(want) {
 		t.Fatalf("got %d findings, want %d: %+v", len(report.Findings), len(want), report.Capabilities())
@@ -290,8 +336,8 @@ func TestAnalyseKeepsStrongestWitnessPerCapability(t *testing.T) {
 	// NETWORK is witnessed by a Direct path (net/http.Get) and an Unknown path
 	// (net.Dial); the Direct one must win.
 	rec := richGraph()
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
-	f, ok := findingFor(report, CapabilityNetwork)
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
+	f, ok := findingFor(report, CapabilityNetDial)
 	if !ok {
 		t.Fatal("NETWORK not found")
 	}
@@ -311,8 +357,8 @@ func TestAnalyseKeepsStrongestWitnessPerCapability(t *testing.T) {
 func TestAnalyseRootIsItselfASink(t *testing.T) {
 	rec := richGraph()
 	// Root the analysis directly at a sink node: zero-edge path, Direct.
-	report := Analyse(rec, []string{"net/http.Get"})
-	f, ok := findingFor(report, CapabilityNetwork)
+	report := Analyse(rec, []string{"net/http.Get"}, cgdomain.RootScopeProduction)
+	f, ok := findingFor(report, CapabilityNetDial)
 	if !ok {
 		t.Fatal("NETWORK not found")
 	}
@@ -326,16 +372,45 @@ func TestAnalyseRootIsItselfASink(t *testing.T) {
 
 func TestAnalyseSkipsMissingRoot(t *testing.T) {
 	rec := richGraph()
-	report := Analyse(rec, []string{"does.NotExist"})
+	report := Analyse(rec, []string{"does.NotExist"}, cgdomain.RootScopeProduction)
 	if len(report.Findings) != 0 {
 		t.Errorf("missing root should witness nothing, got %v", report.Capabilities())
+	}
+}
+
+// The two other non-extracted shapes: a configuration exclusion, and a status
+// this build does not recognise. Both are caveated, neither as a clean set.
+func TestAnalyseCaveatsExclusionAndUnknownStatus(t *testing.T) {
+	for status, want := range map[cgdomain.CallGraphStatus]string{
+		cgdomain.CallGraphStatusExcludedByConfig: "excluded from call-graph analysis by configuration",
+		cgdomain.CallGraphStatus(99):             "does not recognise",
+	} {
+		r := Analyse(cgdomain.CallGraphRecord{OverallStatus: status}, nil, cgdomain.RootScopeProduction)
+		if !r.Partial || !strings.Contains(r.Caveat, want) {
+			t.Errorf("%s: Partial=%v caveat %q, want %q", status, r.Partial, r.Caveat, want)
+		}
+	}
+}
+
+// The queue breaks an equal-confidence tie on depth before node ID.
+func TestWidestQueueOrdersDepthBeforeID(t *testing.T) {
+	q := widestQueue{{id: "b", minRank: 4, depth: 1}, {id: "a", minRank: 4, depth: 2}}
+	if !q.Less(0, 1) || q.Less(1, 0) {
+		t.Error("the shallower item pops first whatever its ID")
+	}
+	tie := widestQueue{
+		{id: "s", minRank: 4, depth: 1, predEdge: cgdomain.CallEdge{FromID: "m.b"}},
+		{id: "s", minRank: 4, depth: 1, predEdge: cgdomain.CallEdge{FromID: "m.a"}},
+	}
+	if !tie.Less(1, 0) || tie.Less(0, 1) {
+		t.Error("two equal routes to one node are decided by the smaller predecessor")
 	}
 }
 
 func TestAnalysePartialGraphIsCaveated(t *testing.T) {
 	rec := richGraph()
 	rec.OverallStatus = cgdomain.CallGraphStatusPartial
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
 	if !report.Partial {
 		t.Fatal("Partial status should set Partial")
 	}
@@ -346,12 +421,12 @@ func TestAnalysePartialGraphIsCaveated(t *testing.T) {
 
 func TestCapabilitiesSorted(t *testing.T) {
 	r := CapabilityReport{Findings: []CapabilityFinding{
-		{Capability: CapabilityReflect},
-		{Capability: CapabilityExec},
-		{Capability: CapabilityNetwork},
+		{Capability: CapabilityReflectInspect},
+		{Capability: CapabilityExecProcess},
+		{Capability: CapabilityNetDial},
 	}}
 	got := r.Capabilities()
-	want := []Capability{CapabilityExec, CapabilityNetwork, CapabilityReflect}
+	want := []Capability{CapabilityExecProcess, CapabilityNetDial, CapabilityReflectInspect}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Capabilities = %v, want %v", got, want)
 	}
@@ -375,8 +450,8 @@ func TestAnalyseWitnessesInitOnlyCapability(t *testing.T) {
 		},
 	}
 
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
-	f, ok := findingFor(report, CapabilityNetwork)
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
+	f, ok := findingFor(report, CapabilityNetDial)
 	if !ok {
 		t.Fatalf("NETWORK not witnessed via init root; got %v", report.Capabilities())
 	}
@@ -387,7 +462,7 @@ func TestAnalyseWitnessesInitOnlyCapability(t *testing.T) {
 	// Control: with the init edge removed, the exported API reaches nothing, so
 	// the capability vanishes — proving init roots are what witness it.
 	rec.Edges = nil
-	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
+	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction); len(got.Findings) != 0 {
 		t.Errorf("without the init edge nothing is witnessed, got %v", got.Capabilities())
 	}
 }
@@ -420,9 +495,9 @@ func TestAnalyseWitnessesDynamicallyDispatchedSink(t *testing.T) {
 			rec := dynamicSinkGraph()
 			rec.ArtifactKind = kind
 
-			report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
+			report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
 
-			f, ok := findingFor(report, CapabilityExec)
+			f, ok := findingFor(report, CapabilityExecProcess)
 			if !ok {
 				t.Fatalf("EXEC not witnessed; got %v", report.Capabilities())
 			}
@@ -581,8 +656,8 @@ func TestAnalyseRelaxesToSettledNode(t *testing.T) {
 			edge("m.RootB", "m.F", cgdomain.ConfidenceDirect),
 		},
 	}
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
-	f, ok := findingFor(report, CapabilityNetwork)
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
+	f, ok := findingFor(report, CapabilityNetDial)
 	if !ok {
 		t.Fatal("NETWORK not witnessed")
 	}
@@ -621,8 +696,8 @@ func bothRootsReachOneSink() cgdomain.CallGraphRecord {
 func TestAnalyseKeepsCapabilityReachedFromBothRootsAndWitnessesTheProductionPath(t *testing.T) {
 	rec := bothRootsReachOneSink()
 
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
-	f, ok := findingFor(report, CapabilityExec)
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
+	f, ok := findingFor(report, CapabilityExecProcess)
 	if !ok {
 		t.Fatalf("EXEC lost when the test root was excluded; got %v", report.Capabilities())
 	}
@@ -639,11 +714,11 @@ func TestAnalyseDropsCapabilityWitnessedOnlyByATestRoot(t *testing.T) {
 	rec := bothRootsReachOneSink()
 	rec.Edges = rec.Edges[1:]
 
-	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction)); len(got.Findings) != 0 {
+	if got := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction); len(got.Findings) != 0 {
 		t.Errorf("test-only sink witnessed under the production scope: %v", got.Capabilities())
 	}
-	withTests := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeWithTests))
-	if _, ok := findingFor(withTests, CapabilityExec); !ok {
+	withTests := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeWithTests), cgdomain.RootScopeWithTests)
+	if _, ok := findingFor(withTests, CapabilityExecProcess); !ok {
 		t.Errorf("EXEC not witnessed with tests included; got %v", withTests.Capabilities())
 	}
 }
@@ -665,8 +740,8 @@ func TestAnalyseKeepsAnInitOnlyCapabilityUnderTheProductionScope(t *testing.T) {
 		},
 	}
 
-	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction))
-	f, ok := findingFor(report, CapabilityNetwork)
+	report := Analyse(rec, SelectRoots(rec, cgdomain.RootScopeProduction), cgdomain.RootScopeProduction)
+	f, ok := findingFor(report, CapabilityNetDial)
 	if !ok {
 		t.Fatalf("init-rooted NETWORK lost; got %v", report.Capabilities())
 	}

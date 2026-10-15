@@ -117,6 +117,10 @@ func TestNoSourceFileWritesAPlaceholderRemedy(t *testing.T) {
 // to name the command it is about.
 func assertRemedyLine(t *testing.T, coord coordinate.ModuleCoordinate, line string) {
 	t.Helper()
+	if strings.Contains(line, " && ") {
+		assertRemedyConjunction(t, coord, line)
+		return
+	}
 	if strings.Contains(line, cgdomain.LocalDirPlaceholder) {
 		t.Errorf("remedy %q prints %s: a reader cannot run a line with a placeholder in it",
 			line, cgdomain.LocalDirPlaceholder)
@@ -165,14 +169,15 @@ func TestReanalysisRemedy_SaysWhichOfThreeThingsItKnows(t *testing.T) {
 	const dir = "/srv/checkouts/project"
 
 	// A published coordinate has no working tree, so the directory is ignored and
-	// the line does not move whichever way it is called.
+	// the line does not move whichever way it is called. The fetch comes first:
+	// callgraph refuses a module the store has not fetched.
 	for _, d := range []string{"", dir} {
 		if got, want := cgdomain.ReanalysisInstruction(published, d),
-			"kanonarion callgraph github.com/spf13/cobra@v1.8.1"; got != want {
+			"kanonarion fetch github.com/spf13/cobra@v1.8.1 && kanonarion callgraph github.com/spf13/cobra@v1.8.1"; got != want {
 			t.Errorf("ReanalysisInstruction(published, %q) = %q, want %q", d, got, want)
 		}
 		if got, want := cgdomain.ForcedReanalysisInstruction(published, d),
-			"kanonarion callgraph github.com/spf13/cobra@v1.8.1 --force"; got != want {
+			"kanonarion fetch github.com/spf13/cobra@v1.8.1 && kanonarion callgraph github.com/spf13/cobra@v1.8.1 --force"; got != want {
 			t.Errorf("ForcedReanalysisInstruction(published, %q) = %q, want %q", d, got, want)
 		}
 	}

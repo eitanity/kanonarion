@@ -462,12 +462,14 @@ func TestClassify_RemedyNamesACommandTheCoordinateCanRun(t *testing.T) {
 			},
 		},
 		{
-			name:       "a published coordinate is re-derived by 'callgraph'",
-			coordKey:   "example.com/dep@v1.2.0",
-			rooting:    vuldomain.RootingIsolated,
-			record:     depCoord,
-			route:      depRoute,
-			wantPrefix: func(bool) string { return "kanonarion callgraph example.com/dep@v1.2.0" },
+			name:     "a published coordinate is re-derived by 'callgraph'",
+			coordKey: "example.com/dep@v1.2.0",
+			rooting:  vuldomain.RootingIsolated,
+			record:   depCoord,
+			route:    depRoute,
+			wantPrefix: func(bool) string {
+				return "kanonarion fetch example.com/dep@v1.2.0 && kanonarion callgraph example.com/dep@v1.2.0"
+			},
 		},
 	}
 

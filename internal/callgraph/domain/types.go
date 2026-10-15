@@ -395,9 +395,9 @@ type CallNode struct {
 	UsesUnsafePointer bool
 	// IsAssemblyOrLinkname is true when the function has no Go body — it is
 	// implemented in assembly or provided via //go:linkname. Such functions are
-	// call-graph leaves with no edges into them, so this fact is captured at
-	// extraction time and treated as an ARBITRARY_EXECUTION sink during
-	// capability analysis.
+	// call-graph leaves whose effects the graph cannot see, so this fact is
+	// captured at extraction time; capability analysis reports an owned one as
+	// an unanalysed body and an external one's reach as UNANALYZED.
 	IsAssemblyOrLinkname bool
 	// UsesPlugin is true when the function's own body references the Go plugin
 	// package (plugin.Open / (*Plugin).Lookup). A plugin boundary loads code the

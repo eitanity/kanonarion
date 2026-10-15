@@ -19,7 +19,8 @@ source positions.
 Extraction uses `go/parser` and `go/doc` (AST-only, no full type-checking).
 No code from the target module is executed.
 
-The module must have been fetched first (`kanonarion fetch`).
+The module must have been fetched first (`kanonarion fetch`). An unfetched
+module exits `4`, and the message names the `kanonarion fetch` that supplies it.
 
 The packages read are the ones `go list ./...` names in the module. Directories
 named `vendor` or `testdata`, and every file or directory whose name begins with
