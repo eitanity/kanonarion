@@ -49,10 +49,21 @@ type fakeVulnLoader struct {
 	otherFrameOnly []coordinate.ModuleCoordinate
 	supersededOnly []coordinate.ModuleCoordinate
 	notInSeedWalk  []coordinate.ModuleCoordinate
+	scanIncomplete []coordinate.ModuleCoordinate
+	setAsideOnly   []coordinate.ModuleCoordinate
 	notAnalysed    []coordinate.ModuleCoordinate
 	// gotConsumer records the module path the use case anchored the seed to, so
 	// a test can assert the probe named the tree it is measuring.
 	gotConsumer string
+}
+
+// markAsked adds to dst each coordinate of src the caller asked about.
+func markAsked(asked map[coordinate.ModuleCoordinate]struct{}, src []coordinate.ModuleCoordinate, dst map[coordinate.ModuleCoordinate]struct{}) {
+	for _, c := range src {
+		if _, ok := asked[c]; ok {
+			dst[c] = struct{}{}
+		}
+	}
 }
 
 // LoadFindings answers ONLY about the coordinates it was asked about. A fake
@@ -74,31 +85,17 @@ func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.Mod
 		OtherFrameOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		SupersededOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		NotInSeedWalk:  make(map[coordinate.ModuleCoordinate]struct{}),
+		ScanIncomplete: make(map[coordinate.ModuleCoordinate]struct{}),
+		SetAsideOnly:   make(map[coordinate.ModuleCoordinate]struct{}),
 		NotAnalysed:    make(map[coordinate.ModuleCoordinate]struct{}),
 		Restriction:    "seed restricted to " + consumerModulePath,
 	}
-	for _, c := range f.notAnalysed {
-		if _, ok := asked[c]; ok {
-			set.NotAnalysed[c] = struct{}{}
-		}
-	}
-	for _, c := range f.notInSeedWalk {
-		if _, ok := asked[c]; ok {
-			set.NotInSeedWalk[c] = struct{}{}
-		}
-	}
-	for _, c := range f.otherFrameOnly {
-		if _, ok := asked[c]; !ok {
-			continue
-		}
-		set.OtherFrameOnly[c] = struct{}{}
-	}
-	for _, c := range f.supersededOnly {
-		if _, ok := asked[c]; !ok {
-			continue
-		}
-		set.SupersededOnly[c] = struct{}{}
-	}
+	markAsked(asked, f.notAnalysed, set.NotAnalysed)
+	markAsked(asked, f.notInSeedWalk, set.NotInSeedWalk)
+	markAsked(asked, f.scanIncomplete, set.ScanIncomplete)
+	markAsked(asked, f.setAsideOnly, set.SetAsideOnly)
+	markAsked(asked, f.otherFrameOnly, set.OtherFrameOnly)
+	markAsked(asked, f.supersededOnly, set.SupersededOnly)
 	for c, fs := range f.findings {
 		if _, ok := asked[c]; !ok {
 			continue
@@ -668,6 +665,43 @@ func TestLocalReachability_NotInSeedWalkNamesItsOwnReason(t *testing.T) {
 	}
 	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredNotInSeedWalk {
 		t.Errorf("uncovered = %+v, want the one module with UncoveredNotInSeedWalk", result.Coverage.Uncovered)
+	}
+}
+
+// A module whose every record was set aside names that, not "never vuln-scanned".
+func TestLocalReachability_SetAsideOnlyNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{setAsideOnly: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredSetAside {
+		t.Errorf("uncovered = %+v, want the one module with UncoveredSetAside", result.Coverage.Uncovered)
+	}
+}
+
+// A module no completed scan answers for names the incomplete scan, not
+// "never vuln-scanned".
+func TestLocalReachability_ScanIncompleteNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{scanIncomplete: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredScanIncomplete {
+		t.Errorf("uncovered = %+v, want the one module with UncoveredScanIncomplete", result.Coverage.Uncovered)
 	}
 }
 

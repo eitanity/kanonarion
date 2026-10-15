@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -339,5 +340,176 @@ INSERT INTO vulnerability_findings_index (
 		rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version(), string(rec.Rooting),
 	); err != nil {
 		t.Fatalf("planting index row: %v", err)
+	}
+}
+
+// After a Go upgrade one frame holds two toolchains' verdicts on one snapshot.
+// The write that appends the new toolchain's record completes, the index then
+// describes that toolchain's answer, and the verifier composes it the same way.
+func TestPutVulnerabilityRecord_AGoUpgradeIndexesTheNewToolchain(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	before := indexTestRecordAt(t, domain.RootingTargetRooted, "",
+		time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), domain.StatusAffected, finding("GO-2026-0001"))
+	before.Toolchain = "go1.26.6"
+	before = seal(t, before)
+	if err := store.PutVulnerabilityRecord(ctx, before); err != nil {
+		t.Fatalf("scan under the old toolchain: %v", err)
+	}
+	after := indexTestRecordAt(t, domain.RootingTargetRooted, "",
+		time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC), domain.StatusAffected, finding("GO-2026-0002"))
+	after.Toolchain = "go1.27.2"
+	after.WalkID = "walk-2"
+	after = seal(t, after)
+	if err := store.PutVulnerabilityRecord(ctx, after); err != nil {
+		t.Fatalf("the first scan after the upgrade refused: %v", err)
+	}
+
+	if recs, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0001", ""); err != nil || len(recs) != 0 {
+		t.Errorf("the old toolchain's advisory is still indexed: %d record(s), err %v", len(recs), err)
+	}
+	recs, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0002", "")
+	if err != nil || len(recs) != 1 || recs[0].ContentHash != after.ContentHash {
+		t.Errorf("the new toolchain's advisory is not served from its record: %d record(s), err %v", len(recs), err)
+	}
+	defects, err := store.CheckFindingsIndex(ctx)
+	if err != nil {
+		t.Fatalf("CheckFindingsIndex: %v", err)
+	}
+	if len(defects) != 0 {
+		t.Errorf("the verifier disagrees with the writer: %v", sqlite.FindingsIndexDefectsError(defects))
+	}
+	// The unpinned read still refuses: the index follows the newest build, the
+	// read does not pick one for the caller.
+	if _, _, err := store.GetVulnerabilityRecordAt(ctx, after.Coordinate, after.PipelineVersion, indexTestSnapshot(), domain.RootingTargetRooted); err == nil {
+		t.Error("the unpinned read answered across two toolchains")
+	}
+}
+
+// A walk's records are the generations its scan runs named. After a Go upgrade
+// the older walk's record shares the newer walk's key; reaching it too made the
+// walk-anchored reads refuse on a conflict the walk does not hold. A run that
+// named no hash still reaches every generation of its key.
+func TestListVulnerabilityRecordsForModuleInWalk_ReachesTheGenerationItsRunNamed(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+	before := indexTestRecordAt(t, domain.RootingTargetRooted, "",
+		time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), domain.StatusAffected, finding("GO-2026-0001"))
+	before.Toolchain = "go1.26.6"
+	before = seal(t, before)
+	after := indexTestRecordAt(t, domain.RootingTargetRooted, "",
+		time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC), domain.StatusAffected, finding("GO-2026-0001"), finding("GO-2026-0002"))
+	after.Toolchain, after.WalkID = "go1.27.2", "walk-2"
+	after = seal(t, after)
+	for _, rec := range []domain.VulnerabilityRecord{before, after} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("writing %s: %v", rec.ContentHash, err)
+		}
+	}
+	putRunNaming(t, store, "walk-1", before)
+	putRunNaming(t, store, "walk-2", after)
+	putRunNaming(t, store, "walk-3", after)
+	// walk-3's run predates the hash column: its membership names the key only.
+	if _, err := store.InternalDB().DB().ExecContext(ctx,
+		`UPDATE walk_scan_run_modules SET record_content_hash = '' WHERE walk_id = 'walk-3'`); err != nil {
+		t.Fatal(err)
+	}
+
+	for walkID, want := range map[string]int{"walk-1": 1, "walk-2": 1, "walk-3": 2} {
+		recs, err := store.ListVulnerabilityRecordsForModuleInWalk(ctx, after.Coordinate, after.PipelineVersion, walkID)
+		if err != nil || len(recs) != want {
+			t.Errorf("%s reaches %d record(s), err %v; want %d", walkID, len(recs), err, want)
+		}
+	}
+	recs, err := store.ListVulnerabilityRecordsForModuleInWalk(ctx, after.Coordinate, after.PipelineVersion, "walk-2")
+	if err == nil && len(recs) == 1 && recs[0].ContentHash != after.ContentHash {
+		t.Errorf("walk-2 reaches %s, want its own record %s", recs[0].ContentHash, after.ContentHash)
+	}
+	for walkID, want := range map[string]string{"walk-1": before.ContentHash, "walk-2": after.ContentHash} {
+		byID, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0001", walkID)
+		if err != nil || len(byID) != 1 || byID[0].ContentHash != want {
+			t.Errorf("%s's advisory read = %d record(s), err %v; want its own record %s", walkID, len(byID), err, want)
+		}
+	}
+}
+
+// putRunNaming writes a scan run of walkID whose membership names rec's hash.
+func putRunNaming(t *testing.T, store *sqlite.Store, walkID string, rec domain.VulnerabilityRecord) {
+	t.Helper()
+	run := sealRun(t, domain.WalkScanRun{
+		ID: "run-" + walkID, WalkID: walkID, Snapshot: indexTestSnapshot(), OverallStatus: domain.WalkStatusAffected,
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{rec.Coordinate: rec.ContentHash},
+		StartedAt:        rec.ScannedAt, CompletedAt: rec.ScannedAt.Add(time.Minute), PipelineVersion: rec.PipelineVersion,
+	})
+	if err := store.PutWalkScanRun(t.Context(), run); err != nil {
+		t.Fatalf("writing %s: %v", run.ID, err)
+	}
+}
+
+// After a Go upgrade the newer toolchain reports an advisory the older did not.
+// The index lists the advisory at the shared key, but only the generation that
+// carries it answers: never the older walk's record, which does not.
+func TestListVulnerabilityRecordsByFindingID_ListsOnlyTheGenerationThatCarriesTheAdvisory(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+	before := indexTestRecordAt(t, domain.RootingTargetRooted, "",
+		time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), domain.StatusAffected, finding("GO-2026-0001"))
+	before.Toolchain = "go1.26.6"
+	before = seal(t, before)
+	after := indexTestRecordAt(t, domain.RootingTargetRooted, "",
+		time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC), domain.StatusAffected, finding("GO-2026-0001"), finding("GO-2026-0002"))
+	after.Toolchain, after.WalkID = "go1.27.2", "walk-2"
+	after = seal(t, after)
+	for _, rec := range []domain.VulnerabilityRecord{before, after} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("writing %s: %v", rec.ContentHash, err)
+		}
+	}
+	putRunNaming(t, store, "walk-1", before)
+	putRunNaming(t, store, "walk-2", after)
+
+	for _, c := range []struct {
+		walkID, findingID, want string
+	}{
+		{"walk-1", "GO-2026-0002", ""},
+		{"walk-2", "GO-2026-0002", after.ContentHash},
+		{"", "GO-2026-0002", after.ContentHash},
+		{"walk-1", "GO-2026-0001", before.ContentHash},
+		{"", "GO-2026-0001", after.ContentHash},
+	} {
+		recs, err := store.ListVulnerabilityRecordsByFindingID(ctx, c.findingID, c.walkID)
+		if err != nil {
+			t.Fatalf("%s in %q: %v", c.findingID, c.walkID, err)
+		}
+		got := ""
+		if len(recs) == 1 {
+			got = recs[0].ContentHash
+		}
+		if len(recs) > 1 || got != c.want {
+			t.Errorf("%s in walk %q = %d record(s) %q, want %q", c.findingID, c.walkID, len(recs), got, c.want)
+		}
+	}
+}
+
+// Unscoped, the row is the record the index was composed from. Here the ladder
+// serves the older generation, built with bodies, over a newer one that built
+// no call graph; ranking by recency alone would list the record the index does
+// not describe.
+func TestListVulnerabilityRecordsByFindingID_UnscopedListsTheComposedRecord(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+	composed := indexTestRecordAt(t, domain.RootingIsolated, "BUILT_WITH_BODIES",
+		time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), domain.StatusAffected, finding("GO-2026-0001"))
+	newer := indexTestRecordAt(t, domain.RootingIsolated, "",
+		time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC), domain.StatusAffected, finding("GO-2026-0001"))
+	for _, rec := range []domain.VulnerabilityRecord{composed, newer} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("writing %s: %v", rec.ContentHash, err)
+		}
+	}
+	recs, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0001", "")
+	if err != nil || len(recs) != 1 || recs[0].ContentHash != composed.ContentHash {
+		t.Errorf("= %d record(s), err %v; want the composed record %s", len(recs), err, composed.ContentHash)
 	}
 }

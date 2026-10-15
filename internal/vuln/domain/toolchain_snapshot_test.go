@@ -194,3 +194,48 @@ func TestToolchainConflict_AnswerDoesNotDependOnRowOrder(t *testing.T) {
 		}
 	}
 }
+
+// One database version retrieved twice is one advisory set: a re-download, and
+// the same instant stored at whole-second precision. Two toolchains that
+// disagree across those retrievals still conflict.
+func TestToolchainConflict_TwoRetrievalsOfOneVersionAreOneSnapshot(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 11, 11, 57, 16, 349792969, time.UTC)
+	for name, other := range map[string]time.Time{
+		"re-download":      at.Add(26 * time.Hour),
+		"second precision": at.Truncate(time.Second),
+	} {
+		a := tcRecord(t, "sha256:a", "go1.26.5", vulntest.MustSealOver("vuln.go.dev", "2026-10-08T22:31:09Z", at, []byte("db")), false,
+			time.Date(2026, 10, 11, 11, 0, 0, 0, time.UTC))
+		b := tcRecord(t, "sha256:b", "go1.27.2", vulntest.MustSealOver("vuln.go.dev", "2026-10-08T22:31:09Z", other, []byte("db")), true,
+			time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC))
+		_, err := domain.Compose([]domain.VulnerabilityRecord{a, b})
+		var c domain.ToolchainConflict
+		if !errors.As(err, &c) {
+			t.Errorf("%s: Compose = %v, want a ToolchainConflict", name, err)
+		}
+	}
+}
+
+// One version label over two different databases is two advisory sets: the
+// content hashes say so, and their verdicts are not compared. A snapshot that
+// carries no hash is matched on source and version alone.
+func TestToolchainConflict_DifferentDatabaseHashesAreTwoSnapshots(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 11, 11, 57, 16, 0, time.UTC)
+	a := tcRecord(t, "sha256:a", "go1.26.5", vulntest.MustSealOver("vuln.go.dev", "2026-10-08T22:31:09Z", at, []byte("db1")), false,
+		time.Date(2026, 10, 11, 11, 0, 0, 0, time.UTC))
+	b := tcRecord(t, "sha256:b", "go1.27.2", vulntest.MustSealOver("vuln.go.dev", "2026-10-08T22:31:09Z", at, []byte("db2")), true,
+		time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC))
+	if _, err := domain.Compose([]domain.VulnerabilityRecord{a, b}); err != nil {
+		t.Errorf("two databases under one version label conflicted: %v", err)
+	}
+	a.DatabaseSnapshot = vulntest.MustNewAt("vuln.go.dev", "2026-10-08T22:31:09Z", at.Add(time.Hour))
+	if _, err := domain.Compose([]domain.VulnerabilityRecord{a, b}); err == nil {
+		t.Error("an unhashed snapshot of the same version did not conflict")
+	}
+	a.DatabaseSnapshot = vulntest.MustSealOver("osv.dev", "2026-10-08T22:31:09Z", at, []byte("db2"))
+	if _, err := domain.Compose([]domain.VulnerabilityRecord{a, b}); err != nil {
+		t.Errorf("two sources under one version label conflicted: %v", err)
+	}
+}

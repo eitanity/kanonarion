@@ -34,6 +34,13 @@ type WalkAnchor struct {
 	// Source names the walk for the seed line, e.g.
 	// `walk "01K…" (code scope, frame target-rooted:example.com/app@local)`.
 	Source string
+	// PassedOver names a newer project walk whose vuln-scan did not complete,
+	// with the remedy that completes it; the seed came from an older walk whose
+	// scan did. Empty when the newest walk's scan completed.
+	PassedOver string
+	// ScanIncomplete says no walk of the tree has a completed vuln-scan, so the
+	// anchor is the newest walk and it answers for no coordinate.
+	ScanIncomplete bool
 }
 
 // NegativeSearcher is the read-time call-graph search a record's negatives are
@@ -94,6 +101,7 @@ func (a *VulnStoreAdapter) LoadFindings(
 		SupersededOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		SetAsideOnly:   make(map[coordinate.ModuleCoordinate]struct{}),
 		NotInSeedWalk:  make(map[coordinate.ModuleCoordinate]struct{}),
+		ScanIncomplete: make(map[coordinate.ModuleCoordinate]struct{}),
 		NotAnalysed:    make(map[coordinate.ModuleCoordinate]struct{}),
 		Restriction:    a.seedRestriction(consumerModulePath),
 	}
@@ -204,13 +212,24 @@ func (a *VulnStoreAdapter) selectSeed(candidates []vulndomain.VulnerabilityRecor
 // seedRestriction is the one-line statement of what the seed was drawn from,
 // for the probe to report beside its answer.
 func (a *VulnStoreAdapter) seedRestriction(consumerModulePath string) string {
-	if a.anchor != nil {
+	switch {
+	case a.anchor == nil:
+		return treeSeedRestriction(consumerModulePath)
+	case a.anchor.ScanIncomplete:
 		return fmt.Sprintf(
 			"seed restricted to stored records scanned by %s, the newest project walk for this tree's go.mod, "+
-				"in its own frame or in the isolated frame; records of older walks and of another consumer's build were not read",
+				"whose vuln-scan did not complete; no walk of this tree has a completed scan, so nothing seeded this build",
 			a.anchor.Source)
+	case a.anchor.PassedOver != "":
+		return fmt.Sprintf(
+			"%s; seeded from %s, the newest project walk for this tree's go.mod whose scan completed, "+
+				"in its own frame or in the isolated frame; records of other walks and of another consumer's build were not read",
+			a.anchor.PassedOver, a.anchor.Source)
 	}
-	return treeSeedRestriction(consumerModulePath)
+	return fmt.Sprintf(
+		"seed restricted to stored records scanned by %s, the newest project walk for this tree's go.mod, "+
+			"in its own frame or in the isolated frame; records of older walks and of another consumer's build were not read",
+		a.anchor.Source)
 }
 
 // treeSeedRestriction states the seed boundary when no walk anchors it.
@@ -250,10 +269,14 @@ func (a *VulnStoreAdapter) supersededOnly(ctx context.Context, coord coordinate.
 	return true
 }
 
-// classifyEmpty records which absence an empty read is: superseded only, held
-// only by walks other than the seed walk, or never scanned (neither set).
+// classifyEmpty records which absence an empty read is: no completed scan to
+// read, superseded only, held only by walks other than the seed walk, or never
+// scanned (no set). A walk whose scan did not complete reads empty for every
+// coordinate, so that reason comes first.
 func (a *VulnStoreAdapter) classifyEmpty(ctx context.Context, coord coordinate.ModuleCoordinate, result *ports.FindingSet) {
 	switch {
+	case a.anchor != nil && a.anchor.ScanIncomplete:
+		result.ScanIncomplete[coord] = struct{}{}
 	case a.supersededOnly(ctx, coord):
 		result.SupersededOnly[coord] = struct{}{}
 	case a.heldOutsideAnchor(ctx, coord):

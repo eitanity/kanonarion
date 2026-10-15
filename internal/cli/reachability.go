@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	localimporter "github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
 	localprober "github.com/eitanity/kanonarion/internal/local/adapters/probe/builder"
 	localsnapshot "github.com/eitanity/kanonarion/internal/local/adapters/snapshot/walkdir"
@@ -24,6 +25,9 @@ import (
 	localapp "github.com/eitanity/kanonarion/internal/local/application"
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 const localVulnPipelineVersion = vulnPipelineVersion
@@ -1436,7 +1440,27 @@ func runLocalReachability(ctx context.Context, dir string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	return renderLocalReachability(stdout, out, jsonOut)
+	if err := renderLocalReachability(stdout, out, jsonOut); err != nil {
+		return err
+	}
+	if coversNoModule(out.Coverage) {
+		// Exit 0 would read as a clear build. Nothing was analysed, which is the
+		// store lacking the records, so the answer is printed and the exit says so.
+		msg := noModuleCoveredLine
+		if out.Coverage.UncoveredRemedy != "" {
+			msg += ". " + out.Coverage.UncoveredRemedy
+		}
+		return &exitError{code: ExitNotFound, msg: msg}
+	}
+	return nil
+}
+
+// noModuleCoveredLine closes a probe that covered none of the build's modules.
+const noModuleCoveredLine = "no module of this build is covered, so this answer speaks about none of them"
+
+// coversNoModule reports a probe of a build with modules that covered none.
+func coversNoModule(c reachabilityCoverage) bool {
+	return c.BuildModules > 0 && c.CoveredModules == 0
 }
 
 // renderLocalReachability writes the local probe in the format the caller asked
@@ -1498,7 +1522,11 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 	}
 	printLocalCoverage(w, r.Coverage)
 	if len(r.Modules) == 0 {
-		w.printf("\nno affected modules in the analysed build\n")
+		closing := "no affected modules in the analysed build"
+		if coversNoModule(r.Coverage) {
+			closing = noModuleCoveredLine
+		}
+		w.printf("\n%s\n", closing)
 		return w.err
 	}
 	w.printf("\nfindings:\n")
@@ -1589,7 +1617,7 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 
 	vulnLoader := localvulnstore.New(ctr.VulnStore, localVulnPipelineVersion).
 		WithNegativeSearcher(ctr.NegativeSearch)
-	anchor, anchored, err := localSeedAnchor(ctx, ctr.QueryWalks, abs)
+	anchor, anchored, err := localSeedAnchor(ctx, ctr.QueryWalks, ctr.QueryScanRuns, abs)
 	if err != nil {
 		return reachabilityOutput{}, err
 	}
@@ -1613,14 +1641,16 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 }
 
 // localSeedAnchor resolves the walk the local probe is seeded from: the newest
-// project walk for the tree's go.mod, chosen by the rule vuln-show --gomod uses.
-// A tree with no go.mod of its own, or no project walk, keeps the frame-wide seed.
-func localSeedAnchor(ctx context.Context, walks QueryWalksUseCase, abs string) (localvulnstore.WalkAnchor, bool, error) {
+// project walk for the tree's go.mod whose vuln-scan completed. The newest walk
+// is chosen by the rule vuln-show --gomod uses; when its scan stopped short, the
+// seed moves to the newest walk whose scan completed and the line says so. A
+// tree with no go.mod of its own, or no project walk, keeps the frame-wide seed.
+func localSeedAnchor(ctx context.Context, walks QueryWalksUseCase, scans QueryScanRunsUseCase, abs string) (localvulnstore.WalkAnchor, bool, error) {
 	gomod := filepath.Join(abs, "go.mod")
 	if _, err := os.Stat(gomod); err != nil {
 		return localvulnstore.WalkAnchor{}, false, nil //nolint:nilerr // no go.mod at the root: the probe resolves its own module
 	}
-	anchor, ok, err := resolveVulnFrameAnchor(ctx, walks, "", gomod, true)
+	choice, err := latestWalkForGoMod(ctx, walks, gomod, scopeCode)
 	var none noProjectWalkError
 	if errors.As(err, &none) {
 		return localvulnstore.WalkAnchor{}, false, nil
@@ -1628,11 +1658,83 @@ func localSeedAnchor(ctx context.Context, walks QueryWalksUseCase, abs string) (
 	if err != nil {
 		return localvulnstore.WalkAnchor{}, false, fmt.Errorf("selecting the walk to seed from: %w", err)
 	}
-	return localvulnstore.WalkAnchor{
-		WalkID:  anchor.walkID,
-		Rooting: anchor.rooting,
-		Source:  anchor.source,
-	}, ok, nil
+	seed, completed, err := newestCompletedScanWalk(ctx, walks, scans, choice.summary)
+	if err != nil {
+		return localvulnstore.WalkAnchor{}, false, fmt.Errorf("selecting the walk to seed from: %w", err)
+	}
+	anchor, ok, err := resolveVulnFrameAnchor(ctx, walks, seed.ID, "", false)
+	if err != nil {
+		return localvulnstore.WalkAnchor{}, false, fmt.Errorf("selecting the walk to seed from: %w", err)
+	}
+	out := localvulnstore.WalkAnchor{
+		WalkID:         anchor.walkID,
+		Rooting:        anchor.rooting,
+		Source:         anchor.source,
+		ScanIncomplete: !completed,
+	}
+	if completed && seed.ID != choice.summary.ID {
+		out.PassedOver = fmt.Sprintf("walk %q's vuln-scan did not complete; %s completes it, run from the project's own directory",
+			choice.summary.ID, remedyCompleteScan().lines[0])
+	}
+	return out, ok, nil
+}
+
+// newestCompletedScanWalk returns newest when its vuln-scan completed, and
+// otherwise the newest walk of the same target, scope and platform whose scan
+// did, under any toolchain. completed is false when no such walk exists; newest
+// is then returned. A completed scan is one that recorded a scan run: the run
+// is written last, so an aborted or interrupted scan leaves records and no run,
+// and a walk-anchored read reaches a walk's records only through its runs.
+func newestCompletedScanWalk(
+	ctx context.Context, walks QueryWalksUseCase, scans QueryScanRunsUseCase, newest walkports.WalkSummary,
+) (seed walkports.WalkSummary, completed bool, _ error) {
+	done, err := walkScanCompleted(ctx, scans, newest.ID)
+	if err != nil || done {
+		return newest, done, err
+	}
+	succeeded := walkdomain.WalkSucceeded
+	filter := walkports.WalkFilter{Target: &newest.Target, Scope: &newest.Scope, OverallStatus: &succeeded}
+	if newest.GOOS != "" {
+		filter.BuildEnv = &walkports.BuildEnvFilter{GOOS: newest.GOOS, GOARCH: newest.GOARCH}
+	}
+	summaries, err := walks.ListWalks(ctx, filter)
+	if err != nil {
+		return newest, false, fmt.Errorf("listing the walks of %s: %w", newest.Target, err)
+	}
+	for _, s := range summaries {
+		if s.ID == newest.ID {
+			continue
+		}
+		done, err := walkScanCompleted(ctx, scans, s.ID)
+		if err != nil {
+			return newest, false, err
+		}
+		if done {
+			return s, true, nil
+		}
+	}
+	return newest, false, nil
+}
+
+// walkScanCompleted reports whether the store records a vuln-scan run for the
+// walk. A run this build sets aside, or cannot verify, is still a recorded run:
+// what its records can serve is decided per coordinate, as for any other walk.
+func walkScanCompleted(ctx context.Context, scans QueryScanRunsUseCase, walkID string) (bool, error) {
+	runs, err := scans.ListRunsForWalk(ctx, walkID)
+	if len(runs) > 0 {
+		return true, nil
+	}
+	var (
+		aside      *recordseal.SetAside
+		unreadable *vulnports.UnreadableRows
+	)
+	if errors.As(err, &aside) || errors.As(err, &unreadable) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading the scan runs of walk %s: %w", walkID, err)
+	}
+	return false, nil
 }
 
 func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabilityOutput {
@@ -1692,7 +1794,7 @@ func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
 		})
 	}
 	if len(out.UncoveredModules) > 0 {
-		out.UncoveredRemedy = remedyScanUncovered().String()
+		out.UncoveredRemedy = remedyScanUncovered(c.Uncovered).String()
 	}
 	for _, b := range c.Binaries {
 		out.ProbedBinaries = append(out.ProbedBinaries, reachabilityProbedBinary{

@@ -128,9 +128,14 @@ func claimsAVerdict(r VulnerabilityRecord) bool {
 }
 
 // sameSnapshot reports whether two records were measured against one advisory
-// set: the same generation, retrieved at the same instant.
+// set: the same source and version, and the same content hash when both carry
+// one. The retrieval instant is not identity: a re-download, or one instant
+// stored at two precisions, is still one set, and a conflict across it is real.
 func sameSnapshot(a, b DatabaseSnapshot) bool {
-	return a.Version() == b.Version() && a.RetrievedAt().Equal(b.RetrievedAt())
+	if a.Source() != b.Source() || a.Version() != b.Version() {
+		return false
+	}
+	return a.ContentHash() == "" || b.ContentHash() == "" || a.ContentHash() == b.ContentHash()
 }
 
 // newerScan orders records by scan time, the content hash breaking a tie so the

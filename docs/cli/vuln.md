@@ -1176,7 +1176,10 @@ could reach are all the toolchain's, so what a record states is stated about
 that build. Records written before it was recorded read
 `Toolchain: not recorded`. Two records for one coordinate naming different
 toolchains are reported as a conflict only when they were scanned against the
-**same advisory-database snapshot** and reached **different answers**. The
+**same advisory-database snapshot** and reached **different answers**. A
+snapshot is the same when its source and version match and, where both records
+carry the database's content hash, the hashes match too. When it was retrieved
+does not matter: two downloads of one database version are one snapshot. The
 snapshot compared is the one of the record that would be served. Records on
 other snapshots never conflict: they were checked against different advisory
 sets, so a difference between them is not the toolchain's. Within the snapshot,
@@ -1190,7 +1193,11 @@ still takes part. The
 refusal names the build to answer for instead: `--walk-id` with the walk of the
 newest disagreeing record, and `--gomod ./go.mod` run from the project. A
 re-scan does not clear it, because the record it writes is added beside the
-other toolchain's, which stays. Under `--json` the field is `toolchain`,
+other toolchain's, which stays. The refusal is for unpinned reads only. A scan
+after a Go upgrade completes, and a read pinned with `--walk-id` or `--gomod`
+reads only the records that walk's scans wrote, so it answers.
+`vuln-by-id` lists, for such a coordinate, the answer of the newest
+toolchain. Under `--json` the field is `toolchain`,
 emitted on every record, empty when not recorded.
 
 Use `--history` to list every stored scan record across all walks, snapshots

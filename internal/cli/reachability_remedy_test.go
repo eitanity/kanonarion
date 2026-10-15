@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -316,5 +317,36 @@ func TestVulnReachability_AdvisoryNamesNoSymbols_NamesTheAbsentTarget(t *testing
 		if !strings.Contains(msg, want) {
 			t.Errorf("refusal missing %q:\n%s", want, msg)
 		}
+	}
+}
+
+// The probe's remedy lead follows the reasons its uncovered modules carry; the
+// commands are the same whichever lead it takes.
+func TestRemedyScanUncovered_LeadFollowsTheReasons(t *testing.T) {
+	superseded := localdomain.UncoveredModule{Reason: localdomain.UncoveredSupersededPipeline}
+	never := localdomain.UncoveredModule{Reason: localdomain.UncoveredNoStoredRecord}
+	cases := []struct {
+		name      string
+		uncovered []localdomain.UncoveredModule
+		lead      string
+	}{
+		{"never scanned only", []localdomain.UncoveredModule{never, never}, "These modules carry no stored record"},
+		{"superseded only", []localdomain.UncoveredModule{superseded, superseded}, "These modules hold records only from superseded scan logic; re-scan the build"},
+		{"mixed", []localdomain.UncoveredModule{superseded, superseded, never},
+			"2 of these modules hold records only from superseded scan logic and 1 carry no record this probe can read"},
+	}
+	want := remedyScanUncovered(nil).lines
+	for _, c := range cases {
+		got := remedyScanUncovered(c.uncovered)
+		if !strings.HasPrefix(got.lead, c.lead) {
+			t.Errorf("%s: lead = %q, want it to start %q", c.name, got.lead, c.lead)
+		}
+		if strings.Join(got.lines, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%s: commands = %v, want %v", c.name, got.lines, want)
+		}
+	}
+	incomplete := remedyScanUncovered([]localdomain.UncoveredModule{{Reason: localdomain.UncoveredScanIncomplete}})
+	if incomplete.String() != remedyCompleteScan().String() || !strings.HasPrefix(incomplete.lines[0], "kanonarion vuln-scan --gomod ./go.mod") {
+		t.Errorf("an incomplete scan's remedy = %q, want the scan completed", incomplete)
 	}
 }

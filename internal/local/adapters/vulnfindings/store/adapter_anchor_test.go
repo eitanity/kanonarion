@@ -186,3 +186,55 @@ func TestLoadFindings_NotAnalysedRecordIsNotCoverage(t *testing.T) {
 		t.Errorf("a failed scan's finding was dropped: %+v", set.Findings)
 	}
 }
+
+// When no walk of the tree has a completed scan, the anchored walk answers for
+// nothing, and every empty read says the scan did not complete — never that the
+// walk holds no record, nor that the module was superseded or never scanned.
+func TestLoadFindings_AnIncompleteScanIsTheReasonForEveryAbsence(t *testing.T) {
+	inOld := mustCoord(t, "example.com/dep", "v1.0.0")
+	superseded := mustCoord(t, "example.com/stale", "v1.0.0")
+	never := mustCoord(t, "example.com/never", "v1.0.0")
+	s := upgradedStore(t, inOld)
+	s.inWalk = map[string]map[string][]vulndomain.VulnerabilityRecord{newestWalk: {}}
+	s.generations = map[string][]vulnports.VulnerabilityRecordGeneration{
+		superseded.Path(): {{PipelineVersion: "v0"}},
+	}
+	anchor := newestAnchor(t)
+	anchor.ScanIncomplete = true
+
+	set, err := anchoredLoad(t, s, anchor, inOld, superseded, never)
+	if err != nil {
+		t.Fatalf("anchored LoadFindings: %v", err)
+	}
+	for _, c := range []coordinate.ModuleCoordinate{inOld, superseded, never} {
+		if _, ok := set.ScanIncomplete[c]; !ok {
+			t.Errorf("%s is not marked ScanIncomplete: %+v", c, set)
+		}
+	}
+	if len(set.NotInSeedWalk) != 0 || len(set.SupersededOnly) != 0 {
+		t.Errorf("another reason was given beside the incomplete scan: %+v", set)
+	}
+	if !strings.Contains(set.Restriction, anchorNote) || !strings.Contains(set.Restriction, "did not complete") {
+		t.Errorf("Restriction = %q, want it to name the walk and say its scan did not complete", set.Restriction)
+	}
+}
+
+// A newer walk whose scan did not complete is named in the seed line ahead of
+// the walk the seed came from.
+func TestLoadFindings_APassedOverWalkIsNamed(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	s := upgradedStore(t, coord)
+	anchor := newestAnchor(t)
+	anchor.PassedOver = `walk "01JS0NGARD0000000000000IN1"'s vuln-scan did not complete`
+
+	set, err := anchoredLoad(t, s, anchor, coord)
+	if err != nil {
+		t.Fatalf("anchored LoadFindings: %v", err)
+	}
+	if !strings.HasPrefix(set.Restriction, anchor.PassedOver+"; seeded from "+anchorNote) {
+		t.Errorf("Restriction = %q, want the passed-over walk then the seed walk", set.Restriction)
+	}
+	if _, ok := set.Scanned[coord]; !ok {
+		t.Errorf("the seed walk's record did not cover %s: %+v", coord, set)
+	}
+}

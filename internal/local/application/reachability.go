@@ -196,6 +196,8 @@ func appendUnservedCoordinates(uncovered []domain.UncoveredModule, coords []coor
 			reason = domain.UncoveredSetAside
 		case setContains(set.NotInSeedWalk, coord):
 			reason = domain.UncoveredNotInSeedWalk
+		case setContains(set.ScanIncomplete, coord):
+			reason = domain.UncoveredScanIncomplete
 		case setContains(set.NotAnalysed, coord):
 			reason = domain.UncoveredNotAnalysed
 		}

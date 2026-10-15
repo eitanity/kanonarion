@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ErrNoRecordsToCompose is returned by Compose when handed no records. It is a
@@ -83,6 +84,45 @@ func ComposeAt(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRec
 	// has a way to produce, and the guard that pretended otherwise was dead code
 	// no test could reach.
 	return best(candidates), true, nil
+}
+
+// ComposeForIndex returns the record the findings index of one frame describes.
+// It is ComposeAt, except on a toolchain conflict: then the index describes the
+// generations scanned under the toolchain of the frame's newest record. A Go
+// upgrade puts two toolchains in one frame, and the newest is the build a
+// walk-anchored read answers for; the unpinned read still refuses. Every other
+// refusal stands, and the store's writer and its index verifier both use this.
+func ComposeForIndex(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRecord, bool, error) {
+	rec, ok, err := ComposeAt(records, rooting)
+	var conflict ToolchainConflict
+	if err == nil || !errors.As(err, &conflict) {
+		return rec, ok, err
+	}
+	toolchain := newestToolchain(atRooting(records, rooting))
+	current := make([]VulnerabilityRecord, 0, len(records))
+	for _, r := range records {
+		// A record stating no toolchain was not scanned under this one, so it is
+		// not part of this toolchain's answer.
+		if r.Toolchain == toolchain {
+			current = append(current, r)
+		}
+	}
+	return ComposeAt(current, rooting)
+}
+
+// newestToolchain is the toolchain named by the newest record that names one;
+// a conflict guarantees there is such a record.
+func newestToolchain(records []VulnerabilityRecord) gotoolchain.Version {
+	var (
+		newest VulnerabilityRecord
+		found  bool
+	)
+	for _, r := range records {
+		if r.Toolchain != "" && (!found || newerScan(r, newest)) {
+			newest, found = r, true
+		}
+	}
+	return newest.Toolchain
 }
 
 // ComposeInFrame picks the record answering for one frame out of a walk's

@@ -65,6 +65,10 @@ const (
 	// project walk, which did not scan the coordinate, though another walk did.
 	// Other walks are not read: an older one may carry another toolchain's verdict.
 	UncoveredNotInSeedWalk = "the walk this probe was seeded from holds no vulnerability record for this coordinate; other walks scanned it, and their records do not seed this build"
+	// UncoveredScanIncomplete means no project walk of this tree has a vuln-scan
+	// that completed: the newest one's scan stopped before it recorded a run, so
+	// the walk answers for no coordinate, whatever records the scan left behind.
+	UncoveredScanIncomplete = "the vuln-scan of the newest project walk for this tree did not complete, and no walk of this tree has a scan that did; no completed scan answers for this coordinate"
 	// UncoveredNotAnalysed means the record that would seed the coordinate says
 	// its scan failed or could not analyse it, and found nothing. That is not
 	// "no known vulnerabilities", so the module is not counted as covered.

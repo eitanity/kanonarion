@@ -829,6 +829,25 @@ examined eleven and cleared one.
 | `the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again` | The module has been scanned for this build, under scan logic this build supersedes. Re-scan it to cover it. |
 | `the stored scan record for this coordinate says it was not analysed (the scan failed or the module was unscannable), so it is no answer about this build` | A scan ran and did not analyse the module. A record like that found nothing because nothing was looked at, so it is not counted as covered. Read the record's reason with `kanonarion vuln-show <module>@<version> --gomod ./go.mod`. |
 | `the walk this probe was seeded from holds no vulnerability record for this coordinate; other walks scanned it, and their records do not seed this build` | The newest project walk of this tree did not scan the module — usually because `go.mod` changed since that walk. Scan the build to cover it. |
+| `the vuln-scan of the newest project walk for this tree did not complete, and no walk of this tree has a scan that did; no completed scan answers for this coordinate` | A scan of the walk was interrupted or failed before it finished, and no earlier walk's scan finished either. Run `kanonarion vuln-scan --gomod ./go.mod --reachability` to completion. |
+
+The `to widen the answer:` line follows the reasons listed. When every
+uncovered module holds records only from superseded scan logic, it says so and
+names the re-scan; when some are superseded and some hold no record, it gives
+both counts. The commands are the same in each case.
+
+**When no module is covered, the probe exits `4`.** If the build has modules
+and the probe covered none of them, the answer is still printed in full, with
+`--json` too, but it ends with
+
+```
+no module of this build is covered, so this answer speaks about none of them
+```
+
+and the command exits `4`, the code for a store that lacks the records. The
+message on stderr repeats the remedy. An exit of `0` means at least one module
+was covered; read `coverage` for how many. `--json` adds no field for this:
+`coverage.covered_modules` is already `0`.
 
 ### Which records seeded the probe
 
@@ -837,7 +856,7 @@ holds several answers per dependency.
 
 When the store holds a project walk for this tree's `go.mod`, the seed is drawn
 from **one walk**: the newest code-scope project walk for that `go.mod` on this
-platform, chosen the way `vuln-show --gomod` chooses it. Within that walk it uses
+platform whose vuln-scan completed, chosen the way `vuln-show --gomod` chooses it. Within that walk it uses
 the records measured in the walk's own frame, plus the **isolated** frame, which
 answers "the module built alone" and belongs to no project. Records of older
 walks are not read. An older walk taken under an earlier Go release can disagree
@@ -850,6 +869,23 @@ target-rooted:github.com/example/app@local), the newest project walk for this
 tree's go.mod, in its own frame or in the isolated frame; records of older walks
 and of another consumer's build were not read
 ```
+
+A scan completes when it records its scan run. A scan that was interrupted, or
+that failed partway, leaves records and no run, and the walk answers for no
+module. When the newest walk's scan did not complete, the seed comes from the
+newest walk whose scan did, under any Go toolchain, and the `seed:` line names
+both:
+
+```
+walk "01M…"'s vuln-scan did not complete; kanonarion vuln-scan --gomod
+./go.mod --reachability completes it, run from the project's own directory;
+seeded from walk "01K…" (code scope, frame
+target-rooted:github.com/example/app@local), the newest project walk for this
+tree's go.mod whose scan completed, …
+```
+
+When no walk's scan completed, the seed names the newest walk, and every
+uncovered module gives the incomplete scan as its reason.
 
 When the store holds no project walk for the tree, the seed is restricted to
 the records measured in **this tree's own frame** — a walk rooted at the module
