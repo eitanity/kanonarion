@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,59 @@ func TestRecordIsCacheable_VCSLeg(t *testing.T) {
 				t.Errorf("RecordIsCacheable() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// preFixTimeoutDetail is the detail a road-test record carries from before a
+// timed-out leg was recorded as unavailable: the fallback failed on the lock
+// the killed git left, and only the tail names the bound.
+const preFixTimeoutDetail = "checkout: git fetch: exit status 128: fatal: Unable to create '/var/tmp/kanonarion-verify-2016628119/.git/shallow.lock': File exists.\n\n" +
+	"Another git process seems to be running in this repository, e.g.\nan editor opened by 'git commit'. Please make sure all processes\n" +
+	"are terminated then try again. If it still fails, a git process\nmay have crashed in this repository earlier:\nremove the file manually to continue.\n" +
+	" (after: git fetch --depth=1 --end-of-options origin 0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1 exceeded the 2m0s fetch bound: signal: killed: )"
+
+// A record written before the timed-out leg was named says "rechecked", and
+// only its detail shows the check never answered. It is refused on the same
+// terms as an unavailable leg; a rechecked record without the phrase is not.
+func TestRecordIsCacheable_RecheckedLegThatExceededTheBound(t *testing.T) {
+	cases := []struct {
+		name   string
+		leg    domain2.LegProvenance
+		detail string
+		want   bool
+	}{
+		{"pre-fix timeout behind a lock message", domain2.LegRechecked, preFixTimeoutDetail, false},
+		{"pre-fix timeout of the fallback itself", domain2.LegRechecked,
+			"checkout: git fetch: git fetch --depth=1024 --end-of-options origin exceeded the 1m30s fetch bound: signal: killed: (after: exit status 128)", false},
+		{"ordinary rechecked mismatch", domain2.LegRechecked, "proxy hash h1:a= does not match git checkout hash h1:b=", true},
+		{"ordinary rechecked, no anchor", domain2.LegRechecked, "resolving tag refs/tags/v1.0.0: exit status 128", true},
+		{"phrase without a bound is not ours", domain2.LegRechecked, "exceeded the  fetch bound", true},
+		{"inherited leg is not re-judged", domain2.LegInherited, preFixTimeoutDetail, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := ""
+			if tc.leg == domain2.LegInherited {
+				source = "sha256:" + strings.Repeat("a", 64)
+			}
+			r := fetchtest.Record(t, fetchtest.Status(domain2.VerifiedBySumDBOnly),
+				fetchtest.Detail(tc.detail), fetchtest.VCSCheck(tc.leg, source))
+			if got := domain2.RecordIsCacheable(r); got != tc.want {
+				t.Errorf("RecordIsCacheable() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The phrase the cache gate matches is the one the git adapter formats, with a
+// real bound substituted the way the adapter does it.
+func TestVCSBoundExceededFormatMatchesWhatItFormats(t *testing.T) {
+	for _, d := range []time.Duration{2 * time.Minute, 300 * time.Millisecond, 90 * time.Minute} {
+		detail := "git ls-remote x " + fmt.Sprintf(domain2.VCSBoundExceededFormat, d) + ": killed"
+		r := fetchtest.Record(t, fetchtest.Detail(detail), fetchtest.VCSCheck(domain2.LegRechecked, ""))
+		if domain2.RecordIsCacheable(r) {
+			t.Errorf("bound %s: the formatted phrase %q is not recognised", d, detail)
+		}
 	}
 }
 

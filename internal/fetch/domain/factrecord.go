@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -88,8 +90,9 @@ type FactRecord struct {
 	// inherited from when it was not rechecked here. A --skip-vcs run leaves both
 	// empty: the leg is absent, which is a different claim from a negative
 	// result. LegUnavailable is a third claim again — the check was attempted and
-	// the host had no git — and it is what keeps a host fault from being stored
-	// as a property of the module. See ValidationLeg.
+	// could not run (no git on the host, or the remote did not answer within the
+	// fetch bound) — and it is what keeps a host or network fault from being
+	// stored as a property of the module. See ValidationLeg.
 	VCSCheck       string `json:"vcs_check,omitempty"`
 	VCSCheckSource string `json:"vcs_check_source,omitempty"`
 
@@ -150,9 +153,14 @@ func NewFactRecord(m FetchedModule) FactRecord {
 // and it is the only way the downgrade can ever be undone on its own.
 //
 // A record whose VCS leg is LegUnavailable is not cacheable for the same reason
-// on the other leg: the host had no git, so the check could not run, and the
-// resulting status describes the machine rather than the module. A later run on
-// a host that has git must re-establish the answer without being forced.
+// on the other leg: the check could not run — the host had no git, or the remote
+// did not answer within the fetch bound — and the resulting status describes the
+// machine or the network rather than the module. A later run that can reach git
+// must re-establish the answer without being forced.
+//
+// A record written before that, whose VCS leg says rechecked but whose detail
+// says the git command exceeded its bound, is the same unavailable leg stored
+// under the wrong name, and is refused on the same terms.
 //
 // Every other record — including one whose sumdb answer was a settled policy
 // answer (GOSUMDB=off, GOPRIVATE, no hash line), one whose VCS check ran and
@@ -164,8 +172,21 @@ func NewFactRecord(m FetchedModule) FactRecord {
 // cache eligibility is fetch-pipeline policy, not the read-shape plumbing a
 // graduated result alias is allowed to carry, so it must not reach the public API.
 func RecordIsCacheable(r FactRecord) bool {
-	return !r.SumDBLookupFailed && LegProvenance(r.VCSCheck) != LegUnavailable
+	leg := LegProvenance(r.VCSCheck)
+	return !r.SumDBLookupFailed && leg != LegUnavailable &&
+		(leg != LegRechecked || !vcsBoundExceeded.MatchString(r.VerificationDetail))
 }
+
+// VCSBoundExceededFormat is the text the git adapter writes when a command
+// talking to the remote outlives its bound; %s is the bound. It is shared with
+// RecordIsCacheable so the two cannot drift: records written before a timed-out
+// leg was recorded as unavailable say "rechecked" and carry only this phrase.
+const VCSBoundExceededFormat = "exceeded the %s fetch bound"
+
+var vcsBoundExceeded = func() *regexp.Regexp {
+	before, after, _ := strings.Cut(VCSBoundExceededFormat, "%s")
+	return regexp.MustCompile(regexp.QuoteMeta(before) + `\S+` + regexp.QuoteMeta(after))
+}()
 
 // Coordinate returns the ModuleCoordinate this record describes.
 //

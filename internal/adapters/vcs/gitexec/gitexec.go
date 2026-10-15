@@ -30,6 +30,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
+	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -44,9 +45,9 @@ const (
 	// fetching without bound.
 	defaultFallbackFetchDepth = 1024
 
-	// defaultFetchTimeout is the wall-clock bound applied to each individual
-	// git fetch attempt in CheckoutToDir, so a stalling or drip-feeding remote
-	// cannot wedge cross-verification indefinitely.
+	// defaultFetchTimeout is the wall-clock bound applied to each git command
+	// that talks to the remote (ls-remote, and each fetch attempt), so a
+	// stalling or drip-feeding remote cannot wedge cross-verification.
 	defaultFetchTimeout = 2 * time.Minute
 )
 
@@ -100,7 +101,7 @@ type Client struct {
 	allowedProtocols string
 	// fallbackFetchDepth bounds the full-fetch fallback in CheckoutToDir.
 	fallbackFetchDepth int
-	// fetchTimeout bounds each individual git fetch attempt in CheckoutToDir.
+	// fetchTimeout bounds each git command that talks to the remote.
 	fetchTimeout time.Duration
 	// extraConfig holds additional "-c key=value" argument pairs appended to
 	// configArgs. It is empty in production; tests use it to drive git into a
@@ -138,7 +139,7 @@ func (c *Client) ResolveTag(ctx context.Context, url, ref string) (string, error
 		return "", err
 	}
 	// git ls-remote <url> <ref> prints "<commit>\t<ref>"
-	out, err := c.runGit(ctx, "ls-remote", "--exit-code", "--end-of-options", url, ref)
+	out, err := c.runRemote(ctx, "", "ls-remote", "--exit-code", "--end-of-options", url, ref)
 	if err != nil {
 		return "", fmt.Errorf("ls-remote %s %s: %w", url, ref, err)
 	}
@@ -189,13 +190,19 @@ func (c *Client) CheckoutToDir(ctx context.Context, url, commit, dir string) err
 		return fmt.Errorf("git remote add: %w", err)
 	}
 	// Fetch only the specific commit, bounded in wall-clock time.
-	if err := c.runFetch(ctx, dir, "fetch", "--depth=1", "--end-of-options", "origin", commit); err != nil {
+	if _, err := c.runRemote(ctx, dir, "fetch", "--depth=1", "--end-of-options", "origin", commit); err != nil {
+		// A killed git leaves its lock files behind, and a timeout says nothing
+		// about whether the remote serves single commits, so only a fetch git
+		// ended itself may fall back; no git runs in this directory after a kill.
+		if !gitEndedItself(ctx, err) {
+			return err
+		}
 		// Fall back when single-commit fetch is not supported — but never to an
 		// unbounded full fetch: a malicious proxy could point cross-verify at an
 		// enormous repository and exhaust disk/time. The fallback is capped at
 		// fallbackFetchDepth commits per branch and the same fetch timeout.
 		depth := fmt.Sprintf("--depth=%d", c.fallbackFetchDepth)
-		if err2 := c.runFetch(ctx, dir, "fetch", depth, "--end-of-options", "origin"); err2 != nil {
+		if _, err2 := c.runRemote(ctx, dir, "fetch", depth, "--end-of-options", "origin"); err2 != nil {
 			return fmt.Errorf("git fetch: %w (after: %w)", err2, err)
 		}
 		// The bounded fallback may legitimately not contain the wanted commit
@@ -248,32 +255,35 @@ func (c *Client) configArgs() []string {
 	return append(gitenv.ConfigArgs(), c.extraConfig...)
 }
 
-// runGit runs a git operation that needs no repository (ls-remote). It must
-// never inherit the parent's working directory: kanonarion is routinely run
-// from inside a git repository, and that repository's .git/config is a config
-// file like any other — url.<base>.insteadOf read from it rewrites the fetch
-// URL after ValidateCloneURL has passed it, which is the allowlist bypass this
-// adapter exists to prevent. run() therefore pins the invocation to the
-// isolated scratch directory when no repository directory is given.
-func (c *Client) runGit(ctx context.Context, args ...string) ([]byte, error) {
-	return c.run(ctx, "", args...)
+// runRemote runs a git command that talks to the remote, in dir, under the
+// client's fetch timeout, so a stalling or drip-feeding remote cannot hold
+// cross-verification open indefinitely. A timeout wraps
+// ports.ErrVCSRemoteTimeout and names the bound; a command stopped by ctx
+// returns ctx's error. dir "" is a repository-less command (see run).
+func (c *Client) runRemote(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	boundCtx, cancel := context.WithTimeout(ctx, c.fetchTimeout)
+	defer cancel()
+	out, err := c.runGitDir(boundCtx, dir, args...)
+	switch {
+	case err == nil:
+		return out, nil
+	case ctx.Err() != nil:
+		return nil, fmt.Errorf("git %s stopped before it finished: %w", strings.Join(args, " "), ctx.Err())
+	case errors.Is(boundCtx.Err(), context.DeadlineExceeded):
+		return nil, fmt.Errorf("git %s "+domain.VCSBoundExceededFormat+": %w (%w)",
+			strings.Join(args, " "), c.fetchTimeout, ports.ErrVCSRemoteTimeout, err)
+	default:
+		return nil, err
+	}
 }
 
-// runFetch runs a git fetch invocation in dir under the client's fetch
-// timeout, so a stalling or drip-feeding remote cannot hold cross-verification
-// open indefinitely. A timeout is reported as such rather than as the raw
-// "signal: killed" git failure.
-func (c *Client) runFetch(ctx context.Context, dir string, args ...string) error {
-	fetchCtx, cancel := context.WithTimeout(ctx, c.fetchTimeout)
-	defer cancel()
-	if _, err := c.runGitDir(fetchCtx, dir, args...); err != nil {
-		if errors.Is(fetchCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			return fmt.Errorf("git %s exceeded the %s fetch bound: %w",
-				strings.Join(args, " "), c.fetchTimeout, err)
-		}
-		return err
-	}
-	return nil
+// gitEndedItself reports whether a failed git run exited with a status of its
+// own choosing. Anything else — the bound, ctx, or any signal — means the
+// process was killed and may have left lock files in its directory.
+func gitEndedItself(ctx context.Context, err error) bool {
+	var exitErr *exec.ExitError
+	return ctx.Err() == nil && !errors.Is(err, ports.ErrVCSRemoteTimeout) &&
+		errors.As(err, &exitErr) && exitErr.ExitCode() >= 0
 }
 
 func (c *Client) runGitDir(ctx context.Context, dir string, args ...string) ([]byte, error) {

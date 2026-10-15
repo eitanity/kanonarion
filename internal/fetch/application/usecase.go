@@ -231,8 +231,8 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	// this call needs the zip, so re-fetch over it and let PutFetchRecord upgrade
 	// the record in place. Any record with a zip is a hit, unless its verification
 	// rests on a check that could not run rather than one that answered — a
-	// checksum-database lookup that failed, or a git leg the measuring host had no
-	// git for (domain.RecordIsCacheable). Re-verify that one instead of serving
+	// checksum-database lookup that failed, or a git leg that could not run
+	// (domain.RecordIsCacheable). Re-verify that one instead of serving
 	// back a downgrade that describes a moment or a machine, not the module.
 	if !req.Force {
 		if res, hit, cerr := uc.cachedFetch(ctx, log, req); cerr != nil || hit {
@@ -289,7 +289,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	}
 
 	// Step 5: run verification pipeline, accumulating status.
-	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed, sumdbAnswered, vcsToolUnavailable, urlBinding := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumAnchoredUnder, req.VCSHosts)
+	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed, sumdbAnswered, vcsLegUnavailable, urlBinding := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumAnchoredUnder, req.VCSHosts)
 
 	// Sign-on-process call site 1: fetch-receive. Sign the received blob over
 	// its canonical content digest, after verification.
@@ -316,7 +316,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		AcquisitionMode:    domain2.AcquisitionProxy,
 		MeasurementKind:    measurementKind(revalidated != nil),
 		SumDBCheck:         sumdbLeg(sumdbAnswered),
-		VCSCheck:           vcsLeg(req.SkipVCSVerify, vcsToolUnavailable),
+		VCSCheck:           vcsLeg(req.SkipVCSVerify, vcsLegUnavailable),
 		VCSURLBinding:      urlBinding,
 	}
 
@@ -659,16 +659,15 @@ func measurementKind(revalidated bool) domain2.MeasurementKind {
 // "not checked" and "checked and could not confirm" are different claims, and
 // collapsing them would let a --skip-vcs run look like a failed verification.
 //
-// A run whose git binary was missing records a third claim again. It attempted
-// the check and the host could not run it, which is a fault of the machine and
-// not a fact about the module, so it is neither a recheck nor an absence. An
-// operator who asked for no VCS leg gets the absence they asked for, missing git
-// or not.
-func vcsLeg(skipped, toolUnavailable bool) domain2.LegProvenance {
+// A run whose git leg could not run — git missing, or the remote silent past
+// the fetch bound — records a third claim again. That is a fault of the machine
+// or the network, not a fact about the module, so it is neither a recheck nor an
+// absence. An operator who asked for no VCS leg gets the absence they asked for.
+func vcsLeg(skipped, unavailable bool) domain2.LegProvenance {
 	switch {
 	case skipped:
 		return domain2.LegAbsent
-	case toolUnavailable:
+	case unavailable:
 		return domain2.LegUnavailable
 	default:
 		return domain2.LegRechecked
@@ -879,7 +878,7 @@ func (uc *FetchModuleUseCase) verify(
 	goSumAnchoredUnder string,
 	vcsHosts domain2.VCSHostAllowlist,
 	// The bools returned, in order: retracted, sumdbLookupFailed, sumdbAnswered,
-	// vcsToolUnavailable. sumdbAnswered is what the checksum-database leg is
+	// vcsLegUnavailable. sumdbAnswered is what the checksum-database leg is
 	// recorded from; sumdbLookupFailed says why a lookup that did not answer
 	// did not, and only a failure makes the record un-cacheable.
 ) (domain2.VerificationStatus, string, domain2.GitReference, bool, bool, bool, bool, domain2.VCSURLBinding) {
@@ -888,9 +887,9 @@ func (uc *FetchModuleUseCase) verify(
 	// than answered, so the caller can mark the record un-cacheable and re-verify
 	// on the next fetch instead of making one bad network moment permanent.
 	var sumdbLookupFailed bool
-	// vcsToolUnavailable records that the git leg could not run on this host, for
-	// the same purpose on the other leg.
-	var vcsToolUnavailable bool
+	// vcsLegUnavailable records that the git leg could not run, for the same
+	// purpose on the other leg.
+	var vcsLegUnavailable bool
 
 	earlyStatus, earlyDetail := zipContentStatus(dl, zipData, goModData, coord)
 
@@ -906,7 +905,7 @@ func (uc *FetchModuleUseCase) verify(
 	// Verified meaning "git ref resolved, ready to cross-verify" — not that the
 	// zip was reproduced from the git tree. crossVerify is what actually
 	// reproduces it, and it is the only step skipVCSVerify gates.
-	gitRef, vcsStatus, vcsDetail, originRefusal, urlBinding := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
+	gitRef, vcsStatus, vcsDetail, originRefusal, urlBinding, vcsCouldNotRun := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
 	// urlBinding says where the clone URL came from. It is only ATTRIBUTED to
 	// the record where a reproduction was actually attempted against that URL,
 	// below: a run that resolved a URL and never cloned from it established
@@ -924,23 +923,23 @@ func (uc *FetchModuleUseCase) verify(
 			vcsDetail = "VCS cross-verification skipped"
 		}
 	case vcsStatus == domain2.Verified && gitRef.CommitHash != "":
-		vcsStatus, vcsDetail = uc.crossVerify(ctx, log, coord, gitRef.URL, gitRef.CommitHash, dl.ZipHash)
+		vcsStatus, vcsDetail, vcsCouldNotRun = uc.crossVerify(ctx, log, coord, gitRef.URL, gitRef.CommitHash, dl.ZipHash)
 		establishedBinding = urlBinding
 		log.InfoContext(ctx, "vcs_cross_verify",
 			slog.String("status", string(vcsStatus)),
 			slog.String("url_binding", string(establishedBinding)))
 	}
 
-	// The git leg could not run on this host. The final status below is the same
-	// as for a module with no VCS anchor at all, so the distinction has to be
-	// carried out separately or it is lost: the record would then state a host
+	// The git leg could not run: no git on this host, or the remote did not
+	// answer within the fetch bound. The final status below is the same as for a
+	// module with no VCS anchor at all, so the distinction has to be carried out
+	// separately or it is lost: the record would then state a host or network
 	// fault as a property of the module and serve it back on every later run.
-	vcsToolUnavailable = !skipVCSVerify && vcsStatus == domain2.UnverifiedVCSToolMissing
-	if vcsToolUnavailable {
-		log.InfoContext(ctx, "vcs_tool_unavailable", slog.String("detail", vcsDetail))
-		// git went missing partway through the checkout. The leg is unavailable,
-		// which is a property of this host and not of the module, so there is no
-		// established binding to attribute either.
+	vcsLegUnavailable = !skipVCSVerify && (vcsCouldNotRun || vcsStatus == domain2.UnverifiedVCSToolMissing)
+	if vcsLegUnavailable {
+		log.InfoContext(ctx, "vcs_leg_unavailable", slog.String("detail", vcsDetail))
+		// Nothing was reproduced from the clone URL, so there is no established
+		// binding to attribute either.
 		establishedBinding = domain2.VCSURLBindingAbsent
 	}
 
@@ -961,7 +960,7 @@ func (uc *FetchModuleUseCase) verify(
 		if vcsDetail != "" {
 			detail += "; vcs: " + vcsDetail
 		}
-		return earlyStatus, withOriginRefusal(detail, originRefusal), gitRef, retracted, sumdbLookupFailed, sumdbResult.Available, vcsToolUnavailable, establishedBinding
+		return earlyStatus, withOriginRefusal(detail, originRefusal), gitRef, retracted, sumdbLookupFailed, sumdbResult.Available, vcsLegUnavailable, establishedBinding
 	}
 
 	// sumdb passed; combine with VCS result. A refused Origin is recorded even
@@ -969,10 +968,10 @@ func (uc *FetchModuleUseCase) verify(
 	// inferred URL, and the fact that the proxy claimed a different source and
 	// was refused is exactly what an auditor needs afterwards.
 	if vcsStatus == domain2.Verified {
-		return domain2.Verified, withOriginRefusal("", originRefusal), gitRef, retracted, sumdbLookupFailed, sumdbResult.Available, vcsToolUnavailable, establishedBinding
+		return domain2.Verified, withOriginRefusal("", originRefusal), gitRef, retracted, sumdbLookupFailed, sumdbResult.Available, vcsLegUnavailable, establishedBinding
 	}
 	// sumdb passed but VCS was not available or missing.
-	return domain2.VerifiedBySumDBOnly, withOriginRefusal(vcsDetail, originRefusal), gitRef, retracted, sumdbLookupFailed, sumdbResult.Available, vcsToolUnavailable, establishedBinding
+	return domain2.VerifiedBySumDBOnly, withOriginRefusal(vcsDetail, originRefusal), gitRef, retracted, sumdbLookupFailed, sumdbResult.Available, vcsLegUnavailable, establishedBinding
 }
 
 // zipContentStatus is the first content-level failure in the download, if
@@ -1172,14 +1171,16 @@ func isReplaced(coord, original coordinate.ModuleCoordinate) bool {
 	return original.Path() != "" && original != coord
 }
 
-// resolveGitRef determines the GitReference for the module.
+// resolveGitRef determines the GitReference for the module. The final bool
+// reports that the git leg could not run: the remote did not answer within the
+// bound while the tag was being resolved.
 func (uc *FetchModuleUseCase) resolveGitRef(
 	ctx context.Context,
 	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
 	info ports.ModuleInfo,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.GitReference, domain2.VerificationStatus, string, string, domain2.VCSURLBinding) {
+) (domain2.GitReference, domain2.VerificationStatus, string, string, domain2.VCSURLBinding, bool) {
 	var originRejected string
 	if info.Origin != nil && info.Origin.URL != "" && info.Origin.Hash != "" {
 		// The module proxy is untrusted (T1/T2), so its Origin metadata is too.
@@ -1219,11 +1220,11 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 				URL:        info.Origin.URL,
 				Ref:        info.Origin.Ref,
 				CommitHash: info.Origin.Hash,
-			}, domain2.Verified, "", "", bindingForProxyURL(coord.Path(), info.Origin.URL)
+			}, domain2.Verified, "", "", bindingForProxyURL(coord.Path(), info.Origin.URL), false
 		}
 	}
 
-	gitRef, status, detail := uc.resolveInferredGitRef(ctx, log, coord, vcsHosts)
+	gitRef, status, detail, timedOut := uc.resolveInferredGitRef(ctx, log, coord, vcsHosts)
 	// The refusal is returned separately rather than folded into detail here.
 	// Folding it in loses it twice over: the inferred path can return a
 	// provisional Verified (so there is no failure to attach it to), and
@@ -1239,7 +1240,7 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 	if gitRef.URL != "" {
 		binding = domain2.VCSURLBindingCoordinateDerived
 	}
-	return gitRef, status, detail, originRejected, binding
+	return gitRef, status, detail, originRejected, binding, timedOut
 }
 
 // bindingForProxyURL says whether a clone URL the proxy supplied is nonetheless
@@ -1263,33 +1264,35 @@ func bindingForProxyURL(modulePath, originURL string) domain2.VCSURLBinding {
 }
 
 // resolveInferredGitRef resolves a GitReference without any trusted proxy
-// Origin, using the pseudo-version commit prefix or an inferred forge URL.
+// Origin, using the pseudo-version commit prefix or an inferred forge URL. The
+// bool reports that tag resolution could not run because the remote did not
+// answer within the bound.
 func (uc *FetchModuleUseCase) resolveInferredGitRef(
 	ctx context.Context,
 	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.GitReference, domain2.VerificationStatus, string) {
+) (domain2.GitReference, domain2.VerificationStatus, string, bool) {
 	if coord.IsPseudoVersion() {
 		prefix, err := coord.ExtractCommitPrefix()
 		if err != nil {
 			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin,
-				fmt.Sprintf("could not extract commit prefix from pseudo-version: %v", err)
+				fmt.Sprintf("could not extract commit prefix from pseudo-version: %v", err), false
 		}
 		repoURL, detail := inferAllowedRepoURL(ctx, log, coord.Path(), vcsHosts)
 		if repoURL == "" {
-			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
+			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail, false
 		}
 		log.InfoContext(ctx, "pseudo_version_resolve", slog.String("prefix", prefix), slog.String("url", repoURL))
 		return domain2.GitReference{
 			URL:        repoURL,
 			CommitHash: prefix,
-		}, domain2.Verified, ""
+		}, domain2.Verified, "", false
 	}
 
 	repoURL, detail := inferAllowedRepoURL(ctx, log, coord.Path(), vcsHosts)
 	if repoURL == "" {
-		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
+		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail, false
 	}
 	// GitTagVersion, not Version: a +incompatible coordinate names a tag that
 	// never carries the suffix, and "refs/tags/v2.22.0+incompatible" resolves to
@@ -1301,29 +1304,32 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 		if errors.Is(err, ports.ErrVCSToolMissing) {
 			status = domain2.UnverifiedVCSToolMissing
 		}
+		// A timed-out ls-remote could not run, exactly as a timed-out fetch.
 		return domain2.GitReference{URL: repoURL, Ref: ref}, status,
-			fmt.Sprintf("resolving tag %s: %v", ref, err)
+			fmt.Sprintf("resolving tag %s: %v", ref, err), errors.Is(err, ports.ErrVCSRemoteTimeout)
 	}
 	log.InfoContext(ctx, "tag_resolved", slog.String("commit", commit))
 	return domain2.GitReference{
 		URL:        repoURL,
 		Ref:        ref,
 		CommitHash: commit,
-	}, domain2.Verified, ""
+	}, domain2.Verified, "", false
 }
 
 // crossVerify checks out the git commit and compares its directory hash to
-// the proxy zip hash.
+// the proxy zip hash. The bool reports that the leg could not run (no git on
+// the host, or the remote did not answer within the fetch bound), which is not
+// an answer about the module.
 func (uc *FetchModuleUseCase) crossVerify(
 	ctx context.Context,
 	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
 	repoURL, commit string,
 	proxyZipHash domain2.ModuleHash,
-) (domain2.VerificationStatus, string) {
+) (domain2.VerificationStatus, string, bool) {
 	tmpDir, err := os.MkdirTemp("", "kanonarion-verify-*")
 	if err != nil {
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("creating temp dir: %v", err)
+		return domain2.UnverifiedNoVCS, fmt.Sprintf("creating temp dir: %v", err), false
 	}
 	defer func() {
 		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
@@ -1335,14 +1341,19 @@ func (uc *FetchModuleUseCase) crossVerify(
 	}()
 
 	if checkoutErr := uc.vcs.CheckoutToDir(ctx, repoURL, commit, tmpDir); checkoutErr != nil {
-		if errors.Is(checkoutErr, ports.ErrVCSToolMissing) {
-			return domain2.UnverifiedVCSToolMissing, fmt.Sprintf("checkout: %v", checkoutErr)
+		detail := fmt.Sprintf("checkout: %v", checkoutErr)
+		switch {
+		case errors.Is(checkoutErr, ports.ErrVCSToolMissing):
+			return domain2.UnverifiedVCSToolMissing, detail, true
+		case errors.Is(checkoutErr, ports.ErrVCSRemoteTimeout):
+			return domain2.UnverifiedNoVCS, detail, true
+		default:
+			return domain2.UnverifiedNoVCS, detail, false
 		}
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("checkout: %v", checkoutErr)
 	}
 
 	if rmErr := os.RemoveAll(filepath.Join(tmpDir, ".git")); rmErr != nil {
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("removing.git from checkout: %v", rmErr)
+		return domain2.UnverifiedNoVCS, fmt.Sprintf("removing.git from checkout: %v", rmErr), false
 	}
 
 	// For modules that follow the major-version-subdirectory convention
@@ -1362,7 +1373,7 @@ func (uc *FetchModuleUseCase) crossVerify(
 
 	dirHash, err := uc.verifier.HashDirAsModuleZip(moduleDir, coord)
 	if err != nil {
-		return domain2.UnverifiedNoVCS, fmt.Sprintf("hashing checkout: %v", err)
+		return domain2.UnverifiedNoVCS, fmt.Sprintf("hashing checkout: %v", err), false
 	}
 
 	log.InfoContext(ctx, "cross_verify",
@@ -1373,9 +1384,9 @@ func (uc *FetchModuleUseCase) crossVerify(
 	if !dirHash.Equal(proxyZipHash) {
 		return domain2.UnverifiedHashMismatch,
 			fmt.Sprintf("proxy hash %s does not match git checkout hash %s",
-				proxyZipHash.String(), dirHash.String())
+				proxyZipHash.String(), dirHash.String()), false
 	}
-	return domain2.Verified, ""
+	return domain2.Verified, "", false
 }
 
 // checkZipVersionPrefix verifies that all files in the zip begin with the

@@ -80,7 +80,8 @@ per-module rows under `modules`, and the fetch ledger's five VCS-evidence counts
 under `vcs`. Those five are kept apart - `rechecked`, `inherited`, `never`,
 `not_measured`, `unavailable` - because a module that was never cross-verified is
 a different fact from one whose record cannot say, and both differ again from one
-whose check could not run because the measuring host had no `git`.
+whose check could not run because the measuring host had no `git` or the remote
+did not answer within the fetch bound.
 
 Two keys state the measurement itself. `measured` is `false` when this run took
 none, and `statement` is the sentence the reader is shown, carried verbatim. A

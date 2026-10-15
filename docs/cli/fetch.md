@@ -36,6 +36,15 @@ Verification has two independent checks:
   install `git` and the next ordinary run re-establishes the answer with no
   `--force`.
 
+  Each git command that talks to the source repository - the `git ls-remote`
+  that resolves the tag, and each `git fetch` - is bounded at 2 minutes. A
+  command that exceeds the bound is recorded the same way: the VCS leg could not
+  run, the detail names the bound, a module the checksum database attests lands
+  on `VerifiedBySumDBOnly`, and the record is never served from cache, so the
+  next ordinary run checks again. A record from an earlier version whose detail
+  says a git command exceeded the fetch bound is also re-checked by the next
+  ordinary run; the old record stays in the store beside the new one.
+
   Because `--skip-vcs-verify` means the git leg never ran, a module the
   checksum database attests resolves to `VerifiedBySumDBOnly`, **never** the
   strongest `Verified` - that status is reserved for a zip actually reproduced

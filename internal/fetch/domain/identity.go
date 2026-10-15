@@ -273,9 +273,10 @@ const (
 	// the same artefact, named by ValidationLeg.Source.
 	LegInherited LegProvenance = "inherited"
 
-	// LegUnavailable means the check was attempted and could not run because the
-	// tool it needs is absent from this host. That is a property of the machine
-	// that measured, not of the module measured, so it must not be recorded as a
+	// LegUnavailable means the check was attempted and could not run: the tool it
+	// needs is absent from this host, or the remote did not answer within the
+	// fetch bound. That is a property of the machine or the network that
+	// measured, not of the module measured, so it must not be recorded as a
 	// recheck (which claims an establishment that never happened) nor as an
 	// absence (which claims the run declined to look). A record carrying it is
 	// not cache-eligible — see RecordIsCacheable.
