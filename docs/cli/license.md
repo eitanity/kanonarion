@@ -516,7 +516,9 @@ documents](conventions.md#listing-documents).
 
 The command takes no positional argument; one is refused rather than ignored. A
 zero result names every filter it applied and what each was compared against,
-per [Zero-result listings](conventions.md#zero-result-listings).
+says when the records it holds, or the ones the filters match, are only at a
+superseded pipeline version, and ends with the generation line, per
+[Zero-result listings](conventions.md#zero-result-listings).
 
 ## Caching
 

@@ -211,15 +211,21 @@ func nativeListWith(ctx context.Context, f nativeListFlags, uc nativeRecordListe
 // generation, the presence filter matched none of the records it does hold, or
 // the page simply starts past the last one.
 func nativeListZeroScope(ctx context.Context, f nativeListFlags, uc nativeRecordLister) (listZeroScope, error) {
-	all, err := uc.List(ctx, nativeports.NativeFilter{AllGenerations: f.allGenerations})
+	every, err := uc.List(ctx, nativeports.NativeFilter{AllGenerations: true})
 	if err != nil {
 		return listZeroScope{}, fmt.Errorf("counting native records for the zero-result notice: %w", err)
 	}
+	all, sup := splitGenerations(nativeListGeneration(f.allGenerations), every,
+		func(s nativeports.NativeSummary) string { return s.Generation },
+		func(s nativeports.NativeSummary) bool {
+			return len(nativeMatching([]nativeports.NativeSummary{s}, f.presence)) == 1
+		})
 	scope := listZeroScope{
 		subject:    "native record",
 		considered: len(all),
 		produce:    "kanonarion native <module>@<version>",
 		listAll:    "kanonarion native-list",
+		superseded: sup,
 	}
 	if len(f.presence) > 0 {
 		scope.filterName = "presence"
@@ -423,7 +429,7 @@ func printNativeList(sums []nativeports.NativeSummary, f nativeListFlags, zero l
 	}
 
 	if len(entries) == 0 {
-		return writeListZeroNotice(stdout, zero)
+		return writeListZeroWithGeneration(stdout, zero, gen)
 	}
 	superseded, perr := printNativeListRows(stdout, gen, entries)
 	if perr != nil {

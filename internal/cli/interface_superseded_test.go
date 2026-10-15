@@ -179,49 +179,13 @@ func TestPrintInterfaceList_MarksRecordsThisBuildWillNotServe(t *testing.T) {
 	}
 }
 
-func TestSupersededInterfaceStoreLine_OnlyWhenNothingIsServed(t *testing.T) {
-	superseded := []ifaceports.InterfaceSummary{
-		{ModulePath: "example.com/a", ModuleVersion: "v1.0.0", PipelineVersion: supersededPipeline},
-		{ModulePath: "example.com/b", ModuleVersion: "v2.0.0", PipelineVersion: supersededPipeline},
-	}
-	line, ok := supersededInterfaceStoreLine(superseded)
-	if !ok {
-		t.Fatal("a store whose every record is superseded must say so")
-	}
-	for _, want := range []string{
-		"the store holds 2 interface record(s)",
-		"this build serves pipeline " + ifaceapp.PipelineVersion,
-		"kanonarion interface <module>@<version>",
-	} {
-		if !strings.Contains(line, want) {
-			t.Errorf("missing %q in:\n%s", want, line)
-		}
-	}
-
-	mixed := append([]ifaceports.InterfaceSummary{
-		{ModulePath: "example.com/c", ModuleVersion: "v1.0.0", PipelineVersion: ifaceapp.PipelineVersion},
-	}, superseded...)
-	if _, ok := supersededInterfaceStoreLine(mixed); ok {
-		t.Error("a store still serving one record has not gone dark")
-	}
-	if _, ok := supersededInterfaceStoreLine(nil); ok {
-		t.Error("an empty store is empty, not superseded")
-	}
-}
-
-// TestStoredInterfaceSummaries_AbsentUseCaseIsNotAFault: the refinement is a
+// TestSupersededInterfaceRecord_AbsentUseCaseIsNotAFault: the refinement is a
 // diagnostic, and a diagnostic must not become the failure. A caller wired
 // without this use case — a seam built for one command — keeps the statement it
 // already had rather than panicking on the way to a better one.
-func TestStoredInterfaceSummaries_AbsentUseCaseIsNotAFault(t *testing.T) {
-	if got := storedInterfaceSummaries(context.Background(), nil); got != nil {
-		t.Errorf("an absent use case must yield no summaries, got %+v", got)
-	}
+func TestSupersededInterfaceRecord_AbsentUseCaseIsNotAFault(t *testing.T) {
 	failing := testfakes.NewFakeQueryInterface()
 	failing.Err = errStoreUnreadable
-	if got := storedInterfaceSummaries(context.Background(), failing); got != nil {
-		t.Errorf("an unreadable store must yield no summaries, got %+v", got)
-	}
 	coord := supersededCoord(t)
 	if _, superseded := supersededInterfacePipelines(coord, nil); superseded {
 		t.Error("no summaries cannot establish that a record is superseded")

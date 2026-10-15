@@ -4,4 +4,4 @@ exit 0
 --- stdout ---
 []
 --- stderr ---
-{"subject":"SBOM record","filter":{"name":"walk id","value":"01ARZ3NDEKTSV4RRFFQ69G5FZZ","compared_against":"walk id each SBOM was generated from","match":"for exact equality"},"records_considered":1,"store_empty":false,"paged_past":false,"remedy":["kanonarion sbom-list"]}
+{"subject":"SBOM record","filter":{"name":"walk id","value":"01ARZ3NDEKTSV4RRFFQ69G5FZZ","compared_against":"walk id each SBOM was generated from","match":"for exact equality"},"records_considered":1,"store_empty":false,"paged_past":false,"superseded":null,"superseded_generations":null,"remedy":["kanonarion sbom-list"]}

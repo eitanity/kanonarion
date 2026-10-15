@@ -1191,14 +1191,16 @@ Under `--json` the command answers with one object carrying `records`, the
 paging state and the `generation` object, not a bare array, and writes nothing
 to stderr — see [Listing documents](conventions.md#listing-documents).
 
-A zero result names its own scope — whether the store is empty, the filter
-matched nothing, or `--offset` skipped past the end — per
+A zero result names its own scope — whether the store is empty, holds records
+only at a superseded pipeline version, the filter matched nothing, or
+`--offset` skipped past the end — and ends with the generation line, per
 [Zero-result listings](conventions.md#zero-result-listings):
 
 ```
 $ kanonarion callgraph-list no-such-module-anywhere
-no call graph record matched module path "no-such-module-anywhere" — the value is compared against the module path, compared for exact equality, of all 312 call graph record(s) in the store (e.g. github.com/spf13/cobra)
+no call graph record matched module path "no-such-module-anywhere" — the value is compared for exact equality against the module path of all 312 call graph record(s) in the store (e.g. github.com/spf13/cobra)
   to list every call graph record: kanonarion callgraph-list
+listing call graph records at pipeline 0.10.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 ```
 
 ### `callers`

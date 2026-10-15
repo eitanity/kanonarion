@@ -133,7 +133,9 @@ By default the listing shows only records at the pipeline version this build
 serves, one row per coordinate, and says so on its last line.
 `--all-generations` includes records from earlier pipeline versions and marks
 each one. Every JSON row carries `pipeline_version` and `superseded`, and the
-document carries a `generation` object. See [The generation a listing
+document carries a `generation` object. When every record the store holds is at
+a superseded pipeline version, the empty listing counts them and names the
+versions rather than saying the store holds none. See [The generation a listing
 serves](conventions.md#the-generation-a-listing-serves).
 
 When the limit bites, the listing says so on both output paths and names the

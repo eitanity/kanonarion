@@ -138,6 +138,24 @@ type InterfaceRecordLister interface {
 	ListInterfaceRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.InterfaceRecord, error)
 }
 
+// InterfaceGeneration names one coordinate and pipeline version the ledger
+// holds records at.
+type InterfaceGeneration struct {
+	ModulePath      string
+	ModuleVersion   string
+	PipelineVersion string
+}
+
+// InterfaceGenerationLister is the optional capability of naming every
+// generation the ledger holds without composing any of them: asking
+// ListInterfaceRecords which pipeline versions are held composes every
+// multi-generation key, which costs seconds on a ledger of thousands.
+type InterfaceGenerationLister interface {
+	// ListInterfaceGenerations returns each held (module, version, pipeline)
+	// once, ordered by module path and version, then pipeline version.
+	ListInterfaceGenerations(ctx context.Context) ([]InterfaceGeneration, error)
+}
+
 // IdenticalGenerationReader is the optional after-the-fact read: the generation
 // the ledger ALREADY holds that states the measurement a run has just taken.
 //

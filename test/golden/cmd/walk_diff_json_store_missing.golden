@@ -6,4 +6,4 @@ execute root command: both arguments named a walk the store does not hold; the s
 --- stdout ---
 (empty)
 --- stderr ---
-{"subject":"walk record","filter":{"name":"walk id","value":"01ARZ3NDEKTSV4RRFFQ69G5FAV, 01ARZ3NDEKTSV4RRFFQ69G5FAW","values":["01ARZ3NDEKTSV4RRFFQ69G5FAV","01ARZ3NDEKTSV4RRFFQ69G5FAW"],"compared_against":"walk id","match":"for exact equality"},"records_considered":0,"store_empty":true,"paged_past":false,"remedy":["kanonarion walk \u003cmodule\u003e@\u003cversion\u003e"]}
+{"subject":"walk record","filter":{"name":"walk id","value":"01ARZ3NDEKTSV4RRFFQ69G5FAV, 01ARZ3NDEKTSV4RRFFQ69G5FAW","values":["01ARZ3NDEKTSV4RRFFQ69G5FAV","01ARZ3NDEKTSV4RRFFQ69G5FAW"],"compared_against":"walk id","match":"for exact equality"},"records_considered":0,"store_empty":true,"paged_past":false,"superseded":null,"superseded_generations":null,"remedy":["kanonarion walk \u003cmodule\u003e@\u003cversion\u003e"]}

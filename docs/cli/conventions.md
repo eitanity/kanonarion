@@ -411,6 +411,12 @@ and names the re-derivation. These five listings therefore share one contract:
   `pipeline_version` on four of the listings, `generation` on `native-list`.
 - **The conflict check runs over the rows being listed.** A disagreement inside
   a version this build does not serve exits `10` only under `--all-generations`.
+- **An empty page counts every version.** When nothing is listed because every
+  record the store holds is at a version this build does not serve, the listing
+  says how many it holds and at which versions, and names `--all-generations`
+  and the re-derivation. It does not say the store holds none. The text zero
+  ends with the same generation line as a page with rows. See [Zero-result
+  listings](#zero-result-listings).
 - **Under `--json` the document carries a `generation` object** on every
   invocation, with rows or without:
 
@@ -446,11 +452,27 @@ no limit, return their whole population and still answer with a bare array.
 
 ## Zero-result listings
 
-A record listing that returns nothing says which of three things happened,
+A record listing that returns nothing says which of these things happened,
 because the remedies differ:
 
-- **The store holds no record of that kind at all.** The line says so and offers
-  the invocation that produces one.
+- **The store holds no record of that kind at all**, in any version. The line
+  says so and offers the invocation that produces one.
+- **The store holds records only at a version this build does not serve.** On
+  the five listings of [The generation a listing
+  serves](#the-generation-a-listing-serves), the line counts them and names the
+  versions, then offers `--all-generations` to list them and the invocation that
+  re-derives one:
+
+  ```
+  none of the 12 interface record(s) the store holds is at pipeline 0.7.0, the version this build serves (held at 0.4.0, 0.5.0, 0.6.0)
+    to list them: kanonarion interface-list --all-generations
+    to re-extract one: kanonarion interface <module>@<version>
+  ```
+
+  Under a filter the count is of the superseded records that match it. A filter
+  that matched only superseded records while served ones exist keeps the
+  filter statement and adds how many matching records are held only at a
+  superseded version.
 - **A filter matched nothing.** The line names the filter, the value given, what
   that value was compared against, and how many records it was compared with —
   plus one example in the shape the comparison uses. Every filter on these
@@ -479,10 +501,20 @@ document](#listing-documents), beside the empty `records` array:
     "records_considered": 312,
     "store_empty": false,
     "paged_past": false,
+    "superseded": 0,
+    "superseded_generations": [],
     "remedy": ["kanonarion callgraph-list"]
   }
 }
 ```
+
+`records_considered` counts records at the version this build serves.
+`superseded` counts the records held only at another version (those the filter
+matches, when there is one) and `superseded_generations` names those versions.
+Both are always present: counted on the five listings that serve one version
+(see [The generation a listing serves](#the-generation-a-listing-serves)), and
+`null` on every other surface, whose census takes no version. `store_empty` is `true` only when the store holds no record of the
+kind in any version.
 
 A listing that returned rows carries no `zero_result` and prints no such
 statement on the text path, and performs no extra store read to decide that: the
@@ -501,6 +533,9 @@ The selectors are `walk-list --walk-id`, `walk-list --latest-success`,
 `dependents --walk-id`, `context --walk-id`, `walk-diff`, `vuln-scan-show`,
 `vuln-scan-diff`, `examples-show`, `examples-list <module>`, `interface-show`,
 `interface-list <module>`, `use`, `license --recursive` and `license-compat`.
+`symbol-find` and `symbol-context` exit `4` the same way when the interface
+store is empty, or when a module that could answer is held only at a superseded
+pipeline (see [`symbol-find`](interface.md#symbol-find)).
 
 Every command that reads a walk by ID answers a missing one with the identical
 sentence, whichever command it was.
@@ -778,7 +813,7 @@ code says the invocation is what has to change.
 | 1 | `walk`, `inspect` (partial closure); `extract` (the run is recorded partial — the stages that ran ARE stored, and the failed-stage breakdown names the rest); `callgraph`, `local` (a `Partial` graph — it IS still an answer, and the failed packages line scopes what it does not cover); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs); `use` (some modules with a stored artefact did not reach the module cache); `vuln-scan` (some modules in the walk were not analysed) |
 | 2 | `walk`, `inspect` (target unfetchable); `callgraph`, `local` (no graph at all: `LoadFailed`, or a `Partial` that measured no function); `extract` (the run itself failed and produced no usable stage); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity); `use` (no module reached the module cache); `vuln-scan` (no module in the walk was analysed) |
 | 3 | every command, when interrupted by `SIGINT`, `SIGTERM` or `SIGHUP` - whatever the interrupted step would otherwise have exited with (see [Interrupting a run](#interrupting-a-run)) |
-| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `vuln-scan-diff`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `reachability --local` (the build has modules and the probe covered none of them; the answer is still printed), `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `capability` (no call graph is stored for the coordinate, at this build's pipeline version, and the message names the invocation that produces it with the coordinate filled in); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree) |
+| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `vuln-scan-diff`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `reachability --local` (the build has modules and the probe covered none of them; the answer is still printed), `callgraph-show`, `interface-show`, `interface-list`, `symbol-find`, `symbol-context` (the interface store is empty, or a module that could answer is held only at a superseded pipeline version; stdout is empty), `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use`; `vuln-scan-show` (a run the store holds, some of whose modules produced no record this build serves — the report is still printed); `capability` (no call graph is stored for the coordinate, at this build's pipeline version, and the message names the invocation that produces it with the coordinate filled in); `usage`, `callers`, `callees`, `implementers` (the call-graph record that would answer is one this build does not serve — the store holds the module only at a superseded pipeline version, or the build resolves it to a version nothing has analysed — and the message names the invocation that produces it with the coordinate filled in, `kanonarion callgraph example.com/mod@v1.2.0`, or `kanonarion local` for a worktree) |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review); `interface-diff --used-by` (the consumer's own code calls a declaration the bump removes or changes) |
 | 10 | any command consuming a record whose content hash does not verify, or that meets two records for one coordinate which disagree — a walk node, a fetched artefact, an extraction run, a call graph, an interface, a licence, an example, a vulnerability record, an advisory snapshot or the stdlib facts. A store-inspection command reports the same condition and exits 0 (see [Store layout](#store-layout)); a consuming command fails closed |
 | 20 | `callgraph`, `local`, `context <dir> --symbol`, `interface`, `examples`, `extract` (this kanonarion was built with a Go older than the code requires, so it could not read the source: the remedy is a kanonarion built with a new enough Go, which no invocation of this binary can run. `callgraph`, `local`, `interface`, `examples` and `extract` still store the record they made); every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)); `callers`, `callees`, `implementers` (a symbol or interface that is in no served graph at all — a typo, unexported or unreachable code, or a module never analysed: the invocation named something that is not there. A module nothing has analysed cannot be named as a coordinate either — the store knows no version for it — so the refusal shows the form of the producing command, `kanonarion callgraph <module>@<version>`, rather than one that can be run; that is why it is a 20 and not a 4) |

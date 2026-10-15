@@ -222,6 +222,12 @@ A coordinate the store has never held keeps the other statement, which points at
 `context` interface section all draw the same distinction. Exit code is `4` in
 either case: no record was served.
 
+A listing or a lookup that names no coordinate meets the same condition across
+the store. `interface-list` says how many records it holds at a superseded
+pipeline and at which versions (see [`interface-list`](#interface-list)), and
+`symbol-find` and `symbol-context` say which modules they could not read (see
+[`symbol-find`](#symbol-find)).
+
 ### `interface-list`
 
 List all modules with extracted interface records, ordered by extraction time.
@@ -268,6 +274,21 @@ github.com/spf13/pflag@v1.0.5               Extracted    1 package(s)  [supersed
   kanonarion interface <module>@<version>
 ```
 
+When every record the store holds is at a superseded pipeline version, the
+listing is empty and says so. The store is not empty, so it does not say that:
+
+```
+$ kanonarion interface-list
+none of the 12 interface record(s) the store holds is at pipeline 0.7.0, the version this build serves (held at 0.4.0, 0.5.0, 0.6.0)
+  to list them: kanonarion interface-list --all-generations
+  to re-extract one: kanonarion interface <module>@<version>
+listing interface records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+```
+
+Under `--json`, `zero_result` carries `store_empty: false`, `superseded: 12`
+and `superseded_generations`. The exit code is `0`. See [Zero-result
+listings](conventions.md#zero-result-listings).
+
 ### `symbol-find`
 
 Search all extracted interface records for a symbol by name.
@@ -286,6 +307,20 @@ Also takes the build-scope flags `--gomod`, `--walk-id`, `--toolchain` and
 `--target GOOS/GOARCH` — see [Declaring the build
 target](walk.md#declaring-the-build-target---target).
 
+`<name>` is a bare name (`Marshal`) or a qualified one. The name is what follows
+the last dot; what comes before it may be:
+
+- the import path: `github.com/google/uuid.NewString`,
+  `github.com/google/uuid.UUID.String`;
+- the package name a Go caller writes, the last path element less a major-version
+  element such as `/v2`: `uuid.NewString`, `errors.Wrap`, `uuid.UUID.String`;
+- the receiver type alone, as the name column prints it: `UUID.String`.
+
+A qualified name keeps only the declarations it names. When several packages
+answer to a short qualifier, all of them are listed. When the qualifier names
+none of the packages that export the name, the command answers as for any miss
+and a `notice:` line on stderr names one or two of the packages that do.
+
 **Example:**
 
 ```
@@ -293,6 +328,41 @@ $ kanonarion symbol-find Marshal
 github.com/spf13/cobra@v1.8.1          func       Marshal
 encoding/json@v1.0.0                   func       Marshal
 ```
+
+**When the lookup could not read a module.** The symbol index is kept per
+pipeline version, so a module the store holds only at a superseded one is not
+searched. `symbol-find` and `symbol-context` never report such a module as
+exporting nothing:
+
+- **Nothing found** — exit `4`, stdout empty. The message counts the modules
+  that could answer but are held only at a superseded pipeline, names them when
+  there are 10 or fewer, and gives the remedy. Under `--json` the message is on
+  stderr as well.
+- **Something found** — the answer is printed as usual, and a `notice:` line on
+  stderr counts and names the modules it did not read.
+- **Which modules count.** With a bare name, or a qualifier without a slash
+  (`errors.Wrap`, `UUID.String`), every module held only at a superseded
+  pipeline counts: a package name or type can sit in any module, under any
+  subpackage. An import-path qualifier counts only the modules it falls inside.
+- **The interface store holds no record at all** — exit `4`, stdout empty, and
+  the message names `kanonarion interface <module>@<version>` and
+  `kanonarion local .`.
+
+`symbol-find` names the general remedy, `kanonarion interface <module>@<version>`,
+and `kanonarion interface-list --all-generations` to see which modules are held.
+`symbol-context` names the coordinate when it knows the module — from a
+qualified name, or because only one module went unread — and when several
+versions of that module are held it names the newest and says the others are
+held:
+
+```
+$ kanonarion symbol-context github.com/google/uuid.NewString
+error: execute root command: symbol "github.com/google/uuid.NewString" cannot be resolved: 1 module(s) that could answer are held only at a superseded interface pipeline (0.4.0, 0.5.0, 0.6.0; this build serves 0.7.0), so this answer did not read them: github.com/google/uuid@v1.6.0. A superseded record is not served, so this answer is empty for want of a measurement, not because nothing exports this name. Re-extract it:
+  kanonarion interface github.com/google/uuid@v1.6.0
+```
+
+A name nothing served exports, with every module that could hold it read, is a
+measured absence: `no exports found for symbol "<name>"`, exit `0`.
 
 ## Storage
 

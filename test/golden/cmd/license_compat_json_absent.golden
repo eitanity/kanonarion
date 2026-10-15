@@ -6,4 +6,4 @@ execute root command: no walk record matched target module "example.com/absent@v
 --- stdout ---
 (empty)
 --- stderr ---
-{"subject":"walk record","filter":{"name":"target module","value":"example.com/absent@v9.9.9","compared_against":"target coordinate","match":"for exact equality"},"records_considered":2,"store_empty":false,"paged_past":false,"remedy":["kanonarion walk-list --limit 0","kanonarion walk example.com/absent@v9.9.9"]}
+{"subject":"walk record","filter":{"name":"target module","value":"example.com/absent@v9.9.9","compared_against":"target coordinate","match":"for exact equality"},"records_considered":2,"store_empty":false,"paged_past":false,"superseded":null,"superseded_generations":null,"remedy":["kanonarion walk-list --limit 0","kanonarion walk example.com/absent@v9.9.9"]}

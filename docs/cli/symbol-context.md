@@ -6,6 +6,15 @@
 kanonarion symbol-context <name> [--module <module@version>] [--json]
 ```
 
+`<name>` is a bare name (`NewString`) or a qualified one: the import path
+(`github.com/google/uuid.NewString`), the package name a Go caller writes
+(`uuid.NewString`, `errors.Wrap` for `github.com/pkg/errors/v2`), the receiver
+type alone (`UUID.String`), or package and receiver together
+(`uuid.UUID.String`). A qualified name keeps only the declarations it names, and
+lists every package a short qualifier answers to. When the qualifier names none
+of the packages that export the name, stdout is the usual miss and a `notice:`
+line on stderr names one or two of the packages that do.
+
 ## Description
 
 `symbol-context` assembles everything the store knows about an exported symbol
@@ -67,11 +76,33 @@ A deterministic array of entries (stable order; `[]` when nothing matches):
 
 ## Behaviour when nothing is found
 
-- No exports for the name → text `no exports found for symbol "<name>"`, or
-  `[]` in JSON; exit 0.
-- `--module` names a module with **no interface record** → a stderr pointer to
-  run `kanonarion interface <module>` first, distinguishing "module not
-  indexed" from "symbol genuinely absent".
+- No served record exports the name, and every module that could hold it was
+  read → text `no exports found for symbol "<name>"`, or `[]` in JSON; exit 0.
+- The interface store holds **no record at all** → exit `4`, stdout empty; the
+  message names `kanonarion interface <module>@<version>` and
+  `kanonarion local .`.
+- A module that could hold the name is held **only at a superseded pipeline
+  version** → exit `4`, stdout empty. Any such module could hold a bare name or
+  one qualified without a slash (`errors.Wrap`); an import-path qualifier counts
+  only the modules it falls inside. The message counts those modules, names
+  them when there are 10 or fewer, and names the coordinate to re-extract when
+  the module is known: from a qualified name, or because only one module went
+  unread. Of several versions it names the newest and says the others are held.
+  Otherwise it names `kanonarion interface <module>@<version>` and
+  `kanonarion interface-list --all-generations`.
+- `--module` names a module the store serves **no interface record** for →
+  exit `4`, stdout empty. The message says whether the module was never
+  extracted or is held only at a superseded pipeline, and names
+  `kanonarion interface <module>@<version>`.
+
+Under `--json` the message is on stderr; stdout stays empty.
+
+When an answer is found but some modules that could hold the name are held only
+at a superseded pipeline, the answer is printed and a `notice:` line on stderr
+counts and names them. Under `--module` the answer is about that module alone,
+and no such notice is printed.
+
+See [A record this build does not serve](interface.md#a-record-this-build-does-not-serve).
 
 ## Relationship to other commands
 

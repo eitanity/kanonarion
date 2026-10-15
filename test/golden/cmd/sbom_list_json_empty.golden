@@ -4,4 +4,4 @@ exit 0
 --- stdout ---
 []
 --- stderr ---
-{"subject":"SBOM record","records_considered":0,"store_empty":true,"paged_past":false,"remedy":["kanonarion sbom \u003cwalk-id\u003e"]}
+{"subject":"SBOM record","records_considered":0,"store_empty":true,"paged_past":false,"superseded":null,"superseded_generations":null,"remedy":["kanonarion sbom \u003cwalk-id\u003e"]}

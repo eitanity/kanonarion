@@ -692,6 +692,27 @@ func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, filter ifac
 	return out, nil
 }
 
+// ListInterfaceGenerations names each (module, version, pipeline) the list
+// holds once. It counts as a listing read in ListCalls.
+func (f *FakeQueryInterface) ListInterfaceGenerations(_ context.Context) ([]ifaceports.InterfaceGeneration, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ListCalls++
+	seen := map[ifaceports.InterfaceGeneration]bool{}
+	var out []ifaceports.InterfaceGeneration
+	for _, s := range f.list {
+		g := ifaceports.InterfaceGeneration{ModulePath: s.ModulePath, ModuleVersion: s.ModuleVersion, PipelineVersion: s.PipelineVersion}
+		if !seen[g] {
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
 func (f *FakeQueryInterface) FindSymbol(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
 	if f.Err != nil {
 		return nil, f.Err

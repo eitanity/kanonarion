@@ -181,3 +181,42 @@ func TestQueryInterfaceUseCase_FindSymbol_Error(t *testing.T) {
 		t.Errorf("got %v, want wrapping %v", err, findErr)
 	}
 }
+
+// generationListingStore adds the column read to the minimal store.
+type generationListingStore struct {
+	*queryFakeStore
+	gens []ifaceports.InterfaceGeneration
+	err  error
+}
+
+func (s generationListingStore) ListInterfaceGenerations(context.Context) ([]ifaceports.InterfaceGeneration, error) {
+	return s.gens, s.err
+}
+
+func TestQueryInterface_ListInterfaceGenerationsUsesTheColumnRead(t *testing.T) {
+	want := []ifaceports.InterfaceGeneration{{ModulePath: "example.com/a", ModuleVersion: "v1.0.0", PipelineVersion: "0.1.0"}}
+	uc := application.NewQueryInterfaceUseCase(generationListingStore{queryFakeStore: &queryFakeStore{}, gens: want})
+	got, err := uc.ListInterfaceGenerations(context.Background())
+	if err != nil || len(got) != 1 || got[0] != want[0] {
+		t.Errorf("got %+v, %v; want %+v", got, err, want)
+	}
+	failing := application.NewQueryInterfaceUseCase(generationListingStore{queryFakeStore: &queryFakeStore{}, err: errors.New("boom")})
+	if _, err := failing.ListInterfaceGenerations(context.Background()); err == nil {
+		t.Error("a failed column read must be reported")
+	}
+}
+
+func TestQueryInterface_ListInterfaceGenerationsFallsBackToSummaries(t *testing.T) {
+	store := &queryFakeStore{summaries: []ifaceports.InterfaceSummary{
+		{ModulePath: "example.com/a", ModuleVersion: "v1.0.0", PipelineVersion: "0.1.0", PackageCount: 3},
+	}}
+	got, err := application.NewQueryInterfaceUseCase(store).ListInterfaceGenerations(context.Background())
+	want := ifaceports.InterfaceGeneration{ModulePath: "example.com/a", ModuleVersion: "v1.0.0", PipelineVersion: "0.1.0"}
+	if err != nil || len(got) != 1 || got[0] != want {
+		t.Errorf("got %+v, %v; want [%+v]", got, err, want)
+	}
+	store.listErr = errors.New("boom")
+	if _, err := application.NewQueryInterfaceUseCase(store).ListInterfaceGenerations(context.Background()); err == nil {
+		t.Error("a failed summary read must be reported")
+	}
+}

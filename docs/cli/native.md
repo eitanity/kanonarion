@@ -438,14 +438,22 @@ must not read as a clean run.
 `native-list` follows the listing rules in
 [`conventions.md`](conventions.md#listing-documents): `--limit` (default 50) with
 `--offset`, a truncation line whenever the limit bit, and a zero-result notice
-that says which of three things happened - the store holds no native record, the
-presence filter matched none of the ones it does hold, or the page starts past
-the last match.
+that says which of four things happened - the store holds no native record, it
+holds them only at a superseded detection generation, the presence filter
+matched none of the ones it does hold, or the page starts past the last match.
+The notice is followed by the generation line.
 
 ```
 $ kanonarion native-list --presence present_identified --offset 5
 no native record on this page — the store holds 186 native record(s), and --offset 5 starts past the last of the 2 matching presence "present_identified"
   to list from the start: kanonarion native-list
+listing native records at generation 0.4.0+recipes.1, the generation this build serves; records from a superseded generation are not shown (--all-generations)
+
+$ kanonarion native-list
+none of the 210 native record(s) the store holds is at generation 0.4.0+recipes.1, the generation this build serves (held at 0.1.0+recipes.1, 0.2.0+recipes.1, 0.3.0+recipes.1)
+  to list them: kanonarion native-list --all-generations
+  to re-measure one: kanonarion native <module>@<version>
+listing native records at generation 0.4.0+recipes.1, the generation this build serves; records from a superseded generation are not shown (--all-generations)
 ```
 
 ### `native-list` JSON

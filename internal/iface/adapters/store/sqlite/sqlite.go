@@ -8,10 +8,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
@@ -734,6 +736,49 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 	}
 
 	return page(out, filter.Limit, filter.Offset), nil
+}
+
+// ListInterfaceGenerations names every generation the ledger holds from the
+// key columns alone; nothing is decoded or composed.
+func (s *Store) ListInterfaceGenerations(ctx context.Context) (_ []ports.InterfaceGeneration, retErr error) {
+	const q = `SELECT DISTINCT module_path, module_version, pipeline_version FROM interface_records
+	           ORDER BY module_path, module_version`
+	rows, err := s.db.DB().QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("listing interface generations: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("closing interface generation rows: %w", cerr)
+		}
+	}()
+	var out []ports.InterfaceGeneration
+	for rows.Next() {
+		var g ports.InterfaceGeneration
+		if serr := rows.Scan(&g.ModulePath, &g.ModuleVersion, &g.PipelineVersion); serr != nil {
+			return nil, fmt.Errorf("scanning interface generation: %w", serr)
+		}
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating interface generations: %w", err)
+	}
+	// SQLite would order the pipeline version as text; one coordinate's
+	// generations are ordered here, as versions.
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.ModulePath != b.ModulePath {
+			return a.ModulePath < b.ModulePath
+		}
+		if a.ModuleVersion != b.ModuleVersion {
+			return a.ModuleVersion < b.ModuleVersion
+		}
+		if c := versionorder.ComparePipelineVersions(a.PipelineVersion, b.PipelineVersion); c != 0 {
+			return c < 0
+		}
+		return a.PipelineVersion < b.PipelineVersion
+	})
+	return out, nil
 }
 
 // appendInterfaceFilter appends the WHERE clause filter asks for to q and its
