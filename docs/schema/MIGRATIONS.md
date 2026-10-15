@@ -116,6 +116,21 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Native record: pipeline `0.4.0` → `0.5.0`
+
+**Derivation change; no record shape change, no store migration.** `0.4.0`
+dropped a source file whose own name begins with `_` or `.` even when it was
+compiled through `#include`: a `main` package whose `a.c` does `#include
+"_ver.h"` builds and prints the value `_ver.h` defines, while `go list` reports
+`CFiles=[a.c]` and `HFiles=[]`. A `0.4.0` record could leave such a file out of
+the compiled native sources, and miss the component it declares. `0.5.0`
+restores the directory-only rule of `0.3.0`: only a directory element beginning
+with `_` or `.`, or a `testdata` element, puts a file out of scope.
+
+Records are keyed by generation (`<pipeline>+recipes.<n>`), so the bump is the
+migration: `0.4.0` rows stay and are never served for a `0.5.0` request. Cost is
+one re-measurement per coordinate on its next `native` run.
+
 ## Fetch record: pipeline `0.4.0` → `0.5.0`
 
 **Derivation change; no record shape change, no store migration.** The checksum
@@ -171,7 +186,8 @@ and remain readable in the ledger. Cost is one re-scan per coordinate.
 
 ## Native record: pipeline `0.3.0` → `0.4.0`
 
-**Derivation change; no record shape change, no store migration.** A source
+**Derivation change; no record shape change, no store migration.** Superseded
+by `0.5.0`. A source
 file whose own name begins with `_` or `.` is out of scope even in a directory
 the go tool builds, as the go tool ignores it: beside `_helper.c`, `go list`
 names only the other `.c` file, and linking fails with `undefined reference to

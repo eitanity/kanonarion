@@ -1,11 +1,15 @@
 package staticcha
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -294,6 +298,73 @@ replace example.com/other => ./other
 			t.Errorf("%q survived the rewrite:\n%s", gone, rewritten)
 		}
 	}
+}
+
+// TestUnresolvableHere_AbsentTargetReadings covers the three readings of a
+// nested-module target that does not Lstat: a path element is a file, the
+// directory exists but lacks the target, and neither, which stays an error.
+func TestUnresolvableHere_AbsentTargetReadings(t *testing.T) {
+	t.Parallel()
+	replace := func(target string) *modfile.Replace {
+		return &modfile.Replace{
+			Old: module.Version{Path: "example.com/mod/sub"},
+			New: module.Version{Path: target},
+		}
+	}
+
+	t.Run("path element is a file", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "afile"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range []string{"./afile/sub", "./afile/a/b/c"} {
+			got, err := unresolvableHere(root, "example.com/mod", replace(target))
+			if err != nil || !got {
+				t.Errorf("%s: got (%v, %v), want (true, nil)", target, got, err)
+			}
+		}
+	})
+
+	t.Run("directory exists but lacks the target", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "adir"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		got, err := unresolvableHere(root, "example.com/mod", replace("./adir/sub"))
+		if err != nil || !got {
+			t.Errorf("got (%v, %v), want (true, nil)", got, err)
+		}
+	})
+
+	t.Run("unreadable parent is an error", func(t *testing.T) {
+		t.Parallel()
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a mode-0 directory, so there is no permission error to observe")
+		}
+		root := t.TempDir()
+		locked := filepath.Join(root, "locked")
+		if err := os.MkdirAll(filepath.Join(locked, "sub"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			// TempDir cannot remove a directory it cannot read.
+			if err := os.Chmod(locked, 0o700); err != nil {
+				t.Errorf("restoring %s: %v", locked, err)
+			}
+		})
+		got, err := unresolvableHere(root, "example.com/mod", replace("./locked/sub"))
+		if err == nil || got {
+			t.Fatalf("got (%v, %v), want (false, error)", got, err)
+		}
+		if !errors.Is(err, fs.ErrPermission) {
+			t.Errorf("err = %v, want it to wrap fs.ErrPermission", err)
+		}
+	})
 }
 
 // TestIsNestedModulePath pins the "/" boundary: a shared string prefix is not

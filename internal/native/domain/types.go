@@ -32,7 +32,9 @@ const EcosystemGo = "go"
 // describes the same measurement, and neither is ever served for one taken now.
 // 0.4.0 ignores a source file whose own name begins with "_" or ".", as the go
 // tool does; a 0.3.0 record could name such a file as compiled.
-const PipelineVersion = "0.4.0"
+// 0.5.0 restores the directory-only rule: 0.4.0 dropped a "_"- or "."-named
+// file even when a compiled .c file #includes it.
+const PipelineVersion = "0.5.0"
 
 // ErrUnsupportedEcosystem is returned when a stored record's ecosystem is
 // absent or holds a value other than EcosystemGo.

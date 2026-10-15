@@ -21,7 +21,7 @@ exit 0
     "format": "cyclonedx-1.6",
     "pipeline_version": "0.10.0",
     "generated_at": "2026-02-03T11:30:00Z",
-    "content_hash": "b8f6366dcc0176d8e6be9d3de90b7ddc9055cc964c91ddf98ed5bf1d7f4b4e57",
+    "content_hash": "e7bbb7d9a6c46d3e0f4f8bc4cbf8e58bf02478e993ddbcb443c6c89b00acd1ae",
     "operator": "",
     "licenses_incomplete": false
   }

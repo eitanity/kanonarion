@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 
@@ -150,11 +149,25 @@ func unresolvableHere(root, modulePath string, r *modfile.Replace) (bool, error)
 	switch {
 	case err == nil:
 		return false, nil
-	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
-		// ENOTDIR: a path element is a file, so the directory is absent too.
+	case errors.Is(err, fs.ErrNotExist), pathElementIsFile(root, target):
 		return true, nil
 	default:
 		return false, fmt.Errorf("checking replace target %s: %w", target, err)
+	}
+}
+
+// pathElementIsFile reports whether the nearest existing ancestor of target,
+// stopping at root, is not a directory: then the target is absent. It replaces
+// a syscall.ENOTDIR test, which the extraction packages may not import.
+func pathElementIsFile(root, target string) bool {
+	for dir := filepath.Dir(target); ; dir = filepath.Dir(dir) {
+		info, err := os.Lstat(dir)
+		if err == nil {
+			return !info.IsDir()
+		}
+		if dir == root || dir == filepath.Dir(dir) {
+			return false
+		}
 	}
 }
 

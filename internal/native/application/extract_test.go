@@ -209,6 +209,31 @@ func TestExecute_IgnoredDirectoriesAreOutOfScope(t *testing.T) {
 	}
 }
 
+// A "_"-named header in a cgo directory is compiled when a .c file includes
+// it, though go/build leaves it out of HFiles. Its declaration still counts.
+func TestExecute_UnderscoreHeaderIncludedByCompiledSourceIsInScope(t *testing.T) {
+	h := newHarness(t, "example.com/verhdr", "v1.0.0", map[string]string{
+		"cgo/wrap.go": cgoWrapper,
+		"cgo/a.c":     "#include \"_ver.h\"\nint answer(void) { return 42; }\n",
+		"cgo/_ver.h":  sqliteAmalgamation,
+	})
+	rec := h.run(t, false).Record
+
+	if rec.Presence != domain.PresenceIdentified {
+		t.Fatalf("presence = %q, want %q", rec.Presence, domain.PresenceIdentified)
+	}
+	if len(rec.Components) != 1 || rec.Components[0].Name != "SQLite" || rec.Components[0].Version != "3.38.0" {
+		t.Fatalf("components = %+v, want SQLite 3.38.0", rec.Components)
+	}
+	listed := false
+	for _, src := range rec.Sources {
+		listed = listed || src.File == "cgo/_ver.h"
+	}
+	if !listed {
+		t.Errorf("sources = %+v, want cgo/_ver.h among them", rec.Sources)
+	}
+}
+
 // The third value: native source is compiled in and no recipe names it. That is
 // a coverage gap a reader can act on, and it carries the file evidence.
 func TestExecute_UnmatchedNativeSourceIsPresentAndUnidentified(t *testing.T) {

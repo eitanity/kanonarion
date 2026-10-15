@@ -47,13 +47,14 @@ func IsBuildableGoSource(rel string) bool {
 //
 // The rules are the go tool's own: a path element beginning with "_" or "." is
 // not part of any package, and a "testdata" element holds fixtures rather than
-// code. The file's own name counts too: go/build skips a "_" or "." file before
-// build constraints. This is what keeps a pure-Go module out of the results even
-// when it ships C — modernc.org/sqlite is a transpilation of SQLite that links no
-// C at all, and the .c files in its zip sit under testdata/ where the toolchain
-// will never look at them.
+// code. The rule reads directories, not file names: a "_"-named header in a
+// built directory is still compiled when a .c file #includes it. This is what
+// keeps a pure-Go module out of the results even when it ships C —
+// modernc.org/sqlite is a transpilation of SQLite that links no C at all, and
+// the .c files in its zip sit under testdata/ where the toolchain will never
+// look at them.
 func IsIgnoredPath(rel string) bool {
-	return gotoolchain.IgnoredPath(path.Dir(rel)) || gotoolchain.IgnoredName(path.Base(rel))
+	return gotoolchain.IgnoredPath(path.Dir(rel))
 }
 
 // DeclaresCgo reports whether an import set makes its package a cgo package.

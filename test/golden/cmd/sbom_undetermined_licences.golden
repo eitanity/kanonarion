@@ -219,7 +219,7 @@ execute root command: sbom generated with undetermined licences: 1 component(s) 
         },
         {
           "name": "kanonarion:native:generation",
-          "value": "0.4.0+recipes.1"
+          "value": "0.5.0+recipes.1"
         },
         {
           "name": "kanonarion:native:advisories_searched",
