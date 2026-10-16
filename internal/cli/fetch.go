@@ -42,6 +42,7 @@ type fetchFlags struct {
 	// populates the store for a walk of that scope; see
 	// refuseTestScopeOnRecordingCommand.
 	excludeTests bool
+	noProgress   bool
 }
 
 func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -115,6 +116,7 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&f.gomod, "gomod", "", "path to a go.mod file to fetch a dependency scope from (default: ./go.mod)")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	registerRecordedTestScopeFlag(cmd, &f.excludeTests)
+	registerNoProgressFlag(cmd, &f.noProgress)
 
 	return cmd
 }
@@ -259,9 +261,9 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		return fmt.Errorf("fetching module: %w", err)
 	}
 
-	// Check staleness for pinned versions. The proxy call is fast relative to
-	// the fetch itself and the result is informative for both humans and agents.
-	stale := fetchStalenessFor(ctx, newProxyLatestResolver(proxyAdapter, logger, nil), coord, version, stderr)
+	// Check staleness for pinned versions. Usually one fast request; a lookup the
+	// proxy has not finished is re-asked for up to four minutes, narrated on stderr.
+	stale := fetchStalenessFor(ctx, commandStalenessPort(proxyAdapter, stderr, f.noProgress), coord, version, stderr)
 
 	if err := writeFetchResult(stdout, coord, version, result, stale); err != nil {
 		return err

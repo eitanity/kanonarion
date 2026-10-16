@@ -48,9 +48,22 @@ type fakeVulnLoader struct {
 	// were all measured in another build's frame.
 	otherFrameOnly []coordinate.ModuleCoordinate
 	supersededOnly []coordinate.ModuleCoordinate
+	notInSeedWalk  []coordinate.ModuleCoordinate
+	scanIncomplete []coordinate.ModuleCoordinate
+	setAsideOnly   []coordinate.ModuleCoordinate
+	notAnalysed    []coordinate.ModuleCoordinate
 	// gotConsumer records the module path the use case anchored the seed to, so
 	// a test can assert the probe named the tree it is measuring.
 	gotConsumer string
+}
+
+// markAsked adds to dst each coordinate of src the caller asked about.
+func markAsked(asked map[coordinate.ModuleCoordinate]struct{}, src []coordinate.ModuleCoordinate, dst map[coordinate.ModuleCoordinate]struct{}) {
+	for _, c := range src {
+		if _, ok := asked[c]; ok {
+			dst[c] = struct{}{}
+		}
+	}
 }
 
 // LoadFindings answers ONLY about the coordinates it was asked about. A fake
@@ -71,20 +84,18 @@ func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.Mod
 		Scanned:        make(map[coordinate.ModuleCoordinate]struct{}),
 		OtherFrameOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		SupersededOnly: make(map[coordinate.ModuleCoordinate]struct{}),
+		NotInSeedWalk:  make(map[coordinate.ModuleCoordinate]struct{}),
+		ScanIncomplete: make(map[coordinate.ModuleCoordinate]struct{}),
+		SetAsideOnly:   make(map[coordinate.ModuleCoordinate]struct{}),
+		NotAnalysed:    make(map[coordinate.ModuleCoordinate]struct{}),
 		Restriction:    "seed restricted to " + consumerModulePath,
 	}
-	for _, c := range f.otherFrameOnly {
-		if _, ok := asked[c]; !ok {
-			continue
-		}
-		set.OtherFrameOnly[c] = struct{}{}
-	}
-	for _, c := range f.supersededOnly {
-		if _, ok := asked[c]; !ok {
-			continue
-		}
-		set.SupersededOnly[c] = struct{}{}
-	}
+	markAsked(asked, f.notAnalysed, set.NotAnalysed)
+	markAsked(asked, f.notInSeedWalk, set.NotInSeedWalk)
+	markAsked(asked, f.scanIncomplete, set.ScanIncomplete)
+	markAsked(asked, f.setAsideOnly, set.SetAsideOnly)
+	markAsked(asked, f.otherFrameOnly, set.OtherFrameOnly)
+	markAsked(asked, f.supersededOnly, set.SupersededOnly)
 	for c, fs := range f.findings {
 		if _, ok := asked[c]; !ok {
 			continue
@@ -241,6 +252,35 @@ func TestLocalReachability_SymbolAbsent(t *testing.T) {
 	}
 	if len(f.MatchedSymbols) != 0 {
 		t.Errorf("MatchedSymbols = %v, want nil", f.MatchedSymbols)
+	}
+}
+
+// A library harness that left exported declarations out carries them into the
+// coverage, and every absence states how many there were.
+func TestLocalReachability_HarnessOmissionsReachCoverageAndAbsence(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	omitted := []domain.HarnessOmission{{Symbol: "example.com/app.F", Reason: "no type argument satisfies T"}}
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0002", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind: "library", BinarySymbols: map[string]struct{}{}, HarnessOmitted: omitted,
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.HarnessOmitted) != 1 || result.Coverage.HarnessOmitted[0] != omitted[0] {
+		t.Errorf("Coverage.HarnessOmitted = %v, want %v", result.Coverage.HarnessOmitted, omitted)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.SoundnessReason != domain.LibraryAbsentReason(1) {
+		t.Errorf("SoundnessReason = %q, want the library reason naming 1 omission", f.SoundnessReason)
 	}
 }
 
@@ -606,6 +646,80 @@ func TestLocalReachability_OtherFrameOnlyModuleNamesItsOwnReason(t *testing.T) {
 	}
 	if got := reasons["example.com/unknown"]; got != domain.UncoveredNoStoredRecord {
 		t.Errorf("reason for the unknown module = %q, want UncoveredNoStoredRecord", got)
+	}
+}
+
+// A module the seed walk did not scan, though other walks did, names that
+// absence rather than "never vuln-scanned".
+func TestLocalReachability_NotInSeedWalkNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{notInSeedWalk: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredNotInSeedWalk {
+		t.Errorf("uncovered = %+v, want the one module with UncoveredNotInSeedWalk", result.Coverage.Uncovered)
+	}
+}
+
+// A module whose every record was set aside names that, not "never vuln-scanned".
+func TestLocalReachability_SetAsideOnlyNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{setAsideOnly: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredSetAside {
+		t.Errorf("uncovered = %+v, want the one module with UncoveredSetAside", result.Coverage.Uncovered)
+	}
+}
+
+// A module no completed scan answers for names the incomplete scan, not
+// "never vuln-scanned".
+func TestLocalReachability_ScanIncompleteNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{scanIncomplete: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredScanIncomplete {
+		t.Errorf("uncovered = %+v, want the one module with UncoveredScanIncomplete", result.Coverage.Uncovered)
+	}
+}
+
+// A module whose seeding scan failed names that, not "never vuln-scanned".
+func TestLocalReachability_NotAnalysedNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{notAnalysed: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 || result.Coverage.Uncovered[0].Reason != domain.UncoveredNotAnalysed {
+		t.Errorf("uncovered = %+v, want the one module with UncoveredNotAnalysed", result.Coverage.Uncovered)
 	}
 }
 

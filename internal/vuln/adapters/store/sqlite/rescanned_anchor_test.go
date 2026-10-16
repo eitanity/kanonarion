@@ -41,12 +41,12 @@ func TestReadPath_RescannedRecordRoundTrips(t *testing.T) {
 		t.Fatalf("PutVulnerabilityRecord: %v", err)
 	}
 
-	got, found, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot)
+	got, found, err := store.GetVulnerabilityRecordAt(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot, domain.RecordRooting(rec))
 	if err != nil {
-		t.Fatalf("GetVulnerabilityRecord on a re-scanned record: %v", err)
+		t.Fatalf("GetVulnerabilityRecordAt on a re-scanned record: %v", err)
 	}
 	if !found {
-		t.Fatal("GetVulnerabilityRecord did not find the record it just stored")
+		t.Fatal("GetVulnerabilityRecordAt did not find the record it just stored")
 	}
 	if !got.FirstScannedAt.Equal(rec.FirstScannedAt) {
 		t.Errorf("first_scanned_at read back as %s, want %s", got.FirstScannedAt, rec.FirstScannedAt)
@@ -89,10 +89,10 @@ func TestReadPath_DriftedRescannedRecordIsReportedAsDrift(t *testing.T) {
 		t.Fatalf("seeding the earlier generation's row: %v", err)
 	}
 
-	_, found, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot)
+	_, found, err := store.GetVulnerabilityRecordAt(ctx, rec.Coordinate, rec.PipelineVersion, rec.DatabaseSnapshot, domain.RecordRooting(rec))
 	var aside *recordseal.SetAside
 	if found || !errors.As(err, &aside) {
-		t.Fatalf("GetVulnerabilityRecord = (found %v, %v), want no servable record and the generation set aside", found, err)
+		t.Fatalf("GetVulnerabilityRecordAt = (found %v, %v), want no servable record and the generation set aside", found, err)
 	}
 	if errors.Is(err, ports.ErrVulnIntegrity) {
 		t.Errorf("a drifted generation was reported as an integrity failure: %v", err)

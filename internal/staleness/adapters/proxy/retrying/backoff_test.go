@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,68 +16,162 @@ import (
 	"github.com/eitanity/kanonarion/internal/staleness/ports"
 )
 
-// failingResolver answers every lookup with a transient empty response.
-type failingResolver struct{ calls int }
-
-func (f *failingResolver) LatestInfo(context.Context, string) (ports.LatestInfo, error) {
-	f.calls++
-	return ports.LatestInfo{}, &fetchdomain.ProxyEmptyResponseError{Path: "example.com/mod/v2"}
+// fakeClock stands in for time: sleeping advances it, and so does each request
+// by reqCost, which models the adapter's own request timeout.
+type fakeClock struct {
+	mu      sync.Mutex
+	t       time.Time
+	reqCost time.Duration
+	slept   []time.Duration
 }
 
-// The friction the retry adds is wall time on the failing path, so the schedule
-// it waits is stated as a number rather than left to be inferred from the
-// constants. Jitter is neutralised here; in production each wait is spread over
-// [d/2, d], which halves the figure at worst and never exceeds it.
-func TestBackoffScheduleIsBoundedAndStated(t *testing.T) {
-	inner := &failingResolver{}
-	var waited []time.Duration
-	r := New(inner, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	r.sleep = func(_ context.Context, d time.Duration) error {
-		waited = append(waited, d)
-		return nil
-	}
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) sleep(_ context.Context, d time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.slept = append(c.slept, d)
+	c.t = c.t.Add(d)
+	return nil
+}
+
+func (c *fakeClock) request() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(c.reqCost)
+}
+
+func (c *fakeClock) waits() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Duration(nil), c.slept...)
+}
+
+// withFakeClock puts r on a fake clock with jitter neutralised.
+func withFakeClock(r *Resolver, reqCost time.Duration) *fakeClock {
+	c := &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), reqCost: reqCost}
+	r.now = c.now
+	r.sleep = c.sleep
 	r.jitter = func(d time.Duration) time.Duration { return d }
+	return c
+}
+
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// scriptedResolver answers each path transiently for its first transient[path]
+// asks, then with final[path] (a nil error is an answer). It advances clk per
+// request when one is set.
+type scriptedResolver struct {
+	mu        sync.Mutex
+	clk       *fakeClock
+	transient map[string]int
+	final     map[string]error
+	calls     map[string]int
+}
+
+func newScripted(clk *fakeClock) *scriptedResolver {
+	return &scriptedResolver{clk: clk, transient: map[string]int{}, final: map[string]error{}, calls: map[string]int{}}
+}
+
+func (s *scriptedResolver) LatestInfo(_ context.Context, path string) (ports.LatestInfo, error) {
+	if s.clk != nil {
+		s.clk.request()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls[path]++
+	if s.calls[path] <= s.transient[path] || s.transient[path] < 0 {
+		return ports.LatestInfo{}, &fetchdomain.ProxyEmptyResponseError{Path: path}
+	}
+	if err := s.final[path]; err != nil {
+		return ports.LatestInfo{}, err
+	}
+	return ports.LatestInfo{Version: "v2.1.0"}, nil
+}
+
+func (s *scriptedResolver) asked(path string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls[path]
+}
+
+// The single-path schedule: a re-ask every interval until the window after the
+// first attempt closes. With instant requests that is the first ask plus one
+// per 20s up to and including 240s.
+func TestSinglePathScheduleIsIntervalUntilWindow(t *testing.T) {
+	r := New(nil, discardLogger())
+	clk := withFakeClock(r, 0)
+	inner := newScripted(clk)
+	inner.transient["example.com/mod/v2"] = -1
+	r.inner = inner
 
 	if _, err := r.LatestInfo(context.Background(), "example.com/mod/v2"); err == nil {
 		t.Fatal("a persistently empty proxy answered successfully")
 	}
-	if inner.calls != 4 {
-		t.Errorf("attempts = %d, want 4", inner.calls)
+	if got := inner.asked("example.com/mod/v2"); got != 13 {
+		t.Errorf("attempts = %d, want 13 (0s, 20s, ..., 240s)", got)
 	}
-	want := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
-	if len(waited) != len(want) {
-		t.Fatalf("waits = %v, want %v", waited, want)
+	waits := clk.waits()
+	if len(waits) != 12 {
+		t.Fatalf("waits = %v, want 12 of 20s", waits)
 	}
-	var total time.Duration
-	for i, d := range waited {
-		if d != want[i] {
-			t.Errorf("wait %d = %v, want %v", i+1, d, want[i])
+	for i, d := range waits {
+		if d != SettleInterval {
+			t.Errorf("wait %d = %v, want %v", i+1, d, SettleInterval)
 		}
-		total += d
-	}
-	// The number this pins: 14s un-jittered, once, per module whose probe never
-	// answers, and half that at the low end of the jitter. Added to four
-	// requests bounded at ten seconds each it comes to 54s, which is under the
-	// ~56s a single lost probe costs today — so the raised budget buys attempts
-	// without buying wall time. It is a deliberate rise from the 600ms that
-	// expired inside the condition it was retrying.
-	if total != 14*time.Second {
-		t.Errorf("total backoff = %v, want 14s", total)
-	}
-	if got := r.backoffBudget(); got != total {
-		t.Errorf("backoffBudget() = %v, want the schedule's own total %v", got, total)
 	}
 }
 
-// The exhaustion warning has to name the budget, not just the attempt count: a
-// reader looking at a probe that gave up needs to know how long it waited
-// against how long it was ever going to wait.
-func TestExhaustionWarningNamesTheBudget(t *testing.T) {
-	inner := &failingResolver{}
+// Requests that take the adapter's 10s timeout count against the window: the
+// window runs from the first ask, not from the end of the last one.
+func TestSinglePathWindowIncludesRequestTime(t *testing.T) {
+	r := New(nil, discardLogger())
+	clk := withFakeClock(r, 10*time.Second)
+	inner := newScripted(clk)
+	inner.transient["example.com/mod/v2"] = -1
+	r.inner = inner
+
+	_, _ = r.LatestInfo(context.Background(), "example.com/mod/v2") //nolint:errcheck // the subject is the schedule
+	// Asks start at 0, 30, ..., 240s: nine of them.
+	if got := inner.asked("example.com/mod/v2"); got != 9 {
+		t.Errorf("attempts = %d, want 9", got)
+	}
+}
+
+// A path the proxy finishes inside the window is answered, and the wait stops
+// there.
+func TestSinglePathAnswersWhenTheProxyFinishes(t *testing.T) {
+	r := New(nil, discardLogger())
+	clk := withFakeClock(r, 0)
+	inner := newScripted(clk)
+	inner.transient["example.com/mod/v2"] = 5
+	r.inner = inner
+
+	info, err := r.LatestInfo(context.Background(), "example.com/mod/v2")
+	if err != nil || info.Version != "v2.1.0" {
+		t.Fatalf("LatestInfo = %+v, %v; want v2.1.0", info, err)
+	}
+	if got := inner.asked("example.com/mod/v2"); got != 6 {
+		t.Errorf("attempts = %d, want 6", got)
+	}
+	if got := len(clk.waits()); got != 5 {
+		t.Errorf("waits = %d, want 5", got)
+	}
+}
+
+// The exhaustion warning names the interval, the window and the elapsed time,
+// so a reader can tell how long a probe waited against how long it could.
+func TestExhaustionWarningNamesTheWindow(t *testing.T) {
 	var buf bytes.Buffer
-	r := New(inner, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	r.sleep = func(context.Context, time.Duration) error { return nil }
-	r.jitter = func(d time.Duration) time.Duration { return d }
+	r := New(nil, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	clk := withFakeClock(r, 10*time.Second)
+	inner := newScripted(clk)
+	inner.transient["example.com/mod/v2"] = -1
+	r.inner = inner
 
 	if _, err := r.LatestInfo(context.Background(), "example.com/mod/v2"); err == nil {
 		t.Fatal("a persistently empty proxy answered successfully")
@@ -84,36 +179,58 @@ func TestExhaustionWarningNamesTheBudget(t *testing.T) {
 	line := buf.String()
 	for _, want := range []string{
 		"staleness.latest.retries_exhausted",
-		"attempts=4",
-		"attempts.max=4",
-		"backoff_budget_ms=14000",
+		"module.path=example.com/mod/v2",
+		"attempts=9",
+		"interval_ms=20000",
+		"window_ms=240000",
+		"elapsed_ms=250000",
+		"empty response",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("exhaustion warning %q does not contain %q", line, want)
 		}
 	}
+	if strings.Count(line, "retries_exhausted") != 1 {
+		t.Errorf("want exactly one exhaustion warning, got %q", line)
+	}
 }
 
-// The timeout the ADAPTER imposes on its own request is retried like any other
-// transient condition. Before the classifier learned to tell it from a caller
-// giving up, this failed on the first attempt — which is the case that matters
-// most on a slow link, because a slow link is where timeouts happen.
+// The non-zero control: a definitive 404 costs exactly one request and no wait.
+func TestAbsentPathCostsOneRequestAndNoWait(t *testing.T) {
+	r := New(nil, discardLogger())
+	clk := withFakeClock(r, 0)
+	inner := newScripted(clk)
+	inner.final["example.com/mod/v9"] = fmt.Errorf("resolving: %w", ports.ErrPathAbsent)
+	r.inner = inner
+
+	_, err := r.LatestInfo(context.Background(), "example.com/mod/v9")
+	if !errors.Is(err, ports.ErrPathAbsent) {
+		t.Fatalf("error = %v, want ErrPathAbsent", err)
+	}
+	if got := inner.asked("example.com/mod/v9"); got != 1 {
+		t.Errorf("requests = %d, want exactly 1", got)
+	}
+	if got := clk.waits(); len(got) != 0 {
+		t.Errorf("slept %v on a definitive answer, want no sleep", got)
+	}
+}
+
+// The timeout the ADAPTER imposes on its own request is re-asked like any other
+// transient condition.
 func TestAdapterTimeoutIsRetried(t *testing.T) {
 	inner := &timingOutResolver{}
-	r := New(inner, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	r.sleep = func(context.Context, time.Duration) error { return nil }
+	r := New(inner, discardLogger())
+	withFakeClock(r, 0)
 
 	if _, err := r.LatestInfo(context.Background(), "example.com/mod/v2"); err == nil {
 		t.Fatal("a resolver that always times out answered successfully")
 	}
-	if inner.calls != 4 {
-		t.Errorf("attempts = %d, want the full 4-attempt budget", inner.calls)
+	if inner.calls < 2 {
+		t.Errorf("attempts = %d, want the timeout re-asked", inner.calls)
 	}
 }
 
-// The control for that change: a CALLER cancellation still fails on sight. This
-// is the property the classifier's context guard exists to protect, and the one
-// the timeout work risks.
+// The control for that: a CALLER cancellation still fails on sight.
 func TestCallerCancellationIsNotRetried(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -124,7 +241,7 @@ func TestCallerCancellationIsNotRetried(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := &erroringResolver{err: tc.err}
-			r := New(inner, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			r := New(inner, discardLogger())
 			r.sleep = func(context.Context, time.Duration) error {
 				t.Error("backoff slept for a caller cancellation")
 				return nil
@@ -163,23 +280,34 @@ func (f *erroringResolver) LatestInfo(context.Context, string) (ports.LatestInfo
 	return ports.LatestInfo{}, fmt.Errorf("resolving example.com/mod/v2@latest: %w", f.err)
 }
 
-// The context ending during backoff is a stop, not an exhausted budget: the
-// lookup error is reported and the remaining attempts are not spent.
+// The context ending during the wait is a stop, not a closed window: the lookup
+// error is reported with the cancellation, and no further ask is made.
 func TestCancelledBackoffStopsRetrying(t *testing.T) {
-	inner := &failingResolver{}
-	r := New(inner, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	inner := newScripted(nil)
+	inner.transient["example.com/mod/v2"] = -1
+	r := New(inner, discardLogger())
 	r.sleep = func(context.Context, time.Duration) error { return context.Canceled }
 
 	_, err := r.LatestInfo(context.Background(), "example.com/mod/v2")
 	if err == nil {
 		t.Fatal("want the lookup error, got nil")
 	}
-	// The stop is part of the answer, so the caller does not report a lookup the
-	// run's cancellation cut short as a failed one.
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("the cancellation is missing from the returned error: %v", err)
 	}
-	if inner.calls != 1 {
-		t.Errorf("attempts = %d, want 1", inner.calls)
+	if got := inner.asked("example.com/mod/v2"); got != 1 {
+		t.Errorf("attempts = %d, want 1", got)
+	}
+}
+
+// fullJitter stays inside [d/2, d].
+func TestJitterStaysInHalfToWhole(t *testing.T) {
+	for range 1000 {
+		if got := fullJitter(SettleInterval); got < SettleInterval/2 || got > SettleInterval {
+			t.Fatalf("fullJitter(%v) = %v, outside [d/2, d]", SettleInterval, got)
+		}
+	}
+	if got := fullJitter(0); got != 0 {
+		t.Errorf("fullJitter(0) = %v, want 0", got)
 	}
 }

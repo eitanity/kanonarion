@@ -23,6 +23,7 @@ import (
 func newLicenseCompatCmd(stdout, stderr io.Writer) *cobra.Command {
 	var targetSPDX string
 	var walkID string
+	var targetAlias *deprecatedAlias
 
 	cmd := &cobra.Command{
 		Use: "license-compat <module>@<version>",
@@ -33,7 +34,7 @@ func newLicenseCompatCmd(stdout, stderr io.Writer) *cobra.Command {
 		Aliases: []string{"licence-compat"},
 		Short:   "Report license conflicts in a module's dependency closure",
 		Long: `Evaluates whether the dependency closure of <module>@<version> is
-redistributable under --target.
+redistributable under --target-license.
 
 Exit codes:
   0  clean — no conflicts, no unknown pairs, no elections pending
@@ -52,8 +53,8 @@ whose recorded resolution still agrees with the go.mod in the directory that
 walk was taken from, falling back to the most recent walk when none agrees or
 when there is no manifest to compare against. Whenever the store holds more than
 one walk of the coordinate, the answer states which walk it used and why.`,
-		Example: `  kanonarion license-compat github.com/spf13/cobra@v1.8.1 --target Apache-2.0
-  kanonarion license-compat github.com/spf13/cobra@v1.8.1 --target Apache-2.0 --json
+		Example: `  kanonarion license-compat github.com/spf13/cobra@v1.8.1 --target-license Apache-2.0
+  kanonarion license-compat github.com/spf13/cobra@v1.8.1 --target-license Apache-2.0 --json
   kanonarion license-compat example.com/project@local
   kanonarion license-compat example.com/project@local --walk-id 01KZ42BGN0T95D932JMC1GXX3C`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -63,12 +64,18 @@ one walk of the coordinate, the answer states which walk it used and why.`,
 			if len(args) > 1 {
 				return fmt.Errorf("accepts 1 arg, received %d", len(args))
 			}
-			return runLicenseCompat(cmd.Context(), args[0], targetSPDX, walkID, stdout, stderr)
+			spdx, err := targetAlias.resolve(cmd, targetSPDX, stderr)
+			if err != nil {
+				return err
+			}
+			return runLicenseCompat(cmd.Context(), args[0], spdx, walkID, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().StringVar(&targetSPDX, "target", "", "target distribution license SPDX id (e.g. Apache-2.0); omitted: use the root's own analysed licence record as the target")
+	cmd.Flags().StringVar(&targetSPDX, "target-license", "", "target distribution license SPDX id (e.g. Apache-2.0); omitted: use the root's own analysed licence record as the target")
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "answer in the frame of this walk instead of the one the default rule picks")
+	// --target is the old spelling. Every other command reads it as GOOS/GOARCH.
+	targetAlias = registerDeprecatedAlias(cmd, "target", "target-license")
 
 	return cmd
 }
@@ -147,13 +154,13 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 		case errors.Is(err, licapp.ErrRootLicenceNotAnalysed):
 			return &exitError{
 				code: ExitNotFound,
-				msg: fmt.Sprintf("no licence record for root %s — %s, or pass --target",
+				msg: fmt.Sprintf("no licence record for root %s — %s, or pass --target-license",
 					coord, missingLicenceRecordRemedy(coord, licenceRemedyBuildForWalk(ctx, ctr, walkID))),
 			}
 		case errors.Is(err, licapp.ErrRootLicenceNoSPDX):
 			return &exitError{
 				code: ExitFailed,
-				msg:  fmt.Sprintf("root %s has a licence record but no SPDX identity (proprietary/unclassified roots are valid, just not usable as an implicit target) — pass --target explicitly", coord),
+				msg:  fmt.Sprintf("root %s has a licence record but no SPDX identity (proprietary/unclassified roots are valid, just not usable as an implicit target) — pass --target-license explicitly", coord),
 			}
 		}
 		return fmt.Errorf("checking compatibility: %w", err)

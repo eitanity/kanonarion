@@ -64,7 +64,7 @@ func (uc *AnalyseCapabilitiesUseCase) Analyse(
 	if err != nil {
 		return capdomain.CapabilityReport{}, err
 	}
-	return capdomain.Analyse(rec, capdomain.SelectRoots(rec, scope)), nil
+	return capdomain.Analyse(rec, capdomain.SelectRoots(rec, scope), scope), nil
 }
 
 // Diff reads the call graphs for two coordinates and returns their per-side

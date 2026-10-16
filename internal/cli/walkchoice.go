@@ -305,7 +305,7 @@ func (c walkChoice) statement() string {
 		return ""
 	}
 	head := fmt.Sprintf("no walk was named and the store holds %d for this target%s, so one was chosen", c.candidates, c.candidateSetClause())
-	pin := fmt.Sprintf("pin one with --walk-id (kanonarion walk-list --target %s lists them)", c.summary.Target)
+	pin := fmt.Sprintf("pin one with --walk-id (kanonarion walk-list --module %s lists them)", c.summary.Target)
 	// The toolchain note rides in front of the pin so it lands in every branch:
 	// the choice it describes was made whichever rule made it.
 	if note := c.toolchainNote(); note != "" {
@@ -481,7 +481,7 @@ func resolvePinnedWalk(
 		if errors.Is(err, walkports.ErrWalkNotFound) {
 			return walkdomain.WalkRecord{}, &exitError{
 				code: ExitConfig,
-				msg: fmt.Sprintf("no walk %q in the store — kanonarion walk-list --target %s lists the walks of this target",
+				msg: fmt.Sprintf("no walk %q in the store — kanonarion walk-list --module %s lists the walks of this target",
 					walkID, target),
 			}
 		}
@@ -490,7 +490,7 @@ func resolvePinnedWalk(
 	if rec.Target != target {
 		return walkdomain.WalkRecord{}, &exitError{
 			code: ExitConfig,
-			msg: fmt.Sprintf("walk %q is rooted at %s, not at %s — the answer is a property of one build, so this walk cannot give it for that coordinate; kanonarion walk-list --target %s lists the walks of this target",
+			msg: fmt.Sprintf("walk %q is rooted at %s, not at %s — the answer is a property of one build, so this walk cannot give it for that coordinate; kanonarion walk-list --module %s lists the walks of this target",
 				walkID, rec.Target, target, target),
 		}
 	}

@@ -250,7 +250,7 @@ func TestCallGraphList_EmptyStore(t *testing.T) {
 	if !strings.Contains(stdout.String(), "the store holds no call graph record at all") {
 		t.Errorf("expected the empty-store statement, got: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "to produce one: kanonarion callgraph") {
+	if !strings.Contains(stdout.String(), "to produce one: kanonarion fetch <module>@<version> && kanonarion callgraph") {
 		t.Errorf("expected the produce-a-record remedy, got: %q", stdout.String())
 	}
 }

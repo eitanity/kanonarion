@@ -19,7 +19,13 @@ source positions.
 Extraction uses `go/parser` and `go/doc` (AST-only, no full type-checking).
 No code from the target module is executed.
 
-The module must have been fetched first (`kanonarion fetch`).
+The module must have been fetched first (`kanonarion fetch`). An unfetched
+module exits `4`, and the message names the `kanonarion fetch` that supplies it.
+
+The packages read are the ones `go list ./...` names in the module. Directories
+named `vendor` or `testdata`, and every file or directory whose name begins with
+`_` or `.`, at any depth, are skipped, as the go tool skips them: an
+`_examples/` tree is not part of the module's API.
 
 ## Build frame
 
@@ -127,7 +133,7 @@ example.com/mod@v1.0.0: Partial — 2 package(s), build frame linux/amd64 (cgo o
   failure: not analysed: 1 file (mod.go): the kanonarion that ran was built with go1.26.6 and the code requires go1.27.2
   Use a kanonarion built with go1.27.2 or newer: a newer release, or `go install github.com/eitanity/kanonarion@latest` run with go1.27.2 or newer.
   example.com/mod                                              0T 0F 0C 0V (1 file not analysed)
-error: example.com/mod@v1.0.0: Partial — this kanonarion cannot read this code: it was built with go1.26.6 and the code requires go1.27.2. ...
+error: execute root command: example.com/mod@v1.0.0: Partial — this kanonarion cannot read this code: it was built with go1.26.6 and the code requires go1.27.2. ...
 ```
 
 The record is stored and the command exits `20`. Under `--json` the record
@@ -207,11 +213,7 @@ absent record. The two are told apart wherever a record can go missing:
 
 ```
 $ kanonarion interface-show github.com/golang-jwt/jwt/v4@v4.5.1
-error: the interface record for github.com/golang-jwt/jwt/v4@v4.5.1 was produced by
-superseded extraction logic: this build serves pipeline 0.6.0 and the store holds this
-coordinate at pipeline 0.3.0. A superseded record is not served, so this answer is empty
-for want of a measurement of this module, not because the coordinate is wrong.
-Re-extract it:
+error: execute root command: the interface record for github.com/golang-jwt/jwt/v4@v4.5.1 was produced by superseded extraction logic: this build serves pipeline 0.7.0 and the store holds this coordinate at pipeline 0.3.0. A superseded record is not served, so this answer is empty for want of a measurement of this module, not because the coordinate is wrong. Re-extract it:
   kanonarion interface github.com/golang-jwt/jwt/v4@v4.5.1
 ```
 
@@ -220,6 +222,12 @@ A coordinate the store has never held keeps the other statement, which points at
 `interface --history`, `interface-diff`, `symbol-find`, `symbol-context` and the
 `context` interface section all draw the same distinction. Exit code is `4` in
 either case: no record was served.
+
+A listing or a lookup that names no coordinate meets the same condition across
+the store. `interface-list` says how many records it holds at a superseded
+pipeline and at which versions (see [`interface-list`](#interface-list)), and
+`symbol-find` and `symbol-context` say which modules they could not read (see
+[`symbol-find`](#symbol-find)).
 
 ### `interface-list`
 
@@ -258,14 +266,29 @@ listing serves](conventions.md#the-generation-a-listing-serves).
 ```
 $ kanonarion interface-list
 github.com/spf13/cobra@v1.8.1               Extracted    1 package(s)
-listing interface records at pipeline 0.6.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+listing interface records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 
 $ kanonarion interface-list --all-generations
 github.com/spf13/cobra@v1.8.1               Extracted    1 package(s)
 github.com/spf13/pflag@v1.0.5               Extracted    1 package(s)  [superseded generation 0.3.0]
-1 of 2 listed record(s) were extracted at a superseded pipeline version; this build serves 0.6.0 and answers no query from them. Re-extract one:
+1 of 2 listed record(s) were extracted at a superseded pipeline version; this build serves 0.7.0 and answers no query from them. Re-extract one:
   kanonarion interface <module>@<version>
 ```
+
+When every record the store holds is at a superseded pipeline version, the
+listing is empty and says so. The store is not empty, so it does not say that:
+
+```
+$ kanonarion interface-list
+none of the 12 interface record(s) the store holds is at pipeline 0.7.0, the version this build serves (held at 0.4.0, 0.5.0, 0.6.0)
+  to list them: kanonarion interface-list --all-generations
+  to re-extract one: kanonarion interface <module>@<version>
+listing interface records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+```
+
+Under `--json`, `zero_result` carries `store_empty: false`, `superseded: 12`
+and `superseded_generations`. The exit code is `0`. See [Zero-result
+listings](conventions.md#zero-result-listings).
 
 ### `symbol-find`
 
@@ -285,6 +308,20 @@ Also takes the build-scope flags `--gomod`, `--walk-id`, `--toolchain` and
 `--target GOOS/GOARCH` — see [Declaring the build
 target](walk.md#declaring-the-build-target---target).
 
+`<name>` is a bare name (`Marshal`) or a qualified one. The name is what follows
+the last dot; what comes before it may be:
+
+- the import path: `github.com/google/uuid.NewString`,
+  `github.com/google/uuid.UUID.String`;
+- the package name a Go caller writes, the last path element less a major-version
+  element such as `/v2`: `uuid.NewString`, `errors.Wrap`, `uuid.UUID.String`;
+- the receiver type alone, as the name column prints it: `UUID.String`.
+
+A qualified name keeps only the declarations it names. When several packages
+answer to a short qualifier, all of them are listed. When the qualifier names
+none of the packages that export the name, the command answers as for any miss
+and a `notice:` line on stderr names one or two of the packages that do.
+
 **Example:**
 
 ```
@@ -292,6 +329,41 @@ $ kanonarion symbol-find Marshal
 github.com/spf13/cobra@v1.8.1          func       Marshal
 encoding/json@v1.0.0                   func       Marshal
 ```
+
+**When the lookup could not read a module.** The symbol index is kept per
+pipeline version, so a module the store holds only at a superseded one is not
+searched. `symbol-find` and `symbol-context` never report such a module as
+exporting nothing:
+
+- **Nothing found** — exit `4`, stdout empty. The message counts the modules
+  that could answer but are held only at a superseded pipeline, names them when
+  there are 10 or fewer, and gives the remedy. Under `--json` the message is on
+  stderr as well.
+- **Something found** — the answer is printed as usual, and a `notice:` line on
+  stderr counts and names the modules it did not read.
+- **Which modules count.** With a bare name, or a qualifier without a slash
+  (`errors.Wrap`, `UUID.String`), every module held only at a superseded
+  pipeline counts: a package name or type can sit in any module, under any
+  subpackage. An import-path qualifier counts only the modules it falls inside.
+- **The interface store holds no record at all** — exit `4`, stdout empty, and
+  the message names `kanonarion interface <module>@<version>` and
+  `kanonarion local .`.
+
+`symbol-find` names the general remedy, `kanonarion interface <module>@<version>`,
+and `kanonarion interface-list --all-generations` to see which modules are held.
+`symbol-context` names the coordinate when it knows the module — from a
+qualified name, or because only one module went unread — and when several
+versions of that module are held it names the newest and says the others are
+held:
+
+```
+$ kanonarion symbol-context github.com/google/uuid.NewString
+error: execute root command: symbol "github.com/google/uuid.NewString" cannot be resolved: 1 module(s) that could answer are held only at a superseded interface pipeline (0.4.0, 0.5.0, 0.6.0; this build serves 0.7.0), so this answer did not read them: github.com/google/uuid@v1.6.0. A superseded record is not served, so this answer is empty for want of a measurement, not because nothing exports this name. Re-extract it:
+  kanonarion interface github.com/google/uuid@v1.6.0
+```
+
+A name nothing served exports, with every module that could hold it read, is a
+measured absence: `no exports found for symbol "<name>"`, exit `0`.
 
 ## Storage
 

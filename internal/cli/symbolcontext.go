@@ -60,13 +60,22 @@ func newSymbolContextCmd(stdout, stderr io.Writer) *cobra.Command {
 		Long: `Assemble a per-module symbol record (signature, godoc, examples).
 
 The bare-name form is primary: 'symbol-context <name>' searches every stored
-module and reports one entry per module version that declares the symbol.
+module and reports one entry per module version that declares the symbol. A
+qualified name keeps only what it names: the import path
+(github.com/google/uuid.NewString), the package name (uuid.NewString), the
+receiver type (UUID.String), or package and receiver (uuid.UUID.String).
+
+A module held only at a superseded interface pipeline is not searched: a miss
+over one exits 4 and names it, and an answer names it on stderr.
 
 Every sibling record command (interface-show, examples-list, vuln-show,
 context) takes <module>@<version> positionally, so that form is accepted here
 too: 'symbol-context <module>@<version> <name>' is exactly equivalent to
 'symbol-context <name> --module <module>@<version>'.`,
 		Example: `  kanonarion symbol-context Marshal
+  kanonarion symbol-context github.com/google/uuid.NewString
+  kanonarion symbol-context uuid.NewString
+  kanonarion symbol-context UUID.String
   kanonarion symbol-context New --module github.com/spf13/cobra@v1.8.1
   kanonarion symbol-context github.com/spf13/cobra@v1.8.1 New
   kanonarion symbol-context Client --json`,
@@ -149,33 +158,27 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	// narrows the query itself.
 	// A conflict is carried rather than returned: see runSymbolFind. The entries
 	// this command CAN assemble are rendered, and the command fails afterwards.
-	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, sc.modules)
-	var conflictErr error
-	switch {
-	case errors.Is(err, ifaceports.ErrInterfaceConflict):
-		conflictErr = err
-	case err != nil:
-		return fmt.Errorf("finding symbol %q: %w", symbolName, err)
+	q := parseSymbolQuery(symbolName)
+	found, err := lookupSymbolRefs(ctx, ctr, symbolName, q, f, sc)
+	if err != nil {
+		return err
+	}
+	census, conflictErr := found.census, found.conflictErr
+
+	// Drop symbols in non-importable packages (internal/, testdata/): they
+	// cannot be called by consumers, so they are misleading as call targets.
+	refs := filterImportableRefs(found.refs)
+
+	if len(refs) == 0 {
+		return writeNoSymbolContext(symbolName, q, f, sc, found, jsonOut, stdout, stderr)
+	}
+	if nerr := census.writeNotice(stderr, census.coordinateRemedy(q)); nerr != nil {
+		return nerr
 	}
 	if !jsonOut {
 		if nerr := writeScopeNotice(stdout, sc); nerr != nil {
 			return nerr
 		}
-	}
-
-	if f.module != "" {
-		var done bool
-		if refs, done, err = narrowRefsToModule(ctx, ctr, f, refs, jsonOut, stdout, stderr); err != nil || done {
-			return err
-		}
-	}
-
-	// Drop symbols in non-importable packages (internal/, testdata/): they
-	// cannot be called by consumers, so they are misleading as call targets.
-	refs = filterImportableRefs(refs)
-
-	if len(refs) == 0 {
-		return writeNoSymbolContext(ctx, ctr, symbolName, conflictErr, jsonOut, stdout, stderr)
 	}
 
 	entries, carried, err := buildSymbolContextEntries(ctx, ctr, refs, ifaceapp.PipelineVersion)
@@ -198,29 +201,56 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	return conflictErr
 }
 
-// narrowRefsToModule keeps the refs of the module --module names; done reports
-// that the module holds no interface record and the answer was given.
-func narrowRefsToModule(ctx context.Context, ctr *Container, f symbolContextFlags, refs []ifaceports.SymbolRef, jsonOut bool, stdout, stderr io.Writer) ([]ifaceports.SymbolRef, bool, error) {
+// symbolLookup is what a symbol-context lookup found: the refs the query
+// names, every importable ref of the bare name (for a qualified miss), the
+// modules it could not read, and a conflict carried beside the refs.
+type symbolLookup struct {
+	refs, all   []ifaceports.SymbolRef
+	census      unreadInterfaceModules
+	conflictErr error
+}
+
+// lookupSymbolRefs finds the refs the query names and the modules it could not
+// read. A named module is the whole question, so modules held only at a
+// superseded pipeline elsewhere do not bear on it; without one they do.
+func lookupSymbolRefs(ctx context.Context, ctr *Container, symbolName string, q symbolQuery, f symbolContextFlags, sc buildScope,
+) (symbolLookup, error) {
+	var out symbolLookup
+	refs, err := ctr.QueryInterface.FindSymbol(ctx, q.name, ifaceapp.PipelineVersion, sc.modules)
+	switch {
+	case errors.Is(err, ifaceports.ErrInterfaceConflict):
+		out.conflictErr = err
+	case err != nil:
+		return out, fmt.Errorf("finding symbol %q: %w", symbolName, err)
+	}
+	out.refs = q.keep(refs)
+	if f.module != "" {
+		out.refs, err = narrowRefsToModule(ctx, ctr, f, out.refs)
+		return out, err
+	}
+	if q.qualifier != "" {
+		// keep copied the qualified refs, so filtering in place is safe here.
+		out.all = filterImportableRefs(refs)
+	}
+	out.census, err = readInterfaceCensus(ctx, ctr.QueryInterface, sc.modules, q)
+	return out, err
+}
+
+// narrowRefsToModule keeps the refs of the module --module names. A module
+// the store serves no record for is a miss, exit 4: "never extracted" and
+// "extracted under superseded logic" both arrive here as an absent record, and
+// only one of them is a coordinate to check.
+func narrowRefsToModule(ctx context.Context, ctr *Container, f symbolContextFlags, refs []ifaceports.SymbolRef) ([]ifaceports.SymbolRef, error) {
 	coord, perr := parseCoordinate(f.module)
 	if perr != nil {
-		return nil, false, fmt.Errorf("invalid --module %q: %w", f.module, perr)
+		return nil, fmt.Errorf("invalid --module %q: %w", f.module, perr)
 	}
-	// Distinguish "module not in store" from "symbol not found": an
-	// empty result is ambiguous unless we know the module was indexed.
 	if _, found, gerr := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion); gerr == nil && !found {
-		// "Never extracted" and "extracted under superseded logic" both
-		// arrive here as an absent record, and only one of them is a
-		// coordinate to check.
 		line := fmt.Sprintf("no interface record for %s in the store; run 'kanonarion interface %s' first", f.module, f.module)
 		if pipelines, superseded := supersededInterfaceRecord(ctx, ctr.QueryInterface, coord); superseded {
 			line = supersededInterfaceLine(coord, pipelines)
 		}
-		_, _ = fmt.Fprintf(stderr, "%s\n", line)
-		if jsonOut {
-			_, _ = fmt.Fprintln(stdout, "[]")
-			return nil, true, nil
-		}
-		return nil, true, nil
+		return nil, &exitError{code: ExitNotFound, msg: line}
 	}
 	var filtered []ifaceports.SymbolRef
 	for _, ref := range refs {
@@ -228,23 +258,40 @@ func narrowRefsToModule(ctx context.Context, ctr *Container, f symbolContextFlag
 			filtered = append(filtered, ref)
 		}
 	}
-	return filtered, false, nil
+	return filtered, nil
 }
 
-// writeNoSymbolContext answers a lookup that found no export, saying when a
-// superseded store is why.
-func writeNoSymbolContext(ctx context.Context, ctr *Container, symbolName string, conflictErr error, jsonOut bool, stdout, stderr io.Writer) error {
-	// An empty lookup over a store whose every record is superseded says
-	// nothing about the symbol: the index is keyed on the pipeline version,
-	// so there was nothing here to read.
-	if line, superseded := supersededInterfaceStoreLine(storedInterfaceSummaries(ctx, ctr.QueryInterface)); superseded {
-		_, _ = fmt.Fprintf(stderr, "%s\n", line)
+// writeNoSymbolContext answers a lookup that found no export. An empty store,
+// or modules that could answer held only at a superseded pipeline, is exit 4
+// with stdout empty: the lookup read nothing there, so "no exports" would be
+// a claim it did not measure.
+func writeNoSymbolContext(symbolName string, q symbolQuery, f symbolContextFlags, sc buildScope,
+	found symbolLookup, jsonOut bool, stdout, stderr io.Writer,
+) error {
+	census, conflictErr := found.census, found.conflictErr
+	if f.module == "" && conflictErr == nil {
+		if census.stored == 0 {
+			return emptyInterfaceStoreError(symbolName)
+		}
+		if len(census.modules) > 0 {
+			return census.missError(symbolName, census.coordinateRemedy(q))
+		}
+	}
+	if err := q.writeExcluded(stderr, found.all); err != nil {
+		return err
 	}
 	if jsonOut {
-		_, _ = fmt.Fprintln(stdout, "[]")
+		if _, err := fmt.Fprintln(stdout, "[]"); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
 		return conflictErr
 	}
-	_, _ = fmt.Fprintf(stdout, "no exports found for symbol %q\n", symbolName)
+	if err := writeScopeNotice(stdout, sc); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "no exports found for symbol %q\n", symbolName); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
 	return conflictErr
 }
 

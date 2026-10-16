@@ -253,8 +253,8 @@ func TestCallGraphList_SingleGenerationRowIsUnchanged(t *testing.T) {
 	if err := runCallGraphList(context.Background(), "", 20, 0, false, uc, &buf, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runCallGraphList: %v", err)
 	}
-	const want = "example.com/once@v1.0.0                                      " +
-		cgapp.PipelineVersion + "        Extracted     5 nodes     8 edges\n" +
+	want := "example.com/once@v1.0.0                                      " +
+		fmt.Sprintf("%-12s", cgapp.PipelineVersion) + " Extracted     5 nodes     8 edges\n" +
 		"listing call graph records at pipeline " + cgapp.PipelineVersion +
 		", the version this build serves; records from a superseded pipeline version are not shown (--all-generations)\n"
 	if buf.String() != want {

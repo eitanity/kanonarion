@@ -1372,7 +1372,7 @@ func printLicenseListText(
 		return serr
 	}
 	if zero != nil {
-		return writeListZeroNotice(stdout, *zero)
+		return writeListZeroWithGeneration(stdout, *zero, gen)
 	}
 	superseded := 0
 	for _, e := range entries {
@@ -1449,23 +1449,16 @@ func licenseListZeroScope(
 	census []ports.LicenseSummary,
 	uc QueryLicenseUseCase,
 ) (listZeroScope, error) {
-	all := census
-	if scope == nil {
-		var err error
-		all, err = uc.ListLicenseRecords(ctx, ports.LicenseFilter{
-			PipelineVersion: licenseListGeneration(f.allGenerations).filterVersion(),
-		})
-		if err != nil {
-			return listZeroScope{}, fmt.Errorf("counting license records for the zero-result notice: %w", err)
-		}
-	} else {
-		all = scope.keep(all)
+	all, sup, err := licenseListCensus(ctx, f, scope, census, uc)
+	if err != nil {
+		return listZeroScope{}, err
 	}
 	z := listZeroScope{
 		subject:    "license record",
 		considered: len(all),
 		produce:    "kanonarion license <module>@<version>",
 		listAll:    "kanonarion license-list",
+		superseded: sup,
 	}
 	// The illustration has to be in the shape the filter compares against, and an
 	// SPDX identifier is only that when --spdx is one of the filters that ran.
@@ -1505,6 +1498,52 @@ func licenseListZeroScope(
 		z.pagedPast = fmt.Sprintf("--offset %d starts past the last one", f.offset)
 	}
 	return z, nil
+}
+
+// licenseListCensus is the zero notice's corpus: the served records in scope,
+// and the superseded ones the served-generation filter hid. The filters are
+// applied to the superseded records by the same reads the page used, so the
+// matched figure is about what was asked.
+func licenseListCensus(
+	ctx context.Context,
+	f licenseListFlags,
+	scope *licenceListScope,
+	census []ports.LicenseSummary,
+	uc QueryLicenseUseCase,
+) ([]ports.LicenseSummary, listZeroSuperseded, error) {
+	gen := licenseListGeneration(f.allGenerations)
+	if gen.all && scope != nil {
+		return scope.keep(census), listZeroSuperseded{gen: gen}, nil
+	}
+	every, err := uc.ListLicenseRecords(ctx, ports.LicenseFilter{})
+	if err != nil {
+		return nil, listZeroSuperseded{}, fmt.Errorf("counting license records for the zero-result notice: %w", err)
+	}
+	version := func(s ports.LicenseSummary) string { return s.PipelineVersion }
+	all, sup := splitGenerations(gen, scope.keep(every), version, nil)
+	if gen.all || len(sup.held) == 0 || (f.spdx == "" && f.copyright == "" && len(f.copyrightStatus) == 0) {
+		return all, sup, nil
+	}
+	filtered, err := uc.ListLicenseRecords(ctx, ports.LicenseFilter{SPDX: f.spdx, CopyrightStatus: f.copyrightStatus})
+	if err != nil {
+		return nil, listZeroSuperseded{}, fmt.Errorf("counting matching license records for the zero-result notice: %w", err)
+	}
+	var stale []ports.LicenseSummary
+	for _, s := range scope.keep(filtered) {
+		if gen.superseded(s.PipelineVersion) {
+			stale = append(stale, s)
+		}
+	}
+	if f.copyright != "" {
+		if stale, err = filterByCopyrightHolder(ctx, uc, stale, f.copyright); err != nil {
+			return nil, listZeroSuperseded{}, err
+		}
+	}
+	sup.matched = nil
+	for _, s := range stale {
+		sup.matched = append(sup.matched, s.PipelineVersion)
+	}
+	return all, sup, nil
 }
 
 // copyrightStatusNames renders a status filter as the caller spelled it.

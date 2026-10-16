@@ -56,6 +56,11 @@ func TestOrdering_IsKeyedOnEveryField(t *testing.T) {
 	assertOrders(t, "binary.build_error", domain.ProbedBinaryLess,
 		domain.ProbedBinary{BuildError: "a"}, domain.ProbedBinary{BuildError: "b"})
 
+	assertOrders(t, "harness_omission.symbol", domain.HarnessOmissionLess,
+		domain.HarnessOmission{Symbol: "a"}, domain.HarnessOmission{Symbol: "b"})
+	assertOrders(t, "harness_omission.reason", domain.HarnessOmissionLess,
+		domain.HarnessOmission{Reason: "a"}, domain.HarnessOmission{Reason: "b"})
+
 	assertOrders(t, "probe.path", domain.ModuleProbeResultLess,
 		domain.ModuleProbeResult{Path: "a"}, domain.ModuleProbeResult{Path: "b"})
 	assertOrders(t, "probe.version", domain.ModuleProbeResultLess,

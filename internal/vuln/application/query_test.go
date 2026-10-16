@@ -18,10 +18,6 @@ import (
 
 // queryVulnFakeStore is a minimal VulnerabilityStore for query use-case tests.
 type queryVulnFakeStore struct {
-	record         domain.VulnerabilityRecord
-	recordFound    bool
-	latestRecord   domain.VulnerabilityRecord
-	latestFound    bool
 	walkRecords    []domain.VulnerabilityRecord
 	moduleRecords  []domain.VulnerabilityRecord
 	allGenRecords  []domain.VulnerabilityRecord
@@ -37,20 +33,6 @@ type queryVulnFakeStore struct {
 
 func (s *queryVulnFakeStore) PutVulnerabilityRecord(_ context.Context, _ domain.VulnerabilityRecord) error {
 	return nil
-}
-
-func (s *queryVulnFakeStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
-	if s.storeErr != nil {
-		return domain.VulnerabilityRecord{}, false, s.storeErr
-	}
-	return s.record, s.recordFound, nil
-}
-
-func (s *queryVulnFakeStore) GetLatestVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (domain.VulnerabilityRecord, bool, error) {
-	if s.storeErr != nil {
-		return domain.VulnerabilityRecord{}, false, s.storeErr
-	}
-	return s.latestRecord, s.latestFound, nil
 }
 
 func (s *queryVulnFakeStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) ([]domain.VulnerabilityRecord, error) {
@@ -118,50 +100,6 @@ func (s *queryVulnFakeStore) ListVulnerabilityRecordGenerationsForModule(_ conte
 var _ vulnports.VulnerabilityStore = (*queryVulnFakeStore)(nil)
 
 // --- QueryVulnUseCase tests ---
-
-func TestQueryVulnUseCase_GetRecord(t *testing.T) {
-	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
-	want := domain.VulnerabilityRecord{Coordinate: coord, OverallStatus: domain.StatusClean}
-	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{record: want, recordFound: true})
-
-	got, found, err := uc.GetRecord(context.Background(), coord, "v1", domain.DatabaseSnapshot{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !found {
-		t.Fatal("expected record to be found")
-	}
-	if got.Coordinate != coord {
-		t.Errorf("got %v, want %v", got.Coordinate, coord)
-	}
-}
-
-func TestQueryVulnUseCase_GetRecord_Error(t *testing.T) {
-	storeErr := errors.New("db failure")
-	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{storeErr: storeErr})
-
-	_, _, err := uc.GetRecord(context.Background(), coordinate.ModuleCoordinate{}, "v1", domain.DatabaseSnapshot{})
-	if !errors.Is(err, storeErr) {
-		t.Errorf("got %v, want wrapping %v", err, storeErr)
-	}
-}
-
-func TestQueryVulnUseCase_GetLatestRecord(t *testing.T) {
-	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
-	want := domain.VulnerabilityRecord{Coordinate: coord}
-	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{latestRecord: want, latestFound: true})
-
-	got, found, err := uc.GetLatestRecord(context.Background(), coord, "v1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !found {
-		t.Fatal("expected record to be found")
-	}
-	if got.Coordinate != coord {
-		t.Errorf("got %v, want %v", got.Coordinate, coord)
-	}
-}
 
 // The walk-scoped read hands back every candidate rather than one answer: the
 // use case has no analysis frame to rank them with, and picking without one is
@@ -345,11 +283,11 @@ func (s *queryVulnFakeStore) GetVulnerabilityRecordAt(_ context.Context, _ coord
 	if s.storeErr != nil {
 		return domain.VulnerabilityRecord{}, false, s.storeErr
 	}
-	return s.record, s.recordFound, nil
+	return domain.VulnerabilityRecord{}, false, nil
 }
 
 func (s *queryVulnFakeStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ string) (bool, error) {
-	return s.recordFound, s.storeErr
+	return false, s.storeErr
 }
 
 // fakeWalkPresence answers the walk-presence probe. A walk is held unless it is

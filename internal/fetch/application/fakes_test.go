@@ -134,9 +134,12 @@ type fakeVCS struct {
 	commits     map[string]string // "url|ref" → commit
 	resolveErr  error
 	checkoutErr error
+	checkouts   int // CheckoutToDir calls, so a test can see the leg re-run
+	resolves    int // ResolveTag calls, for the same reason
 }
 
 func (f *fakeVCS) ResolveTag(_ context.Context, url, ref string) (string, error) {
+	f.resolves++
 	if f.resolveErr != nil {
 		return "", f.resolveErr
 	}
@@ -148,6 +151,7 @@ func (f *fakeVCS) ResolveTag(_ context.Context, url, ref string) (string, error)
 }
 
 func (f *fakeVCS) CheckoutToDir(_ context.Context, _, _, dir string) error {
+	f.checkouts++
 	return f.checkoutErr
 }
 

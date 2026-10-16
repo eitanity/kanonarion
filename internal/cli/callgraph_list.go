@@ -114,7 +114,7 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 		if serr != nil {
 			return serr
 		}
-		return writeListZeroNotice(stdout, scope)
+		return writeListZeroWithGeneration(stdout, scope, gen)
 	}
 
 	superseded := 0
@@ -135,7 +135,7 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 // callGraphListGeneration is callgraph-list's generation contract.
 func callGraphListGeneration(allGenerations bool) listGeneration {
 	return pipelineGeneration("call graph records", cgapp.PipelineVersion, allGenerations,
-		"kanonarion callgraph <module>@<version>")
+		"kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>")
 }
 
 // writeCallGraphListRow prints ONE line per coordinate, whatever its history.
@@ -294,18 +294,22 @@ func callGraphListJSON(c ports.CallGraphCoordinate, gen listGeneration) callGrap
 // composing listing made the cheapest possible answer — an empty one — the most
 // expensive command in the store.
 func callGraphListZeroScope(ctx context.Context, moduleFilter string, offset int, gen listGeneration, uc QueryCallGraphUseCase) (listZeroScope, error) {
-	all, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{PipelineVersion: gen.filterVersion()})
+	every, err := uc.ListCallGraphCoordinates(ctx, ports.CallGraphFilter{})
 	if err != nil {
 		return listZeroScope{}, fmt.Errorf("counting callgraph records for the zero-result notice: %w", err)
 	}
+	all, sup := splitGenerations(gen, every,
+		func(c ports.CallGraphCoordinate) string { return c.PipelineVersion },
+		func(c ports.CallGraphCoordinate) bool { return c.ModulePath == moduleFilter })
 	scope := listZeroScope{
+		superseded:  sup,
 		subject:     "call graph record",
 		filterName:  "module path",
 		filterValue: moduleFilter,
 		field:       "module path",
 		matchKind:   matchExact,
 		considered:  len(all),
-		produce:     "kanonarion callgraph <module>@<version>",
+		produce:     "kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>",
 		listAll:     "kanonarion callgraph-list",
 	}
 	if len(all) > 0 {

@@ -7,6 +7,7 @@ import (
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 )
 
 // reachabilityRemedy is the command-line half of a reachability refusal: the
@@ -201,11 +202,46 @@ func remedyProjectRooted() reachabilityRemedy {
 // makes the next answer wider is scanning the build, so that is what this names
 // — and naming it is the point, because the probe has no refresh flag and an
 // operator told only that modules were uncovered would have no route at all.
-func remedyScanUncovered() reachabilityRemedy {
+// The lead states the reasons present: after a pipeline bump the modules hold
+// records, and "no stored record" would be false of them.
+func remedyScanUncovered(uncovered []localdomain.UncoveredModule) reachabilityRemedy {
+	var incomplete, superseded int
+	for _, u := range uncovered {
+		switch u.Reason {
+		case localdomain.UncoveredScanIncomplete:
+			incomplete++
+		case localdomain.UncoveredSupersededPipeline:
+			superseded++
+		}
+	}
+	if incomplete > 0 {
+		return remedyCompleteScan()
+	}
+	lead := "These modules carry no stored record, so re-running the probe cannot widen the answer. Scan the build first, from the project's own directory"
+	switch other := len(uncovered) - superseded; {
+	case superseded > 0 && other == 0:
+		lead = "These modules hold records only from superseded scan logic; re-scan the build, from the project's own directory"
+	case superseded > 0:
+		lead = fmt.Sprintf("%d of these modules hold records only from superseded scan logic and %d carry no record this probe can read; "+
+			"scan the build, from the project's own directory", superseded, other)
+	}
 	return reachabilityRemedy{
-		lead: "These modules carry no stored record, so re-running the probe cannot widen the answer. Scan the build first, from the project's own directory",
+		lead: lead,
 		lines: []string{
 			"kanonarion walk --gomod ./go.mod" + targetFlagHint(),
+			"kanonarion vuln-scan --gomod ./go.mod" + targetFlagHint() + " --reachability",
+		},
+	}
+}
+
+// remedyCompleteScan is the route past a walk whose vuln-scan did not complete.
+// The walk stands, so only the scan is named: re-running it over the same build
+// writes the run the probe reads the walk through.
+func remedyCompleteScan() reachabilityRemedy {
+	return reachabilityRemedy{
+		lead: "The vuln-scan of this build's newest walk did not complete, so no completed scan answers for these modules. " +
+			"Run it to completion, from the project's own directory",
+		lines: []string{
 			"kanonarion vuln-scan --gomod ./go.mod" + targetFlagHint() + " --reachability",
 		},
 	}
@@ -263,7 +299,10 @@ func printableRemedies(coord coordinate.ModuleCoordinate, walkID string) []reach
 		remedyRebuildGraphThenRescan(coord, walkID),
 		remedyRebuildGraphThenRescan(coord, ""),
 		remedyProjectRooted(),
-		remedyScanUncovered(),
+		remedyScanUncovered(nil),
+		remedyScanUncovered([]localdomain.UncoveredModule{{Reason: localdomain.UncoveredSupersededPipeline}}),
+		remedyScanUncovered([]localdomain.UncoveredModule{{Reason: localdomain.UncoveredSupersededPipeline}, {Reason: localdomain.UncoveredNoStoredRecord}}),
+		remedyCompleteScan(),
 		remedyRescanProject("/srv/checkouts/project"),
 		remedyShowRecord(coord),
 		remedyRescanSuperseded("Re-scan it", coord, true, nil),

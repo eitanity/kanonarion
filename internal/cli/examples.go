@@ -456,15 +456,17 @@ func exampleRecordMiss(ctx context.Context, uc QueryExamplesUseCase, coord coord
 // cannot arise and the notice never claims it did. Reached only when the
 // listing came back empty.
 func examplesListZeroScope(ctx context.Context, offset int, gen listGeneration, uc QueryExamplesUseCase) (listZeroScope, error) {
-	all, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{PipelineVersion: gen.filterVersion()})
+	every, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{})
 	if err != nil {
 		return listZeroScope{}, fmt.Errorf("counting example records for the zero-result notice: %w", err)
 	}
+	all, sup := splitGenerations(gen, every, func(s ports.ExampleSummary) string { return s.PipelineVersion }, nil)
 	scope := listZeroScope{
 		subject:    "example record",
 		considered: len(all),
 		produce:    "kanonarion examples <module>@<version>",
 		listAll:    "kanonarion examples-list",
+		superseded: sup,
 	}
 	// An empty corpus is not something a page can start past, so a zero over it
 	// keeps the store-empty statement and its produce-a-record remedy.
@@ -622,7 +624,7 @@ func runExamplesList(ctx context.Context, limit, offset int, allGenerations bool
 		if serr != nil {
 			return serr
 		}
-		return writeListZeroNotice(stdout, scope)
+		return writeListZeroWithGeneration(stdout, scope, gen)
 	}
 	var conflicts []error
 	superseded := 0

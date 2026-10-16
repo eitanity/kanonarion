@@ -855,6 +855,7 @@ func resolveToolModule(toolPath string, reqVersions map[string]string) (modPath,
 // BEFORE the invocation runs, and resetting it here would unpin every golden.
 func resetInvocationState() {
 	storeSetAside.reset()
+	storeNotSearched.reset()
 	modcacheMode, modcacheDir, goSumPath = false, "", ""
 	projectGoSumPath = ""
 	// The built-in defaults, which is what a store with no config file loads —
@@ -866,6 +867,12 @@ func resetInvocationState() {
 	// No remedy, so a refusal raised before a command was resolved names none
 	// rather than the last command's.
 	offlineRemedy = ""
+	if restoreGoproxy != nil {
+		if err := restoreGoproxy(); err != nil {
+			slog.Default().Error("restoring GOPROXY after --goproxy", slog.String("error", err.Error()))
+		}
+		restoreGoproxy = nil
+	}
 	// The rendering flags, in the state a command that was passed neither is
 	// entitled to: text on stdout at the default verbosity.
 	jsonOut = false
@@ -1122,6 +1129,25 @@ func offlineAlternativeOf(cmd *cobra.Command) string {
 // print a no-network refusal — the proxy adapter is built in a dozen places and
 // none of them knows which command is running.
 var offlineRemedy string
+
+// restoreGoproxy undoes the invocation's --goproxy declaration; nil when the
+// command was given none.
+var restoreGoproxy func() error
+
+// declareGoproxyFlag makes a --goproxy value the effective GOPROXY for the whole
+// invocation, so every egress decides on it and not only the module proxy.
+func declareGoproxyFlag(cmd *cobra.Command) error {
+	fl := cmd.Flags().Lookup("goproxy")
+	if fl == nil || strings.TrimSpace(fl.Value.String()) == "" {
+		return nil
+	}
+	restore, err := goenv.Declare(fl.Value.String())
+	if err != nil {
+		return &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	restoreGoproxy = restore
+	return nil
+}
 
 // renderOfflineRemedy builds that line from what the command declared about
 // itself.
@@ -1708,6 +1734,14 @@ var evidenceInDoubt = []error{
 	nativeports.ErrNativeConflict,
 }
 
+// moduleNotFetched is every producer's refusal for a module whose bytes the
+// store does not hold. The printed 'kanonarion fetch' runs as given and supplies
+// them, so it is an absent record (4), not a malformed invocation (20).
+var moduleNotFetched = []error{
+	cgports.ErrModuleNotFetched, ifaceports.ErrModuleNotFetched, licenceports.ErrModuleNotFetched,
+	exampleports.ErrModuleNotFetched, nativeports.ErrModuleNotFetched,
+}
+
 // ExitCodeForError maps a Run error onto the process exit code. It honours an
 // explicit exit-code carrier on the chain first (so categories like ExitNotFound
 // survive), then the evidence-in-doubt sentinels, and otherwise falls back to
@@ -1732,6 +1766,11 @@ func ExitCodeForError(err error) int {
 	for _, sentinel := range evidenceInDoubt {
 		if errors.Is(err, sentinel) {
 			return ExitIntegrity
+		}
+	}
+	for _, sentinel := range moduleNotFetched {
+		if errors.Is(err, sentinel) {
+			return ExitNotFound
 		}
 	}
 	// Every stored generation was set aside, or a refusal was decided without

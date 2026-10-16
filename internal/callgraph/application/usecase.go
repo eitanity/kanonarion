@@ -115,7 +115,12 @@ import (
 // Bumped to "0.9.0" when a record started carrying its build's dependency
 // closure (DependencyPackages). Without it a dependency's negative cannot be
 // searched from the project's own entry points.
-const PipelineVersion = "0.9.0"
+//
+// Bumped to "0.10.0" when the load started dropping a replace of the module's own
+// nested module onto an absent in-tree directory, and leading a failure with the
+// go command's error on a dependency. A 0.9.0 record of
+// go.opentelemetry.io/otel@v1.44.0 or later is LoadFailed for a module that builds.
+const PipelineVersion = "0.10.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

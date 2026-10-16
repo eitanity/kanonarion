@@ -187,7 +187,7 @@ func runVulnShow(
 // selectShowRecord picks the record vuln-show serves when no walk anchors the
 // question: the consumer frame's, refused when several consumers hold one.
 func selectShowRecord(ctx context.Context, uc QueryVulnUseCase, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate, aside *setAsideRows) (rec, isolated vuldomain.VulnerabilityRecord, hasIsolated bool, _ error) {
-	// Every generation is read rather than the store's composed "latest",
+	// Every generation is read rather than one frame-blind composition,
 	// because "show me this module's record" is a question a consumer asks
 	// about a module they depend on, and the frame-blind ladder answers it in
 	// whichever frame happens to rank first. The rung that decides is
@@ -407,7 +407,7 @@ func explainWalkRecordAbsence(
 		msg := fmt.Sprintf("walk %s%s has %d vulnerability scan run(s), none covering %s — that build does not contain this module",
 			walkID, scopeLabel, len(scanRuns), coord)
 		if target != "" {
-			msg += fmt.Sprintf("; a module that is only in another scope's closure is answered from that scope's walk — kanonarion walk-list --target %s lists them, and --walk-id names one",
+			msg += fmt.Sprintf("; a module that is only in another scope's closure is answered from that scope's walk — kanonarion walk-list --module %s lists them, and --walk-id names one",
 				target)
 		}
 		return &exitError{code: ExitNotFound, msg: msg}

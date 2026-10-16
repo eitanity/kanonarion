@@ -692,6 +692,27 @@ func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, filter ifac
 	return out, nil
 }
 
+// ListInterfaceGenerations names each (module, version, pipeline) the list
+// holds once. It counts as a listing read in ListCalls.
+func (f *FakeQueryInterface) ListInterfaceGenerations(_ context.Context) ([]ifaceports.InterfaceGeneration, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ListCalls++
+	seen := map[ifaceports.InterfaceGeneration]bool{}
+	var out []ifaceports.InterfaceGeneration
+	for _, s := range f.list {
+		g := ifaceports.InterfaceGeneration{ModulePath: s.ModulePath, ModuleVersion: s.ModuleVersion, PipelineVersion: s.PipelineVersion}
+		if !seen[g] {
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
 func (f *FakeQueryInterface) FindSymbol(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
@@ -1240,6 +1261,22 @@ func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, req cgapp.Traver
 	}, nil
 }
 
+// NotSearchedByCallers names nothing: the fake holds one generation per
+// coordinate, so nothing it holds is superseded.
+func (f *FakeQueryCallGraph) NotSearchedByCallers(context.Context, []string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error) {
+	return nil, nil
+}
+
+// NotSearchedByCallees names nothing, as NotSearchedByCallers.
+func (f *FakeQueryCallGraph) NotSearchedByCallees(context.Context, []string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error) {
+	return nil, nil
+}
+
+// UnservedCoordinates names nothing, as NotSearchedByCallers.
+func (f *FakeQueryCallGraph) UnservedCoordinates(context.Context, []coordinate.ModuleCoordinate, string) ([]cgports.UnservedCoordinate, error) {
+	return nil, nil
+}
+
 // ---- example context ----
 
 // FakeExtractExample implements cli.ExtractExampleUseCase.
@@ -1554,8 +1591,7 @@ type FakeQueryVuln struct {
 	// what is missing from it.
 	PartialErr error
 	// ForceLatestRecordForWalkNotFound empties the walk-scoped candidate read
-	// regardless of the records map. Use this to exercise the fallback path that
-	// checks GetLatestRecord for a ScanFailed status.
+	// regardless of the records map.
 	ForceLatestRecordForWalkNotFound bool
 	// supersededLedger holds records the store has at a generation this build's
 	// keyed reads cannot see. They are returned only by the all-generations read,
@@ -1598,26 +1634,6 @@ func (f *FakeQueryVuln) AddRecord(coord coordinate.ModuleCoordinate, rec vulndom
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[coord.String()] = rec
-}
-
-func (f *FakeQueryVuln) GetRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
-	if f.Err != nil {
-		return vulndomain.VulnerabilityRecord{}, false, f.Err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	rec, ok := f.records[coord.String()]
-	return rec, ok, nil
-}
-
-func (f *FakeQueryVuln) GetLatestRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
-	if f.Err != nil {
-		return vulndomain.VulnerabilityRecord{}, false, f.Err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	rec, ok := f.records[coord.String()]
-	return rec, ok, nil
 }
 
 // ListRecordsForModuleInWalk returns the walk's candidate records for a

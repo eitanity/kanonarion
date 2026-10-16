@@ -312,11 +312,11 @@ func writeCoverageAnchorLines(w io.Writer, c fetchdomain.VerificationCoverage) e
 	}
 
 	// "could not run" is reported separately from "never established". The first
-	// is a fault of the host that measured — no git — and is fixed by installing
-	// git and re-running; the second is what the ledger knows about the module.
+	// is a fault of the host or network that measured — no git, or a remote past
+	// the fetch bound — and clears on a re-run; the second is about the module.
 	if c.CrossVerifiable() > 0 {
 		if _, err := fmt.Fprintf(w,
-			"  VCS evidence (fetch ledger): %d rechecked by this run, %d inherited, %d never established, %d not measured, %d could not run (no git on the measuring host)\n",
+			"  VCS evidence (fetch ledger): %d rechecked by this run, %d inherited, %d never established, %d not measured, %d could not run (no git, or the remote did not answer within the fetch bound)\n",
 			c.VCSRechecked, c.VCSInherited, c.VCSNever, c.VCSNotMeasured, c.VCSUnavailable); err != nil {
 			return fmt.Errorf("writing coverage legs: %w", err)
 		}

@@ -414,7 +414,7 @@ func TestLicenseCompat_UnknownWalkIDRefusesNamingTheRemedy(t *testing.T) {
 	var out bytes.Buffer
 	err := licenseCompatWith(context.Background(), ctr, coord, "Apache-2.0", "W-nope", &out, io.Discard)
 	requireExit(t, err, ExitConfig)
-	if !strings.Contains(err.Error(), "kanonarion walk-list --target") {
+	if !strings.Contains(err.Error(), "kanonarion walk-list --module") {
 		t.Errorf("refusal does not name the remedy: %v", err)
 	}
 	if out.Len() != 0 {
@@ -542,7 +542,7 @@ func TestUse_UnknownWalkIDRefusesNamingTheRemedy(t *testing.T) {
 	var stderr bytes.Buffer
 	_, err := useTargetWalk(context.Background(), walks, coord, "W-nope", &stderr)
 	requireExit(t, err, ExitConfig)
-	if !strings.Contains(err.Error(), "kanonarion walk-list --target") {
+	if !strings.Contains(err.Error(), "kanonarion walk-list --module") {
 		t.Errorf("refusal does not name the remedy: %v", err)
 	}
 	if stderr.Len() != 0 {

@@ -118,82 +118,6 @@ func writeFrameAnchorNotice(stdout io.Writer, anchor vulnFrameAnchor, ok bool) {
 	_, _ = fmt.Fprintf(stdout, "notice: results restricted to the records %s scanned%s\n", anchor.source, anchor.staleness)
 }
 
-// selectRecordInFrame picks the record answering for one frame out of a
-// candidate set, together with the isolated-frame record it declined to answer
-// from. found is false when the candidates hold nothing this frame's question
-// can be answered from.
-//
-// The isolated frame is the one legitimate fallback, and it is not a relaxation
-// of the rule. An isolated record answers "does the module, built alone, reach
-// the advisory" — a question with no consumer in it, so it belongs to no
-// project and misattributes nothing. Another consumer's target-rooted record is
-// the opposite: it answers a question about a build the caller did not ask
-// about, and is never served here. The fallback matters because a walk rooted
-// at a published module scans its dependencies through an isolated per-module
-// pool, so its own frame legitimately holds nothing for most coordinates.
-//
-// The isolated aside is carried on the anchored path for the same reason it is
-// carried on the composed one: the two frames disagreeing is information, and a
-// reader who has seen the isolated verdict elsewhere is owed the reason it is
-// not the headline.
-//
-// A conflict in the frame that answers is returned, not read as "no record":
-// two toolchains disagreeing is an answer the store holds. A conflict among
-// isolated records offered only as the aside drops the aside, as
-// ComposeForConsumer does.
-func selectRecordInFrame(
-	recs []vuldomain.VulnerabilityRecord,
-	rooting vuldomain.Rooting,
-) (vuldomain.VulnerabilityRecord, vuldomain.VulnerabilityRecord, bool, bool, error) {
-	if len(recs) == 0 {
-		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, nil
-	}
-	rec, found, err := vuldomain.ComposeAt(recs, rooting)
-	if err != nil {
-		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, fmt.Errorf("composing vulnerability record in frame %s: %w", rooting, err)
-	}
-	if !found {
-		isolated, hasIsolated, ierr := vuldomain.ComposeAt(isolatedOnly(recs), vuldomain.RootingIsolated)
-		if ierr != nil {
-			return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, fmt.Errorf("composing the isolated-frame record: %w", ierr)
-		}
-		if !hasIsolated {
-			return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false, nil
-		}
-		// Served as the answer, not as an aside: it IS the answer, and the record
-		// states the isolated frame itself on every surface that prints one.
-		return isolated, vuldomain.VulnerabilityRecord{}, false, true, nil
-	}
-	if vuldomain.RecordRooting(rec) == vuldomain.RootingIsolated {
-		// An aside drawn from the frame that produced the answer is the same
-		// record printed twice.
-		return rec, vuldomain.VulnerabilityRecord{}, false, true, nil
-	}
-	isolated, hasIsolated, ierr := vuldomain.ComposeAt(isolatedOnly(recs), vuldomain.RootingIsolated)
-	if ierr != nil {
-		// The disputed aside is dropped, not the answer: see above.
-		isolated, hasIsolated = vuldomain.VulnerabilityRecord{}, false
-	}
-	return rec, isolated, hasIsolated, true, nil
-}
-
-// isolatedOnly narrows a candidate set to the records that state the isolated
-// frame.
-//
-// The filter is why the isolated reads above cannot be a bare ComposeAt over
-// the whole set: ComposeAt falls back to the entire group when NO record states
-// a frame, so on a store written before the frame existed it would hand back a
-// record that never claimed the isolated frame and label it as one.
-func isolatedOnly(recs []vuldomain.VulnerabilityRecord) []vuldomain.VulnerabilityRecord {
-	out := make([]vuldomain.VulnerabilityRecord, 0, len(recs))
-	for _, r := range recs {
-		if vuldomain.RecordRooting(r) == vuldomain.RootingIsolated {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 // recordInWalkFrame reads one coordinate's verdict in a walk's own frame, for
 // the batch surfaces that report a walk's modules rather than answering a
 // question about one.
@@ -221,7 +145,7 @@ func recordInWalkFrame(
 		return vuldomain.VulnerabilityRecord{}, false, aside, nil
 	}
 	if anchor.rooting.IsRecorded() {
-		rec, _, _, found, err = selectRecordInFrame(candidates, anchor.rooting)
+		rec, _, _, found, err = vuldomain.ComposeInFrame(candidates, anchor.rooting)
 	} else {
 		rec, _, _, found, err = selectConsumerRecord(candidates, coord)
 	}
@@ -258,7 +182,7 @@ func selectAnchoredRecord(
 	cmdline string,
 ) (vuldomain.VulnerabilityRecord, vuldomain.VulnerabilityRecord, bool, bool, error) {
 	if anchor.rooting.IsRecorded() {
-		return selectRecordInFrame(candidates, anchor.rooting)
+		return vuldomain.ComposeInFrame(candidates, anchor.rooting)
 	}
 	if frames := consumerFrames(candidates, coord); len(frames) > 1 {
 		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false,

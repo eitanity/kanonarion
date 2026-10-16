@@ -25,7 +25,7 @@ kanonarion native github.com/mattn/go-sqlite3@v1.14.12
 ```
 Module:     github.com/mattn/go-sqlite3@v1.14.12
 Artefact:   zip:h1:TJ1bhYJPV44phC+IMu1u2K/i5RriLTPe+yc68XDJ1Z0=
-Generation: 0.3.0+recipes.1
+Generation: 0.5.0+recipes.1
 Presence:   present_identified
 Statement:  4 native source file(s) compiled in; 1 component(s) identified by declaration
 
@@ -97,7 +97,7 @@ kanonarion native golang.org/x/text@v0.17.0
 ```
 Module:     golang.org/x/text@v0.17.0
 Artefact:   zip:h1:XtiM5bkSOt+ewxlOE/aE/AKEHibwj/6gvWMl9Rsh0Qc=
-Generation: 0.3.0+recipes.1
+Generation: 0.5.0+recipes.1
 Presence:   linked_not_shipped
 Statement:  no native source is compiled in from this artefact; it names 5 external native libraries it links but does not ship, so no version could be read
 
@@ -187,7 +187,7 @@ kanonarion native github.com/coreos/go-systemd/v22@v22.7.0
 ```
 Module:     github.com/coreos/go-systemd/v22@v22.7.0
 Artefact:   zip:h1:JceLXa5a+mEpGoVZMoAHzHfmDdZ0dFSvXINCPCbP37o=
-Generation: 0.3.0+recipes.1
+Generation: 0.5.0+recipes.1
 Presence:   absent
 Statement:  no native source is compiled into a binary from this module's own artefact
 
@@ -216,7 +216,10 @@ Three consequences follow, and each is a decision rather than a heuristic:
 - **Test-only cgo is out of scope.** A package whose only `import "C"` is in a
   `_test.go` file compiles its C into the test binary and into nothing you ship.
 - **A directory the go tool ignores is out of scope** - any path element
-  beginning with `_` or `.`, and any `testdata` element.
+  beginning with `_` or `.`, and any `testdata` element. A `_`- or `.`-named
+  file in a built cgo directory is counted, because a `.c` file can `#include`
+  it, so one that nothing includes is listed although the go tool does not
+  compile it.
 
 The same three rules scope the linked libraries: a `#cgo` directive in a
 `_test.go` file, under `testdata/`, or in a `_`-prefixed directory names nothing
@@ -310,7 +313,7 @@ kanonarion native github.com/mattn/go-sqlite3@v1.14.12 --json
 {
   "schema_version": "1",
   "ecosystem": "go",
-  "pipeline_version": "0.3.0",
+  "pipeline_version": "0.5.0",
   "recipe_catalogue_version": "1",
   "module": "github.com/mattn/go-sqlite3",
   "version": "v1.14.12",
@@ -375,7 +378,7 @@ github.com/moby/moby/v2@v2.0.0-beta.21                  linked_not_shipped     l
 github.com/mattn/go-sqlite3@v1.14.12                    present_identified     4 native source file(s); SQLite 3.38.0; links icui18n, icuuc, mingw32, mingwex, sqlite3
 github.com/terminalstatic/go-xsd-validate@v0.1.6        linked_not_shipped     links libxml-2.0
 go.mongodb.org/mongo-driver/v2@v2.6.0                   present_unidentified   4 native source file(s); links GSS, gssapi_krb5, krb5, libmongocrypt, mongocrypt
-listing native records at generation 0.3.0+recipes.1, the generation this build serves; records from a superseded generation are not shown (--all-generations)
+listing native records at generation 0.5.0+recipes.1, the generation this build serves; records from a superseded generation are not shown (--all-generations)
 ```
 
 Measured on a store holding 186 records at this generation: **176 read `absent`
@@ -398,7 +401,7 @@ because a measured absence is an answer and not an empty cell.
 ### Which generation you are reading
 
 A record is stored under a **generation**: the detection logic folded with the
-recipe catalogue, e.g. `0.3.0+recipes.1`. A record taken at an earlier
+recipe catalogue, e.g. `0.5.0+recipes.1`. A record taken at an earlier
 generation answers no query - it was measured by logic this build has replaced -
 so `native-list` lists only the generation this build serves, and says so on
 every listing.
@@ -408,7 +411,7 @@ every listing.
 ```
 github.com/terminalstatic/go-xsd-validate@v0.1.6        absent                 —  [superseded generation 0.2.0+recipes.1]
 github.com/mattn/go-sqlite3@v1.14.12                    present_identified     4 native source file(s); SQLite 3.38.0  [superseded generation 0.1.0+recipes.1]
-16 of 202 listed record(s) were taken at a superseded detection generation; this build serves 0.3.0+recipes.1 and answers no query from them. Re-measure one:
+16 of 202 listed record(s) were taken at a superseded detection generation; this build serves 0.5.0+recipes.1 and answers no query from them. Re-measure one:
   kanonarion native <module>@<version>
 ```
 
@@ -437,14 +440,22 @@ must not read as a clean run.
 `native-list` follows the listing rules in
 [`conventions.md`](conventions.md#listing-documents): `--limit` (default 50) with
 `--offset`, a truncation line whenever the limit bit, and a zero-result notice
-that says which of three things happened - the store holds no native record, the
-presence filter matched none of the ones it does hold, or the page starts past
-the last match.
+that says which of four things happened - the store holds no native record, it
+holds them only at a superseded detection generation, the presence filter
+matched none of the ones it does hold, or the page starts past the last match.
+The notice is followed by the generation line.
 
 ```
 $ kanonarion native-list --presence present_identified --offset 5
 no native record on this page — the store holds 186 native record(s), and --offset 5 starts past the last of the 2 matching presence "present_identified"
   to list from the start: kanonarion native-list
+listing native records at generation 0.5.0+recipes.1, the generation this build serves; records from a superseded generation are not shown (--all-generations)
+
+$ kanonarion native-list
+none of the 210 native record(s) the store holds is at generation 0.5.0+recipes.1, the generation this build serves (held at 0.1.0+recipes.1, 0.2.0+recipes.1, 0.3.0+recipes.1)
+  to list them: kanonarion native-list --all-generations
+  to re-measure one: kanonarion native <module>@<version>
+listing native records at generation 0.5.0+recipes.1, the generation this build serves; records from a superseded generation are not shown (--all-generations)
 ```
 
 ### `native-list` JSON
@@ -460,7 +471,7 @@ kanonarion native-list --presence present_identified --json
       "module": "github.com/mattn/go-sqlite3",
       "version": "v1.14.12",
       "presence": "present_identified",
-      "generation": "0.3.0+recipes.1",
+      "generation": "0.5.0+recipes.1",
       "superseded": false,
       "artefact_identity": "zip:h1:TJ1bhYJPV44phC+IMu1u2K/i5RriLTPe+yc68XDJ1Z0=",
       "components": [
@@ -479,7 +490,7 @@ kanonarion native-list --presence present_identified --json
   "offset": 0,
   "next_offset": 50,
   "generation": {
-    "served": "0.3.0+recipes.1",
+    "served": "0.5.0+recipes.1",
     "all_generations": false,
     "remedy": "--all-generations"
   }
@@ -563,5 +574,6 @@ carrying no native component.
 
 ## Exit codes
 
-`0` on success, `20` on a bad invocation or an unfetched module. See
+`0` on success, `4` for a module the store has not fetched (the message names
+the `kanonarion fetch` that supplies it), `20` on a bad invocation. See
 [`conventions.md`](conventions.md#exit-codes).

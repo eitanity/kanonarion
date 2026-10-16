@@ -40,7 +40,9 @@ For each module in the scope, `audit` emits a single line containing:
 
 - **Coordinate** - `module@version`
 - **Verification** - outcome of sumdb/VCS cross-verification (`Verified`,
-  `VerifiedBySumDBOnly`, `VerifiedByGoSum`, `UnverifiedNoSumDB`, etc.). See
+  `VerifiedBySumDBOnly`, `VerifiedByGoSum`, `UnverifiedNoSumDB`, etc.). The
+  checksum-database check covers the module's zip and its `go.mod`; a go.mod-only
+  fetch is checked against the database's `go.mod` hash. See
   [Local `go.sum` verification](#local-gosum-verification) for `VerifiedByGoSum`.
   `(set aside)` when every fetch record of the module was written in a shape
   this build cannot reproduce; the run names each one on stderr.
@@ -169,7 +171,7 @@ the install command.
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache---from-modcache) |
-| `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`), honoured not rewritten. Under `off` the run proceeds, the staleness column answered from the ledger alone — a walk still needs its module bytes. `direct` refuses, exit `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
+| `--goproxy` | `$GOPROXY` | Override the Go module proxy. `off` declares the same air gap as `GOPROXY=off`, with or without `--from-modcache`: nothing is fetched or verified over the network, and the run proceeds, the staleness column answered from the ledger alone — a walk still needs its module bytes. `direct` refuses, exit `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--json` | `false` | Emit output as one JSON object: the rows in `modules`, the run's own facts beside them |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -397,15 +399,18 @@ it used (`latest as of ...`, dated by its oldest row) so a served answer is
 never mistaken for a live one, and a **failed** lookup is never recorded. Under
 `--json` that footer is the `staleness` key, dated by the same lookup.
 
-A lookup that fails transiently (a loaded proxy answering an empty body, a
-timeout, a 5xx) is retried, and each retry is narrated on stderr:
+A lookup the proxy has not finished (an empty body, a timeout, a 5xx) is asked
+again every 20 seconds for up to 4 minutes from its first ask. The newer-major
+probes run in rounds; a round does not wait on such a path, and after it the
+unanswered paths are asked again together. stderr says so once per round that
+needs it, and once per retry for a single lookup:
 
 ```text
-staleness progress: retrying example.com/mod/v2 (attempt 2 of 4)
+staleness progress: waiting on 19 module path(s) the proxy has not finished (re-asking every 20s, up to 4m0s)
+staleness progress: retrying example.com/mod/v2 (attempt 2, 0s of 4m0s)
 ```
 
-One line per retry, naming the module, the attempt and the budget - so a probe
-that spends most of a minute waiting is distinguishable from a hang. A run where
+So a wait of up to 4 minutes is distinguishable from a hang. A run where
 nothing retries prints none of these lines. `--no-progress` silences them, as
 does `preferences.progress: false` in the config; at `--log-level info` or
 `debug` they are omitted because the log already streams each retry. A
@@ -417,8 +422,8 @@ the module **path**. `newer_major_module` names the newest major-suffixed path
 above the pinned major - a dependency pinned a whole major line behind is at the
 latest version of its own path and is still behind. `major_probed` separates
 "probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
-whose request failed); an answered row whose probe was not is noted as `newer
-major: not probed`.
+the proxy did not answer within the 4-minute window); an answered row whose
+probe was not is noted as `newer major: not probed`.
 
 `republished_module` is a third fact and only a `+incompatible` pin can have one:
 the pinned major's own `/vN` publication. The major **number** is unchanged

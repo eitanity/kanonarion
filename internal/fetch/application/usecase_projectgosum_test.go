@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/fetch/application"
@@ -115,5 +116,29 @@ func TestExecute_ProjectGoSum_NetworkSumDBRemainsPrimary(t *testing.T) {
 	}
 	if result.Record.VerificationStatus != string(domain2.VerifiedBySumDBOnly) {
 		t.Errorf("VerificationStatus = %q, want %q", result.Record.VerificationStatus, domain2.VerifiedBySumDBOnly)
+	}
+}
+
+// A go.sum entry on a line whose hash does not parse is never read as absent:
+// both the full and the go.mod-only fetch fail hard naming the line, rather
+// than falling through to the network checksum database.
+func TestExecute_ProjectGoSum_AnUnreadableEntryFailsHardNamingTheLine(t *testing.T) {
+	unreadable := ports.SumDBResult{
+		Available:      false,
+		Reason:         `malformed go.sum line 3: invalid module hash "garbage"`,
+		Unavailability: ports.SumDBUnavailabilityFailure,
+		Err:            errors.New(`malformed go.sum line 3: invalid module hash "garbage"`),
+	}
+	for name, goModOnly := range map[string]bool{"full fetch": false, "go.mod-only fetch": true} {
+		t.Run(name, func(t *testing.T) {
+			uc, facts := projectGoSum(t, unreadable)
+			_, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: testCoord, GoModOnly: goModOnly})
+			if !errors.Is(err, application.ErrGoSumVerification) || !strings.Contains(err.Error(), "malformed go.sum line 3") {
+				t.Fatalf("Execute err = %v, want ErrGoSumVerification naming the line", err)
+			}
+			if _, ok, rerr := facts.GetFetchRecord(context.Background(), testCoord, "test-0.1.0"); rerr != nil || ok {
+				t.Errorf("a record was persisted over an unreadable go.sum entry; want none (read error: %v)", rerr)
+			}
+		})
 	}
 }

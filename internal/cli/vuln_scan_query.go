@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/failurecause"
 
+	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	"github.com/spf13/cobra"
@@ -215,6 +217,60 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 // is not keyed on a walk, so the caller's walk is not what excluded it. The
 // survey read is on the miss branch, where a found run never goes.
 func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jsonOut bool, stderr io.Writer) error {
+	scope, err := scanRunZeroScope(ctx, uc, runID)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
+}
+
+// scanDiffMiss answers a `vuln-scan-diff` naming a run the store does not hold
+// as vuln-scan-show does, and says which argument named it, as walk-diff does.
+func scanDiffMiss(ctx context.Context, uc QueryScanRunsUseCase, idA, idB string, jsonOut bool, stderr io.Writer) error {
+	missing := make([]string, 0, 2)
+	for _, id := range []string{idA, idB} {
+		_, found, err := uc.GetRun(ctx, id)
+		if err != nil {
+			return fmt.Errorf("checking scan run %s for the not-found notice: %w", id, err)
+		}
+		if !found {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return fmt.Errorf("diffing scan runs %s and %s: %w", idA, idB, vulnapp.ErrScanRunNotFound)
+	}
+	scope, err := scanRunZeroScope(ctx, uc, strings.Join(missing, ", "))
+	if err != nil {
+		return err
+	}
+	if len(missing) > 1 {
+		scope.filterValues = missing
+	}
+	side := "the <run-id-a> argument"
+	switch {
+	case len(missing) == 2:
+		side = "both arguments"
+	case missing[0] == idB:
+		side = "the <run-id-b> argument"
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf("%s named a scan run the store does not hold; %s",
+		side, listZeroLine(scope))}
+}
+
+// scanRunZeroScope is the not-found statement for a run id, counted over every
+// run in the store.
+func scanRunZeroScope(ctx context.Context, uc QueryScanRunsUseCase, runID string) (listZeroScope, error) {
 	all, err := uc.ListAllRuns(ctx)
 	var aside setAsideRows
 	err = aside.take(err)
@@ -223,7 +279,7 @@ func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jso
 	// at all has nothing honest to say, and a zero substituted for a failed count
 	// would assert exactly the thing it failed to measure.
 	if _, survivable := unreadableRowReport(err); err != nil && !survivable {
-		return fmt.Errorf("counting scan runs for the not-found notice: %w", err)
+		return listZeroScope{}, fmt.Errorf("counting scan runs for the not-found notice: %w", err)
 	}
 	scope := listZeroScope{
 		subject:     "scan run",
@@ -238,12 +294,7 @@ func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jso
 	if len(all) > 0 {
 		scope.example = all[0].ID
 	}
-	if jsonOut {
-		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
-			return werr
-		}
-	}
-	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
+	return scope, nil
 }
 
 func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -945,7 +996,10 @@ func runScanDiff(
 	// and says so: in the document under --json, on stderr otherwise.
 	var aside setAsideRows
 	diff, err := ucDiff.Diff(ctx, runIDA, runIDB)
-	if err = aside.take(err); err != nil {
+	if err = aside.take(err); errors.Is(err, vulnapp.ErrScanRunNotFound) {
+		return scanDiffMiss(ctx, ucRuns, runIDA, runIDB, jsonOut, stderr)
+	}
+	if err != nil {
 		return fmt.Errorf("computing scan diff: %w", err)
 	}
 	// A diff is a claim about two runs of one walk, so the walk it names carries

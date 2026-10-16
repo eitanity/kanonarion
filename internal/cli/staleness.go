@@ -76,11 +76,24 @@ func pinnedModulesOf(coords []string) []staleports.PinnedModule {
 //
 // progress is where the decorator narrates a retry, and it is a parameter rather
 // than something built here because whether this run narrates at all is the
-// CALLER's decision: only a command that already accepts --no-progress can honour
-// an instruction to be quiet, so `latest` and `fetch` — which register no such
-// flag — pass nil and are unchanged.
+// CALLER's decision: only a command that accepts --no-progress can honour an
+// instruction to be quiet.
 func newProxyLatestResolver(proxy *proxyadapter.Proxy, logger *slog.Logger, progress staleports.ProgressReporter) staleports.LatestResolver {
-	return staleretry.New(staleproxy.New(proxy), logger, staleretry.WithProgress(progress))
+	opts := append([]staleretry.Option{staleretry.WithProgress(progress)}, stalenessRetryOptions...)
+	return staleretry.New(staleproxy.New(proxy), logger, opts...)
+}
+
+// stalenessRetryOptions is a test seam, nil in production: tests shorten the
+// shared re-ask schedule here so a command can be driven end to end without
+// waiting it out.
+var stalenessRetryOptions []staleretry.Option
+
+// commandStalenessPort is the staleness port `latest` and `fetch` ask: the
+// proxy behind the shared re-ask schedule, narrating each wait on stderr unless
+// --no-progress (or the config preference, or a streaming log level) says not to.
+func commandStalenessPort(proxy *proxyadapter.Proxy, stderr io.Writer, noProgress bool) staleports.LatestResolver {
+	return newProxyLatestResolver(proxy, buildLogger(logLevel, stderr),
+		newStalenessProgressReporter(stderr, noProgress, activeConfig, logLevel))
 }
 
 // newAuditStalenessResolver builds the resolver behind an audit's latest column.

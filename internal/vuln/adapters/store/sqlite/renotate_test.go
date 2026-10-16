@@ -271,9 +271,9 @@ func TestNotationMigration_ReNotatesEverySeal(t *testing.T) {
 func assertServedAfterNotation(ctx context.Context, t *testing.T, db sqlitestore.DB, c coordinate.ModuleCoordinate, snapshot domain.DatabaseSnapshot, wantRec domain.VulnerabilityRecord, wantRun domain.WalkScanRun) {
 	t.Helper()
 	store := sqlite.New(db)
-	served, found, err := store.GetVulnerabilityRecord(ctx, c, wantRec.PipelineVersion, snapshot)
+	served, found, err := store.GetVulnerabilityRecordAt(ctx, c, wantRec.PipelineVersion, snapshot, domain.RecordRooting(wantRec))
 	if err != nil || !found {
-		t.Fatalf("GetVulnerabilityRecord after the migration = found %v, err %v", found, err)
+		t.Fatalf("GetVulnerabilityRecordAt after the migration = found %v, err %v", found, err)
 	}
 	if served.ContentHash != wantRec.ContentHash {
 		t.Errorf("served seal %q, want %q", served.ContentHash, wantRec.ContentHash)
@@ -324,7 +324,7 @@ func TestNotationMigration_AnAlteredRecordStillSaysSo(t *testing.T) {
 	if !strings.Contains(string(gotBlob), `"walk_id":"walk-9"`) {
 		t.Error("the migration rewrote an altered record's contents")
 	}
-	if _, _, err := sqlite.New(db).GetVulnerabilityRecord(ctx, c, rec.PipelineVersion, snapshot); err == nil {
+	if _, _, err := sqlite.New(db).GetVulnerabilityRecordAt(ctx, c, rec.PipelineVersion, snapshot, domain.RecordRooting(rec)); err == nil {
 		t.Error("the altered record now passes its integrity check; re-notating must not repair anything")
 	}
 }

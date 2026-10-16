@@ -73,15 +73,32 @@ type CapabilityFinding struct {
 	// consumer concatenating Findings and Observations can still tell them
 	// apart; every entry in Findings carries BasisUse.
 	Basis CapabilityBasis
+	// Reach is how deliberately the sink is reached, from the sink alone.
+	Reach Reach
+	// CallerKind is the kind of the last owned function on Path: the one whose
+	// own code makes the call, or the sink itself when the module owns it.
+	CallerKind CallerKind
+	// ClassifiedBy says whether the label came from a rule or a package default.
+	ClassifiedBy ClassifiedBy
+	// PlumbingOnly is set when every witness of the capability is
+	// RUNTIME_PLUMBING. Such a finding is shown, not suppressed, because hiding
+	// it would hide the capability.
+	PlumbingOnly bool
+}
+
+// Suppressed reports whether text hides the finding unless asked: its
+// capability is in the suppressed tier.
+func (f CapabilityFinding) Suppressed() bool {
+	return f.Capability.Tier() == TierSuppressed
 }
 
 // CapabilityReport is the result of analysing one call graph.
 type CapabilityReport struct {
-	// Findings holds one finding per witnessed capability, sorted by capability
-	// name. Each finding's WeakestConfidence is the strongest available across
-	// every witnessing path, so a confirmed witness is never hidden behind an
-	// over-approximated one. Every entry is a capability of the analysed module
-	// (BasisUse); this is the set Capabilities() and the diff read.
+	// Findings holds one finding per witnessed capability, in tier then
+	// capability order. Each finding is the best witness: a direct call over
+	// plumbing over an unanalysed body, then the strongest confidence. Every
+	// entry is a capability of the analysed module (BasisUse); this is the set
+	// Capabilities() and the diff read.
 	Findings []CapabilityFinding
 	// Observations holds paths that reach a classified node but establish
 	// something weaker than a capability of the analysed module — an external
@@ -90,6 +107,27 @@ type CapabilityReport struct {
 	// false-negative direction, and only for a capability Findings does not
 	// already carry, since a real witness answers the question outright.
 	Observations []CapabilityFinding
+	// Rows are the witness rows: one per owned caller and classified external
+	// callee with basis use, plus each owned node's own body fact. See Rows.
+	Rows []WitnessRow
+	// SensitiveCalls is the high-signal roll-up over Rows.
+	SensitiveCalls []SensitiveCall
+	// CollectsAndEgresses names each owned function that itself calls both a
+	// collection and an egress member of SensitiveCalls.
+	CollectsAndEgresses []CoLocation
+	// InitReachesBoth names each owned initialiser from which Direct edges
+	// reach both a collection and an egress member.
+	InitReachesBoth []InitReach
+	// Unanalyzed lists the owned in-scope functions with an assembly or
+	// //go:linkname body, sorted. The graph cannot see what they do.
+	Unanalyzed []string
+	// UnanalyzedCallees counts the distinct external assembly or linkname
+	// callees of owned code that carry no identity capability. They are not
+	// rows.
+	UnanalyzedCallees int
+	// PackageDefaults counts, per package, the distinct row callees whose label
+	// is the package default rather than a named rule.
+	PackageDefaults []PackageDefault
 	// Partial is true when the report does not rest on a fully extracted graph.
 	// A capability set over a Partial graph is a
 	// soundness caveat, never a clean set (parity with capslock's UNANALYZED).
@@ -98,7 +136,7 @@ type CapabilityReport struct {
 	Caveat string
 }
 
-// Capabilities returns the witnessed capability set, sorted.
+// Capabilities returns the witnessed capability set, sorted by name.
 func (r CapabilityReport) Capabilities() []Capability {
 	caps := make([]Capability, 0, len(r.Findings))
 	for _, f := range r.Findings {
@@ -130,7 +168,12 @@ func SelectRoots(rec cgdomain.CallGraphRecord, scope cgdomain.RootScope) []strin
 // reachable sink node, maximises the minimum edge confidence along the path —
 // so each capability is reported with its strongest available witness and that
 // path's weakest edge.
-func Analyse(rec cgdomain.CallGraphRecord, roots []string) CapabilityReport {
+//
+// scope is the root scope the roots were selected under. Under the production
+// scope the search does not enter test-declared nodes either: an over-
+// approximated edge from production code into a test function would otherwise
+// carry a test-only sink into the default report.
+func Analyse(rec cgdomain.CallGraphRecord, roots []string, scope cgdomain.RootScope) CapabilityReport {
 	report := CapabilityReport{Partial: true}
 	// Each status is named. Testing "not Extracted" put every member that is
 	// neither into the unresolved-graph sentence, and one of them is not an
@@ -168,10 +211,19 @@ func Analyse(rec cgdomain.CallGraphRecord, roots []string) CapabilityReport {
 		nodeByID[n.ID] = n
 	}
 
+	if scope == cgdomain.RootScopeProduction {
+		for id, n := range nodeByID {
+			if n.IsTest {
+				delete(nodeByID, id)
+			}
+		}
+	}
+
 	adj := buildAdjacency(rec.Edges)
 	dist, pred := widestPaths(roots, nodeByID, adj)
 
 	report.Findings, report.Observations = collectFindings(dist, pred, nodeByID)
+	addRowEvidence(&report, roots, nodeByID, adj)
 	return report
 }
 
@@ -248,7 +300,7 @@ func widestPaths(
 }
 
 // collectFindings turns settled sink nodes into one finding per capability,
-// keeping the strongest witness for each. It returns two lists: the capabilities
+// keeping the best witness for each. It returns two lists: the capabilities
 // of the analysed module, and the observations — paths whose sink is an external
 // package's init or an external node's body fact, which classify the callee
 // rather than the caller. An observation is dropped when the same capability has
@@ -260,6 +312,9 @@ func collectFindings(
 ) (findings, observations []CapabilityFinding) {
 	best := make(map[Capability]CapabilityFinding)
 	weak := make(map[Capability]CapabilityFinding)
+	// nonPlumbing records a capability with any witness that is not plumbing,
+	// so plumbing-only is decided over every witness and not the chosen one.
+	nonPlumbing := make(map[Capability]bool)
 	for id, rank := range dist {
 		n := nodeByID[id]
 		caps := NodeCapabilities(n)
@@ -268,18 +323,24 @@ func collectFindings(
 		}
 		path := reconstructPath(id, pred)
 		conf := confidenceForRank(rank)
+		kind := pathCallerKind(path, nodeByID)
 		for _, nc := range caps {
 			f := CapabilityFinding{
 				Capability:        nc.Capability,
 				Path:              path,
-				SinkPackage:       n.Package,
+				SinkPackage:       ClassificationPackage(n),
 				SinkSymbol:        n.Symbol,
 				WeakestConfidence: conf,
 				Basis:             nc.Basis,
+				Reach:             nc.Reach,
+				CallerKind:        kind,
+				ClassifiedBy:      nc.ClassifiedBy,
 			}
 			into := best
 			if nc.Basis != BasisUse {
 				into = weak
+			} else if !IsPlumbing(nc.Reach, n.Symbol) {
+				nonPlumbing[nc.Capability] = true
 			}
 			if cur, exists := into[nc.Capability]; !exists || strongerFinding(f, cur) {
 				into[nc.Capability] = f
@@ -288,7 +349,8 @@ func collectFindings(
 	}
 
 	findings = make([]CapabilityFinding, 0, len(best))
-	for _, f := range best {
+	for c, f := range best {
+		f.PlumbingOnly = !nonPlumbing[c]
 		findings = append(findings, f)
 	}
 	observations = make([]CapabilityFinding, 0, len(weak))
@@ -303,19 +365,30 @@ func collectFindings(
 	return findings, observations
 }
 
+// pathCallerKind is the kind of the last node on path the module owns. A path
+// starts at a root, which is owned, so one is always found when the root is in
+// the graph.
+func pathCallerKind(path []string, nodeByID map[string]cgdomain.CallNode) CallerKind {
+	for i := len(path) - 1; i >= 0; i-- {
+		if n, ok := nodeByID[path[i]]; ok && !n.IsExternal {
+			return NodeCallerKind(n)
+		}
+	}
+	return CallerInternal
+}
+
 // sortFindings puts a finding slice in the canonical order.
 func sortFindings(fs []CapabilityFinding) {
 	sort.Slice(fs, func(i, j int) bool { return CapabilityFindingLess(fs[i], fs[j]) })
 }
 
 // CapabilityFindingLess is the canonical ordering for CapabilityFinding slices.
-// The capability leads, because that is what a reader scans the report by; the
-// sink and the witnessing path follow, so two findings for one capability — a
-// report that ever carried more than the single best witness — still have a
-// defined order.
+// The tier leads, so Act findings print before Context, then the capability,
+// which is what a reader scans by; the sink and the witnessing path follow, so
+// two findings for one capability still have a defined order.
 func CapabilityFindingLess(a, b CapabilityFinding) bool {
 	if a.Capability != b.Capability {
-		return a.Capability < b.Capability
+		return capabilityLess(a.Capability, b.Capability)
 	}
 	if a.SinkPackage != b.SinkPackage {
 		return a.SinkPackage < b.SinkPackage
@@ -334,13 +407,28 @@ func CapabilityFindingLess(a, b CapabilityFinding) bool {
 			return a.Path[i] < b.Path[i]
 		}
 	}
+	if a.Reach != b.Reach {
+		return a.Reach < b.Reach
+	}
+	if a.CallerKind != b.CallerKind {
+		return a.CallerKind < b.CallerKind
+	}
+	if a.ClassifiedBy != b.ClassifiedBy {
+		return a.ClassifiedBy < b.ClassifiedBy
+	}
+	if a.PlumbingOnly != b.PlumbingOnly {
+		return !a.PlumbingOnly
+	}
 	return a.Basis < b.Basis
 }
 
 // strongerFinding reports whether candidate is a better witness than current:
-// higher confidence first, then a shorter path, then a lexicographically
-// smaller sink node ID for determinism.
+// the more deliberate reach first (witnessRank), then higher confidence, then a shorter
+// path, then a lexicographically smaller sink node ID for determinism.
 func strongerFinding(cand, cur CapabilityFinding) bool {
+	if cr, ur := witnessRank(cand.Reach, cand.SinkSymbol), witnessRank(cur.Reach, cur.SinkSymbol); cr != ur {
+		return cr > ur
+	}
 	cr, ur := confRank(cand.WeakestConfidence), confRank(cur.WeakestConfidence)
 	if cr != ur {
 		return cr > ur
@@ -389,7 +477,7 @@ type widestItem struct {
 }
 
 // widestQueue orders items so the strongest witness pops first: higher minRank,
-// then shorter depth, then smaller node ID.
+// then shorter depth, then smaller node ID, then smaller predecessor.
 type widestQueue []widestItem
 
 func (q widestQueue) Len() int { return len(q) }
@@ -401,7 +489,12 @@ func (q widestQueue) Less(i, j int) bool {
 	if q[i].depth != q[j].depth {
 		return q[i].depth < q[j].depth
 	}
-	return q[i].id < q[j].id
+	if q[i].id != q[j].id {
+		return q[i].id < q[j].id
+	}
+	// Two routes to one node at equal strength and depth: the smaller caller
+	// wins, so the witness does not depend on how full the heap happened to be.
+	return q[i].predEdge.FromID < q[j].predEdge.FromID
 }
 
 func (q widestQueue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }

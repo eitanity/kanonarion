@@ -269,7 +269,7 @@ func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 	}
 
 	// Record must be persisted despite the spawn failure.
-	persisted, ok, perr := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", snap)
+	persisted, ok, perr := vulnStore.recordAtSnapshot(ctx, coord, "v1", snap)
 	if perr != nil || !ok {
 		t.Fatal("record not persisted after spawn failure")
 	}
@@ -566,9 +566,9 @@ func TestReachability_FailedAnalysisIsRecordedNotOnlyLogged(t *testing.T) {
 
 	// The note has to survive the seal, or the run's claim is only degraded in
 	// memory and every later read of the record is back to guessing.
-	persisted, ok, perr := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", snap)
+	persisted, ok, perr := vulnStore.recordAtSnapshot(ctx, coord, "v1", snap)
 	if perr != nil || !ok {
-		t.Fatalf("GetVulnerabilityRecord: ok=%v err=%v", ok, perr)
+		t.Fatalf("recordAtSnapshot: ok=%v err=%v", ok, perr)
 	}
 	if !persisted.Findings[0].ReachabilityAttemptFailed() {
 		t.Error("the persisted record does not record that reachability was attempted and failed")

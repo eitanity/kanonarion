@@ -56,7 +56,7 @@ false` - surfaced as a fact, never silently dropped - but it does
 Each setting is evaluated against the `godebug_policy` governance block
 (config schema v2). The default policy flags **red** settings
 (`warn`), notifies on **amber**, allows **green**. When any *applied* setting
-resolves to `warn`, the command exits **20** (`ExitConfig`) - suitable as a
+resolves to `warn`, the command exits **5** (`ExitPolicy`) - suitable as a
 CI gate. Per-org overrides/waivers are Enterprise.
 
 ## Output

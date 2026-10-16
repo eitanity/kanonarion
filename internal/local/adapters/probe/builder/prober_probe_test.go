@@ -109,6 +109,17 @@ func TestProbe_LibraryTarget(t *testing.T) {
 			"type Widget struct{}\n\n" +
 			"func ProbeLibFunc() int { return 1 }\n\n" +
 			"func (w *Widget) ProbeLibMethod() {}\n",
+		// Generic declarations must be instantiated to be referenced at all: each
+		// of these stopped the harness build or was dropped without a word.
+		"lib/generic.go": "package lib\n\n" +
+			"type Box[T any] struct{ V T }\n\n" +
+			"type Pair[K comparable, V ~string | ~int] struct{ k K; v V }\n\n" +
+			"func ProbeGenFunc[T any](x T) T { return x }\n\n" +
+			"func (b Box[T]) ProbeGenValue() {}\n\n" +
+			"func (b *Box[T]) ProbeGenPtr() {}\n\n" +
+			"func (p *Pair[K, V]) ProbeGenPair() {}\n\n" +
+			"func ProbeGenFloat[T ~float32 | ~float64](x T) T { return x }\n\n" +
+			"func ProbeMethodBound[T interface{ M() }](x T) {}\n",
 	})
 
 	res, err := New("").Probe(context.Background(), root)
@@ -124,9 +135,52 @@ func TestProbe_LibraryTarget(t *testing.T) {
 	if !hasSymbolContaining(res.BinarySymbols, "ProbeLibMethod") {
 		t.Error("expected ProbeLibMethod retained via synthetic harness")
 	}
+	for _, sym := range []string{"ProbeGenFunc[", "ProbeGenValue", "(*Box[go.shape.int]).ProbeGenPtr", "ProbeGenPair", "ProbeGenFloat[go.shape.float32]"} {
+		if !hasSymbolContaining(res.BinarySymbols, sym) {
+			t.Errorf("expected %s retained via synthetic harness", sym)
+		}
+	}
+	// No candidate satisfies a method-bearing constraint, so it is named, and
+	// the probe still answers for everything else.
+	if len(res.HarnessOmitted) != 1 || res.HarnessOmitted[0].Symbol != "example.com/probe/lib.ProbeMethodBound" {
+		t.Errorf("HarnessOmitted = %+v, want lib.ProbeMethodBound named", res.HarnessOmitted)
+	}
 	// Library harness dir must be cleaned up after Probe returns.
 	if _, err := os.Stat(filepath.Join(root, probeHarnessDir)); !os.IsNotExist(err) {
 		t.Errorf("harness dir should be cleaned up (stat err=%v)", err)
+	}
+}
+
+// A Go 1.27 generic method is instantiated with the method's own arguments.
+func TestProbe_LibraryTarget_GenericMethod(t *testing.T) {
+	root := writeModule(t, map[string]string{
+		"go.mod": "module example.com/probe\n\ngo 1.27\n",
+		"lib/lib.go": "package lib\n\n" +
+			"type Parser struct{}\n\n" +
+			"func (Parser) ProbeOwnParam[T any](x T) T { return x }\n",
+	})
+	res, err := New("").Probe(context.Background(), root)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if !hasSymbolContaining(res.BinarySymbols, "Parser.ProbeOwnParam[") {
+		t.Error("expected Parser.ProbeOwnParam retained via synthetic harness")
+	}
+}
+
+// A library workspace that does not compile fails the probe with the
+// compiler's own report, as it did when the harness build reported it.
+func TestProbe_LibraryTarget_WorkspaceThatDoesNotCompile(t *testing.T) {
+	root := writeModule(t, map[string]string{
+		"go.mod":     goMod,
+		"lib/lib.go": "package lib\n\nfunc Broken() int { return notDeclared }\n",
+	})
+	_, err := New("").Probe(context.Background(), root)
+	if err == nil || !strings.Contains(err.Error(), "undefined: notDeclared") {
+		t.Fatalf("err = %v, want the compiler's report", err)
+	}
+	if _, serr := os.Stat(filepath.Join(root, probeHarnessDir)); !os.IsNotExist(serr) {
+		t.Errorf("harness dir should be cleaned up (stat err=%v)", serr)
 	}
 }
 

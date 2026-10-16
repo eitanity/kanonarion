@@ -38,9 +38,10 @@ import (
 // whole-graph result is carried beside it rather than dropped.
 //
 // Cost is one call-graph decode per graph a search needs — the coordinate's,
-// and for a joined search the frame's and every dependency graph held for its
-// build — each memoised for the life of the searcher, and exactly zero for a
-// record with no negative: nothing is loaded until a finding asks for it.
+// and for a joined search the frame's and, where the build links a package the
+// advisory names, every dependency graph held for its build — each memoised for
+// the life of the searcher, and exactly zero for a record with no negative:
+// nothing is loaded until a finding asks for it.
 type NegativeSearcher struct {
 	loader ports.CallGraphLoader
 	// dirs answers where a frame's working tree is, for the refusal that has to
@@ -95,6 +96,9 @@ type graphKey struct {
 	// two checkouts are two answers, and a cache that could not tell them apart
 	// would name the first project's directory in the second's refusal.
 	walk string
+	// unlinked is a dependency join made without the held dependency graphs,
+	// for a finding whose packages the build does not link.
+	unlinked bool
 }
 
 // cachedProjection is one coordinate's loaded graph, or the recorded fact that
@@ -188,15 +192,12 @@ func (s *NegativeSearcher) Search(ctx context.Context, rec *domain.Vulnerability
 	if s == nil || s.loader == nil || rec == nil {
 		return
 	}
-	var graph *cachedProjection
 	for i := range rec.Findings {
 		f := &rec.Findings[i]
 		if !searchableNegative(*f) {
 			continue
 		}
-		if graph == nil {
-			graph = s.graphForRecord(ctx, rec)
-		}
+		graph := s.graphForRecord(ctx, rec, symbolRefsFor(rec.Coordinate, f.AffectedPackages, f.AffectedSymbols))
 		f.NegativeSearch = graph.guardUnjoined(rec, *f, graph.search(rec, *f))
 	}
 }
@@ -490,7 +491,7 @@ func ownGraph(coord coordinate.ModuleCoordinate, proj ports.CallGraphProjection)
 // where almost every symbol an advisory names is a root and is reached in zero
 // hops whatever the build does: it answers a question nobody asked. The
 // coordinate's own graph is searched only when the record names no other frame.
-func (s *NegativeSearcher) graphForRecord(ctx context.Context, rec *domain.VulnerabilityRecord) *cachedProjection {
+func (s *NegativeSearcher) graphForRecord(ctx context.Context, rec *domain.VulnerabilityRecord, refs []ports.SymbolReference) *cachedProjection {
 	target := rec.Rooting.RootTarget()
 	if target == "" || (!rec.Coordinate.IsStdlib() && rec.Rooting.IsRootedAtPath(rec.Coordinate.Path())) {
 		// No other build is named, so there is nothing to join. The entry-point
@@ -498,7 +499,7 @@ func (s *NegativeSearcher) graphForRecord(ctx context.Context, rec *domain.Vulne
 		// anything out of a root set made of the vulnerable symbols themselves.
 		return s.graphFor(ctx, rec.Coordinate)
 	}
-	return s.joinedGraphFor(ctx, rec.Coordinate, target, rec.WalkID)
+	return s.joinedGraphFor(ctx, rec.Coordinate, target, rec.WalkID, refs)
 }
 
 // joinRule is what differs between joining the standard library's graph and a
@@ -579,10 +580,12 @@ func (s *NegativeSearcher) joinedGraphFor(
 	subject coordinate.ModuleCoordinate,
 	frameTarget string,
 	walkID string,
+	refs []ports.SymbolReference,
 ) *cachedProjection {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := graphKey{coord: subject, frame: frameTarget, walk: walkID}
+	key.unlinked = s.linksNoneOf(ctx, subject, frameTarget, refs)
 	if cached, ok := s.cache[key]; ok {
 		return cached
 	}
@@ -636,7 +639,10 @@ func (s *NegativeSearcher) joinedGraphFor(
 			remedyClause("re-analyse it with", frameCoord, frameDir, true)
 		return entry
 	}
-	frame := s.frameFor(ctx, frameCoord, walkID, consumer, frameDir)
+	frame := &frameBuild{base: consumer, notWidened: "no dependency graph was joined, because the build links none of the packages the advisory names"}
+	if !key.unlinked {
+		frame = s.frameFor(ctx, frameCoord, walkID, consumer, frameDir)
+	}
 	entry.projection = frame.base
 	if _, held := frame.holds(subject); !held {
 		entry.projection = joinProjections(frame.base, own, linked, rule.keepUnlinked)

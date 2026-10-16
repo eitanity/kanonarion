@@ -16,12 +16,12 @@ exit 0
       "retrieved_at": "2026-02-14T00:00:00Z",
       "content_hash": "sha256:f8f3e08ea8c5a10193a6767cfea29261ea9eb06896fb30c5cf61327d1c6d7f47"
     },
-    "pipeline_version": "v25",
+    "pipeline_version": "v26",
     "callgraph_completeness": "BUILT_WITH_BODIES",
     "callgraph_algorithm": "CHA",
     "rooting": "target-rooted",
     "analysis_surface": "fetched",
-    "content_hash": "sha256:b33942f4a280ca91055d14f058b26a7ea7e997b67facaa27129ed9d9865adf25",
+    "content_hash": "sha256:b57860c7a13b2451b2ff1c1d09a9f4b6b29876eed077d7d7f319e2d3f9366540",
     "findings": [
       {
         "id": "GO-2026-0001",
@@ -210,12 +210,12 @@ exit 0
       "retrieved_at": "2026-01-10T00:00:00Z",
       "content_hash": "sha256:066c65bdf0a2404975109e3b09f7e137c84552c775d1898bdf840cddcb389a60"
     },
-    "pipeline_version": "v25",
+    "pipeline_version": "v26",
     "callgraph_completeness": "BUILT_WITH_BODIES",
     "callgraph_algorithm": "CHA",
     "rooting": "target-rooted",
     "analysis_surface": "fetched",
-    "content_hash": "sha256:208b42a52316e22121a9f14665221823fbd539fcb77704bb29d512cd876875f4",
+    "content_hash": "sha256:a49b8e32a75966c3002a995f236d03bb1c72b65f7fed6b180d0d8a581e1f72d6",
     "findings": [
       {
         "id": "GO-2026-0001",

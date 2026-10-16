@@ -13,56 +13,47 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-// dropLocalReplaces removes every replace directive in an extracted module's own
-// go.mod whose target is a directory OUTSIDE the extracted tree, and reports what
-// it removed.
+// dropLocalReplaces removes the replace directives in an extracted module's own
+// go.mod that cannot resolve in the extraction, and reports what it removed.
 //
 // It runs only for a module extracted from a published zip, where the analysis
 // makes that module the MAIN module of a build for the first time in its life. A
 // replace directive is ignored by the go command in any module that is not the
 // main module, so a directive in a published artefact has never applied to any
-// consumer's build; the extraction is the one context that applies it, and — for
-// a module published out of a monorepo — the one context where it cannot possibly
-// resolve. "replace example.com/mod/creds => ../creds/" names a sibling checkout,
-// and a zip holds one module. Every requirement so replaced dangles, the packages
-// importing it fail to type-check, and the record files that as the module's own
-// source failing to compile. Measured on
-// github.com/aws/aws-sdk-go-v2/config@v1.32.25: fifteen packages of the
-// dependency closure in error with the twelve directives present, none without
-// them.
+// consumer's build; the extraction is the one context that applies it. Two kinds
+// cannot resolve here, and both are dropped:
+//
+//   - a target OUTSIDE the extracted tree. "replace example.com/mod/creds =>
+//     ../creds/" names a sibling checkout of a monorepo, and a zip holds one
+//     module. Measured on github.com/aws/aws-sdk-go-v2/config@v1.32.25: fifteen
+//     packages of the dependency closure in error with the twelve directives
+//     present, none without them.
+//   - an ABSENT target inside the tree whose replaced path is a nested module of
+//     this module: "replace go.opentelemetry.io/otel/metric => ./metric" in
+//     go.opentelemetry.io/otel. The zip format leaves every nested module out of
+//     its parent's zip, so the directory is absent by construction, while the
+//     nested module is published separately and resolves like any requirement.
 //
 // Dropping them is not a repair of the module. It restores the build every real
 // consumer already gets, and the record states what was dropped, on the same
 // terms the synthesised-go.mod path states the file it wrote.
 //
-// OUTSIDE is the whole rule, and it is narrower than "is a filesystem path" for a
-// reason that is not hypothetical: a zip can carry a nested module and replace
-// onto it — "replace example.com/dep => ./dep" — and that directive resolves
-// exactly as published, inside the tree the analysis reads. Dropping it would
-// send the load hunting for a version of a module that is sitting in the zip.
+// Every other filesystem target is kept. One inside the tree that exists — a
+// nested module the zip carries, "replace example.com/dep => ./dep" — resolves
+// exactly as published. One inside the tree that is absent and names any other
+// module path is a true statement about the published bytes: the go command
+// reports it, and that report belongs on the record as the module's own fault.
 //
-// A target inside the tree that does not EXIST is kept too, and deliberately.
-// The go command then says "replacement directory ./dep does not exist", which is
-// a true statement about the published bytes and belongs on the record as the
-// module's own fault. Dropping it would replace that diagnosis with a search for
-// a module nobody published.
+// The outside test is lexical and never consults the filesystem: the extraction
+// directory sits under the system temp root, so "../" names that root, and a stray
+// go.mod there must not be pulled into the analysis of an unrelated module. The
+// absence test runs only on a target already known to be inside the tree.
 //
-// The containment test is lexical and never consults the filesystem for the
-// decision. The extraction directory sits under the system temp root, so "../"
-// names that root: were the test "does the directory exist", a stray go.mod there
-// would be silently pulled into the analysis of an unrelated module. A directive
-// that cannot mean what it says must not be allowed to mean something else.
-//
-// A replace whose target names a MODULE VERSION is left untouched. It resolves
-// from the module graph with no filesystem involved, so the extraction does not
-// break it, and it is a real statement about what this module's own build
-// selects.
-//
-// A go.mod that is absent, or that does not parse, is left exactly as it is. The
-// load is about to report the parse failure in its own terms, with a line number
-// this cannot produce, and pre-empting it would replace a real diagnosis with a
-// worse one.
-func dropLocalReplaces(dir string) ([]domain.DroppedReplace, error) {
+// A replace whose target names a MODULE VERSION is left untouched: it resolves
+// from the module graph with no filesystem involved. A go.mod that is absent, or
+// that does not parse, is left exactly as it is; the load reports a parse failure
+// in its own terms, with a line number this cannot produce.
+func dropLocalReplaces(dir, modulePath string) ([]domain.DroppedReplace, error) {
 	path := filepath.Join(dir, "go.mod")
 	data, err := os.ReadFile(path) /* #nosec G304 -- dir is an extraction directory this process created and owns */
 	if err != nil {
@@ -78,7 +69,14 @@ func dropLocalReplaces(dir string) ([]domain.DroppedReplace, error) {
 
 	var dropped []domain.DroppedReplace
 	for _, r := range f.Replace {
-		if !isFilesystemReplace(r) || !escapesModuleRoot(dir, r.New.Path) {
+		if !isFilesystemReplace(r) {
+			continue
+		}
+		drop, derr := unresolvableHere(dir, modulePath, r)
+		if derr != nil {
+			return nil, derr
+		}
+		if !drop {
 			continue
 		}
 		dropped = append(dropped, domain.DroppedReplace{
@@ -134,6 +132,50 @@ func parsedGoModOrNil(path string, data []byte) *modfile.File {
 // already states.
 func isFilesystemReplace(r *modfile.Replace) bool {
 	return r != nil && r.New.Version == ""
+}
+
+// unresolvableHere reports whether a filesystem replace cannot resolve in the
+// extraction: its target escapes the tree, or it is absent and the replaced path
+// is a nested module of modulePath. See dropLocalReplaces.
+func unresolvableHere(root, modulePath string, r *modfile.Replace) (bool, error) {
+	if escapesModuleRoot(root, r.New.Path) {
+		return true, nil
+	}
+	if !isNestedModulePath(modulePath, r.Old.Path) {
+		return false, nil
+	}
+	target := filepath.Join(root, filepath.FromSlash(r.New.Path))
+	_, err := os.Lstat(target)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, fs.ErrNotExist), pathElementIsFile(root, target):
+		return true, nil
+	default:
+		return false, fmt.Errorf("checking replace target %s: %w", target, err)
+	}
+}
+
+// pathElementIsFile reports whether the nearest existing ancestor of target,
+// stopping at root, is not a directory: then the target is absent. It replaces
+// a syscall.ENOTDIR test, which the extraction packages may not import.
+func pathElementIsFile(root, target string) bool {
+	for dir := filepath.Dir(target); ; dir = filepath.Dir(dir) {
+		info, err := os.Lstat(dir)
+		if err == nil {
+			return !info.IsDir()
+		}
+		if dir == root || dir == filepath.Dir(dir) {
+			return false
+		}
+	}
+}
+
+// isNestedModulePath reports whether path lies under modulePath on a "/"
+// boundary: example.com/mod/sub is nested in example.com/mod, example.com/modx
+// is not, and neither is example.com/mod itself.
+func isNestedModulePath(modulePath, path string) bool {
+	return modulePath != "" && strings.HasPrefix(path, modulePath+"/")
 }
 
 // escapesModuleRoot reports whether a replace target names a directory outside

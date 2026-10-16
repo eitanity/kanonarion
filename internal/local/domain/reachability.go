@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -60,6 +61,18 @@ const (
 	// remedy is a re-scan, not a first scan, and the module is not an
 	// unexamined dependency.
 	UncoveredSupersededPipeline = "the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again"
+	// UncoveredNotInSeedWalk means the probe was seeded from the tree's newest
+	// project walk, which did not scan the coordinate, though another walk did.
+	// Other walks are not read: an older one may carry another toolchain's verdict.
+	UncoveredNotInSeedWalk = "the walk this probe was seeded from holds no vulnerability record for this coordinate; other walks scanned it, and their records do not seed this build"
+	// UncoveredScanIncomplete means no project walk of this tree has a vuln-scan
+	// that completed: the newest one's scan stopped before it recorded a run, so
+	// the walk answers for no coordinate, whatever records the scan left behind.
+	UncoveredScanIncomplete = "the vuln-scan of the newest project walk for this tree did not complete, and no walk of this tree has a scan that did; no completed scan answers for this coordinate"
+	// UncoveredNotAnalysed means the record that would seed the coordinate says
+	// its scan failed or could not analyse it, and found nothing. That is not
+	// "no known vulnerabilities", so the module is not counted as covered.
+	UncoveredNotAnalysed = "the stored scan record for this coordinate says it was not analysed (the scan failed or the module was unscannable), so it is no answer about this build"
 	// UncoveredSetAside means every record the store holds for the coordinate at
 	// this build's pipeline version was written in a canonical shape this build
 	// cannot reproduce, so it serves none of them. SeedSetAside names them.
@@ -128,6 +141,28 @@ func SortProbedBinaries(bins []ProbedBinary) {
 	sort.Slice(bins, func(i, j int) bool { return ProbedBinaryLess(bins[i], bins[j]) })
 }
 
+// HarnessOmission is one exported declaration of a library workspace that the
+// probe harness does not reference, and why. A route only through it is not in
+// the harness binary, so an absence there says nothing about it.
+type HarnessOmission struct {
+	// Symbol names the declaration: "pkg.F", "pkg.T.M" or "pkg.(*T).M".
+	Symbol string
+	Reason string
+}
+
+// HarnessOmissionLess is the canonical ordering for HarnessOmission slices.
+func HarnessOmissionLess(a, b HarnessOmission) bool {
+	if a.Symbol != b.Symbol {
+		return a.Symbol < b.Symbol
+	}
+	return a.Reason < b.Reason
+}
+
+// SortHarnessOmissions sorts omissions in place by HarnessOmissionLess.
+func SortHarnessOmissions(omissions []HarnessOmission) {
+	sort.Slice(omissions, func(i, j int) bool { return HarnessOmissionLess(omissions[i], omissions[j]) })
+}
+
 // ProbeCoverage states what a local probe's answer was drawn from and what it
 // left out, so an incomplete answer is visibly incomplete.
 //
@@ -160,6 +195,9 @@ type ProbeCoverage struct {
 	// workspace, which declares no main and is probed through a synthetic
 	// harness instead.
 	Binaries []ProbedBinary
+	// HarnessOmitted names every exported declaration of a library workspace
+	// the probe harness left out. Empty for a binary probe.
+	HarnessOmitted []HarnessOmission
 }
 
 // SymbolProbeVerdict is the result of checking whether a CVE-affected symbol
@@ -245,6 +283,16 @@ const (
 		"library workspace; the workspace declares no main package, so this is an absence from a harness over its " +
 		"exported API rather than from a binary the project ships, and no call graph was built"
 )
+
+// LibraryAbsentReason is ProbeAbsentLibraryReason, stating how many exported
+// declarations the harness left out when there are any.
+func LibraryAbsentReason(omitted int) string {
+	if omitted == 0 {
+		return ProbeAbsentLibraryReason
+	}
+	return ProbeAbsentLibraryReason + fmt.Sprintf("; %d exported declaration(s) of this workspace are not in the harness "+
+		"(each is named in the coverage), so a route only through them is not in the binary", omitted)
+}
 
 // VerdictSource identifies which signal produced a SymbolProbeFinding.Verdict.
 type VerdictSource string

@@ -861,7 +861,9 @@ DO NOTHING`
 //
 // The index is composed over the generations this build can reproduce. The ones
 // it cannot are returned as set aside, for the caller to state; a generation
-// whose bytes do not hash to their own seal aborts the write.
+// whose bytes do not hash to their own seal aborts the write. A frame two
+// toolchains scanned is indexed for the newest one (domain.ComposeForIndex), so
+// the first scan after a Go upgrade completes instead of refusing.
 func (s *Store) reconcileFindingsIndex(
 	ctx context.Context,
 	tx execQuerier,
@@ -874,7 +876,7 @@ func (s *Store) reconcileFindingsIndex(
 	if err != nil {
 		return nil, err
 	}
-	served, ok, cerr := domain.ComposeAt(generations, rooting)
+	served, ok, cerr := domain.ComposeForIndex(generations, rooting)
 	if cerr != nil {
 		return nil, fmt.Errorf("composing %s to reconcile its finding index: %w", record.Coordinate, cerr)
 	}
@@ -1038,57 +1040,6 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	return t, true, nil
 }
 
-// GetVulnerabilityRecord returns the composed record for a coordinate,
-// pipeline version and snapshot, across every analysis frame the ledger holds.
-//
-// It is the read for a caller that has explicitly declined to name a frame and
-// is asking what the store's best-founded answer about this module is. A caller
-// that HAS a frame in mind — a scan deciding whether it may reuse an earlier
-// record, a run reading back what it wrote — must use
-// GetVulnerabilityRecordAt, or it will be handed an answer to the other
-// question.
-//
-// See domain.Compose for the ladder: a finding outranks an all-clear, an
-// analysed record outranks a coverage gap, a better call graph outranks a
-// weaker one, and only then does recency decide. The served record states its
-// own frame, snapshot and completeness, so a composed answer always names the
-// evidence it rests on.
-func (s *Store) GetVulnerabilityRecord(
-	ctx context.Context,
-	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
-	snapshot domain.DatabaseSnapshot,
-) (domain.VulnerabilityRecord, bool, error) {
-	// The zero coordinate names no module, so this is a question about nothing.
-	// Answering it with absence would report "no record here" for a module that
-	// was never asked about — see coordinate.ErrZeroCoordinate.
-	if coord.IsZero() {
-		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
-	}
-	// The zero snapshot names no advisory database at no generation, so this is a
-	// question about nothing. Answering it with absence would report "no record
-	// here" against a database that was never named — and, worse, would read the
-	// composition group every record that recorded no snapshot fell into.
-	if snapshot.IsZero() {
-		return domain.VulnerabilityRecord{}, false, domain.ErrZeroSnapshot
-	}
-	records, aside, err := s.listGenerations(ctx, s.db.DB(),
-		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source(), snapshot.Version())
-	if err != nil {
-		return domain.VulnerabilityRecord{}, false, err
-	}
-	// Nothing reproducible but something set aside is "no record this build can
-	// serve", and the set-aside error is what says so.
-	if len(records) == 0 {
-		return domain.VulnerabilityRecord{}, false, setAsideErr(aside)
-	}
-	composed, cerr := domain.Compose(records)
-	if cerr != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
-	}
-	return composed, true, setAsideErr(aside)
-}
-
 // GetVulnerabilityRecordAt returns the composed record for a coordinate,
 // pipeline version and snapshot WITHIN one analysis frame. found is false when
 // the ledger holds no record produced in that frame.
@@ -1183,49 +1134,6 @@ LIMIT 1`
 	return true, nil
 }
 
-// GetLatestVulnerabilityRecord returns the composed record for a coordinate and
-// pipeline version across every snapshot and every frame the ledger holds.
-//
-// "Latest" is the name it has always had; what it serves is the best-founded
-// answer, not the newest row. The distinction is the point of the ladder: a
-// re-scan under a newer advisory database backed by a weaker call graph is a
-// legitimate append and a worse basis for a reachability finding, so ordering by
-// scanned_at alone would let it retract an established finding merely by running
-// later.
-func (s *Store) GetLatestVulnerabilityRecord(
-	ctx context.Context,
-	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
-) (domain.VulnerabilityRecord, bool, error) {
-	// The zero coordinate names no module, so this is a question about nothing.
-	// Answering it with absence would report "no record here" for a module that
-	// was never asked about — see coordinate.ErrZeroCoordinate.
-	if coord.IsZero() {
-		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
-	}
-	const q = `
-SELECT serialised FROM vulnerability_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY julianday(scanned_at) ASC, rowid ASC`
-
-	records, err := s.queryRecords(ctx, "latest vulnerability record", q,
-		coord.Path(), coord.Version(), pipelineVersion)
-	// Drift alone is composed around and returned beside the answer; any other
-	// failure, an altered row among them, still refuses.
-	var aside *recordseal.SetAside
-	if err != nil && !errors.As(err, &aside) {
-		return domain.VulnerabilityRecord{}, false, err
-	}
-	if len(records) == 0 {
-		return domain.VulnerabilityRecord{}, false, err
-	}
-	composed, cerr := domain.Compose(records)
-	if cerr != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
-	}
-	return composed, true, err
-}
-
 // ListVulnerabilityRecordsForModuleInWalk returns every generation of a
 // coordinate the given walk's scan runs covered, regardless of snapshot, oldest
 // first.
@@ -1263,6 +1171,10 @@ func (s *Store) ListVulnerabilityRecordsForModuleInWalk(
 	if coord.IsZero() {
 		return nil, coordinate.ErrZeroCoordinate
 	}
+	// A run that named its record's content hash reaches that generation only;
+	// one written before the column reaches every generation of the key. Without
+	// the hash term a walk taken after a Go upgrade also reached the older
+	// walk's record on the same snapshot, and the read refused on the conflict.
 	const q = `
 SELECT DISTINCT vr.serialised, vr.scanned_at, vr.rowid
 FROM vulnerability_records vr
@@ -1272,6 +1184,7 @@ JOIN walk_scan_run_modules m
  AND m.pipeline_version = vr.pipeline_version
  AND m.snapshot_source  = vr.snapshot_source
  AND m.snapshot_version = vr.snapshot_version
+ AND (m.record_content_hash = '' OR m.record_content_hash = vr.content_hash)
 JOIN walk_scan_runs wsr ON wsr.id = m.walk_scan_run_id
 WHERE vr.module_path      = ?
   AND vr.module_version   = ?
@@ -1770,195 +1683,6 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 		return nil, fmt.Errorf("iterating snapshots: %w", err)
 	}
 	return snapshots, nil
-}
-
-// ListVulnerabilityRecordsByFindingID returns one vulnerability record per
-// module version that contains a finding with the given identifier.
-//
-// A coordinate accumulates a record per (pipeline version, snapshot) it was ever
-// scanned under, and those generations disagree — the same module version is
-// Affected under one snapshot and Clean under another. Reporting every
-// generation gives the reader rows they cannot rank; reporting only the newest
-// would let a later Clean quietly retire an earlier finding.
-//
-// The tie-break is therefore the finding, not the clock: a record that reports
-// the module as Affected outranks one that does not, and only among equals does
-// the newest scan win.
-//
-// Clean is the right label for a module where the advisory was never found. It
-// is not a label a finding may quietly decay into: once a finding exists,
-// turning it into anything else needs a stated reason — the advisory was
-// withdrawn, the module moved out of the affected range, the reachability
-// verdict was corrected. The store has no way to record such a reason yet, so
-// this ranking is a guard rather than a model: it keeps an unexplained Clean
-// from displacing a finding until reasoned transitions exist.
-//
-// The guard is not hypothetical. In a working store, seven (advisory, module,
-// snapshot) triples — identical inputs, no new evidence — were reported Clean by
-// exactly one pipeline generation and Affected by every other. Ranking by
-// recency alone would have let that generation retract seven real findings.
-//
-// Superseded generations are not lost — vuln-show --history exists to show them,
-// and does.
-//
-// An empty walkID answers across the store. When walkID is set the answer is
-// restricted to the modules a scan run of that walk covered, and "most recent"
-// is taken within that walk.
-//
-// The walk constraint goes through walk_scan_run_modules rather than the
-// walk_id column on vulnerability_records: since schema v5 that column is
-// provenance for the last walk that triggered the scan, so a record shared by
-// two walks names only one of them and filtering on it would drop the other
-// walk's module. ListVulnerabilityRecordsForModuleInWalk takes the same route.
-//
-// An unknown walkID is an error rather than an empty result: "no modules are
-// affected by this CVE" is the wrong answer to give for a walk that was never
-// scanned.
-func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error) {
-	// Ranking within a coordinate: a finding-bearing verdict first, then a
-	// verdict that was actually analysed, then the newest scan, then the newest
-	// pipeline generation.
-	//
-	// The two status terms are the two axes, and both are needed. Findings first,
-	// because a later all-clear must not retire an earlier finding. Coverage
-	// second, because among records that report no finding, one that was analysed
-	// and found nothing is evidence of absence while one that could not be
-	// analysed is merely absence of evidence — ranking them together let a
-	// ScanFailed record outrank a real all-clear purely on being newer, and
-	// answer a security question with a scan that never happened. That is the
-	// collapse this pair of columns exists to undo; a single collapsed status
-	// could not express it, because two of its four values are coverage answers
-	// sitting in a findings field.
-	//
-	// The pipeline version is a tie-break, never a filter. Pinning the reader's
-	// current version would erase every module whose newest scan predates a
-	// pipeline bump — measured at 92 of 235 findings in a working store, each of
-	// which would have become "no modules affected". A stale answer labelled
-	// with its date is a fact; a missing answer is a false all-clear.
-	//
-	// substr past the leading "v" makes that compare numeric, so v9 does not
-	// outrank v14 the way a text compare would. A format change degrades to 0,
-	// which is arbitrary but still deterministic.
-	//
-	// The first tier is "this record reports a matched advisory at all", which is
-	// two findings values, not one: Affected and Withdrawn. A withdrawn record bears
-	// the finding and states why it no longer stands, so it belongs in the tier that
-	// outranks a bare all-clear, and within that tier scanned_at decides — which is
-	// what lets a newer retraction supersede an older Affected verdict. Ranking
-	// Withdrawn with Clean instead would have demoted the very record that carries
-	// the reason, leaving a stale Affected as the answer for a retracted advisory.
-	// Ranking it above Affected would be the mirror error: one live advisory beside
-	// a retracted one is an Affected record, and it must not lose to a withdrawal.
-	//
-	// The three status placeholders are bound first because they appear first in
-	// the query text, ahead of the WHERE clause parameters.
-	//
-	// Records written before the axes existed carry them back-filled by migration
-	// 11, so the comparison is against a real value on every row rather than
-	// against the empty string on the older generations the query deliberately
-	// still reads.
-	const rankWithinCoordinate = `
-    ROW_NUMBER() OVER (
-      PARTITION BY vr.module_path, vr.module_version
-      ORDER BY (vr.findings_status IN (?, ?)) DESC,
-               (vr.coverage_status = ?) DESC,
-               vr.scanned_at DESC,
-               CAST(substr(vr.pipeline_version, 2) AS INTEGER) DESC
-    ) AS rn`
-
-	// The index carries the analysis frame, so the join carries it too. Without
-	// that term an index row an isolated scan wrote would attach to the
-	// target-rooted record of the same coordinate and snapshot, and the answer
-	// would name a record that never reported the advisory being asked about.
-	const unscoped = `
-SELECT serialised, scanned_at FROM (
-  SELECT vr.serialised AS serialised, vr.scanned_at AS scanned_at,` + rankWithinCoordinate + `
-  FROM vulnerability_records vr
-  JOIN vulnerability_findings_index fi
-    ON fi.module_path      = vr.module_path
-   AND fi.module_version   = vr.module_version
-   AND fi.pipeline_version = vr.pipeline_version
-   AND fi.snapshot_source  = vr.snapshot_source
-   AND fi.snapshot_version = vr.snapshot_version
-   AND fi.rooting          = vr.rooting
-  WHERE fi.finding_id = ?
-)
-WHERE rn = 1
-ORDER BY julianday(scanned_at) DESC`
-
-	// The partition also absorbs the duplicate rows a walk with several scan
-	// runs over one module would otherwise produce.
-	const scoped = `
-SELECT serialised, scanned_at FROM (
-  SELECT DISTINCT vr.serialised AS serialised, vr.scanned_at AS scanned_at,` + rankWithinCoordinate + `
-  FROM vulnerability_records vr
-  JOIN vulnerability_findings_index fi
-    ON fi.module_path      = vr.module_path
-   AND fi.module_version   = vr.module_version
-   AND fi.pipeline_version = vr.pipeline_version
-   AND fi.snapshot_source  = vr.snapshot_source
-   AND fi.snapshot_version = vr.snapshot_version
-   AND fi.rooting          = vr.rooting
-  JOIN walk_scan_run_modules m
-    ON m.module_path      = vr.module_path
-   AND m.module_version   = vr.module_version
-   AND m.pipeline_version = vr.pipeline_version
-   AND m.snapshot_source  = vr.snapshot_source
-   AND m.snapshot_version = vr.snapshot_version
-  JOIN walk_scan_runs wsr ON wsr.id = m.walk_scan_run_id
-  WHERE fi.finding_id = ? AND wsr.walk_id = ?
-)
-WHERE rn = 1
-ORDER BY julianday(scanned_at) DESC`
-
-	rank := []any{
-		string(domain.FindingsRecordAffected),
-		string(domain.FindingsRecordWithdrawn),
-		string(domain.CoverageAnalysed),
-	}
-
-	q, args := unscoped, append(append([]any{}, rank...), findingID)
-	if walkID != "" {
-		known, err := s.walkHasScanRun(ctx, walkID)
-		if err != nil {
-			return nil, err
-		}
-		if !known {
-			return nil, fmt.Errorf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
-		}
-		q, args = scoped, append(append([]any{}, rank...), findingID, walkID)
-	}
-
-	rows, err := s.db.DB().QueryContext(ctx, q, args...)
-	if err != nil {
-		if walkID != "" {
-			return nil, fmt.Errorf("querying records by finding id in walk %s: %w", walkID, err)
-		}
-		return nil, fmt.Errorf("querying records by finding id: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var (
-		records    []domain.VulnerabilityRecord
-		unreadable []ports.UnreadableRow
-	)
-	for rows.Next() {
-		var serialised []byte
-		var scannedAt string // ordering key only; the record carries its own timestamp.
-		if err := rows.Scan(&serialised, &scannedAt); err != nil {
-			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
-		}
-		rec, bad := recordRow(serialised)
-		if bad != nil {
-			unreadable = append(unreadable, *bad)
-			continue
-		}
-		records = append(records, rec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
-	}
-	return records, listingErr(unreadable)
 }
 
 // walkHasScanRun reports whether any vulnerability scan run was recorded for

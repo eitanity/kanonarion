@@ -422,7 +422,8 @@ kanonarion dependents golang.org/x/crypto@v0.48.0 --json \
   only the second is a measurement.
 
   ```
-  error: walk 01M1E9940J18X1VEW03GS5P1DX (code scope, frame linux/amd64), rooted at github.com/eitanity/kanonarion@local, does not contain golang.org/x/sys@v0.38.0; it resolved golang.org/x/sys at v0.47.0; no current build of github.com/eitanity/kanonarion@local holds it either — the newest walk of each scope and platform was checked, and an older one still may, so search them all with:
+  $ kanonarion dependents golang.org/x/sys@v0.38.0
+  error: execute root command: walk 01M308158YRB231T34T1D7DKJ7 (code scope, frame linux/amd64), rooted at github.com/eitanity/kanonarion@local, does not contain golang.org/x/sys@v0.38.0; it resolved golang.org/x/sys at v0.48.0; no current build of github.com/eitanity/kanonarion@local holds it either — the newest walk of each scope and platform was checked, and an older one still may, so search them all with:
     kanonarion dependents golang.org/x/sys@v0.38.0 --any-build
   ```
 - A zero-result response is not an error (exit 0). It means the module is in the

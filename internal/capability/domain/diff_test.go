@@ -14,8 +14,8 @@ func report(caps ...Capability) CapabilityReport {
 }
 
 func TestDiffCapabilitiesAddedRemovedCommon(t *testing.T) {
-	from := report(CapabilityNetwork, CapabilityFiles)
-	to := report(CapabilityFiles, CapabilityExec)
+	from := report(CapabilityNetDial, CapabilityFSRead)
+	to := report(CapabilityFSRead, CapabilityExecProcess)
 
 	diff := DiffCapabilities(from, to)
 
@@ -25,30 +25,30 @@ func TestDiffCapabilitiesAddedRemovedCommon(t *testing.T) {
 	if diff.Caveat != "" {
 		t.Errorf("parity diff should have no caveat, got %q", diff.Caveat)
 	}
-	if !reflect.DeepEqual(diff.Added, []Capability{CapabilityExec}) {
-		t.Errorf("Added = %v, want [EXEC]", diff.Added)
+	if !reflect.DeepEqual(diff.Added, []Capability{CapabilityExecProcess}) {
+		t.Errorf("Added = %v, want [EXEC_PROCESS]", diff.Added)
 	}
-	if !reflect.DeepEqual(diff.Removed, []Capability{CapabilityNetwork}) {
-		t.Errorf("Removed = %v, want [NETWORK]", diff.Removed)
+	if !reflect.DeepEqual(diff.Removed, []Capability{CapabilityNetDial}) {
+		t.Errorf("Removed = %v, want [NET_DIAL]", diff.Removed)
 	}
-	if !reflect.DeepEqual(diff.Common, []Capability{CapabilityFiles}) {
-		t.Errorf("Common = %v, want [FILES]", diff.Common)
+	if !reflect.DeepEqual(diff.Common, []Capability{CapabilityFSRead}) {
+		t.Errorf("Common = %v, want [FS_READ]", diff.Common)
 	}
 }
 
 func TestDiffCapabilitiesSortsMultipleAdditions(t *testing.T) {
 	from := report()
-	to := report(CapabilityReflect, CapabilityExec, CapabilityNetwork)
+	to := report(CapabilityReflectInspect, CapabilityExecProcess, CapabilityNetDial)
 	diff := DiffCapabilities(from, to)
-	want := []Capability{CapabilityExec, CapabilityNetwork, CapabilityReflect}
+	want := []Capability{CapabilityExecProcess, CapabilityNetDial, CapabilityReflectInspect}
 	if !reflect.DeepEqual(diff.Added, want) {
 		t.Errorf("Added = %v, want sorted %v", diff.Added, want)
 	}
 }
 
 func TestDiffCapabilitiesParityBrokenByPartial(t *testing.T) {
-	from := report(CapabilityNetwork)
-	to := CapabilityReport{Partial: true, Findings: []CapabilityFinding{{Capability: CapabilityNetwork}}}
+	from := report(CapabilityNetDial)
+	to := CapabilityReport{Partial: true, Findings: []CapabilityFinding{{Capability: CapabilityNetDial}}}
 
 	diff := DiffCapabilities(from, to)
 	if diff.ParityOK {

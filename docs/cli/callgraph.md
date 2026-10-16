@@ -22,7 +22,8 @@ Extraction runs `golang.org/x/tools/go/callgraph/cha` over an SSA program built
 from `go/packages`. The module's source is type-checked; no code from it is
 executed.
 
-To analyse a published module, fetch it first (`kanonarion fetch`). To analyse a
+To analyse a published module, fetch it first (`kanonarion fetch`); without the
+fetch it exits `4` naming that command. To analyse a
 working tree — including this repository — use [`kanonarion local`](local.md),
 which indexes the directory in place.
 
@@ -216,7 +217,8 @@ path is only as strong as its weakest hop.
 Records state whether the axis was measured. A graph extracted before references
 existed downgrades an empty `callers` answer to `UNRESOLVED` naming
 `reference-scope-unmeasured`, rather than claiming an absence it could not have
-seen. Re-extract the module (`kanonarion callgraph <module>@<version>`, or
+seen. Re-extract the module (`kanonarion fetch <module>@<version> && kanonarion callgraph
+<module>@<version>`, or
 `kanonarion local .` for a working tree) to get the measured answer.
 
 ## Test scope
@@ -407,6 +409,7 @@ see [`callgraph-show`](#callgraph-show).
 | `1` | `Partial`: a graph exists and is known-incomplete, with its incompleteness scoped to the packages named on the `failed packages` line |
 | `2` | No graph at all: `LoadFailed`, or a `Partial` that measured no functions. The message repeats the recorded failure detail |
 | `3` | `Cancelled`: the run ended before the graph was walked |
+| `4` | The store has not fetched the module. Nothing was extracted; the message names `kanonarion fetch <module>@<version>`, which supplies the bytes, and the analysis runs after it |
 | `10` | Two stored records for this coordinate disagree, or one failed its content-hash check. The message names what differs and the remedy, `callgraph-show --diff` |
 | `20` | This kanonarion was built with a Go older than the code requires, so it could not read the source. The record is still stored; the message names both versions and the remedy, a kanonarion built with a new enough Go |
 
@@ -431,7 +434,7 @@ it. The causes that recur:
 | Message | What it means |
 |---|---|
 | `no go.mod was synthesised: … imports packages outside the standard library: …` | A module published before Go modules whose imports no build list in this store resolves. Name a build that does with `--from-walk`, or walk a project that uses it |
-| `no package under <path>: the loader resolved N package(s) (…)` | Nothing the loader returned belongs to the module. The named packages say what it found instead — a nested module's `replace` target absent from the published zip is the usual reason |
+| `no package under <path>: the loader resolved N package(s) (…)` | Nothing the loader returned belongs to the module. The named packages say what it found instead |
 | `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
 | `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
 | `the loader reported: … missing go.sum entry for module providing package …; to add: …` | The tree's `go.sum` does not cover a module the load needs. `go mod tidy`, then re-analyse. A local analysis is read-only: it reports the gap rather than closing it in the tree it was asked to measure |
@@ -747,7 +750,7 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
 * a zip that ships its own `go.mod` is **never** synthesised over. Modules that
   publish one and still fail to load are failing for their own reasons, and
   overwriting the published file would hide that. The one edit made to a shipped
-  `go.mod` is dropping `replace` directives that point outside the extracted
+  `go.mod` is dropping `replace` directives that cannot resolve in the extracted
   tree, which apply to no consumer's build either and are described below;
 * if the module also ships a `vendor/` directory, vendor mode is explicitly
   disabled for the load, so the graph describes the module rather than vendored
@@ -794,6 +797,49 @@ consumer can retry without parsing prose:
 
 The key is absent when nothing was refused. The analysis still runs, without
 pins.
+
+The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
+note naming how many `require` directives were pinned, `--history` appends it to
+the artefact the generation was computed from, and `--json` carries a
+`synthesised_go_mod` object whose `requires` list and `build_list_source` name
+the pins and the walk they came from. Those requires are **scan inputs** — what
+the analysis was pointed at — and are never resolved dependency edges of the
+module; no answer surface presents them as such. Two analyses of the same bytes
+pinned to different versions are two different graphs and carry different graph
+digests, while identical pins from two different walks do not. The analysis is of the
+published bytes **plus a file kanonarion invented**, and a record that did not
+state that would be claiming to describe the artefact it was sealed against. The
+field is absent — not empty — on every graph analysed as published.
+
+##### `replace` directives that point at a directory
+
+A module published from a monorepo carries `replace` directives naming its
+sibling directories — `replace example.com/mod => ../`, `replace
+example.com/mod/creds => ../creds/`. They apply to nobody: the go command ignores
+a `replace` in any module that is not the **main** module, so no consumer's build
+has ever used one. This analysis is the first build in which the module *is* the
+main module, and the zip contains no siblings, so every requirement so replaced
+dangles and every package importing it fails to type-check.
+
+**Every `replace` whose target is a directory outside the extracted tree is
+dropped before the load**, whether or not that directory happens to exist on this
+host. It cannot mean what it says here, and the extraction directory sits under
+the system temp root — so `../` names that root, and a stray `go.mod` there would
+otherwise be pulled into an unrelated module's analysis.
+
+**A `replace` of the module's own nested module onto an absent directory is
+dropped too.** `go.opentelemetry.io/otel` replaces `go.opentelemetry.io/otel/metric
+=> ./metric`. The zip format leaves every nested module out of its parent's zip,
+so `./metric` is absent, and the nested module is published on its own. A path is
+nested when it continues the module's path after a `/`: `example.com/mod/sub` is
+nested in `example.com/mod`, `example.com/modx` is not.
+
+Every other form is left exactly as published. A target **inside** the tree that
+exists resolves as the publisher intended. One that is absent and names any other
+module — `replace example.com/other => ./other` — is a fault in the published
+bytes: the go command says `replacement directory ./other does not exist`, the
+record leads with that sentence, and the cause is the module. A target naming a
+**module version** resolves with no filesystem involved at all.
 
 The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
 note naming how many `require` directives were pinned, `--history` appends it to
@@ -913,7 +959,7 @@ columns still state that, and names the remedy:
 * served by the composed read (highest completeness, then most recent, within one analysis source)
 
 not listed above: the store holds 1 generation(s) of it written at a record schema this build no longer decodes, parsed by golang.org/x/tools v0.47.0 (observed).
-  re-analyse it: kanonarion callgraph example.com/mod@v1.2.3
+  re-analyse it: kanonarion fetch example.com/mod@v1.2.3 && kanonarion callgraph example.com/mod@v1.2.3
 ```
 
 The same sentence appears where **no** generation at the served pipeline version
@@ -1099,7 +1145,7 @@ $ kanonarion callgraph-list
 golang.org/x/text@v0.42.0              0.8.0  Extracted  5931 nodes 48484 edges
 github.com/spf13/cobra@v1.10.2         0.8.0  Extracted  1404 nodes  6583 edges  [2 generations; counts from 2026-09-20T11:30:56.168419348Z]
 github.com/eitanity/kanonarion@local   0.8.0  18 generations state different counts, status or completeness; run: kanonarion callgraph-show github.com/eitanity/kanonarion@local --history
-listing call graph records at pipeline 0.8.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+listing call graph records at pipeline 0.10.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 ```
 
 Those counts belong to the generation the row names, which is **not**
@@ -1148,14 +1194,16 @@ Under `--json` the command answers with one object carrying `records`, the
 paging state and the `generation` object, not a bare array, and writes nothing
 to stderr — see [Listing documents](conventions.md#listing-documents).
 
-A zero result names its own scope — whether the store is empty, the filter
-matched nothing, or `--offset` skipped past the end — per
+A zero result names its own scope — whether the store is empty, holds records
+only at a superseded pipeline version, the filter matched nothing, or
+`--offset` skipped past the end — and ends with the generation line, per
 [Zero-result listings](conventions.md#zero-result-listings):
 
 ```
 $ kanonarion callgraph-list no-such-module-anywhere
-no call graph record matched module path "no-such-module-anywhere" — the value is compared against the module path, compared for exact equality, of all 312 call graph record(s) in the store (e.g. github.com/spf13/cobra)
+no call graph record matched module path "no-such-module-anywhere" — the value is compared for exact equality against the module path of all 312 call graph record(s) in the store (e.g. github.com/spf13/cobra)
   to list every call graph record: kanonarion callgraph-list
+listing call graph records at pipeline 0.10.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 ```
 
 ### `callers`
@@ -1189,6 +1237,10 @@ $ kanonarion callers '...sqlite.(*Store).PutLicenseRecord' --exclude-tests
   github.com/org/repo/internal/license/application.(*ExtractLicenseUseCase).Execute  [CHA-overapprox]  (github.com/org/repo@v0.0.0)
 scope: test callers omitted (--exclude-tests was given)
 ```
+
+An answer that could not read some stored graphs, because they come only from
+superseded extraction logic, still exits `0` and names them on stderr — see
+[Graphs an answer could not read](#graphs-an-answer-could-not-read).
 
 #### A bounded traversal says it is bounded
 
@@ -1265,7 +1317,8 @@ output is byte-identical with and without it.
 ### `callees`
 
 Find every recorded call site where a symbol is the caller. Same flags as
-`callers`, including `--no-progress` and the truncation statement above.
+`callers`, including `--no-progress`, the truncation statement above and the
+[not-searched notice](#graphs-an-answer-could-not-read).
 
 ### `implementers`
 
@@ -1335,6 +1388,7 @@ one module:
 | `tests_exclude_flag` | The flag that narrows it, so a consumer can ask the other question |
 | `scope` | The sentence the text prints, kept as it was |
 | `answer_foreign_modules` | The modules other than the searched one that own implementers in this answer, `path`/`version`. Present only when non-empty — see [Answers drawn from a module the record is not about](#answers-drawn-from-a-module-the-record-is-not-about) |
+| `not_searched` | The coordinates whose graphs this answer could not read: other versions of the searched module held only at a superseded pipeline, and under `--gomod`/`--walk-id` every module version in scope with no served graph. Absent when none. See [Graphs an answer could not read](#graphs-an-answer-could-not-read) |
 
 Three failure modes are kept distinct rather than collapsed into an empty list:
 
@@ -1501,21 +1555,92 @@ A record is served only at the pipeline version the binary was built with. When
 the extraction pipeline is bumped, every stored record for a coordinate becomes
 unreachable until it is re-analysed, and a query for one does not answer empty —
 `callers`, `callees`, their `--transitive` forms and `implementers` refuse with
-exit 20, naming the versions the store holds and the command that re-derives
+exit 4, naming the versions the store holds and the command that re-derives
 them:
 
 ```
 $ kanonarion callers 'github.com/golang-jwt/jwt/v4.(*Parser).ParseUnverified'
-error: symbol "…ParseUnverified" belongs to module "github.com/golang-jwt/jwt/v4",
-whose every stored call graph was produced by superseded extraction logic: this
-build serves pipeline 0.5.0 and the store holds v4.5.0, v4.5.1, v4.5.2 at
-pipeline 0.3.0, 0.4.1. …
-  kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.0
+error: execute root command: symbol "github.com/golang-jwt/jwt/v4.(*Parser).ParseUnverified" belongs to module "github.com/golang-jwt/jwt/v4", whose every stored call graph was produced by superseded extraction logic: this build serves pipeline 0.10.0 and the store holds v4.5.1 at pipeline 0.5.0, 0.6.0. A superseded record is not served, so this answer is empty for want of a measurement of this module, not because the code holds nothing. Re-analyse it:
+  kanonarion fetch github.com/golang-jwt/jwt/v4@v4.5.1 && kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.1
+$ echo $?
+4
 ```
 
 `callgraph-show` and `callgraph-show --history` say the same thing for the
-coordinate they were asked about. A module the store holds at both a superseded
-and the serving version is answered normally from the served generation.
+coordinate they were asked about, with different exit codes. `callgraph-show`
+serves one record, so it refuses with exit 4. `--history` lists generations,
+and an empty list is an answer, so it exits `0`, as it also does for a
+coordinate the store has never held:
+
+```
+$ kanonarion callgraph-show github.com/golang-jwt/jwt/v4@v4.5.1 --history
+no callgraph records for github.com/golang-jwt/jwt/v4@v4.5.1 at pipeline 0.10.0 — the store holds it at superseded pipeline 0.5.0, 0.6.0, which this build does not serve.
+  re-analyse it: kanonarion fetch github.com/golang-jwt/jwt/v4@v4.5.1 && kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.1
+$ echo $?
+0
+```
+
+A module the store holds at both a superseded and the serving version is
+answered normally from the served generation.
+
+#### Graphs an answer could not read
+
+When the symbol is in a served graph, the answer is given from the served graphs
+and exits `0`. Other coordinates may still hold edges touching the symbol only in
+graphs from superseded extraction logic. Those edges are not searched, and the
+answer names the coordinates that hold them, with the command that re-derives
+each one. The notice goes to **stderr**:
+
+```
+$ kanonarion callers 'github.com/spf13/cobra.(*Command).Execute'
+45 callers of github.com/spf13/cobra.(*Command).Execute:
+  ...
+notice: 7 coordinate(s) hold call graphs only from superseded extraction logic and were not searched: example.com/app@local (pipeline 0.5.0, 0.6.0), github.com/spf13/cobra@v1.10.2 (pipeline 0.5.0, 0.6.0, 0.7.0), ... — re-derive with:
+  kanonarion local /home/me/src/app
+  kanonarion fetch github.com/spf13/cobra@v1.10.2 && kanonarion callgraph github.com/spf13/cobra@v1.10.2
+  ...
+```
+
+- A coordinate is named only when it has **no** generation at the serving
+  pipeline. A coordinate that has one is searched, and is not named even if it
+  also holds older generations.
+- `callers` and `callees` name the coordinates holding edges into (or out of) the
+  queried symbol. With `--transitive`, they name the coordinates holding such
+  edges for every symbol the walk expanded.
+- `implementers` names the other versions of the interface's module that are
+  held only at a superseded pipeline, because each would have been searched.
+- With `--gomod` or `--walk-id`, every module version in the build's scope that
+  has no served graph is also named, whether or not it touches the symbol. A
+  module version with no call graph at all gets its own line:
+
+  ```
+  notice: 1 module version(s) in the build scope have no call graph at any pipeline and were not searched: modernc.org/libc@v1.75.7 — analyse with:
+    kanonarion fetch modernc.org/libc@v1.75.7 && kanonarion callgraph modernc.org/libc@v1.75.7
+  ```
+
+- For a `@local` coordinate the remedy is `kanonarion local <dir>`, using the
+  working tree its newest graph recorded. When no graph recorded one, the line
+  names the coordinate and reads `no stored record names the working tree, so
+  run kanonarion local from inside it`.
+
+Under `--json`, the `--transitive` and `implementers` documents carry the same
+list as `not_searched`, sorted by coordinate. The key is absent when nothing was
+skipped:
+
+```json
+"not_searched": [
+  {"coordinate": "github.com/spf13/cobra@v1.10.2", "pipelines": ["0.5.0", "0.6.0", "0.7.0"],
+   "reason": "superseded", "remedy": "kanonarion fetch github.com/spf13/cobra@v1.10.2 && kanonarion callgraph github.com/spf13/cobra@v1.10.2"},
+  {"coordinate": "modernc.org/libc@v1.75.7", "reason": "not_analysed",
+   "remedy": "kanonarion fetch modernc.org/libc@v1.75.7 && kanonarion callgraph modernc.org/libc@v1.75.7"}
+]
+```
+
+`reason` is `superseded` (graphs only at older pipelines, listed in `pipelines`)
+or `not_analysed` (no graph at all; only under `--gomod` or `--walk-id`).
+`remedy` is absent for a local coordinate whose working tree no graph recorded.
+`callers` and `callees` without `--transitive` print a JSON array, so they state
+the notice on stderr instead.
 
 The callgraph schema is tracked in the shared `schema_migrations` table under
 module key `callgraph` (current version: 13). A record whose `schema_version`
@@ -1645,7 +1770,7 @@ silently short answer.
 
 ```
 $ kanonarion callers 'golang.org/x/tools/go/packages.Load'
-error: ... toolchain disagrees ([GOROOT usr/local/go go1.26.6]) ...
+error: execute root command: ... conflicting call graph records for golang.org/x/tools@v… at pipeline 0.10.0: toolchain disagrees ([GOROOT /usr/local/go go1.26.6]; records [sha256:… sha256:…]) ...
 
 $ kanonarion callers 'golang.org/x/tools/go/packages.Load' --toolchain go1.26.6
 297 callers of golang.org/x/tools/go/packages.Load:

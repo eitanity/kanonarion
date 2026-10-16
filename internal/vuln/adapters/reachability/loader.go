@@ -46,6 +46,9 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		Completeness: string(rec.Completeness),
 		Algorithm:    string(rec.Algorithm),
 		ArtifactKind: string(rec.ArtifactKind),
+		// The generation the composed read served, which is the one the answer
+		// rests on.
+		PipelineVersion: rec.PipelineVersion,
 		// The eligibility rule is the callgraph domain's, applied here rather than
 		// restated in the vuln context: the on-demand spawner asks the same
 		// question the extraction use case asks, and both must get the same answer.

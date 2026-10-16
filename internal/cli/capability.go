@@ -2,11 +2,9 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -28,7 +26,7 @@ const capabilityTestRootFlagName = "include-tests"
 
 func newCapabilityCmd(stdout, stderr io.Writer) *cobra.Command {
 	var against string
-	var includeTests bool
+	var includeTests, showSuppressed bool
 
 	cmd := &cobra.Command{
 		Use: "capability <module>@<version>",
@@ -37,32 +35,49 @@ func newCapabilityCmd(stdout, stderr io.Writer) *cobra.Command {
 			annotationNetworkUse:  NetworkNever,
 		},
 		Short: "Report the sensitive capabilities a module's reachable code can use",
-		Long: `capability derives, from a module's stored call graph, which sensitive
-capabilities (NETWORK, FILES, EXEC, REFLECT, UNSAFE_POINTER, …) its reachable
-code can exercise. Each capability is reported with an example witnessing path
-and that path's weakest edge confidence, so a capability confirmed by a resolved
-direct call is distinguishable from one reached only through interface fanout.
+		Long: `capability derives, from a module's stored call graph, what its reachable code
+can do. Every callee is labelled on three axes:
+
+  capability   what the callee does: EXEC_PROCESS, NET_DIAL, FS_READ, ENV_READ, …
+               (Act tier), NET_INSPECT, FS_STREAM, PATH_PURE, … (Context tier),
+               RUNTIME_INTERNAL (suppressed)
+  reach        how deliberately: DIRECT_CALL (an exported function by name),
+               RUNTIME_PLUMBING (unexported), PKG_LINKAGE (an initialiser),
+               UNANALYZED (an assembly or //go:linkname body)
+  caller kind  the kind of the function making the call: INIT, TEST_INIT, TEST,
+               MAIN, EXPORTED_API, INTERNAL
+
+The report gives one finding per capability, with an example witnessing path and
+its weakest edge confidence, then "sensitive calls": the exported sensitive
+functions this module calls over at least one Direct edge, each with the kinds of
+caller that reach it. It names any function that both collects (ENV_READ,
+FS_READ) and egresses (NET_DIAL, NET_TRANSFER), and any initialiser whose Direct
+edges reach both. The module's own assembly or linkname functions are listed as
+unanalysed.
+
+RUNTIME_INTERNAL findings and unexported plumbing rows are hidden in text unless
+--show-suppressed is given; a count says how many. A capability whose only
+witnesses are plumbing is shown, marked plumbing-only. JSON carries everything.
 
 A path that reaches another package's init, or an external callee carrying a
 body-level fact, is reported below the capability set instead of in it: it shows
 the package is linked, or classifies the callee, rather than naming something
 this module does.
 
-Roots are every function the module owns, exported or not. A module is entered
-through more than its exported API — registered handlers, cgo callbacks,
-closures, goroutine entries — and none of those are enumerable, so rooting only
-the exported API would leave their code dark. Test declarations do not root the
-traversal: a consumer compiles none of the module's _test.go files, so a sink
-only its test suite reaches is not in the consuming build. --include-tests
-widens the roots to them.
+Roots are every function the module owns, exported or not. Test declarations do
+not root the traversal: a consumer compiles none of the module's _test.go files.
+--include-tests widens the roots to them.
 
-With --against, it diffs the capability set of two versions (update-validity):
-did the bump add NETWORK/EXEC/UNSAFE? The diff is only valid when both versions
-were analysed at equal completeness.
+With --against, it diffs two versions row by row: an owned function's call to a
+labelled callee, or its own unsafe.Pointer use. Added and removed rows, sensitive
+calls, co-location facts and unanalysed bodies are listed separately. The diff is
+only valid when both versions were analysed at equal completeness.
 
-It reads stored call graphs; run 'kanonarion callgraph <module>@<version>' first.`,
+It reads stored call graphs; run
+'kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>' first.`,
 		Example: `  kanonarion capability github.com/spf13/cobra@v1.8.1
   kanonarion capability github.com/spf13/cobra@v1.8.1 --json
+  kanonarion capability github.com/spf13/cobra@v1.8.1 --show-suppressed
   kanonarion capability github.com/spf13/cobra@v1.8.1 --include-tests
   kanonarion capability github.com/spf13/cobra@v1.8.0 --against github.com/spf13/cobra@v1.8.1`,
 		Args: cobra.MaximumNArgs(1),
@@ -80,15 +95,19 @@ It reads stored call graphs; run 'kanonarion callgraph <module>@<version>' first
 			uc := capapp.NewAnalyseCapabilitiesUseCase(ctr.QueryCallGraph)
 			scope := capabilityRootScope(includeTests)
 			if against != "" {
-				return runCapabilityDiff(cmd.Context(), args[0], against, uc, ctr.QueryCallGraph, scope, jsonOut, stdout)
+				return runCapabilityDiff(cmd.Context(), args[0], against, uc, ctr.QueryCallGraph, scope,
+					capabilityOutput{json: jsonOut, showSuppressed: showSuppressed}, stdout)
 			}
-			return runCapability(cmd.Context(), args[0], uc, ctr.QueryCallGraph, scope, jsonOut, stdout)
+			return runCapability(cmd.Context(), args[0], uc, ctr.QueryCallGraph, scope,
+				capabilityOutput{json: jsonOut, showSuppressed: showSuppressed}, stdout)
 		},
 	}
 
 	cmd.Flags().StringVar(&against, "against", "", "second <module>@<version> to diff the capability set against")
 	cmd.Flags().BoolVar(&includeTests, capabilityTestRootFlagName, false,
 		"also root the traversal at test functions, which a consumer of the module does not compile")
+	cmd.Flags().BoolVar(&showSuppressed, capabilityShowSuppressedFlagName, false,
+		"also print what text hides by default: RUNTIME_INTERNAL and unexported plumbing rows (JSON always carries them)")
 	return cmd
 }
 
@@ -126,7 +145,13 @@ type capabilityAnalyser interface {
 	Diff(ctx context.Context, from, to coordinate.ModuleCoordinate, pipelineVersion string, scope cgdomain.RootScope) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error)
 }
 
-func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, generations cgports.CallGraphCoordinateLister, scope cgdomain.RootScope, jsonOut bool, stdout io.Writer) error {
+// capabilityOutput is how a report is rendered.
+type capabilityOutput struct {
+	json           bool
+	showSuppressed bool
+}
+
+func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, generations cgports.CallGraphCoordinateLister, scope cgdomain.RootScope, out capabilityOutput, stdout io.Writer) error {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
@@ -138,15 +163,15 @@ func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, gener
 		}
 		return fmt.Errorf("analysing capabilities: %w", err)
 	}
-	if jsonOut {
+	if out.json {
 		doc := capabilityReportToJSON(coord, report, scope)
 		doc.SetAside = storeSetAside.take().json()
 		return encodeJSON(stdout, doc)
 	}
-	return printCapabilityReport(stdout, coord, report, scope)
+	return printCapabilityReport(stdout, coord, report, scope, out.showSuppressed)
 }
 
-func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capabilityAnalyser, generations cgports.CallGraphCoordinateLister, scope cgdomain.RootScope, jsonOut bool, stdout io.Writer) error {
+func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capabilityAnalyser, generations cgports.CallGraphCoordinateLister, scope cgdomain.RootScope, out capabilityOutput, stdout io.Writer) error {
 	from, err := parseCoordinate(fromArg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", fromArg, err)
@@ -162,12 +187,12 @@ func runCapabilityDiff(ctx context.Context, fromArg, toArg string, uc capability
 		}
 		return fmt.Errorf("diffing capabilities: %w", err)
 	}
-	if jsonOut {
+	if out.json {
 		doc := capabilityDiffToJSON(from, to, fromReport, toReport, diff, scope)
 		doc.SetAside = storeSetAside.take().json()
 		return encodeJSON(stdout, doc)
 	}
-	return printCapabilityDiff(stdout, from, to, diff, scope)
+	return printCapabilityDiff(stdout, from, to, diff, scope, out.showSuppressed)
 }
 
 // capabilityMissingRecord turns "this coordinate has no call graph" into the
@@ -190,208 +215,4 @@ func capabilityMissingRecord(ctx context.Context, err error, generations cgports
 		return nil
 	}
 	return missingCallGraphRefusal(ctx, missing.Coord, generations)
-}
-
-func encodeJSON(stdout io.Writer, v any) error {
-	enc := json.NewEncoder(stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return fmt.Errorf("encoding JSON: %w", err)
-	}
-	return nil
-}
-
-// -- JSON shapes --
-
-type capabilityFindingJSON struct {
-	Capability        string `json:"capability"`
-	WeakestConfidence string `json:"weakest_confidence"`
-	// Basis is what the path established: "use", "linkage_only" or
-	// "callee_body_fact". Emitted on every entry in both arrays so a consumer
-	// that merges them cannot lose the distinction.
-	Basis string `json:"basis"`
-	// BasisNote is the one-line reason, empty for "use".
-	BasisNote   string   `json:"basis_note,omitempty"`
-	SinkPackage string   `json:"sink_package"`
-	SinkSymbol  string   `json:"sink_symbol"`
-	Path        []string `json:"path"`
-}
-
-type capabilityReportJSON struct {
-	Module  string `json:"module"`
-	Version string `json:"version"`
-	// TestRoots is "excluded" or "included": which root set produced the
-	// answer. It is always populated, so a consumer cannot mistake an unstated
-	// axis for a missing one.
-	TestRoots    string                  `json:"test_roots"`
-	Partial      bool                    `json:"partial"`
-	Caveat       string                  `json:"caveat,omitempty"`
-	Capabilities []string                `json:"capabilities"`
-	Findings     []capabilityFindingJSON `json:"findings"`
-	// Observations are paths that reach a classified node but establish
-	// something weaker than a capability of this module. Always present (empty
-	// array when there are none) so its absence cannot be read as "none found".
-	Observations []capabilityFindingJSON `json:"observations"`
-	// SetAside names the stored call graph generations the reads behind this
-	// document left out because this build cannot reproduce them.
-	SetAside []setAsideJSON `json:"set_aside,omitempty"`
-}
-
-type capabilityDiffJSON struct {
-	From     capabilityReportJSON `json:"from"`
-	To       capabilityReportJSON `json:"to"`
-	ParityOK bool                 `json:"parity_ok"`
-	Caveat   string               `json:"caveat,omitempty"`
-	Added    []string             `json:"added"`
-	Removed  []string             `json:"removed"`
-	Common   []string             `json:"common"`
-	// SetAside names the stored call graph generations the reads behind this
-	// document left out because this build cannot reproduce them.
-	SetAside []setAsideJSON `json:"set_aside,omitempty"`
-}
-
-func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport, scope cgdomain.RootScope) capabilityReportJSON {
-	return capabilityReportJSON{
-		Module:       coord.Path(),
-		Version:      coord.Version(),
-		TestRoots:    capabilityRootScopeJSON(scope),
-		Partial:      r.Partial,
-		Caveat:       r.Caveat,
-		Capabilities: capsToStrings(r.Capabilities()),
-		Findings:     capabilityFindingsToJSON(r.Findings),
-		Observations: capabilityFindingsToJSON(r.Observations),
-	}
-}
-
-func capabilityFindingsToJSON(fs []capdomain.CapabilityFinding) []capabilityFindingJSON {
-	out := make([]capabilityFindingJSON, 0, len(fs))
-	for _, f := range fs {
-		out = append(out, capabilityFindingJSON{
-			Capability:        string(f.Capability),
-			WeakestConfidence: string(f.WeakestConfidence),
-			Basis:             string(f.Basis),
-			BasisNote:         f.Basis.Explanation(),
-			SinkPackage:       f.SinkPackage,
-			SinkSymbol:        f.SinkSymbol,
-			Path:              f.Path,
-		})
-	}
-	return out
-}
-
-func capabilityDiffToJSON(from, to coordinate.ModuleCoordinate, fromReport, toReport capdomain.CapabilityReport, diff capdomain.CapabilityDiff, scope cgdomain.RootScope) capabilityDiffJSON {
-	return capabilityDiffJSON{
-		From:     capabilityReportToJSON(from, fromReport, scope),
-		To:       capabilityReportToJSON(to, toReport, scope),
-		ParityOK: diff.ParityOK,
-		Caveat:   diff.Caveat,
-		Added:    capsToStrings(diff.Added),
-		Removed:  capsToStrings(diff.Removed),
-		Common:   capsToStrings(diff.Common),
-	}
-}
-
-func capsToStrings(caps []capdomain.Capability) []string {
-	out := make([]string, 0, len(caps))
-	for _, c := range caps {
-		out = append(out, string(c))
-	}
-	return out
-}
-
-// -- text rendering --
-
-func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport, scope cgdomain.RootScope) error {
-	if _, err := fmt.Fprintf(stdout, "%s@%s capabilities:\n", coord.Path(), coord.Version()); err != nil {
-		return fmt.Errorf("writing header: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "  %s\n", capabilityRootScopeLine(scope)); err != nil {
-		return fmt.Errorf("writing root scope: %w", err)
-	}
-	if r.Partial {
-		if _, err := fmt.Fprintf(stdout, "  ⚠ %s\n", r.Caveat); err != nil {
-			return fmt.Errorf("writing caveat: %w", err)
-		}
-	}
-	if len(r.Findings) == 0 {
-		if _, err := fmt.Fprintln(stdout, "  (no sensitive capabilities witnessed)"); err != nil {
-			return fmt.Errorf("writing empty result: %w", err)
-		}
-	}
-	for _, f := range r.Findings {
-		if err := printCapabilityFinding(stdout, f, "  "); err != nil {
-			return err
-		}
-	}
-	if len(r.Observations) == 0 {
-		return nil
-	}
-	if _, err := fmt.Fprintln(stdout,
-		"  not capabilities of this module — what the path establishes instead:"); err != nil {
-		return fmt.Errorf("writing observations header: %w", err)
-	}
-	for _, f := range r.Observations {
-		if err := printCapabilityFinding(stdout, f, "    "); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// printCapabilityFinding renders one finding; a basis other than use adds the
-// line saying what the path proved instead, so the label is never read alone.
-func printCapabilityFinding(stdout io.Writer, f capdomain.CapabilityFinding, indent string) error {
-	if _, err := fmt.Fprintf(stdout, "%s%-20s [%s]  via %s.%s\n",
-		indent, string(f.Capability), string(f.WeakestConfidence), f.SinkPackage, f.SinkSymbol); err != nil {
-		return fmt.Errorf("writing finding: %w", err)
-	}
-	if note := f.Basis.Explanation(); note != "" {
-		if _, err := fmt.Fprintf(stdout, "%s  %s\n", indent, note); err != nil {
-			return fmt.Errorf("writing basis: %w", err)
-		}
-	}
-	if _, err := fmt.Fprintf(stdout, "%s  path: %s\n", indent, strings.Join(f.Path, " → ")); err != nil {
-		return fmt.Errorf("writing path: %w", err)
-	}
-	return nil
-}
-
-func printCapabilityDiff(stdout io.Writer, from, to coordinate.ModuleCoordinate, diff capdomain.CapabilityDiff, scope cgdomain.RootScope) error {
-	if _, err := fmt.Fprintf(stdout, "capability diff %s@%s → %s@%s:\n",
-		from.Path(), from.Version(), to.Path(), to.Version()); err != nil {
-		return fmt.Errorf("writing header: %w", err)
-	}
-	if _, err := fmt.Fprintf(stdout, "  %s\n", capabilityRootScopeLine(scope)); err != nil {
-		return fmt.Errorf("writing root scope: %w", err)
-	}
-	if !diff.ParityOK {
-		if _, err := fmt.Fprintf(stdout, "  ⚠ %s\n", diff.Caveat); err != nil {
-			return fmt.Errorf("writing caveat: %w", err)
-		}
-	}
-	if len(diff.Added) == 0 && len(diff.Removed) == 0 {
-		// The set held in common is stated with the zero, because "no capability
-		// change" over two empty sets and over two identical non-empty sets are
-		// different findings that otherwise print the same line.
-		line := "  no capability change: neither version witnesses any capability"
-		if len(diff.Common) > 0 {
-			line = fmt.Sprintf("  no capability change: both versions witness the same %s (%s)",
-				countOf(len(diff.Common), "capabilities"), strings.Join(capsToStrings(diff.Common), ", "))
-		}
-		if _, err := fmt.Fprintln(stdout, line); err != nil {
-			return fmt.Errorf("writing no-change: %w", err)
-		}
-		return nil
-	}
-	for _, c := range diff.Added {
-		if _, err := fmt.Fprintf(stdout, "  + %s\n", string(c)); err != nil {
-			return fmt.Errorf("writing added: %w", err)
-		}
-	}
-	for _, c := range diff.Removed {
-		if _, err := fmt.Fprintf(stdout, "  - %s\n", string(c)); err != nil {
-			return fmt.Errorf("writing removed: %w", err)
-		}
-	}
-	return nil
 }

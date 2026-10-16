@@ -19,8 +19,9 @@ import (
 // path must be pre-resolved via os.Executable() at construction time so that the
 // subprocess always runs the same kanonarion binary as the parent.
 type OsCallGraphSpawner struct {
-	binary string
-	bounds childproc.Bounds
+	binary    string
+	bounds    childproc.Bounds
+	extraArgs []string
 }
 
 // NewOsCallGraphSpawner constructs an OsCallGraphSpawner using the already-resolved
@@ -51,6 +52,14 @@ func (s *OsCallGraphSpawner) WithMemoryCeiling(bytes uint64) *OsCallGraphSpawner
 	return s
 }
 
+// WithExtraArgs appends args to every child invocation. The child opens the
+// store from its own arguments, so without --store-root it writes to the default
+// store rather than the one this process scans.
+func (s *OsCallGraphSpawner) WithExtraArgs(args []string) *OsCallGraphSpawner {
+	s.extraArgs = append([]string(nil), args...)
+	return s
+}
+
 // Spawn runs `<binary> callgraph <module@version> [--force] [--from-walk <id>]`
 // as a child process bounded by the progress it reports and by a wall-clock
 // backstop. It captures stderr and returns it alongside any exec error. A kill,
@@ -72,6 +81,7 @@ func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleC
 	if walkID != "" {
 		args = append(args, "--from-walk", walkID)
 	}
+	args = append(args, s.extraArgs...)
 
 	// childproc, not exec directly: the child builds an SSA closure that can hold
 	// several GB, and must not survive an abnormal death of this process.

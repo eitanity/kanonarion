@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 )
@@ -139,7 +140,7 @@ func observeStalenessNarration(t *testing.T, storeRoot string, _ ...string) stri
 	// The call audit makes, minus the --no-progress flag no row types.
 	reporter := newStalenessProgressReporter(&stderr, false, cfg, "warn")
 	if reporter != nil {
-		reporter.RetryingLookup("example.com/mod", 2, 4)
+		reporter.RetryingLookup("example.com/mod", 2, 20*time.Second, 4*time.Minute)
 	}
 	return stderr.String()
 }

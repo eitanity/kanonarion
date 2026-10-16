@@ -56,8 +56,8 @@ func TestAnalyseReturnsReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	caps := report.Capabilities()
-	if len(caps) != 1 || caps[0] != capdomain.CapabilityNetwork {
-		t.Errorf("caps = %v, want [NETWORK]", caps)
+	if len(caps) != 1 || caps[0] != capdomain.CapabilityNetDial {
+		t.Errorf("caps = %v, want [NET_DIAL]", caps)
 	}
 }
 
@@ -92,8 +92,11 @@ func TestDiffTwoVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(diff.Added) != 1 || diff.Added[0] != capdomain.CapabilityExec {
-		t.Errorf("Added = %v, want [EXEC]", diff.Added)
+	if len(diff.Added) != 1 || diff.Added[0] != capdomain.CapabilityExecProcess {
+		t.Errorf("Added = %v, want [EXEC_PROCESS]", diff.Added)
+	}
+	if len(diff.RowsAdded) != 1 || diff.RowsAdded[0].Callee != "os/exec.Command" || len(diff.SensitiveAdded) != 1 {
+		t.Errorf("rows +%v sensitive +%v, want the os/exec.Command row and member", diff.RowsAdded, diff.SensitiveAdded)
 	}
 	if !diff.ParityOK {
 		t.Error("both Extracted → parity OK")

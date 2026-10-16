@@ -150,7 +150,7 @@ Kanonarion is designed to be called directly from agent tool-use. The recommende
 | "Is this advisory reachable from my code?" | `reachability <module@version> --vuln <id> --gomod ./go.mod` |
 | "What can this dependency actually do?"    | `capability <module@version>` |
 | "Can I use this commercially?"             | `license <module@version>` |
-| "Is my dependency closure licence-compatible?" | `license-compat <root-module@version> --target <SPDX>` (the coordinate a stored walk is rooted at; `@local` for your own project) |
+| "Is my dependency closure licence-compatible?" | `license-compat <root-module@version> --target-license <SPDX>` (the coordinate a stored walk is rooted at; `@local` for your own project) |
 | Generate a third-party attribution / NOTICE file | `notice --package ./cmd/<binary>` |
 | "What does function F call?"               | `callees '<fully.qualified.Symbol>'` |
 | "What calls function F?" / impact analysis | `callers '<fully.qualified.Symbol>'` |

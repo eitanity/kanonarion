@@ -48,6 +48,9 @@ func (a *Analyser) Analyse(
 	graphDerived := domain.ReachabilityDerivation{
 		Analyser: domain.AnalyserCallGraphBFS,
 		Fidelity: cg.Completeness,
+		// The graph generation, because a stored graph may be read by a scan long
+		// after it was built and its derivation is not this scan's.
+		GraphPipeline: cg.PipelineVersion,
 		// Empty unless the graph does not say what the module is, in which case
 		// the answer names the rooting it fell back to rather than presenting the
 		// narrow root set as a measured choice.

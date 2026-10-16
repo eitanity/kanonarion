@@ -207,7 +207,8 @@ func indexRowLess(a, b indexRow) bool {
 // already reported by every read path, and treating it as agreement here would
 // let the one check aimed at this defect class be the one that looks away. A
 // drifted generation is set aside exactly as the write's reconciliation sets it
-// aside, so the check composes the same set the index was written from.
+// aside, so the check composes the same set the index was written from, and it
+// resolves a toolchain conflict by the writer's rule, domain.ComposeForIndex.
 func (s *Store) composedFindingIDs(
 	ctx context.Context,
 	path, version, pipeline, snapSource, snapVersion string,
@@ -220,7 +221,7 @@ func (s *Store) composedFindingIDs(
 	if len(generations) == 0 {
 		return nil, reasonNoRecord
 	}
-	served, ok, cerr := domain.ComposeAt(generations, rooting)
+	served, ok, cerr := domain.ComposeForIndex(generations, rooting)
 	if cerr != nil || !ok {
 		return nil, reasonNoRecord
 	}

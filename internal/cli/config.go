@@ -697,9 +697,7 @@ func validateStalenessNode(key, value string, node *yaml.Node) error {
 			return &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl must be a duration (e.g. 1h, 30m, 0), got %q", value)}
 		}
 	case "staleness.probe_concurrency":
-		// Bounded, and the bound is a correctness setting rather than a speed
-		// one: past the default the proxy starts answering 200 with an empty
-		// body, which is a lost answer rather than an error. 0 is a serial probe.
+		// A whole number; 0 is a serial probe.
 		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
 			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
 				"staleness.probe_concurrency requires a whole number (0 for a serial probe), got %q", value)}

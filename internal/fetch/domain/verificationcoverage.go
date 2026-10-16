@@ -185,11 +185,12 @@ const (
 	VCSNever
 
 	// VCSUnavailable means the check was attempted and could not run: the host
-	// that measured had no git. It is a fault of that machine, not an absence of
-	// VCS anchor for the module, and counting it as either an establishment or a
-	// measured absence would report a property of the measuring host as a
-	// property of the graph. The remedy is to install git and re-run, which the
-	// ledger does without --force because such a record is not cache-eligible.
+	// that measured had no git, or the remote did not answer within the fetch
+	// bound. It is a fault of that machine or network, not an absence of VCS
+	// anchor for the module, and counting it as either an establishment or a
+	// measured absence would report it as a property of the graph. The remedy is
+	// to re-run (installing git if it was missing), which the ledger does without
+	// --force because such a record is not cache-eligible.
 	VCSUnavailable
 )
 

@@ -250,6 +250,10 @@ type ReachabilityDerivation struct {
 	// roots at the narrow consumer surface by default. Empty otherwise, so it
 	// carries a caveat and never restates what the answer already implies.
 	RootSelection string `json:"root_selection,omitzero"`
+	// GraphPipeline is the call-graph pipeline version of the graph a
+	// call-graph search ran over. Empty for every other analyser and on answers
+	// recorded before the field, which name no graph generation.
+	GraphPipeline string `json:"graph_pipeline,omitzero"`
 }
 
 // IsRecorded reports whether the derivation says anything at all.
@@ -264,6 +268,9 @@ func (d ReachabilityDerivation) String() string {
 	parts := []string{"by " + d.Analyser.String()}
 	if d.Fidelity != "" {
 		parts = append(parts, "fidelity "+d.Fidelity)
+	}
+	if d.GraphPipeline != "" {
+		parts = append(parts, "call-graph pipeline "+d.GraphPipeline)
 	}
 	if d.Rooting.IsRecorded() {
 		parts = append(parts, "rooted at "+d.Rooting.String())

@@ -116,6 +116,121 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Native record: pipeline `0.4.0` → `0.5.0`
+
+**Derivation change; no record shape change, no store migration.** `0.4.0`
+dropped a source file whose own name begins with `_` or `.` even when it was
+compiled through `#include`: a `main` package whose `a.c` does `#include
+"_ver.h"` builds and prints the value `_ver.h` defines, while `go list` reports
+`CFiles=[a.c]` and `HFiles=[]`. A `0.4.0` record could leave such a file out of
+the compiled native sources, and miss the component it declares. `0.5.0`
+restores the directory-only rule of `0.3.0`: only a directory element beginning
+with `_` or `.`, or a `testdata` element, puts a file out of scope.
+
+Records are keyed by generation (`<pipeline>+recipes.<n>`), so the bump is the
+migration: `0.4.0` rows stay and are never served for a `0.5.0` request. Cost is
+one re-measurement per coordinate on its next `native` run.
+
+## Fetch record: pipeline `0.4.0` → `0.5.0`
+
+**Derivation change; no record shape change, no store migration.** The checksum
+database records two hashes per module version: one for the zip and one for the
+`go.mod`. A `0.4.0` build never read the `go.mod` hash, so:
+
+- every go.mod-only record read `UnverifiedNoSumDB`, "checksum database
+  returned no go.mod hash", or `VerifiedByGoSum` where a project `go.sum`
+  confirmed the `go.mod`. A `0.5.0` record compares the `go.mod` with the
+  database: `VerifiedBySumDBOnly` on a match, `UnverifiedHashMismatch` naming
+  both hashes on a mismatch;
+- a full record never compared its `go.mod` with the database. A `0.5.0` full
+  record does, and a mismatch records `UnverifiedHashMismatch`.
+
+Fetch records are append-only, so `0.4.0` rows stay as written. A fetch at
+`0.5.0` does not serve a `0.4.0` row from cache: the next full fetch of a
+coordinate (`fetch`, `walk --force`) appends a `0.5.0` record, and reads serve
+it. The steps that fetch a `go.mod` alone (`vuln-scan`'s module-graph
+preparation, the call-graph module cache) skip a coordinate held as a full
+record at any version, or as a `0.5.0` go.mod-only record. A coordinate held only
+as a `0.4.0` go.mod-only record is fetched again: the next scan that needs its
+`go.mod` downloads it from the proxy, verifies it and appends a `0.5.0` record,
+which reads then serve. A walk or scan that is itself reused fetches nothing.
+Cost is one proxy `go.mod` request per such coordinate, once; the checksum
+database answers from its local cache when it already holds the lookup.
+
+## Vulnerability record: pipeline `v25` → `v26`
+
+**Derivation change; one additive field, hash-transparent when unset; no store
+migration.** Three changes to how a record is derived:
+
+- **A metadata-only record takes the reachability step.** Under
+  `vuln-scan --reachability`, a finding on an `Unscannable` record whose
+  advisory names symbols is searched over the module's call graph, extracted on
+  demand as for an analysed record. Coverage stays `Unscannable`. At `v25` such a
+  finding was always `not_analysed`.
+- **`reachable.derived_by.graph_pipeline`** names the call-graph pipeline of the
+  graph a `callgraph-bfs` answer was read from. It is `omitzero`, so a record
+  without it hashes as before.
+- **The isolated scan reads what `./...` reads.** The go.mod synthesised for a
+  module zip with none takes its requires only from packages `./...` matches:
+  not from `_`/`.`-prefixed or `testdata` directories, `vendor/`, nested
+  modules, or `_`/`.`-prefixed files. `github.com/klauspost/cpuid@v1.2.3` no
+  longer requires `golang.org/x/net` for its `testdata/getall.go`, nor
+  `github.com/shirou/gopsutil@v3.21.11+incompatible` `golang.org/x/tools` for
+  its `_tools/`. The binary-mode package pick skips the same directories, a
+  go.mod below the module root no longer counts as the module's own, and the
+  synthesised go.mod is written at the zip's `path@version` directory.
+
+Records are keyed by `(module, version, pipeline_version, snapshot, frame)`, so
+the bump is the migration: `v25` rows stay, are not served for a `v26` question,
+and remain readable in the ledger. Cost is one re-scan per coordinate.
+
+## Native record: pipeline `0.3.0` → `0.4.0`
+
+**Derivation change; no record shape change, no store migration.** Superseded
+by `0.5.0`. A source
+file whose own name begins with `_` or `.` is out of scope even in a directory
+the go tool builds, as the go tool ignores it: beside `_helper.c`, `go list`
+names only the other `.c` file, and linking fails with `undefined reference to
+helper`. A `0.3.0` record could count such a file as compiled native source.
+
+Records are keyed by generation (`<pipeline>+recipes.<n>`), so the bump is the
+migration: `0.3.0` rows stay and are never served for a `0.4.0` request. Cost is
+one re-measurement per coordinate on its next `native` run.
+
+## Call graph record: pipeline `0.9.0` → `0.10.0`
+
+**Derivation change; no record shape change, no schema bump, no store
+migration.** Two changes to how a record is derived:
+
+- **A `replace` of the module's own nested module onto an absent directory is
+  dropped**, and named in `dropped_replaces` as an out-of-tree drop is.
+  `go.opentelemetry.io/otel@v1.44.0` and later replace `…/otel/metric =>
+  ./metric` and `…/otel/trace => ./trace`; the zip format leaves both out, so a
+  `0.9.0` record of `otel@v1.45.0` is `LoadFailed` with no nodes. At `0.10.0` it
+  is `Extracted` with 50,798 nodes and 207,289 edges.
+- **A failed load leads with the go command's error on a dependency.** A
+  `replace example.com/other => ./other` with `./other` absent read only as
+  `could not import example.com/other (invalid package name: "")`; it now leads
+  with `replacement directory ./other does not exist`.
+
+Records are keyed `(module, version, pipeline_version)`, so the bump is the
+migration: `0.9.0` rows stay, become unreachable, and are never served for a
+`0.10.0` request. Cost is one re-extraction per coordinate on its next
+`callgraph` run; run `kanonarion local .` in each ingested tree whose answers you
+rely on.
+
+## Interface record: pipeline `0.6.0` → `0.7.0`
+
+**Derivation change; no record shape change, no store migration.** Extraction
+skips every file and directory whose name begins with `_` or `.`, at any depth,
+as the go tool does. A `0.6.0` record of `github.com/go-chi/chi/v5@v5.0.7` holds
+16 packages, 14 of them under `_examples/`; at `0.7.0` it holds the 2 that
+`go list ./...` names, and `symbol-find` and `interface-diff` no longer answer
+from example code. A directory holding only `_`- or `.`-named Go files is no
+longer recorded as a package.
+
+Migration: **none.** Reads key on the pipeline version.
+
 ## Call graph record: pipeline `0.8.0` → `0.9.0`
 
 **Record shape change; no schema bump, no store migration.** A call-graph

@@ -40,8 +40,8 @@ never silently dropped.
 
 Each directive is evaluated against the `directive_policy` governance block
 (config schema v2). The default policy flags **local-path replace**
-(`warn`). When any directive resolves to `warn`, the command exits **20**
-(`ExitConfig`) - suitable as a CI gate. Per-org overrides/waivers are
+(`warn`). When any directive resolves to `warn`, the command exits **5**
+(`ExitPolicy`) - suitable as a CI gate. Per-org overrides/waivers are
 Enterprise.
 
 ## Output

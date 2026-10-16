@@ -423,7 +423,7 @@ func TestCheckCompatibilityForWalk_EmptyTargetWithoutRootRecordErrs(t *testing.T
 
 // A proprietary root resolves to a record with no SPDX identity. That record
 // is valid, but it cannot serve as an implicit SPDX target: the caller must
-// pass --target explicitly.
+// pass --target-license explicitly.
 func TestCheckCompatibilityForWalk_EmptyTargetWithUnclassifiedRootErrs(t *testing.T) {
 	t.Parallel()
 	root := makeCoord("example.com/project", coordinate.LocalVersion)

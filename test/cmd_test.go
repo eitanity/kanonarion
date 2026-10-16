@@ -691,7 +691,8 @@ func cmdSeedVuln(args []string) {
 		PipelineVersion: vulnapp.PipelineVersion,
 		ContentHash:     "sha256:vulnrec",
 	}
-	if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(vulnRec)); err != nil {
+	vulnRec = sealVulnRecord(vulnRec) // the run below names the stored hash
+	if err := store.PutVulnerabilityRecord(ctx, vulnRec); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -784,8 +785,10 @@ func cmdSeedVulnPartial(args []string) {
 		ScannedAt:         scannedAt, PipelineVersion: vulnapp.PipelineVersion, ContentHash: "sha256:unscan",
 	}
 
+	// Sealed first, so the run below names the hashes the store holds.
+	cleanRec, failedRec, unscanRec = sealVulnRecord(cleanRec), sealVulnRecord(failedRec), sealVulnRecord(unscanRec)
 	for _, rec := range []vuldomain.VulnerabilityRecord{cleanRec, failedRec, unscanRec} {
-		if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(rec)); err != nil {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
 			_ = db.Close()
 			os.Exit(1)
 		}
@@ -866,7 +869,10 @@ func cmdSeedVulnForWalk(args []string) {
 		PipelineVersion: vulnapp.PipelineVersion,
 		ContentHash:     "sha256:vulnrec-app",
 	}
-	if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(vulnRec)); err != nil {
+	// The run names the sealed record's hash, as a scan does: a walk reaches
+	// the generation its run named.
+	vulnRec = sealVulnRecord(vulnRec)
+	if err := store.PutVulnerabilityRecord(ctx, vulnRec); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}

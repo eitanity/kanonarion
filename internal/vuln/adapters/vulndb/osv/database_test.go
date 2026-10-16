@@ -311,9 +311,6 @@ func (f *fakeVulnStore) ListVulnerabilityRecordGenerationsForModule(_ context.Co
 func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ domain.VulnerabilityRecord) error {
 	return nil
 }
-func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
-	return domain.VulnerabilityRecord{}, false, nil
-}
 func (f *fakeVulnStore) PutWalkScanRun(_ context.Context, _ domain.WalkScanRun) error { return nil }
 func (f *fakeVulnStore) GetWalkScanRun(_ context.Context, _ string) (domain.WalkScanRun, bool, error) {
 	return domain.WalkScanRun{}, false, nil
@@ -341,9 +338,6 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _
 }
 func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]domain.VulnerabilityRecord, error) {
 	return nil, nil
-}
-func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (domain.VulnerabilityRecord, bool, error) {
-	return domain.VulnerabilityRecord{}, false, nil
 }
 func (f *fakeVulnStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) ([]domain.VulnerabilityRecord, error) {
 	return nil, nil

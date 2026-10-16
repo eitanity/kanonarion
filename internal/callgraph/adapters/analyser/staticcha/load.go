@@ -170,6 +170,10 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	// would change what a complete extraction reports. This is a separate reading
 	// of the same load, consulted only where a cause is being decided.
 	res.UnobtainableImports = unobtainableImports(loaded)
+	// The go command's other sentences about a dependency land there too, for
+	// the same reason: "replacement directory ./x does not exist" is on x, and
+	// the target package gets only "could not import x".
+	res.DependencyErrors = dependencyListErrors(loaded)
 
 	// Pass 2: register the transitive dependencies that are not targets. They
 	// carry no syntax, so their method bodies are absent by design; the
@@ -336,6 +340,10 @@ type ssaBuildResult struct {
 	// module whose sources do not compile from a host that could not assemble the
 	// build — see unobtainableImports.
 	UnobtainableImports []string
+	// DependencyErrors are the go command's own errors on packages other than
+	// the load's roots, sorted and deduplicated, cache misses excluded — see
+	// dependencyListErrors.
+	DependencyErrors []string
 	// SourceFiles are the absolute paths the LOADER resolved for the packages it
 	// returned: compiled Go files, the Go files as written, and the non-Go source
 	// (assembly, cgo) that goes into the same packages. They are what the worktree
@@ -377,6 +385,39 @@ func unobtainableImports(pkgs []*packages.Package) []string {
 			seen[p.PkgPath] = true
 			out = append(out, p.PkgPath)
 			return
+		}
+	})
+	sort.Strings(out)
+	return out
+}
+
+// dependencyListErrors lists the go command's errors on every package of the
+// loaded graph that is not one of its roots, on one line each, sorted and
+// deduplicated. An offline cache miss and a missing go.sum entry are left out:
+// each has its own reading in the classification.
+func dependencyListErrors(roots []*packages.Package) []string {
+	isRoot := make(map[*packages.Package]bool, len(roots))
+	for _, p := range roots {
+		isRoot[p] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	packages.Visit(roots, nil, func(p *packages.Package) {
+		if isRoot[p] {
+			return
+		}
+		for _, e := range p.Errors {
+			// An error with no position renders as "-: …"; the dash says nothing.
+			msg := e.Msg
+			if e.Pos != "" && e.Pos != "-" {
+				msg = e.Pos + ": " + e.Msg
+			}
+			msg = strings.Join(strings.Fields(msg), " ")
+			if e.Kind != packages.ListError || isOfflineCacheMiss(msg) || domain.IsMissingChecksumEntry(msg) || seen[msg] {
+				continue
+			}
+			seen[msg] = true
+			out = append(out, msg)
 		}
 	})
 	sort.Strings(out)

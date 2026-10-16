@@ -232,6 +232,9 @@ func walkDiffMiss(ctx context.Context, walks QueryWalksUseCase, idA, idB string,
 	if serr != nil {
 		return serr
 	}
+	if len(missing) > 1 {
+		scope.filterValues = missing
+	}
 	// Which operand slot the missing id came from, so a caller reading the
 	// message does not have to compare strings to find out which of the two they
 	// have to correct.

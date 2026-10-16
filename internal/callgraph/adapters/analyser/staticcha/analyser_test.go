@@ -554,8 +554,8 @@ import (
 	"unsafe"
 )
 
-// nanotime has no Go body — it is provided via //go:linkname, so it is an
-// ARBITRARY_EXECUTION leaf.
+// nanotime has no Go body — it is provided via //go:linkname, so capability
+// analysis lists it as an unanalysed body.
 //
 //go:linkname nanotime runtime.nanotime
 func nanotime() int64

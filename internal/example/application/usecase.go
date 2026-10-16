@@ -348,19 +348,36 @@ func (uc *ExtractExampleUseCase) goDirectiveFor(ctx context.Context, r domain2.E
 		return ""
 	}
 	id, ok, err := fetchports.GoModIdentity(fact)
-	if err != nil || !ok {
+	if err != nil {
+		return uc.goModUnreadable(ctx, fact, "deriving the go.mod address", err)
+	}
+	if !ok {
 		return ""
 	}
 	rc, err := uc.blobs.Get(ctx, id)
 	if err != nil {
-		return ""
+		return uc.goModUnreadable(ctx, fact, "opening the go.mod blob", err)
 	}
 	defer func() { _ = rc.Close() }() //nolint:errcheck // read-only blob
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return ""
+		return uc.goModUnreadable(ctx, fact, "reading the go.mod blob", err)
 	}
 	return gotoolchain.GoDirective(data)
+}
+
+// goModUnreadable logs why a recorded go.mod could not be produced, so the
+// "no directive" answer it returns never reads as a go.mod that was never
+// recorded. A cancelled run is not logged: the run reports its own stop.
+func (uc *ExtractExampleUseCase) goModUnreadable(ctx context.Context, fact domain.FactRecord, step string, err error) string {
+	if !interrupt.Cancelled(ctx, err) {
+		uc.logger.WarnContext(ctx, "examples: the module's stored go.mod could not be read, treating it as having no go directive",
+			slog.String("coordinate", fact.Coordinate().String()),
+			slog.String("step", step),
+			slog.String("error", err.Error()),
+		)
+	}
+	return ""
 }
 
 // requireFetchRecord asks the ledger what it has measured about coord and

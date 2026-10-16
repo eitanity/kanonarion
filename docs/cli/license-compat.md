@@ -4,9 +4,17 @@ Reports licence conflicts in a module's dependency closure against a
 target SPDX expression. Backed by the obligations catalogue and the
 effective licence set described below.
 
+```
+kanonarion license-compat <module>@<version> [--target-license <SPDX id>] [--walk-id <id>] [--json]
+```
+
+`--target-license` names the licence you distribute under, for example
+`Apache-2.0`. `--target` is its deprecated spelling: it still works, warns on
+stderr, and is refused when given together with `--target-license`.
+
 ## Implicit target (analysed root licence)
 
-`--target` may be omitted: the root's own analysed licence record then becomes
+`--target-license` may be omitted: the root's own analysed licence record then becomes
 the target, so the closure is checked against the project's ACTUAL declared
 licence with nothing hand-typed.
 
@@ -23,7 +31,7 @@ of data is never presented as an answer):
 | Condition | Outcome |
 |-----------|---------|
 | No licence record for the root | Exit 4 (not found) with a diagnostic naming the command that produces it (`walk --gomod ./go.mod --analyse-root` + `extract` for a local root, `walk --gomod <path> --analyse-local` + `extract` for a module the build replaces with a local path, `license <mod@ver>` otherwise) |
-| Record exists but no SPDX identity (proprietary / `Unclassified` root) | Exit 2: the record is a valid outcome but cannot serve as an implicit SPDX target - pass `--target` explicitly |
+| Record exists but no SPDX identity (proprietary / `Unclassified` root) | Exit 2: the record is a valid outcome but cannot serve as an implicit SPDX target - pass `--target-license` explicitly |
 
 ## The answering walk
 
@@ -47,7 +55,7 @@ walk of one tree carry different module sets and therefore different positions
 — and the way to re-read an older answer without re-walking.
 
 A walk id the store does not hold, or one rooted at a different project, is
-refused with exit 20 and the refusal names `walk-list --target <coord>`. The
+refused with exit 20 and the refusal names `walk-list --module <coord>`. The
 positional slot takes a coordinate, so a walk id typed there is refused with the
 `--walk-id` invocation spelled out.
 
@@ -346,7 +354,7 @@ Dataset coverage — 1 licence identifier in this closure is not modelled (data 
   Go code. These still require review and still exit `2`.
 - **not yet researched** — a gap. Nobody has ruled on the identifier.
 
-`target_modelled` reports the same question about the `--target` itself. When it
+`target_modelled` reports the same question about the `--target-license` itself. When it
 is `false` every row in the report follows from that one fact rather than from
 the dependencies' own licences, and the text output says so before the rows.
 
@@ -364,7 +372,7 @@ closing brace. It is omitted entirely when no module in the closure resolved
 that way, so its presence is the signal:
 
 ```
-$ kanonarion license-compat github.com/henomis/phero@v1.0.1 --target Apache-2.0 --json \
+$ kanonarion license-compat github.com/henomis/phero@v1.0.1 --target-license Apache-2.0 --json \
     | jq '.pre_modules_caveat.coordinates'
 [
   "github.com/docker/docker@v28.5.2+incompatible",

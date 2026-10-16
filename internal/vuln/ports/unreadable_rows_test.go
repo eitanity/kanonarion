@@ -31,18 +31,18 @@ func TestUnreadableRow_NamesTheKindAndTheRow(t *testing.T) {
 			row: ports.UnreadableRow{
 				Kind:       ports.RowKindRecord,
 				ID:         "example.com/mod@v1.0.0",
-				Generation: ports.RowGeneration{PipelineVersion: "v25", SnapshotSource: "govulndb", SnapshotVersion: "v2026-01-01"},
+				Generation: ports.RowGeneration{PipelineVersion: "v26", SnapshotSource: "govulndb", SnapshotVersion: "v2026-01-01"},
 				Reason:     reason,
 			},
-			want: "record example.com/mod@v1.0.0 (pipeline v25, vuln-db v2026-01-01): content hash mismatch",
+			want: "record example.com/mod@v1.0.0 (pipeline v26, vuln-db v2026-01-01): content hash mismatch",
 		},
 		"bytes that named a generation but no module": {
 			row: ports.UnreadableRow{
 				Kind:       ports.RowKindRecord,
-				Generation: ports.RowGeneration{PipelineVersion: "v25"},
+				Generation: ports.RowGeneration{PipelineVersion: "v26"},
 				Reason:     reason,
 			},
-			want: "unidentified record (pipeline v25): content hash mismatch",
+			want: "unidentified record (pipeline v26): content hash mismatch",
 		},
 		"bytes that will not introduce themselves": {
 			row:  ports.UnreadableRow{Kind: ports.RowKindRecord, Reason: reason},
@@ -91,14 +91,14 @@ func TestRowGeneration_RendersOnlyWhatItHolds(t *testing.T) {
 		want string
 	}{
 		"nothing":       {gen: ports.RowGeneration{}, want: ""},
-		"pipeline only": {gen: ports.RowGeneration{PipelineVersion: "v25"}, want: "(pipeline v25)"},
+		"pipeline only": {gen: ports.RowGeneration{PipelineVersion: "v26"}, want: "(pipeline v26)"},
 		"snapshot only": {gen: ports.RowGeneration{SnapshotVersion: "v2026-01-01"}, want: "(vuln-db v2026-01-01)"},
 		"a source with no version is not an identity": {
 			gen: ports.RowGeneration{SnapshotSource: "govulndb"}, want: "",
 		},
 		"both": {
-			gen:  ports.RowGeneration{PipelineVersion: "v25", SnapshotVersion: "v2026-01-01"},
-			want: "(pipeline v25, vuln-db v2026-01-01)",
+			gen:  ports.RowGeneration{PipelineVersion: "v26", SnapshotVersion: "v2026-01-01"},
+			want: "(pipeline v26, vuln-db v2026-01-01)",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

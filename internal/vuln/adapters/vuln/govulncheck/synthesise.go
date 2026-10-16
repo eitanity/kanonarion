@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -63,9 +65,13 @@ func toolchainGoVersion(ctx context.Context, dir string, env []string) string {
 // source file whose imports could not be read, so the caller can report a
 // require set that was assembled from less than the whole module.
 func writeSynthesisedGoMod(extractRoot string, coord coordinate.ModuleCoordinate, goVersion string, buildList map[coordinate.ModuleCoordinate]struct{}) (root string, skipped []string, err error) {
-	root, err = moduleRoot(extractRoot)
-	if err != nil {
-		return "", nil, err
+	// The zip's own prefix names the module root; the source heuristic is only
+	// for a layout without one, and descends past a root holding one directory.
+	root, ok := zipModuleDir(extractRoot)
+	if !ok {
+		if root, err = moduleRoot(extractRoot); err != nil {
+			return "", nil, err
+		}
 	}
 	target := filepath.Join(root, "go.mod")
 	if _, statErr := os.Stat(target); statErr == nil {
@@ -119,6 +125,8 @@ func moduleRoot(extractRoot string) (string, error) {
 // collectImports returns every package path the module's own source imports,
 // deduplicated. It is the input to the require set of a synthesised go.mod.
 //
+// It reads what "./..." matches and nothing else; see outsidePackagePattern.
+//
 // Test files are skipped: govulncheck's source scan does not load them by
 // default, so their imports would add requirements the analysed build never
 // needs — a test-only helper absent from the project's build list would
@@ -136,15 +144,18 @@ func moduleRoot(extractRoot string) (string, error) {
 func collectImports(root string) (imports, skipped []string) {
 	seen := make(map[string]struct{})
 	fset := token.NewFileSet()
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error { //nolint:errcheck // the callback returns only nil; failures go to skipped
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck // the callback returns only nil or SkipDir; failures go to skipped
 		if err != nil {
 			skipped = append(skipped, path)
 			return nil //nolint:nilerr // recorded in skipped and reported by the caller; an unreadable entry must not fail the scan
 		}
-		if info.IsDir() {
+		if d.IsDir() {
+			if outsidePackagePattern(root, path, d) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || gotoolchain.IgnoredName(d.Name()) {
 			return nil
 		}
 		f, perr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
@@ -168,6 +179,21 @@ func collectImports(root string) (imports, skipped []string) {
 	sort.Strings(out)
 	sort.Strings(skipped)
 	return out, skipped
+}
+
+// outsidePackagePattern reports whether "./..." run at root leaves the directory
+// out: a name the go tool ignores, vendor/, or a nested module. Code there is not
+// built, so its imports must not become requires and its packages must not be
+// the one a scan builds. root itself is always inside.
+func outsidePackagePattern(root, path string, d fs.DirEntry) bool {
+	if path == root {
+		return false
+	}
+	if name := d.Name(); name == "vendor" || gotoolchain.IgnoredDir(name) {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(path, "go.mod"))
+	return err == nil
 }
 
 // importPathsFromFile returns the non-stdlib import paths declared in f, and

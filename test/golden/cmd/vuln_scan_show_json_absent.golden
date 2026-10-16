@@ -6,4 +6,4 @@ execute root command: no scan run matched run id "01JSCANRUN0ABSENT00000001" —
 --- stdout ---
 (empty)
 --- stderr ---
-{"subject":"scan run","filter":{"name":"run id","value":"01JSCANRUN0ABSENT00000001","compared_against":"run id","match":"for exact equality"},"records_considered":2,"store_empty":false,"paged_past":false,"remedy":["kanonarion vuln-scan-list --limit 0"]}
+{"subject":"scan run","filter":{"name":"run id","value":"01JSCANRUN0ABSENT00000001","compared_against":"run id","match":"for exact equality"},"records_considered":2,"store_empty":false,"paged_past":false,"superseded":null,"superseded_generations":null,"remedy":["kanonarion vuln-scan-list --limit 0"]}

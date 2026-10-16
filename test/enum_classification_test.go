@@ -93,7 +93,7 @@ func TestCallGraphStatusCapabilityClassification(t *testing.T) {
 	named := make([]string, 0, len(cases))
 	for _, tc := range cases {
 		named = append(named, tc.name)
-		report := capdomain.Analyse(cgdomain.CallGraphRecord{OverallStatus: tc.value}, nil)
+		report := capdomain.Analyse(cgdomain.CallGraphRecord{OverallStatus: tc.value}, nil, cgdomain.RootScopeProduction)
 		got := complete
 		switch {
 		case !report.Partial:

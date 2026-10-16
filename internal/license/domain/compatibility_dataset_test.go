@@ -238,6 +238,30 @@ func TestIsUnbuiltPath(t *testing.T) {
 	}
 }
 
+// TestIsUnbuiltPath_PinnedRule pins the rule as shipped: licence derivation
+// does not change without a licence pipeline bump.
+func TestIsUnbuiltPath_PinnedRule(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"_", false},
+		{".", false},
+		{"a/_/b", false},
+		{"_x", true},
+		{".x", true},
+		{"testdata", true},
+		{"a/testdata/b", true},
+		{"vendor", false},
+		{"pkg", false},
+	} {
+		if got := domain.IsUnbuiltPath(tc.path); got != tc.want {
+			t.Errorf("IsUnbuiltPath(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 // TestLicenceOrigin_String pins the wire names: they are read by JSON
 // consumers, so a rename is a breaking change and must show up in a diff here.
 func TestLicenceOrigin_String(t *testing.T) {

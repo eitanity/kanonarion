@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -125,6 +126,10 @@ type implementersResult struct {
 	// SetAside names the stored call graph generations the reads behind this
 	// document left out because this build cannot reproduce them.
 	SetAside []setAsideJSON `json:"set_aside,omitempty"`
+	// NotSearched names the coordinates of the searched module whose graphs are
+	// only at a superseded pipeline, and under a build scope every module
+	// version in it with no served graph.
+	NotSearched []notSearchedJSON `json:"not_searched,omitempty"`
 }
 
 // runImplementers answers an implementers query and renders it with the same
@@ -151,6 +156,14 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 		return fmt.Errorf(
 			"interface %q declares no method %q; its methods are %s",
 			interfaceID, method, strings.Join(found.iface.Methods, ", "))
+	}
+
+	notSearched, err := uc.UnservedCoordinates(ctx, found.supersededCoords, cgapp.PipelineVersion)
+	if err != nil {
+		return fmt.Errorf("naming the call graphs this answer could not read: %w", err)
+	}
+	if err := reportNotSearched(ctx, uc, sc, notSearched); err != nil {
+		return err
 	}
 
 	impls := found.implementations
@@ -209,6 +222,9 @@ type implementerLookup struct {
 	testScopeDetail  string
 	partialPkg       string
 	partialDetail    string
+	// supersededCoords are the module's coordinates held only at a superseded
+	// pipeline: each would have been searched had it been re-derived.
+	supersededCoords []coordinate.ModuleCoordinate
 }
 
 func (l implementerLookup) hasMethod(method string) bool {
@@ -290,6 +306,9 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 	out.modulePath = modulePath
 	out.moduleAnalysed = true
 	out.analysedVersions = analysedVersionsOf(modulePath, coords)
+	if out.supersededCoords, err = supersededCoordinatesOf(modulePath, stored, coords); err != nil {
+		return out, err
+	}
 
 	seen := make(map[string]struct{})
 	for _, s := range coords {
@@ -439,6 +458,7 @@ func writeImplementersJSON(stdout io.Writer, interfaceID, method string, perMeth
 		res.Method = method
 	}
 	res.SetAside = storeSetAside.take().json()
+	res.NotSearched = storeNotSearched.take().json()
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(res); err != nil {

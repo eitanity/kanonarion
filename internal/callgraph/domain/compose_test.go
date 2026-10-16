@@ -1296,6 +1296,36 @@ func TestCompose_TheTreeTheCallerStandsInAnswers(t *testing.T) {
 	}
 }
 
+// TestCompose_AZipLookalikeStaysOutOfTheCallersTree: the reader's own tree
+// answers, and a zip record appended after it stays out of that group even when
+// it carries the tree record's content hash.
+func TestCompose_AZipLookalikeStaysOutOfTheCallersTree(t *testing.T) {
+	t.Parallel()
+	tree := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion,
+		source:  domain.AnalysisSourceWorktree, worktree: "analysed-sha256:t",
+		root:         "/src/mod",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "FromTree",
+	})
+	zip := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion,
+		source:  domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "FromZip",
+	})
+	zip.ContentHash = tree.ContentHash
+	if zip.ContentHash == "" || zip.ContentHash != tree.ContentHash {
+		t.Fatal("premise: the zip record must carry the tree record's content hash")
+	}
+
+	got, err := domain.Compose([]domain.CallGraphRecord{tree, zip}, domain.ComposeRequest{CallerRoot: "/src/mod"})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if got.AnalysisSource != domain.AnalysisSourceWorktree {
+		t.Fatalf("a reader standing in /src/mod was served the %s record", got.AnalysisSource)
+	}
+}
+
 // TestSameMeasurement_IgnoresOnlyTheClock. A re-analysis that came back saying
 // exactly what the ledger already says has added no fact, and appending it grows
 // the ledger without making any answer better. What it must not absorb is a

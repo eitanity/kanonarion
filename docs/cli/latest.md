@@ -80,9 +80,9 @@ Each is a separate field:
 The probe walks upward from one major above the **pinned version's** major -
 not the path suffix, since a `+incompatible` pin carries its major in the
 version - and stops at the first major that does not resolve. `major_probed`
-distinguishes "probed, nothing newer" from "not probed" (offline, or a failed
-request); the text says `newer major: not probed` there, because an unasked
-question is never rendered as a clean answer.
+distinguishes "probed, nothing newer" from "not probed" (offline, or a request
+the proxy did not answer within 4 minutes); the text says `newer major: not
+probed` there, because an unasked question is never rendered as a clean answer.
 
 A `+incompatible` pin is asked one extra question first: whether its **own**
 major is now published at the suffixed path -
@@ -158,9 +158,21 @@ With `--gomod`, the latest version of every module in the scope comes from
 where the deprecation notice comes from. The newer-major probe stays
 kanonarion's own — `go list -m -u` does not cross a major boundary — and is the
 remaining per-module request; it runs in bounded parallel rounds
-(`staleness.probe_concurrency`, default 16). That bound is a correctness
-setting: past it the proxy answers `200` with an empty body, a lost answer
-rather than an error.
+(`staleness.probe_concurrency`, default 16).
+
+For a path it has not looked up before - often an absent major in a large
+multi-module repository - the proxy can hold the request for about a minute and
+then answer `200` with an empty body, or time out. It keeps working on that
+lookup after the request ends, so a later ask gets the real answer. A round
+asks each path once and does not wait on such a path; after the round, the
+paths still unanswered are asked again together, every 20 seconds, for up to 4
+minutes from their first ask. stderr says so once per round that needs it:
+
+```text
+staleness progress: waiting on 19 module path(s) the proxy has not finished (re-asking every 20s, up to 4m0s)
+```
+
+A run where every path answers first time does not wait at all.
 
 A positional `latest <module>` resolves one path at a time and cannot see a
 notice. Where the ledger already recorded one, that recorded answer is **carried
@@ -199,9 +211,17 @@ about longest ago.
 A **failed** lookup is never written - failures are not cacheable facts. An
 absent major path is not a failure: it is a definitive answer, it bounds the
 probe, and it is recorded. An answer that settles nothing - an empty body, a
-timeout, a 429 or a 5xx - is asked again: four attempts, ten seconds each,
-over about fourteen seconds of backoff, so a sweep can pause on a module the
-proxy is slow for. A definitive answer is never retried.
+timeout, a 429 or a 5xx - is asked again every 20 seconds for up to 4 minutes
+from the first ask, so a run can pause on a module the proxy is slow for. A
+positional `latest <module>` waits the same way, one path at a time, with one
+stderr line per retry. A definitive answer, including the 404 that says a major
+does not exist, is asked once and never retried. A row still `newer major: not
+probed` (`major_probed: false`) after that wait is one the proxy did not answer
+in 4 minutes; `staleness.latest.retries_exhausted` on stderr names it with the
+window and the time spent. `--no-progress` or `preferences.progress: false`
+silences the progress lines. At `--log-level info` or `debug` they are omitted:
+the log carries each settle pass (`staleness.latest.settling`,
+`staleness.latest.settled`) at info and each retry at debug.
 
 `staleness.ttl` is a config key (default `1h`; `0` disables serving). `--fresh`
 bypasses the ledger for a single run and still records what it resolved.
@@ -228,9 +248,10 @@ need the `--json` output for a structured pipeline.
 | `--gomod` | `./go.mod` | Path to `go.mod`; report latest vs pinned for the project's code dependencies |
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project` |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
-| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy, honoured not rewritten. Under `off`, a lookup younger than `staleness.ttl` is served and nothing is written; without one, exit `20`. `direct` refuses; `--fresh` under `off` refuses too, naming itself as what to drop. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
+| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy. `off` declares the same air gap as `GOPROXY=off`: a lookup younger than `staleness.ttl` is served and nothing is written; without one, exit `20`. `direct` refuses; `--fresh` under `off` refuses too, naming itself as what to drop. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--exclude-tests` | false | With `--gomod`: resolve the `code` scope without test imports, and state the narrowing. On `--tool` it is accepted and changes nothing - the scope already excludes them - and the answer says so. Refused against `--project` (its build list carries no test partition) and against a positional module. See [Test scope](walk.md#test-scope---exclude-tests) |
 | `--fresh` | false | Re-query the proxy instead of serving recorded lookups from the store |
+| `--no-progress` | `false` | Suppress the stderr lines that say a probe is being asked again; results and warnings are unaffected |
 | `--json` | false | Emit output as JSON (global flag). Always one object with the per-module rows in `modules`, whatever the form and the result count. See [JSON output](#json-output) |
 
 ## Text output

@@ -374,32 +374,17 @@ type VulnerabilityStore interface {
 	// do not hash to their own seal aborts the write.
 	PutVulnerabilityRecord(ctx context.Context, record domain.VulnerabilityRecord) error
 
-	// GetVulnerabilityRecord returns the composed record for a coordinate,
-	// pipeline version and snapshot, across every analysis frame the ledger holds.
-	// It is the read for a caller that has declined to name a frame; see
-	// domain.Compose for the ladder it serves on.
+	// GetVulnerabilityRecordAt returns the composed record within one analysis
+	// frame, and (zero, false, nil) when the ledger holds none reached in it.
+	//
+	// An isolated scan and a target-rooted scan answer different questions, so
+	// serving one for the other attributes a reachability finding to a build it
+	// was never computed against; every point read names its frame.
 	//
 	// It composes over the generations this build can reproduce and returns a
 	// *recordseal.SetAside beside the answer naming the rest. A group whose every
 	// generation was set aside answers found=false with that error: no record
 	// this build can serve.
-	GetVulnerabilityRecord(
-		ctx context.Context,
-		coord coordinate.ModuleCoordinate,
-		pipelineVersion string,
-		snapshot domain.DatabaseSnapshot,
-	) (domain.VulnerabilityRecord, bool, error)
-
-	// GetVulnerabilityRecordAt returns the composed record within one analysis
-	// frame, and (zero, false, nil) when the ledger holds none reached in it.
-	//
-	// A caller that has a frame — a scan deciding whether an earlier record may
-	// be reused, a run reading back what it wrote — MUST use this rather than
-	// GetVulnerabilityRecord. An isolated scan and a target-rooted scan answer
-	// different questions, so serving one for the other attributes a reachability
-	// finding to a build it was never computed against.
-	//
-	// Set-aside generations on GetVulnerabilityRecord's terms.
 	GetVulnerabilityRecordAt(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -419,16 +404,6 @@ type VulnerabilityStore interface {
 		snapshot domain.DatabaseSnapshot,
 		contentHash string,
 	) (bool, error)
-
-	// GetLatestVulnerabilityRecord returns the composed record for a coordinate
-	// and pipeline version across every snapshot and frame the ledger holds.
-	// Returns (zero, false, nil) if no record exists. Set-aside generations on
-	// GetVulnerabilityRecord's terms.
-	GetLatestVulnerabilityRecord(
-		ctx context.Context,
-		coord coordinate.ModuleCoordinate,
-		pipelineVersion string,
-	) (domain.VulnerabilityRecord, bool, error)
 
 	// ListVulnerabilityRecordsForModuleInWalk returns every generation of a
 	// coordinate the given walk's scan runs covered, regardless of snapshot,
@@ -513,8 +488,8 @@ type VulnerabilityStore interface {
 	// consumer serves the rows it has and states the ones set aside. One altered
 	// row makes it *UnreadableRows again, every unreadable row included.
 	//
-	// The reads that COMPOSE a verdict — GetLatestVulnerabilityRecord,
-	// ListVulnerabilityRecords and the point-in-time gets — compose over the
+	// The reads that COMPOSE a verdict — ListVulnerabilityRecords and the
+	// point-in-time get — compose over the
 	// generations this build can reproduce, return the rest as set aside, and
 	// fail closed on an altered row.
 	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error)
@@ -943,6 +918,9 @@ type CallGraphProjection struct {
 	// verdict and checks completeness parity before trusting a green result.
 	Completeness string
 	Algorithm    string
+	// PipelineVersion is the call-graph pipeline the graph was built by, so an
+	// answer read from it names the generation it came from.
+	PipelineVersion string
 	// ArtifactKind is what the analysed module is (application, library, or not
 	// established), as an opaque string for the same reason. Reachability roots
 	// are conditioned on it: an application's own code is all reachable, because

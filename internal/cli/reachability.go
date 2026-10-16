@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	localimporter "github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
 	localprober "github.com/eitanity/kanonarion/internal/local/adapters/probe/builder"
 	localsnapshot "github.com/eitanity/kanonarion/internal/local/adapters/snapshot/walkdir"
@@ -23,6 +25,9 @@ import (
 	localapp "github.com/eitanity/kanonarion/internal/local/application"
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 const localVulnPipelineVersion = vulnPipelineVersion
@@ -112,6 +117,13 @@ type reachabilityProbedBinary struct {
 	BuildError string `json:"build_error,omitempty"`
 }
 
+// reachabilityHarnessOmission is one exported declaration of a library
+// workspace the probe harness does not reference, and why.
+type reachabilityHarnessOmission struct {
+	Symbol string `json:"symbol"`
+	Reason string `json:"reason"`
+}
+
 // reachabilityCoverage states what the local probe's answer was drawn from and
 // what it left out.
 //
@@ -146,6 +158,10 @@ type reachabilityCoverage struct {
 	// workspace and for a probe that was skipped, neither of which built a
 	// main package.
 	ProbedBinaries []reachabilityProbedBinary `json:"probed_binaries,omitempty"`
+	// HarnessOmitted names every exported declaration of a library workspace
+	// the harness left out. An absence says nothing about a route only through
+	// one of them. Absent when nothing was left out.
+	HarnessOmitted []reachabilityHarnessOmission `json:"harness_omitted,omitempty"`
 }
 
 type reachabilityOutput struct {
@@ -399,9 +415,9 @@ func runVulnReachabilityQuery(
 		return err
 	}
 
-	// Every generation is read, not the composed "latest", because which record
-	// answers this question is a question about analysis frames and the composed
-	// read has none: it ranks an isolated scan against a consumer-rooted one on
+	// Every generation is read, not one frame-blind composition, because which
+	// record answers this question is a question about analysis frames and such a
+	// composition has none: it ranks an isolated scan against a consumer-rooted one on
 	// call-graph completeness, a rung the isolated scan always wins. See
 	// vuldomain.ComposeForConsumer.
 	var (
@@ -599,6 +615,14 @@ type vulnReachabilityQuery struct {
 	// whether the module builds a command, so the narrow consumer surface was
 	// rooted by default. Absent otherwise.
 	RootSelection string `json:"root_selection,omitempty"`
+	// GraphPipeline is the call-graph pipeline of the graph a call-graph search
+	// ran over. Absent on an answer from any other analyser.
+	GraphPipeline string `json:"graph_pipeline,omitempty"`
+	// CoverageStatus and UnscannableReason are present only when the record's
+	// source was not analysed: the answer then comes from the call graph alone,
+	// and the gap is stated beside it. Absent on an analysed record.
+	CoverageStatus    string `json:"coverage_status,omitempty"`
+	UnscannableReason string `json:"unscannable_reason,omitempty"`
 	// Soundness states how thorough the search behind a NEGATIVE was, and
 	// SoundnessReason names the basis for that rung in the producing analyser's
 	// own terms. Both are absent on a reachable verdict: a route is its own
@@ -980,18 +1004,33 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 			"%s could not be scanned (ScanFailed)%s; reachability is unknown. %s",
 			coord, detail, remedyRescanModule(coord, rec.WalkID))
 	case vuldomain.CoverageUnscannable:
-		detail := ""
-		if rec.UnscannableReason != "" {
-			detail = ": " + rec.UnscannableReason
+		// A call-graph search can answer for a module govulncheck could not
+		// analyse; that answer, or the recorded failure of the attempt, is served
+		// with the coverage gap beside it. Anything else has no answer to give.
+		if f, ok := findFindingByID(rec.Findings, vulnID); !ok || (f.Reachable == nil && !f.ReachabilityAttemptFailed()) {
+			detail := ""
+			if rec.UnscannableReason != "" {
+				detail = ": " + rec.UnscannableReason
+			}
+			return vulnReachabilityQuery{}, fmt.Errorf(
+				"%s is unscannable%s; reachability cannot be determined. %s",
+				coord, detail, remedyShowRecord(coord))
 		}
-		return vulnReachabilityQuery{}, fmt.Errorf(
-			"%s is unscannable%s; reachability cannot be determined. %s",
-			coord, detail, remedyShowRecord(coord))
 	case vuldomain.CoverageAnalysed:
 		// Analysed: the findings below are an answer about a module that was read.
 	}
 
-	// The module was analysed, so its findings answer the question.
+	res, err := findingReachabilityAnswer(coord, rec, vulnID, classify, aside)
+	if err == nil && coverage == vuldomain.CoverageUnscannable {
+		res.CoverageStatus = string(coverage)
+		res.UnscannableReason = rec.UnscannableReason
+	}
+	return res, err
+}
+
+// findingReachabilityAnswer answers from the record's findings, once the
+// coverage axis has said they can be read.
+func findingReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, vulnID string, classify routeRootFunc, aside *isolatedAside) (vulnReachabilityQuery, error) {
 	f, ok := findFindingByID(rec.Findings, vulnID)
 	if !ok {
 		// Genuine zero: the scan ran and this CVE is not among its findings.
@@ -1079,6 +1118,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		Fidelity:          f.Reachable.DerivedBy.Fidelity,
 		Rooting:           f.Reachable.DerivedBy.Rooting.String(),
 		RootSelection:     f.Reachable.DerivedBy.RootSelection,
+		GraphPipeline:     f.Reachable.DerivedBy.GraphPipeline,
 		Soundness:         soundness,
 		SoundnessReason:   soundnessReason,
 		Routes:            routes,
@@ -1167,6 +1207,9 @@ func derivationLine(res vulnReachabilityQuery) string {
 	parts = append(parts, "by: "+res.Method)
 	if res.Fidelity != "" {
 		parts = append(parts, "fidelity: "+res.Fidelity)
+	}
+	if res.GraphPipeline != "" {
+		parts = append(parts, "call-graph pipeline: "+res.GraphPipeline)
 	}
 	if res.Rooting != "" {
 		parts = append(parts, "rooted at: "+res.Rooting)
@@ -1382,6 +1425,10 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 			res.VulnID, res.WithdrawnAt, coord, res.ScannedAt)
 	}
 	printIsolatedAside(stdout, res.IsolatedAside)
+	if res.CoverageStatus != "" {
+		_, _ = fmt.Fprintf(stdout, "  coverage: %s — govulncheck did not analyse this module's source (%s); the answer above is from kanonarion's call graph alone\n",
+			res.CoverageStatus, res.UnscannableReason)
+	}
 }
 
 func runLocalReachability(ctx context.Context, dir string, stdout, stderr io.Writer) error {
@@ -1393,7 +1440,27 @@ func runLocalReachability(ctx context.Context, dir string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	return renderLocalReachability(stdout, out, jsonOut)
+	if err := renderLocalReachability(stdout, out, jsonOut); err != nil {
+		return err
+	}
+	if coversNoModule(out.Coverage) {
+		// Exit 0 would read as a clear build. Nothing was analysed, which is the
+		// store lacking the records, so the answer is printed and the exit says so.
+		msg := noModuleCoveredLine
+		if out.Coverage.UncoveredRemedy != "" {
+			msg += ". " + out.Coverage.UncoveredRemedy
+		}
+		return &exitError{code: ExitNotFound, msg: msg}
+	}
+	return nil
+}
+
+// noModuleCoveredLine closes a probe that covered none of the build's modules.
+const noModuleCoveredLine = "no module of this build is covered, so this answer speaks about none of them"
+
+// coversNoModule reports a probe of a build with modules that covered none.
+func coversNoModule(c reachabilityCoverage) bool {
+	return c.BuildModules > 0 && c.CoveredModules == 0
 }
 
 // renderLocalReachability writes the local probe in the format the caller asked
@@ -1455,7 +1522,11 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 	}
 	printLocalCoverage(w, r.Coverage)
 	if len(r.Modules) == 0 {
-		w.printf("\nno affected modules in the analysed build\n")
+		closing := "no affected modules in the analysed build"
+		if coversNoModule(r.Coverage) {
+			closing = noModuleCoveredLine
+		}
+		w.printf("\n%s\n", closing)
 		return w.err
 	}
 	w.printf("\nfindings:\n")
@@ -1489,9 +1560,9 @@ func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
 }
 
 // printLocalCoverage states what the probe covered: the build's modules, the
-// binaries probed, and the modules the answer does not speak about.
+// binaries probed, the modules the answer does not speak about, and the exported
+// declarations a library harness left out.
 func printLocalCoverage(w *errWriter, c reachabilityCoverage) {
-
 	w.printf("\ncoverage: %d build module(s), %d queried, %d covered, %d with findings\n",
 		c.BuildModules, c.QueriedModules, c.CoveredModules, c.ModulesWithFindings)
 	for _, b := range c.ProbedBinaries {
@@ -1509,6 +1580,12 @@ func printLocalCoverage(w *errWriter, c reachabilityCoverage) {
 	}
 	if c.UncoveredRemedy != "" {
 		w.printf("  to widen the answer: %s\n", c.UncoveredRemedy)
+	}
+	if len(c.HarnessOmitted) > 0 {
+		w.printf("  harness omitted (%d) — exported declarations not in the library harness:\n", len(c.HarnessOmitted))
+		for _, o := range c.HarnessOmitted {
+			w.printf("    %s — %s\n", o.Symbol, o.Reason)
+		}
 	}
 }
 
@@ -1540,6 +1617,13 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 
 	vulnLoader := localvulnstore.New(ctr.VulnStore, localVulnPipelineVersion).
 		WithNegativeSearcher(ctr.NegativeSearch)
+	anchor, anchored, err := localSeedAnchor(ctx, ctr.QueryWalks, ctr.QueryScanRuns, abs)
+	if err != nil {
+		return reachabilityOutput{}, err
+	}
+	if anchored {
+		vulnLoader = vulnLoader.WithWalkAnchor(anchor)
+	}
 	uc := localapp.NewLocalReachabilityUseCase(
 		localsnapshot.Builder{},
 		localimporter.New(""),
@@ -1554,6 +1638,103 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 	}
 
 	return reachabilityResultToOutput(result), nil
+}
+
+// localSeedAnchor resolves the walk the local probe is seeded from: the newest
+// project walk for the tree's go.mod whose vuln-scan completed. The newest walk
+// is chosen by the rule vuln-show --gomod uses; when its scan stopped short, the
+// seed moves to the newest walk whose scan completed and the line says so. A
+// tree with no go.mod of its own, or no project walk, keeps the frame-wide seed.
+func localSeedAnchor(ctx context.Context, walks QueryWalksUseCase, scans QueryScanRunsUseCase, abs string) (localvulnstore.WalkAnchor, bool, error) {
+	gomod := filepath.Join(abs, "go.mod")
+	if _, err := os.Stat(gomod); err != nil {
+		return localvulnstore.WalkAnchor{}, false, nil //nolint:nilerr // no go.mod at the root: the probe resolves its own module
+	}
+	choice, err := latestWalkForGoMod(ctx, walks, gomod, scopeCode)
+	var none noProjectWalkError
+	if errors.As(err, &none) {
+		return localvulnstore.WalkAnchor{}, false, nil
+	}
+	if err != nil {
+		return localvulnstore.WalkAnchor{}, false, fmt.Errorf("selecting the walk to seed from: %w", err)
+	}
+	seed, completed, err := newestCompletedScanWalk(ctx, walks, scans, choice.summary)
+	if err != nil {
+		return localvulnstore.WalkAnchor{}, false, fmt.Errorf("selecting the walk to seed from: %w", err)
+	}
+	anchor, ok, err := resolveVulnFrameAnchor(ctx, walks, seed.ID, "", false)
+	if err != nil {
+		return localvulnstore.WalkAnchor{}, false, fmt.Errorf("selecting the walk to seed from: %w", err)
+	}
+	out := localvulnstore.WalkAnchor{
+		WalkID:         anchor.walkID,
+		Rooting:        anchor.rooting,
+		Source:         anchor.source,
+		ScanIncomplete: !completed,
+	}
+	if completed && seed.ID != choice.summary.ID {
+		out.PassedOver = fmt.Sprintf("walk %q's vuln-scan did not complete; %s completes it, run from the project's own directory",
+			choice.summary.ID, remedyCompleteScan().lines[0])
+	}
+	return out, ok, nil
+}
+
+// newestCompletedScanWalk returns newest when its vuln-scan completed, and
+// otherwise the newest walk of the same target, scope and platform whose scan
+// did, under any toolchain. completed is false when no such walk exists; newest
+// is then returned. A completed scan is one that recorded a scan run: the run
+// is written last, so an aborted or interrupted scan leaves records and no run,
+// and a walk-anchored read reaches a walk's records only through its runs.
+func newestCompletedScanWalk(
+	ctx context.Context, walks QueryWalksUseCase, scans QueryScanRunsUseCase, newest walkports.WalkSummary,
+) (seed walkports.WalkSummary, completed bool, _ error) {
+	done, err := walkScanCompleted(ctx, scans, newest.ID)
+	if err != nil || done {
+		return newest, done, err
+	}
+	succeeded := walkdomain.WalkSucceeded
+	filter := walkports.WalkFilter{Target: &newest.Target, Scope: &newest.Scope, OverallStatus: &succeeded}
+	if newest.GOOS != "" {
+		filter.BuildEnv = &walkports.BuildEnvFilter{GOOS: newest.GOOS, GOARCH: newest.GOARCH}
+	}
+	summaries, err := walks.ListWalks(ctx, filter)
+	if err != nil {
+		return newest, false, fmt.Errorf("listing the walks of %s: %w", newest.Target, err)
+	}
+	for _, s := range summaries {
+		if s.ID == newest.ID {
+			continue
+		}
+		done, err := walkScanCompleted(ctx, scans, s.ID)
+		if err != nil {
+			return newest, false, err
+		}
+		if done {
+			return s, true, nil
+		}
+	}
+	return newest, false, nil
+}
+
+// walkScanCompleted reports whether the store records a vuln-scan run for the
+// walk. A run this build sets aside, or cannot verify, is still a recorded run:
+// what its records can serve is decided per coordinate, as for any other walk.
+func walkScanCompleted(ctx context.Context, scans QueryScanRunsUseCase, walkID string) (bool, error) {
+	runs, err := scans.ListRunsForWalk(ctx, walkID)
+	if len(runs) > 0 {
+		return true, nil
+	}
+	var (
+		aside      *recordseal.SetAside
+		unreadable *vulnports.UnreadableRows
+	)
+	if errors.As(err, &aside) || errors.As(err, &unreadable) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading the scan runs of walk %s: %w", walkID, err)
+	}
+	return false, nil
 }
 
 func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabilityOutput {
@@ -1613,12 +1794,15 @@ func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
 		})
 	}
 	if len(out.UncoveredModules) > 0 {
-		out.UncoveredRemedy = remedyScanUncovered().String()
+		out.UncoveredRemedy = remedyScanUncovered(c.Uncovered).String()
 	}
 	for _, b := range c.Binaries {
 		out.ProbedBinaries = append(out.ProbedBinaries, reachabilityProbedBinary{
 			ImportPath: b.ImportPath, BuildError: b.BuildError,
 		})
+	}
+	for _, o := range c.HarnessOmitted {
+		out.HarnessOmitted = append(out.HarnessOmitted, reachabilityHarnessOmission{Symbol: o.Symbol, Reason: o.Reason})
 	}
 	return out
 }

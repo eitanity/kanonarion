@@ -24,6 +24,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/godebug/domain"
 	"github.com/eitanity/kanonarion/internal/godebug/ports"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	"golang.org/x/mod/modfile"
 )
@@ -143,7 +144,7 @@ func (s *Scanner) ScanProject(ctx context.Context, goModPath string) (domain.Par
 // `//go:debug` is a recorded (not-applied) fact, not a separate module to
 // exclude.
 func skipDir(path, name string) bool {
-	if name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+	if gotoolchain.IgnoredDir(name) {
 		return true
 	}
 	if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {

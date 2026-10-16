@@ -45,7 +45,7 @@ func TestResolveGitRef_ToolMissing(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: toolMissingVCS{}}
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	_, status, _, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
+	_, status, _, _, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.UnverifiedVCSToolMissing {
 		t.Errorf("status = %q, want UnverifiedVCSToolMissing", status)
 	}
@@ -55,7 +55,7 @@ func TestResolveGitRef_GenericFailureStaysNoVCS(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: genericFailVCS{}}
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	_, status, _, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
+	_, status, _, _, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.UnverifiedNoVCS {
 		t.Errorf("status = %q, want UnverifiedNoVCS", status)
 	}
@@ -72,7 +72,7 @@ func TestResolveGitRef_RejectsMaliciousOrigin(t *testing.T) {
 		Hash: "--upload-pack=touch",
 	}}
 
-	gitRef, status, _, refusal, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
+	gitRef, status, _, refusal, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
 	if status == domain2.Verified {
 		t.Fatal("malicious Origin must not be trusted as Verified")
 	}
@@ -101,7 +101,7 @@ func TestResolveGitRef_AcceptsValidOrigin(t *testing.T) {
 		Hash: strings.Repeat("a", 40),
 	}}
 
-	gitRef, status, _, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
+	gitRef, status, _, _, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.Verified {
 		t.Fatalf("valid Origin should resolve Verified, got %q", status)
 	}
@@ -139,7 +139,7 @@ func TestResolveGitRef_IncompatibleStripsSuffixFromTagRef(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: vcs}
 	coord := coordinatetest.MustNew("github.com/Masterminds/sprig", "v2.22.0+incompatible")
 
-	gitRef, status, detail, _, _ := uc.resolveGitRef(context.Background(), slog.Default(),
+	gitRef, status, detail, _, _, _ := uc.resolveGitRef(context.Background(), slog.Default(),
 		coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 
 	if len(vcs.refs) != 1 {
@@ -168,7 +168,7 @@ func TestResolveGitRef_IncompatibleAgreesWithProxyOrigin(t *testing.T) {
 	coord := coordinatetest.MustNew("github.com/docker/cli", "v28.2.2+incompatible")
 
 	vcs := &tagRecordingVCS{}
-	inferred, _, _, _, _ := (&FetchModuleUseCase{vcs: vcs}).resolveGitRef(context.Background(),
+	inferred, _, _, _, _, _ := (&FetchModuleUseCase{vcs: vcs}).resolveGitRef(context.Background(),
 		slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 
 	info := ports.ModuleInfo{Origin: &ports.ModuleOrigin{
@@ -176,7 +176,7 @@ func TestResolveGitRef_IncompatibleAgreesWithProxyOrigin(t *testing.T) {
 		Ref:  "refs/tags/v28.2.2",
 		Hash: strings.Repeat("a", 40),
 	}}
-	fromOrigin, status, _, _, _ := (&FetchModuleUseCase{vcs: &tagRecordingVCS{}}).resolveGitRef(
+	fromOrigin, status, _, _, _, _ := (&FetchModuleUseCase{vcs: &tagRecordingVCS{}}).resolveGitRef(
 		context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
 
 	if status != domain2.Verified {
@@ -195,7 +195,7 @@ func TestResolveGitRef_IncompatibleAgreesWithProxyOrigin(t *testing.T) {
 // still resolves by its embedded commit rather than by any tag at all.
 func TestResolveGitRef_NonIncompatibleVersionsUnchanged(t *testing.T) {
 	tagged := &tagRecordingVCS{}
-	taggedRef, _, _, _, _ := (&FetchModuleUseCase{vcs: tagged}).resolveGitRef(context.Background(),
+	taggedRef, _, _, _, _, _ := (&FetchModuleUseCase{vcs: tagged}).resolveGitRef(context.Background(),
 		slog.Default(), coordinatetest.MustNew("github.com/foo/bar", "v1.8.1"),
 		ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 	if taggedRef.Ref != "refs/tags/v1.8.1" {
@@ -203,7 +203,7 @@ func TestResolveGitRef_NonIncompatibleVersionsUnchanged(t *testing.T) {
 	}
 
 	pseudo := &tagRecordingVCS{}
-	pseudoRef, _, _, _, _ := (&FetchModuleUseCase{vcs: pseudo}).resolveGitRef(context.Background(),
+	pseudoRef, _, _, _, _, _ := (&FetchModuleUseCase{vcs: pseudo}).resolveGitRef(context.Background(),
 		slog.Default(), coordinatetest.MustNew("github.com/foo/bar", "v0.0.0-20210101120000-abcdefabcdef"),
 		ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 	if len(pseudo.refs) != 0 {
@@ -220,10 +220,13 @@ func TestCrossVerify_ToolMissing(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: toolMissingVCS{}}
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	status, detail := uc.crossVerify(context.Background(), slog.Default(),
+	status, detail, couldNotRun := uc.crossVerify(context.Background(), slog.Default(),
 		coord, "https://github.com/foo/bar", strings.Repeat("a", 40), domain2.ModuleHash{})
 	if status != domain2.UnverifiedVCSToolMissing {
 		t.Errorf("status = %q, want UnverifiedVCSToolMissing", status)
+	}
+	if !couldNotRun {
+		t.Error("a missing tool must report the leg as one that could not run")
 	}
 	if !strings.Contains(detail, ports.ErrVCSToolMissing.Error()) {
 		t.Errorf("detail %q does not carry the tool-missing classification", detail)
@@ -234,10 +237,13 @@ func TestCrossVerify_GenericFailureStaysNoVCS(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: genericFailVCS{}}
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	status, _ := uc.crossVerify(context.Background(), slog.Default(),
+	status, _, couldNotRun := uc.crossVerify(context.Background(), slog.Default(),
 		coord, "https://github.com/foo/bar", strings.Repeat("a", 40), domain2.ModuleHash{})
 	if status != domain2.UnverifiedNoVCS {
 		t.Errorf("status = %q, want UnverifiedNoVCS", status)
+	}
+	if couldNotRun {
+		t.Error("a checkout that ran and failed is an answer, not a leg that could not run")
 	}
 }
 
@@ -315,7 +321,7 @@ func TestCrossVerify_MajorVersionSubdir_Verified(t *testing.T) {
 	}
 
 	uc := &FetchModuleUseCase{vcs: vcs, verifier: verifier}
-	status, detail := uc.crossVerify(context.Background(), slog.Default(),
+	status, detail, _ := uc.crossVerify(context.Background(), slog.Default(),
 		coord, "https://example.com/foo", strings.Repeat("a", 40), expectedHash)
 
 	if status != domain2.Verified {
