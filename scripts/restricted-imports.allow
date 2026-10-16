@@ -1,0 +1,72 @@
+# Packages in kanonarion's build that import a restricted package, one
+# "<package> <import>" pair per line. Restricted means os/exec, plugin,
+# syscall or unsafe. The list covers kanonarion's packages and its
+# dependencies', keyed by package path without a version, across every release
+# target; scripts/restricted-imports.sh fails on a pair missing from it and on
+# an entry no target's build contains. Keep it sorted (LC_ALL=C sort -u); the
+# script refuses an unsorted list. Regenerate the pairs with
+# `bash scripts/restricted-imports.sh --print`. A new entry is reviewed with
+# `kanonarion capability` (CONTRIBUTING.md, "Changing dependencies").
+
+github.com/eitanity/kanonarion/internal/adapters/childproc os/exec
+github.com/eitanity/kanonarion/internal/adapters/childproc syscall
+github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite os/exec
+github.com/eitanity/kanonarion/internal/adapters/interrupt os/exec
+github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec os/exec
+github.com/eitanity/kanonarion/internal/cli os/exec
+github.com/eitanity/kanonarion/internal/cli syscall
+github.com/eitanity/kanonarion/internal/local/adapters/importer/golist os/exec
+github.com/eitanity/kanonarion/internal/local/adapters/probe/builder os/exec
+github.com/eitanity/kanonarion/internal/local/localtest os/exec
+github.com/eitanity/kanonarion/internal/staleness/adapters/golist os/exec
+github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote os/exec
+github.com/eitanity/kanonarion/internal/stdlib/adapters/toolchainenv os/exec
+github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck os/exec
+github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain os/exec
+github.com/inconshreveable/mousetrap syscall
+github.com/inconshreveable/mousetrap unsafe
+github.com/klauspost/compress/internal/le unsafe
+github.com/mattn/go-isatty syscall
+github.com/mattn/go-isatty unsafe
+github.com/remyoudompheng/bigfft unsafe
+golang.org/x/mod/zip os/exec
+golang.org/x/sys/unix syscall
+golang.org/x/sys/unix unsafe
+golang.org/x/sys/windows syscall
+golang.org/x/sys/windows unsafe
+golang.org/x/tools/go/gcexportdata os/exec
+golang.org/x/tools/go/packages os/exec
+golang.org/x/tools/go/ssa unsafe
+golang.org/x/tools/internal/event/label unsafe
+golang.org/x/tools/internal/gcimporter os/exec
+golang.org/x/tools/internal/gocommand os/exec
+golang.org/x/tools/internal/gocommand syscall
+modernc.org/libc os/exec
+modernc.org/libc unsafe
+modernc.org/libc/errno unsafe
+modernc.org/libc/fcntl unsafe
+modernc.org/libc/fts unsafe
+modernc.org/libc/grp unsafe
+modernc.org/libc/langinfo unsafe
+modernc.org/libc/limits unsafe
+modernc.org/libc/netdb unsafe
+modernc.org/libc/netinet/in unsafe
+modernc.org/libc/poll unsafe
+modernc.org/libc/pthread unsafe
+modernc.org/libc/pwd unsafe
+modernc.org/libc/signal unsafe
+modernc.org/libc/stdio unsafe
+modernc.org/libc/stdlib unsafe
+modernc.org/libc/sys/socket unsafe
+modernc.org/libc/sys/stat unsafe
+modernc.org/libc/sys/types unsafe
+modernc.org/libc/termios unsafe
+modernc.org/libc/time unsafe
+modernc.org/libc/unistd unsafe
+modernc.org/libc/utime unsafe
+modernc.org/libc/uuid/uuid unsafe
+modernc.org/libc/wctype unsafe
+modernc.org/memory unsafe
+modernc.org/sqlite unsafe
+modernc.org/sqlite/lib syscall
+modernc.org/sqlite/lib unsafe

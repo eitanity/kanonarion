@@ -19,6 +19,10 @@ import "os"
 // duplicate key resolves to its final value, so it also overrides an inherited
 // GOWORK pointing at the invoking user's workspace.
 //
+// GOPACKAGESDRIVER=off is appended last for the same reason: go/packages would
+// otherwise run a host-named driver program, or a gopackagesdriver found on
+// PATH, on the module instead of the go command.
+//
 // This applies only to extracted module directories. A local working-tree
 // analysis keeps honouring the project's own go.work: there the workspace is the
 // real build configuration rather than a stale artefact of packaging. That is
@@ -28,5 +32,5 @@ import "os"
 // only when the answer is no; analyseDirOnce chooses between the two producers
 // rather than layering one over the other.
 func isolatedModuleEnv() []string {
-	return append(os.Environ(), "GOWORK=off")
+	return append(os.Environ(), "GOWORK=off", "GOPACKAGESDRIVER=off")
 }

@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
@@ -35,6 +36,38 @@ const loadMode = packages.NeedName |
 	packages.NeedTypesInfo |
 	packages.NeedModule
 
+// loadEnv is the environment for the type-checking load: the same worktree
+// posture as the import lister and the symbol probe that measure this tree.
+func loadEnv(root string) []string { return goenv.Worktree(os.Environ(), root) }
+
+// load type-checks every package under root, running again under an on-disk
+// toolchain when the installed one is older than the tree's go directive, as
+// the sibling working-tree children do.
+func load(ctx context.Context, root string) ([]*packages.Package, error) {
+	toolchains := goenv.NewToolchains()
+	defer func() { _ = toolchains.Close() }()
+	for {
+		cfg := &packages.Config{
+			Mode:    loadMode,
+			Dir:     root,
+			Env:     toolchains.Apply(loadEnv(root)),
+			Tests:   true,
+			Context: ctx,
+		}
+		pkgs, err := packages.Load(cfg, "./...")
+		if err == nil {
+			return pkgs, nil
+		}
+		retry, refusal := toolchains.Escalate(err.Error())
+		if refusal != "" {
+			return nil, fmt.Errorf("loading packages: %w\n%s", err, refusal)
+		}
+		if !retry {
+			return nil, fmt.Errorf("loading packages: %w", err)
+		}
+	}
+}
+
 // AnalyseSymbols loads and type-checks all packages in root, then scans
 // identifier references to find which exported symbols from external modules
 // are used. Both ImportedPackages and UsedSymbols are populated in the result,
@@ -45,15 +78,9 @@ const loadMode = packages.NeedName |
 // variant carrying it: the in-package test variant holds the production
 // references too, so classifying it wholesale would move them.
 func (a *Analyser) AnalyseSymbols(ctx context.Context, root string) ([]domain.ImportedModule, error) {
-	cfg := &packages.Config{
-		Mode:    loadMode,
-		Dir:     root,
-		Tests:   true,
-		Context: ctx,
-	}
-	pkgs, err := packages.Load(cfg, "./...")
+	pkgs, err := load(ctx, root)
 	if err != nil {
-		return nil, fmt.Errorf("loading packages: %w", err)
+		return nil, err
 	}
 	// Fatal only when this binary could not read the source: every reference
 	// it would report then rests on a type check that never happened.

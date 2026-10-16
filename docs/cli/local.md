@@ -202,6 +202,8 @@ generation.
 
 - Requires a `go.mod` at `[dir]`; the declared module path becomes the record's
   coordinate path.
+- The tree is loaded through the go command. `GOPACKAGESDRIVER` is not
+  honoured, so a build that needs an external package driver is not analysable.
 - Re-run after editing source; an edited tree is always re-analysed.
 - Several generations of one tree state - which `--force` is how you get - are
   ordered by completeness before recency, so a re-analysis that came back with

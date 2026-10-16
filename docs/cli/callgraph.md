@@ -469,6 +469,10 @@ was written against what was requested, and which coordinates failed — because
 with the network off a missing version is the difference between a module that
 resolves and one that records an environment failure.
 
+Packages are loaded through the go command, for a fetched module and a working
+tree alike: `GOPACKAGESDRIVER` is not honoured, so a build that needs an external
+package driver is not analysable.
+
 Package membership is decided by the module path the analysed tree **declares**,
 not by the coordinate it was published under. A fork republished at a new path
 that never rewrote its own `module` directive — and which consumers therefore

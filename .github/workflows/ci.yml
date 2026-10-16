@@ -184,8 +184,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # The same script make lint runs.
-      - name: Check for restricted imports in extraction packages
+      # The same script make lint runs: every package in the build, kanonarion's
+      # and its dependencies', on every release target, against
+      # scripts/restricted-imports.allow.
+      - name: Check restricted imports across the build against the allowlist
         run: bash scripts/restricted-imports.sh
 
   benchmarks:

@@ -31,7 +31,14 @@ make test    # all packages, race detector
 make lint    # vet, staticcheck, govulncheck, gosec, restricted imports
 ```
 
-The restricted-imports check (`scripts/restricted-imports.sh`, also run by CI) fails when an extraction package imports `os/exec`, `plugin`, `syscall` or `unsafe`.
+The restricted-imports check (`scripts/restricted-imports.sh`, also run by CI)
+lists every package in the build, kanonarion's and its dependencies', on every
+release target, and compares each package that imports `os/exec`, `plugin`,
+`syscall` or `unsafe` with `scripts/restricted-imports.allow`. It fails both
+ways: on a pair missing from the list, and on a list entry no target's build
+contains. To update the list, run `bash scripts/restricted-imports.sh --print`,
+and add or remove the lines it reports, keeping the file sorted. A new entry is
+reviewed as a dependency change; see [Changing dependencies](#changing-dependencies).
 
 `make lint` does **not** run golangci-lint. Run it separately, and expect zero
 issues:
@@ -77,6 +84,25 @@ The release workflow regenerates the file and fails on any difference, so a
 stale one blocks the release rather than shipping. Regenerating needs a
 populated store: run `kanonarion audit` in the checkout first if a module has
 no licence record yet.
+
+A `go.mod` change, or a new line in `scripts/restricted-imports.allow`, is
+reviewed with kanonarion on the main store while you make it:
+
+```bash
+# Upgrade: what the new version's own code calls that the old one did not.
+kanonarion capability <module>@<new> --against <module>@<old>
+
+# New module: its whole capability set.
+kanonarion capability <module>@<version>
+```
+
+Put the changed `sensitive calls`, and the changed exec, `unsafe`, network and
+file-system rows, in the commit message. `capability` reads stored call graphs;
+it names the commands that build them when one is missing. The import list
+does not change when an upgrade makes an existing call reachable, so this
+review is what shows it. See
+[the dependency-update workflow](docs/dependency-update-workflow.md) for the
+full recipe.
 
 ### Architecture
 

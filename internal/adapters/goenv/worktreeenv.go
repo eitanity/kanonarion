@@ -17,14 +17,17 @@ import (
 // a copy we own — under -mod=mod a command asked to measure the tree writes the
 // go.sum entries it finds missing instead of reporting them, from the module
 // cache and without a download, so GOPROXY=off does not prevent it.
+//
+// GOPACKAGESDRIVER=off so go/packages loads through the go command rather than
+// a driver program named by the host or found on PATH.
 func Worktree(base []string, dir string) []string {
-	env := make([]string, len(base), len(base)+5)
+	env := make([]string, len(base), len(base)+6)
 	copy(env, base)
 	env = append(env, "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 	if !workspaceInScope(base, dir) {
 		env = append(env, "GOWORK=off")
 	}
-	return append(env, "GOFLAGS=-mod=readonly")
+	return append(env, "GOFLAGS=-mod=readonly", "GOPACKAGESDRIVER=off")
 }
 
 // workspaceInScope answers the question the go command asks: GOWORK decides when

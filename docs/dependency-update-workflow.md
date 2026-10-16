@@ -104,7 +104,37 @@ shape and the exit codes.
 
 ---
 
-## 4. Call tree - does the change *matter to us*?
+## 4. Capability diff - what can the new version *do* that the old could not?
+
+A signature diff says nothing about what the code inside the functions does.
+`capability --against` diffs what each version's own code calls: process
+starts, network, file system, environment, `unsafe`. It reads stored call
+graphs, so build them first.
+
+```bash
+for v in v0.36.0 v0.37.0; do
+  ./kanonarion fetch golang.org/x/mod@$v
+  ./kanonarion callgraph golang.org/x/mod@$v
+done
+
+./kanonarion capability golang.org/x/mod@v0.37.0 --against golang.org/x/mod@v0.36.0
+
+# A module the build has not had before: its whole capability set.
+./kanonarion capability golang.org/x/mod@v0.37.0
+```
+
+Read `sensitive calls` first: a function newly listed there is something the
+upgrade newly does, even when the signature diff is empty. Then read the added
+rows for exec, `unsafe`, network and file-system labels. This repository puts
+the changed `sensitive calls` and those rows in the commit message of the
+`go.mod` change; see [CONTRIBUTING.md](../CONTRIBUTING.md#changing-dependencies).
+The diff is only valid when both versions were analysed at equal completeness,
+and a row marked `[CHA-overapprox]` or `[Unknown]` is graph over-approximation,
+not a proven call.
+
+---
+
+## 5. Call tree - does the change *matter to us*?
 
 Ingest the local working tree once, then ask whether our code reaches the
 symbol(s) the bump touches. `callers` walks up (who reaches it), `callees`
@@ -147,14 +177,14 @@ has **17 callers in our tree** across `internal/cli`, `walk`, `directive`,
 changes warrant attention. Conversely the *new* symbol `SetRequireAtMostTwo`
 has no callers here, so the additive change is inert for us today.
 
-Combined read from §3 + §4: a large signature diff in code you never call is
+Combined read from §3 + §5: a large signature diff in code you never call is
 cheap to adopt; a small one directly under live callers is not. Here the diff
 is both small **and** additive, and the touched surface is heavily used but
 unchanged - a low-risk bump.
 
 ---
 
-## 5. Vulnerabilities and reachability
+## 6. Vulnerabilities and reachability
 
 Scan the project; the project-scoped scan (`--gomod`, and the same leg inside
 `audit`/`inspect --gomod`) is **project-rooted** - one `govulncheck` over the
@@ -215,7 +245,7 @@ action; version bumps for their own sake are not (see the note below).
 > A stale-but-clean set of pins is safe to ship. Prefer a fresh-snapshot rescan
 > over a pre-release dependency bump: the rescan answers "are we exposed?"
 > directly, while a bump introduces behavioural risk right before a release. Do
-> the staleness sweep (§1-4 per module) *after* the release, unless the rescan
+> the staleness sweep (§1-5 per module) *after* the release, unless the rescan
 > turns up an advisory that a bump resolves.
 
 ---
@@ -226,6 +256,7 @@ action; version bumps for their own sake are not (see the note below).
 |---|---|---|
 | Staleness | `latest --gomod` | how far behind, and how old |
 | Breaking-ness | `interface` + `interface-diff` | removed/changed signature = refactor; zero breaking is not safety |
+| Capability change | `capability --against` | a new sensitive call = new behaviour, whatever the signature diff says |
 | Blast radius | `local .` + `interface-diff --used-by`, `callers`/`callees` | a breaking delta your own code calls = it matters |
 | Risk | `vuln-scan` + `reachability` | reachable advisory = act; `Partial` ≠ clean |
 

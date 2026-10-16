@@ -56,7 +56,8 @@ const stdlibTestScopeDetail = "the standard library's own test files were not lo
 // and GOPROXY=off makes that explicit rather than incidental.
 func stdlibAnalysisEnv() []string {
 	return append(os.Environ(),
-		"GOWORK=off", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOFLAGS=-mod=readonly")
+		"GOWORK=off", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GOFLAGS=-mod=readonly",
+		"GOPACKAGESDRIVER=off")
 }
 
 // AnalyseStdlib extracts the call graph of the Go standard library from an

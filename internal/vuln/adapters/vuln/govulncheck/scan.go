@@ -569,9 +569,11 @@ const (
 // build configuration, so disabling it made this scan resolve a different module
 // graph from the one the walk resolved and the developer compiles.
 //
-// GOGC is the one value every surface sets, and it decides nothing about
-// resolution: govulncheck holds the whole package graph live, and the default
-// pacing costs the host memory this analysis has no need to spend.
+// GOGC and GOPACKAGESDRIVER=off are the two values every surface sets, and
+// neither decides anything about resolution. govulncheck holds the whole package
+// graph live, and the default pacing costs the host memory this analysis has no
+// need to spend; and it loads through go/packages, which would otherwise run a
+// driver program named by the host or found on PATH instead of the go command.
 //
 // CGO_ENABLED is deliberately not set here on any surface. Only one child gets
 // cgo turned off — the binary-mode test build; see withCgoDisabled — because
@@ -640,9 +642,9 @@ const (
 // GOWORK/GOFLAGS/GOSUMDB/GOPROXY/GOTOOLCHAIN.
 func scanEnv(base []string, goModCache string, surface scanSurface) []string {
 	// Copy rather than append onto base so a caller's slice is never mutated.
-	env := make([]string, len(base), len(base)+7)
+	env := make([]string, len(base), len(base)+8)
 	copy(env, base)
-	env = append(env, "GOGC=30")
+	env = append(env, "GOGC=30", "GOPACKAGESDRIVER=off")
 	if surface == surfaceLiveTree {
 		return env
 	}

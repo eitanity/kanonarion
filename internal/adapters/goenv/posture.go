@@ -25,13 +25,13 @@ var postures = map[string]Posture{
 	// isolatedModuleEnv: the workspace isolation on its own. Everything else the
 	// extracted-module analysis needs is layered on top of it.
 	"extracted-module": {
-		Require: map[string]string{"GOWORK": "off"},
+		Require: map[string]string{"GOWORK": "off", "GOPACKAGESDRIVER": "off"},
 		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	"extracted-module-analysis": {
 		Require: map[string]string{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
-			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod",
+			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod", "GOPACKAGESDRIVER": "off",
 		},
 		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
@@ -44,6 +44,7 @@ var postures = map[string]Posture{
 		Require: map[string]string{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
 			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod", "GOMODCACHE": ModCache,
+			"GOPACKAGESDRIVER": "off",
 		},
 		Forbid: []string{"GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
@@ -59,7 +60,7 @@ var postures = map[string]Posture{
 	"toolchain-stdlib": {
 		Require: map[string]string{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
-			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
+			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly", "GOPACKAGESDRIVER": "off",
 		},
 		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
@@ -69,14 +70,14 @@ var postures = map[string]Posture{
 	"worktree": {
 		Require: map[string]string{
 			"GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off",
-			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
+			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly", "GOPACKAGESDRIVER": "off",
 		},
 		Forbid: []string{"GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	"worktree-workspace": {
 		Require: map[string]string{
 			"GOPROXY": "off", "GOSUMDB": "off",
-			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
+			"GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly", "GOPACKAGESDRIVER": "off",
 		},
 		Forbid: []string{"GOWORK", "GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
@@ -87,17 +88,19 @@ var postures = map[string]Posture{
 	"scan-vendored": {
 		Require: map[string]string{
 			"GOGC": "30", "GOWORK": "off", "GOFLAGS": "-mod=vendor", "GOPROXY": "off",
+			"GOPACKAGESDRIVER": "off",
 		},
 		Forbid: []string{"GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	"scan-fetched": {
-		Require: map[string]string{"GOGC": "30", "GOWORK": "off"},
+		Require: map[string]string{"GOGC": "30", "GOWORK": "off", "GOPACKAGESDRIVER": "off"},
 		Forbid:  []string{"GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	"scan-fetched-modcache": {
 		Require: map[string]string{
 			"GOGC": "30", "GOWORK": "off", "GOMODCACHE": ModCache,
 			"GOFLAGS": "-mod=mod", "GOSUMDB": "off", "GOTOOLCHAIN": "local", "GOPROXY": "off",
+			"GOPACKAGESDRIVER": "off",
 		},
 		Forbid: []string{"CGO_ENABLED", "GOOS", "GOARCH"},
 	},
@@ -113,7 +116,7 @@ var postures = map[string]Posture{
 		Require: map[string]string{
 			"GOGC": "30", "GOWORK": "off", "GOMODCACHE": ModCache,
 			"GOFLAGS": "-mod=mod", "GOSUMDB": "off", "GOTOOLCHAIN": "local", "GOPROXY": "off",
-			"CGO_ENABLED": "0",
+			"CGO_ENABLED": "0", "GOPACKAGESDRIVER": "off",
 		},
 		Forbid: []string{"GOOS", "GOARCH"},
 	},
@@ -127,13 +130,13 @@ var postures = map[string]Posture{
 	// PATH is absent from both lists because moving it is the whole mechanism.
 	"on-disk-toolchain": {
 		Require: map[string]string{"GOTOOLCHAIN": "path"},
-		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOWORK", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH"},
+		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOWORK", "GOFLAGS", "GOMODCACHE", "GOGC", "CGO_ENABLED", "GOOS", "GOARCH", "GOPACKAGESDRIVER"},
 	},
 	// A project that has a vendor tree and a caller declining it: Go selects
 	// -mod=vendor from the tree's mere presence, so the fetched surface has to
 	// say otherwise, and that flag is refused in workspace mode.
 	"project-fetched-over-vendor": {
-		Require: map[string]string{"GOGC": "30", "GOWORK": "off", "GOFLAGS": "-mod=mod"},
+		Require: map[string]string{"GOGC": "30", "GOWORK": "off", "GOFLAGS": "-mod=mod", "GOPACKAGESDRIVER": "off"},
 		Forbid:  []string{"GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	// The project surface with no vendor tree, and the one posture in this table
@@ -153,11 +156,15 @@ var postures = map[string]Posture{
 	// disabling it made the scan resolve a different module graph from the one
 	// the walk resolved and the developer compiles.
 	//
-	// GOGC is the single exception, and it is not resolution: govulncheck holds
-	// the whole package graph live, and the default pacing costs the host memory
-	// the analysis does not need to spend.
+	// GOGC is the one resolution-neutral exception: govulncheck holds the whole
+	// package graph live, and the default pacing costs the host memory the
+	// analysis does not need to spend.
+	//
+	// GOPACKAGESDRIVER=off is not resolution either: a driver is a program the
+	// host would run on the analysed module, so it is turned off here as it is on
+	// every other surface.
 	"scan-project": {
-		Require: map[string]string{"GOGC": "30"},
+		Require: map[string]string{"GOGC": "30", "GOPACKAGESDRIVER": "off"},
 		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "CGO_ENABLED", "GOOS", "GOARCH"},
 	},
 	// The declaration a resolving command layers onto whichever posture it
@@ -180,7 +187,7 @@ var postures = map[string]Posture{
 	// make on its own.
 	"declared-target": {
 		Require: map[string]string{"GOOS": PostureTarget.GOOS(), "GOARCH": PostureTarget.GOARCH()},
-		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "GOGC", "CGO_ENABLED"},
+		Forbid:  []string{"GOWORK", "GOFLAGS", "GOPROXY", "GOSUMDB", "GOTOOLCHAIN", "GOMODCACHE", "GOGC", "CGO_ENABLED", "GOPACKAGESDRIVER"},
 	},
 }
 
