@@ -2,31 +2,38 @@ package builder
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
-// Under a go directive newer than this binary's Go, a file the parser refuses
-// is the analyser limit, not a file to drop from the harness: dropping it left
-// its exports, and every symbol they reach, out of the probe without a word.
-func TestEnumerateExportedFuncs_AnalyserLimitRefuses(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "ok.go", "package mypkg\n\nfunc Ok() {}\n")
-	writeFile(t, dir, "new.go", "package mypkg\n\nfunc (b Box) Map[T any](f func(int) T) T {\n")
-	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"ok.go", "new.go"}}}
-	l := gotoolchain.AnalyserLimit{Required: "go1.27.2", Built: "go1.26.6"}
+// Under a go directive newer than this binary's Go, export data this binary's
+// go/types cannot read is the analyser limit, not a harness to give up on: the
+// build would compile it, so only this binary could not read it.
+func TestLibraryHarness_AnalyserLimitRefuses(t *testing.T) {
+	bogus := filepath.Join(t.TempDir(), "bogus")
+	if err := os.WriteFile(bogus, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pkgs := []goListPackage{{ImportPath: "example.com/lib", Export: bogus}}
+	restore := gotoolchain.SetAnalysingGo("go1.21.0")
+	defer restore()
 
-	_, err := enumerateExportedFuncs(pkgs, l, true)
+	_, _, err := libraryHarness(pkgs, []byte("module example.com/lib\n\ngo 1.22\n"))
 	var lim *gotoolchain.AnalyserLimitError
-	if !errors.As(err, &lim) || lim.Limit != l {
-		t.Fatalf("err = %v, want the analyser limit %+v", err, l)
+	if !errors.As(err, &lim) || lim.Limit.Required != "go1.22" {
+		t.Fatalf("err = %v, want the analyser limit for go1.22", err)
 	}
 
-	// The control: under a directive this binary covers, the file is one the
-	// harness build will report, and enumeration carries on as before.
-	got, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
-	if err != nil || len(got["example.com/mypkg"]) != 1 {
-		t.Errorf("unlimited: %v, %v; want Ok alone", got, err)
+	_, _, err = libraryHarness(pkgs, []byte("module example.com/lib\n\ngo 1.20\n"))
+	if err == nil || errors.As(err, &lim) || !strings.Contains(err.Error(), "generating harness") {
+		t.Errorf("err = %v, want a plain generation error under a directive this binary covers", err)
+	}
+	_, _, err = libraryHarness(pkgs, nil)
+	if err == nil || errors.As(err, &lim) {
+		t.Errorf("err = %v, want a plain generation error with no go.mod", err)
 	}
 }

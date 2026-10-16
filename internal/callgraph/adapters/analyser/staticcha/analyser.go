@@ -152,11 +152,11 @@ func (a *Analyser) Analyse(
 	// A module published from a monorepo carries replace directives pointing at
 	// its sibling directories. They apply to no consumer's build — a replace is
 	// ignored outside the main module — but this analysis IS a build whose main
-	// module is the extracted one, and the siblings are not in the zip. Dropping
-	// them before the load is what makes the module resolve here the way it
-	// resolves for everyone else; the record then says which ones went. See
-	// dropLocalReplaces.
-	dropped, err := dropLocalReplaces(tempDir)
+	// module is the extracted one, and neither the siblings nor the module's own
+	// nested modules are in the zip. Dropping them before the load is what makes
+	// the module resolve here the way it resolves for everyone else; the record
+	// then says which ones went. See dropLocalReplaces.
+	dropped, err := dropLocalReplaces(tempDir, coord.Path())
 	if err != nil {
 		// Rewriting a file in a directory this process just created is the run, not
 		// the module: the same zip on a working filesystem loads.
@@ -616,6 +616,12 @@ func (a *Analyser) analyseDirOnce(
 	// path is rendered against, and roots read off a different toolchain would
 	// render against directories the load never touched. See sourceRoots.
 	dirs := a.probeSourceDirs(ctx, tempDir, env)
+	// Every failure detail returned from here on is rendered against the same
+	// roots as a position: the module cache is a per-run temp directory, and a
+	// record naming it differs on every run of one module. See relText.
+	roots := newSourceRoots(tempDir, goModCache, dirs)
+	textRoots := detailRoots(roots, mode)
+	defer func() { rec.FailureDetail = textRoots.relText(rec.FailureDetail) }()
 
 	// New Architecture: Multi-pass load to bypass go/packages memory limitations.
 	// Step 1: Discover ALL packages in the transitive dependency graph (metadata only).
@@ -747,8 +753,6 @@ func (a *Analyser) analyseDirOnce(
 	// where this host keeps them reaches the record — and a file in the build
 	// cache is given no position at all, because a content-addressed entry names
 	// nothing a reader can open and moves whenever it is rebuilt. See sourceRoots.
-	roots := newSourceRoots(tempDir, goModCache, dirs)
-
 	a.step(coord, fmt.Sprintf("walking the call graph (%d caller nodes)", len(recordedCallers)))
 	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, roots)
 
@@ -869,6 +873,7 @@ func (a *Analyser) noPackageTypeCheckedRecord(coord, target coordinate.ModuleCoo
 	if isOfflineCacheMiss(detail) {
 		cause = domain.FailureCauseEnvironment
 	}
+	detail = leadWithDependencyError(detail, build.DependencyErrors)
 	// The loader's own account of a module it could not obtain, read off the
 	// dependency it failed on. It leads, because everything else here is its
 	// symptom, and it moves the cause: a build this host could not assemble is
@@ -897,7 +902,7 @@ func stateGraphIncompleteness(rec domain.CallGraphRecord, overallStatus domain.C
 	// A graph exists, so what remains is to say what its incompleteness is a
 	// statement about — the module, or this host. See classifyIncompleteGraph.
 	if overallStatus == domain.CallGraphStatusPartial {
-		rec = classifyIncompleteGraph(rec, tempDir, metaErrs, allLoadErrs, build.UnobtainableImports)
+		rec = classifyIncompleteGraph(rec, tempDir, metaErrs, allLoadErrs, build.UnobtainableImports, build.DependencyErrors)
 	}
 	// FailedPackages scopes the incompleteness to the exact packages that did
 	// not typecheck, so an answer read out of this Partial graph can name the
@@ -946,7 +951,7 @@ func stateGraphIncompleteness(rec domain.CallGraphRecord, overallStatus domain.C
 func classifyIncompleteGraph(
 	rec domain.CallGraphRecord,
 	tempDir string,
-	metaErrs, allLoadErrs, unobtainableImports []string,
+	metaErrs, allLoadErrs, unobtainableImports, dependencyErrs []string,
 ) domain.CallGraphRecord {
 	// A dependency the local module cache does not hold is the one incompleteness
 	// whose cause is not visible in the type errors. Every load runs offline, so
@@ -984,6 +989,7 @@ func classifyIncompleteGraph(
 		sum = strings.Join(strings.Fields(sum), " ")
 		rec.FailureDetail = strings.TrimSuffix("the loader reported: "+sum+"; "+rec.FailureDetail, "; ")
 	}
+	rec.FailureDetail = leadWithDependencyError(rec.FailureDetail, dependencyErrs)
 	// Last, so it leads whatever the branches above assembled. A module this host
 	// could not supply is the CAUSE of every "could not import" line that follows
 	// it, and it is the only line that names something a reader can go and get. It
@@ -1125,6 +1131,25 @@ func firstMissingChecksum(sets ...[]string) string {
 		}
 	}
 	return ""
+}
+
+// detailRoots are the roots a failure detail is rendered against. A working
+// tree's root is a real place a reader can open and stays named; see sourced.
+func detailRoots(roots sourceRoots, mode analysisMode) sourceRoots {
+	if mode != modeModuleZip {
+		roots.module = ""
+	}
+	return roots
+}
+
+// leadWithDependencyError puts the go command's first error about a dependency
+// ahead of detail: the type errors that follow name the import, never why it
+// failed. Absent from detail only; a sentence already quoted is not repeated.
+func leadWithDependencyError(detail string, dependencyErrs []string) string {
+	if len(dependencyErrs) == 0 || strings.Contains(detail, dependencyErrs[0]) {
+		return detail
+	}
+	return strings.TrimSuffix("the loader reported: "+dependencyErrs[0]+"; "+detail, "; ")
 }
 
 func joinFirst(ss []string, n int) string {

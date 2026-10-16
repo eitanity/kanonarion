@@ -69,6 +69,8 @@ func (uc *FetchModuleUseCase) revalidateIfForced(
 // It declines, and the caller downloads, when:
 //
 //   - no record exists, so there is nothing to revalidate against;
+//   - the record's hash does not parse, which is logged at warn because it
+//     means a corrupt record, not a miss;
 //   - the record names no zip, or the blob store does not hold the artefacts —
 //     an evicted blob is an absence, not a contradiction, so it is re-acquired
 //     silently exactly as before;
@@ -86,12 +88,20 @@ func (uc *FetchModuleUseCase) tryRevalidate(
 	existing domain2.FactRecord,
 ) (revalidation, bool, error) {
 	zipIdentity, hasZip, err := ports.ZipIdentity(existing)
-	if err != nil || !hasZip {
-		return revalidation{}, false, nil //nolint:nilerr // an underivable identity is a re-acquisition, not a failure
+	if err != nil {
+		revalidateIdentityUnderivable(ctx, log, err)
+		return revalidation{}, false, nil //nolint:nilerr // an underivable identity is a re-acquisition, not a failure, as logged
+	}
+	if !hasZip {
+		return revalidation{}, false, nil
 	}
 	goModIdentity, hasGoMod, err := ports.GoModIdentity(existing)
-	if err != nil || !hasGoMod {
+	if err != nil {
+		revalidateIdentityUnderivable(ctx, log, err)
 		return revalidation{}, false, nil //nolint:nilerr // as above
+	}
+	if !hasGoMod {
+		return revalidation{}, false, nil
 	}
 
 	zipData, ok, err := uc.readHeldArtefact(ctx, zipIdentity)
@@ -226,4 +236,13 @@ func (uc *FetchModuleUseCase) recordTamperEvent(existing domain2.FactRecord, com
 		return fmt.Errorf("recording held-artefact mismatch for %s: %w", existing.Coordinate(), err)
 	}
 	return nil
+}
+
+// revalidateIdentityUnderivable states that a stored record's hash does not
+// parse before the run re-acquires, so a corrupt record never reads as an
+// ordinary cache miss. log already names the module.
+func revalidateIdentityUnderivable(ctx context.Context, log *slog.Logger, err error) {
+	log.WarnContext(ctx, "stored fact record carries a hash that does not parse; re-acquiring",
+		slog.String("error", err.Error()),
+	)
 }

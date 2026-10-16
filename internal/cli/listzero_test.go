@@ -69,7 +69,7 @@ func TestRunCallGraphList_EmptyStoreIsNotAnUnmatchedFilter(t *testing.T) {
 	if !strings.Contains(out, `so module path "no-such-module-anywhere" is not what made this empty`) {
 		t.Errorf("expected the filter cleared of blame, got: %q", out)
 	}
-	if !strings.Contains(out, "to produce one: kanonarion callgraph <module>@<version>") {
+	if !strings.Contains(out, "to produce one: kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>") {
 		t.Errorf("expected the produce-a-record remedy, got: %q", out)
 	}
 	if strings.Contains(out, "matched module path") {
@@ -165,7 +165,7 @@ func TestRunCallGraphList_JSONEmptyStoreSaysStoreEmpty(t *testing.T) {
 	if !notice.StoreEmpty || notice.RecordsConsidered != 0 {
 		t.Errorf("want store_empty with zero records considered, got %+v", notice)
 	}
-	if len(notice.Remedy) == 0 || !strings.HasPrefix(notice.Remedy[0], "kanonarion callgraph ") {
+	if len(notice.Remedy) == 0 || !strings.Contains(notice.Remedy[0], " && kanonarion callgraph ") {
 		t.Errorf("remedy = %v, want the produce-a-record invocation", notice.Remedy)
 	}
 }
@@ -251,7 +251,7 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "walk-list",
 			run: func(stdout, stderr io.Writer) error {
-				return runWalkList(context.Background(), "", "", "", "", "", 20, 0, false, false,
+				return runWalkList(context.Background(), "", "", "", "", buildTargetFlags{}, "", 20, 0, false, false,
 					testfakes.NewFakeQueryWalks(), stdout, stderr)
 			},
 			want: []string{"the store holds no walk record at all",

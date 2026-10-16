@@ -71,7 +71,7 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 	vuldomain.UnscanReasonVersionNotInToolchain: {
 		label:       metadataOnlyNote + " (version not in project build)",
 		heading:     metadataOnlyNote + " — version not in project build",
-		explanation: "scanned in isolation these modules resolve a dependency version the project's build never selected; advisories matched, reachability not computed here",
+		explanation: "scanned in isolation these modules resolve a dependency version the project's build never selected; advisories matched, govulncheck reachability not computed here",
 		// The only reason with a direction: the module is analysable, just not in
 		// isolation, and the whole-build analysis answers the question properly.
 		hint: reachabilityLocalHint,
@@ -81,7 +81,7 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		heading: metadataOnlyNote + " — offline resolution failed, version could not be identified",
 		explanation: "an offline module lookup failed but the toolchain error named no version, " +
 			"so whether these modules reach outside the project build or the scan cache is incomplete is unverified; " +
-			"advisories matched, reachability not computed here",
+			"advisories matched, govulncheck reachability not computed here",
 		// The whole-build analysis both resolves reachability and, by rooting at
 		// the project, avoids the isolated re-resolution that produced this at all.
 		hint: reachabilityLocalHint,
@@ -180,7 +180,7 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		label:   metadataOnlyNote + " (only go.mod fetched)",
 		heading: metadataOnlyNote + " — only the go.mod was fetched, not the module source",
 		explanation: "these modules were fetched for module-graph resolution only, so the store holds their go.mod " +
-			"and not their source; advisories matched, reachability not computed here",
+			"and not their source; advisories matched, govulncheck reachability not computed here",
 	},
 	vuldomain.UnscanReasonLocalProjectSource: {
 		label:   metadataOnlyNote + " (local project source, never published)",
@@ -200,7 +200,7 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		// fetch under a retired pipeline generation is another, and stating either
 		// would be a guess printed as a finding.
 		explanation: "the store holds no fetched source for these coordinates, so only their advisory match could run; " +
-			"advisories matched, reachability not computed here",
+			"advisories matched, govulncheck reachability not computed here",
 	},
 	// Not scanned, not metadata-only: the advisory match this reason accompanies
 	// was never performed in the run's own frame, because the frame never

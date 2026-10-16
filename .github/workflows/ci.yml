@@ -184,17 +184,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # The same script make lint runs.
       - name: Check for restricted imports in extraction packages
-        run: |
-          RESTRICTED="os/exec|plugin|syscall|unsafe"
-          PACKAGES="./internal/license/... ./internal/iface/... ./internal/callgraph/... ./internal/example/..."
-          FOUND=$(go list -f '{{.ImportPath}} {{join .Imports " "}}' $PACKAGES | grep -E " ($RESTRICTED)" || true)
-          if [ -n "$FOUND" ]; then
-            echo "::error::Restricted imports found in extraction packages:"
-            echo "$FOUND"
-            exit 1
-          fi
-          echo "No restricted imports found."
+        run: bash scripts/restricted-imports.sh
 
   benchmarks:
     name: Resource Benchmarks

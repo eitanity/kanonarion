@@ -24,7 +24,7 @@ func TestClassifyIncompleteGraph_AnalyserLimitIsTheEnvironment(t *testing.T) {
 		stdlibWarning,
 	}
 	rec := domain.CallGraphRecord{OverallStatus: domain.CallGraphStatusPartial, FailureDetail: joinFirst(errs, 3)}
-	got := classifyIncompleteGraph(rec, t.TempDir(), nil, errs, nil)
+	got := classifyIncompleteGraph(rec, t.TempDir(), nil, errs, nil, nil)
 	if got.FailureCause != domain.FailureCauseEnvironment {
 		t.Errorf("cause = %q, want %q", got.FailureCause, domain.FailureCauseEnvironment)
 	}
@@ -35,14 +35,14 @@ func TestClassifyIncompleteGraph_AnalyserLimitIsTheEnvironment(t *testing.T) {
 	// Already in the kept detail: stated once, not twice.
 	refusal := "/p/main.go:1:1: package requires newer Go version go1.27 (application built with go1.26)"
 	rec = domain.CallGraphRecord{OverallStatus: domain.CallGraphStatusPartial, FailureDetail: refusal}
-	got = classifyIncompleteGraph(rec, t.TempDir(), nil, []string{refusal}, nil)
+	got = classifyIncompleteGraph(rec, t.TempDir(), nil, []string{refusal}, nil, nil)
 	if got.FailureCause != domain.FailureCauseEnvironment || strings.Count(got.FailureDetail, refusal) != 1 {
 		t.Errorf("cause %q, detail %q", got.FailureCause, got.FailureDetail)
 	}
 
 	// The control: a package that does not compile is still the module's.
 	rec = domain.CallGraphRecord{OverallStatus: domain.CallGraphStatusPartial, FailureDetail: errs[2]}
-	if got := classifyIncompleteGraph(rec, t.TempDir(), nil, errs[2:3], nil); got.FailureCause != domain.FailureCauseModule {
+	if got := classifyIncompleteGraph(rec, t.TempDir(), nil, errs[2:3], nil, nil); got.FailureCause != domain.FailureCauseModule {
 		t.Errorf("a compile error was filed as %q", got.FailureCause)
 	}
 }

@@ -102,7 +102,7 @@ github.com/spf13/cobra@v1.8.1
   Vulnerabilities: Clean
   Walk basis:      01KZWK6GHN7CK9Y54YTHMTNRKJ (frame target-rooted:github.com/spf13/cobra@v1.8.1)
   Run context:     this record was measured in a walk outside the 10 most recent walks this report loaded, so there is no run context to show
-  Snapshot:        2026-08-28T14:47:45Z (pipeline v25)
+  Snapshot:        2026-08-28T14:47:45Z (pipeline v26)
 
 Context size: ~6062 tokens (24248 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 ```
@@ -339,8 +339,8 @@ kanonarion license-compat github.com/spf13/cobra@v1.8.1
 github.com/spf13/cobra@v1.8.1: closure is compatible with Apache-2.0 (data v1.1.0, walk 01KZWK6GHN7CK9Y54YTHMTNRKJ, frame not-platform-scoped)
 ```
 
-Without `--target`, kanonarion compares the closure against the module's own
-licence. Pass `--target <SPDX id>` to compare it against the licence you ship
+Without `--target-license`, kanonarion compares the closure against the module's own
+licence. Pass `--target-license <SPDX id>` to compare it against the licence you ship
 under.
 
 **What does the vulnerability record say?**
@@ -354,7 +354,7 @@ github.com/spf13/cobra@v1.8.1 — Clean
   Walk:            01KZWK6GHN7CK9Y54YTHMTNRKJ
   Analysis frame:  target-rooted:github.com/spf13/cobra@v1.8.1
   Toolchain:       go1.26.5
-  First validated: 2026-08-27T01:09:38Z  (against this snapshot at pipeline v25, not first awareness)
+  First validated: 2026-08-27T01:09:38Z  (against this snapshot at pipeline v26, not first awareness)
                    first observation: kanonarion store ledger --event-type vuln_finding_observed --module github.com/spf13/cobra@v1.8.1
   Last validated:  2026-08-27T01:09:38Z
   Snapshot:        vuln.go.dev@2026-08-21T20:38:00Z
@@ -492,7 +492,7 @@ kanonarion reachability --local .
 local reachability probe of /home/mb/dev/kanonarion
   module:    github.com/eitanity/kanonarion
   snapshot:  local-5f4438c9453f312e903b0c61eb5cbef18633b072bdbe9ef4f1586e0ecf00a384 taken 2026-08-27T01:33:16Z
-  seed:      seed restricted to stored records measured in this tree's own frame (rooted at github.com/eitanity/kanonarion) or in the isolated frame; records measured in another consumer's build were not read
+  seed:      seed restricted to stored records scanned by walk "01M4DN1KPYJM458G55MJEGK9NV" (code scope, frame target-rooted:github.com/eitanity/kanonarion@local), the newest project walk for this tree's go.mod, in its own frame or in the isolated frame; records of older walks and of another consumer's build were not read
   notice:    no stored vulnerability findings for the 18 module(s) of this build the store holds a record for
 
 coverage: 18 build module(s), 18 queried, 18 covered, 0 with findings
@@ -500,7 +500,8 @@ coverage: 18 build module(s), 18 queried, 18 covered, 0 with findings
 no affected modules in the analysed build
 ```
 
-This probe reads only records measured in your own tree's frame, and says so.
+This probe reads only the records of your tree's newest project walk, and says
+which walk that is.
 When there are findings to probe, it walks the call graph from your code to the
 affected symbols, which takes about 30 seconds.
 
@@ -513,7 +514,7 @@ would analyse it:
 
 ```
 error: execute root command: symbol "github.com/hashicorp/go-multierror.Append" is not in the call-graph store: its module has not been analysed (consumer-mode code). Analyse it first, e.g.:
-  kanonarion callgraph <module>@<version>
+  kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>
 ```
 
 | Status | Meaning | What to run next |
@@ -595,7 +596,7 @@ Exit codes you must branch on:
                       walk exists but the root has no licence record. These are
                       different problems. The diagnostic says which one it is and
                       names the command that fixes it: `kanonarion walk <coord>`
-                      for the first, `--target <SPDX>` or an `--analyse-root`
+                      for the first, `--target-license <SPDX>` or an `--analyse-root`
                       walk plus `extract` for the second.
                    20 bad invocation
 
@@ -606,9 +607,13 @@ Interpretation rules. These are load-bearing.
    result is empty. Never report "no vulnerabilities" or "no licence issues"
    from a not_run or not_fetched section. Run the command the status implies
    (not_fetched: fetch or inspect the module; not_run: extract) and ask again.
-2. Queries over unanalysed data exit non-zero and print the command to run.
-   Run that command, then repeat the query. An empty result with exit 0 over
-   analysed data is a real zero. Report it as one.
+2. Most queries over unanalysed data exit non-zero and print the command to
+   run. Run that command, then repeat the query. Two exit 0 instead.
+   symbol-context --module, for a module with no interface record, prints
+   the command to run on stderr. callgraph-show --history lists stored
+   generations, and prints "no callgraph records" for a module with none this
+   build serves. Neither is a real zero. Otherwise an empty result with exit 0
+   over analysed data is a real zero. Report it as one.
 3. Read the answer line on callers, callees and implementers, not just the
    list. RESOLVED-ABSENT is a measurement and you may report it as "nothing
    calls this". UNRESOLVED is not an answer: the graph could not decide, and

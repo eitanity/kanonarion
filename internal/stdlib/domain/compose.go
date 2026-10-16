@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -102,17 +103,24 @@ func Compose(measurements []Facts, req ComposeRequest) (Facts, error) {
 		return Facts{}, *c
 	}
 
-	ordered := make([]Facts, len(candidates))
-	copy(ordered, candidates)
-	sort.SliceStable(ordered, func(i, j int) bool { return servesBefore(ordered[i], ordered[j]) })
-	return ordered[0], nil
+	// Position breaks the tie nothing else does: candidates are in append order,
+	// so the later of two indistinguishable measurements is the later run.
+	best := 0
+	for i := 1; i < len(candidates); i++ {
+		if !servesBefore(candidates[best], candidates[i]) {
+			best = i
+		}
+	}
+	return candidates[best], nil
 }
 
-// withRoute keeps the measurements that took one acquisition route.
-func withRoute(measurements []Facts, want AcquisitionRoute) []Facts {
+// withRoute keeps the measurements that took any of the given routes, in the
+// order they were appended. It decides membership per element in one walk, so a
+// measurement is identified by its position and no two can be mistaken for one.
+func withRoute(measurements []Facts, want ...AcquisitionRoute) []Facts {
 	out := make([]Facts, 0, len(measurements))
 	for _, f := range measurements {
-		if f.AcquisitionRoute == want {
+		if slices.Contains(want, f.AcquisitionRoute) {
 			out = append(out, f)
 		}
 	}
@@ -157,34 +165,12 @@ func defaultRouteGroup(measurements []Facts) ([]Facts, error) {
 	case len(godev) > 0 && len(local) > 0:
 		return godev, nil
 	case len(godev) > 0:
-		return inAppendOrder(measurements, godev, silent), nil
+		return withRoute(measurements, RouteGoDev, RouteUnrecorded), nil
 	case len(local) > 0:
-		return inAppendOrder(measurements, local, silent), nil
+		return withRoute(measurements, RouteLocalToolchain, RouteUnrecorded), nil
 	default:
 		return silent, nil
 	}
-}
-
-// inAppendOrder merges two subsets back into the order they were appended in, so
-// recency as a tiebreaker means what it says.
-func inAppendOrder(all, a, b []Facts) []Facts {
-	keep := make(map[string]bool, len(a)+len(b))
-	key := func(f Facts) string {
-		return f.ContentHash + "\x00" + f.Digests.SHA256 + "\x00" + f.AcquiredAt.UTC().String()
-	}
-	for _, f := range a {
-		keep[key(f)] = true
-	}
-	for _, f := range b {
-		keep[key(f)] = true
-	}
-	out := make([]Facts, 0, len(keep))
-	for _, f := range all {
-		if keep[key(f)] {
-			out = append(out, f)
-		}
-	}
-	return out
 }
 
 // findConflict reports the first disagreement composition must not resolve by

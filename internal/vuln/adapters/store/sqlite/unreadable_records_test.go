@@ -265,14 +265,6 @@ func TestComposingReads_AllDriftedIsNoServableRecord(t *testing.T) {
 		err   error
 	}
 	for name, read := range map[string]func() answer{
-		"GetLatest": func() answer {
-			_, found, err := store.GetLatestVulnerabilityRecord(ctx, bad.Coordinate, "v1")
-			return answer{found, err}
-		},
-		"Get": func() answer {
-			_, found, err := store.GetVulnerabilityRecord(ctx, bad.Coordinate, "v1", snap("govulndb", "v2024-01-01"))
-			return answer{found, err}
-		},
 		"GetAt": func() answer {
 			_, found, err := store.GetVulnerabilityRecordAt(ctx, bad.Coordinate, "v1", snap("govulndb", "v2024-01-01"), domain.RootingUnrecorded)
 			return answer{found, err}

@@ -88,8 +88,21 @@ func adoptRowBlobs(blobs *blobstore.Store, logger *slog.Logger, moduleHash, goMo
 		{fetchports.BlobKindZip, moduleHash, contentLocation},
 		{fetchports.BlobKindGoMod, goModHash, goModLocation},
 	} {
+		if artefact.legacy == "" {
+			continue
+		}
 		h, perr := fetchdomain.ParseModuleHash(artefact.hash)
-		if perr != nil || h.IsZero() || artefact.legacy == "" {
+		if perr != nil {
+			// A blob whose record hash does not parse cannot be addressed; it is
+			// counted and logged so it never reads as a record with no blob.
+			logger.Warn("blob_readdress_failed",
+				slog.String("legacy_handle", artefact.legacy),
+				slog.String("error", perr.Error()),
+			)
+			skipped++
+			continue
+		}
+		if h.IsZero() {
 			continue
 		}
 		identity, ierr := fetchports.NewBlobIdentity(artefact.kind, h)

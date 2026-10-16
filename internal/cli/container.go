@@ -400,7 +400,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// hard, while an absent entry falls through to network sumdb verification.
 	// In --from-modcache mode go.sum is already the sole anchor (via sumdb), so
 	// this is skipped.
-	fetchUC, err = withProjectGoSumAnchor(fetchUC, dbHandle)
+	fetchUC, err = withProjectGoSumAnchor(fetchUC, dbHandle, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -586,7 +586,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// module, and a ceiling that applied only on the extract path would leave the
 	// heaviest module able to take the host by the other route.
 	cgSpawner := vulncallgraph.NewOsCallGraphSpawner(kanonarionBinary, callgraphCeiling, callgraphNarration).
-		WithMemoryCeiling(callgraphBound.CeilingBytes)
+		WithMemoryCeiling(callgraphBound.CeilingBytes).
+		// The same store and blob source the extract stage's child is given.
+		WithExtraArgs(cgExtraArgs)
 	setAside := newSetAsideRelay(logger)
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,
@@ -835,7 +837,7 @@ func selectFetchAdapters(storeRoot, goproxy, goBinary string, localBlobs *blobst
 	if modcacheMode {
 		blobs = mcblobstore.New(modcacheDir, localBlobs)
 		proxyAdapter = mcproxy.New(modcacheDir, goBinary, filepath.Dir(goSumPath), logger)
-		gsClient, gerr := gosumfile.New(goSumPath)
+		gsClient, gerr := gosumfile.New(goSumPath, logger)
 		if gerr != nil {
 			_ = dbHandle.Close()
 			return nil, nil, nil, fmt.Errorf("loading go.sum for modcache mode: %w", gerr)
@@ -889,9 +891,9 @@ func cleanOrphanedBlobTemps(localBlobs *blobstore.Store, logger *slog.Logger) {
 
 // withProjectGoSumAnchor layers the walk root's go.sum on the network path as
 // an extra offline integrity anchor, when there is one.
-func withProjectGoSumAnchor(fetchUC *fetchapp.FetchModuleUseCase, dbHandle sqlitestore.DB) (*fetchapp.FetchModuleUseCase, error) {
+func withProjectGoSumAnchor(fetchUC *fetchapp.FetchModuleUseCase, dbHandle sqlitestore.DB, logger *slog.Logger) (*fetchapp.FetchModuleUseCase, error) {
 	if !modcacheMode && projectGoSumPath != "" {
-		gsClient, gerr := gosumfile.New(projectGoSumPath)
+		gsClient, gerr := gosumfile.New(projectGoSumPath, logger)
 		if gerr != nil {
 			_ = dbHandle.Close()
 			return nil, fmt.Errorf("loading project go.sum for verification: %w", gerr)

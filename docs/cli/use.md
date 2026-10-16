@@ -194,10 +194,13 @@ whether every selected node landed.
 ## Air-gapped operation
 
 `use --recursive` is the offline remedy the fetch-capable commands name. In an
-environment that declares no module fetching (`GOPROXY=off`), `fetch`, `walk`,
-`latest` and `audit` refuse before any network I/O and exit `20`; the way to
-put a module and its whole closure in front of a `go build` there is this
-command, whose bytes come from the store and are re-verified against the
+environment that declares no module fetching (`GOPROXY=off`, or `--goproxy off`
+on the command), nothing is fetched over the network: `fetch` refuses, exit
+`20`; `latest` refuses, exit `20`, unless the store holds a lookup inside
+`staleness.ttl`; a walk records each module it cannot fetch as failed and ends
+partial, exit `1` (failed, exit `2`, when it is the walk's own target); and
+`audit` carries on without them. The way to put a module and its whole closure
+in front of a `go build` there is this command, whose bytes come from the store and are re-verified against the
 recorded hashes on the way out. `use` itself is unaffected by `GOPROXY` - it
 never opens a socket. See
 [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct).

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -576,11 +577,13 @@ func (g GenerationRank) ServesBefore(o GenerationRank) bool {
 	return g.ContentHash < o.ContentHash
 }
 
-// withSource keeps the records built from one kind of source.
-func withSource(records []CallGraphRecord, want AnalysisSource) []CallGraphRecord {
+// withSource keeps the records built from any of the given kinds of source, in
+// the order they were appended. It decides membership per record in one walk, so
+// a record is identified by its position and a lookalike excluded one stays out.
+func withSource(records []CallGraphRecord, want ...AnalysisSource) []CallGraphRecord {
 	out := make([]CallGraphRecord, 0, len(records))
 	for _, r := range records {
-		if r.AnalysisSource == want {
+		if slices.Contains(want, r.AnalysisSource) {
 			out = append(out, r)
 		}
 	}
@@ -639,7 +642,7 @@ func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGra
 	// shares the group it steps aside with them — a measurement that cannot be
 	// attributed to the question being asked does not get to answer it.
 	if len(toolchain) > 0 && len(zip) == 0 && len(tree) == 0 {
-		return inAppendOrder(records, toolchain, silent), nil
+		return withSource(records, AnalysisSourceToolchainSource, AnalysisSourceUnrecorded), nil
 	}
 
 	switch {
@@ -655,14 +658,14 @@ func defaultSourceGroup(records []CallGraphRecord, callerRoot string) ([]CallGra
 		// could never be served again once an extract had run: the remedy the tool
 		// printed changed the ledger and never the answer.
 		if analysedIn(tree, callerRoot) {
-			return inAppendOrder(records, tree, nil), nil
+			return tree, nil
 		}
 		// Leave the silent records out, since they cannot be attributed to either.
 		return zip, nil
 	case len(zip) > 0:
-		return inAppendOrder(records, zip, silent), nil
+		return withSource(records, AnalysisSourceModuleZip, AnalysisSourceUnrecorded), nil
 	case len(tree) > 0:
-		return inAppendOrder(records, tree, silent), nil
+		return withSource(records, AnalysisSourceWorktree, AnalysisSourceUnrecorded), nil
 	default:
 		return silent, nil
 	}
@@ -700,30 +703,6 @@ func analysedIn(records []CallGraphRecord, root string) bool {
 		}
 	}
 	return false
-}
-
-// inAppendOrder merges two subsets back into the order they were appended in.
-//
-// Order is not cosmetic here: composition serves the LAST observation of a
-// mutating working tree, and that is by position rather than by timestamp
-// because two extractions can share one. Rebuilding a group by concatenating
-// subsets would put a legacy record after a newer one and hand back a graph the
-// tree no longer has.
-func inAppendOrder(all, a, b []CallGraphRecord) []CallGraphRecord {
-	keep := make(map[string]bool, len(a)+len(b))
-	for _, r := range a {
-		keep[r.ContentHash] = true
-	}
-	for _, r := range b {
-		keep[r.ContentHash] = true
-	}
-	out := make([]CallGraphRecord, 0, len(keep))
-	for _, r := range all {
-		if keep[r.ContentHash] {
-			out = append(out, r)
-		}
-	}
-	return out
 }
 
 // isWorktreeSequence reports whether these records observe a mutating working

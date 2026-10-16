@@ -76,14 +76,14 @@ func TestLicenseCompatWith_RootNotAnalysed(t *testing.T) {
 }
 
 // A root with a licence record but no SPDX identity cannot be an implicit
-// target => ExitFailed directing the user to pass --target.
+// target => ExitFailed directing the user to pass --target-license.
 func TestLicenseCompatWith_RootNoSPDX(t *testing.T) {
 	ctr := containerWithWalk(compatCoord(), licdomain.ClosureCompatibilityReport{}, licapp.ErrRootLicenceNoSPDX)
 	var out bytes.Buffer
 	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "", "", &out, io.Discard)
 	requireExit(t, err, ExitFailed)
-	if !strings.Contains(err.Error(), "--target") {
-		t.Errorf("diagnostic should suggest --target: %v", err)
+	if !strings.Contains(err.Error(), "--target-license") {
+		t.Errorf("diagnostic should suggest --target-license: %v", err)
 	}
 }
 

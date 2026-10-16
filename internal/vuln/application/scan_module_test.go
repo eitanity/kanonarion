@@ -73,7 +73,7 @@ func TestScanModule_NewScan(t *testing.T) {
 	}
 
 	// Verify persistence
-	persisted, ok, err := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", db.snapshot)
+	persisted, ok, err := vulnStore.recordAtSnapshot(ctx, coord, "v1", db.snapshot)
 	if err != nil || !ok {
 		t.Fatal("record not persisted")
 	}
@@ -285,7 +285,7 @@ func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 		t.Errorf("expected Ecosystem %q on scanner-built record, got %q", fetchdomain.EcosystemGo, res.Ecosystem)
 	}
 
-	persisted, ok, err := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", db.snapshot)
+	persisted, ok, err := vulnStore.recordAtSnapshot(ctx, coord, "v1", db.snapshot)
 	if err != nil || !ok {
 		t.Fatal("record not persisted")
 	}
@@ -910,7 +910,7 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 		t.Errorf("AffectedSymbols = %v", got.AffectedSymbols)
 	}
 
-	persisted, ok, err := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", db.snapshot)
+	persisted, ok, err := vulnStore.recordAtSnapshot(ctx, coord, "v1", db.snapshot)
 	if err != nil || !ok {
 		t.Fatal("record not persisted")
 	}
@@ -1297,7 +1297,7 @@ func TestScanModule_SuccessfulSourceScanStillMatchesOwnAdvisories(t *testing.T) 
 	if res.Findings[0].Reachable != nil {
 		t.Errorf("Reachable = %+v, want nil when the source scan could not report the advisory", res.Findings[0].Reachable)
 	}
-	persisted, ok, err := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", db.snapshot)
+	persisted, ok, err := vulnStore.recordAtSnapshot(ctx, coord, "v1", db.snapshot)
 	if err != nil || !ok {
 		t.Fatal("record not persisted")
 	}

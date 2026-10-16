@@ -26,9 +26,8 @@ import (
 // commands from silently shrinking again.
 //
 // The roster is a decision, not an inventory: a command earns an entry by
-// emitting progress. `fetch` and `latest` are deliberately absent (see
-// TestNoProgressFlag_AbsentFromCommandsThatEmitNoProgress), because a flag that
-// accepts an instruction it cannot carry out is worse than no flag at all.
+// emitting progress, because a flag that accepts an instruction it cannot carry
+// out is worse than no flag at all.
 func TestNoProgressFlag_RegisteredOnEveryProgressEmittingCommand(t *testing.T) {
 	commands := map[string]*cobra.Command{
 		// Throttled stderr heartbeat.
@@ -47,6 +46,11 @@ func TestNoProgressFlag_RegisteredOnEveryProgressEmittingCommand(t *testing.T) {
 		// reads to tell a working subprocess from a stalled one, which is why it is
 		// told to narrate explicitly rather than left to this flag.
 		"callgraph": newCallGraphCmd(io.Discard, io.Discard),
+		// One line per settle pass and per retry while a probe the proxy has not
+		// finished is asked again, for up to four minutes.
+		"latest": newLatestCmd(io.Discard, io.Discard),
+		// The same lines, on the staleness note of each module fetched.
+		"fetch": newFetchCmd(io.Discard, io.Discard),
 	}
 
 	var usage string
@@ -69,23 +73,6 @@ func TestNoProgressFlag_RegisteredOnEveryProgressEmittingCommand(t *testing.T) {
 	}
 	if usage != noProgressUsage {
 		t.Errorf("registered help = %q, want the shared constant %q", usage, noProgressUsage)
-	}
-}
-
-// TestNoProgressFlag_AbsentFromCommandsThatEmitNoProgress states the other half
-// of the decision. `fetch` narrates one preamble line and writes its result to
-// stdout; `latest` writes only results and per-module errors. Neither runs a
-// heartbeat or a per-module progress stream, so neither gets the flag: a
-// registered --no-progress that suppresses nothing tells a caller their run was
-// silenced when it never spoke.
-func TestNoProgressFlag_AbsentFromCommandsThatEmitNoProgress(t *testing.T) {
-	for name, cmd := range map[string]*cobra.Command{
-		"fetch":  newFetchCmd(io.Discard, io.Discard),
-		"latest": newLatestCmd(io.Discard, io.Discard),
-	} {
-		if flag := cmd.Flags().Lookup("no-progress"); flag != nil {
-			t.Errorf("%s emits no progress; --no-progress there would be a dead flag", name)
-		}
 	}
 }
 

@@ -393,50 +393,47 @@ func TestBuildSymbolContextEntries_DeterministicSort(t *testing.T) {
 
 // -- integration: empty store --
 
+// An empty interface store is "nothing analysed", not "no such export": the
+// lookup exits 4 with stdout empty, on both paths.
 func TestSymbolContextCmd_EmptyStore(t *testing.T) {
-	dir := t.TempDir()
-	var stdout, stderr bytes.Buffer
-	err := Run([]string{"symbol-context", "--store-root", dir, "Marshal"}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "no exports found") {
-		t.Errorf("expected empty message, got: %q", stdout.String())
-	}
-	// No token count for empty results.
-	if strings.Contains(stdout.String(), "tokens") {
-		t.Errorf("expected no token count for empty result, got: %q", stdout.String())
+	for _, args := range [][]string{{"Marshal"}, {"--json", "Marshal"}} {
+		dir := t.TempDir()
+		var stdout, stderr bytes.Buffer
+		err := Run(append([]string{"symbol-context", "--store-root", dir}, args...), &stdout, &stderr)
+		if code := ExitCodeForError(err); code != ExitNotFound {
+			t.Errorf("%v: exit = %d, want %d (%v)", args, code, ExitNotFound, err)
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("%v: stdout must be empty, got %q", args, stdout.String())
+		}
+		if err != nil && !strings.Contains(err.Error(), "interface store is empty") {
+			t.Errorf("%v: the miss does not say the store is empty: %v", args, err)
+		}
 	}
 }
 
-func TestSymbolContextCmd_EmptyStore_JSON(t *testing.T) {
-	dir := t.TempDir()
+func TestSymbolContextCmd_NoExportsJSONIsAnEmptyArray(t *testing.T) {
+	root := seedSymbolStore(t, servedModule)
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"symbol-context", "--store-root", dir, "--json", "Marshal"}, &stdout, &stderr)
-	if err != nil {
+	if err := Run([]string{"symbol-context", "--store-root", root, "--json", "Marshal"}, &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// stdout must be valid JSON and not contain log lines.
 	out := stdout.String()
-	if !strings.Contains(out, "[]") {
-		t.Errorf("expected JSON empty array, got: %q", out)
-	}
 	// JSON mode: no token count on stdout (it's a human-only feature).
 	if strings.Contains(out, "tokens") {
 		t.Errorf("token count must not appear in JSON output, got: %q", out)
 	}
-	// Verify stdout is parseable JSON.
 	var result []symbolContextEntry
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
-		t.Errorf("stdout is not valid JSON: %v\nout=%q", err, out)
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil || len(result) != 0 {
+		t.Errorf("stdout is not an empty JSON array: %v\nout=%q", err, out)
 	}
 }
 
 func TestSymbolContextCmd_LogsGoToStderr_NotStdout(t *testing.T) {
 	// In JSON mode, no log lines must appear on stdout; they go to stderr.
-	dir := t.TempDir()
+	root := seedSymbolStore(t, servedModule)
 	var stdout, stderr bytes.Buffer
-	err := Run([]string{"symbol-context", "--store-root", dir, "--json", "--log-level", "debug", "Marshal"}, &stdout, &stderr)
+	err := Run([]string{"symbol-context", "--store-root", root, "--json", "--log-level", "debug", "Served"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

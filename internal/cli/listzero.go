@@ -4,6 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/eitanity/kanonarion/internal/versionorder"
 )
 
 // listZeroScope is everything a listing knows about a zero result: the filter it
@@ -32,6 +37,9 @@ type listZeroScope struct {
 	// listing was unfiltered, and the zero is about the store, not the filter.
 	filterName  string
 	filterValue string
+	// filterValues names each value separately when one statement covers
+	// several missed selectors, so two ids never read as one id with a comma.
+	filterValues []string
 	// field names the column the value was compared against and matchKind names
 	// how, so a reader who passed a prefix of a module path learns why an
 	// exact-match filter refused it rather than concluding the record is absent.
@@ -59,11 +67,73 @@ type listZeroScope struct {
 	// of the answer for the other, and a caller whose module has simply never
 	// been walked needs the produce invocation whether or not other modules have.
 	keepProduce bool
+	// superseded is what the census found at generations this build does not
+	// serve. considered counts only the served generation, so without it a store
+	// holding nothing but superseded records reads as an empty one.
+	superseded listZeroSuperseded
+}
+
+// listZeroSuperseded is the half of a generation-aware listing's census that
+// the served-generation filter would have hidden.
+type listZeroSuperseded struct {
+	gen listGeneration
+	// held is the generation of every superseded record held, one entry per
+	// record; matched is the subset the listing's filter keeps.
+	held, matched []string
+}
+
+// splitGenerations is the census every generation-aware listing takes: one read
+// with the generation filter lifted, split into the served rows the notice
+// counts and the superseded ones it states. matches is the listing's own filter,
+// nil when it has none. Under --all-generations every row is served.
+func splitGenerations[T any](gen listGeneration, rows []T, generation func(T) string, matches func(T) bool) ([]T, listZeroSuperseded) {
+	sup := listZeroSuperseded{gen: gen}
+	if gen.all {
+		return rows, sup
+	}
+	served := make([]T, 0, len(rows))
+	for _, r := range rows {
+		v := generation(r)
+		if !gen.superseded(v) {
+			served = append(served, r)
+			continue
+		}
+		sup.held = append(sup.held, v)
+		if matches == nil || matches(r) {
+			sup.matched = append(sup.matched, v)
+		}
+	}
+	return served, sup
 }
 
 // storeEmpty reports the case whose remedy is "produce a record", as opposed to
-// "check the filter".
-func (s listZeroScope) storeEmpty() bool { return s.considered == 0 }
+// "check the filter". A store holding only superseded records is not empty.
+func (s listZeroScope) storeEmpty() bool { return s.considered == 0 && len(s.superseded.held) == 0 }
+
+// supersededAsked is the superseded records the figure is about: those the
+// filter matches when there is one, every superseded record otherwise.
+func (s listZeroScope) supersededAsked() []string {
+	if s.filterValue != "" {
+		return s.superseded.matched
+	}
+	return s.superseded.held
+}
+
+// listAllGenerations is the invocation that lists the superseded records.
+func (s listZeroScope) listAllGenerations() string { return s.listAll + " --all-generations" }
+
+// quotedFilter renders the filter and its value: `run id "a"`, or
+// `run ids "a" or "b"` when several values missed.
+func (s listZeroScope) quotedFilter() string {
+	if len(s.filterValues) < 2 {
+		return fmt.Sprintf("%s %q", s.filterName, s.filterValue)
+	}
+	quoted := make([]string, len(s.filterValues))
+	for i, v := range s.filterValues {
+		quoted[i] = strconv.Quote(v)
+	}
+	return s.filterName + "s " + strings.Join(quoted, " or ")
+}
 
 // plural renders the subject in the plural the counting sentences need.
 func (s listZeroScope) plural() string {
@@ -84,12 +154,29 @@ func writeListZeroNotice(stdout io.Writer, s listZeroScope) error {
 	if storeSetAside.pending() {
 		return nil
 	}
-	line, remedyLabel, remedy := listZeroStatement(s)
-	if _, err := fmt.Fprintf(stdout, "%s\n  %s: %s\n", line, remedyLabel, remedy); err != nil {
+	line, remedies := listZeroStatement(s)
+	text := line + "\n"
+	for _, r := range remedies {
+		text += fmt.Sprintf("  %s: %s\n", r.label, r.invocation)
+	}
+	if _, err := io.WriteString(stdout, text); err != nil {
 		return fmt.Errorf("writing zero-result notice: %w", err)
 	}
 	return nil
 }
+
+// writeListZeroWithGeneration is a generation-aware listing's text zero: the
+// notice, then the generation line every page of the listing ends with, so an
+// empty page also points at --all-generations.
+func writeListZeroWithGeneration(stdout io.Writer, s listZeroScope, gen listGeneration) error {
+	if err := writeListZeroNotice(stdout, s); err != nil {
+		return err
+	}
+	return gen.writeNotice(stdout, 0, 0)
+}
+
+// listZeroRemedy is one labelled invocation the notice offers.
+type listZeroRemedy struct{ label, invocation string }
 
 // listZeroLine is the same statement on one line, for the surfaces whose zero
 // is an error rather than an empty page: a single-record selector that matched
@@ -97,8 +184,11 @@ func writeListZeroNotice(stdout io.Writer, s listZeroScope) error {
 // it can say what it searched. Sharing the wording with the listings is the
 // point — a reader who has seen one has seen both.
 func listZeroLine(s listZeroScope) string {
-	line, remedyLabel, remedy := listZeroStatement(s)
-	out := fmt.Sprintf("%s; %s: %s", line, remedyLabel, remedy)
+	line, remedies := listZeroStatement(s)
+	out := line
+	for _, r := range remedies {
+		out += fmt.Sprintf("; %s: %s", r.label, r.invocation)
+	}
 	// The store-empty statement already offers the produce invocation, so adding
 	// it again would print the same remedy twice.
 	if s.keepProduce && !s.storeEmpty() {
@@ -108,44 +198,114 @@ func listZeroLine(s listZeroScope) string {
 }
 
 // listZeroStatement renders the prose halves of the notice: what was looked at,
-// and the invocation that changes the answer.
-func listZeroStatement(s listZeroScope) (line, remedyLabel, remedy string) {
+// and the invocations that change the answer.
+func listZeroStatement(s listZeroScope) (string, []listZeroRemedy) {
+	one := func(line, label, invocation string) (string, []listZeroRemedy) {
+		return line, []listZeroRemedy{{label, invocation}}
+	}
 	switch {
 	case s.pagedPast != "":
-		line = fmt.Sprintf("no %s on this page — the store holds %d %s, and %s",
-			s.subject, s.considered, s.plural(), s.pagedPast)
-		remedyLabel, remedy = "to list from the start", s.listAll
+		return one(fmt.Sprintf("no %s on this page — the store holds %d %s, and %s",
+			s.subject, s.considered, s.plural(), s.pagedPast),
+			"to list from the start", s.listAll)
+	case s.considered == 0 && len(s.superseded.held) > 0:
+		return supersededZeroStatement(s)
 	case s.storeEmpty() && s.filterValue == "":
-		line = fmt.Sprintf("the store holds no %s at all", s.subject)
-		remedyLabel, remedy = "to produce one", s.produce
+		return one(fmt.Sprintf("the store holds no %s at all", s.subject), "to produce one", s.produce)
 	case s.storeEmpty():
-		line = fmt.Sprintf("the store holds no %s at all, so %s %q is not what made this empty",
-			s.subject, s.filterName, s.filterValue)
-		remedyLabel, remedy = "to produce one", s.produce
+		verb := "is"
+		if len(s.filterValues) > 1 {
+			verb = "are"
+		}
+		return one(fmt.Sprintf("the store holds no %s at all, so %s %s not what made this empty",
+			s.subject, s.quotedFilter(), verb), "to produce one", s.produce)
 	case s.filterValue != "":
-		line = fmt.Sprintf("no %s matched %s %q — the value is compared %s against the %s of all %d %s in the store",
-			s.subject, s.filterName, s.filterValue, s.matchKind, s.field, s.considered, s.plural())
+		line := fmt.Sprintf("no %s matched %s — the value is compared %s against the %s of all %d %s in the store",
+			s.subject, s.quotedFilter(), s.matchKind, s.field, s.considered, s.plural())
 		if s.example != "" {
 			line += fmt.Sprintf(" (e.g. %s)", s.example)
 		}
-		remedyLabel, remedy = fmt.Sprintf("to list every %s", s.subject), s.listAll
+		remedies := []listZeroRemedy{{fmt.Sprintf("to list every %s", s.subject), s.listAll}}
+		if m := s.superseded.matched; len(m) > 0 {
+			g := s.superseded.gen
+			line += fmt.Sprintf("; %d %s matching it %s held only at a superseded %s (%s)",
+				len(m), s.plural(), pluralVerb(len(m)), g.supersededNoun, strings.Join(distinctGenerations(m), ", "))
+			remedies = append(remedies, listZeroRemedy{"to list them", s.listAllGenerations()})
+		}
+		return line, remedies
 	default:
 		// An unfiltered listing that returned nothing over a non-empty corpus.
 		// Nothing in this command explains it, so the line says exactly that
 		// rather than borrowing one of the explanations above.
-		line = fmt.Sprintf("no %s was returned, though the store holds %d %s",
-			s.subject, s.considered, s.plural())
-		remedyLabel, remedy = fmt.Sprintf("to list every %s", s.subject), s.listAll
+		return one(fmt.Sprintf("no %s was returned, though the store holds %d %s",
+			s.subject, s.considered, s.plural()),
+			fmt.Sprintf("to list every %s", s.subject), s.listAll)
 	}
-	return line, remedyLabel, remedy
+}
+
+// supersededZeroStatement is the zero of a store whose records, or whose
+// records the filter matches, are all at a generation this build does not
+// serve: the store is not empty, and the remedy is to list or re-derive them.
+func supersededZeroStatement(s listZeroScope) (string, []listZeroRemedy) {
+	g := s.superseded.gen
+	servedAt := fmt.Sprintf("%s %s, the %s this build serves", g.at, g.served, g.servedNoun)
+	var line string
+	switch held, matched := s.superseded.held, s.superseded.matched; {
+	case s.filterValue == "":
+		line = fmt.Sprintf("none of the %d %s the store holds is at %s (held at %s)",
+			len(held), s.plural(), servedAt, strings.Join(distinctGenerations(held), ", "))
+	case len(matched) > 0:
+		line = fmt.Sprintf("none of the %d %s matching %s that the store holds is at %s (held at %s)",
+			len(matched), s.plural(), s.quotedFilter(), servedAt, strings.Join(distinctGenerations(matched), ", "))
+	default:
+		line = fmt.Sprintf("no %s matched %s in any generation, and none of the %d %s the store holds is at %s (held at %s)",
+			s.subject, s.quotedFilter(), len(held), s.plural(), servedAt, strings.Join(distinctGenerations(held), ", "))
+	}
+	return line, []listZeroRemedy{
+		{"to list them", s.listAllGenerations()},
+		{"to " + strings.ToLower(g.redo[:1]) + g.redo[1:], g.produce},
+	}
+}
+
+// pluralVerb agrees "is"/"are" with a count.
+func pluralVerb(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
+}
+
+// distinctGenerations returns each generation once, oldest first, ordered as
+// versions (lexical order puts 0.10.0 before 0.9.0). A detection generation's
+// "+recipes.N" suffix is compared as text after its version.
+func distinctGenerations(versions []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, v := range versions {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, _, _ := strings.Cut(out[i], "+")
+		b, _, _ := strings.Cut(out[j], "+")
+		if c := versionorder.ComparePipelineVersions(a, b); c != 0 {
+			return c < 0
+		}
+		return out[i] < out[j]
+	})
+	return out
 }
 
 // listZeroFilterJSON carries the filter half of the statement.
 type listZeroFilterJSON struct {
-	Name            string `json:"name"`
-	Value           string `json:"value"`
-	ComparedAgainst string `json:"compared_against"`
-	Match           string `json:"match"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	// Values lists each missed value when the statement covers several.
+	Values          []string `json:"values,omitempty"`
+	ComparedAgainst string   `json:"compared_against"`
+	Match           string   `json:"match"`
 }
 
 // listZeroJSON is the machine-readable form of the same statement.
@@ -155,7 +315,13 @@ type listZeroJSON struct {
 	RecordsConsidered int                 `json:"records_considered"`
 	StoreEmpty        bool                `json:"store_empty"`
 	PagedPast         bool                `json:"paged_past"`
-	Remedy            []string            `json:"remedy"`
+	// Superseded counts the records held only at a generation this build does
+	// not serve (those the filter matches, when there is one), and
+	// SupersededGenerations names those generations. Both are always emitted,
+	// null on a surface whose census takes no generation.
+	Superseded            *int      `json:"superseded"`
+	SupersededGenerations *[]string `json:"superseded_generations"`
+	Remedy                []string  `json:"remedy"`
 }
 
 // listZeroStatementJSON renders the same scope for a machine reader. A listing
@@ -170,15 +336,28 @@ func listZeroStatementJSON(s listZeroScope) listZeroJSON {
 		PagedPast:         s.pagedPast != "",
 		Remedy:            []string{s.listAll},
 	}
-	if s.storeEmpty() {
+	if s.superseded.gen.served != "" {
+		sup := s.supersededAsked()
+		n := len(sup)
+		out.Superseded = &n
+		gens := distinctGenerations(sup)
+		out.SupersededGenerations = &gens
+	}
+	switch {
+	case s.storeEmpty():
 		out.Remedy = []string{s.produce}
-	} else if s.keepProduce {
+	case s.pagedPast == "" && s.considered == 0 && len(s.superseded.held) > 0:
+		out.Remedy = []string{s.listAllGenerations(), s.superseded.gen.produce}
+	case s.pagedPast == "" && s.filterValue != "" && len(s.superseded.matched) > 0:
+		out.Remedy = []string{s.listAll, s.listAllGenerations()}
+	case s.keepProduce:
 		out.Remedy = []string{s.listAll, s.produce}
 	}
 	if s.filterValue != "" {
 		out.Filter = &listZeroFilterJSON{
 			Name:            s.filterName,
 			Value:           s.filterValue,
+			Values:          s.filterValues,
 			ComparedAgainst: s.field,
 			Match:           s.matchKind,
 		}

@@ -84,9 +84,9 @@ func TestPutAndGetVulnerabilityRecord(t *testing.T) {
 		t.Fatalf("PutVulnerabilityRecord: %v", err)
 	}
 
-	got, found, err := store.GetVulnerabilityRecord(ctx, rec.Coordinate, "v1", snapshot)
+	got, found, err := store.GetVulnerabilityRecordAt(ctx, rec.Coordinate, "v1", snapshot, domain.RecordRooting(rec))
 	if err != nil {
-		t.Fatalf("GetVulnerabilityRecord: %v", err)
+		t.Fatalf("GetVulnerabilityRecordAt: %v", err)
 	}
 	if !found {
 		t.Fatal("expected record to be found")
@@ -136,9 +136,9 @@ func TestPutVulnerabilityRecord_FirstScannedAtImmutableOnReScan(t *testing.T) {
 		t.Fatalf("re-scan PutVulnerabilityRecord: %v", err)
 	}
 
-	got, found, err := store.GetVulnerabilityRecord(ctx, c, "v1", snapshot)
+	got, found, err := store.GetVulnerabilityRecordAt(ctx, c, "v1", snapshot, domain.RecordRooting(rec))
 	if err != nil {
-		t.Fatalf("GetVulnerabilityRecord: %v", err)
+		t.Fatalf("GetVulnerabilityRecordAt: %v", err)
 	}
 	if !found {
 		t.Fatal("expected record to be found")
@@ -154,11 +154,11 @@ func TestPutVulnerabilityRecord_FirstScannedAtImmutableOnReScan(t *testing.T) {
 	}
 }
 
-func TestGetVulnerabilityRecord_NotFound(t *testing.T) {
+func TestGetVulnerabilityRecordAt_NotFound(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
 
-	_, found, err := store.GetVulnerabilityRecord(ctx, coord("github.com/missing/mod", "v1.0.0"), "v1", snap("govulndb", "v1"))
+	_, found, err := store.GetVulnerabilityRecordAt(ctx, coord("github.com/missing/mod", "v1.0.0"), "v1", snap("govulndb", "v1"), domain.RootingIsolated)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -240,6 +240,18 @@ func findingRecord(t *testing.T, path, version, walkID, findingID string, snapsh
 }
 
 // scanRun builds a sealed run for walkID covering the given coordinates.
+// scanRunOf is scanRun naming each record's own content hash, as a production
+// run does; a walk-scoped read reaches only the generations its run named.
+func scanRunOf(t *testing.T, id, walkID string, snapshot domain.DatabaseSnapshot, recs ...domain.VulnerabilityRecord) domain.WalkScanRun {
+	t.Helper()
+	run := scanRun(t, id, walkID, snapshot)
+	run.PerModuleResults = make(map[coordinate.ModuleCoordinate]string, len(recs))
+	for _, r := range recs {
+		run.PerModuleResults[r.Coordinate] = r.ContentHash
+	}
+	return sealRun(t, run)
+}
+
 func scanRun(t *testing.T, id, walkID string, snapshot domain.DatabaseSnapshot, coords ...coordinate.ModuleCoordinate) domain.WalkScanRun {
 	t.Helper()
 	per := make(map[coordinate.ModuleCoordinate]string, len(coords))
@@ -433,10 +445,10 @@ func TestListVulnerabilityRecordsByFindingID_ScopedToWalk(t *testing.T) {
 			t.Fatalf("PutVulnerabilityRecord: %v", err)
 		}
 	}
-	if err := store.PutWalkScanRun(ctx, scanRun(t, "run-1", "walk-1", snapshot, old.Coordinate)); err != nil {
+	if err := store.PutWalkScanRun(ctx, scanRunOf(t, "run-1", "walk-1", snapshot, old)); err != nil {
 		t.Fatalf("PutWalkScanRun run-1: %v", err)
 	}
-	if err := store.PutWalkScanRun(ctx, scanRun(t, "run-2", "walk-2", snapshot, current.Coordinate)); err != nil {
+	if err := store.PutWalkScanRun(ctx, scanRunOf(t, "run-2", "walk-2", snapshot, current)); err != nil {
 		t.Fatalf("PutWalkScanRun run-2: %v", err)
 	}
 
@@ -475,11 +487,11 @@ func TestListVulnerabilityRecordsByFindingID_WalkScopeIgnoresRecordProvenance(t 
 		t.Fatalf("PutVulnerabilityRecord: %v", err)
 	}
 	// ... but walk-1's scan run covered the same module.
-	if err := store.PutWalkScanRun(ctx, scanRun(t, "run-1", "walk-1", snapshot, rec.Coordinate)); err != nil {
+	if err := store.PutWalkScanRun(ctx, scanRunOf(t, "run-1", "walk-1", snapshot, rec)); err != nil {
 		t.Fatalf("PutWalkScanRun run-1: %v", err)
 	}
 	// Two runs of walk-1 cover it, which must not duplicate the record.
-	if err := store.PutWalkScanRun(ctx, scanRun(t, "run-1b", "walk-1", snapshot, rec.Coordinate)); err != nil {
+	if err := store.PutWalkScanRun(ctx, scanRunOf(t, "run-1b", "walk-1", snapshot, rec)); err != nil {
 		t.Fatalf("PutWalkScanRun run-1b: %v", err)
 	}
 

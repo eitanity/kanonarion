@@ -2,9 +2,11 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // ErrNoRecordsToCompose is returned by Compose when handed no records. It is a
@@ -27,13 +29,12 @@ var ErrNoRecordsToCompose = errors.New("no vulnerability records to compose")
 // record names its provenance rather than having it summarised away — plus the
 // ledger, which still holds every generation for a reader that wants the rest.
 //
-// A caller that has a frame in mind must use ComposeAt instead. This entry
-// point is for the reader who has explicitly declined to name one and is asking
-// "what is the best-founded thing this store knows about the module". The
-// served record still states the frame it was reached in, so an answer is never
-// laundered into an answer to the other question; what is forbidden — carrying a
-// reachability finding across a rooting boundary — is a merge, and this does not
-// merge.
+// A caller that has a frame in mind must use ComposeAt instead. Its one
+// production caller composes the generations a single scan run reached, which
+// share that run's frame. The served record still states the frame it was
+// reached in, so an answer is never laundered into an answer to the other
+// question; what is forbidden — carrying a reachability finding across a rooting
+// boundary — is a merge, and this does not merge.
 func Compose(records []VulnerabilityRecord) (VulnerabilityRecord, error) {
 	if len(records) == 0 {
 		return VulnerabilityRecord{}, ErrNoRecordsToCompose
@@ -83,6 +84,101 @@ func ComposeAt(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRec
 	// has a way to produce, and the guard that pretended otherwise was dead code
 	// no test could reach.
 	return best(candidates), true, nil
+}
+
+// ComposeForIndex returns the record the findings index of one frame describes.
+// It is ComposeAt, except on a toolchain conflict: then the index describes the
+// generations scanned under the toolchain of the frame's newest record. A Go
+// upgrade puts two toolchains in one frame, and the newest is the build a
+// walk-anchored read answers for; the unpinned read still refuses. Every other
+// refusal stands, and the store's writer and its index verifier both use this.
+func ComposeForIndex(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRecord, bool, error) {
+	rec, ok, err := ComposeAt(records, rooting)
+	var conflict ToolchainConflict
+	if err == nil || !errors.As(err, &conflict) {
+		return rec, ok, err
+	}
+	toolchain := newestToolchain(atRooting(records, rooting))
+	current := make([]VulnerabilityRecord, 0, len(records))
+	for _, r := range records {
+		// A record stating no toolchain was not scanned under this one, so it is
+		// not part of this toolchain's answer.
+		if r.Toolchain == toolchain {
+			current = append(current, r)
+		}
+	}
+	return ComposeAt(current, rooting)
+}
+
+// newestToolchain is the toolchain named by the newest record that names one;
+// a conflict guarantees there is such a record.
+func newestToolchain(records []VulnerabilityRecord) gotoolchain.Version {
+	var (
+		newest VulnerabilityRecord
+		found  bool
+	)
+	for _, r := range records {
+		if r.Toolchain != "" && (!found || newerScan(r, newest)) {
+			newest, found = r, true
+		}
+	}
+	return newest.Toolchain
+}
+
+// ComposeInFrame picks the record answering for one frame out of a walk's
+// candidate set, together with the isolated-frame record it declined to answer
+// from. found is false when the candidates hold nothing this frame's question
+// can be answered from.
+//
+// The isolated frame is the one legitimate fallback: it answers "does the module,
+// built alone, reach the advisory", which belongs to no project. Another
+// consumer's target-rooted record answers about a build the caller did not ask
+// about and is never served. A conflict in the frame that answers is returned;
+// a conflict among isolated records offered only as the aside drops the aside.
+//
+// It is the selection every walk-anchored read makes — vuln-show and
+// reachability under --walk-id/--gomod, the batch reports and the local probe's
+// seed — so the surfaces cannot answer one walk differently.
+func ComposeInFrame(recs []VulnerabilityRecord, rooting Rooting) (rec, isolated VulnerabilityRecord, hasIsolated, found bool, _ error) {
+	if len(recs) == 0 {
+		return VulnerabilityRecord{}, VulnerabilityRecord{}, false, false, nil
+	}
+	rec, found, err := ComposeAt(recs, rooting)
+	if err != nil {
+		return VulnerabilityRecord{}, VulnerabilityRecord{}, false, false, fmt.Errorf("composing vulnerability record in frame %s: %w", rooting, err)
+	}
+	if !found {
+		var ierr error
+		isolated, hasIsolated, ierr = ComposeAt(isolatedOnly(recs), RootingIsolated)
+		if ierr != nil {
+			return VulnerabilityRecord{}, VulnerabilityRecord{}, false, false, fmt.Errorf("composing the isolated-frame record: %w", ierr)
+		}
+		// Served as the answer, not as an aside: the record states its frame.
+		return isolated, VulnerabilityRecord{}, false, hasIsolated, nil
+	}
+	if RecordRooting(rec) == RootingIsolated {
+		// An aside drawn from the frame that produced the answer is the same
+		// record printed twice.
+		return rec, VulnerabilityRecord{}, false, true, nil
+	}
+	isolated, hasIsolated, ierr := ComposeAt(isolatedOnly(recs), RootingIsolated)
+	if ierr != nil {
+		isolated, hasIsolated = VulnerabilityRecord{}, false
+	}
+	return rec, isolated, hasIsolated, true, nil
+}
+
+// isolatedOnly narrows a candidate set to the records that state the isolated
+// frame. A bare ComposeAt over the whole set would fall back to every record
+// when none states a frame, and label one that never claimed isolation as such.
+func isolatedOnly(recs []VulnerabilityRecord) []VulnerabilityRecord {
+	out := make([]VulnerabilityRecord, 0, len(recs))
+	for _, r := range recs {
+		if RecordRooting(r) == RootingIsolated {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ComposeForConsumer returns the record that answers a CONSUMER's question about

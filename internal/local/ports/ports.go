@@ -95,6 +95,17 @@ type FindingSet struct {
 	// pipeline version was set aside: written in a canonical shape this build
 	// cannot reproduce.
 	SetAsideOnly map[coordinate.ModuleCoordinate]struct{}
+	// NotInSeedWalk is every coordinate the store holds records for that the
+	// walk the seed was anchored to did not scan: another walk measured it, and
+	// the tree's current build has not been scanned for it.
+	NotInSeedWalk map[coordinate.ModuleCoordinate]struct{}
+	// ScanIncomplete is every coordinate an anchored load found nothing for
+	// because no walk of the tree has a completed vuln-scan.
+	ScanIncomplete map[coordinate.ModuleCoordinate]struct{}
+	// NotAnalysed is every coordinate whose seeding record says the scan failed
+	// or could not analyse it, and reported nothing. Such a record is not an
+	// answer, so the coordinate is not covered.
+	NotAnalysed map[coordinate.ModuleCoordinate]struct{}
 	// SetAside names, one line each, every stored generation the seed was drawn
 	// without because this build cannot reproduce it. It is reported with the
 	// answer, for the reason Restriction is.
@@ -168,6 +179,9 @@ type SymbolProbeResult struct {
 	// failed, sorted by import path. Empty for a library probe, which has no
 	// main package to attribute a symbol to.
 	Binaries []ProbedBinary
+	// HarnessOmitted names the exported declarations a library probe's harness
+	// left out, with the reason. Empty for a binary probe.
+	HarnessOmitted []domain.HarnessOmission
 }
 
 // SymbolTableProber builds a probe binary from a local workspace with inlining

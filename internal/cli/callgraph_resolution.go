@@ -240,10 +240,22 @@ func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphU
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"symbol %q belongs to module %q, which %s resolves to %s — a version that "+
 				"has not been analysed; analysed versions are %s. Analyse the version "+
-				"the build uses:\n  kanonarion callgraph %s@%s",
+				"the build uses:\n  %s",
 			symbolID, modulePath, sc.source, strings.Join(inBuild, ", "),
-			strings.Join(versions, ", "), modulePath, inBuild[0])}
+			strings.Join(versions, ", "), buildVersionRemedy(modulePath, inBuild[0]))}
 	}
+}
+
+// buildVersionRemedy re-derives the call graph of the version a build resolves,
+// through the shared builder. A pair the coordinate parser refuses is still
+// named as given, fetch first, rather than dropped.
+func buildVersionRemedy(modulePath, version string) string {
+	coord, err := coordinate.NewModuleCoordinate(modulePath, version)
+	if err != nil {
+		at := modulePath + "@" + version
+		return "kanonarion fetch " + at + " && kanonarion callgraph " + at
+	}
+	return domain.ReanalysisInstruction(coord, "")
 }
 
 // classifyEmptyEdgeResult turns an empty callers/callees result into either
@@ -929,6 +941,6 @@ func unresolvedSymbolMessage(symbolID, localModulePath string) string {
 	return fmt.Sprintf(
 		"symbol %q is not in the call-graph store: its module has not been "+
 			"analysed (consumer-mode code). Analyse it first, e.g.:\n"+
-			"  kanonarion callgraph <module>@<version>",
+			"  kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>",
 		symbolID)
 }

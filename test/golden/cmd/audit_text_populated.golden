@@ -27,7 +27,7 @@ verification coverage over 3 module(s):
   cross-verified (checksum db + VCS)     0    0.0%
   local go.sum only                      3  100.0%
   cross-verified 0 of 3 module(s) where it applies (0.0%)
-  VCS evidence (fetch ledger): 0 rechecked by this run, 0 inherited, 2 never established, 1 not measured, 0 could not run (no git on the measuring host)
+  VCS evidence (fetch ledger): 0 rechecked by this run, 0 inherited, 2 never established, 1 not measured, 0 could not run (no git, or the remote did not answer within the fetch bound)
   note: no module in this graph carries a VCS anchor — cross-verification covered none of it
 staleness coverage over 3 module(s):
   measured                               1   33.3%

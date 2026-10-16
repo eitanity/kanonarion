@@ -4,6 +4,7 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -419,6 +420,24 @@ func (r sourceRoots) rel(path string) (string, bool) {
 	// long as it hid: a path that cannot be made relative must stay visibly
 	// absolute, so a reader can see that it names a place on someone else's host.
 	return path, true
+}
+
+// relText rewrites every path under one of these roots inside free text, such
+// as a loader error quoted into a failure detail, the way rel writes a position.
+// Longest root first, so a root nested in another is not cut short. A build-cache
+// path is left as it is: in prose it names the entry the error is about.
+func (r sourceRoots) relText(s string) string {
+	if s == "" {
+		return s
+	}
+	roots := append(append(bothSpellings(r.module), r.moduleCache...), r.goroot...)
+	slices.SortStableFunc(roots, func(a, b string) int { return len(b) - len(a) })
+	for _, root := range roots {
+		if root != "" {
+			s = strings.ReplaceAll(s, root+string(filepath.Separator), "")
+		}
+	}
+	return s
 }
 
 // relativeToAny renders path against the first of roots that contains it.

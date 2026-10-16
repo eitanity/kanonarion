@@ -7,12 +7,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/recordstamp"
+	"github.com/eitanity/kanonarion/internal/versionorder"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
@@ -2603,6 +2605,161 @@ func (s *Store) frontierEdges(ctx context.Context, matchCol, orderCol string, sy
 	return s.servedEdges(ctx, candidates, pipelineVersion, opts.Toolchain)
 }
 
+// SupersededCallerHolders names the coordinates holding an edge into any of
+// symbolIDs at another pipeline (see ports.CallGraphUnservedReader).
+func (s *Store) SupersededCallerHolders(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]coordinate.ModuleCoordinate, error) {
+	return s.supersededHolders(ctx, "to_id", symbolIDs, pipelineVersion, scope, opts)
+}
+
+// SupersededCalleeHolders names the coordinates holding an edge out of any of
+// symbolIDs at another pipeline (see ports.CallGraphUnservedReader).
+func (s *Store) SupersededCalleeHolders(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]coordinate.ModuleCoordinate, error) {
+	return s.supersededHolders(ctx, "from_id", symbolIDs, pipelineVersion, scope, opts)
+}
+
+// supersededHolders reads the same index as frontierEdges, chunked the same
+// way. matchCol is a literal from the two callers above, never query input.
+func (s *Store) supersededHolders(ctx context.Context, matchCol string, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]coordinate.ModuleCoordinate, error) {
+	const chunk = 400
+	seen := map[coordinate.ModuleCoordinate]bool{}
+	var out []coordinate.ModuleCoordinate
+	for start := 0; start < len(symbolIDs); start += chunk {
+		batch := symbolIDs[start:min(start+chunk, len(symbolIDs))]
+		args := make([]any, 0, len(batch)+1)
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		args = append(args, pipelineVersion)
+		q := `SELECT DISTINCT from_module, from_version FROM callgraph_edges
+WHERE ` + matchCol + ` IN (` + strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",") + `) AND pipeline_version <> ?`
+		if opts.ExcludeTests {
+			q += ` AND is_test = 0`
+		}
+		coords, err := s.holderRows(ctx, q, args, scope)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range coords {
+			if !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
+	}
+	sortCoordinates(out)
+	return out, nil
+}
+
+// holderRows runs one holder statement and returns its in-scope coordinates.
+func (s *Store) holderRows(ctx context.Context, q string, args []any, scope coordinate.ModuleSet) ([]coordinate.ModuleCoordinate, error) {
+	rows, err := s.db.DB().QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying superseded callgraph edges: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only; Err is checked below
+	var out []coordinate.ModuleCoordinate
+	for rows.Next() {
+		var path, version string
+		if serr := rows.Scan(&path, &version); serr != nil {
+			return nil, fmt.Errorf("scanning superseded callgraph edge: %w", serr)
+		}
+		if !scope.ContainsPathVersion(path, version) {
+			continue
+		}
+		c, cerr := coordinate.NewModuleCoordinate(path, version)
+		if cerr != nil {
+			return nil, fmt.Errorf("callgraph edge row %s@%s names no module: %w", path, version, cerr)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating superseded callgraph edges: %w", err)
+	}
+	return out, nil
+}
+
+// UnservedCoordinates returns those of coords with no generation at
+// pipelineVersion (see ports.CallGraphUnservedReader). Each coordinate is two
+// reads on callgraph_records_generation_idx at most; no blob is decoded.
+func (s *Store) UnservedCoordinates(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]ports.UnservedCoordinate, error) {
+	sorted := append([]coordinate.ModuleCoordinate(nil), coords...)
+	sortCoordinates(sorted)
+	var out []ports.UnservedCoordinate
+	for i, c := range sorted {
+		if i > 0 && sorted[i-1] == c {
+			continue
+		}
+		pipelines, err := s.pipelinesHeld(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		if slices.Contains(pipelines, pipelineVersion) {
+			continue
+		}
+		u := ports.UnservedCoordinate{Coordinate: c, Pipelines: pipelines}
+		if c.IsLocal() && len(pipelines) > 0 {
+			if u.AnalysisRoot, err = s.newestAnalysisRoot(ctx, c); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+// pipelinesHeld lists the pipeline versions c holds call graphs at, oldest
+// first.
+func (s *Store) pipelinesHeld(ctx context.Context, c coordinate.ModuleCoordinate) ([]string, error) {
+	rows, err := s.db.DB().QueryContext(ctx,
+		`SELECT DISTINCT pipeline_version FROM callgraph_records WHERE module_path = ? AND module_version = ?`,
+		c.Path(), c.Version())
+	if err != nil {
+		return nil, fmt.Errorf("querying the pipelines held for %s: %w", c, err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only; Err is checked below
+	var out []string
+	for rows.Next() {
+		var p string
+		if serr := rows.Scan(&p); serr != nil {
+			return nil, fmt.Errorf("scanning the pipelines held for %s: %w", c, serr)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating the pipelines held for %s: %w", c, err)
+	}
+	slices.SortFunc(out, versionorder.ComparePipelineVersions)
+	return out, nil
+}
+
+// newestAnalysisRoot is the working tree the newest generation of c naming one
+// records, empty when none does.
+func (s *Store) newestAnalysisRoot(ctx context.Context, c coordinate.ModuleCoordinate) (string, error) {
+	var root string
+	err := s.db.DB().QueryRowContext(ctx,
+		`SELECT analysis_root FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND analysis_root <> ''
+ORDER BY julianday(extracted_at) DESC, rowid DESC LIMIT 1`,
+		c.Path(), c.Version()).Scan(&root)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("querying the working tree of %s: %w", c, err)
+	}
+	return root, nil
+}
+
+// sortCoordinates orders coordinates by path, then version text.
+func sortCoordinates(cs []coordinate.ModuleCoordinate) {
+	slices.SortFunc(cs, func(a, b coordinate.ModuleCoordinate) int {
+		if c := strings.Compare(a.Path(), b.Path()); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Version(), b.Version())
+	})
+}
+
 // queryEdges is the single-symbol edge query: the rows for one symbol, narrowed
 // to the generation that serves each.
 //
@@ -2741,4 +2898,5 @@ var (
 	_ ports.CallGraphSourceReader     = (*Store)(nil)
 	_ ports.CallGraphWorktreeRouter   = (*Store)(nil)
 	_ ports.CallGraphFrontierFinder   = (*Store)(nil)
+	_ ports.CallGraphUnservedReader   = (*Store)(nil)
 )

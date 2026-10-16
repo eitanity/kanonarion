@@ -26,10 +26,16 @@ type AuditSink interface {
 // control tool is not available on the host (e.g. no git binary in PATH).
 // It is part of the VCSClient contract so callers can distinguish "cross-verify
 // could not run because the tool is absent" (an un-analysed/unknown outcome)
-// from "cross-verify ran and could not confirm" (a negative result) — see
+// from "cross-verify ran and could not confirm" (a negative result).
 // Implementations wrap it with an actionable, transport-specific
 // message; callers match with errors.Is, never on the string.
 var ErrVCSToolMissing = errors.New("vcs tool not available")
+
+// ErrVCSRemoteTimeout is returned by a VCSClient when the remote did not
+// finish answering within the client's bound. Like ErrVCSToolMissing it means
+// the leg could not run: it says nothing about the module, so callers must not
+// record it as a settled answer.
+var ErrVCSRemoteTimeout = errors.New("vcs remote did not answer within the bound")
 
 // SumDBClient queries the Go checksum database (sum.golang.org or configured
 // GOSUMDB) for module hash entries. Implementations must never return a non-nil
@@ -527,6 +533,26 @@ func ComposedFetchRecord(ctx context.Context, facts FactStore, coord coordinate.
 		return domain2.CompositeRecord{}, false, fmt.Errorf("reading measurements of %s: %w", coord, err)
 	}
 	return record, found, nil
+}
+
+// SparesGoModFetch reports whether the store's records of coord make a
+// go.mod-only fetch pointless. A full record at any version does: it outranks
+// the go.mod-only record the fetch would write, so no read would serve that. A
+// go.mod-only record spares it only at the current pipeline; an older one was
+// verified by superseded rules, so the fetch runs and re-derives it.
+func SparesGoModFetch(ctx context.Context, facts FactStore, coord coordinate.ModuleCoordinate) (bool, error) {
+	served, ok, err := AbsentIfNothingServable(ComposedFetchRecord(ctx, facts, coord))
+	if err != nil || !ok {
+		return false, err
+	}
+	if !served.IsGoModOnly() {
+		return true, nil
+	}
+	_, ok, err = AbsentIfNothingServable(facts.GetFetchRecord(ctx, coord, domain2.PipelineVersion))
+	if err != nil {
+		return false, fmt.Errorf("reading the current fetch record of %s: %w", coord, err)
+	}
+	return ok, nil
 }
 
 // AbsentIfNothingServable reads a coordinate whose every measurement was set

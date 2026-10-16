@@ -15,6 +15,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // synthesisedGoDirective is the language version written into every go.mod
@@ -261,7 +262,7 @@ func skipNonPackageDir(root, path string, d fs.DirEntry) error {
 		return nil
 	}
 	name := d.Name()
-	if name == "vendor" || name == "testdata" || strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+	if name == "vendor" || gotoolchain.IgnoredDir(name) {
 		return filepath.SkipDir
 	}
 	if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {

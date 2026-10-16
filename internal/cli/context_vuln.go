@@ -341,10 +341,7 @@ func (b *vulnBatchCtx) anchoredVulnerabilities(ctx context.Context, coord coordi
 		if _, ok := run.PerModuleResults[coord]; !ok {
 			continue
 		}
-		// Narrowed to run.Snapshot (the snapshot the scan used), not the latest
-		// snapshot, exactly as the per-run store read was keyed.
-		atSnapshot := recordsAtSnapshot(recs, run.Snapshot)
-		rec, found, err := b.selectForBatch(atSnapshot, coord)
+		rec, found, err := b.selectForBatch(recordsTheRunScanned(recs, run, coord), coord)
 		if err != nil {
 			return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 		}
@@ -482,23 +479,27 @@ func (b *vulnBatchCtx) nameRecordBasis(ctx context.Context, result *contextVulne
 // among consumers when it did not.
 func (b *vulnBatchCtx) selectForBatch(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, bool, error) {
 	if b.anchored && b.anchor.rooting.IsRecorded() {
-		rec, _, _, ok, err := selectRecordInFrame(recs, b.anchor.rooting)
+		rec, _, _, ok, err := vuldomain.ComposeInFrame(recs, b.anchor.rooting)
 		return rec, ok, err
 	}
 	rec, _, _, ok, err := selectConsumerRecord(recs, coord)
 	return rec, ok, err
 }
 
-// recordsAtSnapshot narrows a coordinate's generations to the ones reached
-// against one advisory-database snapshot.
-//
-// Source and version are the whole of snapshot identity here because they are
-// what the store's own per-snapshot read keys on; the retrieval instant travels
-// with the record and is not part of the key.
-func recordsAtSnapshot(recs []vuldomain.VulnerabilityRecord, snap vuldomain.DatabaseSnapshot) []vuldomain.VulnerabilityRecord {
+// recordsTheRunScanned narrows a coordinate's generations to the one the run
+// named by content hash, or, for a run that named none, to every generation on
+// its snapshot (source and version, the store's own key). A snapshot alone also
+// reached another walk's record after a Go upgrade, and the two toolchains'
+// verdicts refused a walk-pinned read.
+func recordsTheRunScanned(recs []vuldomain.VulnerabilityRecord, run vuldomain.WalkScanRun, coord coordinate.ModuleCoordinate) []vuldomain.VulnerabilityRecord {
+	want := run.PerModuleResults[coord]
 	out := make([]vuldomain.VulnerabilityRecord, 0, len(recs))
 	for _, r := range recs {
-		if r.DatabaseSnapshot.Source() == snap.Source() && r.DatabaseSnapshot.Version() == snap.Version() {
+		snap := r.DatabaseSnapshot
+		if snap.Source() != run.Snapshot.Source() || snap.Version() != run.Snapshot.Version() {
+			continue
+		}
+		if want == "" || r.ContentHash == want {
 			out = append(out, r)
 		}
 	}

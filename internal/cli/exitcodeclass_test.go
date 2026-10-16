@@ -378,3 +378,44 @@ type wrapErr struct {
 
 func (w *wrapErr) Error() string { return w.msg + ": " + w.err.Error() }
 func (w *wrapErr) Unwrap() error { return w.err }
+
+// TestExitCodeClass_ModuleNotFetchedIsNotFound: a producer refusing a module
+// the store has not fetched names a 'kanonarion fetch' that runs as printed and
+// supplies the bytes, so it is an absent record (4), not a wrong invocation.
+// The sweep counts every ErrModuleNotFetched a ports package declares, so a new
+// producer's sentinel cannot fall through to 20.
+func TestExitCodeClass_ModuleNotFetchedIsNotFound(t *testing.T) {
+	for _, sentinel := range moduleNotFetched {
+		wrapped := &wrapErr{msg: "extracting call graph", err: sentinel}
+		if got := ExitCodeForError(wrapped); got != ExitNotFound {
+			t.Errorf("%q wrapped: exit %d, want %d", sentinel, got, ExitNotFound)
+		}
+	}
+	files, err := filepath.Glob("../*/ports/*.go")
+	if err != nil {
+		t.Fatalf("globbing ports packages: %v", err)
+	}
+	declared := 0
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		parsed, perr := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+		if perr != nil {
+			t.Fatalf("parsing %s: %v", file, perr)
+		}
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			if vs, ok := n.(*ast.ValueSpec); ok {
+				for _, name := range vs.Names {
+					if name.Name == "ErrModuleNotFetched" {
+						declared++
+					}
+				}
+			}
+			return true
+		})
+	}
+	if declared == 0 || declared != len(moduleNotFetched) {
+		t.Errorf("ports packages declare %d ErrModuleNotFetched sentinels and moduleNotFetched maps %d", declared, len(moduleNotFetched))
+	}
+}

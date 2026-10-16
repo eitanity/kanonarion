@@ -278,9 +278,12 @@ func TestClient_CheckoutToDir_FetchTimeoutOnStallingRemote(t *testing.T) {
 	if !strings.Contains(err.Error(), "fetch bound") {
 		t.Errorf("error %q does not name the fetch bound", err)
 	}
-	// Two bounded attempts (direct + fallback) at 500ms each plus the
-	// WaitDelay pipe grace per attempt, with generous headroom — the point is
-	// "minutes, not the 10-minute test deadline".
+	if !errors.Is(err, ports.ErrVCSRemoteTimeout) {
+		t.Errorf("error %q does not wrap ports.ErrVCSRemoteTimeout", err)
+	}
+	// One bounded attempt (a timed-out fetch never falls back) plus the
+	// WaitDelay pipe grace, with generous headroom — the point is "minutes, not
+	// the 10-minute test deadline".
 	if elapsed > 45*time.Second {
 		t.Errorf("CheckoutToDir took %s against a stalling remote; the fetch timeout is not enforced", elapsed)
 	}

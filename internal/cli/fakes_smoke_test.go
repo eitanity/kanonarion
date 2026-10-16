@@ -341,23 +341,13 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 	rec := vulndomain.VulnerabilityRecord{Coordinate: c, OverallStatus: vulndomain.StatusClean}
 	f.AddRecord(c, rec)
 
-	got, found, err := f.GetRecord(context.Background(), c, "0.1.0", vulndomain.DatabaseSnapshot{})
-	if err != nil || !found || got.OverallStatus != vulndomain.StatusClean {
-		t.Fatalf("GetRecord: %v %v %v", got, found, err)
-	}
-
-	got, found, err = f.GetLatestRecord(context.Background(), c, "0.1.0")
-	if err != nil || !found {
-		t.Fatalf("GetLatestRecord: %v %v %v", got, found, err)
-	}
-
 	inWalk, err := f.ListRecordsForModuleInWalk(context.Background(), c, "W1", "0.1.0")
 	if err != nil || len(inWalk) != 1 {
 		t.Fatalf("ListRecordsForModuleInWalk: %v %v", inWalk, err)
 	}
 
 	list, err := f.ListRecordsForModule(context.Background(), c, "0.1.0")
-	if err != nil || len(list) != 1 {
+	if err != nil || len(list) != 1 || list[0].OverallStatus != vulndomain.StatusClean {
 		t.Fatalf("ListRecordsForModule: %v %v", list, err)
 	}
 
@@ -381,14 +371,6 @@ func assertFakeVulnErrors(t *testing.T, f *testfakes.FakeQueryVuln, c coordinate
 	t.Helper()
 	var err error
 	f.Err = errTest
-	_, _, err = f.GetRecord(context.Background(), c, "0.1.0", vulndomain.DatabaseSnapshot{})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	_, _, err = f.GetLatestRecord(context.Background(), c, "0.1.0")
-	if err == nil {
-		t.Fatal("expected error")
-	}
 	_, err = f.ListRecordsForModuleInWalk(context.Background(), c, "W1", "0.1.0")
 	if err == nil {
 		t.Fatal("expected error")

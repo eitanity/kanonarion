@@ -350,6 +350,33 @@ type CallGraphFrontierFinder interface {
 	FindCalleesOfEach(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]CallEdgeRef, error)
 }
 
+// UnservedCoordinate is a coordinate the store holds no generation of at the
+// served pipeline, so no edge query reads it.
+type UnservedCoordinate struct {
+	Coordinate coordinate.ModuleCoordinate
+	// Pipelines are the pipeline versions the coordinate holds call graphs at,
+	// oldest first. Empty means it was never analysed.
+	Pipelines []string
+	// AnalysisRoot is the working tree the newest generation of a local
+	// coordinate names, empty when none does.
+	AnalysisRoot string
+}
+
+// CallGraphUnservedReader is the optional capability of naming what an edge
+// query could not read. Optional on the CallGraphFrontierFinder precedent: a
+// store without it answers as before and names nothing.
+type CallGraphUnservedReader interface {
+	// SupersededCallerHolders returns the in-scope coordinates holding an edge
+	// into any of symbolIDs at a pipeline other than pipelineVersion, sorted.
+	// opts.ExcludeTests drops test edges, as in FindCallers.
+	SupersededCallerHolders(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]coordinate.ModuleCoordinate, error)
+	// SupersededCalleeHolders is the same for edges out of symbolIDs.
+	SupersededCalleeHolders(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]coordinate.ModuleCoordinate, error)
+	// UnservedCoordinates returns those of coords with no generation at
+	// pipelineVersion, sorted by coordinate.
+	UnservedCoordinates(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]UnservedCoordinate, error)
+}
+
 // TraversalProgressReporter receives the state of a transitive traversal so a
 // read that runs longer than the operator expects can show proof of life. A
 // read command that prints nothing is indistinguishable from a hung one, and

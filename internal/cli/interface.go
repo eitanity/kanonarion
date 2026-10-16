@@ -356,6 +356,9 @@ func newSymbolFindCmd(stdout, stderr io.Writer) *cobra.Command {
 		},
 		Short: "Find all modules that export a symbol with the given name",
 		Example: `  kanonarion symbol-find Client
+  kanonarion symbol-find github.com/google/uuid.NewString
+  kanonarion symbol-find errors.Wrap
+  kanonarion symbol-find UUID.String
   kanonarion symbol-find Marshal
   kanonarion symbol-find Marshal --json
   kanonarion symbol-find Marshal --gomod ./go.mod`,
@@ -392,7 +395,8 @@ func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScope
 	// rendered first and the command fails afterwards, so one module whose records
 	// composition refused to pick between does not delete every other module's
 	// answer. See ports.ErrInterfaceConflict.
-	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, sc.modules)
+	q := parseSymbolQuery(symbolName)
+	refs, err := ctr.QueryInterface.FindSymbol(ctx, q.name, ifaceapp.PipelineVersion, sc.modules)
 	var conflictErr error
 	switch {
 	case errors.Is(err, ports.ErrInterfaceConflict):
@@ -400,15 +404,18 @@ func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScope
 	case err != nil:
 		return fmt.Errorf("finding symbol %q: %w", symbolName, err)
 	}
+	all := refs
+	refs = q.keep(refs)
 
-	// An empty result over an empty interface store is "nothing analysed",
-	// not "analysed, no such export" — the two must be distinguishable
-	// symbol-find takes a bare name with no module to
-	// classify, so the absence test is whether any interface record exists.
-	if len(refs) == 0 {
-		if err := explainNoSymbolExports(ctx, ctr, symbolName, sc, stderr); err != nil {
-			return err
-		}
+	// The index is keyed on the pipeline version, so a module held only at a
+	// superseded one was never read: a miss over it is not "no such export",
+	// and an answer without it must say so.
+	census, err := readInterfaceCensus(ctx, ctr.QueryInterface, sc.modules, q)
+	if err != nil {
+		return err
+	}
+	if err := reportSymbolFindGaps(ctx, ctr, symbolName, q, sc, census, len(refs) > 0, all, stderr); err != nil {
+		return err
 	}
 
 	if !jsonOut {
@@ -435,36 +442,41 @@ func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScope
 	return conflictErr
 }
 
+// reportSymbolFindGaps states what an answer or a miss could not see: a miss
+// is refused or explained, and an answer names the modules it did not read.
+func reportSymbolFindGaps(ctx context.Context, ctr *Container, symbolName string, q symbolQuery, sc buildScope,
+	census unreadInterfaceModules, found bool, all []ports.SymbolRef, stderr io.Writer,
+) error {
+	if found {
+		return census.writeNotice(stderr, census.generalRemedy())
+	}
+	if err := explainNoSymbolExports(ctx, ctr, symbolName, q, sc, census, stderr); err != nil {
+		return err
+	}
+	return q.writeExcluded(stderr, all)
+}
+
 // explainNoSymbolExports refuses an empty answer the store cannot stand
 // behind, and says when every export sits outside the named build.
-func explainNoSymbolExports(ctx context.Context, ctr *Container, symbolName string, sc buildScope, stderr io.Writer) error {
-	recs, lerr := ctr.QueryInterface.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
-	if lerr != nil {
-		return fmt.Errorf("listing analysed modules: %w", lerr)
+func explainNoSymbolExports(ctx context.Context, ctr *Container, symbolName string, q symbolQuery, sc buildScope,
+	census unreadInterfaceModules, stderr io.Writer,
+) error {
+	if census.stored == 0 {
+		return emptyInterfaceStoreError(symbolName)
 	}
-	if len(recs) == 0 {
-		return fmt.Errorf(
-			"symbol %q cannot be resolved: the interface store is empty, nothing "+
-				"has been analysed. Analyse a module first, e.g.:\n"+
-				"  kanonarion interface <module>@<version>\n"+
-				"  kanonarion local .   # for this project's own symbols",
-			symbolName)
-	}
-	// A store full of records this build refuses to serve is not a store
-	// that answers "no such export". The index is keyed on the pipeline
-	// version, so the lookup read nothing at all.
-	if line, superseded := supersededInterfaceStoreLine(recs); superseded {
-		return fmt.Errorf("symbol %q cannot be resolved: %s", symbolName, line)
+	if len(census.modules) > 0 {
+		return census.missError(symbolName, census.generalRemedy())
 	}
 	// Under a scope, "no exports" is also reachable because every module that
 	// exports the symbol sits outside the named build. That is a statement
 	// about the build, not about the symbol, and the two must not print the
 	// same line — so say which one it is before the empty list is rendered.
 	if sc.modules.IsRestricted() {
-		unscoped, uerr := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, coordinate.ModuleSet{})
+		unscoped, uerr := ctr.QueryInterface.FindSymbol(ctx, q.name, ifaceapp.PipelineVersion, coordinate.ModuleSet{})
 		if uerr != nil && !errors.Is(uerr, ports.ErrInterfaceConflict) {
 			return fmt.Errorf("finding symbol %q across all versions: %w", symbolName, uerr)
 		}
+		unscoped = q.keep(unscoped)
 		if len(unscoped) > 0 {
 			if _, werr := fmt.Fprintf(stderr,
 				"notice: %d export(s) of %q exist in the store, all outside %s\n",
@@ -655,21 +667,26 @@ func interfaceListWith(ctx context.Context, limit, offset int, allGenerations bo
 	return printInterfaceList(sums, jsonOut, limit, offset, gen, zero, stdout, stderr)
 }
 
-// interfaceListZeroScope lifts the paging and re-asks the store, so a zero says
-// whether the store holds no interface record at all or the page simply starts
-// past the last one. This listing takes no filter — a module argument routes to
-// interface-list's single-module rendering, which fails with ExitNotFound — so
-// the filter cause cannot arise and the notice never claims it did.
+// interfaceListZeroScope lifts the paging and the generation filter and re-asks
+// the store, so a zero says whether the store holds no interface record at all,
+// holds only superseded ones, or the page simply starts past the last one. This
+// listing takes no filter — a module argument routes to interface-list's
+// single-module rendering, which fails with ExitNotFound — so the filter cause
+// cannot arise and the notice never claims it did.
 func interfaceListZeroScope(ctx context.Context, offset int, gen listGeneration, uc QueryInterfaceUseCase) (listZeroScope, error) {
-	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{PipelineVersion: gen.filterVersion()})
+	// The generation keys, not the composed summaries: the notice needs only
+	// counts and versions, and composing every superseded key costs seconds.
+	every, err := uc.ListInterfaceGenerations(ctx)
 	if err != nil {
 		return listZeroScope{}, fmt.Errorf("counting interface records for the zero-result notice: %w", err)
 	}
+	all, sup := splitGenerations(gen, every, func(g ports.InterfaceGeneration) string { return g.PipelineVersion }, nil)
 	scope := listZeroScope{
 		subject:    "interface record",
 		considered: len(all),
 		produce:    "kanonarion interface <module>@<version>",
 		listAll:    "kanonarion interface-list",
+		superseded: sup,
 	}
 	// An offset past the end empties the page while the store holds records, and
 	// the two are the same zero rows from the caller's side.
@@ -782,7 +799,7 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 		return interfaceListConflictErr(jsonConflicts)
 	}
 	if len(sums) == 0 {
-		return writeListZeroNotice(stdout, zero)
+		return writeListZeroWithGeneration(stdout, zero, gen)
 	}
 	var conflicts []error
 	superseded := 0

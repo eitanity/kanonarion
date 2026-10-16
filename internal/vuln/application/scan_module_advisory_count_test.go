@@ -97,7 +97,7 @@ func TestScanModule_RecordsNameTheAdvisoryCountTheScannerMeasured(t *testing.T) 
 
 			// The sealed row is what a later reader gets, so the count has to
 			// survive the write and not merely the return.
-			persisted, ok, perr := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", res.DatabaseSnapshot)
+			persisted, ok, perr := vulnStore.recordAtSnapshot(ctx, coord, "v1", res.DatabaseSnapshot)
 			if perr != nil || !ok {
 				t.Fatalf("record not persisted under the snapshot it names: ok=%v err=%v", ok, perr)
 			}

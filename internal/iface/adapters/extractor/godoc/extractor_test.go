@@ -1115,3 +1115,50 @@ type _ struct{}
 		}
 	}
 }
+
+// TestExtractor_GoToolIgnoredNamesSkipped holds the go tool's rule from `go help
+// packages`: a file or directory whose name begins with "_" or "." is ignored, at
+// any depth, beside testdata. `go list ./...` over this tree names exactly
+// example.com/m and example.com/m/pkg, and a directory holding only "_only.go" is
+// "no Go files", not a package.
+func TestExtractor_GoToolIgnoredNamesSkipped(t *testing.T) {
+	src := func(pkg, fn string) *fstest.MapFile {
+		return &fstest.MapFile{Data: []byte("package " + pkg + "\n\nfunc " + fn + "() {}\n")}
+	}
+	fsys := fstest.MapFS{
+		"root.go":                 src("m", "Root"),
+		"_x.go":                   src("m", "Underscore"),
+		".x.go":                   src("m", "Dot"),
+		"_x/a.go":                 src("x", "X"),
+		".hidden/a.go":            src("hidden", "H"),
+		"pkg/p.go":                src("pkg", "P"),
+		"pkg/_internal/i.go":      src("internal", "I"),
+		"a/b/_c/d/d.go":           src("d", "D"),
+		"testdata/t.go":           src("t", "T"),
+		"only/_only.go":           src("only", "O"),
+		"_examples/hello/main.go": src("main", "Main"),
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.OverallStatus != domain2.InterfaceStatusExtracted {
+		t.Errorf("OverallStatus = %s (%s), want Extracted", r.OverallStatus, r.FailureDetail)
+	}
+	var got []string
+	for _, pkg := range r.Packages {
+		got = append(got, pkg.ImportPath)
+	}
+	if want := "example.com/m example.com/m/pkg"; strings.Join(got, " ") != want {
+		t.Fatalf("packages = %v, want %s", got, want)
+	}
+	// The ordinary package keeps its API; the ignored files beside it add none.
+	var funcs []string
+	for _, f := range r.Packages[0].Funcs {
+		funcs = append(funcs, f.Name)
+	}
+	if strings.Join(funcs, " ") != "Root" {
+		t.Errorf("example.com/m funcs = %v, want [Root]", funcs)
+	}
+}

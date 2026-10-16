@@ -384,7 +384,12 @@ import (
 // reads are keyed on the pipeline version, so the v24 rows are already
 // unreachable for a v25 question, and all three fields live inside the serialised
 // record rather than in a column.
-const PipelineVersion = "v25"
+//
+// v26 gives a metadata-only record the reachability step an analysed one takes,
+// so under --reachability its findings can carry a call-graph answer, and the
+// isolated scan's go.mod synthesis and package pick skip what "./..." skips.
+// Both change what a re-derived record contains; reads key on the version.
+const PipelineVersion = "v26"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -1029,7 +1034,7 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 			reason, category = uc.verifyOfflineResolution(ctx, params, record.ErrorDetail)
 		}
 		uc.logMetadataFallback(params.Coordinate, reason, category, record.ErrorDetail)
-		note := "source analysis unavailable: " + category + "; results are metadata-only with no reachability"
+		note := "source analysis unavailable: " + category + "; results are metadata-only; govulncheck established no reachability"
 		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, derived, note, reason, record.ErrorDetail, domain.StatusUnscannable)
 		return rec, true, err
 	}
@@ -1037,7 +1042,7 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 	if coverage == domain.CoverageUnscannable {
 		note := record.UnscannableReason
 		if note == "" {
-			note = "source analysis unavailable; results are metadata-only with no reachability"
+			note = "source analysis unavailable; results are metadata-only; govulncheck established no reachability"
 		}
 		uc.logger.Warn("vuln-scan: scanner reported unscannable, falling back to metadata",
 			"coordinate", params.Coordinate, "reason", record.UnscanReason)
@@ -1213,30 +1218,50 @@ func goModModulePaths(f *modfile.File) map[string]struct{} {
 
 // scannedGoMod reads and parses the scanned module's own go.mod from the blob
 // store. ok is false when no go.mod is recorded for it or it cannot be read or
-// parsed — treated as a recovery miss, never a fabricated requirement.
+// parsed — treated as a recovery miss, never a fabricated requirement. A
+// recorded go.mod that cannot be produced is logged, so it never reads as one
+// that was never recorded.
 func (uc *ScanModuleUseCase) scannedGoMod(ctx context.Context, scanned coordinate.ModuleCoordinate) (*modfile.File, bool) {
-	fact, ok, err := uc.getFetchRecord(ctx, scanned)
-	if err != nil || !ok {
+	// A coordinate whose every measurement was set aside holds no record here,
+	// on the same terms as one never fetched.
+	fact, ok, err := fetchports.AbsentIfNothingServable(uc.getFetchRecord(ctx, scanned))
+	if err != nil {
+		return uc.goModUnreadable(ctx, scanned, "reading the fetch record", err)
+	}
+	if !ok {
 		return nil, false
 	}
 	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(fact)
-	if err != nil || !hasGoMod {
+	if err != nil {
+		return uc.goModUnreadable(ctx, scanned, "deriving the go.mod address", err)
+	}
+	if !hasGoMod {
 		return nil, false
 	}
 	rc, err := uc.blobs.Get(ctx, goModIdentity)
 	if err != nil {
-		return nil, false
+		return uc.goModUnreadable(ctx, scanned, "opening the go.mod blob", err)
 	}
 	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return nil, false
+		return uc.goModUnreadable(ctx, scanned, "reading the go.mod blob", err)
 	}
 	f, err := modfile.Parse("go.mod", data, nil)
 	if err != nil {
-		return nil, false
+		return uc.goModUnreadable(ctx, scanned, "parsing the go.mod", err)
 	}
 	return f, true
+}
+
+// goModUnreadable logs why a recorded go.mod could not be produced and answers
+// the miss. A cancelled run is not logged: the run reports its own stop.
+func (uc *ScanModuleUseCase) goModUnreadable(ctx context.Context, coord coordinate.ModuleCoordinate, step string, err error) (*modfile.File, bool) {
+	if !interrupt.Cancelled(ctx, err) {
+		uc.logger.Warn("vuln-scan: the module's stored go.mod could not be read, treating it as absent",
+			"coordinate", coord, "step", step, "error", err)
+	}
+	return nil, false
 }
 
 // modulePaths projects a set of coordinates onto their distinct module paths,
@@ -1319,8 +1344,9 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 // coordinate, without building the module — used when source-mode analysis is
 // not possible (the module was never fetched, or it does not build under the
 // host toolchain). Findings carry the advisory's summary, affected range, fixed
-// version and at-risk symbols, but a nil Reachable to signal that call-graph
-// reachability was not computed. note records why the scan was metadata-only.
+// version and at-risk symbols. Reachable stays nil unless reachability was asked
+// for and the call-graph search answered. note records why the scan was
+// metadata-only.
 // emptyStatus is the status when no advisory matches: Clean when that is a
 // genuine answer, or Unscannable when metadata is a fallback for a module that
 // could not be analysed from source (a coverage gap, not a clean).
@@ -1401,6 +1427,12 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 	// Empty when the module was never fetched: a coordinate matched against the
 	// advisory database read no artefact, and must not claim to have read one.
 	derived.stamp(&record)
+	// The same reachability step an analysed record takes. The call-graph search
+	// reads a stored or on-demand graph, not the build that failed, so a coverage
+	// gap is no reason to skip it; coverage stays Unscannable either way.
+	uc.stampReachability(ctx, params, &record)
+	domain.StampReachabilityRooting(&record)
+	annotateRouteDispatch(ctx, uc.routeAnnotator, uc.logger, &record)
 	record, err = domain.VulnerabilityRecordHasher{}.SetContentHash(record)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing metadata-only record: %w", err)

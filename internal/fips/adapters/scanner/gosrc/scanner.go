@@ -25,6 +25,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/fips/domain"
 	"github.com/eitanity/kanonarion/internal/fips/ports"
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	"golang.org/x/mod/modfile"
 )
@@ -193,7 +194,7 @@ func readBuildInfoGoVersion(path string) (string, error) {
 // deliberately not skipped — vendored deps are part of the closure we want
 // to assess.
 func skipDir(path, name string) bool {
-	if name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+	if gotoolchain.IgnoredDir(name) {
 		return true
 	}
 	if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {

@@ -1,13 +1,9 @@
 package builder
 
 import (
-	"fmt"
-	"go/ast"
-	"os"
+	"go/types"
 	"strings"
 	"testing"
-
-	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 // Tests for unexported helpers in the probe builder package.
@@ -158,200 +154,69 @@ func TestGenerateHarness_SinksSliceDeclared(t *testing.T) {
 	}
 }
 
-// -- enumerateExportedFuncs --
-
-func TestEnumerateExportedFuncs_SkipsUnexportedFuncs(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "pkg.go", `package mypkg
-
-func Exported() {}
-func unexported() {}
-`)
-	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"pkg.go"}}}
-	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
-	if err != nil {
-		t.Fatalf("enumerateExportedFuncs: %v", err)
+// Generic declarations cannot be referenced without instantiation, so each
+// shape is written with its type arguments.
+func TestGenerateHarness_GenericShapes(t *testing.T) {
+	pkgs := []goListPackage{{ImportPath: "example.com/lib", Name: "lib"}}
+	intT, strT := types.Typ[types.Int], types.Typ[types.String]
+	exports := map[string][]exportedFunc{
+		"example.com/lib": {
+			{name: "Accept", ownArgs: []types.Type{intT}},
+			{receiver: "Box", name: "ValAccept", recvArgs: []types.Type{intT}},
+			{receiver: "*Box", name: "PtrAccept", recvArgs: []types.Type{intT}},
+			{receiver: "*Pair", name: "Pair2", recvArgs: []types.Type{intT, strT}},
+			{receiver: "Parser", name: "Map", ownArgs: []types.Type{strT}},
+		},
 	}
-	funcs := result["example.com/mypkg"]
-	if len(funcs) != 1 {
-		t.Fatalf("funcs = %d, want 1 (only Exported)", len(funcs))
-	}
-	if funcs[0].name != "Exported" {
-		t.Errorf("func name = %q, want Exported", funcs[0].name)
-	}
-}
-
-func TestEnumerateExportedFuncs_SkipsMethodsOnUnexportedTypes(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "pkg.go", `package mypkg
-
-type Exported struct{}
-type unexported struct{}
-
-func (e Exported) Method() {}
-func (u unexported) Method() {}
-`)
-	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"pkg.go"}}}
-	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
-	if err != nil {
-		t.Fatalf("enumerateExportedFuncs: %v", err)
-	}
-	funcs := result["example.com/mypkg"]
-	if len(funcs) != 1 {
-		t.Fatalf("funcs = %d, want 1 (only method on Exported type)", len(funcs))
-	}
-	if funcs[0].receiver != "Exported" || funcs[0].name != "Method" {
-		t.Errorf("unexpected func %+v", funcs[0])
-	}
-}
-
-func TestEnumerateExportedFuncs_PointerReceiverPreserved(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "pkg.go", `package mypkg
-
-type MyType struct{}
-
-func (m *MyType) PtrMethod() {}
-func (m MyType) ValMethod() {}
-`)
-	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"pkg.go"}}}
-	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
-	if err != nil {
-		t.Fatalf("enumerateExportedFuncs: %v", err)
-	}
-	funcs := result["example.com/mypkg"]
-	if len(funcs) != 2 {
-		t.Fatalf("funcs = %d, want 2", len(funcs))
-	}
-
-	byName := make(map[string]exportedFunc)
-	for _, f := range funcs {
-		byName[f.name] = f
-	}
-	if byName["PtrMethod"].receiver != "*MyType" {
-		t.Errorf("PtrMethod receiver = %q, want *MyType", byName["PtrMethod"].receiver)
-	}
-	if byName["ValMethod"].receiver != "MyType" {
-		t.Errorf("ValMethod receiver = %q, want MyType", byName["ValMethod"].receiver)
-	}
-}
-
-func TestEnumerateExportedFuncs_SkipsTestFiles(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "pkg.go", `package mypkg
-
-func Real() {}
-`)
-	writeFile(t, dir, "pkg_test.go", `package mypkg
-
-func TestOnly() {}
-`)
-	pkgs := []goListPackage{{
-		ImportPath: "example.com/mypkg",
-		Dir:        dir,
-		GoFiles:    []string{"pkg.go", "pkg_test.go"},
-	}}
-	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
-	if err != nil {
-		t.Fatalf("enumerateExportedFuncs: %v", err)
-	}
-	funcs := result["example.com/mypkg"]
-	for _, f := range funcs {
-		if f.name == "TestOnly" {
-			t.Error("TestOnly from _test.go file should have been skipped")
+	code := generateHarness(pkgs, exports)
+	for _, want := range []string{
+		"p0.Accept[int]",
+		"(p0.Box[int]).ValAccept",
+		"(*p0.Box[int]).PtrAccept",
+		"(*p0.Pair[int, string]).Pair2",
+		"(p0.Parser).Map[string]",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("%s not in generated code; got:\n%s", want, code)
 		}
 	}
 }
 
-func TestEnumerateExportedFuncs_EmptyPackage(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "pkg.go", `package mypkg
-`)
-	pkgs := []goListPackage{{ImportPath: "example.com/mypkg", Dir: dir, GoFiles: []string{"pkg.go"}}}
-	result, err := enumerateExportedFuncs(pkgs, gotoolchain.AnalyserLimit{}, false)
-	if err != nil {
-		t.Fatalf("enumerateExportedFuncs: %v", err)
+// A type argument naming a package outside the workspace imports it under its
+// own alias, and only when a written reference uses it.
+func TestGenerateHarness_TypeArgFromAnotherPackageIsImported(t *testing.T) {
+	pkgs := []goListPackage{{ImportPath: "example.com/lib", Name: "lib"}}
+	other := types.NewPackage("example.com/other", "other")
+	named := types.NewNamed(types.NewTypeName(0, other, "Kind", nil), types.Typ[types.Int], nil)
+	exports := map[string][]exportedFunc{
+		"example.com/lib": {{name: "F", ownArgs: []types.Type{named}}},
 	}
-	if len(result["example.com/mypkg"]) != 0 {
-		t.Error("expected no exported funcs in empty package")
+	code := generateHarness(pkgs, exports)
+	if !strings.Contains(code, `t0 "example.com/other"`) || !strings.Contains(code, "p0.F[t0.Kind]") {
+		t.Errorf("type argument from another package not imported and qualified; got:\n%s", code)
 	}
-}
-
-// -- receiverTypeName --
-
-func TestReceiverTypeName_Ident(t *testing.T) {
-	expr := &ast.Ident{Name: "MyType"}
-	got := receiverTypeName(expr)
-	if got != "MyType" {
-		t.Errorf("receiverTypeName(Ident) = %q, want MyType", got)
+	if code := generateHarness(pkgs, map[string][]exportedFunc{}); strings.Contains(code, "example.com/other") {
+		t.Errorf("an unused package was imported; got:\n%s", code)
 	}
 }
 
-func TestReceiverTypeName_StarIdent(t *testing.T) {
-	expr := &ast.StarExpr{X: &ast.Ident{Name: "MyType"}}
-	got := receiverTypeName(expr)
-	if got != "*MyType" {
-		t.Errorf("receiverTypeName(StarExpr) = %q, want *MyType", got)
+// Every reference line maps back to its export, so a reference that fails the
+// type check is the one dropped and named.
+func TestRenderHarness_LinesMapToReferences(t *testing.T) {
+	pkgs := []goListPackage{{ImportPath: "example.com/z"}, {ImportPath: "example.com/a"}}
+	exports := map[string][]exportedFunc{
+		"example.com/z": {{name: "Z1"}, {name: "Z2"}},
+		"example.com/a": {{name: "A1"}},
 	}
-}
-
-func TestReceiverTypeName_IndexExpr_OneTypeParam(t *testing.T) {
-	// Generic type with one type parameter: type Stack[T any] struct{}
-	// The receiver expression is IndexExpr{X: Ident("Stack"), Index: Ident("T")}.
-	expr := &ast.IndexExpr{
-		X:     &ast.Ident{Name: "Stack"},
-		Index: &ast.Ident{Name: "T"},
+	code, lines := renderHarness(pkgs, exports)
+	src := strings.Split(code, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %d, want 3", len(lines))
 	}
-	got := receiverTypeName(expr)
-	if got != "Stack" {
-		t.Errorf("receiverTypeName(IndexExpr) = %q, want Stack", got)
+	for line, ref := range lines {
+		ef := exports[ref.pkgPath][ref.index]
+		if !strings.Contains(src[line-1], "."+ef.name+")") {
+			t.Errorf("line %d = %q, want the reference to %s", line, src[line-1], ef.symbol(ref.pkgPath))
+		}
 	}
-}
-
-func TestReceiverTypeName_IndexListExpr_MultipleTypeParams(t *testing.T) {
-	// Generic type with multiple type parameters: type Pair[K, V any] struct{}
-	// The receiver expression is IndexListExpr{X: Ident("Pair"), Indices: [...]}.
-	expr := &ast.IndexListExpr{
-		X:       &ast.Ident{Name: "Pair"},
-		Indices: []ast.Expr{&ast.Ident{Name: "K"}, &ast.Ident{Name: "V"}},
-	}
-	got := receiverTypeName(expr)
-	if got != "Pair" {
-		t.Errorf("receiverTypeName(IndexListExpr) = %q, want Pair", got)
-	}
-}
-
-func TestReceiverTypeName_StarNonIdent_ReturnsEmpty(t *testing.T) {
-	// StarExpr whose X is not an Ident (unusual but should return "").
-	expr := &ast.StarExpr{X: &ast.StarExpr{X: &ast.Ident{Name: "Nested"}}}
-	got := receiverTypeName(expr)
-	if got != "" {
-		t.Errorf("receiverTypeName(StarExpr with non-Ident X) = %q, want empty", got)
-	}
-}
-
-func TestReceiverTypeName_UnknownExpr_ReturnsEmpty(t *testing.T) {
-	// An expression type that receiverTypeName doesn't handle.
-	expr := &ast.SelectorExpr{X: &ast.Ident{Name: "pkg"}, Sel: &ast.Ident{Name: "Type"}}
-	got := receiverTypeName(expr)
-	if got != "" {
-		t.Errorf("receiverTypeName(SelectorExpr) = %q, want empty", got)
-	}
-}
-
-// -- helpers --
-
-func writeFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	path := dir + "/" + name
-	if err := writeTestFile(path, content); err != nil {
-		t.Fatalf("writing %s: %v", name, err)
-	}
-}
-
-func writeTestFile(path, content string) error {
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	return nil
 }

@@ -5,5 +5,7 @@ exit 0
 example.com/mod@v1.2.0 capabilities:
   roots: all of this module's own code; test functions excluded (widen with --include-tests)
   (no sensitive capabilities witnessed)
+  sensitive calls: none (no exported sensitive function called over a Direct edge)
+  co-location: no function collects and egresses, and no initialiser reaches both
 --- stderr ---
 (empty)

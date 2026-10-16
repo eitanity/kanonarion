@@ -191,3 +191,97 @@ func BenchmarkNetworkForbidden_EveryResolutionReadsTheFile(b *testing.B) {
 		_ = goenv.NetworkForbidden()
 	}
 }
+
+// The TestDeclare cases: a command-line GOPROXY wins over the environment and
+// the env file in both directions, a forbidding one is exported for children,
+// and restoring puts back exactly what was there.
+
+func TestDeclare_OffOverALiveEnvironment(t *testing.T) {
+	noEnvFile(t)
+	t.Setenv("GOPROXY", "https://proxy.example.com")
+	restore, err := goenv.Declare("off")
+	if err != nil {
+		t.Fatalf("Declare: %v", err)
+	}
+	if !goenv.NetworkForbidden() || os.Getenv("GOPROXY") != "off" {
+		t.Errorf("forbidden=%v GOPROXY=%q, want the air gap declared and exported", goenv.NetworkForbidden(), os.Getenv("GOPROXY"))
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if goenv.NetworkForbidden() || os.Getenv("GOPROXY") != "https://proxy.example.com" {
+		t.Errorf("after restore: forbidden=%v GOPROXY=%q", goenv.NetworkForbidden(), os.Getenv("GOPROXY"))
+	}
+}
+
+func TestDeclare_OffWithTheVariableUnset(t *testing.T) {
+	noEnvFile(t)
+	t.Setenv("GOPROXY", "")
+	if err := os.Unsetenv("GOPROXY"); err != nil {
+		t.Fatalf("unsetting GOPROXY: %v", err)
+	}
+	restore, err := goenv.Declare("off,https://proxy.example.com")
+	if err != nil {
+		t.Fatalf("Declare: %v", err)
+	}
+	if !goenv.NetworkForbidden() {
+		t.Error("an off-first list did not forbid the network")
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if _, set := os.LookupEnv("GOPROXY"); set {
+		t.Error("restore left GOPROXY set where it was unset")
+	}
+}
+
+func TestDeclare_AProxyURLOverAnAirGappedEnvFile(t *testing.T) {
+	writeEnvFile(t, "GOPROXY=off\n")
+	t.Setenv("GOPROXY", "")
+	restore, err := goenv.Declare("https://proxy.example.com")
+	if err != nil {
+		t.Fatalf("Declare: %v", err)
+	}
+	if goenv.NetworkForbidden() || goenv.Proxy() != "https://proxy.example.com" {
+		t.Errorf("forbidden=%v proxy=%q, want the flag's proxy", goenv.NetworkForbidden(), goenv.Proxy())
+	}
+	if os.Getenv("GOPROXY") != "https://proxy.example.com" {
+		t.Errorf("the flag's proxy was not exported to children: GOPROXY=%q", os.Getenv("GOPROXY"))
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if !goenv.NetworkForbidden() {
+		t.Error("after restore the env file's air gap is not back")
+	}
+}
+
+func TestDeclare_AnEmptyValueDeclaresNothing(t *testing.T) {
+	noEnvFile(t)
+	t.Setenv("GOPROXY", "off")
+	restore, err := goenv.Declare("  ")
+	if err != nil {
+		t.Fatalf("Declare: %v", err)
+	}
+	if !goenv.NetworkForbidden() {
+		t.Error("an empty flag overrode the environment")
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+}
+
+func TestDeclare_DirectLeavesTheEnvironmentInForce(t *testing.T) {
+	noEnvFile(t)
+	t.Setenv("GOPROXY", "off")
+	restore, err := goenv.Declare("direct,https://proxy.example.com")
+	if err != nil {
+		t.Fatalf("Declare: %v", err)
+	}
+	if goenv.Proxy() != "off" || !goenv.NetworkForbidden() || os.Getenv("GOPROXY") != "off" {
+		t.Errorf("proxy=%q forbidden=%v GOPROXY=%q, want the environment's off in force", goenv.Proxy(), goenv.NetworkForbidden(), os.Getenv("GOPROXY"))
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+}

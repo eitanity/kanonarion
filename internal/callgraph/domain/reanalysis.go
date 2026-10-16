@@ -51,10 +51,10 @@ const LocalDirPlaceholder = "<dir>"
 // without re-spelling it.
 const UnnamedWorkingTreeLead = "no stored record names the working tree"
 
-// ReanalysisInstruction names the one thing that re-derives coord's call graph,
-// as a line a reader can act on. The answer is a property of the coordinate:
-// 'callgraph' fetches a published module and refuses a local one, so every
-// refusal routes through here rather than choosing per site.
+// ReanalysisInstruction names what re-derives coord's call graph, as a line a
+// reader can act on. The answer is a property of the coordinate: a published
+// module is fetched then analysed, a local one is re-ingested, so every refusal
+// routes through here rather than choosing per site.
 //
 // dir is the working tree behind a local coordinate; when the caller does not
 // know it the line says so, because a bare 'kanonarion local' would silently
@@ -88,6 +88,12 @@ func ReanalysisCommand(coord coordinate.ModuleCoordinate, dir string, force bool
 	flags := ""
 	if force {
 		flags = " --force"
+	}
+	if IsReFetchable(coord) {
+		// callgraph reads bytes the store already holds and refuses a module it
+		// has not fetched; fetching a held module returns at once, so the pair is
+		// right either way.
+		return "kanonarion fetch " + coord.String() + " && kanonarion callgraph " + coord.String() + flags, true
 	}
 	if !coord.IsLocal() {
 		return "kanonarion callgraph " + coord.String() + flags, true

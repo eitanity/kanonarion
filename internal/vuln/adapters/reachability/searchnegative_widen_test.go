@@ -146,7 +146,7 @@ func TestSearchNegative_WidenedJoinNamesTheCommandForAnUnheldDependency(t *testi
 	if n := strings.Count(s.NotJoined, "kanonarion callgraph"); n != 1 {
 		t.Errorf("two calls into one module name %d commands, want 1: %s", n, s.NotJoined)
 	}
-	for _, want := range []string{"(" + wrapModule + ".Hello, " + wrapModule + ".init)", "the module that provides them; extract it with: kanonarion callgraph " + wrapCoord} {
+	for _, want := range []string{"(" + wrapModule + ".Hello, " + wrapModule + ".init)", "the module that provides them; extract it with: kanonarion fetch " + wrapCoord + " && kanonarion callgraph " + wrapCoord} {
 		if !strings.Contains(s.NotJoined, want) || !strings.Contains(reason, want) {
 			t.Errorf("not_joined and the reason do not both say %q:\n%s\n%s", want, s.NotJoined, reason)
 		}
@@ -167,15 +167,16 @@ func TestSearchNegative_WidenedJoinStatesWhyEachCallWasNotJoined(t *testing.T) {
 		walk   ports.WalkModuleReader
 		want   string
 	}{
-		"local replace":      {widenLoader(wrapFrame("Hello"), held), buildList(true), wrapCoord + " is replaced by a local directory"},
-		"two unheld modules": {twoUnheld(), buildList(false), "the 2 modules that provide them; extract them with: kanonarion callgraph " + wrapCoord + "; kanonarion callgraph " + depModule + "@" + depVersion},
-		"held without node":  {widenLoader(wrapFrame("Missing"), held), buildList(false), "the stored call graphs of " + wrapCoord + " (BUILT_WITH_BODIES, 7 nodes) hold no node for those calls; kanonarion callgraph-show"},
-		"unreadable":         {wrapFaultLoader{widenLoader(wrapFrame("Hello"), nil)}, buildList(false), "the stored call graph of " + wrapCoord + " could not be read: blob missing"},
-		"no module":          {widenLoader(strange, held), buildList(false), "no module of this build's walk provides example.org/other"},
-		"no walk reader":     {widenLoader(wrapFrame("Hello"), held), nil, "no walk is named that lists the modules this build selected"},
-		"walk not held":      {widenLoader(wrapFrame("Hello"), held), fakeWalkModules{}, "the store holds no walk " + walkID},
-		"walk unreadable":    {widenLoader(wrapFrame("Hello"), held), fakeWalkModules{err: errors.New("disk on fire")}, "could not be read: disk on fire"},
-		"no closure":         {widenLoader(noDeps, held), buildList(false), "does not record which packages of other modules its build links, so no dependency graph was joined; re-analyse it with: kanonarion local /srv/app --force"},
+		"local replace": {widenLoader(wrapFrame("Hello"), held), buildList(true), wrapCoord + " is replaced by a local directory"},
+		"two unheld modules": {twoUnheld(), buildList(false), "the 2 modules that provide them; extract them with: kanonarion fetch " + wrapCoord + " && kanonarion callgraph " + wrapCoord +
+			"; kanonarion fetch " + depModule + "@" + depVersion + " && kanonarion callgraph " + depModule + "@" + depVersion},
+		"held without node": {widenLoader(wrapFrame("Missing"), held), buildList(false), "the stored call graphs of " + wrapCoord + " (BUILT_WITH_BODIES, 7 nodes) hold no node for those calls; kanonarion callgraph-show"},
+		"unreadable":        {wrapFaultLoader{widenLoader(wrapFrame("Hello"), nil)}, buildList(false), "the stored call graph of " + wrapCoord + " could not be read: blob missing"},
+		"no module":         {widenLoader(strange, held), buildList(false), "no module of this build's walk provides example.org/other"},
+		"no walk reader":    {widenLoader(wrapFrame("Hello"), held), nil, "no walk is named that lists the modules this build selected"},
+		"walk not held":     {widenLoader(wrapFrame("Hello"), held), fakeWalkModules{}, "the store holds no walk " + walkID},
+		"walk unreadable":   {widenLoader(wrapFrame("Hello"), held), fakeWalkModules{err: errors.New("disk on fire")}, "could not be read: disk on fire"},
+		"no closure":        {widenLoader(noDeps, held), buildList(false), "does not record which packages of other modules its build links, so no dependency graph was joined; re-analyse it with: kanonarion local /srv/app --force"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, got, reason := searchWidened(t, tt.loader, tt.walk)
@@ -264,5 +265,92 @@ func TestSearchNegative_WidenedDependencyJoinFollowsAThirdModule(t *testing.T) {
 		if n != 1 {
 			t.Errorf("%s loaded %d times, want once across both searches", c, n)
 		}
+	}
+}
+
+// loadedWrap says whether the search decoded example.com/wrap's held graph.
+func loadedWrap(loader *byCoordinateLoader) bool {
+	for _, c := range loader.calls {
+		if c == wrapCoord {
+			return true
+		}
+	}
+	return false
+}
+
+// searchHeld searches a dependency record's findings in wrap's build, with
+// wrap's graph held at the given completeness.
+func searchHeld(t *testing.T, frame ports.CallGraphProjection, findings ...domain.VulnerabilityFinding) (*byCoordinateLoader, domain.VulnerabilityRecord) {
+	t.Helper()
+	loader := widenLoader(frame, ptr(wrapGraph("TYPE_ONLY")))
+	rec := dependencyRecord(nil, nil)
+	rec.WalkID = walkID
+	rec.Findings = findings
+	reachability.NewNegativeSearcher(loader).WithWalkModules(buildList(false)).Search(t.Context(), &rec)
+	return loader, rec
+}
+
+func heldFinding(packages, symbols []string) domain.VulnerabilityFinding {
+	return dependencyRecord(packages, symbols).Findings[0]
+}
+
+// TestSearchNegative_UnlinkedDependencyLoadsNoHeldGraph: a build that links
+// none of the advisory's packages is answered from the frame's and the
+// dependency's graphs alone, so no held graph is decoded. One that links them
+// still joins wrap's graph.
+func TestSearchNegative_UnlinkedDependencyLoadsNoHeldGraph(t *testing.T) {
+	unlinked := heldFinding([]string{depUnlinked}, []string{"Decoder"})
+	loader, rec := searchHeld(t, wrapFrame("Accept"), unlinked)
+	s := rec.Findings[0].NegativeSearch
+	if !strings.Contains(s.NotSearched, "links none of the packages of "+depModule+"@"+depVersion) {
+		t.Errorf("not searched = %q, want the build to link none of the packages", s.NotSearched)
+	}
+	if s.Fidelity != "BUILT_WITH_BODIES" {
+		t.Errorf("fidelity = %q, want the frame's and the dependency's", s.Fidelity)
+	}
+	if loadedWrap(loader) {
+		t.Errorf("loads = %q, want no held dependency graph", loader.calls)
+	}
+
+	loader, _ = searchHeld(t, wrapFrame("Accept"), heldFinding(advisoryPackages, advisorySymbols))
+	if !loadedWrap(loader) {
+		t.Errorf("loads = %q, want %s joined for a linked package", loader.calls, wrapCoord)
+	}
+
+	// One record holding both: the unlinked answer does not depend on whether
+	// the frame was built first.
+	_, both := searchHeld(t, wrapFrame("Accept"), heldFinding(advisoryPackages, advisorySymbols), unlinked)
+	if got := both.Findings[1].NegativeSearch; got.NotSearched != s.NotSearched || got.Fidelity != s.Fidelity {
+		t.Errorf("after a widened finding: %q at %q, want %q at %q", got.NotSearched, got.Fidelity, s.NotSearched, s.Fidelity)
+	}
+	// Two unlinked findings share one answer graph and still load nothing held.
+	loader, twice := searchHeld(t, wrapFrame("Accept"), unlinked, unlinked)
+	if twice.Findings[0].NegativeSearch.NotSearched != twice.Findings[1].NegativeSearch.NotSearched || loadedWrap(loader) {
+		t.Errorf("two unlinked findings: %+v, loads %q", twice.Findings, loader.calls)
+	}
+}
+
+// TestSearchNegative_UnscopedAdvisoryLinksAnyPackageOfTheModule: an advisory
+// that names no package is searchable wherever the build links a package of
+// the module, or the module's root package.
+func TestSearchNegative_UnscopedAdvisoryLinksAnyPackageOfTheModule(t *testing.T) {
+	cases := []struct {
+		name    string
+		linked  []string
+		widened bool
+	}{
+		{"a package below the module", []string{wrapModule, depLanguage}, true},
+		{"the module's root package", []string{wrapModule, depModule}, true},
+		{"no package of the module", []string{wrapModule, depModule + "x/language"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := wrapFrame("Accept")
+			frame.DependencyPackages = tc.linked
+			loader, _ := searchHeld(t, frame, heldFinding(nil, []string{"MatchStrings"}))
+			if loadedWrap(loader) != tc.widened {
+				t.Errorf("loads = %q, want wrap's graph loaded %v", loader.calls, tc.widened)
+			}
+		})
 	}
 }

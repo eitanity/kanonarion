@@ -164,9 +164,10 @@ func TestReanalysisCommand_FillsASlotOrDeclines(t *testing.T) {
 		want  string
 		ok    bool
 	}{
-		{name: "published", coord: published, want: "kanonarion callgraph example.com/mod@v1.0.0", ok: true},
+		{name: "published", coord: published,
+			want: "kanonarion fetch example.com/mod@v1.0.0 && kanonarion callgraph example.com/mod@v1.0.0", ok: true},
 		{name: "published forced", coord: published, force: true,
-			want: "kanonarion callgraph example.com/mod@v1.0.0 --force", ok: true},
+			want: "kanonarion fetch example.com/mod@v1.0.0 && kanonarion callgraph example.com/mod@v1.0.0 --force", ok: true},
 		{name: "standard library", coord: stdlib, want: "kanonarion callgraph stdlib@v1.26.5", ok: true},
 		{name: "local with a named tree", coord: local, dir: "/srv/app",
 			want: "kanonarion local /srv/app", ok: true},

@@ -276,7 +276,7 @@ func walkSurface(t *testing.T) listingSurface {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runWalkList(context.Background(), "", "", "", "", "", limit, offset, false, false,
+			if err := runWalkList(context.Background(), "", "", "", "", buildTargetFlags{}, "", limit, offset, false, false,
 				uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runWalkList: %v", err)
 			}
@@ -610,10 +610,10 @@ showing first 3 license records — more exist (--limit 0 for all, --offset 3 fo
 			text: `example.com/mod0@v1.0.0                            Unknown      2 package(s)
 example.com/mod1@v1.0.0                            Unknown      2 package(s)
 example.com/mod2@v1.0.0                            Unknown      2 package(s)
-listing interface records at pipeline 0.6.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+listing interface records at pipeline 0.7.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 showing first 3 interface records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
-			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"0.6.0","superseded":false,"package_count":2}`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"0.7.0","superseded":false,"package_count":2}`,
 		},
 		"examples-list": {
 			text: `example.com/mod0@v1.0.0                            Unknown      3 example(s)
@@ -625,13 +625,13 @@ showing first 3 example records — more exist (--limit 0 for all, --offset 3 fo
 			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","status":"Unknown","pipeline_version":"0.3.0","superseded":false,"example_count":3}`,
 		},
 		"callgraph-list": {
-			text: `example.com/mod0@v1.0.0                                      0.9.0        Unknown     4 nodes     3 edges
-example.com/mod1@v1.0.0                                      0.9.0        Unknown     4 nodes     3 edges
-example.com/mod2@v1.0.0                                      0.9.0        Unknown     4 nodes     3 edges
-listing call graph records at pipeline 0.9.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
+			text: `example.com/mod0@v1.0.0                                      0.10.0       Unknown     4 nodes     3 edges
+example.com/mod1@v1.0.0                                      0.10.0       Unknown     4 nodes     3 edges
+example.com/mod2@v1.0.0                                      0.10.0       Unknown     4 nodes     3 edges
+listing call graph records at pipeline 0.10.0, the version this build serves; records from a superseded pipeline version are not shown (--all-generations)
 showing first 3 call graph records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
-			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","pipeline_version":"0.9.0","superseded":false,"status":"Unknown","node_count":4,"edge_count":3,"generations_differ":false}`,
+			firstRecord: `{"module":"example.com/mod0","version":"v1.0.0","pipeline_version":"0.10.0","superseded":false,"status":"Unknown","node_count":4,"edge_count":3,"generations_differ":false}`,
 		},
 		"vuln-scan-list": {
 			text: `run-0                       walk=walk-0                      status=AllClean      2026-01-01T00:00:00Z
@@ -642,9 +642,9 @@ showing first 3 scan runs — more exist (--limit 0 for all, --offset 3 for the 
 			firstRecord: `{"id":"run-0","walk_id":"walk-0","status":"AllClean","completed_at":"2026-01-01T00:00:00Z"}`,
 		},
 		"walk-list": {
-			text: `walk-0  example.com/mod0@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
-walk-1  example.com/mod1@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
-walk-2  example.com/mod2@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  depth=full  nodes=2 failures=0
+			text: `walk-0  example.com/mod0@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  platform=not-platform-scoped  depth=full  nodes=2 failures=0
+walk-1  example.com/mod1@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  platform=not-platform-scoped  depth=full  nodes=2 failures=0
+walk-2  example.com/mod2@v1.0.0  2026-01-01T00:00:00Z  succeeded  scope=code  platform=not-platform-scoped  depth=full  nodes=2 failures=0
 showing first 3 walk records — more exist (--limit 0 for all, --offset 3 for the next page)
 `,
 			firstRecord: `{"id":"walk-0","target":"example.com/mod0@v1.0.0","scope":"code","depth":"full","started_at":"2026-01-01T00:00:00Z","overall_status":"succeeded","node_count":2,"failure_count":0}`,

@@ -154,10 +154,17 @@ func (uc *ScanWalkUseCase) targetZip(ctx context.Context, target coordinate.Modu
 	}
 
 	zipIdentity, hasZip, err := fetchports.ZipIdentity(fact)
-	if err != nil || !hasZip {
+	if err != nil {
+		// The isolated scan of the target fails closed on the same record, so the
+		// target's answer is a ScanFailed naming this error, never a clean one.
+		uc.logger.Warn("target-rooted scan: the target's fact record carries a module hash that does not parse, falling back to isolated scans",
+			"target", target, "error", err)
+		return fetchports.BlobIdentity{}, false, nil //nolint:nilerr // an underivable zip address falls back to isolated scans, as logged
+	}
+	if !hasZip {
 		uc.logger.Info("target-rooted scan: the target's fact record names no module zip, falling back to isolated scans",
 			"target", target)
-		return fetchports.BlobIdentity{}, false, nil //nolint:nilerr // an underivable zip address falls back to isolated scans, as logged
+		return fetchports.BlobIdentity{}, false, nil
 	}
 	return zipIdentity, true, nil
 }

@@ -54,6 +54,29 @@ func (uc *QueryInterfaceUseCase) InterfaceHistory(ctx context.Context, coord coo
 	return recs, nil
 }
 
+// ListInterfaceGenerations names every generation the ledger holds. A store
+// without the column read answers from its summaries, which compose.
+func (uc *QueryInterfaceUseCase) ListInterfaceGenerations(ctx context.Context) ([]ifaceports.InterfaceGeneration, error) {
+	if lister, ok := uc.store.(ifaceports.InterfaceGenerationLister); ok {
+		gens, err := lister.ListInterfaceGenerations(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing interface generations: %w", err)
+		}
+		return gens, nil
+	}
+	sums, err := uc.store.ListInterfaceRecords(ctx, ifaceports.InterfaceFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("listing interface records: %w", err)
+	}
+	gens := make([]ifaceports.InterfaceGeneration, 0, len(sums))
+	for _, s := range sums {
+		gens = append(gens, ifaceports.InterfaceGeneration{
+			ModulePath: s.ModulePath, ModuleVersion: s.ModuleVersion, PipelineVersion: s.PipelineVersion,
+		})
+	}
+	return gens, nil
+}
+
 // ListInterfaceRecords returns summaries matching the given filter.
 func (uc *QueryInterfaceUseCase) ListInterfaceRecords(ctx context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error) {
 	sums, err := uc.store.ListInterfaceRecords(ctx, filter)

@@ -22,6 +22,9 @@ The module must have been fetched first:
 kanonarion fetch github.com/spf13/cobra@v1.8.1
 ```
 
+An unfetched module exits `4`, and the message names the `kanonarion fetch` that
+supplies it.
+
 The one exception is the Go standard library, which is never fetched — see
 [Standard library](#standard-library-stdlibvtoolchain).
 
@@ -516,7 +519,9 @@ documents](conventions.md#listing-documents).
 
 The command takes no positional argument; one is refused rather than ignored. A
 zero result names every filter it applied and what each was compared against,
-per [Zero-result listings](conventions.md#zero-result-listings).
+says when the records it holds, or the ones the filters match, are only at a
+superseded pipeline version, and ends with the generation line, per
+[Zero-result listings](conventions.md#zero-result-listings).
 
 ## Caching
 

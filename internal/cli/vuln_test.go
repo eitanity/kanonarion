@@ -400,7 +400,7 @@ func TestVulnScanProgress_OutOfToolchainExplanationIsOncePerRun(t *testing.T) {
 	if n := strings.Count(stream.String(), reachabilityLocalHint); n != 0 {
 		t.Errorf("direction appears %d times in the per-module stream, want 0", n)
 	}
-	if n := strings.Count(stream.String(), "advisories matched, reachability not computed here"); n != 0 {
+	if n := strings.Count(stream.String(), "advisories matched, govulncheck reachability not computed here"); n != 0 {
 		t.Errorf("explanation appears %d times in the per-module stream, want 0", n)
 	}
 
@@ -410,7 +410,7 @@ func TestVulnScanProgress_OutOfToolchainExplanationIsOncePerRun(t *testing.T) {
 	if n := strings.Count(got, reachabilityLocalHint); n != 1 {
 		t.Errorf("direction appears %d times in the roll-up, want exactly 1; got:\n%s", n, got)
 	}
-	if n := strings.Count(got, "advisories matched, reachability not computed here"); n != 1 {
+	if n := strings.Count(got, "advisories matched, govulncheck reachability not computed here"); n != 1 {
 		t.Errorf("explanation appears %d times in the roll-up, want exactly 1; got:\n%s", n, got)
 	}
 	if !strings.Contains(got, fmt.Sprintf("version not in project build (%d):", modules)) {

@@ -15,7 +15,7 @@ var vulnRow = recordseal.SetAsideRow{
 	Kind: "vulnerability record",
 	ID:   "stdlib@v1.26.5",
 	Generation: recordseal.Generation{
-		PipelineVersion: "v25",
+		PipelineVersion: "v26",
 		Snapshot:        recordseal.Snapshot{Name: "vuln-db", Source: "govulndb", Version: "2026-09-16T18:00:43Z"},
 	},
 	ContentHash: "sha256:a2546bf0",
@@ -26,7 +26,7 @@ var vulnRow = recordseal.SetAsideRow{
 // moved here from the vulnerability ports, and its output did not change.
 func TestSetAside_StatesEachGenerationAndTheRemedy(t *testing.T) {
 	got := (&recordseal.SetAside{Rows: []recordseal.SetAsideRow{vulnRow}}).Error()
-	want := "set aside 1 stored vulnerability record generation: stdlib@v1.26.5 (pipeline v25, vuln-db 2026-09-16T18:00:43Z) " +
+	want := "set aside 1 stored vulnerability record generation: stdlib@v1.26.5 (pipeline v26, vuln-db 2026-09-16T18:00:43Z) " +
 		"content_hash sha256:a2546bf0 — " + recordseal.SetAsideRemedy
 	if got != want {
 		t.Errorf("Error() =\n%s\nwant\n%s", got, want)
@@ -79,7 +79,7 @@ func TestNothingServable_IsAnAbsenceThatSaysWhy(t *testing.T) {
 func TestGeneration_RendersOnlyWhatItHolds(t *testing.T) {
 	for g, want := range map[recordseal.Generation]string{
 		{}:                       "",
-		{PipelineVersion: "v25"}: "(pipeline v25)",
+		{PipelineVersion: "v26"}: "(pipeline v26)",
 		{Snapshot: recordseal.Snapshot{Name: "vuln-db", Source: "govulndb"}}: "",
 	} {
 		if got := g.String(); got != want {

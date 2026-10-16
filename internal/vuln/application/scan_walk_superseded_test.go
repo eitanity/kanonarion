@@ -7,6 +7,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -117,5 +118,72 @@ func TestScan_SkipsSupersededGoMod_WhenFullyPruned(t *testing.T) {
 
 	if fetcher.wasFetched(superseded) || fetcher.wasFetchedGoModOnly(superseded) {
 		t.Errorf("fully pruned graph must not fetch the superseded go.mod %s, but it did", superseded)
+	}
+}
+
+// seedHeld records coord at the given fetch pipeline: its go.mod alone, as a
+// go.mod-only fetch writes it, or with its zip when full.
+func seedHeld(t testing.TB, ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, pipeline string, full bool) {
+	handle := "gomod-" + coord.Path() + "-" + coord.Version()
+	opts := []fetchtest.Option{fetchtest.Coordinate(coord), fetchtest.PipelineVersion(pipeline), fetchtest.GoModOnly(handle)}
+	if full {
+		opts = []fetchtest.Option{fetchtest.Coordinate(coord), fetchtest.PipelineVersion(pipeline),
+			fetchtest.GoMod(handle), fetchtest.Content("zip-" + coord.Path() + "-" + coord.Version())}
+	}
+	rec := fetchtest.Record(t, opts...)
+	mustSucceed(t, blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader("module "+coord.Path()+"\n\ngo 1.16\n")))
+	mustSucceed(t, facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...)))
+}
+
+// supersededGoModFetched scans the pre-pruning superseded graph with the
+// superseded go.mod already held at pipeline, and reports whether the scan
+// fetched that go.mod again.
+func supersededGoModFetched(t *testing.T, pipeline string) bool {
+	t.Helper()
+	return supersededHeldFetched(t, pipeline, false)
+}
+
+// supersededHeldFetched is supersededGoModFetched with the superseded version
+// held as a full record when full.
+func supersededHeldFetched(t *testing.T, pipeline string, full bool) bool {
+	t.Helper()
+	ctx := t.Context()
+	rec, superseded := supersededGraph("w-superseded-held")
+	walkStore := newFakeWalkStore()
+	mustSucceed(t, walkStore.PutWalk(ctx, rec))
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	seedFactNode(t, ctx, facts, blobs, rec.Graph.Nodes[0].Coordinate, "1.20")
+	seedFactNode(t, ctx, facts, blobs, rec.Graph.Nodes[1].Coordinate, "1.16")
+	seedHeld(t, ctx, facts, blobs, superseded, pipeline, full)
+
+	fetcher := &fakeFetcher{}
+	uc := makePrefetchScanWalkUC(t, walkStore, newFakeVulnStore(), facts, blobs, fetcher)
+	if _, err := uc.Scan(ctx, application.ScanWalkParams{WalkID: rec.ID}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	return fetcher.wasFetchedGoModOnly(superseded)
+}
+
+// A go.mod-only record an older fetch pipeline wrote was verified by superseded
+// rules, so the scan fetches the go.mod again and the fetch re-derives it.
+func TestScan_SupersededGoModFromAnOlderFetchPipelineIsRefetched(t *testing.T) {
+	if !supersededGoModFetched(t, "0.4.0") {
+		t.Error("a go.mod-only record from an older fetch pipeline was reused; it must be re-fetched")
+	}
+}
+
+// Control: a record the current fetch pipeline wrote spares the fetch.
+func TestScan_SupersededGoModAtTheCurrentFetchPipelineIsNotRefetched(t *testing.T) {
+	if supersededGoModFetched(t, fetchdomain.PipelineVersion) {
+		t.Error("a go.mod-only record at the current fetch pipeline was fetched again")
+	}
+}
+
+// A full record from an older pipeline spares the fetch: it outranks the
+// go.mod-only record the fetch would write, so no read would serve that.
+func TestScan_SupersededGoModHeldAsAnOlderFullRecordIsNotRefetched(t *testing.T) {
+	if supersededHeldFetched(t, "0.4.0", true) {
+		t.Error("a coordinate held as a full record was fetched go.mod-only; no read would serve the result")
 	}
 }

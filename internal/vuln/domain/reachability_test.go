@@ -196,6 +196,27 @@ func TestReachabilityDerivation_RootSelectionIsAbsentWhenUnstated(t *testing.T) 
 	}
 }
 
+// The graph pipeline is wire-transparent when unstated, and named when stated.
+func TestReachabilityDerivation_GraphPipelineIsAbsentWhenUnstated(t *testing.T) {
+	t.Parallel()
+	stored := domain.ReachabilityDerivation{Analyser: domain.AnalyserCallGraphBFS, Fidelity: "BUILT_WITH_BODIES"}
+	b, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(b), "graph_pipeline") {
+		t.Errorf("an unstated graph pipeline reaches the wire: %s", b)
+	}
+	stated := stored
+	stated.GraphPipeline = "0.10.0"
+	if b, err = json.Marshal(stated); err != nil || !strings.Contains(string(b), `"graph_pipeline":"0.10.0"`) {
+		t.Errorf("a stated graph pipeline is dropped from the wire: %s (%v)", b, err)
+	}
+	if !strings.Contains(stated.String(), "call-graph pipeline 0.10.0") {
+		t.Errorf("the rendered derivation does not name the graph pipeline: %s", stated.String())
+	}
+}
+
 // StampReachabilityRooting is the one place the frame — decided by the use case
 // that writes the record — meets the answers produced by analysers below it.
 func TestStampReachabilityRooting(t *testing.T) {

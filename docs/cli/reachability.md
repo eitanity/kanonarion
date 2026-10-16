@@ -84,11 +84,16 @@ the query **refuses** (exit 20) and names the frames it found plus the flags
 that select one:
 
 ```
-$ kanonarion reachability github.com/golang-jwt/jwt/v4@v4.5.1 --vuln GO-2025-3553
-error: the store holds github.com/golang-jwt/jwt/v4@v4.5.1 in 2 consumer frames, and this question names none:
+$ kanonarion reachability github.com/pkg/errors@v0.9.1 --vuln GO-2022-0603
+error: execute root command: the store holds github.com/pkg/errors@v0.9.1 in 6 consumer frames, and this question names none:
+  target-rooted:github.com/AustralianCyberSecurityCentre/azul-bedrock/v13@local
   target-rooted:github.com/cortezaproject/corteza/server@local
-  target-rooted:github.com/tmc/langchaingo@v0.1.14
-name the build you mean: kanonarion reachability … --walk-id <walk of that build>, or … --gomod <path/to/go.mod>
+  target-rooted:github.com/eitanity/kanonarion@local
+  target-rooted:github.com/grafana/loki/v3@local
+  target-rooted:github.com/guacsec/guac@local
+  target-rooted:ragflow@local
+name the build you mean: kanonarion reachability github.com/pkg/errors@v0.9.1 --vuln GO-2022-0603 --walk-id <walk of that build>, or kanonarion reachability github.com/pkg/errors@v0.9.1 --vuln GO-2022-0603 --gomod <path/to/go.mod>
+kanonarion vuln-show github.com/pkg/errors@v0.9.1 --history lists every stored record and the frame it was measured in
 ```
 
 One project's scans in the store leave nothing to disambiguate, and the query
@@ -387,7 +392,8 @@ the rung stays where govulncheck's answer puts it (`inferred` for a source
 scan), and `not_joined` names the calls and why each was not joined:
 
 - the store holds no call graph for the module: the answer names the
-  `kanonarion callgraph <mod>@<version>` that extracts it;
+  `kanonarion fetch <mod>@<version> && kanonarion callgraph <mod>@<version>` that
+  extracts it;
 - the module is replaced by a local directory, which no stored graph is taken
   of;
 - the module's stored graph holds no node for the call, or could not be read;
@@ -479,7 +485,7 @@ frame, and the frame decides `closure_rooted`.
 an SBOM asserts what is in the build and never what is reachable in it.
 | `… has not been vuln-scanned` | non-zero | No record at any pipeline version. Walk the module, then scan that walk. |
 | `… that this build serves: it reads pipeline <v> and the store holds this coordinate at pipeline <v>` | non-zero | The module has been scanned, under scan logic this build supersedes. The message names each generation held and how many records and findings sit in it. Re-scan the coordinate. |
-| `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
+| `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned and no call-graph answer was recorded; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
 | `no reachability route … it was rooted at <coord>` | non-zero | The scan **did** run with reachability, but the module was its own root. See below. |
 | `… reachability is undetermined` | non-zero | Reachability ran but the call graph was unavailable. |
@@ -597,7 +603,7 @@ over — the test axis, the exported-API flag, and the edges into the node.
 | `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
 | `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
 | `test` | The root is a test-scope declaration. This is printed **on the same line as the answer**, so a test-only reach is never read as a production one. |
-| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. The `remedy` re-derives *that* module's graph: `kanonarion callgraph <module>@<version>` when the route starts in a dependency; when it starts in the project's own module (which carries the synthetic `@local` version and cannot be fetched) it names the working tree the stored record was analysed in — `kanonarion local /path/to/tree`. Where no stored record names that tree, the remedy says so rather than printing an argument you would have to guess. |
+| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. The `remedy` re-derives *that* module's graph: `kanonarion fetch <module>@<version> && kanonarion callgraph <module>@<version>` when the route starts in a dependency; when it starts in the project's own module (which carries the synthetic `@local` version and cannot be fetched) it names the working tree the stored record was analysed in — `kanonarion local /path/to/tree`. Where no stored record names that tree, the remedy says so rather than printing an argument you would have to guess. |
 
 Two rules keep this honest:
 
@@ -722,6 +728,32 @@ carries no `soundness_reason`. A negative names its rung and its basis, and drop
 ```
 
 
+### An answer for a module govulncheck could not analyse
+
+A module whose source govulncheck could not analyse (coverage `Unscannable`) can
+still carry an answer under `vuln-scan --reachability`: kanonarion's call-graph
+search reads the module's graph, built by `kanonarion callgraph` on demand if the
+store holds none. The answer is served with the gap beside it:
+
+```json
+{
+  "reachability_state": "reachable",
+  "confidence": "High",
+  "method": "callgraph-bfs",
+  "fidelity": "BUILT_WITH_BODIES",
+  "graph_pipeline": "0.10.0",
+  "rooting": "isolated",
+  "coverage_status": "Unscannable",
+  "unscannable_reason": "source analysis unavailable: ..."
+}
+```
+
+`graph_pipeline` names the call-graph pipeline of the graph searched.
+`coverage_status` and `unscannable_reason` appear only on such a record. In text,
+a `coverage:` line under the verdict says the same. A graph below
+`BUILT_WITH_BODIES` gives an `unconfirmed` negative. A finding the search could
+not answer keeps the `… is unscannable` refusal, or names why the search failed.
+
 ### `root_selection`
 
 A call-graph answer carries `root_selection` when the stored graph does not say
@@ -796,21 +828,76 @@ examined eleven and cleared one.
 | `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
 | `the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned` | The module has been scanned — for a different project. Nothing measured this build, so nothing seeded the probe. Scan this build to cover it. |
 | `the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again` | The module has been scanned for this build, under scan logic this build supersedes. Re-scan it to cover it. |
+| `the stored scan record for this coordinate says it was not analysed (the scan failed or the module was unscannable), so it is no answer about this build` | A scan ran and did not analyse the module. A record like that found nothing because nothing was looked at, so it is not counted as covered. Read the record's reason with `kanonarion vuln-show <module>@<version> --gomod ./go.mod`. |
+| `the walk this probe was seeded from holds no vulnerability record for this coordinate; other walks scanned it, and their records do not seed this build` | The newest project walk of this tree did not scan the module — usually because `go.mod` changed since that walk. Scan the build to cover it. |
+| `the vuln-scan of the newest project walk for this tree did not complete, and no walk of this tree has a scan that did; no completed scan answers for this coordinate` | A scan of the walk was interrupted or failed before it finished, and no earlier walk's scan finished either. Run `kanonarion vuln-scan --gomod ./go.mod --reachability` to completion. |
+
+The `to widen the answer:` line follows the reasons listed. When every
+uncovered module holds records only from superseded scan logic, it says so and
+names the re-scan; when some are superseded and some hold no record, it gives
+both counts. The commands are the same in each case.
+
+**When no module is covered, the probe exits `4`.** If the build has modules
+and the probe covered none of them, the answer is still printed in full, with
+`--json` too, but it ends with
+
+```
+no module of this build is covered, so this answer speaks about none of them
+```
+
+and the command exits `4`, the code for a store that lacks the records. The
+message on stderr repeats the remedy. An exit of `0` means at least one module
+was covered; read `coverage` for how many. `--json` adds no field for this:
+`coverage.covered_modules` is already `0`.
 
 ### Which records seeded the probe
 
 The probe is seeded from stored records, and a store shared by several projects
-holds several answers per dependency. The seed is restricted to the records
-measured in **this tree's own frame** — a walk rooted at the module path this
-tree's `go.mod` declares, at any version — plus the **isolated** frame, which
-answers "the module built alone" and belongs to no project. Another project's
-records are never read.
+holds several answers per dependency.
+
+When the store holds a project walk for this tree's `go.mod`, the seed is drawn
+from **one walk**: the newest code-scope project walk for that `go.mod` on this
+platform whose vuln-scan completed, chosen the way `vuln-show --gomod` chooses it. Within that walk it uses
+the records measured in the walk's own frame, plus the **isolated** frame, which
+answers "the module built alone" and belongs to no project. Records of older
+walks are not read. An older walk taken under an earlier Go release can disagree
+with the newer one, and reading both would refuse the probe. The `seed:` line
+names the walk:
+
+```
+seed restricted to stored records scanned by walk "01K…" (code scope, frame
+target-rooted:github.com/example/app@local), the newest project walk for this
+tree's go.mod, in its own frame or in the isolated frame; records of older walks
+and of another consumer's build were not read
+```
+
+A scan completes when it records its scan run. A scan that was interrupted, or
+that failed partway, leaves records and no run, and the walk answers for no
+module. When the newest walk's scan did not complete, the seed comes from the
+newest walk whose scan did, under any Go toolchain, and the `seed:` line names
+both:
+
+```
+walk "01M…"'s vuln-scan did not complete; kanonarion vuln-scan --gomod
+./go.mod --reachability completes it, run from the project's own directory;
+seeded from walk "01K…" (code scope, frame
+target-rooted:github.com/example/app@local), the newest project walk for this
+tree's go.mod whose scan completed, …
+```
+
+When no walk's scan completed, the seed names the newest walk, and every
+uncovered module gives the incomplete scan as its reason.
+
+When the store holds no project walk for the tree, the seed is restricted to
+the records measured in **this tree's own frame** — a walk rooted at the module
+path this tree's `go.mod` declares, at any version — plus the isolated frame.
+Another project's records are never read.
 
 **Why this matters:** another project resolves the same dependency to its own
 version set and its own entry points, so its reachability answer is about a
 build that is not yours. Read here it would answer a question you never asked,
 with nothing to show it had. `seed_restriction` states the boundary on every
-run:
+run. Without a project walk it reads:
 
 ```
 seed restricted to stored records measured in this tree's own frame (rooted at
@@ -850,6 +937,36 @@ that fails to build does not fail the probe and is not dropped from the answer
 either: it appears with a `build_error`, so a reader can see which artefact the
 answer does not rest on. A workspace with no main is probed through the
 synthetic harness instead and names no binaries.
+
+### What the library harness left out
+
+A workspace with no main is probed through a synthetic harness that references
+every exported function, and every exported method of its exported types. A
+generic declaration is referenced with type arguments. For each type parameter,
+the first of these that satisfies the constraint is used:
+
+1. the constraint's core type;
+2. each type in the constraint's type set, in the order written (`~T` gives `T`),
+   so `~float32 | ~float64` gives `float32`;
+3. `int`, `string`, `struct{}`.
+
+A declaration the harness cannot reference is left out and named in
+`coverage.harness_omitted`, with its reason. The probe still runs. For example,
+no candidate satisfies a constraint that requires a method:
+
+```json
+"harness_omitted": [
+  {
+    "symbol": "example.com/lib.F",
+    "reason": "no type argument satisfies T interface{M()} (tried int, string, struct{})"
+  }
+]
+```
+
+The text output lists the same entries under `harness omitted`. A vulnerable
+symbol reached only through an omitted declaration is not in the harness binary,
+so every `absent` finding's `soundness_reason` states how many declarations were
+left out. The field is absent when nothing was left out, and on a binary probe.
 
 `coverage.uncovered_remedy` names the route to a wider answer. There is no
 refresh flag and none is needed: `version_id` is a content digest recomputed from
@@ -915,6 +1032,9 @@ JSON shape:
         "import_path": "github.com/example/app/cmd/tool",
         "build_error": "building probe binary: exit status 1\n..."
       }
+    ],
+    "harness_omitted": [
+      { "symbol": "example.com/lib.F", "reason": "<why the library harness left it out>" }
     ]
   },
   "modules": [

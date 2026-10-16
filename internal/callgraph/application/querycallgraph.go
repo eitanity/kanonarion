@@ -184,6 +184,48 @@ func (uc *QueryCallGraphUseCase) FindCallees(ctx context.Context, symbolID, pipe
 	return refs, nil
 }
 
+// NotSearchedByCallers names the coordinates that hold edges into any of
+// symbolIDs only at a superseded pipeline, so FindCallers could not read them.
+// A store without the capability names none.
+func (uc *QueryCallGraphUseCase) NotSearchedByCallers(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error) {
+	return uc.notSearched(ctx, symbolIDs, pipelineVersion, scope, opts, true)
+}
+
+// NotSearchedByCallees is NotSearchedByCallers for edges out of symbolIDs.
+func (uc *QueryCallGraphUseCase) NotSearchedByCallees(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error) {
+	return uc.notSearched(ctx, symbolIDs, pipelineVersion, scope, opts, false)
+}
+
+func (uc *QueryCallGraphUseCase) notSearched(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions, callers bool) ([]cgports.UnservedCoordinate, error) {
+	r, ok := uc.store.(cgports.CallGraphUnservedReader)
+	if !ok {
+		return nil, nil
+	}
+	holders := r.SupersededCalleeHolders
+	if callers {
+		holders = r.SupersededCallerHolders
+	}
+	coords, err := holders(ctx, symbolIDs, pipelineVersion, scope, opts)
+	if err != nil {
+		return nil, fmt.Errorf("finding superseded call graphs touching %d symbol(s): %w", len(symbolIDs), err)
+	}
+	return uc.UnservedCoordinates(ctx, coords, pipelineVersion)
+}
+
+// UnservedCoordinates returns those of coords with no generation at
+// pipelineVersion. A store without the capability names none.
+func (uc *QueryCallGraphUseCase) UnservedCoordinates(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]cgports.UnservedCoordinate, error) {
+	r, ok := uc.store.(cgports.CallGraphUnservedReader)
+	if !ok || len(coords) == 0 {
+		return nil, nil
+	}
+	out, err := r.UnservedCoordinates(ctx, coords, pipelineVersion)
+	if err != nil {
+		return nil, fmt.Errorf("reading which coordinates have no served call graph: %w", err)
+	}
+	return out, nil
+}
+
 // TraversalRequest is one transitive walk: where to start, how far to follow,
 // what counts as in scope, and who to narrate to.
 //
@@ -236,22 +278,51 @@ type TraversalResult struct {
 	// exits with an empty frontier and is complete; marking that partial would
 	// report a gap in the evidence where there is none.
 	Truncated bool
+	// NotSearched names the coordinates holding edges touching an expanded
+	// symbol only at a superseded pipeline: the walk could not follow them.
+	NotSearched []cgports.UnservedCoordinate
 }
 
 // TraverseCallers performs a BFS from req.SymbolID following caller edges.
 func (uc *QueryCallGraphUseCase) TraverseCallers(ctx context.Context, req TraversalRequest) (TraversalResult, error) {
-	return uc.traverseTransitive(ctx, req,
-		uc.callersOfFrontier(),
-		func(e cgports.CallEdgeRef) string { return e.FromID },
-	)
+	return uc.traverseTransitive(ctx, req, traversalLeg{
+		query:      uc.callersOfFrontier(),
+		holders:    uc.holdersOf(true),
+		neighborOf: func(e cgports.CallEdgeRef) string { return e.FromID },
+	})
 }
 
 // TraverseCallees performs a BFS from req.SymbolID following callee edges.
 func (uc *QueryCallGraphUseCase) TraverseCallees(ctx context.Context, req TraversalRequest) (TraversalResult, error) {
-	return uc.traverseTransitive(ctx, req,
-		uc.calleesOfFrontier(),
-		func(e cgports.CallEdgeRef) string { return e.ToID },
-	)
+	return uc.traverseTransitive(ctx, req, traversalLeg{
+		query:      uc.calleesOfFrontier(),
+		holders:    uc.holdersOf(false),
+		neighborOf: func(e cgports.CallEdgeRef) string { return e.ToID },
+	})
+}
+
+// traversalLeg is one direction of a traversal: the level query, the
+// superseded-holder query asked of the same frontier, and the next hop.
+type traversalLeg struct {
+	query      frontierQuery
+	holders    holderQuery
+	neighborOf func(cgports.CallEdgeRef) string
+}
+
+// holderQuery names the coordinates holding superseded edges touching a
+// frontier; nil when the store cannot say.
+type holderQuery func(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]coordinate.ModuleCoordinate, error)
+
+func (uc *QueryCallGraphUseCase) holdersOf(callers bool) holderQuery {
+	r, ok := uc.store.(cgports.CallGraphUnservedReader)
+	switch {
+	case !ok:
+		return nil
+	case callers:
+		return r.SupersededCallerHolders
+	default:
+		return r.SupersededCalleeHolders
+	}
 }
 
 // frontierQuery answers one level of a traversal: every edge reaching, or
@@ -374,10 +445,10 @@ func startTraversalNarration(p cgports.TraversalProgressReporter, interval time.
 	}
 }
 
-// traverseTransitive performs a BFS from root using queryFn. neighborOf extracts
+// traverseTransitive performs a BFS from root using leg.query. leg.neighborOf extracts
 // the "next hop" symbol from each returned edge. maxDepth 0 means unlimited.
 //
-// queryFn is asked ONCE PER LEVEL, with the whole frontier, which queue holds
+// leg.query is asked ONCE PER LEVEL, with the whole frontier, which queue holds
 // before anything is asked. Asking per symbol instead cost a store round trip
 // per visited node.
 //
@@ -391,12 +462,7 @@ func startTraversalNarration(p cgports.TraversalProgressReporter, interval time.
 // closure — or because the depth bound stopped it while symbols were still
 // waiting. Non-empty therefore means "this is not all of them", exactly, for
 // both directions, without a second traversal to compare against.
-func (uc *QueryCallGraphUseCase) traverseTransitive(
-	ctx context.Context,
-	req TraversalRequest,
-	queryFn frontierQuery,
-	neighborOf func(cgports.CallEdgeRef) string,
-) (TraversalResult, error) {
+func (uc *QueryCallGraphUseCase) traverseTransitive(ctx context.Context, req TraversalRequest, leg traversalLeg) (TraversalResult, error) {
 	root := req.SymbolID
 	visited := map[string]bool{root: true}
 	queue := []string{root}
@@ -405,16 +471,25 @@ func (uc *QueryCallGraphUseCase) traverseTransitive(
 	defer stop()
 
 	var edges []cgports.CallEdgeRef
+	// One holder statement per level over the same frontier, never per symbol.
+	var holders []coordinate.ModuleCoordinate
 	for depth := 0; len(queue) > 0 && (req.MaxDepth == 0 || depth < req.MaxDepth); depth++ {
 		narrator.at(depth+1, len(visited)-1)
-		hops, qerr := queryFn(ctx, queue, req.PipelineVersion, req.Scope, req.Opts)
+		hops, qerr := leg.query(ctx, queue, req.PipelineVersion, req.Scope, req.Opts)
 		if qerr != nil {
 			return TraversalResult{}, fmt.Errorf("querying at depth %d: %w", depth+1, qerr)
+		}
+		if leg.holders != nil {
+			h, herr := leg.holders(ctx, queue, req.PipelineVersion, req.Scope, req.Opts)
+			if herr != nil {
+				return TraversalResult{}, fmt.Errorf("finding superseded call graphs at depth %d: %w", depth+1, herr)
+			}
+			holders = append(holders, h...)
 		}
 		var next []string
 		for _, e := range hops {
 			edges = append(edges, e)
-			if nb := neighborOf(e); !visited[nb] {
+			if nb := leg.neighborOf(e); !visited[nb] {
 				visited[nb] = true
 				next = append(next, nb)
 			}
@@ -422,7 +497,11 @@ func (uc *QueryCallGraphUseCase) traverseTransitive(
 		queue = next
 	}
 
-	res := TraversalResult{Edges: edges, Truncated: len(queue) > 0}
+	notSearched, err := uc.UnservedCoordinates(ctx, holders, req.PipelineVersion)
+	if err != nil {
+		return TraversalResult{}, err
+	}
+	res := TraversalResult{Edges: edges, Truncated: len(queue) > 0, NotSearched: notSearched}
 	for n := range visited {
 		if n != root {
 			res.Nodes = append(res.Nodes, n)

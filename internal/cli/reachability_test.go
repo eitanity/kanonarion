@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -95,6 +96,45 @@ func TestReachabilityResultToOutput_Empty(t *testing.T) {
 	out := reachabilityResultToOutput(localdomain.LocalReachabilityResult{})
 	if out.Modules == nil {
 		t.Error("Modules must not be nil for empty result")
+	}
+}
+
+// TestReachabilityResultToOutput_HarnessOmitted: the declarations a library
+// harness left out reach the JSON coverage and the text coverage, each named
+// with its reason, and the field is absent when nothing was left out.
+func TestReachabilityResultToOutput_HarnessOmitted(t *testing.T) {
+	result := localdomain.LocalReachabilityResult{
+		ProbeKind: localdomain.ProbeKindLibrary,
+		Coverage: localdomain.ProbeCoverage{HarnessOmitted: []localdomain.HarnessOmission{
+			{Symbol: "example.com/lib.F", Reason: "no type argument satisfies T interface{M()}"},
+		}},
+	}
+	out := reachabilityResultToOutput(result)
+	if len(out.Coverage.HarnessOmitted) != 1 || out.Coverage.HarnessOmitted[0].Symbol != "example.com/lib.F" {
+		t.Fatalf("HarnessOmitted = %+v, want lib.F", out.Coverage.HarnessOmitted)
+	}
+	raw, err := json.Marshal(out.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"harness_omitted":[{"symbol":"example.com/lib.F","reason":"no type argument satisfies T interface{M()}"}]`) {
+		t.Errorf("coverage JSON = %s, want harness_omitted", raw)
+	}
+	var text strings.Builder
+	if perr := printLocalReachability(&text, out); perr != nil {
+		t.Fatal(perr)
+	}
+	if !strings.Contains(text.String(), "harness omitted (1)") ||
+		!strings.Contains(text.String(), "example.com/lib.F — no type argument satisfies T interface{M()}") {
+		t.Errorf("text coverage does not name the omission:\n%s", text.String())
+	}
+
+	none, err := json.Marshal(reachabilityResultToOutput(localdomain.LocalReachabilityResult{}).Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(none), "harness_omitted") {
+		t.Errorf("coverage JSON = %s, want no harness_omitted when nothing was left out", none)
 	}
 }
 

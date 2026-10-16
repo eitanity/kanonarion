@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,12 @@ func (s *factStore) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedR
 	return nil
 }
 
-func (s *factStore) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, _ string) (fetchdomain.CompositeRecord, bool, error) {
+// GetFetchRecord answers only from a record the named pipeline wrote, as the
+// real store's version-keyed read does.
+func (s *factStore) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipeline string) (fetchdomain.CompositeRecord, bool, error) {
+	if r, ok := s.records[coord.String()]; !ok || r.PipelineVersion != pipeline {
+		return fetchdomain.CompositeRecord{}, false, nil
+	}
 	return s.ComposeFetchRecord(ctx, coord)
 }
 
@@ -95,13 +101,19 @@ func (f *fetcher) FetchModuleGoMod(_ context.Context, coord coordinate.ModuleCoo
 // text in the blob store under the address the record names.
 func store(t *testing.T, facts *factStore, blobs *blobStore, coord coordinate.ModuleCoordinate, goMod string, withZip bool) {
 	t.Helper()
+	storeAt(t, facts, blobs, coord, goMod, withZip, fetchdomain.PipelineVersion)
+}
+
+// storeAt is store with the record written by the given fetch pipeline.
+func storeAt(t *testing.T, facts *factStore, blobs *blobStore, coord coordinate.ModuleCoordinate, goMod string, withZip bool, pipeline string) {
+	t.Helper()
 	if goMod == "" {
 		goMod = "module " + coord.Path() + "\n\ngo 1.21\n"
 	}
 	handle := "blob:" + coord.String()
 	opts := []fetchtest.Option{
 		fetchtest.Module(coord.Path(), coord.Version()),
-		fetchtest.PipelineVersion("0.1.0"),
+		fetchtest.PipelineVersion(pipeline),
 		fetchtest.FetchedAt(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
 	}
 	if withZip {
@@ -341,5 +353,53 @@ func TestMaterialise_NoRequirementsIsNoWork(t *testing.T) {
 	}
 	if len(f.full)+len(f.goMods) != 0 {
 		t.Errorf("a module requiring nothing caused %d fetches", len(f.full)+len(f.goMods))
+	}
+}
+
+// deeperGoModFetched materialises a pre-pruning requirement whose own
+// requirement is held as a go.mod-only record at pipeline, and reports whether
+// that go.mod was fetched again.
+func deeperGoModFetched(t *testing.T, pipeline string) bool {
+	t.Helper()
+	return deeperHeldFetched(t, pipeline, false)
+}
+
+// deeperHeldFetched is deeperGoModFetched with the requirement held as a full
+// record when full.
+func deeperHeldFetched(t *testing.T, pipeline string, full bool) bool {
+	t.Helper()
+	facts, blobs, f := newFixture(t)
+	old := coord(t, "example.com/old", "v1.2.3")
+	deeper := coord(t, "example.com/deeper", "v0.4.0")
+	store(t, facts, blobs, old, "module example.com/old\n\ngo 1.16\n\nrequire example.com/deeper v0.4.0\n", true)
+	storeAt(t, facts, blobs, deeper, "", full, pipeline)
+
+	if report := modulecache.New(facts, blobs, discardLogger()).WithFetcher(f).
+		Materialise(context.Background(), t.TempDir(), pruned(old)); !report.Complete() {
+		t.Fatalf("materialise reported %d/%d written: %s", report.Written, report.Requested, report.Failures)
+	}
+	return slices.Contains(f.goMods, deeper.String())
+}
+
+// A go.mod-only record an older fetch pipeline wrote was verified by superseded
+// rules, so the closure fetches the go.mod again and the fetch re-derives it.
+func TestMaterialise_GoModFromAnOlderFetchPipelineIsRefetched(t *testing.T) {
+	if !deeperGoModFetched(t, "0.4.0") {
+		t.Error("a go.mod-only record from an older fetch pipeline was reused; it must be re-fetched")
+	}
+}
+
+// Control: a record the current fetch pipeline wrote spares the fetch.
+func TestMaterialise_GoModAtTheCurrentFetchPipelineIsNotRefetched(t *testing.T) {
+	if deeperGoModFetched(t, fetchdomain.PipelineVersion) {
+		t.Error("a go.mod-only record at the current fetch pipeline was fetched again")
+	}
+}
+
+// A full record from an older pipeline spares the fetch: it outranks the
+// go.mod-only record the fetch would write, so no read would serve that.
+func TestMaterialise_GoModHeldAsAnOlderFullRecordIsNotRefetched(t *testing.T) {
+	if deeperHeldFetched(t, "0.4.0", true) {
+		t.Error("a coordinate held as a full record was fetched go.mod-only; no read would serve the result")
 	}
 }

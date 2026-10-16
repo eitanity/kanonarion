@@ -141,6 +141,7 @@ type QueryInterfaceUseCase interface {
 	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error)
 	InterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]ifacedomain.InterfaceRecord, error)
 	ListInterfaceRecords(ctx context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error)
+	ListInterfaceGenerations(ctx context.Context) ([]ifaceports.InterfaceGeneration, error)
 	FindSymbol(ctx context.Context, symbolName, pipelineVersion string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error)
 }
 
@@ -198,6 +199,12 @@ type QueryCallGraphUseCase interface {
 	// unexpanded frontier is a comparison against a second, unbounded run.
 	TraverseCallers(ctx context.Context, req cgapp.TraversalRequest) (cgapp.TraversalResult, error)
 	TraverseCallees(ctx context.Context, req cgapp.TraversalRequest) (cgapp.TraversalResult, error)
+	// NotSearchedByCallers, NotSearchedByCallees and UnservedCoordinates name
+	// the coordinates an edge query could not read because they hold no
+	// generation at the served pipeline.
+	NotSearchedByCallers(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error)
+	NotSearchedByCallees(ctx context.Context, symbolIDs []string, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.UnservedCoordinate, error)
+	UnservedCoordinates(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]cgports.UnservedCoordinate, error)
 }
 
 // --- example context ---
@@ -263,8 +270,6 @@ type RescanWalkUseCase interface {
 
 // QueryVulnUseCase is the interface for querying vulnerability records.
 type QueryVulnUseCase interface {
-	GetRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, snapshot vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error)
-	GetLatestRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (vulndomain.VulnerabilityRecord, bool, error)
 	// ListRecordsForModuleInWalk returns a walk's candidate records for a
 	// coordinate, unranked. Every caller ranks them within a named frame — see
 	// recordInWalkFrame — because a walk's candidates span every frame the

@@ -3,6 +3,8 @@ package application
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/eitanity/kanonarion/internal/staleness/domain"
@@ -26,11 +28,11 @@ import (
 // itself is unchanged and still stops at the first absent major; it just reads
 // answers that are already in hand.
 //
-// The width is bounded and configurable, and the bound is not a performance
-// dial — it is a correctness one. A throttled proxy does not refuse, it answers
-// 200 with an empty body, and that is a LOST ANSWER rather than an error. The
-// default is the measured knee; see domain.DefaultStalenessProbeConcurrency in
-// the config package for the figures.
+// The width is bounded and configurable. A probe the proxy has not finished —
+// it holds the request about a minute while its origin lookup runs, then answers
+// 200 with an empty body — is not waited on inside the round: it is re-asked
+// after it, with the others like it, until it settles or its window closes (see
+// fetchRound). The proxy keeps working between asks, so a later ask answers.
 
 // probeResult is one prefetched answer, carrying the error as a value so an
 // absent path — the ordinary case, and the thing that bounds the walk — is
@@ -116,14 +118,21 @@ func (r *Resolver) prefetchProbes(ctx context.Context, skip map[string]bool) {
 }
 
 // fetchRound asks for every path in one round, at most r.concurrency at a time.
+//
+// When the proxy port can settle (ports.RoundResolver), each path is asked once
+// and a path the proxy has not finished is re-asked after the round, with the
+// others like it: waiting inside a pool slot would stall the round once more
+// paths are slow than there are slots.
 func (r *Resolver) fetchRound(ctx context.Context, paths []string) {
 	width := r.concurrency
 	if width < 1 {
 		width = 1
 	}
+	rr, settles := r.proxy.(ports.RoundResolver)
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var pending []ports.RoundAnswer
 	sem := make(chan struct{}, width)
 
 	for _, path := range paths {
@@ -142,13 +151,34 @@ func (r *Resolver) fetchRound(ctx context.Context, paths []string) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			info, err := r.proxy.LatestInfo(ctx, p)
+			a := r.askOnce(ctx, rr, settles, p)
 			mu.Lock()
-			r.prefetched[p] = probeResult{info: info, err: err}
+			r.prefetched[p] = probeResult{info: a.Info, err: a.Err}
+			if a.Unsettled {
+				pending = append(pending, a)
+			}
 			mu.Unlock()
 		}(path)
 	}
 	wg.Wait()
+
+	if len(pending) == 0 {
+		return
+	}
+	slices.SortFunc(pending, func(a, b ports.RoundAnswer) int { return strings.Compare(a.Path, b.Path) })
+	for _, a := range rr.Settle(ctx, pending, width) {
+		r.prefetched[a.Path] = probeResult{info: a.Info, err: a.Err}
+	}
+}
+
+// askOnce asks for p once through a settling port, or through the plain port
+// (whose answer is never unsettled) when the proxy cannot settle.
+func (r *Resolver) askOnce(ctx context.Context, rr ports.RoundResolver, settles bool, p string) ports.RoundAnswer {
+	if settles {
+		return rr.AskOnce(ctx, p)
+	}
+	info, err := r.proxy.LatestInfo(ctx, p)
+	return ports.RoundAnswer{Path: p, Info: info, Err: err}
 }
 
 // tagCandidate reports whether this module's own @latest must be looked up

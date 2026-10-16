@@ -59,9 +59,9 @@ func TestPutVulnerabilityRecord_ReMeasurementAppends(t *testing.T) {
 
 	// Composition, not recency: the unexplained all-clear does not retire the
 	// finding-bearing record merely by running later.
-	served, ok, err := store.GetVulnerabilityRecord(ctx, first.Coordinate, first.PipelineVersion, ledgerSnapshot())
+	served, ok, err := store.GetVulnerabilityRecordAt(ctx, first.Coordinate, first.PipelineVersion, ledgerSnapshot(), domain.RecordRooting(first))
 	if err != nil || !ok {
-		t.Fatalf("GetVulnerabilityRecord = found %v, err %v", ok, err)
+		t.Fatalf("GetVulnerabilityRecordAt = found %v, err %v", ok, err)
 	}
 	if served.ContentHash != first.ContentHash {
 		t.Fatalf("served %s, want the finding-bearing generation", served.OverallStatus)
@@ -209,7 +209,7 @@ INSERT INTO vulnerability_records (
 
 	// It survived, it still verifies (the read leg checks the seal), and it
 	// states no frame.
-	got, ok, err := store.GetVulnerabilityRecord(ctx, legacy.Coordinate, legacy.PipelineVersion, ledgerSnapshot())
+	got, ok, err := store.GetVulnerabilityRecordAt(ctx, legacy.Coordinate, legacy.PipelineVersion, ledgerSnapshot(), domain.RootingUnrecorded)
 	if err != nil || !ok {
 		t.Fatalf("legacy row after migration 14: found %v, err %v", ok, err)
 	}

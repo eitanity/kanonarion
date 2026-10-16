@@ -28,8 +28,10 @@ Build, test, and lint before opening a PR - all three must pass:
 ```bash
 make build
 make test    # all packages, race detector
-make lint    # vet, staticcheck, govulncheck, gosec
+make lint    # vet, staticcheck, govulncheck, gosec, restricted imports
 ```
+
+The restricted-imports check (`scripts/restricted-imports.sh`, also run by CI) fails when an extraction package imports `os/exec`, `plugin`, `syscall` or `unsafe`.
 
 `make lint` does **not** run golangci-lint. Run it separately, and expect zero
 issues:

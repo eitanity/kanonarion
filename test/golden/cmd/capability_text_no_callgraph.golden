@@ -3,7 +3,7 @@ $ kanonarion capability example.com/clean@v1.0.0
 exit 4
 --- error ---
 execute root command: no callgraph record for example.com/clean@v1.0.0 — analyse it first:
-  kanonarion callgraph example.com/clean@v1.0.0
+  kanonarion fetch example.com/clean@v1.0.0 && kanonarion callgraph example.com/clean@v1.0.0
 --- stdout ---
 (empty)
 --- stderr ---

@@ -3,7 +3,10 @@ package staticcha_test
 import (
 	"context"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -221,4 +224,156 @@ func builtXModVersion(t *testing.T) string {
 		t.Fatal("go list named no version for golang.org/x/mod")
 	}
 	return version
+}
+
+// TestAnalyse_NestedModuleReplaceIsDroppedAndTheModuleLoads is the otel shape
+// end to end: the module replaces its own nested module with "./mod", the zip
+// format leaves "./mod" out, and the nested module is published separately. The
+// module path golang.org/x makes golang.org/x/mod nested in it, and the host's
+// module cache holds that requirement.
+func TestAnalyse_NestedModuleReplaceIsDroppedAndTheModuleLoads(t *testing.T) {
+	xmod := builtXModVersion(t)
+	coord := mustTestCoord(t, "golang.org/x", "v1.0.0")
+	files := map[string]string{
+		"go.mod": "module golang.org/x\n\ngo 1.17\n\n" +
+			"require golang.org/x/mod " + xmod + "\n\n" +
+			"replace golang.org/x/mod => ./mod\n",
+		"x.go": "package x\n\nimport \"golang.org/x/mod/semver\"\n\n" +
+			"// Canonical is the module's exported entry point.\nfunc Canonical(v string) string { return semver.Canonical(v) }\n",
+	}
+
+	a := staticcha.New("0.1.0", "", slog.Default())
+	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord, domain.AnalysisInputs{})
+	if err != nil {
+		t.Fatalf("Analyse returned error: %v", err)
+	}
+	if rec.OverallStatus != domain.CallGraphStatusExtracted {
+		t.Fatalf("OverallStatus = %s (%s), want Extracted: the nested-module replace should be gone",
+			rec.OverallStatus, rec.FailureDetail)
+	}
+	if len(rec.DroppedReplaces) != 1 {
+		t.Fatalf("DroppedReplaces = %v, want the one directive that was removed", rec.DroppedReplaces)
+	}
+	if got, want := rec.DroppedReplaces[0].String(), "golang.org/x/mod => ./mod"; got != want {
+		t.Errorf("DroppedReplaces[0] = %q, want %q", got, want)
+	}
+}
+
+// TestAnalyse_AbsentInTreeReplaceOfAnotherModuleKeepsGosMessage is the control:
+// an absent in-tree target for a module that is not nested in this one is a
+// fault in the published bytes, and the go command's own message is the record.
+func TestAnalyse_AbsentInTreeReplaceOfAnotherModuleKeepsGosMessage(t *testing.T) {
+	coord := mustTestCoord(t, "example.com/premod", "v1.0.0")
+	files := map[string]string{
+		"go.mod": "module example.com/premod\n\ngo 1.17\n\n" +
+			"require example.com/other v1.0.0\n\n" +
+			"replace example.com/other => ./other\n",
+		"premod.go": "package premod\n\nimport \"example.com/other\"\n\n" +
+			"// Value is the module's exported entry point.\nfunc Value() int { return other.V }\n",
+	}
+
+	a := staticcha.New("0.1.0", "", slog.Default())
+	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord, domain.AnalysisInputs{})
+	if err != nil {
+		t.Fatalf("Analyse returned error: %v", err)
+	}
+	if len(rec.DroppedReplaces) != 0 {
+		t.Errorf("DroppedReplaces = %v: a replace of a module that is not nested was dropped", rec.DroppedReplaces)
+	}
+	if rec.OverallStatus != domain.CallGraphStatusPartial {
+		t.Fatalf("OverallStatus = %s (%s), want Partial", rec.OverallStatus, rec.FailureDetail)
+	}
+	// go attaches its sentence to the dependency; the importing package gets only
+	// "could not import". The record leads with go's own words.
+	const gosMessage = "the loader reported: premod.go:3:8: example.com/other@v1.0.0: replacement directory ./other does not exist"
+	if !strings.HasPrefix(rec.FailureDetail, gosMessage) {
+		t.Errorf("FailureDetail does not lead with go's message about the replace:\n%s", rec.FailureDetail)
+	}
+	if rec.FailureCause != domain.FailureCauseModule {
+		t.Errorf("FailureCause = %q, want module", rec.FailureCause)
+	}
+}
+
+// TestAnalyse_DependencyErrorNamesNoHostPath holds the dependency error to the
+// rule positions follow: a path under the module cache is written relative to
+// it. Two analyses reading the same module from two differently named caches
+// state one detail, with no "-: " position prefix.
+func TestAnalyse_DependencyErrorNamesNoHostPath(t *testing.T) {
+	xsys := builtModuleVersion(t, "golang.org/x/sys")
+	coord := mustTestCoord(t, "example.com/premod", "v1.0.0")
+	files := map[string]string{
+		"go.mod": "module example.com/premod\n\ngo 1.17\n\nrequire golang.org/x/sys " + xsys + "\n",
+		// golang.org/x/sys/windows builds on windows only, so on any other host
+		// go reports "build constraints exclude all Go files in <cache>/…".
+		"premod.go": "//go:build !windows\n\npackage premod\n\nimport \"golang.org/x/sys/windows\"\n\n" +
+			"// Value is the module's exported entry point.\nfunc Value() uint32 { return windows.INFINITE }\n",
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("golang.org/x/sys/windows builds here")
+	}
+
+	var details []string
+	for range 2 {
+		cache := copiedModuleCache(t, "golang.org/x/sys", xsys)
+		a := staticcha.New("0.1.0", "", slog.Default()).WithRealModcache(cache)
+		rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord, domain.AnalysisInputs{})
+		if err != nil {
+			t.Fatalf("Analyse returned error: %v", err)
+		}
+		if strings.Contains(rec.FailureDetail, cache) {
+			t.Errorf("FailureDetail names the module cache %s:\n%s", cache, rec.FailureDetail)
+		}
+		details = append(details, rec.FailureDetail)
+	}
+	const lead = "the loader reported: build constraints exclude all Go files in golang.org/x/sys@"
+	if !strings.HasPrefix(details[0], lead) {
+		t.Errorf("FailureDetail does not lead with the dependency's error, module-cache relative:\n%s", details[0])
+	}
+	t.Logf("detail: %s", details[0])
+	if details[0] != details[1] {
+		t.Errorf("two caches, two details:\n%s\n%s", details[0], details[1])
+	}
+}
+
+// builtModuleVersion is the version of path this repository's own build
+// selects; see builtXModVersion.
+func builtModuleVersion(t *testing.T, path string) string {
+	t.Helper()
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-m", "-f", "{{.Version}}", path).Output()
+	if err != nil {
+		t.Fatalf("reading the %s version this build selects: %v", path, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// copiedModuleCache builds a module cache under a fresh temp directory holding
+// one module, copied from the host's cache: the extracted tree and its download
+// entries.
+func copiedModuleCache(t *testing.T, path, version string) string {
+	t.Helper()
+	out, err := exec.CommandContext(t.Context(), "go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		t.Fatalf("go env GOMODCACHE: %v", err)
+	}
+	host := strings.TrimSpace(string(out))
+	cache := t.TempDir()
+	tree := path + "@" + version
+	if err := os.CopyFS(filepath.Join(cache, tree), os.DirFS(filepath.Join(host, tree))); err != nil {
+		t.Fatalf("copying %s: %v", tree, err)
+	}
+	dl := filepath.Join("cache", "download", path, "@v")
+	if err := os.MkdirAll(filepath.Join(cache, dl), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, ext := range []string{".info", ".mod", ".zip", ".ziphash"} {
+		name := filepath.Join(dl, version+ext)
+		data, err := os.ReadFile(filepath.Join(host, name)) //nolint:gosec // a host module-cache file this test copies
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(cache, name), data, 0o600); err != nil { /* #nosec G703 -- cache is this test's own temp dir */
+			t.Fatal(err)
+		}
+	}
+	return cache
 }

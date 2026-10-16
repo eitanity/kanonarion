@@ -3,19 +3,23 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
 )
 
 func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var target string
+	var module string
+	var platform buildTargetFlags
 	var since string
 	var statusStr string
 	var scopeStr string
@@ -24,6 +28,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 	var latest bool
 	var latestSuccess bool
+	var moduleAlias *deprecatedAlias
 
 	cmd := &cobra.Command{
 		Use: "walk-list",
@@ -33,11 +38,18 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 		},
 		Short: "List stored walk records",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := refuseWalkIDRowFilters(cmd); err != nil {
+				return err
+			}
 			if tool && scopeStr != "" {
 				return fmt.Errorf("cannot combine --tool and --scope")
 			}
 			if tool {
 				scopeStr = "tool"
+			}
+			moduleArg, err := moduleAlias.resolve(cmd, module, stderr)
+			if err != nil {
+				return err
 			}
 			if latestSuccess {
 				if statusStr != "" && statusStr != "succeeded" {
@@ -52,10 +64,16 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer releaseStore(cleanup)
-			return runWalkList(cmd.Context(), target, since, statusStr, scopeStr, walkID, limit, offset, latest, latestSuccess, ctr.QueryWalks, stdout, stderr)
+			lerr := runWalkList(cmd.Context(), moduleArg, since, statusStr, scopeStr, platform, walkID, limit, offset, latest, latestSuccess, ctr.QueryWalks, stdout, stderr)
+			if me, ok := errors.AsType[*moduleFilterError](lerr); ok && cmd.Flags().Changed("target") {
+				me.flag = "target"
+			}
+			return lerr
 		},
 	}
-	cmd.Flags().StringVar(&target, "target", "", "filter by target module@version")
+	cmd.Flags().StringVar(&module, "module", "", "filter by the module@version the walk is rooted at")
+	cmd.Flags().StringVar(&platform.goos, "goos", "", "filter by the recorded target operating system; pass with --goarch")
+	cmd.Flags().StringVar(&platform.goarch, "goarch", "", "filter by the recorded target architecture; pass with --goos")
 	cmd.Flags().StringVar(&since, "since", "", "filter by start time (RFC3339)")
 	cmd.Flags().StringVar(&statusStr, "status", "", "filter by overall status (succeeded|partial|failed|cancelled)")
 	cmd.Flags().StringVar(&scopeStr, "scope", "", "filter by walk scope (code|tool|complete)")
@@ -63,11 +81,87 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of results to return (0 = unlimited)")
 	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many results")
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "fetch a single walk summary by ID")
-	cmd.Flags().BoolVar(&latest, "latest", false, "return only the latest unique (target, scope) combination")
+	cmd.Flags().BoolVar(&latest, "latest", false, "return only the latest unique (target, scope, platform, toolchain) combination")
 	cmd.Flags().BoolVar(&latestSuccess, "latest-success", false, "return only the single most recent succeeded walk (as a JSON object, not an array)")
+	// --target is the old spelling of --module. Every other command reads it as
+	// GOOS/GOARCH, so it is kept only as a warning alias, not as a platform filter.
+	moduleAlias = registerDeprecatedAlias(cmd, "target", "module")
 	return cmd
 }
-func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, walkID string, limit, offset int, latest, latestSuccess bool, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
+
+// walkListRowFilters are the walk-list flags that narrow or select rows. Paging
+// and output flags are not here: they still apply to one named walk.
+var walkListRowFilters = []string{"module", "target", "goos", "goarch", "since", "status", "scope", "tool", "latest", "latest-success"}
+
+// refuseWalkIDRowFilters refuses a row filter beside --walk-id. The walk is
+// already named, so a filter would be ignored and the walk returned even when it
+// does not match — a wrong answer, not an unfiltered one.
+func refuseWalkIDRowFilters(cmd *cobra.Command) error {
+	if !cmd.Flags().Changed("walk-id") {
+		return nil
+	}
+	var given []string
+	for _, name := range walkListRowFilters {
+		if cmd.Flags().Changed(name) {
+			given = append(given, "--"+name)
+		}
+	}
+	if len(given) == 0 {
+		return nil
+	}
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf("--walk-id names one walk; it cannot be combined with %s", strings.Join(given, ", "))}
+}
+
+// walkListPlatform is the recorded-platform row filter --goos/--goarch ask for,
+// nil when neither was given. It is validated as every resolving command
+// validates the pair, so a mistyped half is refused by name rather than
+// answered with an empty listing.
+func walkListPlatform(ctx context.Context, f buildTargetFlags) (*walkports.BuildEnvFilter, error) {
+	if err := resolveBuildTarget(ctx, buildTargetFlags{goos: f.goos, goarch: f.goarch}, "", ""); err != nil {
+		return nil, err
+	}
+	if !declaredTarget.Declared() {
+		return nil, nil
+	}
+	return &walkports.BuildEnvFilter{GOOS: declaredTarget.GOOS(), GOARCH: declaredTarget.GOARCH()}, nil
+}
+
+// moduleFilterError is a module filter that is not a coordinate. It names the
+// flag the caller typed; RunE sets flag to "target" when the alias was used.
+type moduleFilterError struct {
+	flag  string
+	value string
+	err   error
+}
+
+func (e *moduleFilterError) Error() string {
+	return fmt.Sprintf("--%s: invalid module coordinate %q: %v", e.flag, e.value, e.err)
+}
+
+func (e *moduleFilterError) Unwrap() error { return e.err }
+
+// platformNotModule refuses a module filter that is a GOOS/GOARCH pair, naming
+// --goos/--goarch: --target means a platform on every other command, so this is
+// the mistake the old spelling invites. Asked only after the value failed to
+// parse as a coordinate; the toolchain decides what is a pair.
+func platformNotModule(ctx context.Context, arg string) error {
+	t, err := goenv.ParseTarget(arg)
+	if err != nil || strings.Contains(arg, "@") {
+		return nil //nolint:nilerr // not a pair: the coordinate refusal stands
+	}
+	if ok, _, serr := gotoolchain.New("", nil).Supports(ctx, t); serr != nil || !ok {
+		return nil //nolint:nilerr // an unconfirmed pair: the coordinate refusal stands
+	}
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+		"%q is a build platform, not a module coordinate: on walk-list, --module (and its deprecated spelling --target) names the module@version a walk is rooted at; filter by the recorded platform with --goos %s --goarch %s",
+		arg, t.GOOS(), t.GOARCH())}
+}
+
+func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg string, platform buildTargetFlags, walkID string, limit, offset int, latest, latestSuccess bool, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
+	env, perr := walkListPlatform(ctx, platform)
+	if perr != nil {
+		return perr
+	}
 	if walkID != "" {
 		return showOneWalk(ctx, walkID, uc, stdout, stderr)
 	}
@@ -80,8 +174,12 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 	}
 	filter, ferr := buildWalkFilter(targetArg, sinceArg, statusArg, scopeArg, fetchLimit, offset, latest)
 	if ferr != nil {
+		if perr := platformNotModule(ctx, targetArg); perr != nil {
+			return perr
+		}
 		return ferr
 	}
+	filter.BuildEnv = env
 
 	summaries, err := uc.ListWalks(ctx, filter)
 	if err != nil {
@@ -115,10 +213,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 		return writeListZeroNotice(stdout, scope)
 	}
 	for _, s := range summaries {
-		if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
-			s.ID, s.Target.String(), ledgerStamp(s.StartedAt),
-			s.OverallStatus.String(), string(s.Scope), string(s.Depth), s.NodeCount, s.FailureCount,
-		); pErr != nil {
+		if pErr := writeWalkRow(stdout, s); pErr != nil {
 			return fmt.Errorf("writing output: %w", pErr)
 		}
 	}
@@ -145,6 +240,8 @@ func showOneWalk(ctx context.Context, walkID string, uc QueryWalksUseCase, stdou
 		OverallStatus: rec.OverallStatus,
 		NodeCount:     len(rec.Graph.Nodes),
 		FailureCount:  domain.CountNodeFailures(rec),
+		GOOS:          rec.Graph.BuildEnv.GOOS,
+		GOARCH:        rec.Graph.BuildEnv.GOARCH,
 	}
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
@@ -154,10 +251,7 @@ func showOneWalk(ctx context.Context, walkID string, uc QueryWalksUseCase, stdou
 		}
 		return nil
 	}
-	if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
-		summary.ID, summary.Target.String(), ledgerStamp(summary.StartedAt),
-		summary.OverallStatus.String(), string(summary.Scope), string(summary.Depth), summary.NodeCount, summary.FailureCount,
-	); pErr != nil {
+	if pErr := writeWalkRow(stdout, summary); pErr != nil {
 		return fmt.Errorf("writing output: %w", pErr)
 	}
 	return nil
@@ -179,13 +273,20 @@ func showLatestSuccess(ctx context.Context, summaries []walkports.WalkSummary, u
 		}
 		return nil
 	}
-	if _, pErr := fmt.Fprintf(stdout, "%s  %s  %s  %s  scope=%s  depth=%s  nodes=%d failures=%d\n",
-		s.ID, s.Target.String(), ledgerStamp(s.StartedAt),
-		s.OverallStatus.String(), string(s.Scope), string(s.Depth), s.NodeCount, s.FailureCount,
-	); pErr != nil {
+	if pErr := writeWalkRow(stdout, s); pErr != nil {
 		return fmt.Errorf("writing output: %w", pErr)
 	}
 	return nil
+}
+
+// writeWalkRow prints one walk-list text row. The platform is printed, in the
+// frame wording every read uses, so rows can be narrowed with --goos/--goarch: a
+// module-rooted walk is not-platform-scoped, a project walk without one unrecorded.
+func writeWalkRow(w io.Writer, s walkports.WalkSummary) error {
+	_, err := fmt.Fprintf(w, "%s  %s  %s  %s  scope=%s  platform=%s  depth=%s  nodes=%d failures=%d\n",
+		s.ID, s.Target.String(), ledgerStamp(s.StartedAt),
+		s.OverallStatus.String(), string(s.Scope), s.BuildFrame(), string(s.Depth), s.NodeCount, s.FailureCount)
+	return err //nolint:wrapcheck // every caller wraps it as an output write
 }
 
 // walkSelectorMiss answers a single-record selector that matched nothing.
@@ -306,7 +407,7 @@ func buildWalkFilter(targetArg, sinceArg, statusArg, scopeArg string, limit, off
 	if targetArg != "" {
 		coord, cerr := parseCoordinate(targetArg)
 		if cerr != nil {
-			return walkports.WalkFilter{}, fmt.Errorf("invalid target coordinate %q: %w", targetArg, cerr)
+			return walkports.WalkFilter{}, &moduleFilterError{flag: "module", value: targetArg, err: cerr}
 		}
 		filter.Target = &coord
 	}
@@ -391,6 +492,12 @@ func describeWalkFilter(applied walkports.WalkFilter) (names, values, fields, ki
 		names = append(names, "target")
 		values = append(values, applied.Target.String())
 		fields = append(fields, "target coordinate")
+		kinds = append(kinds, matchExact)
+	}
+	if applied.BuildEnv != nil {
+		names = append(names, "platform")
+		values = append(values, applied.BuildEnv.String())
+		fields = append(fields, "recorded platform")
 		kinds = append(kinds, matchExact)
 	}
 	if applied.Since != nil {

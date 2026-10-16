@@ -123,6 +123,10 @@ type fakeFacts struct {
 	// setAside answers a coordinate with no readable record as one whose every
 	// record was set aside.
 	setAside bool
+	// uncomposed is the fault seam for a store whose read serves a record
+	// without composing it, so a hash composition would refuse reaches the
+	// identity derivation that follows the read.
+	uncomposed map[coordinate.ModuleCoordinate]fetchdomain.FactRecord
 }
 
 func newFakeFacts() *fakeFacts { return &fakeFacts{records: make(map[string]fetchdomain.FactRecord)} }
@@ -164,6 +168,10 @@ func (f *fakeFacts) ComposeFetchRecord(_ context.Context, coord coordinate.Modul
 		return fetchdomain.CompositeRecord{}, false, coordinate.ErrZeroCoordinate
 	}
 	f.mu.Lock()
+	if r, ok := f.uncomposed[coord]; ok {
+		f.mu.Unlock()
+		return fetchdomain.CompositeRecord{FactRecord: r}, true, nil
+	}
 	held := make([]fetchdomain.FactRecord, 0, len(f.records))
 	for _, r := range f.records {
 		held = append(held, r)
@@ -272,9 +280,12 @@ func (f *fakeVulnStore) served(key string) (domain.VulnerabilityRecord, bool) {
 	return rec, true
 }
 
-func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
+// recordAtSnapshot is a read-back convenience for the scan tests, which assert
+// what a scan wrote at one snapshot. It is not part of the store port: every
+// production point read names its frame.
+func (f *fakeVulnStore) recordAtSnapshot(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
 	if snapshot.IsZero() {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("fakeVulnStore.GetVulnerabilityRecord: %w", domain.ErrZeroSnapshot)
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("fakeVulnStore.recordAtSnapshot: %w", domain.ErrZeroSnapshot)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -308,14 +319,6 @@ func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, coord coordina
 		}
 	}
 	return false, nil
-}
-
-func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.VulnerabilityRecord, bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.composeMatching(func(rec domain.VulnerabilityRecord) bool {
-		return rec.Coordinate == coord && rec.PipelineVersion == pv
-	})
 }
 
 // ListVulnerabilityRecordsForModuleInWalk is the port method: candidates, not an

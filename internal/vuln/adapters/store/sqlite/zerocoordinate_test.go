@@ -17,10 +17,10 @@ func TestRefusesZeroCoordinate(t *testing.T) {
 	coordinatetest.AssertRefusesZeroCoordinate(t, "PutVulnerabilityRecord", func() error {
 		return s.PutVulnerabilityRecord(ctx, domain.VulnerabilityRecord{})
 	})
-	coordinatetest.AssertRefusesZeroCoordinate(t, "GetLatestVulnerabilityRecord", func() error {
-		_, _, err := s.GetLatestVulnerabilityRecord(ctx, zeroCoordinate(), "0.1.0")
+	coordinatetest.AssertRefusesZeroCoordinate(t, "GetVulnerabilityRecordAt", func() error {
+		_, _, err := s.GetVulnerabilityRecordAt(ctx, zeroCoordinate(), "0.1.0", snap("govulndb", "v1"), domain.RootingIsolated)
 		if err != nil {
-			return fmt.Errorf("GetLatestVulnerabilityRecord: %w", err)
+			return fmt.Errorf("GetVulnerabilityRecordAt: %w", err)
 		}
 		return nil
 	})

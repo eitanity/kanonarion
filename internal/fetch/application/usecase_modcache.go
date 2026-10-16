@@ -309,7 +309,7 @@ func (uc *FetchModuleUseCase) cachedGoModOnlyModcache(ctx context.Context, log *
 func (uc *FetchModuleUseCase) verifyGoModAgainstGoSum(ctx context.Context, coord, original coordinate.ModuleCoordinate, dl ports.GoModDownload) error {
 	res := uc.sumdb.Lookup(ctx, coord)
 	if !res.Available {
-		if isReplaced(coord, original) {
+		if isReplaced(coord, original) && !res.LookupFailed() {
 			return errReplacedModuleNotInGoSum(coord, original, res.Reason)
 		}
 		return fmt.Errorf("%w: %s: %s", ErrGoSumVerification, coord, res.Reason)
@@ -327,7 +327,7 @@ func (uc *FetchModuleUseCase) verifyGoModAgainstGoSum(ctx context.Context, coord
 func (uc *FetchModuleUseCase) verifyAgainstGoSum(ctx context.Context, coord, original coordinate.ModuleCoordinate, dl ports.ModuleDownload) error {
 	res := uc.sumdb.Lookup(ctx, coord)
 	if !res.Available {
-		if isReplaced(coord, original) {
+		if isReplaced(coord, original) && !res.LookupFailed() {
 			return errReplacedModuleNotInGoSum(coord, original, res.Reason)
 		}
 		return fmt.Errorf("%w: %s: %s", ErrGoSumVerification, coord, res.Reason)

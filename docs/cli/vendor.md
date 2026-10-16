@@ -175,8 +175,9 @@ a no-op there, not a failure.
 Each finding is evaluated against the `vendor_policy` governance block
 (config schema v2). The default policy flags both **drift** and
 **inconsistency** (`warn`). When any finding resolves to `warn`, the command
-exits **5** (`ExitPolicy`) - suitable as a CI gate. A bad invocation, an
-unreadable policy file or a project with no `vendor/` tree exits **20**.
+exits **5** (`ExitPolicy`) - suitable as a CI gate. A bad invocation or an
+unreadable policy file exits **20**. A project with no `vendor/` tree exits
+**0**, with or without `--vendor-only`.
 
 ## Output
 

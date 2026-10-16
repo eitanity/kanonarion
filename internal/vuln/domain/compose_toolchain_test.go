@@ -3,6 +3,7 @@ package domain_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -135,5 +136,58 @@ func TestToolchainConflict_ComparesTheVerdictAndNotTheLabel(t *testing.T) {
 	differing.Findings = []domain.VulnerabilityFinding{{ID: "GO-2026-0002", FixedIn: "v1.2.3"}}
 	if _, err := domain.Compose([]domain.VulnerabilityRecord{same, differing}); err == nil {
 		t.Error("two toolchains naming different advisories were composed; the findings are the verdict")
+	}
+}
+
+// TestComposeForIndex_AConflictIndexesTheNewestToolchain: after a Go upgrade the
+// frame holds both toolchains' verdicts. The index describes the newest one's,
+// picked by the ladder among that toolchain's records alone. A record stating
+// no toolchain neither decides the toolchain nor joins its answer.
+func TestComposeForIndex_AConflictIndexesTheNewestToolchain(t *testing.T) {
+	t.Parallel()
+	rooting := domain.TargetRootedAt(coordinatetest.MustNew("example.com/app", "v1.0.0"))
+	older, newer := disagreeingPair(t, rooting)
+	newer.ScannedAt = older.ScannedAt.Add(time.Hour)
+	unstated := sampleRecord(t)
+	unstated.Rooting = rooting
+	unstated.ContentHash = "sha256:ccc"
+	unstated.ScannedAt = newer.ScannedAt.Add(time.Hour)
+
+	records := []domain.VulnerabilityRecord{newer, unstated, older}
+	if _, _, err := domain.ComposeAt(records, rooting); err == nil {
+		t.Fatal("the fixture holds no toolchain conflict, so this proves nothing")
+	}
+	got, ok, err := domain.ComposeForIndex(records, rooting)
+	if err != nil || !ok {
+		t.Fatalf("ComposeForIndex = ok %v, err %v; want the newest toolchain's record", ok, err)
+	}
+	if got.ContentHash != newer.ContentHash {
+		t.Errorf("indexed %s (toolchain %q), want the newest toolchain's record %s", got.ContentHash, got.Toolchain, newer.ContentHash)
+	}
+
+	// Reversed scan times: the older toolchain is now the newest record's.
+	older.ScannedAt, newer.ScannedAt = newer.ScannedAt, older.ScannedAt
+	got, _, err = domain.ComposeForIndex([]domain.VulnerabilityRecord{newer, unstated, older}, rooting)
+	if err != nil || got.ContentHash != older.ContentHash {
+		t.Errorf("indexed %s, err %v; want %s, the record of the newest scan's toolchain", got.ContentHash, err, older.ContentHash)
+	}
+}
+
+// TestComposeForIndex_IsComposeAtWithoutAConflict: one toolchain, or nothing in
+// the frame, composes exactly as the read does.
+func TestComposeForIndex_IsComposeAtWithoutAConflict(t *testing.T) {
+	t.Parallel()
+	rooting := domain.TargetRootedAt(coordinatetest.MustNew("example.com/app", "v1.0.0"))
+	older, newer := disagreeingPair(t, rooting)
+	newer.Toolchain = older.Toolchain
+	for _, recs := range [][]domain.VulnerabilityRecord{{older, newer}, {older}} {
+		want, wantOK, wantErr := domain.ComposeAt(recs, rooting)
+		got, ok, err := domain.ComposeForIndex(recs, rooting)
+		if got.ContentHash != want.ContentHash || ok != wantOK || !errors.Is(err, wantErr) {
+			t.Errorf("ComposeForIndex = %s/%v/%v, ComposeAt = %s/%v/%v", got.ContentHash, ok, err, want.ContentHash, wantOK, wantErr)
+		}
+	}
+	if _, ok, err := domain.ComposeForIndex([]domain.VulnerabilityRecord{older}, domain.RootingIsolated); ok || err != nil {
+		t.Errorf("a frame holding nothing = ok %v, err %v; want not found", ok, err)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/eitanity/kanonarion/internal/gotoolchain"
 )
 
 func (s *Scanner) extractZip(ctx context.Context, r io.Reader, dest string) error {
@@ -78,7 +80,7 @@ func (s *Scanner) extractZip(ctx context.Context, r io.Reader, dest string) erro
 }
 
 // findFirstGoPackage returns a "./..." relative package pattern for the first
-// directory under root that contains at least one non-test.go file.
+// directory "./..." matches under root that holds a buildable non-test .go file.
 // Falls back to "./..." if no such directory is found.
 func findFirstGoPackage(root string) string {
 	var found string
@@ -86,10 +88,11 @@ func findFirstGoPackage(root string) string {
 		if found != "" || err != nil {
 			return filepath.SkipAll
 		}
-		if d.IsDir() && d.Name() == "vendor" {
+		if d.IsDir() && outsidePackagePattern(root, path, d) {
 			return filepath.SkipDir
 		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".go") && !strings.HasSuffix(d.Name(), "_test.go") {
+		name := d.Name()
+		if !d.IsDir() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") && !gotoolchain.IgnoredName(name) {
 			rel, relErr := filepath.Rel(root, filepath.Dir(path))
 			if relErr == nil {
 				found = "./" + rel
