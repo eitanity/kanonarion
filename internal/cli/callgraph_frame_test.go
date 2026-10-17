@@ -203,7 +203,7 @@ const frameWalkID = "01JS0NFRAME0000000000000WA1"
 func installWasip1TinyGo(t *testing.T) {
 	t.Helper()
 	fake := tinygotest.Install(t, map[string]tinygotest.Target{
-		"wasip1": {GOOS: "wasip1", GOARCH: "wasm", Tags: []string{"tinygo.wasm", "tinygo"}, GOROOT: hostGOROOT(t)},
+		"wasip1": {GOOS: "wasip1", GOARCH: "wasm", Triple: "wasm32-unknown-wasi", Tags: []string{"tinygo.wasm", "tinygo"}, GOROOT: hostGOROOT(t)},
 	})
 	t.Setenv("PATH", fake.Dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

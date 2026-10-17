@@ -1,6 +1,7 @@
 // Package tinygotest installs a fake tinygo command for tests: a script that
-// answers `version`, `info -json -target=<t>` and `list -target=<t> -json
-// runtime` from fixtures, exits 1 for any other target, and logs every call.
+// answers `version`, `info -json -target=<t>`, `list -target=<t> -json runtime`
+// and `env TINYGOROOT` from fixtures, exits 1 for any other target, and logs
+// every call.
 package tinygotest
 
 import (
@@ -17,7 +18,9 @@ const VersionLine = "tinygo version 0.42.0 linux/amd64 (using go version go1.27.
 // Target is one target the fake knows.
 type Target struct {
 	GOOS, GOARCH, GOARM string
-	Tags                []string
+	// Triple is the llvm_triple info reports.
+	Triple string
+	Tags   []string
 	// GOROOT is the root whose src/runtime the fake's list names. Empty makes
 	// a fresh directory holding only src/runtime.
 	GOROOT string
@@ -25,7 +28,7 @@ type Target struct {
 
 // Pico is a pico-shaped target over a fake GOROOT.
 func Pico() Target {
-	return Target{GOOS: "linux", GOARCH: "arm", GOARM: "6", Tags: []string{"cortexm", "baremetal", "linux", "arm", "rp2040", "rp", "pico", "tinygo"}}
+	return Target{GOOS: "linux", GOARCH: "arm", GOARM: "6", Triple: "thumbv6m-unknown-unknown-eabi", Tags: []string{"cortexm", "baremetal", "linux", "arm", "rp2040", "rp", "pico", "tinygo"}}
 }
 
 // Fake is an installed fake tinygo.
@@ -34,7 +37,9 @@ type Fake struct {
 	Dir string
 	// Bin is the script's path.
 	Bin string
-	log string
+	// SourceRoot is the TINYGOROOT the fake's env prints: an empty src.
+	SourceRoot string
+	log        string
 }
 
 // Install writes the fake into a fresh directory. The script shell-quotes
@@ -46,6 +51,10 @@ func Install(t testing.TB, targets map[string]Target) Fake {
 	if err := os.MkdirAll(fixtures, 0o750); err != nil {
 		t.Fatalf("creating the fake tinygo: %v", err)
 	}
+	sourceRoot := filepath.Join(dir, "tinygoroot")
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "src"), 0o750); err != nil {
+		t.Fatalf("creating the fake TINYGOROOT: %v", err)
+	}
 	for name, tg := range targets {
 		root := tg.GOROOT
 		if root == "" {
@@ -56,7 +65,7 @@ func Install(t testing.TB, targets map[string]Target) Fake {
 		}
 		writeJSON(t, filepath.Join(fixtures, "info-"+name+".json"), map[string]any{
 			"goroot": filepath.Join(dir, "info-goroot-is-never-read"), "goos": tg.GOOS, "goarch": tg.GOARCH,
-			"goarm": tg.GOARM, "build_tags": tg.Tags,
+			"goarm": tg.GOARM, "llvm_triple": tg.Triple, "build_tags": tg.Tags,
 		})
 		writeJSON(t, filepath.Join(fixtures, "list-"+name+".json"), map[string]any{
 			"Dir": filepath.Join(root, "src", "runtime"), "ImportPath": "runtime",
@@ -71,6 +80,7 @@ func Install(t testing.TB, targets map[string]Target) Fake {
 		`info) t="${3#-target=}"; f=` + fixtures + `/info-"$t".json`,
 		`  if [ -f "$f" ]; then cat "$f"; else echo "open /fake/tinygo/targets/$t.json: no such file or directory" >&2; exit 1; fi ;;`,
 		`list) t="${2#-target=}"; cat ` + fixtures + `/list-"$t".json ;;`,
+		`env) echo ` + sourceRoot + ` ;;`,
 		`*) echo "unexpected tinygo $*" >&2; exit 2 ;;`,
 		`esac`,
 		"",
@@ -79,7 +89,7 @@ func Install(t testing.TB, targets map[string]Target) Fake {
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { // #nosec G306 -- an executable test fixture
 		t.Fatalf("writing the fake tinygo: %v", err)
 	}
-	return Fake{Dir: dir, Bin: bin, log: log}
+	return Fake{Dir: dir, Bin: bin, SourceRoot: sourceRoot, log: log}
 }
 
 // Calls is every invocation the fake has answered, one argument line each.

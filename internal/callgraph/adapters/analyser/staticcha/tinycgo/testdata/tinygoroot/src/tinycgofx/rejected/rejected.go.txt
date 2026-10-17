@@ -1,0 +1,9 @@
+// Package rejected has a preamble clang refuses.
+package rejected
+
+/*
+int broken(void) { return }
+*/
+import "C"
+
+func Broken() int { return int(C.broken()) }

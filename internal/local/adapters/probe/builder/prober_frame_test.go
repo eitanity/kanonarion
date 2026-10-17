@@ -59,7 +59,7 @@ func tinyGoFrame(t *testing.T, target, goos, goarch string, tags []string) goenv
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	f, err := goenv.NewTinyGo(target, "0.42.0", "go1.27.2", goos, goarch, "6", root, tags)
+	f, err := goenv.NewTinyGo(target, "0.42.0", "go1.27.2", goos, goarch, "6", root, root, "thumbv6m-unknown-unknown-eabi", tags)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygotest"
 )
 
-func TestProbe_ReadsTheThreeOutputs(t *testing.T) {
+func TestProbe_ReadsTheFourOutputs(t *testing.T) {
 	fake := tinygotest.Install(t, map[string]tinygotest.Target{"pico": tinygotest.Pico()})
 
 	f, err := tinygo.Probe(context.Background(), fake.Bin, "pico")
@@ -34,6 +34,9 @@ func TestProbe_ReadsTheThreeOutputs(t *testing.T) {
 	if want := filepath.Join(fake.Dir, "goroot-pico"); f.GOROOT() != want {
 		t.Errorf("GOROOT = %s, want the parent of list's src %s; info's goroot is never read", f.GOROOT(), want)
 	}
+	if f.SourceRoot() != fake.SourceRoot || f.LLVMTriple() != "thumbv6m-unknown-unknown-eabi" {
+		t.Errorf("TINYGOROOT = %s and triple = %s, want %s from env and info's llvm_triple", f.SourceRoot(), f.LLVMTriple(), fake.SourceRoot)
+	}
 }
 
 func TestProbe_IsMemoisedPerBinaryAndTarget(t *testing.T) {
@@ -45,14 +48,14 @@ func TestProbe_IsMemoisedPerBinaryAndTarget(t *testing.T) {
 			t.Fatalf("Probe: %v", err)
 		}
 	}
-	if n := len(fake.Calls(t)); n != 3 {
-		t.Errorf("three probes of one target ran %d tinygo commands, want the 3 of the first", n)
+	if n := len(fake.Calls(t)); n != 4 {
+		t.Errorf("three probes of one target ran %d tinygo commands, want the 4 of the first", n)
 	}
 	if _, err := tinygo.Probe(ctx, fake.Bin, "other"); err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
-	if n := len(fake.Calls(t)); n != 6 {
-		t.Errorf("a second target ran %d commands in all, want 6", n)
+	if n := len(fake.Calls(t)); n != 8 {
+		t.Errorf("a second target ran %d commands in all, want 8", n)
 	}
 }
 
@@ -112,6 +115,10 @@ echo nope`, []string{"tinygo list -target=pico -json runtime", "not a package's 
 		{"runtime not under src", versionOK + `
 if [ "$1" = info ]; then echo '{"goos":"linux","goarch":"arm"}'; exit 0; fi
 echo '{"Dir":"/opt/runtime"}'`, []string{"not under a GOROOT's src"}},
+		{"env fails", versionOK + `
+if [ "$1" = info ]; then echo '{"goos":"linux","goarch":"arm"}'; exit 0; fi
+if [ "$1" = list ]; then echo '{"Dir":"/opt/src/runtime"}'; exit 0; fi
+echo "env broke" >&2; exit 5`, []string{"tinygo env TINYGOROOT", "env broke"}},
 		{"incomplete frame", versionOK + `
 if [ "$1" = info ]; then echo '{"goarch":"arm"}'; exit 0; fi
 echo '{"Dir":"/opt/src/runtime"}'`, []string{"described the target \"pico\" incompletely", "GOOS"}},

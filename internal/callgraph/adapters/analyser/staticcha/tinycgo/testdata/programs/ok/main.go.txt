@@ -1,0 +1,16 @@
+package main
+
+import (
+	"tinycgofx/full"
+	"tinycgofx/noref"
+)
+
+var seen int
+
+func onEvent(n int) { seen += n }
+
+func main() {
+	full.Run(onEvent)
+	full.Copy([]byte{1}, []byte{0})
+	_ = noref.Hello()
+}

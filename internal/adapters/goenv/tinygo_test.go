@@ -55,7 +55,7 @@ func TestPostureTinyGo_IsNotThisHost(t *testing.T) {
 
 func TestTinyGoApply_WinsOverAnInheritedExportAndKeepsTheCallersSlice(t *testing.T) {
 	root := tinyGoRoot(t)
-	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, []string{"tinygo", "pico"})
+	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", []string{"tinygo", "pico"})
 	if err != nil {
 		t.Fatalf("NewTinyGo: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestTinyGoApply_WinsOverAnInheritedExportAndKeepsTheCallersSlice(t *testing
 }
 
 func TestTinyGoApply_NoGOARMWritesNone(t *testing.T) {
-	f, err := goenv.NewTinyGo("wasip1", "0.42.0", "go1.27.2", "wasip1", "wasm", "", tinyGoRoot(t), nil)
+	f, err := goenv.NewTinyGo("wasip1", "0.42.0", "go1.27.2", "wasip1", "wasm", "", tinyGoRoot(t), tinyGoRoot(t), "wasm32-unknown-wasi", nil)
 	if err != nil {
 		t.Fatalf("NewTinyGo: %v", err)
 	}
@@ -103,14 +103,14 @@ func TestTinyGoApply_UndeclaredLeavesTheEnvironment(t *testing.T) {
 func TestTinyGo_AccessorsAndListArgs(t *testing.T) {
 	root := tinyGoRoot(t)
 	tags := []string{"tinygo", "baremetal", "pico"}
-	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, tags)
+	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", tags)
 	if err != nil {
 		t.Fatalf("NewTinyGo: %v", err)
 	}
 	tags[0] = "mutated"
 
-	if got := []string{f.Target(), f.Version(), f.GoVersion(), f.GOOS(), f.GOARCH(), f.GOARM(), f.GOROOT()}; !reflect.DeepEqual(got,
-		[]string{"pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root}) {
+	if got := []string{f.Target(), f.Version(), f.GoVersion(), f.GOOS(), f.GOARCH(), f.GOARM(), f.GOROOT(), f.SourceRoot(), f.LLVMTriple()}; !reflect.DeepEqual(got,
+		[]string{"pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi"}) {
 		t.Errorf("accessors = %v", got)
 	}
 	if !f.Declared() {
@@ -128,19 +128,23 @@ func TestTinyGo_AccessorsAndListArgs(t *testing.T) {
 func TestNewTinyGo_RefusesAPartialFrameByName(t *testing.T) {
 	root := tinyGoRoot(t)
 	noSrc := t.TempDir()
+	const triple = "thumbv6m-unknown-unknown-eabi"
 	for _, tc := range []struct {
-		name                                              string
-		target, version, goos, goarch, goroot, wantInText string
+		name                                                                  string
+		target, version, goos, goarch, goroot, sourceRoot, triple, wantInText string
 	}{
-		{"target", "", "0.42.0", "linux", "arm", root, "target"},
-		{"version", "pico", "", "linux", "arm", root, "TinyGo version"},
-		{"goos", "pico", "0.42.0", "", "arm", root, "GOOS"},
-		{"goarch", "pico", "0.42.0", "linux", "", root, "GOARCH"},
-		{"goroot", "pico", "0.42.0", "linux", "arm", "", "GOROOT"},
-		{"goroot without src", "pico", "0.42.0", "linux", "arm", noSrc, "no src directory"},
+		{"target", "", "0.42.0", "linux", "arm", root, root, triple, "target"},
+		{"version", "pico", "", "linux", "arm", root, root, triple, "TinyGo version"},
+		{"goos", "pico", "0.42.0", "", "arm", root, root, triple, "GOOS"},
+		{"goarch", "pico", "0.42.0", "linux", "", root, root, triple, "GOARCH"},
+		{"goroot", "pico", "0.42.0", "linux", "arm", "", root, triple, "GOROOT"},
+		{"goroot without src", "pico", "0.42.0", "linux", "arm", noSrc, root, triple, "GOROOT " + noSrc + " holds no src directory"},
+		{"tinygoroot", "pico", "0.42.0", "linux", "arm", root, "", triple, "TINYGOROOT"},
+		{"tinygoroot without src", "pico", "0.42.0", "linux", "arm", root, noSrc, triple, "TINYGOROOT " + noSrc + " holds no src directory"},
+		{"triple", "pico", "0.42.0", "linux", "arm", root, root, "", "LLVM triple"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := goenv.NewTinyGo(tc.target, tc.version, "go1.27.2", tc.goos, tc.goarch, "6", tc.goroot, nil)
+			_, err := goenv.NewTinyGo(tc.target, tc.version, "go1.27.2", tc.goos, tc.goarch, "6", tc.goroot, tc.sourceRoot, tc.triple, nil)
 			if err == nil {
 				t.Fatal("a partial frame was accepted")
 			}
@@ -153,7 +157,7 @@ func TestNewTinyGo_RefusesAPartialFrameByName(t *testing.T) {
 
 // A refusal raised under the frame names it; an undeclared frame adds nothing.
 func TestTinyGo_ResolutionClause(t *testing.T) {
-	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", tinyGoRoot(t), nil)
+	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", tinyGoRoot(t), tinyGoRoot(t), "thumbv6m-unknown-unknown-eabi", nil)
 	if err != nil {
 		t.Fatalf("NewTinyGo: %v", err)
 	}
@@ -178,7 +182,7 @@ func TestTinyGoBuildsWasm(t *testing.T) {
 		{"wasm-unknown", "linux", "arm", []string{"tinygo.wasm", "wasm_unknown"}, true},
 		{"pico", "linux", "arm", []string{"tinygo", "pico"}, false},
 	} {
-		f, err := goenv.NewTinyGo(tc.target, "0.42.0", "go1.27.2", tc.goos, tc.goarch, "", tinyGoRoot(t), tc.tags)
+		f, err := goenv.NewTinyGo(tc.target, "0.42.0", "go1.27.2", tc.goos, tc.goarch, "", tinyGoRoot(t), tinyGoRoot(t), "thumbv6m-unknown-unknown-eabi", tc.tags)
 		if err != nil {
 			t.Fatal(err)
 		}

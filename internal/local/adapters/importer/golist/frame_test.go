@@ -45,7 +45,7 @@ func TestBuildModules_ListsUnderTheDeclaredFrame(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	pico, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, []string{"tinygo", "pico"})
+	pico, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", []string{"tinygo", "pico"})
 	if err != nil {
 		t.Fatal(err)
 	}

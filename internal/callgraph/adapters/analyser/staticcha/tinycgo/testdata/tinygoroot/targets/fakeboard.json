@@ -1,0 +1,5 @@
+{
+	"inherits": ["fakechip"],
+	"build-tags": ["fakeboard"],
+	"cflags": ["-DFAKEBOARD=1"]
+}

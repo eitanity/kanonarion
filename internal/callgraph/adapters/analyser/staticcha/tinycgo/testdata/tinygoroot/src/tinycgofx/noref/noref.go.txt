@@ -1,0 +1,9 @@
+// Package noref imports "C" for its preamble alone, which is never compiled.
+package noref
+
+/*
+#error a package that references no C name must not reach clang
+*/
+import "C"
+
+func Hello() int { return 1 }

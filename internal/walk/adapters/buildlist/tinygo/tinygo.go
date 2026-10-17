@@ -67,10 +67,11 @@ func Probe(ctx context.Context, binary, target string) (goenv.TinyGo, error) {
 		return goenv.TinyGo{}, err
 	}
 	var info struct {
-		GOOS      string   `json:"goos"`
-		GOARCH    string   `json:"goarch"`
-		GOARM     string   `json:"goarm"`
-		BuildTags []string `json:"build_tags"`
+		GOOS       string   `json:"goos"`
+		GOARCH     string   `json:"goarch"`
+		GOARM      string   `json:"goarm"`
+		LLVMTriple string   `json:"llvm_triple"`
+		BuildTags  []string `json:"build_tags"`
 	}
 	if jerr := json.Unmarshal(infoOut, &info); jerr != nil {
 		return goenv.TinyGo{}, fmt.Errorf("tinygo info -json -target=%s printed output that is not its JSON: %w", target, jerr)
@@ -83,7 +84,14 @@ func Probe(ctx context.Context, binary, target string) (goenv.TinyGo, error) {
 	if err != nil {
 		return goenv.TinyGo{}, fmt.Errorf("tinygo list -target=%s -json runtime: %w", target, err)
 	}
-	f, err := goenv.NewTinyGo(target, version, goVersion, info.GOOS, info.GOARCH, info.GOARM, goroot, info.BuildTags)
+	// TINYGOROOT holds TinyGo's own packages and target definitions; the call
+	// graph analyses the first with bodies and reads the second for its C flags.
+	rootOut, err := run(ctx, bin, "env", "TINYGOROOT")
+	if err != nil {
+		return goenv.TinyGo{}, err
+	}
+	f, err := goenv.NewTinyGo(target, version, goVersion, info.GOOS, info.GOARCH, info.GOARM, goroot,
+		strings.TrimSpace(string(rootOut)), info.LLVMTriple, info.BuildTags)
 	if err != nil {
 		return goenv.TinyGo{}, fmt.Errorf("tinygo described the target %q incompletely: %w", target, err)
 	}

@@ -9,19 +9,22 @@ import (
 )
 
 // TinyGo is a TinyGo target as the tinygo command defined it: the board or
-// runtime name, the TinyGo and merged Go versions, the platform, the build tags
-// and the GOROOT TinyGo builds with. The zero value declares nothing.
+// runtime name, the TinyGo and merged Go versions, the platform, the build tags,
+// the GOROOT TinyGo builds with, TinyGo's own source root and the LLVM triple.
+// The zero value declares nothing.
 type TinyGo struct {
 	target, version, goVersion, goos, goarch, goarm, goroot string
+	sourceRoot, llvmTriple                                  string
 	tags                                                    []string
 }
 
 // NewTinyGo is a complete frame. A partial one would let the missing half come
 // from the inherited environment, so every field the children need is required
-// and the GOROOT must hold the source tree go list reads.
-func NewTinyGo(target, version, goVersion, goos, goarch, goarm, goroot string, tags []string) (TinyGo, error) {
+// and the GOROOT and TINYGOROOT must hold the source trees that are read.
+func NewTinyGo(target, version, goVersion, goos, goarch, goarm, goroot, sourceRoot, llvmTriple string, tags []string) (TinyGo, error) {
 	for _, f := range []struct{ name, value string }{
 		{"target", target}, {"TinyGo version", version}, {"GOOS", goos}, {"GOARCH", goarch}, {"GOROOT", goroot},
+		{"TINYGOROOT", sourceRoot}, {"LLVM triple", llvmTriple},
 	} {
 		if f.value == "" {
 			return TinyGo{}, fmt.Errorf("a TinyGo frame names its %s; tinygo reported none", f.name)
@@ -30,9 +33,13 @@ func NewTinyGo(target, version, goVersion, goos, goarch, goarm, goroot string, t
 	if info, err := os.Stat(filepath.Join(goroot, "src")); err != nil || !info.IsDir() {
 		return TinyGo{}, fmt.Errorf("the TinyGo GOROOT %s holds no src directory", goroot)
 	}
+	if info, err := os.Stat(filepath.Join(sourceRoot, "src")); err != nil || !info.IsDir() {
+		return TinyGo{}, fmt.Errorf("the TINYGOROOT %s holds no src directory", sourceRoot)
+	}
 	return TinyGo{
 		target: target, version: version, goVersion: goVersion,
 		goos: goos, goarch: goarch, goarm: goarm, goroot: goroot,
+		sourceRoot: sourceRoot, llvmTriple: llvmTriple,
 		tags: append([]string(nil), tags...),
 	}, nil
 }
@@ -70,6 +77,13 @@ func (f TinyGo) BuildsWasm() bool {
 
 // GOROOT is the merged root TinyGo builds with.
 func (f TinyGo) GOROOT() string { return f.goroot }
+
+// SourceRoot is TINYGOROOT, the tree TinyGo's own packages and target
+// definitions live in. It is a host path, so it reaches no record.
+func (f TinyGo) SourceRoot() string { return f.sourceRoot }
+
+// LLVMTriple is the triple tinygo info reports for the target.
+func (f TinyGo) LLVMTriple() string { return f.llvmTriple }
 
 // Apply returns env as a child resolving under this frame must see it, written
 // last so it wins over the inherited values and over Target.Apply. cgo is on
@@ -111,5 +125,6 @@ func (f TinyGo) ResolutionClause() string {
 var PostureTinyGo = TinyGo{
 	target: "pico", version: "0.0.0", goVersion: "go0.0.0",
 	goos: "linux", goarch: "arm", goarm: "6", goroot: "/kanonarion-posture/tinygo-goroot",
+	sourceRoot: "/kanonarion-posture/tinygo-root", llvmTriple: "thumbv6m-unknown-unknown-eabi",
 	tags: []string{"tinygo", "baremetal"},
 }

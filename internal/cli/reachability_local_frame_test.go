@@ -29,9 +29,9 @@ import (
 // binary is built in its place.
 func TestReachabilityLocal_RefusesWasmFramesByName(t *testing.T) {
 	requireGoOnPath(t)
-	wasip2 := tinygotest.Target{GOOS: "linux", GOARCH: "arm", Tags: []string{"tinygo.wasm", "wasip2", "tinygo"}, GOROOT: hostGOROOT(t)}
+	wasip2 := tinygotest.Target{GOOS: "linux", GOARCH: "arm", Triple: "wasm32-unknown-wasip2", Tags: []string{"tinygo.wasm", "wasip2", "tinygo"}, GOROOT: hostGOROOT(t)}
 	fake := tinygotest.Install(t, map[string]tinygotest.Target{
-		"wasip1": {GOOS: "wasip1", GOARCH: "wasm", Tags: []string{"tinygo.wasm", "tinygo"}, GOROOT: hostGOROOT(t)},
+		"wasip1": {GOOS: "wasip1", GOARCH: "wasm", Triple: "wasm32-unknown-wasi", Tags: []string{"tinygo.wasm", "tinygo"}, GOROOT: hostGOROOT(t)},
 		"wasip2": wasip2,
 	})
 	t.Setenv("PATH", fake.Dir+string(os.PathListSeparator)+os.Getenv("PATH"))

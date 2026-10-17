@@ -1,0 +1,5 @@
+package main
+
+import "tinycgofx/rejected"
+
+func main() { _ = rejected.Broken() }

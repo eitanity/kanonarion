@@ -134,7 +134,8 @@ only the go command knows how the `toolchain` directive and any `GOTOOLCHAIN`
 switch settled.
 
 Call-graph records carry their frame from pipeline `0.11.0`, and every call-graph
-read selects the frame its invocation declares, or this host's. Interface records
+read selects the frame its invocation declares, or this host's. From pipeline
+`0.12.0` a record under `--tinygo` holds TinyGo's own packages with bodies. Interface records
 are measured in the host frame, and examples records apply no build constraint.
 
 `--target` means the build target on every command that shows it. Two commands

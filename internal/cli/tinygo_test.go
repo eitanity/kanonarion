@@ -328,7 +328,7 @@ func TestTinyGo_RemediesAndClausesNameTheDeclaration(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	frame, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, nil)
+	frame, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", nil)
 	if err != nil {
 		t.Fatalf("NewTinyGo: %v", err)
 	}

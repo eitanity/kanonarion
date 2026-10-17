@@ -339,6 +339,35 @@ $ kanonarion callgraph golang.org/x/mod@v0.30.0
 golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA] frame linux/amd64
 ```
 
+### Under a TinyGo target
+
+With `--tinygo`, TinyGo's own packages are analysed with bodies: every package
+whose directory or files resolve under `$(tinygo env TINYGOROOT)/src`, such as
+`machine`, `device/arm`, `runtime`, `internal/task` and `sync`. Their functions
+are nodes with `module ''` and `role: external`, as the standard library's are,
+and their call edges are recorded, including a call back into the analysed
+module: `callers` on a function handed to `machine.Pin.SetInterrupt` names the
+`machine` function that calls it. Packages that come from Go's own `GOROOT`,
+such as `time` and `fmt`, stay standard library. The graph is much larger than
+the same program's under the host frame, because `device/*` packages declare a
+method per register.
+
+TinyGo's packages are written for TinyGo's cgo, so they are read the way TinyGo
+reads them: `import "C"` is removed and every `C.<name>` becomes the name TinyGo
+declares for it. A package that only imports `"C"` for its preamble needs
+nothing more. A file that references C names needs a C compiler: `clang` on
+`PATH`, else the highest-numbered `clang-<N>` (Debian and Ubuntu install only
+the versioned name). The preamble is compiled for the target with the
+`cflags`, `cpu` and ABI of its definition under `TINYGOROOT/targets/`, and its
+declarations become Go declarations. The record is `Partial` when:
+
+| Message | What it means |
+|---|---|
+| `package <path>: no C compiler found on PATH (looked for clang, then clang-<N>)` | The named file references C names and this host has no clang. Install one and re-analyse |
+| `clang rejected the preamble: <file>:<line>:<col>: error: …` | clang's first diagnostic for the file's preamble under this target |
+| `C.<name>: <C type> is a C type this analysis does not translate` | The C declaration uses a type outside the translated set: bit fields, a union of more than one field, `__int128`, `_Complex`, an anonymous struct named only inside another |
+| `C.<name>: the macro "<text>" is not a constant this analysis evaluates: …` | A referenced macro that is not an integer, float, character or string constant, or an expression of those |
+
 The result line names the frame the analysis ran under. With `--from-walk`, the
 walk's frame is the extraction frame: a walk resolved for another platform is
 analysed under that platform, and stderr says so. A declaration that disagrees

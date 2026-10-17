@@ -241,6 +241,24 @@ Records are keyed by generation (`<pipeline>+recipes.<n>`), so the bump is the
 migration: `0.3.0` rows stay and are never served for a `0.4.0` request. Cost is
 one re-measurement per coordinate on its next `native` run.
 
+## Call graph record: pipeline `0.11.0` → `0.12.0`
+
+**Derivation change; no record shape change, no store migration.** Under a
+TinyGo frame (`--tinygo`), TinyGo's own packages — those whose directory or
+files resolve under `$(tinygo env TINYGOROOT)/src`, such as `machine`,
+`device/arm`, `runtime` and `internal/task` — are now analysed with bodies:
+their functions keep `module ''` and `role: external`, and their call edges,
+including calls back into the analysed module, are recorded. They are no longer
+listed in the record's `stdlib_packages`. Packages that resolve under Go's own
+GOROOT stay standard library. A record under the host frame or `--target` is
+unchanged apart from its pipeline version.
+
+A `0.11.0` TinyGo-frame record holds TinyGo's packages as bodiless externals,
+so it is not served for a `0.12.0` request. Records are keyed
+`(module, version, pipeline_version)`: `0.11.0` rows stay and become
+unreachable. Cost is one re-extraction per coordinate on its next `callgraph`
+or `local` run.
+
 ## Call graph record: pipeline `0.10.0` → `0.11.0`
 
 **Record shape change; store migration 17; no schema-version bump.** A record

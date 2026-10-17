@@ -1,0 +1,10 @@
+package more
+
+/*
+int sum(int n, ...);
+union one { int only; };
+*/
+import "C"
+
+func Sum2() C.int     { return C.sum(2) }
+func U2() C.union_one { return C.union_one{only: 2} }

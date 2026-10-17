@@ -65,7 +65,7 @@ func testTinyGo(t *testing.T) goenv.TinyGo {
 	if err := os.Mkdir(filepath.Join(root, "src"), 0o700); err != nil {
 		t.Fatalf("making the TinyGo GOROOT: %v", err)
 	}
-	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, []string{"cortexm", "baremetal"})
+	f, err := goenv.NewTinyGo("pico", "0.42.0", "go1.27.2", "linux", "arm", "6", root, root, "thumbv6m-unknown-unknown-eabi", []string{"cortexm", "baremetal"})
 	if err != nil {
 		t.Fatalf("NewTinyGo: %v", err)
 	}

@@ -1,0 +1,6 @@
+{
+	"inherits": ["fakecore"],
+	"llvm-target": "thumbv6m-unknown-unknown-eabi",
+	"cpu": "cortex-m0plus",
+	"target-abi": "aapcs"
+}
