@@ -118,7 +118,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		// examined it at its real version, so its silence is a reachability
 		// answer. The project's own main module is versioned "(devel)" and never
 		// coordinate-matches an advisory, so it does not reach the false case.
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, true, *snapshot)
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, true, result.ScanMode, *snapshot)
 		if interrupt.Cancelled(ctx, err) {
 			return fmt.Errorf("matching advisories for %s: %w", coord, err)
 		}
@@ -190,6 +190,7 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 	coord coordinate.ModuleCoordinate,
 	reported []domain.VulnerabilityFinding,
 	reachabilityAnswerable bool,
+	mode domain.ScanMode,
 	snapshot domain.DatabaseSnapshot,
 ) ([]domain.VulnerabilityFinding, error) {
 	matched, err := uc.moduleScanner.database.LookupFindings(ctx, coord, snapshot)
@@ -223,12 +224,21 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 		// It reaches only an advisory the analysis never reported. Where the
 		// analysis did report one, its own reachability answer stands and this
 		// derived-from-silence verdict must never displace it.
+		//
+		// A module-level analysis examined no package, so its silence is stated
+		// under its own mode and weighs nothing.
+		confidence := domain.ConfidenceHigh
+		if mode == domain.ScanModeModule {
+			confidence = domain.ConfidenceUnknown
+		} else {
+			mode = domain.ScanModeSource
+		}
 		f.Reachable = &domain.ReachabilityResult{
 			IsReachable: false,
-			Confidence:  domain.ConfidenceHigh,
+			Confidence:  confidence,
 			DerivedBy: domain.ReachabilityDerivation{
 				Analyser: domain.AnalyserGovulncheck,
-				Fidelity: string(domain.ScanModeSource),
+				Fidelity: string(mode),
 			},
 		}
 	})

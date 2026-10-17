@@ -155,20 +155,21 @@ The rungs, most to least sound:
 |---|---|
 | `confirmed` | A call-graph search ran over a graph built with function bodies and found no path **from any entry point the analysis can name** — the module's public API, its package initialisers, a command's `main`, a function with an export directive, an `http.Handler`. The only rung a clean negative may rest on. |
 | `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
-| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
+| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a module-level scan under a TinyGo frame (see [Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame)), a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
 | `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
 | `disputed` | The recorded negative is contradicted: a search from one of those entry points found a path to the symbol. Both answers stand; neither is discarded. Treat the finding as open. |
 
 Two consequences worth knowing before you read a negative:
 
-- **govulncheck never produces a `confirmed` negative, in either mode.** It emits
+- **govulncheck never produces a `confirmed` negative, in any mode.** It emits
   findings for what it *reached*, so a module it examined and did not report
   produces no finding at all; the negative you are reading was manufactured
   afterwards by matching the advisory database against the module's coordinate.
   Source mode is that silence at its strongest and reports `inferred`; binary
   mode inspected a symbol table with no call graph behind it and reports
-  `unconfirmed`. Where the store holds a call graph for the coordinate, that
-  silence is put through kanonarion's own search when you read the finding, and
+  `unconfirmed`; module mode examined no package and reports `unconfirmed` on a
+  `not_determined` finding, with no read-time search behind it. Where the
+  store holds a call graph for the coordinate, that silence is put through kanonarion's own search when you read the finding, and
   when `vuln-scan` prints it, which is what can raise it to `confirmed` or
   `disputed` with no re-scan. A negative measured in your build is searched
   over your build's graph joined to the dependency's (see below). Where your
@@ -990,6 +991,7 @@ command is safe to run from the root of a repository with fixture modules under
 | `--gomod <path>` | *(empty)* | Answer the stored query in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform |
 | `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
 | `--local` | *(empty)* | Path to the local Go workspace to probe (live local mode) |
 | `--json` | false | Emit output as JSON (global flag) |
 

@@ -476,3 +476,28 @@ func TestScanWalk_LocalProjectWalk_StillTakesTheProjectRootedPath(t *testing.T) 
 		t.Errorf("a local project walk must not take the target-rooted path; calls = %d", scanner.targetCalls)
 	}
 }
+
+// Under a module-level analysis the same silence examined no package, so the
+// coordinate match is stated under that mode and reads not_determined.
+func TestScanWalk_CoordinateKeyed_ModuleModeSilenceIsNotAnAnswer(t *testing.T) {
+	ctx := t.Context()
+	scanner := &fakeScanner{targetRooted: true, targetMode: domain.ScanModeModule}
+	f := newTargetScanFixture(t, scanner)
+	f.db.findings = map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
+		f.depA: {{ID: "GO-2024-0001", Summary: "bad"}},
+	}
+	if _, err := f.walkUC.Scan(ctx, application.ScanWalkParams{WalkID: f.walkID, Operator: "tester"}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	rec, ok, err := f.vulnStore.GetLatestVulnerabilityRecordForWalk(ctx, f.depA, "v1", f.walkID)
+	if err != nil || !ok || len(rec.Findings) != 1 || rec.Findings[0].Reachable == nil {
+		t.Fatalf("record for depA: ok=%v err=%v %+v", ok, err, rec.Findings)
+	}
+	got := rec.Findings[0]
+	if state := domain.FindingReachabilityState(got); state != domain.StateNotDetermined {
+		t.Errorf("state = %s, want not_determined", state)
+	}
+	if fid := got.Reachable.DerivedBy.Fidelity; fid != string(domain.ScanModeModule) {
+		t.Errorf("fidelity = %q, want module", fid)
+	}
+}

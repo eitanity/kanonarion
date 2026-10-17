@@ -1,0 +1,107 @@
+package goenv
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// TinyGo is a TinyGo target as the tinygo command defined it: the board or
+// runtime name, the TinyGo and merged Go versions, the platform, the build tags
+// and the GOROOT TinyGo builds with. The zero value declares nothing.
+type TinyGo struct {
+	target, version, goVersion, goos, goarch, goarm, goroot string
+	tags                                                    []string
+}
+
+// NewTinyGo is a complete frame. A partial one would let the missing half come
+// from the inherited environment, so every field the children need is required
+// and the GOROOT must hold the source tree go list reads.
+func NewTinyGo(target, version, goVersion, goos, goarch, goarm, goroot string, tags []string) (TinyGo, error) {
+	for _, f := range []struct{ name, value string }{
+		{"target", target}, {"TinyGo version", version}, {"GOOS", goos}, {"GOARCH", goarch}, {"GOROOT", goroot},
+	} {
+		if f.value == "" {
+			return TinyGo{}, fmt.Errorf("a TinyGo frame names its %s; tinygo reported none", f.name)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(goroot, "src")); err != nil || !info.IsDir() {
+		return TinyGo{}, fmt.Errorf("the TinyGo GOROOT %s holds no src directory", goroot)
+	}
+	return TinyGo{
+		target: target, version: version, goVersion: goVersion,
+		goos: goos, goarch: goarch, goarm: goarm, goroot: goroot,
+		tags: append([]string(nil), tags...),
+	}, nil
+}
+
+// Declared reports whether this value names a TinyGo target at all.
+func (f TinyGo) Declared() bool { return f.target != "" }
+
+// Target is the TinyGo target name, such as pico or wasip1.
+func (f TinyGo) Target() string { return f.target }
+
+// Version is the TinyGo release, such as 0.42.0.
+func (f TinyGo) Version() string { return f.version }
+
+// GoVersion is the Go release TinyGo reports it merges, such as go1.27.2.
+func (f TinyGo) GoVersion() string { return f.goVersion }
+
+// GOOS is the operating system TinyGo resolves the target for.
+func (f TinyGo) GOOS() string { return f.goos }
+
+// GOARCH is the architecture TinyGo resolves the target for.
+func (f TinyGo) GOARCH() string { return f.goarch }
+
+// GOARM is the ARM variant TinyGo reports, possibly empty.
+func (f TinyGo) GOARM() string { return f.goarm }
+
+// Tags is the target's build tag set, in the order tinygo reported it.
+func (f TinyGo) Tags() []string { return append([]string(nil), f.tags...) }
+
+// GOROOT is the merged root TinyGo builds with.
+func (f TinyGo) GOROOT() string { return f.goroot }
+
+// Apply returns env as a child resolving under this frame must see it, written
+// last so it wins over the inherited values and over Target.Apply. cgo is on
+// because TinyGo compiles C, so build constraints select the cgo files. An
+// undeclared frame leaves env as it is.
+func (f TinyGo) Apply(env []string) []string {
+	out := env[:len(env):len(env)]
+	if !f.Declared() {
+		return out
+	}
+	out = append(out, "GOOS="+f.goos, "GOARCH="+f.goarch)
+	if f.goarm != "" {
+		out = append(out, "GOARM="+f.goarm)
+	}
+	return append(out, "GOROOT="+f.goroot, "CGO_ENABLED=1")
+}
+
+// ListArgs is the tag set as a go list or govulncheck argument, nil when there
+// are none.
+func (f TinyGo) ListArgs() []string {
+	if len(f.tags) == 0 {
+		return nil
+	}
+	return []string{"-tags=" + strings.Join(f.tags, ",")}
+}
+
+// ResolutionClause names this frame in a refusal raised by a child that
+// resolved under it, empty when none was declared.
+func (f TinyGo) ResolutionClause() string {
+	if !f.Declared() {
+		return ""
+	}
+	return fmt.Sprintf(" (resolving for the declared build target --tinygo %s; this failure may be the target's rather than the project's)", f.target)
+}
+
+// PostureTinyGo is the frame the declared-tinygo-target posture is stated
+// against. It is not this host's platform, so a producer that dropped the frame
+// and kept the ambient values fails the assertion.
+var PostureTinyGo = TinyGo{
+	target: "pico", version: "0.0.0", goVersion: "go0.0.0",
+	goos: "linux", goarch: "arm", goarm: "6", goroot: "/kanonarion-posture/tinygo-goroot",
+	tags: []string{"tinygo", "baremetal"},
+}

@@ -32,6 +32,9 @@ type Resolver struct {
 	// value is a resolver nobody declared a target to, which still writes the
 	// measured host into every child: see goenv.Target.Apply.
 	target goenv.Target
+	// tinygo is the declared TinyGo frame, layered after target; zero when
+	// none was declared.
+	tinygo goenv.TinyGo
 	logger *slog.Logger
 }
 
@@ -50,6 +53,14 @@ func New(goBinary string, logger *slog.Logger) *Resolver {
 func (r *Resolver) WithTarget(t goenv.Target) *Resolver {
 	out := *r
 	out.target = t
+	return &out
+}
+
+// WithTinyGo returns a copy of the resolver whose children resolve under the
+// declared TinyGo frame: its environment on every child, its tags on the lists.
+func (r *Resolver) WithTinyGo(f goenv.TinyGo) *Resolver {
+	out := *r
+	out.tinygo = f
 	return &out
 }
 
@@ -98,11 +109,15 @@ func (r *Resolver) Resolve(ctx context.Context, projectDir string) (walkports.Bu
 	}
 
 	return walkports.BuildList{
-		Modules:   modules,
-		Edges:     edges,
-		GoVersion: goVersion,
-		GOOS:      goos,
-		GOARCH:    goarch,
+		Modules:       modules,
+		Edges:         edges,
+		GoVersion:     goVersion,
+		GOOS:          goos,
+		GOARCH:        goarch,
+		GOARM:         r.tinygo.GOARM(),
+		TinyGoTarget:  r.tinygo.Target(),
+		TinyGoVersion: r.tinygo.Version(),
+		TinyGoTags:    r.tinygo.Tags(),
 	}, nil
 }
 
@@ -153,13 +168,16 @@ func (r *Resolver) buildEnv(ctx context.Context, projectDir string) (goVersion, 
 
 // run executes the configured go binary with args in dir and returns stdout.
 func (r *Resolver) run(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "list" {
+		args = append(append([]string{"list"}, r.tinygo.ListArgs()...), args[1:]...)
+	}
 	cmd := childproc.CommandContext(ctx, r.goBin(), args...) // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	cmd.Dir = dir
 	// The platform is stated rather than inherited. Every child of a build-list
 	// resolution — the module list, the requirement graph and the environment
 	// probe — resolves for the same pair, and it is the pair the invocation
 	// declared or, failing that, the host this process measured.
-	cmd.Env = r.target.Apply(os.Environ())
+	cmd.Env = r.tinygo.Apply(r.target.Apply(os.Environ()))
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {

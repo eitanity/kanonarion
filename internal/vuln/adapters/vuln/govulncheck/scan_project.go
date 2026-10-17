@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/gotoolchain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -84,7 +85,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 	// The platform is layered on last, over whichever surface the tree selected,
 	// so the one decision a posture must not make is made in one place for all
 	// three of them.
-	env = s.target.Apply(env)
+	env = s.tinygo.Apply(s.target.Apply(env))
 
 	// Stamped on every result this scan returns, faults included: a project's
 	// reachable set is the toolchain's, and it is resolved from the project
@@ -103,9 +104,26 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 		return domain.ProjectScanResult{}, err
 	}
 
-	s.logger.Info("vuln-scan: running project-rooted govulncheck source mode",
+	toolchains := goenv.NewToolchains()
+	defer func() {
+		if cerr := toolchains.Close(); cerr != nil {
+			s.logger.Warn("vuln-scan: failed to remove the staged toolchain directory", "error", cerr)
+		}
+	}()
+	mode, fault, err := s.scanModeFor(ctx, toolchains, env, projectDir)
+	if err != nil {
+		return domain.ProjectScanResult{}, err
+	}
+	if fault != nil {
+		return domain.ProjectScanResult{
+			Status: fault.status, ErrorDetail: fault.errorDetail,
+			AnalysisSurface: surface, AdvisoryCount: advisories,
+		}, nil
+	}
+
+	s.logger.Info("vuln-scan: running project-rooted govulncheck "+string(mode)+" mode",
 		"dir", projectDir, "db", dbArg, "analysis_surface", string(surface))
-	cmd := childproc.CommandContext(ctx, tool.bin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+	cmd := childproc.CommandContext(ctx, tool.bin, s.scanArgs(dbArg, mode)...) // #nosec G204 -- binary path from exec.LookPath
 	cmd.Dir = projectDir
 	cmd.Env = env
 
@@ -125,7 +143,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 		_ = pw.Close() /* #nosec G104 -- pipe close in goroutine, error not actionable */
 	}()
 
-	byModule, perr := s.parseResultsByModule(ctx, pr, domain.ScanModeSource)
+	byModule, perr := s.parseResultsByModule(ctx, pr, mode)
 	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
 	// is settled: a scan that died mid-stream must be classified as the failure it
 	// is, not as the truncated parse it also produced. The channel receive is the
@@ -154,6 +172,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 			// same break under a fetched resolution.
 			AnalysisSurface: surface,
 			AdvisoryCount:   advisories,
+			ScanMode:        mode,
 		}, nil
 	}
 
@@ -169,6 +188,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 		Status:           status,
 		AnalysisSurface:  surface,
 		AdvisoryCount:    advisories,
+		ScanMode:         mode,
 	}, nil
 }
 

@@ -726,8 +726,9 @@ func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]
 // buildEnvProperties renders the resolved build environment as CycloneDX
 // metadata properties, emitting only the values that were captured so a record
 // with no build environment (a non-project walk, or a pre-BuildEnv record)
-// contributes none. The ordering is fixed (goos, goarch, go_version) for
-// deterministic output.
+// contributes none. The ordering is fixed (goos, goarch, goarm, go_version,
+// then the TinyGo target, version and comma-joined tags) for deterministic
+// output; the last four exist only on a TinyGo walk.
 func buildEnvProperties(env walkdomain.BuildEnv) []cdx.Property {
 	var props []cdx.Property
 	add := func(key, value string) {
@@ -737,7 +738,11 @@ func buildEnvProperties(env walkdomain.BuildEnv) []cdx.Property {
 	}
 	add("goos", env.GOOS)
 	add("goarch", env.GOARCH)
+	add("goarm", env.GOARM)
 	add("go_version", env.GoVersion)
+	add("tinygo_target", env.TinyGoTarget)
+	add("tinygo_version", env.TinyGoVersion)
+	add("tinygo_tags", strings.Join(env.TinyGoTags, ","))
 	return props
 }
 

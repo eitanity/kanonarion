@@ -20,7 +20,17 @@ const (
 	ScanModeSource ScanMode = "source"
 	// ScanModeBinary builds a test binary then scans its symbol table. Much faster; no call-graph precision.
 	ScanModeBinary ScanMode = "binary"
+	// ScanModeModule matches advisories against the module graph alone. It is
+	// what a TinyGo closure that compiles C gets, because the host toolchain
+	// cannot load its packages; no package or symbol is examined.
+	ScanModeModule ScanMode = "module"
 )
+
+// ScanModes is every mode a scan can record, so renderers and tests walk one
+// list rather than restating it.
+func ScanModes() []ScanMode {
+	return []ScanMode{ScanModeSource, ScanModeBinary, ScanModeModule}
+}
 
 // VulnerabilityStatus describes the outcome of a module's vulnerability scan as
 // a single word.
@@ -941,6 +951,9 @@ type ProjectScanResult struct {
 	// because the snapshot reaches the adapter by value: only the caller can put
 	// the reading on the snapshot the records it goes on to build will name.
 	AdvisoryCount int
+	// ScanMode is the mode govulncheck ran in, decided by the adapter from the
+	// tree; empty reads as source, which is all a result without it could be.
+	ScanMode ScanMode
 }
 
 // StdlibModulePath is govulncheck's pseudo-module path for Go standard-library

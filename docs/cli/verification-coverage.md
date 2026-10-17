@@ -273,6 +273,8 @@ drops because its row is zero is still emitted here.
 `build` follows the same rule and is emitted on every document. Its platform and
 toolchain fields are empty strings where the walk recorded none, and
 `vendoring_known` is `false` where there was no project directory to look in.
+A TinyGo walk adds `goarm`, `tinygo_target`, `tinygo_version` and `tinygo_tags`;
+they are absent on every other walk.
 The key names match `walk-show --json`'s `.graph.build_env` and the `goos` /
 `goarch` / `go_version` properties the CycloneDX SBOM emits, so one fact keeps
 one spelling. It is deliberately not called `toolchain`: that key is taken on the

@@ -105,6 +105,64 @@ question, with its own cost: it needs a non-Go advisory source, a version
 comparator that is not semver, and an identity scheme. It is deliberately not
 begun. What is offered here is the truthful statement kanonarion can make today.
 
+#### Scanning under a TinyGo frame
+
+`vuln-scan --gomod ./go.mod --tinygo <target>` scans the walk taken with the
+same `--tinygo <target>`. Before govulncheck runs, kanonarion lists the
+packages that build under the TinyGo frame (`go list -deps -json ./...` with
+TinyGo's `GOROOT`, platform and tags) and checks whether any of them compiles C:
+
+- **No package compiles C** (for example `wasip1`): govulncheck analyses the
+  build from source with the target's tags, as for any other scan. The mode is
+  `source`.
+- **A package compiles C** (every Cortex-M board, such as `pico`, has
+  `device/arm`): the host C compiler cannot build TinyGo's C, so govulncheck
+  cannot load the packages. It runs at module level instead
+  (`govulncheck -scan module`), matching advisories against the module
+  versions only. The mode is `module`, and the scan log names the first three
+  packages that decided it.
+
+A module-level scan examines no package or symbol. Its findings say which
+advisories match the modules in the build, but not whether your code reaches
+them, so every finding reads `reachability_state: not_determined`, with
+`soundness: unconfirmed` and the reason "govulncheck ran at module level because
+the TinyGo closure compiles C that the host toolchain cannot load; no package or
+symbol was examined, so reachability is not established". It is never reported
+as `not_reachable`.
+
+The mode is recorded on each finding as the `fidelity` of its derivation:
+
+```console
+$ kanonarion vuln-show golang.org/x/text@v0.3.7 --gomod ./go.mod --tinygo pico
+...
+      reachability: not_determined — an analysis ran and could not decide; it recorded its answer at Unknown confidence
+      derived:  by govulncheck, fidelity module, rooted at target-rooted:example.com/wvuln@local
+      soundness: unconfirmed — govulncheck ran at module level because the TinyGo closure compiles C that the host toolchain cannot load; no package or symbol was examined, so reachability is not established
+$ kanonarion vuln-show golang.org/x/text@v0.3.7 --gomod ./go.mod --tinygo wasip1
+...
+      derived:  by govulncheck, fidelity source, rooted at target-rooted:example.com/wvuln@local
+```
+
+In `--json` the same value is `reachable.derived_by.fidelity`: `source`,
+`binary` or `module`.
+
+`reachability <module>@<version> --vuln <id> --gomod ./go.mod --tinygo <target>`
+answers such a finding as `not_determined` (exit 0), with the same soundness
+reason and `remedy: none this build can run`: kanonarion cannot yet extract a
+call graph under a TinyGo frame, so no command settles it.
+
+If the package listing itself fails, the scan is recorded as `ScanFailed` with
+the `go list` error and the declared `--tinygo` target named. `--binary-pre-pass`
+is refused under `--tinygo`: `go build` cannot produce the TinyGo binary, and a
+test binary built for the host would describe a different build.
+
+`vuln-scan <walk-id>` refuses a walk recorded under a TinyGo frame (exit `20`),
+before anything runs, and names the command that scans it:
+
+```console
+$ kanonarion vuln-scan 01M5487W409X025Z1QAE6KA7MV
+error: execute root command: vuln-scan <walk-id> cannot scan a walk recorded under tinygo/pico (linux/arm): a TinyGo frame reaches the scan only through the manifest; run vuln-scan --gomod /path/to/project/go.mod --tinygo pico
+```
 
 ### Coverage decides the exit code
 
@@ -253,7 +311,8 @@ Compiles a test binary per module and reads its symbol table, then runs the
 slower source analysis only on modules that look affected. The build sets
 `CGO_ENABLED=0`, so a module needing cgo fails the fast path and falls through
 to source mode. It loses the speed-up, not its answer. Source-mode and project
-scans are unaffected.
+scans are unaffected. It is refused under `--tinygo`; see
+[Scanning under a TinyGo frame](#scanning-under-a-tinygo-frame).
 
 **The toolchain axis**
 
@@ -600,6 +659,7 @@ the current resolution, and scanning that walk gives a reachability answer again
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it (not platform-filtered; such walks record no platform) |
 | `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. Selects the project walk a scope scan reads, and is the platform govulncheck analyses for. Refused beside a positional walk id or `--module`, which already name the walk. Unknown pairs are refused against `go tool dist list`. `--goos`/`--goarch` set the two halves separately. See [Declaring the build target](walk.md#declaring-the-build-target---target). |
+| `--tinygo` | _(none)_ | TinyGo target, e.g. `pico` or `wasip1`, as the `tinygo` command on `PATH` defines it. Mutually exclusive with `--target`, `--goos` and `--goarch`. A closure that compiles C is scanned at module level; see [Scanning under a TinyGo frame](#scanning-under-a-tinygo-frame) and [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo). |
 | `--gomod` | `./go.mod` | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
@@ -608,7 +668,7 @@ the current resolution, and scanning that walk gives a reachability answer again
 | `--reachability` | `false` | Enable call-graph reachability analysis; spawns `kanonarion callgraph` on demand for modules with findings but no cached callgraph |
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
-| `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules. Applies to a walk-id scan; refused by name with `--module` and with a `--gomod`/`--tool`/`--project` scope scan, neither of which carries it into the scan |
+| `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules. Applies to a walk-id scan; refused by name with `--module` and with a `--gomod`/`--tool`/`--project` scope scan, neither of which carries it into the scan, and with `--tinygo` |
 | `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles. Refused by name with `--module`, which scans a walk rooted at a published coordinate and has no project tree to vendor |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
@@ -856,7 +916,8 @@ A walk that recorded none says so and never reports the reader's own. Where the
 project the walk was taken from is still present and `go env GOVERSION` there no
 longer resolves the recorded toolchain, a second line names both versions.
 `--json` carries the same fact as a `build` object of `goos`, `goarch` and
-`go_version`.
+`go_version`; a TinyGo walk adds `goarm`, `tinygo_target`, `tinygo_version` and
+`tinygo_tags`, which are absent on every other walk.
 
 **Why this matters:** the findings you are reading include the standard
 library's, and which standard library that is comes from the toolchain named
@@ -1221,6 +1282,7 @@ counts them: those rows are history, not the answer a scan would give today. In
 | `--gomod <path>` | _(none)_ | Answer in the frame of the latest **code-scope** project walk for this go.mod on this platform. Takes a path, e.g. `--gomod ./go.mod`. Refuses, naming the scopes the store does hold, rather than answering from a walk of another scope or platform. The notice names the walk's scope and frame, and states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
 | `--target <GOOS/GOARCH>` | _(this host's platform)_ | Select the walk taken for this build target, e.g. `--target windows/amd64`. Applies to the `--gomod` route; refused by name on `--walk-id`, which names a walk that already recorded its platform. A refusal raised under a declared target prints a remedy carrying it. See [Declaring the build target](walk.md#declaring-the-build-target---target) |
 | `--goos` / `--goarch` | _(this host's)_ | The two halves of `--target`, for a caller holding them separately. Both are required, and neither combines with `--target` |
+| `--tinygo <target>` | _(none)_ | Select the walk taken with `--tinygo <target>`, e.g. `--tinygo pico`; the `tinygo` command on `PATH` defines the target. Mutually exclusive with `--target`, `--goos` and `--goarch`. See [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo) |
 | `--history` | `false` | List all scan records across walks, snapshots and pipeline generations, marking superseded rows |
 | `--json` | `false` | Emit record as JSON |
 

@@ -183,7 +183,7 @@ func runSBOMGenerate(
 	// to a settled question.
 	if walkID != "" && f.target.declared() {
 		if rerr := refuseInapplicableFlags("sbom <walk-id>", []inapplicableFlag{{
-			flag:  "--target/--goos/--goarch",
+			flag:  f.target.flagName(),
 			where: "sbom --package, which resolves a closure; a walk id already names the platform its walk recorded",
 		}}); rerr != nil {
 			return rerr
@@ -732,6 +732,7 @@ func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath
 		OverallStatus: &succeeded,
 		BuildEnv:      &platform,
 		Toolchain:     env.toolchainFilter(),
+		TinyGoVersion: env.tinyGoVersionFilter(),
 		Limit:         1,
 	})
 	if err != nil {

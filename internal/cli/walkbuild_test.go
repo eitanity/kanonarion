@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -345,7 +346,7 @@ func TestBuildOnTheJSONSurfaces_CarriesTheWalksEnvUnderOneSpelling(t *testing.T)
 		{"a walk that recorded none", unrecorded, walkBuildJSON{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := walkBuildOf(tc.rec); got != tc.want {
+			if got := walkBuildOf(tc.rec); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("walkBuildOf() = %+v, want %+v", got, tc.want)
 			}
 			// Emitted whatever it holds. An absent key would say this producer
@@ -393,5 +394,32 @@ func TestVerificationCoverageJSON_BuildHoldsBothHalves(t *testing.T) {
 		if !strings.Contains(string(encoded), key) {
 			t.Errorf("the coverage build object omits %s", key)
 		}
+	}
+}
+
+// A TinyGo walk's build object carries the frame under the walk record's own
+// keys; a standard walk's object has none of them, so it is byte-identical to
+// what it was before they existed.
+func TestWalkBuildJSON_TinyGoFieldsOnlyOnATinyGoWalk(t *testing.T) {
+	standard := walkRecordUnder(t, "01WALKBUILD00000000000015", "linux", "amd64", "go1.26.6", "", "")
+	doc, err := json.Marshal(walkBuildOf(standard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(doc), `{"goos":"linux","goarch":"amd64","go_version":"go1.26.6"}`; got != want {
+		t.Errorf("standard build = %s, want %s", got, want)
+	}
+
+	pico := walkRecordUnder(t, "01WALKBUILD00000000000016", "linux", "arm", "go1.27.2", "", "")
+	pico.Graph.BuildEnv.GOARM = "6"
+	pico.Graph.BuildEnv.TinyGoTarget = "pico"
+	pico.Graph.BuildEnv.TinyGoVersion = "0.42.0"
+	pico.Graph.BuildEnv.TinyGoTags = []string{"tinygo", "pico"}
+	doc, err = json.Marshal(walkBuildOf(pico))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(doc), `{"goos":"linux","goarch":"arm","goarm":"6","go_version":"go1.27.2","tinygo_target":"pico","tinygo_version":"0.42.0","tinygo_tags":["tinygo","pico"]}`; got != want {
+		t.Errorf("TinyGo build = %s, want %s", got, want)
 	}
 }

@@ -266,12 +266,19 @@ type BuildEnv struct {
 	// GoVersion is the effective toolchain version (e.g. "go1.26.4"), from
 	// `go env GOVERSION` — the version that actually compiles the project.
 	GoVersion string
+	// GOARM, TinyGoTarget, TinyGoVersion and TinyGoTags are set only on a walk
+	// resolved under a declared TinyGo target, as the tinygo command defined it.
+	// Empty on every other walk, so its hash and frame are unchanged.
+	GOARM         string
+	TinyGoTarget  string
+	TinyGoVersion string
+	TinyGoTags    []string
 }
 
 // IsZero reports whether no build environment was captured, so serialisers can
 // omit an empty BuildEnv and keep hashes stable for pre-BuildEnv records.
 func (e BuildEnv) IsZero() bool {
-	return e.GOOS == "" && e.GOARCH == "" && e.GoVersion == ""
+	return e.GOOS == "" && e.GOARCH == "" && e.GoVersion == "" && e.TinyGoTarget == ""
 }
 
 // FrameBasis names why a walk's frame reads the way it does. It is the machine
@@ -322,6 +329,9 @@ func (f WalkFrame) String() string { return f.Text }
 // platform cannot be told apart from a platform that was never applicable, and
 // those are opposite claims about whether re-walking would recover it.
 func FrameOf(target coordinate.ModuleCoordinate, env BuildEnv) WalkFrame {
+	if env.TinyGoTarget != "" {
+		return WalkFrame{Text: TinyGoFrameText(env.TinyGoTarget, env.GOOS, env.GOARCH), Basis: FrameBasisPlatform}
+	}
 	if env.GOOS != "" || env.GOARCH != "" {
 		return WalkFrame{Text: env.GOOS + "/" + env.GOARCH, Basis: FrameBasisPlatform}
 	}
@@ -329,6 +339,12 @@ func FrameOf(target coordinate.ModuleCoordinate, env BuildEnv) WalkFrame {
 		return WalkFrame{Text: frameTextNotPlatformScoped, Basis: FrameBasisNotPlatformScoped}
 	}
 	return WalkFrame{Text: frameTextUnrecorded, Basis: FrameBasisUnrecorded}
+}
+
+// TinyGoFrameText is how every surface names a TinyGo frame: the target first,
+// because it decides the files, then the platform TinyGo resolved it to.
+func TinyGoFrameText(target, goos, goarch string) string {
+	return "tinygo/" + target + " (" + goos + "/" + goarch + ")"
 }
 
 // Frame renders the frame this graph answers in, over its own target.

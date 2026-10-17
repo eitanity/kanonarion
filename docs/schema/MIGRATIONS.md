@@ -142,6 +142,19 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+Values added to existing fields, additively (consumers must already accept new
+values there, as they did when `verdict` and `reachability_state` gained theirs):
+
+- `reachable.derived_by.fidelity` on a govulncheck finding gains `module`,
+  beside `source` and `binary`: a scan under a TinyGo frame whose closure
+  compiles C. Existing records are unchanged; no pipeline bump.
+- `reachability --json` gains `remedy`, present only on a `not_determined`
+  answer whose fidelity is `module`. Additive; absent everywhere else.
+- The `build` object (`vuln-scan-show --json`, `verification-coverage --json`)
+  and the SBOM's `kanonarion:build:*` properties gain `goarm`, `tinygo_target`,
+  `tinygo_version` and `tinygo_tags` on a TinyGo walk only. They are absent on
+  every other walk, so those documents are unchanged.
+
 ## Native record: pipeline `0.4.0` → `0.5.0`
 
 **Derivation change; no record shape change, no store migration.** `0.4.0`
@@ -1061,6 +1074,24 @@ cannot decode is skipped rather than failing the migration.
 
 Additive: no purge, no pipeline bump, no record shape change. The blob is read,
 never rewritten, and every stored walk still verifies against its written hash.
+
+## Walk store: module `walk`, migration 12
+
+Adds `walks.tinygo_target` and `walks.tinygo_version`: the TinyGo target and
+TinyGo release a walk declared with `--tinygo`, and extends the platform index
+with `tinygo_target`. Store `v87` -> `v88`.
+
+Additive: no purge, no pipeline bump, no record shape change for any stored
+walk. The values live in the sealed blob as the graph's `BuildEnv`, beside
+`goarm` and the target's build tags; those fields are omitted when empty, so
+every walk written before them marshals and hashes exactly as it did.
+
+A walk-reading command declaring `--tinygo <target>` selects only walks whose
+`tinygo_target` matches, and one declaring `--target`, `--goos`/`--goarch` or
+nothing selects only walks whose `tinygo_target` is empty.
+
+**No back-fill.** No stored walk carries the fields, and the empty string is the
+recorded value "not a TinyGo walk".
 
 ## Call graph store: module `callgraph`, migration 12
 

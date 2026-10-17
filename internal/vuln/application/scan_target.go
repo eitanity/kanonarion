@@ -187,7 +187,7 @@ func (uc *ScanWalkUseCase) recordTargetRootedAnswers(ctx context.Context, root, 
 		// not reached. The target itself was the versionless main module, which
 		// OSV matching structurally cannot reach a verdict on, so its coordinate
 		// matches carry no reachability rather than a fabricated not-reachable.
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target, *snapshot)
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target, result.ScanMode, *snapshot)
 		if interrupt.Cancelled(ctx, err) {
 			return fmt.Errorf("matching advisories for %s: %w", coord, err)
 		}

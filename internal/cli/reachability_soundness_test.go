@@ -162,3 +162,39 @@ func TestFindingListLabelStatesSoundness(t *testing.T) {
 		t.Errorf("both negatives still carry the same label %q", gotInferred)
 	}
 }
+
+// A module-level TinyGo answer is served as not_determined with its rung and
+// the one true remedy, naming no command that searches the host frame. Any
+// other undetermined answer keeps its refusal.
+func TestModuleLevelAnswerIsNotDeterminedWithNoHostRemedy(t *testing.T) {
+	rec := negativeRecord(vuldomain.AnalyserGovulncheck, string(vuldomain.ScanModeModule))
+	rec.Findings[0].Reachable.Confidence = vuldomain.ConfidenceUnknown
+	rec.Findings[0].NegativeSearch = &vuldomain.NegativeSearch{}
+	res, err := vulnReachabilityVerdict(rec.Coordinate, rec, true, "GO-2025-3487", unclassifiedRoutes, nil)
+	if err != nil {
+		t.Fatalf("vulnReachabilityVerdict: %v", err)
+	}
+	if res.ReachabilityState != verdictNotDetermined || res.Soundness != vuldomain.SoundnessUnconfirmed || res.NegativeSearch != nil {
+		t.Errorf("answer = %q %q search %+v", res.ReachabilityState, res.Soundness, res.NegativeSearch)
+	}
+	var out bytes.Buffer
+	printVulnReachability(&out, res)
+	got := out.String()
+	for _, w := range []string{"NOT DETERMINED", "fidelity: module", "reachability is not established", "remedy: none this build can run"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("text does not say %q:\n%s", w, got)
+		}
+	}
+	for _, never := range []string{"callgraph", "--reachability --force"} {
+		if strings.Contains(got, never) {
+			t.Errorf("text names a host-frame remedy %q:\n%s", never, got)
+		}
+	}
+
+	source := negativeRecord(vuldomain.AnalyserGovulncheck, "source")
+	source.Findings[0].Reachable.Confidence = vuldomain.ConfidenceUnknown
+	if _, err := vulnReachabilityVerdict(source.Coordinate, source, true, "GO-2025-3487", unclassifiedRoutes, nil); err == nil ||
+		!strings.Contains(err.Error(), "is undetermined") {
+		t.Errorf("a source-mode undetermined answer lost its refusal: %v", err)
+	}
+}

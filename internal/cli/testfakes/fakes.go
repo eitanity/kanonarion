@@ -203,11 +203,14 @@ func filterSummariesByIdentity(out []walkports.WalkSummary, filter walkports.Wal
 // environment and toolchain, exactly as the adapter does.
 func filterSummariesByBuild(out []walkports.WalkSummary, filter walkports.WalkFilter) []walkports.WalkSummary {
 	if filter.BuildEnv != nil {
-		// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
-		// with the empty string selecting the unrecorded frame rather than any.
+		// Mirrors the adapter's `goos = ? AND goarch = ? AND tinygo_target = ?`:
+		// exact on every axis, with the empty string selecting the unrecorded
+		// frame (or no TinyGo target) rather than any; a TinyGo name alone
+		// matches on the name.
 		var filtered []walkports.WalkSummary
 		for _, s := range out {
-			if s.GOOS == filter.BuildEnv.GOOS && s.GOARCH == filter.BuildEnv.GOARCH {
+			pair := filter.BuildEnv.IsTinyGoNameOnly() || (s.GOOS == filter.BuildEnv.GOOS && s.GOARCH == filter.BuildEnv.GOARCH)
+			if pair && s.TinyGoTarget == filter.BuildEnv.TinyGoTarget {
 				filtered = append(filtered, s)
 			}
 		}
@@ -219,6 +222,15 @@ func filterSummariesByBuild(out []walkports.WalkSummary, filter walkports.WalkFi
 		var filtered []walkports.WalkSummary
 		for _, s := range out {
 			if s.GoVersion == *filter.Toolchain {
+				filtered = append(filtered, s)
+			}
+		}
+		out = filtered
+	}
+	if filter.TinyGoVersion != nil {
+		var filtered []walkports.WalkSummary
+		for _, s := range out {
+			if s.TinyGoVersion == *filter.TinyGoVersion {
 				filtered = append(filtered, s)
 			}
 		}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/goenv"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
+	"github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygo"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +24,27 @@ import (
 // for.
 var declaredTarget goenv.Target
 
+// declaredTinyGo is the TinyGo frame this invocation declared with --tinygo, or
+// the zero value. When set, declaredTarget holds the pair TinyGo reported, and
+// every resolving child applies this frame after it.
+var declaredTinyGo goenv.TinyGo
+
+// resolvingEnv is env as a resolving child must see it under this invocation's
+// declaration: the platform, then the TinyGo frame when one was declared.
+func resolvingEnv(env []string) []string {
+	return declaredTinyGo.Apply(declaredTarget.Apply(env))
+}
+
+// withTinyGoTags passes the declared TinyGo tag set to a go list child, right
+// after "list". Other children take the environment alone.
+func withTinyGoTags(args []string) []string {
+	tags := declaredTinyGo.ListArgs()
+	if len(tags) == 0 || len(args) == 0 || args[0] != "list" {
+		return args
+	}
+	return append(append([]string{"list"}, tags...), args[1:]...)
+}
+
 // buildTargetFlags are the three spellings of one declaration. --target is the
 // canonical one — it is the pair, and the pair is what `go tool dist list`
 // prints and what the docs use; --goos/--goarch exist because the two halves
@@ -32,6 +54,8 @@ type buildTargetFlags struct {
 	goos   string
 	goarch string
 	target string
+	// tinygo is a TinyGo target name; the tinygo command says what it means.
+	tinygo string
 }
 
 // registerBuildTargetFlags registers the declaration on cmd. Every resolving
@@ -41,12 +65,22 @@ func registerBuildTargetFlags(cmd *cobra.Command, f *buildTargetFlags) {
 	cmd.Flags().StringVar(&f.target, "target", "", "build target as GOOS/GOARCH, e.g. wasip1/wasm (default: this host's platform)")
 	cmd.Flags().StringVar(&f.goos, "goos", "", "target operating system; the GOOS half of --target (default: this host's)")
 	cmd.Flags().StringVar(&f.goarch, "goarch", "", "target architecture; the GOARCH half of --target (default: this host's)")
+	cmd.Flags().StringVar(&f.tinygo, "tinygo", "", "TinyGo target, e.g. pico or wasip1, as the tinygo command on PATH defines it")
 }
 
 // declared reports whether the caller named anything at all, so the default path
 // can be told apart from a declaration that happens to name the host.
 func (f buildTargetFlags) declared() bool {
-	return f.target != "" || f.goos != "" || f.goarch != ""
+	return f.target != "" || f.goos != "" || f.goarch != "" || f.tinygo != ""
+}
+
+// flagName is the declaration as a refusal names it: --tinygo when that is
+// what was typed, the three standard spellings otherwise.
+func (f buildTargetFlags) flagName() string {
+	if f.tinygo != "" {
+		return "--tinygo"
+	}
+	return "--target/--goos/--goarch"
 }
 
 // target reads the declaration out of the flags, refusing the combinations that
@@ -56,6 +90,15 @@ func (f buildTargetFlags) declared() bool {
 // who wrote both has stated the platform twice, and a rule about which wins
 // would make one of the two lines they typed do nothing.
 func (f buildTargetFlags) parse() (goenv.Target, error) {
+	if f.tinygo != "" {
+		switch {
+		case f.target != "":
+			return goenv.Target{}, fmt.Errorf("--tinygo and --target both declare the build target; pass one of them")
+		case f.goos != "" || f.goarch != "":
+			return goenv.Target{}, fmt.Errorf("--tinygo and --goos/--goarch both declare the build target; pass one of them")
+		}
+		return goenv.Target{}, nil
+	}
 	if f.target != "" {
 		if f.goos != "" || f.goarch != "" {
 			return goenv.Target{}, fmt.Errorf("--target and --goos/--goarch both declare the build target; pass one of them")
@@ -90,12 +133,16 @@ func (f buildTargetFlags) parse() (goenv.Target, error) {
 // toolchain is validated against the Go that will actually resolve it.
 func resolveBuildTarget(ctx context.Context, f buildTargetFlags, goBinary, dir string) error {
 	declaredTarget = goenv.Target{}
+	declaredTinyGo = goenv.TinyGo{}
 	if !f.declared() {
 		return nil
 	}
 	t, err := f.parse()
 	if err != nil {
 		return err
+	}
+	if f.tinygo != "" {
+		return resolveTinyGoTarget(ctx, f.tinygo)
 	}
 	supported, offered, err := gotoolchain.New(goBinary, nil).Supports(ctx, t)
 	if err != nil {
@@ -105,6 +152,22 @@ func resolveBuildTarget(ctx context.Context, f buildTargetFlags, goBinary, dir s
 		return unsupportedTargetError(t, offered)
 	}
 	declaredTarget = t
+	return nil
+}
+
+// resolveTinyGoTarget settles a --tinygo declaration through the tinygo command
+// rather than `go tool dist list`, which knows no board names. Both refusals are
+// invocation errors: the command or the target name is what has to change.
+func resolveTinyGoTarget(ctx context.Context, name string) error {
+	frame, err := tinygo.Probe(ctx, "", name)
+	if err != nil {
+		return &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	pair, err := goenv.NewTarget(frame.GOOS(), frame.GOARCH())
+	if err != nil {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("tinygo target %q: %v", name, err)}
+	}
+	declaredTarget, declaredTinyGo = pair, frame
 	return nil
 }
 
@@ -156,6 +219,9 @@ func nearestTargets(t goenv.Target, offered []goenv.Target) []string {
 // at the cause. This is the pointer, and it is added only where the target IS
 // the cause: a host resolution that fails fails for its own reasons.
 func targetClause() string {
+	if declaredTinyGo.Declared() {
+		return declaredTinyGo.ResolutionClause()
+	}
 	if !declaredTarget.Declared() || declaredTarget.IsHost() {
 		return ""
 	}
@@ -178,6 +244,9 @@ func targetClause() string {
 // caller typed: both halves are known here, and one pair is easier to read than
 // two flags.
 func targetFlagHint() string {
+	if declaredTinyGo.Declared() {
+		return " --tinygo " + declaredTinyGo.Target()
+	}
 	if !declaredTarget.Declared() {
 		return ""
 	}
@@ -205,7 +274,7 @@ func resolveReadTarget(ctx context.Context, f buildTargetFlags, path string, sel
 	}
 	if !selectsByManifest {
 		return refuseInapplicableFlags(path, []inapplicableFlag{{
-			flag:  "--target/--goos/--goarch",
+			flag:  f.flagName(),
 			where: "a read that selects its walk by manifest (--gomod); a walk named by id already records the platform it resolved under",
 		}})
 	}

@@ -64,7 +64,14 @@ const (
 	// nor "not reachable", which would offer a search that was never possible as
 	// the reason.
 	verdictPackageLevelOnly = string(vuldomain.StatePackageLevelOnly)
+	// verdictNotDetermined is answered only for a module-level TinyGo scan; any
+	// other undetermined finding is refused with the remedy that can settle it.
+	verdictNotDetermined = string(vuldomain.StateNotDetermined)
 )
+
+// tinyGoGraphRemedy is the one true remedy for a module-level answer: no
+// command here can produce the call graph that would settle it.
+const tinyGoGraphRemedy = "none this build can run: a call graph under a TinyGo frame is not something kanonarion can extract yet, so no search can settle this finding"
 
 // -- output types --
 
@@ -673,7 +680,10 @@ type vulnReachabilityQuery struct {
 	// timestamp so the answer states its reason rather than asserting a bare
 	// negative the reader has to take on trust.
 	WithdrawnAt string `json:"withdrawn_at,omitempty"`
-	ScannedAt   string `json:"scanned_at,omitempty"`
+	// Remedy is set only on a not_determined answer from a module-level scan,
+	// where it says that no command can settle it yet.
+	Remedy    string `json:"remedy,omitempty"`
+	ScannedAt string `json:"scanned_at,omitempty"`
 }
 
 // negativeSearchOutput is the read-time search's own claims, in the curated
@@ -1091,7 +1101,8 @@ func findingReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.
 	// graph, so the state ordering answers package_level_only ahead of it: no
 	// graph resolves a symbol the advisory never named, and the scan that produced
 	// this record did run.
-	if state == vuldomain.StateNotDetermined {
+	moduleLevel := f.Reachable != nil && f.Reachable.DerivedBy.Fidelity == string(vuldomain.ScanModeModule)
+	if state == vuldomain.StateNotDetermined && !moduleLevel {
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"reachability for %s in %s is undetermined: the call graph was unavailable during the scan. %s",
 			f.ID, coord, remedyRebuildGraphThenRescan(coord, rec.WalkID))
@@ -1106,7 +1117,14 @@ func findingReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.
 	// Empty on the positive: NegativeSoundness states a rung only where there is
 	// an absence to qualify, and a route answers its own soundness question.
 	soundness, soundnessReason := vuldomain.NegativeSoundness(f)
+	remedy, search := "", negativeSearchToOutput(f.NegativeSearch, classify)
+	if moduleLevel {
+		// A read-time search over the host's graphs names remedies that search
+		// another frame, so none is published beside a module-level answer.
+		remedy, search = tinyGoGraphRemedy, nil
+	}
 	return vulnReachabilityQuery{
+		Remedy:            remedy,
 		Module:            coord.Path(),
 		Version:           coord.Version(),
 		VulnID:            f.ID,
@@ -1123,7 +1141,7 @@ func findingReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.
 		SoundnessReason:   soundnessReason,
 		Routes:            routes,
 		RouteRoot:         firstRouteRoot(routes),
-		NegativeSearch:    negativeSearchToOutput(f.NegativeSearch, classify),
+		NegativeSearch:    search,
 		ScannedAt:         ledgerStamp(rec.ScannedAt),
 	}, nil
 }
@@ -1418,6 +1436,10 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 			res.VulnID, coord, res.Confidence, derivationLine(res), rootTagFromOutput(res.RouteRoot))
 		printSoundness(stdout, res)
 		printRoute(stdout, res)
+	case verdictNotDetermined:
+		_, _ = fmt.Fprintf(stdout, "%s affects %s; reachability is NOT DETERMINED [confidence: %s, %s]\n", res.VulnID, coord, res.Confidence, derivationLine(res))
+		printSoundness(stdout, res)
+		_, _ = fmt.Fprintf(stdout, "  remedy: %s\n", res.Remedy)
 	case verdictNotAffected:
 		_, _ = fmt.Fprintf(stdout, "%s is not affected by %s (scanned %s)\n", coord, res.VulnID, res.ScannedAt)
 	case verdictWithdrawn:
@@ -1694,7 +1716,7 @@ func newestCompletedScanWalk(
 	succeeded := walkdomain.WalkSucceeded
 	filter := walkports.WalkFilter{Target: &newest.Target, Scope: &newest.Scope, OverallStatus: &succeeded}
 	if newest.GOOS != "" {
-		filter.BuildEnv = &walkports.BuildEnvFilter{GOOS: newest.GOOS, GOARCH: newest.GOARCH}
+		filter.BuildEnv = &walkports.BuildEnvFilter{GOOS: newest.GOOS, GOARCH: newest.GOARCH, TinyGoTarget: newest.TinyGoTarget}
 	}
 	summaries, err := walks.ListWalks(ctx, filter)
 	if err != nil {

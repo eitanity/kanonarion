@@ -63,6 +63,7 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--target` | _(this host's platform)_ | Build target as `GOOS/GOARCH`, e.g. `wasip1/wasm`. The canonical spelling. Requires a `go.mod` walk; refused by name on a positional module walk, which records no build environment. See [Declaring the build target](#declaring-the-build-target---target). |
 | `--goos` | _(this host's)_ | The `GOOS` half of `--target`. Must be given with `--goarch`; mutually exclusive with `--target`. |
 | `--goarch` | _(this host's)_ | The `GOARCH` half of `--target`. Must be given with `--goos`; mutually exclusive with `--target`. |
+| `--tinygo` | _(none)_ | TinyGo target, e.g. `pico` or `wasip1`, as the `tinygo` command on `PATH` defines it. Mutually exclusive with `--target`, `--goos` and `--goarch`. Requires a `go.mod` walk. See [Declaring a TinyGo target](#declaring-a-tinygo-target---tinygo). |
 | `--json` | `false` | Emit the walk record, and this run's verification coverage, as JSON |
 
 #### What `walk --json` carries
@@ -130,7 +131,8 @@ A walk rooted at a published `module@version` resolves no platform and prints
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--module` | _(all)_ | Filter by the `module@version` the walk is rooted at |
-| `--goos`, `--goarch` | _(all)_ | Filter by the recorded platform. Pass both; the pair is validated as `walk --goos/--goarch` validates it. Walks that recorded no platform never match |
+| `--goos`, `--goarch` | _(all)_ | Filter by the recorded platform. Pass both; the pair is validated as `walk --goos/--goarch` validates it. Walks that recorded no platform never match, and neither do TinyGo walks |
+| `--tinygo` | _(all)_ | Filter by the recorded TinyGo target name, e.g. `pico`. The name is matched as recorded, so the `tinygo` command need not be on `PATH`, and a name no walk recorded lists nothing. Cannot be combined with `--goos`/`--goarch`. See [Declaring a TinyGo target](#declaring-a-tinygo-target---tinygo) |
 | `--since` | _(none)_ | Filter by start time (RFC3339) |
 | `--status` | _(all)_ | Filter by overall status (`succeeded`, `partial`, `failed`, or `cancelled`) |
 | `--scope` | _(all)_ | Filter by walk scope (`code`, `tool`, or `complete`) |
@@ -157,7 +159,7 @@ a miss on either exits `4` and the message names how many walk records were
 searched and the invocation that lists them.
 
 `--walk-id` names one walk, so it is refused (exit `20`) beside any row filter
-— `--module`, `--goos`, `--goarch`, `--since`, `--status`, `--scope`, `--tool`,
+— `--module`, `--goos`, `--goarch`, `--tinygo`, `--since`, `--status`, `--scope`, `--tool`,
 `--latest` or `--latest-success` — rather than ignoring it. `--limit`, `--offset`
 and `--json` still apply.
 
@@ -526,6 +528,72 @@ error: execute root command: resolving code scope: go list -deps -test -f ... ./
 That is a truthful answer about this project: its SQLite driver depends on a
 libc package with no `wasip1` files, so it has no `wasip1/wasm` build to resolve. A project
 whose dependencies do build for the target resolves normally.
+
+### Declaring a TinyGo target (`--tinygo`)
+
+TinyGo compiles a different set of files than standard Go: it sets the `tinygo`
+build tag and tags of its own for each board, and it builds against its own
+standard library. A project with a file under `//go:build tinygo` can therefore
+need a module the standard build never selects. `--tinygo <target>` says the
+walk is about the build TinyGo makes for that target:
+
+```console
+$ kanonarion walk --gomod ./go.mod --tinygo pico
+$ kanonarion walk --gomod ./go.mod --tinygo wasip1
+```
+
+**The `tinygo` command on `PATH` defines the target.** kanonarion asks it three
+questions and runs its own `go list` with the answers:
+
+- `tinygo version` for the TinyGo release and the Go release it uses;
+- `tinygo info -json -target=<target>` for `GOOS`, `GOARCH`, `GOARM` and the
+  target's build tags;
+- `tinygo list -target=<target> -json runtime` for the `GOROOT` TinyGo builds
+  with.
+
+The module list, requirement graph and package scope are then resolved with
+that `GOOS`/`GOARCH`/`GOARM`, that `GOROOT`, `CGO_ENABLED=1` and the target's
+tags passed as `-tags`. The answers are asked once per run.
+
+Two refusals, both exit 20:
+
+```console
+$ kanonarion walk --gomod ./go.mod --tinygo pico
+error: execute root command: declaring --tinygo needs the tinygo command on PATH
+$ kanonarion walk --gomod ./go.mod --tinygo nosuchboard
+error: execute root command: tinygo does not know the target "nosuchboard": run `tinygo targets` for the names it offers
+```
+
+Any other failure of those three commands is reported with the command and what
+it printed. `--tinygo` cannot be combined with `--target`, `--goos` or
+`--goarch`, and a positional module walk refuses it as it refuses `--target`.
+
+**The walk records the frame.** The walk stores the TinyGo target, the TinyGo
+version and the tag set beside `goos`, `goarch` and `go_version`
+(`.graph.build_env` in `walk-show --json`; `tinygo_target` and
+`tinygo_version` in `walk-list --json`), and its identity hash covers them. The
+frame is printed as `tinygo/<target> (<goos>/<goarch>)`:
+
+```console
+$ kanonarion walk-show 01M545E5WQZESCN1480KWPAKV4
+...
+build:
+  tinygo/pico (linux/arm) under go1.27.2
+$ kanonarion walk-list --tinygo wasip1
+01M545ASCP97M7N350S3VBAQHW  example.com/tagdep@local  2026-10-17T05:28:38.550365743Z  succeeded  scope=code  platform=tinygo/wasip1 (wasip1/wasm)  depth=full  nodes=3 failures=0
+```
+
+**Only the same declaration selects it.** Every command that takes `--target`
+takes `--tinygo`, and a read declaring `--tinygo pico` answers only from a walk
+taken with `--tinygo pico`. A read declaring `--target linux/arm`, or nothing,
+never selects a TinyGo walk, even one for the same `GOOS`/`GOARCH`.
+
+**The target's default configuration.** The walk resolves the target as TinyGo
+defines it by default. TinyGo's `-gc`, `-scheduler`, `-serial` and `-tags`
+options are not accepted, so a build that changes them is not described.
+
+How `vuln-scan` analyses a TinyGo walk is described in
+[Scanning under a TinyGo frame](vuln.md#scanning-under-a-tinygo-frame).
 
 ## Standard-library version (`--stdlib-from-gomod`)
 

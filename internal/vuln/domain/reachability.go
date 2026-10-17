@@ -235,7 +235,7 @@ type ReachabilityDerivation struct {
 	// Analyser is the instrument.
 	Analyser ReachabilityAnalyser `json:"analyser,omitzero"`
 	// Fidelity is how well that instrument could see, in the instrument's own
-	// terms: the scan mode (source or binary) for govulncheck, the call-graph
+	// terms: the scan mode (source, binary or module) for govulncheck, the call-graph
 	// completeness level for the search. It is deliberately one opaque string
 	// rather than a union — the two scales are not comparable, and the analyser
 	// field is what says which scale is in use.
@@ -571,6 +571,11 @@ func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness,
 	}
 
 	d := f.Reachable.DerivedBy
+	// A module-level answer was measured in a TinyGo frame no stored call graph
+	// describes, so a read-time search over the host's graph cannot stand behind it.
+	if d.Analyser == AnalyserGovulncheck && ScanMode(d.Fidelity) == ScanModeModule {
+		return soundnessFromDerivation(d)
+	}
 	// A search that ran at read time answers ahead of the recorded derivation,
 	// which by construction is one that never searched. Where it found the path
 	// the record denies, neither answer is discarded: rule 4 still refuses to
@@ -740,6 +745,8 @@ func soundnessFromDerivation(d ReachabilityDerivation) (soundness ReachabilitySo
 			return SoundnessInferred, "govulncheck analysed this build from source and reported no route to the vulnerable symbol; the negative reads that silence, not a search over a call graph that ran and came back empty"
 		case ScanModeBinary:
 			return SoundnessUnconfirmed, "govulncheck inspected a symbol table in binary mode; no call graph existed, so no route could have been found whether or not one exists"
+		case ScanModeModule:
+			return SoundnessUnconfirmed, "govulncheck ran at module level because the TinyGo closure compiles C that the host toolchain cannot load; no package or symbol was examined, so reachability is not established"
 		default:
 			return SoundnessUnconfirmed, "the answer came from govulncheck but does not state the mode it ran in, so it cannot be told from a binary-mode one"
 		}

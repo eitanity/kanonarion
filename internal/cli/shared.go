@@ -249,13 +249,13 @@ func findPolicyFile() string {
 // dies without warning does not leave it resolving a build nobody is waiting
 // for.
 func readPackageModules(ctx context.Context, pattern string) ([]string, error) {
-	cmd := childproc.CommandContext(ctx, "go", "list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
-		"{{if not .Standard}}{{.Module.Path}}@{{.Module.Version}}{{end}}", pattern)
+	cmd := childproc.CommandContext(ctx, "go", withTinyGoTags([]string{"list", "-deps", "-f", // #nosec G204 -- pattern is a Go package path from a developer CLI flag
+		"{{if not .Standard}}{{.Module.Path}}@{{.Module.Version}}{{end}}", pattern})...)
 	// The allow-list is the import closure of one package, and the Go toolchain
 	// resolves that against the build target. It is stated here rather than
 	// inherited so the closure and the walk it is filtered against agree on the
 	// platform by construction.
-	cmd.Env = declaredTarget.Apply(os.Environ())
+	cmd.Env = resolvingEnv(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -562,7 +562,7 @@ func goListDepsArgs(patterns []string, ts testScope) []string {
 // that was killed rather than asked to stop, and went on holding the memory
 // that got it killed.
 func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
-	cmd := childproc.CommandContext(ctx, "go", args...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
+	cmd := childproc.CommandContext(ctx, "go", withTinyGoTags(args)...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
 	cmd.Dir = dir
 	// The scope is platform-specific: build constraints select files per target,
 	// so `go list -deps` over one tree answers differently for each. The pair is
@@ -572,7 +572,7 @@ func runGoList(ctx context.Context, dir string, args []string) ([]byte, error) {
 	// writes one), so it gets a temp root removed once it has exited.
 	scratch, removeScratch := childproc.Scratch()
 	defer removeScratch()
-	cmd.Env = append(declaredTarget.Apply(os.Environ()), scratch...)
+	cmd.Env = append(resolvingEnv(os.Environ()), scratch...)
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -898,6 +898,7 @@ func resetInvocationState() {
 	// next reader in this process filter on a platform nobody asked for, and
 	// record one nobody declared.
 	declaredTarget = goenv.Target{}
+	declaredTinyGo = goenv.TinyGo{}
 }
 
 // callgraphCeiling is the wall-clock backstop for one call-graph subprocess.

@@ -23,6 +23,7 @@ github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote os/exec
 github.com/eitanity/kanonarion/internal/stdlib/adapters/toolchainenv os/exec
 github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck os/exec
 github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain os/exec
+github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/tinygo os/exec
 github.com/inconshreveable/mousetrap syscall
 github.com/inconshreveable/mousetrap unsafe
 github.com/klauspost/compress/internal/le unsafe

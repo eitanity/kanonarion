@@ -900,6 +900,8 @@ func walkSummaryOf(rec domain.WalkRecord) walkports.WalkSummary {
 		FailureCount:  domain.CountNodeFailures(rec),
 		GOOS:          rec.Graph.BuildEnv.GOOS,
 		GOARCH:        rec.Graph.BuildEnv.GOARCH,
+		TinyGoTarget:  rec.Graph.BuildEnv.TinyGoTarget,
+		TinyGoVersion: rec.Graph.BuildEnv.TinyGoVersion,
 	}
 }
 

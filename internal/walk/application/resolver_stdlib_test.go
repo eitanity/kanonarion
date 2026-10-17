@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -166,7 +167,7 @@ func TestResolveProject_BuildEnvCaptured(t *testing.T) {
 		t.Fatalf("ResolveProject: %v", err)
 	}
 	want := domain3.BuildEnv{GOOS: "linux", GOARCH: "amd64", GoVersion: "go1.26.4"}
-	if g.BuildEnv != want {
+	if !reflect.DeepEqual(g.BuildEnv, want) {
 		t.Errorf("BuildEnv = %+v, want %+v", g.BuildEnv, want)
 	}
 }

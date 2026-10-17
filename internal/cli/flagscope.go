@@ -68,7 +68,7 @@ func inspectGoModOnlyFlags(f inspectFlags) []inapplicableFlag {
 		// A coordinate inspect resolves no build list and records no build
 		// environment, so a declared target reaches no record that could say
 		// which platform the answer is about.
-		out = append(out, inapplicableFlag{flag: "--target/--goos/--goarch", where: where})
+		out = append(out, inapplicableFlag{flag: f.target.flagName(), where: where})
 	}
 	return out
 }
@@ -94,7 +94,7 @@ func vulnScanGoModScopeFlags(f vulnScanFlags) []inapplicableFlag {
 		// The target selects which project walk a scope scan reads; a named walk
 		// id, or --module, has already named one, and the platform it was
 		// resolved for is the walk's own rather than this invocation's to choose.
-		out = append(out, inapplicableFlag{flag: "--target/--goos/--goarch", where: where})
+		out = append(out, inapplicableFlag{flag: f.target.flagName(), where: where})
 	}
 	return out
 }
@@ -115,6 +115,16 @@ func binaryPrePassFlag(set bool) []inapplicableFlag {
 		return nil
 	}
 	return []inapplicableFlag{{flag: "--binary-pre-pass", where: "vuln-scan <walk-id>"}}
+}
+
+// binaryPrePassUnderTinyGo returns --binary-pre-pass when it was set beside
+// --tinygo: go build cannot produce the TinyGo artefact, and a host test binary
+// would answer about another frame. Checked before any child runs.
+func binaryPrePassUnderTinyGo(f vulnScanFlags) []inapplicableFlag {
+	if !f.binaryModePrePass || f.target.tinygo == "" {
+		return nil
+	}
+	return []inapplicableFlag{{flag: "--binary-pre-pass", where: "a scan without --tinygo; go build cannot produce the TinyGo artefact, and a host test binary would answer about another frame"}}
 }
 
 // walkGoModOnlyFlags returns the walk flags that only a go.mod walk can act on,
@@ -140,7 +150,7 @@ func walkGoModOnlyFlags(f walkFlags) []inapplicableFlag {
 		// reach. Accepting it would let a caller name a platform the record
 		// cannot say it was about.
 		out = append(out, inapplicableFlag{
-			flag:  "--target/--goos/--goarch",
+			flag:  f.target.flagName(),
 			where: "walk --gomod, whose record carries the build environment it resolved under; a positional module walk records none",
 		})
 	}
@@ -191,7 +201,7 @@ func contextGoModOnlyFlags(f contextFlags) []inapplicableFlag {
 		// The target names which platform's stored walk answers. A coordinate, a
 		// walk id and a working tree each name their own module set and choose no
 		// walk, so there is nothing for the declaration to select between.
-		out = append(out, inapplicableFlag{flag: "--target/--goos/--goarch", where: where})
+		out = append(out, inapplicableFlag{flag: f.target.flagName(), where: where})
 	}
 	if f.tool {
 		out = append(out, inapplicableFlag{flag: "--tool", where: where})
@@ -293,7 +303,7 @@ func dependentsScopeFlags(f dependentsFlags) []inapplicableFlag {
 		// The search and a pinned walk each arrive at a build that already
 		// recorded the platform it resolved under, so a declaration there would
 		// name a platform the answer is not about.
-		out = append(out, inapplicableFlag{flag: "--target/--goos/--goarch", where: where})
+		out = append(out, inapplicableFlag{flag: f.target.flagName(), where: where})
 	}
 	if f.tool {
 		out = append(out, inapplicableFlag{flag: "--tool", where: where})

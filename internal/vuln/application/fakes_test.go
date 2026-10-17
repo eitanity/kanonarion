@@ -630,6 +630,7 @@ type fakeScanner struct {
 	targetStatus   domain.VulnerabilityStatus
 	targetReason   string
 	targetErr      error
+	targetMode     domain.ScanMode
 	gotTargetCoord coordinate.ModuleCoordinate
 	gotTargetCache string
 	// call counters let tests assert which path a walk took.
@@ -749,7 +750,7 @@ func (f *fakeScanner) ScanTargetModule(_ context.Context, req ports.TargetScanRe
 	if len(f.targetFindings) > 0 {
 		status = domain.StatusAffected
 	}
-	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status, AdvisoryCount: f.advisoryCount}, nil
+	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status, AdvisoryCount: f.advisoryCount, ScanMode: f.targetMode}, nil
 }
 
 func (f *fakeScanner) ScannerMetadata() ports.ScannerMetadata {

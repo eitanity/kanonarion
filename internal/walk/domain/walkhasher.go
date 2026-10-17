@@ -89,6 +89,12 @@ type canonicalBuildEnv struct {
 	GOARCH    string `json:"goarch"`
 	GOOS      string `json:"goos"`
 	GoVersion string `json:"go_version"`
+	// The TinyGo frame is omitempty so a walk without one marshals, and
+	// hashes, exactly as it did before the fields existed.
+	GOARM         string   `json:"goarm,omitempty"`
+	TinyGoTags    []string `json:"tinygo_tags,omitempty"`
+	TinyGoTarget  string   `json:"tinygo_target,omitempty"`
+	TinyGoVersion string   `json:"tinygo_version,omitempty"`
 }
 
 type canonicalWalkNode struct {
@@ -458,7 +464,10 @@ func fromCanonicalBuildEnv(c *canonicalBuildEnv) BuildEnv {
 	if c == nil {
 		return BuildEnv{}
 	}
-	return BuildEnv{GOOS: c.GOOS, GOARCH: c.GOARCH, GoVersion: c.GoVersion}
+	return BuildEnv{
+		GOOS: c.GOOS, GOARCH: c.GOARCH, GoVersion: c.GoVersion,
+		GOARM: c.GOARM, TinyGoTarget: c.TinyGoTarget, TinyGoVersion: c.TinyGoVersion, TinyGoTags: c.TinyGoTags,
+	}
 }
 
 // toCanonicalBuildEnv converts a BuildEnv into its canonical pointer form,
@@ -470,9 +479,13 @@ func toCanonicalBuildEnv(e BuildEnv) *canonicalBuildEnv {
 		return nil
 	}
 	return &canonicalBuildEnv{
-		GOARCH:    e.GOARCH,
-		GOOS:      e.GOOS,
-		GoVersion: e.GoVersion,
+		GOARCH:        e.GOARCH,
+		GOOS:          e.GOOS,
+		GoVersion:     e.GoVersion,
+		GOARM:         e.GOARM,
+		TinyGoTags:    e.TinyGoTags,
+		TinyGoTarget:  e.TinyGoTarget,
+		TinyGoVersion: e.TinyGoVersion,
 	}
 }
 

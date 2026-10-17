@@ -452,6 +452,15 @@ func findingConfidence(m *findingMeta) domain.ReachabilityConfidence {
 	}
 }
 
+// findingConfidenceIn is findingConfidence under mode. A module-level scan
+// examined no package, so its report is never a reachability answer.
+func findingConfidenceIn(m *findingMeta, mode domain.ScanMode) domain.ReachabilityConfidence {
+	if mode == domain.ScanModeModule {
+		return domain.ConfidenceUnknown
+	}
+	return findingConfidence(m)
+}
+
 func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFinding, findingIndex map[string]int, meta map[string]*findingMeta, routes map[string][]domain.ReachabilityRoute, intern func(string) string, scannedModule string) {
 	if !bytes.Contains(raw, []byte("\"finding\":")) {
 		return
@@ -652,7 +661,7 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 		applyOSV(f, osvs[f.ID], m.vulnModule)
 		f.Reachable = &domain.ReachabilityResult{
 			IsReachable: m.symbolReached,
-			Confidence:  findingConfidence(m),
+			Confidence:  findingConfidenceIn(m, mode),
 			Routes:      routes[f.ID],
 			// Stamped on every answer, reachable or not: a binary-mode "not
 			// reachable" is a symbol-table result and a source-mode one is a call
@@ -869,7 +878,7 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader, mode do
 			if m == nil {
 				m = &findingMeta{}
 			}
-			mf.findings[i].Reachable.Confidence = findingConfidence(m)
+			mf.findings[i].Reachable.Confidence = findingConfidenceIn(m, mode)
 			domain.WithdrawSymbolLevelClaim(&mf.findings[i])
 		}
 		domain.SortFindings(mf.findings)

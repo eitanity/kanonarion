@@ -301,6 +301,12 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 		if f.Reachable != nil {
 			_, _ = fmt.Fprintf(stdout, "      derived:  %s\n", f.Reachable.DerivedBy)
 		}
+		// A module-level answer is not_determined for a reason the state line
+		// cannot give: no package was examined. The rung states it.
+		if state == vuldomain.StateNotDetermined && f.Reachable.DerivedBy.Fidelity == string(vuldomain.ScanModeModule) {
+			soundness, why := vuldomain.NegativeSoundness(f)
+			_, _ = fmt.Fprintf(stdout, "      soundness: %s — %s\n", soundness, why)
+		}
 		// The route is what answers "which of my dependencies reaches this". It is
 		// printed entry point first, and says so when its hops carry no versions,
 		// because an unversioned route cannot be checked against another build.

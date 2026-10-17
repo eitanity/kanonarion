@@ -190,14 +190,19 @@ func pluralHas(n int) string {
 // record surface, where it names the toolchain that produced the RECORD, and one
 // key must not carry two meanings.
 //
-// Every field is emitted, empty included. An empty value is the statement that
-// the walk recorded no build environment, and it is a different statement from
-// the key being absent, which would say this producer does not publish the fact
-// at all.
+// The first three fields are emitted, empty included. An empty value is the
+// statement that the walk recorded no build environment, and it is a different
+// statement from the key being absent, which would say this producer does not
+// publish the fact at all. GOARM and the TinyGo fields exist only on a TinyGo
+// walk, so they are omitted elsewhere and a standard build's object is unchanged.
 type walkBuildJSON struct {
-	GOOS      string `json:"goos"`
-	GOARCH    string `json:"goarch"`
-	GoVersion string `json:"go_version"`
+	GOOS          string   `json:"goos"`
+	GOARCH        string   `json:"goarch"`
+	GOARM         string   `json:"goarm,omitempty"`
+	GoVersion     string   `json:"go_version"`
+	TinyGoTarget  string   `json:"tinygo_target,omitempty"`
+	TinyGoVersion string   `json:"tinygo_version,omitempty"`
+	TinyGoTags    []string `json:"tinygo_tags,omitempty"`
 }
 
 // walkBuildOf projects a walk's recorded build environment.
@@ -209,7 +214,10 @@ type walkBuildJSON struct {
 // already render.
 func walkBuildOf(rec walkdomain.WalkRecord) walkBuildJSON {
 	env := rec.Graph.BuildEnv
-	return walkBuildJSON{GOOS: env.GOOS, GOARCH: env.GOARCH, GoVersion: env.GoVersion}
+	return walkBuildJSON{
+		GOOS: env.GOOS, GOARCH: env.GOARCH, GOARM: env.GOARM, GoVersion: env.GoVersion,
+		TinyGoTarget: env.TinyGoTarget, TinyGoVersion: env.TinyGoVersion, TinyGoTags: env.TinyGoTags,
+	}
 }
 
 // walkBuildToolchainUnrecorded is what a walk that recorded no toolchain says.

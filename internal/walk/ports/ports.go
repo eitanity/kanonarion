@@ -156,6 +156,12 @@ type BuildList struct {
 	// the toolchain did not report them.
 	GOOS   string
 	GOARCH string
+	// GOARM and the TinyGo fields are the declared TinyGo frame the list was
+	// resolved under, empty when none was declared.
+	GOARM         string
+	TinyGoTarget  string
+	TinyGoVersion string
+	TinyGoTags    []string
 }
 
 // BuildListResolver computes the authoritative build list for a project from the
@@ -257,8 +263,11 @@ type WalkFilter struct {
 	// platform-filtered read to also pin a toolchain, and there is no value it
 	// could pass to mean "any".
 	Toolchain *string
-	Limit     int // 0 = no limit
-	Offset    int
+	// TinyGoVersion is the TinyGo release half of the toolchain axis, matched
+	// exactly as Toolchain is: nil = any, the empty string = not a TinyGo walk.
+	TinyGoVersion *string
+	Limit         int // 0 = no limit
+	Offset        int
 	// LatestOnly returns only the latest walk of each unique
 	// (target, scope, platform, toolchain) combination.
 	//
@@ -286,12 +295,28 @@ type BuildEnvFilter struct {
 	// GOARCH is the target architecture (e.g. "amd64"), as `go env GOARCH`
 	// reports it for the project the walk resolved.
 	GOARCH string
+	// TinyGoTarget is the declared TinyGo target, matched exactly with the
+	// pair, or alone when no pair is given: the empty string selects only
+	// walks that declared none.
+	TinyGoTarget string
+}
+
+// IsTinyGoNameOnly reports a filter naming a TinyGo target and no pair, which
+// matches every walk recorded under that target name, whatever pair it reported.
+func (f BuildEnvFilter) IsTinyGoNameOnly() bool {
+	return f.TinyGoTarget != "" && f.GOOS == "" && f.GOARCH == ""
 }
 
 // String renders the platform the way output and refusals name it. A filter is
 // not a walk: an empty filter selects the rows that stored no platform, and it
 // says so without claiming why any particular row is one of them.
 func (f BuildEnvFilter) String() string {
+	if f.IsTinyGoNameOnly() {
+		return "tinygo/" + f.TinyGoTarget
+	}
+	if f.TinyGoTarget != "" {
+		return walkdomain.TinyGoFrameText(f.TinyGoTarget, f.GOOS, f.GOARCH)
+	}
 	if f.GOOS == "" && f.GOARCH == "" {
 		return "unrecorded"
 	}
@@ -324,6 +349,10 @@ type WalkSummary struct {
 	// no build environment, and for one written before the toolchain was
 	// projected into a column of its own.
 	GoVersion string `json:"go_version,omitempty"`
+	// TinyGoTarget and TinyGoVersion are the declared TinyGo frame, empty for a
+	// walk that declared none.
+	TinyGoTarget  string `json:"tinygo_target,omitempty"`
+	TinyGoVersion string `json:"tinygo_version,omitempty"`
 }
 
 // Toolchain names the toolchain this walk was resolved by, for output that says
@@ -341,7 +370,7 @@ func (s WalkSummary) Toolchain() string {
 // module-rooted walk (no platform applies) is never confused with a project
 // walk whose platform was not recorded.
 func (s WalkSummary) Frame() walkdomain.WalkFrame {
-	return walkdomain.FrameOf(s.Target, walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH})
+	return walkdomain.FrameOf(s.Target, walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH, TinyGoTarget: s.TinyGoTarget})
 }
 
 // BuildFrame renders the target platform a walk answers in, for output that

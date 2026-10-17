@@ -306,7 +306,8 @@ kanonarion symbol-find <name> [flags]
 
 Also takes the build-scope flags `--gomod`, `--walk-id`, `--toolchain` and
 `--target GOOS/GOARCH` — see [Declaring the build
-target](walk.md#declaring-the-build-target---target).
+target](walk.md#declaring-the-build-target---target) — and `--tinygo <target>`
+— see [Declaring a TinyGo target](walk.md#declaring-a-tinygo-target---tinygo).
 
 `<name>` is a bare name (`Marshal`) or a qualified one. The name is what follows
 the last dot; what comes before it may be:

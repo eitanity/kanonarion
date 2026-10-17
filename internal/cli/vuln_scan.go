@@ -75,6 +75,9 @@ it. It is reported on its own and counted in no roll-up.`,
   kanonarion vuln-scan --target windows/amd64`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if rerr := refuseInapplicableFlags("vuln-scan --tinygo", binaryPrePassUnderTinyGo(f)); rerr != nil {
+				return rerr
+			}
 			// With neither a walk-id nor --module the scan is the project in
 			// the current directory, as it is for inspect, context and audit.
 			bare := f.moduleCoord == "" && len(args) == 0
@@ -126,7 +129,46 @@ func runVulnScanByWalkID(ctx context.Context, walkID string, f vulnScanFlags, st
 	if rerr := refuseInapplicableFlags("vuln-scan <walk-id>", refused); rerr != nil {
 		return rerr
 	}
+	if rerr := refuseTinyGoWalkByID(ctx, walkID, f.goBinary, stderr); rerr != nil {
+		return rerr
+	}
 	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, f.binaryModePrePass, jsonOut, f.goBinary, f.operator, "", f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
+}
+
+// refuseTinyGoWalkByID refuses a walk recorded under a TinyGo frame before any
+// child runs: the frame reaches the scanner only through --tinygo on the
+// manifest path, so a walk-id scan would analyse it under the host's frame.
+// A walk that cannot be read is left to the scan, which reports it.
+func refuseTinyGoWalkByID(ctx context.Context, walkID, goBinary string, stderr io.Writer) error {
+	rec, ok := readWalkByID(ctx, walkID, goBinary, stderr)
+	env := rec.Graph.BuildEnv
+	if !ok || env.TinyGoTarget == "" {
+		return nil
+	}
+	gomod := "<path>"
+	if rec.ProjectDir != "" {
+		gomod = filepath.Join(rec.ProjectDir, "go.mod")
+	}
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+		"vuln-scan <walk-id> cannot scan a walk recorded under %s: a TinyGo frame reaches the scan only through the manifest; run vuln-scan --gomod %s --tinygo %s",
+		walkdomain.TinyGoFrameText(env.TinyGoTarget, env.GOOS, env.GOARCH), gomod, env.TinyGoTarget)}
+}
+
+// readWalkByID is the stored walk, or false when the store or the walk cannot
+// be read.
+func readWalkByID(ctx context.Context, walkID, goBinary string, stderr io.Writer) (walkdomain.WalkRecord, bool) {
+	logger := buildLogger(logLevel, stderr)
+	ctr, cleanup, err := NewContainer(storeRoot, "", goBinary, false, activeConfig, logger)
+	if err != nil {
+		return walkdomain.WalkRecord{}, false
+	}
+	defer func() {
+		if cerr := cleanup(); cerr != nil {
+			logger.Warn("vuln-scan: store cleanup failed", "error", cerr)
+		}
+	}()
+	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
+	return rec, err == nil
 }
 
 // runVulnScanScope finds the latest succeeded project walk for the requested
@@ -289,6 +331,7 @@ func selectProjectWalkToScan(
 		OverallStatus: &succeeded,
 		BuildEnv:      &platform,
 		Toolchain:     env.toolchainFilter(),
+		TinyGoVersion: env.tinyGoVersionFilter(),
 		Limit:         1,
 	})
 	if err != nil {

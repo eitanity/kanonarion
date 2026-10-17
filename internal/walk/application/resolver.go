@@ -580,9 +580,13 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 		PartialReason:   st.partialReason,
 		HasLocalReplace: st.hasLocalReplace,
 		BuildEnv: domain3.BuildEnv{
-			GOOS:      bl.GOOS,
-			GOARCH:    bl.GOARCH,
-			GoVersion: bl.GoVersion,
+			GOOS:          bl.GOOS,
+			GOARCH:        bl.GOARCH,
+			GoVersion:     bl.GoVersion,
+			GOARM:         bl.GOARM,
+			TinyGoTarget:  bl.TinyGoTarget,
+			TinyGoVersion: bl.TinyGoVersion,
+			TinyGoTags:    bl.TinyGoTags,
 		},
 	}
 	g.Nodes = st.drainNodes()
